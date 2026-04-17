@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bootstrap Agent Harness"
+  short_description: "Create a docs-first agent harness for new repos, apps, and services"
+  default_prompt: "Use $bootstrap-agent-harness when creating a new repository, app, or service that should be agent-ready from the start with orientation docs, validation coverage, runtime scenarios, drift detection, and CI-backed harness maintenance."

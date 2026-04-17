@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Linear Ticket"
+  short_description: "Generate atomic implementation plans and convert them into parallel Linear tickets for any project"
+  default_prompt: "Use $create-linear-ticket to resolve team/project context in Linear and create atomic, parallelizable tickets."

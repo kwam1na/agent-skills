@@ -1,0 +1,4 @@
+interface:
+  display_name: "Execute Linear Ticket"
+  short_description: "Execute Linear tickets end-to-end across different teams and keep Linear in sync"
+  default_prompt: "Use $execute-linear-ticket to resolve team/project context in Linear and deliver an existing ticket through implementation, validation, and handoff."

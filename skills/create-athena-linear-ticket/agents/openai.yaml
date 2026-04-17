@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Athena Linear Ticket"
+  short_description: "Apply Athena defaults on top of the generic Linear ticket creation workflow"
+  default_prompt: "Use $create-athena-linear-ticket when Athena ticket creation needs Athena team/project defaults without losing the generic Linear workflow."

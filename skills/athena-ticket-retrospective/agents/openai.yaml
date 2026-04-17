@@ -1,0 +1,4 @@
+interface:
+  display_name: "Athena Ticket Retrospective"
+  short_description: "Generate redacted Athena delivery retrospectives"
+  default_prompt: "Use $athena-ticket-retrospective after Athena ticket handoff to analyze logs and generate a strict redacted report."
