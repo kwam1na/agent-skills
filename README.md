@@ -1,7 +1,5 @@
 # Custom Agent Skills
 
-Custom skills bundled for reuse across machines and agent clients.
-
 ## Included Skills
 
 - `athena-ticket-retrospective`
