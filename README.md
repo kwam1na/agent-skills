@@ -1,6 +1,6 @@
-# Codex Custom Skills
+# Custom Agent Skills
 
-Custom Codex skills bundled for reuse across machines.
+Custom skills bundled for reuse across machines and agent clients.
 
 ## Included Skills
 
@@ -14,36 +14,14 @@ Custom Codex skills bundled for reuse across machines.
 - `frontend-skill`
 - `playwright`
 
-## Install
+## Usage
 
-Clone the repo anywhere, then run:
+Clone this repo anywhere and wire the folders in `skills/` into your client's normal skill discovery path.
 
-```bash
-./install.sh
-```
-
-By default this creates symlinks in `${CODEX_HOME:-$HOME/.codex}/skills`, so updates are just:
-
-```bash
-git pull
-```
-
-If you want standalone copies instead of symlinks:
-
-```bash
-./install.sh --copy
-```
-
-## Uninstall
-
-The uninstall script removes symlinks created by `install.sh`:
-
-```bash
-./uninstall.sh
-```
+This repository intentionally does not ship client-specific install or uninstall helpers.
 
 ## Notes
 
 - System skills and runtime-provided skills are intentionally excluded.
-- The installer backs up conflicting skill directories before replacing them.
-- These skills may depend on plugins or system skills already available in Codex.
+- Some individual skills still assume the presence of specific tools, plugins, or agent capabilities.
+- This pass keeps the repository packaging neutral without rewriting every skill to a fully agent-agnostic format.
