@@ -1,4 +1,4 @@
 interface:
   display_name: "Execute Linear Ticket"
-  short_description: "Execute Linear tickets end-to-end across different teams and keep Linear in sync"
-  default_prompt: "Use $execute-linear-ticket to resolve team/project context in Linear and deliver an existing ticket through implementation, validation, and handoff."
+  short_description: "Execute Linear tickets end-to-end with test-first delivery, sensor validation, review, and compounding"
+  default_prompt: "Use $execute-linear-ticket to resolve team/project context from the issue, explicit user input, or the current working directory and deliver an existing ticket autonomously end-to-end through test-first or characterization-first implementation, repo sensor validation, review, merge, Linear closure, and a compounding decision."

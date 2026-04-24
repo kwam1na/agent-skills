@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deliver Work"
+  short_description: "Ship software with compound delivery"
+  default_prompt: "Use $deliver-work when Codex should build, fix, modify, refactor, debug, or ship software work through compound delivery."

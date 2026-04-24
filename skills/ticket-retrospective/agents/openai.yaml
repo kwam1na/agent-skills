@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ticket Retrospective"
+  short_description: "Generate redacted post-handoff ticket retrospectives"
+  default_prompt: "Use $ticket-retrospective after ticket handoff when you want a strict, redacted retrospective report."

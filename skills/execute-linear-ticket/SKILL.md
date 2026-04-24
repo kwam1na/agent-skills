@@ -1,113 +1,129 @@
 ---
 name: execute-linear-ticket
-description: Use when implementing one or more existing Linear tickets end-to-end across different teams or projects.
+description: Use when work already exists in Linear and the user wants implementation rather than new planning.
 ---
 
 # Executing Linear Tickets
 
-Use this skill when the work already exists in Linear and the user wants execution, not fresh planning. The goal is to turn a ticket into a reliable delivery loop: pick it up, implement it on a clean branch, make reasonable scope decisions, document those decisions in Linear, and finish with validation plus a clear PR or handoff state.
+Use this skill to carry an existing Linear issue through implementation, review, merge, and ticket closure. Use `$create-linear-ticket` first if the work is not yet ticketed or still needs decomposition.
 
-This is the execution companion to `$create-linear-ticket`. Use that skill to create or restructure tickets. Use this skill to carry existing tickets through implementation.
+## Delivery Posture
+
+Apply `$compound-delivery-kernel` throughout execution. Linear owns the work record, the repo owns sensors, and the skills system owns the delivery workflow. Preserve test-driven delivery: behavior changes start with a failing test or characterization capture, not implementation.
 
 ## When to Use
 
 - The user asks to work on a specific Linear issue.
-- The user asks to proceed with outstanding Linear work already tracked in tickets.
-- The user expects Codex to choose the next sensible ticket from a known backlog or execution plan.
-- The work spans implementation plus ticket hygiene: status updates, comments, PR links, or follow-up tickets for deferred scope.
+- The user asks to continue a backlog or execution plan that is already tracked in Linear.
+- The work includes implementation plus ticket hygiene such as status updates, comments, PR links, or follow-up issues.
 
 Do not use this skill when:
-- the user is still deciding scope and wants planning first
+- the work needs planning or ticket creation first
 - the work is not tracked in Linear yet
 - the task is unrelated to a Linear workflow
 
-## Project Resolution Contract
+## Delivery Contract
 
+- Default to completing the ticket autonomously end-to-end.
+- Delivery means the PR is merged into `main` and the ticket is already marked `Done` in Linear by merge automation.
+- When executing a coordinated batch of related tickets, delivery can mean all tickets land through one shared integration PR rather than one PR per ticket.
+- Delivery also means you leave the local repo tidy and back on `main`.
+- Do not stop at "PR open" or "ready for review" unless the user explicitly asked for that narrower handoff.
+- Only treat something as a blocker when it genuinely requires user input.
+- Document significant scope decisions in Linear as you work.
+
+## Red Flags
+
+- "The PR is open, so this is done."
+- "I'll update Linear at the end."
+- "The review loop hit `3`, so I should stop even though the next fix is obvious."
+- "The checks are probably fine" or "the review comments are minor."
+- "`pre-push` passed, so remote CI parity is guaranteed."
+- "The sub-agent is taking too long, so I should kill it early."
+- "Every harness or repo validation failure needs a manual fix."
+- "The final suite passed, so test-first happened."
+- "The PR merged, so there is nothing left to teach the system."
+- "I noticed something adjacent, so I should silently expand this ticket."
+- "A vague improvement idea deserves a proactive ticket."
+
+## Shared Context
+
+Apply `references/linear-project-resolution.md` before mutating Linear or choosing the next ticket from a backlog.
+
+Use this resolution order before asking the user for context:
 - If a Linear issue ID is present, call `get_issue` first and derive the team/project from the issue.
-- If no issue id is present, look for explicit project/team names in the prompt and validate them with `get_project` and `get_team`.
-- If neither source exists, stop and ask the user for project context.
+- If no issue id is present, look for explicit project/team names and validate them with `get_team` and `get_project`.
+- If neither source resolves context, inspect the current working directory the skill was invoked from.
+- Build candidate project names from the current directory basename, the git repo root basename when it differs, and obvious workspace metadata such as `package.json` names.
+- If exactly one confident project match exists, use it automatically and report that it was cwd-derived.
 - If the issue exists but has no project, stop and ask instead of silently falling back.
 - If the named or derived project does not exist in Linear, stop and surface the mismatch clearly.
-- If the user supplies both an issue id and explicit project/team names and they conflict, surface the mismatch instead of guessing.
 
 ## Defaults
 
-- Start each new implementation branch from the latest `origin/main`
-- Use a fresh `codex/` branch and isolated worktree for each ticket
-- Prefix every commit message with the Linear ticket id
-- Prefer direct Linear MCP operations for status changes, comments, and follow-up issue creation
-- Execution mode default: `auto_review_and_merge = on` (opt out only when the user explicitly requests it)
-- Auto-merge target branch: `main`
-- Auto-merge method: `squash`
-- Review loop cap: `max_review_iterations = 3`
-- Internal review gate source: `$requesting-code-review`
-- Human approval is not a required merge gate unless the user explicitly asks for it
-- CI merge gate: all PR checks must be green before merge
+- Start each ticket from the latest `origin/main` in a fresh worktree and `codex/` branch.
+- Include the Linear ticket id in every commit message.
+- Prefer Linear MCP operations for status changes, comments, and follow-up issue creation.
+- Prefer sub-agents when the work can be split into parallelizable chunks with clear ownership.
+- If several tickets share high-conflict generated artifacts, prefer isolated worktrees per ticket plus one later integration branch instead of opening multiple artifact-conflicting PRs early.
+- Prefer the repo's PR-equivalent validation command when one exists; do not assume local `pre-push` hooks cover the full remote CI surface.
+- Default execution posture is `test-first` for new behavior and bug fixes, `characterization-first` for unclear legacy behavior, and `sensor-only` only for pure docs, generated artifacts, configuration, or mechanical changes with no behavior.
+- `auto_review_and_merge = on` unless the user opts out.
+- Merge target `main`; merge method `squash`; review loop cap `3`.
+- Human approval is not required unless the user explicitly asks for it.
+- All PR checks must be green before merge.
 
 ## Workflow
 
-### 1. Pick Up The Ticket
+### 1. Pick Up The Issue
 
 - Read the Linear issue first.
-- Resolve project context before implementation.
-- Capture:
-  - title
-  - scope
-  - acceptance criteria
-  - test scenarios
-  - milestone, labels, and parent issue when relevant
+- Capture title, scope, acceptance criteria, test scenarios, and any relevant labels, milestone, or parent links.
+- Capture execution posture, expected repo sensors, and compounding opportunity when present; infer them from the ticket and repo context when absent.
 - Move the issue to `In Progress` when work begins.
-- If the user asked for a series of tickets, choose the next one based on explicit dependencies first, then implementation leverage.
+- If the user asked to continue through a backlog, choose the next ticket by explicit dependencies first, then implementation leverage.
 
-### 2. Build An Isolated Execution Workspace
+### 2. Prepare An Isolated Workspace
 
 - Create a fresh worktree from the latest `origin/main`.
-- Use a branch name with the `codex/` prefix and the ticket id in the name.
-- Keep the same ticket id in every commit message so branch history stays traceable back to the Linear issue.
-- Do not branch from a stale local `main` if the repo already moved on.
+- Use a `codex/` branch name that includes the ticket id.
 - Respect repo rules in `AGENTS.md` and related docs before coding.
+- If the overall batch is expected to land through one integration PR, still keep each ticket's implementation isolated in its own worktree or branch so the final integration step is deliberate.
 
-### 3. Reproduce And Understand Before Fixing
+### 3. Reproduce And Understand Before Editing
 
 - Reproduce the failure, warning, or missing behavior before editing code.
 - Read the exact files implicated by the ticket.
-- If the issue is ambiguous, confirm the real code path locally instead of trusting memory or ticket phrasing.
+- If the ticket touches UI or other user-facing surfaces, invoke `$designing-frontends` before shaping the UI implementation.
+- Also invoke `$frontend-skill` before shaping the UI implementation.
 - Prefer the smallest accurate root-cause statement you can defend.
+- Discover the closest existing tests or characterization fixtures before editing behavior.
 
-### 4. Execute Autonomously
+### 4. Implement With Scope Discipline
 
-- Default to implementing the fix end-to-end inside the current turn.
-- Make reasonable scope decisions without stopping the user unless the consequences are materially different.
+- For `test-first` work, write or update the failing test first, run it, and confirm the failure proves the intended behavior before implementation.
+- For `characterization-first` work, capture current behavior with a test or fixture before changing it, then add the intended-behavior test when the desired outcome is clear.
+- For `sensor-only` work, identify the sensor that proves the mechanical change and record why no behavior test is appropriate.
 - Keep changes aligned to the ticket's outcome. Avoid bundling unrelated cleanup just because you are nearby.
-- If a related improvement is necessary to make the fix coherent, include it and explain why.
+- Make reasonable scope decisions without pausing the user unless the consequences materially change the intended outcome.
+- When a non-obvious call matters, record what you decided, why, and what you intentionally left out.
+- If new work is discovered but should not expand the current ticket, apply `$compound-delivery-kernel` proactive-ticket rules: create a follow-up issue only when the work is concrete, scoped, evidence-backed, and separate from current acceptance criteria; link it in Linear and the PR/handoff.
+- When sub-agents are feasible, give them narrow scope and disjoint ownership so work can proceed in parallel safely.
+- Do not interrupt, close, or give up on a sub-agent just because it is taking time; let it use its allotted time unless the task is blocked, mis-scoped, conflicting with higher-priority work, or you need to redirect it with better context.
 
-### 5. Make Judgment Calls Deliberately
+### 5. Keep Linear Current
 
-When you make a non-obvious call, document it both in your own summary and in Linear.
-
-Typical judgment calls:
-- splitting follow-up work into a new ticket instead of broadening the current one
-- keeping a ticket scoped to one subsystem even when adjacent code is tempting to clean up
-- preserving a runtime boundary because it appears intentional
-- choosing a library-supported composition pattern over inventing a custom helper layer
-- separating unrelated drift from the primary ticket
-
-For each significant judgment call, record:
-- what you decided
-- why you decided it
-- what you intentionally left out
-
-### 6. Keep Linear In Sync While You Work
-
-Update Linear as part of execution, not only at the end.
-
-Minimum expectations:
-- move the issue to `In Progress` when work starts
-- add a comment when there is meaningful implementation progress
-- add a comment when you open the PR
-- move the issue to `In Review` once implementation is complete, the PR is open, and the ticket is primarily waiting on review or merge
-- include branch name, commit or HEAD when useful, validation run, and major scope decisions
-- when auto-review or merge is active, include telemetry fields in loop comments:
+- Add comments when there is meaningful progress, when the PR opens, and when the ticket state changes.
+- Move the issue to `In Review` once implementation is complete, the PR is open, and the ticket is primarily waiting on review or merge.
+- For coordinated batches, comment on each issue when its branch is ready for integration, then link the final shared PR on every ticket once opened.
+- Include these fields when relevant:
+  - branch name
+  - current commit or HEAD
+  - execution posture
+  - validation run
+  - major scope decisions
+  - compounding decision or pending learning
+- When auto-review or merge is active, also include:
   - `review_iteration`
   - `internal_review_decision`
   - `critical_count`
@@ -115,37 +131,26 @@ Minimum expectations:
   - `github_feedback_blockers`
   - `all_pr_checks_green`
   - `merge_status`
-  - `merge_commit_sha` (when merged)
+  - `merge_commit_sha` when merged
 
-If you defer work discovered during implementation:
-- create a follow-up issue instead of burying it in prose
-- put it in the correct milestone or state
-- link it back to the umbrella or parent issue when appropriate
-- explain the split in a Linear comment
+### 6. Validate Before Claiming Success
 
-### 7. Validate Before Claiming Success
+- Run the smallest targeted test first, then the relevant suite, typecheck, build, lint, repo preflight, and `git diff --check`.
+- Match validation to the ticket's expected sensors and supplement with discovered repo sensors when the ticket is incomplete.
+- If the repo defines a PR-equivalent command, run that before trusting local parity with remote CI.
+- When harness or repo validation fails, first classify it as deterministic repairable drift or a semantic blocker.
+- If the repo already defines a canonical repair command for deterministic drift, run that repair once, rerun the blocked validation once, and continue only if the rerun passes.
+- Do not invent self-corrections for semantic failures; investigate those normally.
+- If bounded self-repair refreshed tracked artifacts, review and commit those repaired files before pushing again.
+- If a validation step hangs or is blocked, say exactly what happened and whether it appears related to your change.
 
-Run the smallest targeted tests first, then the broader package or project checks.
+### 7. Open Or Update The PR Correctly
 
-Typical validation ladder:
-- focused failing or regression test
-- package test suite
-- typecheck, build, and lint checks relevant to the touched code
-- project-specific preflight commands if the repo defines them
-- `git diff --check`
-
-If a validation step is blocked or hangs:
-- say exactly what happened
-- note whether it appears unrelated or introduced by your change
-- do not quietly omit it
-
-### 8. Prepare The PR Correctly
-
-Before opening or updating a PR:
 - sync the branch with the latest `origin/main`
 - rerun the relevant validation checks after syncing
 - do not open or update the PR until the required local validations pass
 - when `auto_review_and_merge = on`, open or keep the PR as draft during review or fix loops
+- if multiple tickets were intentionally batched because of shared generated artifacts, open a single integration PR from a branch that contains the combined work plus one fresh regeneration of the shared artifacts
 
 PR conventions:
 - title format: `[<TICKET-ID>]: Title`
@@ -155,124 +160,55 @@ PR conventions:
   - `## Validation`
 - include the Linear ticket link at the end of the PR body
 
+For coordinated integration PRs:
+- use a combined title that includes all ticket ids or a clear batch label
+- list every included ticket in the PR body
+- make clear that the shared PR exists to avoid repeated merge conflicts in generated artifacts while preserving ticket-level scope in Linear
+
 After opening the PR:
 - push the branch
 - add the PR link to the Linear ticket
-- move the Linear issue to `In Review` once the work is in PR review or merge loop
+- if it is a coordinated integration PR, add the same PR link to every included ticket
 - note final validation status and major scope decisions in Linear
 
-### 9. Run Deterministic Review + Merge Loop
+### 8. Run The Review + Merge Loop
 
-When `auto_review_and_merge = on`, run this loop with `max_review_iterations = 3`.
+- Run `$requesting-code-review`.
+- Treat any of the following as blocking:
+  - internal review `decision = CHANGES_REQUESTED`
+  - `critical_count > 0`
+  - `important_count > 0`
+  - GitHub review state `CHANGES_REQUESTED`
+  - unresolved actionable PR review threads or comments
+  - any PR check not green
+- If blocked, fix the issue, rerun the relevant validations, push, rerun `$requesting-code-review`, and recheck GitHub feedback plus CI.
+- If remote GitHub Actions fails after local validation passed, inspect the failing logs and deduce the concrete root cause instead of guessing from the check name alone.
+- Treat remote-only failures as a local parity or harness gap until disproven:
+  - if the failure belongs to the current ticket, fix it in the current ticket
+  - if the failure exposed missing local guardrails, create a follow-up Linear issue scoped to the missing parity or harness remediation with source evidence from the failing check
+  - if both are true, do both
+- The follow-up issue should capture the failing remote check, the local validations that passed, the root cause, and the local command, harness mapping, or coverage addition needed so the failure is caught before CI next time.
+- Link that follow-up issue from the current Linear ticket and the PR comment trail when it materially affects the handoff.
+- Iterate up to `3` times by default, but continue autonomously if the next fix is still clear.
+- When all gates pass, mark the PR ready if needed and squash-merge into `main`.
 
-For each iteration `N`:
+### 9. Compound The Learning
 
-1. Run `$requesting-code-review`.
-2. Parse required merge gate output:
-   - `decision: APPROVED | CHANGES_REQUESTED`
-   - `critical_count: <int>`
-   - `important_count: <int>`
-   - `minor_count: <int>`
-3. Treat internal review as blocking when:
-   - `decision = CHANGES_REQUESTED`, or
-   - `critical_count > 0`, or
-   - `important_count > 0`.
-4. Check external GitHub feedback blockers:
-   - PR review state `CHANGES_REQUESTED`
-   - unresolved actionable PR review threads or comments
-5. Check CI merge gate:
-   - all PR checks must be green
-6. If any blocker exists:
-   - fix issues
-   - rerun relevant validations
-   - push updates
-   - rerun `$requesting-code-review`
-   - recheck GitHub review blockers and all PR checks
-7. If no blockers remain:
-   - mark PR ready for review (if draft)
-   - merge with squash into `main`
-   - record merge SHA and PR URL
+- Before final ticket closure, decide whether the work taught the system something reusable.
+- Use `$ce-compound` or an equivalent solution-doc workflow when the repo has a `docs/solutions/` knowledge base and the learning is repo-specific.
+- Update a skill when the learning changes how agents should deliver work across repos.
+- Create a follow-up Linear issue when the learning is a concrete missing repo sensor, missing validation map coverage, missing reviewer, or tooling gap that should be implemented later; include the source evidence and why it is separate from the current ticket.
+- Record `No durable learning` only when the change is local, obvious, and unlikely to recur.
+- Include the compounding decision in the final Linear comment and handoff.
 
-### 10. Close The Loop and Handle Fallbacks
+### 10. Close The Loop
 
-Post-merge success path (`auto_review_and_merge = on`):
-- move Linear issue from `In Review` to `Done`
-- post merge comment with:
-  - PR URL
-  - merge SHA
-  - final telemetry fields
-
-Fallback path A: loop cap reached without gate pass:
-- stop auto-merge attempts
-- leave issue in `In Review`
-- post unresolved-item checklist in Linear and user handoff
-- include exact blockers and latest telemetry values
-
-Fallback path B: merge permission or settings prevent merge:
-- leave issue in `In Review`
-- post exact merge blocker text in Linear and user handoff
-- include what passed vs what still blocks
-
-Opt-out mode (`auto_review_and_merge = off`):
-- do not auto-merge
-- complete handoff at review-ready state with explicit "awaiting manual merge or review" note
-
-## Comment Template
-
-Use concise Linear comments with this shape when helpful:
-
-```md
-Implementation update:
-
-- Branch: `codex/ABC-123-short-name`
-- Current commit: `abc1234`
-
-What changed:
-- short concrete outcome
-- short concrete outcome
-
-Validation:
-- `npm test -- some-target` ✅
-- `tsc --noEmit` ✅
-
-Review or merge telemetry:
-- `review_iteration`: `2`
-- `internal_review_decision`: `APPROVED`
-- `critical_count`: `0`
-- `important_count`: `0`
-- `github_feedback_blockers`: `[]`
-- `all_pr_checks_green`: `true`
-- `merge_status`: `merged`
-- `merge_commit_sha`: `abc123def456`
-
-Judgment call:
-- explain the scoped decision and why
-```
-
-## Common Mistakes
-
-- Starting from a stale branch after a prior checkpoint merged.
-- Treating ticket execution as code-only work and forgetting Linear status or comments.
-- Leaving the issue in `In Progress` after the work is effectively handed off for review.
-- Expanding ticket scope silently instead of recording a judgment call.
-- Discovering follow-up work and leaving it undocumented.
-- Opening a PR without rebasing onto the latest `origin/main`.
-- Skipping `$requesting-code-review` in auto-review mode.
-- Ignoring GitHub `CHANGES_REQUESTED` or unresolved actionable review threads or comments.
-- Creating commits whose messages omit the Linear ticket id.
-- Using a PR title that omits the Linear ticket id.
-- Putting the Linear link at the top of the PR body instead of the end.
-- Attempting merge before all PR checks are green.
-- Exceeding review loop cap without posting an unresolved-item checklist.
-
-## Quick Reference
-
-- Existing ticket, execution requested: use this skill
-- Need to create or restructure tickets first: use `$create-linear-ticket`
-- Default execution mode: `auto_review_and_merge = on`
-- Deterministic loop: Execute -> Draft PR -> Internal review -> Fix or re-review -> all checks green -> squash merge -> Linear `Done`
-- New branch after a merged checkpoint: always from latest `origin/main`
-- CI merge gate: all PR checks green
-- Commits for ticket work: include the ticket id in every commit message
-- Deferred scope found during execution: create a follow-up ticket
-- Project-specific validation or handoff hooks belong in a project wrapper such as `$execute-athena-linear-ticket`
+- After merge, confirm the ticket has already moved to `Done` via merge automation.
+- If merge succeeded but Linear did not move to `Done`, update the ticket directly or document the automation mismatch in Linear before handoff.
+- Post a final Linear comment with the PR URL, merge SHA, final telemetry, validation evidence, and compounding decision.
+- For coordinated batches, confirm every included ticket reached `Done`, not just the ticket that happened to anchor the PR title.
+- After delivery, align the local `main` branch with `origin/main`, switch back to `main`, and confirm the local checkout reflects the merged result.
+- Clean up the working tree and any temporary worktree or branch created for the ticket so the local repo is tidy before handoff.
+- If repeated blockers remain and the next fix is not clear, leave the issue in the most accurate state, post an unresolved-item checklist with the latest telemetry, and hand off the exact blocker.
+- If merge permissions or repo settings prevent merge, leave the ticket in `In Review` and document the exact blocker.
+- If `auto_review_and_merge = off`, stop at review-ready state and say it is awaiting manual review or merge.

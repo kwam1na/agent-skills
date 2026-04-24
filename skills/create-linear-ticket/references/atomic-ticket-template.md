@@ -19,6 +19,20 @@ One paragraph describing the problem and target outcome.
 3. Authorization or ownership path when relevant.
 4. Replay or idempotency path when events or webhooks are involved.
 
+## Execution Posture
+One of:
+- `test-first` for new behavior or bug fixes with a clear expected outcome.
+- `characterization-first` for legacy, unclear, or fragile behavior that must be captured before changing.
+- `sensor-only` for pure docs, generated artifacts, configuration, or mechanical changes with no behavior.
+
+## Expected Sensors
+1. Targeted test or characterization command.
+2. Broader suite, typecheck, build, lint, harness/review command, runtime scenario, or CI-equivalent command.
+3. Repair path for deterministic drift, if known.
+
+## Compounding Opportunity
+Name likely reusable learning, missing sensor, reviewer gap, skill update, or `None expected`.
+
 ## Dependencies
 1. Blocking ticket(s), if any.
 2. Shared contracts that must be finalized first.

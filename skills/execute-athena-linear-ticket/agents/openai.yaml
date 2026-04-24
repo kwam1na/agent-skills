@@ -1,4 +1,0 @@
-interface:
-  display_name: "Execute Athena Linear Ticket"
-  short_description: "Apply Athena validation, handoff, and retrospective hooks on top of generic Linear ticket execution"
-  default_prompt: "Use $execute-athena-linear-ticket to run the generic Linear execution flow with Athena defaults, `bun run pr:athena`, recorded handoff video evidence, and $athena-ticket-retrospective."
