@@ -1,0 +1,203 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import tempfile
+import unittest
+from pathlib import Path
+
+from agent_skills.validate import validate_corpus
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def write_json(path: Path, value: object) -> None:
+    path.write_text(
+        json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def tree_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+class CorpusValidationTests(unittest.TestCase):
+    def copied_corpus(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
+        temporary = tempfile.TemporaryDirectory()
+        copied = Path(temporary.name) / "corpus"
+        shutil.copytree(ROOT, copied, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        return temporary, copied
+
+    def test_valid_corpus_is_stable_and_read_only(self) -> None:
+        before = tree_digest(ROOT)
+        first = validate_corpus(ROOT)
+        second = validate_corpus(ROOT)
+        self.assertEqual(first.to_json(), second.to_json())
+        self.assertEqual(first.findings, ())
+        self.assertGreater(len(first.rules_checked), 0)
+        self.assertGreater(len(first.scan_roots), 0)
+        self.assertEqual(tree_digest(ROOT), before)
+
+    def test_structure_reference_and_dependency_findings_aggregate(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        skill = root / "skills" / "compound-delivery-kernel" / "SKILL.md"
+        skill.write_text("# missing frontmatter\n[missing](references/nope.md)\n", encoding="utf-8")
+        catalog_path = root / "catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        catalog["skills"][1]["dependencies"] = [
+            {"id": "missing-skill", "requirement": "required"}
+        ]
+        write_json(catalog_path, catalog)
+
+        findings = validate_corpus(root).findings
+        rules = {finding.rule_id for finding in findings}
+        self.assertTrue(
+            {"skill.frontmatter", "skill.reference", "dependency.reference"} <= rules
+        )
+
+    def test_missing_skill_deep_reference_and_future_schema_reject(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        missing = root / "skills" / "deliver-work" / "SKILL.md"
+        missing.unlink()
+        core = root / "skills" / "compound-delivery-kernel"
+        (core / "references").mkdir()
+        (core / "references" / "one.md").write_text("[two](two.md)\n", encoding="utf-8")
+        (core / "references" / "two.md").write_text("[three](three.md)\n", encoding="utf-8")
+        (core / "references" / "three.md").write_text("end\n", encoding="utf-8")
+        skill = core / "SKILL.md"
+        skill.write_text(skill.read_text(encoding="utf-8") + "\n[one](references/one.md)\n", encoding="utf-8")
+        profile_path = root / "profiles" / "core.json"
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        profile["schemaVersion"] = "agent-skills-profile/2"
+        write_json(profile_path, profile)
+
+        rules = {finding.rule_id for finding in validate_corpus(root).findings}
+        self.assertTrue({"skill.structure", "skill.reference", "schema.supported"} <= rules)
+
+    def test_path_escape_absolute_case_collision_and_external_symlink_reject(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        catalog_path = root / "catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        duplicate = copy = dict(catalog["skills"][1])
+        duplicate["id"] = "Compound-Delivery-Kernel"
+        duplicate["path"] = "../outside/SKILL.md"
+        catalog["skills"].append(duplicate)
+        catalog["skills"][0]["path"] = "/absolute/SKILL.md"
+        write_json(catalog_path, catalog)
+        outside = Path(temporary.name) / "outside.md"
+        outside.write_text("outside", encoding="utf-8")
+        os.symlink(outside, root / "skills" / "compound-delivery-kernel" / "escape.md")
+
+        rules = {finding.rule_id for finding in validate_corpus(root).findings}
+        self.assertTrue({"path.safe", "path.case_unique", "path.symlink_contained"} <= rules)
+
+    def test_core_leakage_has_positive_and_negative_controls(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        skill = root / "skills" / "compound-delivery-kernel" / "SKILL.md"
+        original = skill.read_text(encoding="utf-8")
+        skill.write_text(original + "\nPrivate command: V26-999 and /Users/example/work.\n", encoding="utf-8")
+        rules = {finding.rule_id for finding in validate_corpus(root).findings}
+        self.assertIn("core.leakage", rules)
+
+        skill.write_text(
+            original + "\nPublic standard: https://json-schema.org/draft/2020-12/schema\n",
+            encoding="utf-8",
+        )
+        self.assertNotIn(
+            "core.leakage", {finding.rule_id for finding in validate_corpus(root).findings}
+        )
+
+    def test_each_core_leakage_class_rejects(self) -> None:
+        literals = (
+            "Athena policy",
+            "V26-999",
+            "/Users/example/work",
+            "https://athena-os.app/private",
+            "https://linear.app/v26-labs/issue/example",
+            "api_key=abcdefgh",
+        )
+        for literal in literals:
+            with self.subTest(literal=literal):
+                temporary, root = self.copied_corpus()
+                self.addCleanup(temporary.cleanup)
+                skill = root / "skills" / "compound-delivery-kernel" / "SKILL.md"
+                skill.write_text(skill.read_text(encoding="utf-8") + f"\n{literal}\n", encoding="utf-8")
+                self.assertIn(
+                    "core.leakage",
+                    {finding.rule_id for finding in validate_corpus(root).findings},
+                )
+
+    def test_undeclared_core_host_extension_rejects(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        relative = "skills/compound-delivery-kernel/agents/unknown.yaml"
+        extension = root / relative
+        extension.parent.mkdir()
+        extension.write_text("interface: unknown\n", encoding="utf-8")
+        provenance_path = root / "provenance.lock.json"
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        entry = next(item for item in provenance["entries"] if item["id"] == "compound-delivery-kernel")
+        entry["outputs"].append({"path": relative, "sha256": hashlib.sha256(extension.read_bytes()).hexdigest()})
+        entry["outputs"].sort(key=lambda item: item["path"])
+        write_json(provenance_path, provenance)
+        profile_path = root / "profiles" / "core.json"
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        profile["expectedFiles"].append(relative)
+        profile["expectedFiles"].sort()
+        write_json(profile_path, profile)
+
+        self.assertIn(
+            "core.leakage",
+            {finding.rule_id for finding in validate_corpus(root).findings},
+        )
+
+    def test_empty_scan_root_and_disabled_rule_fail_anti_vacuity(self) -> None:
+        for mutation in ("empty-root", "disabled-rule", "missing-scenario", "missing-fixture"):
+            with self.subTest(mutation=mutation):
+                temporary, root = self.copied_corpus()
+                self.addCleanup(temporary.cleanup)
+                inventory_path = root / "validation-inventory.json"
+                inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+                if mutation == "empty-root":
+                    inventory["scanRoots"] = []
+                elif mutation == "disabled-rule":
+                    inventory["rules"][0]["enabled"] = False
+                elif mutation == "missing-scenario":
+                    inventory["scenarios"] = []
+                else:
+                    (root / "tests" / "fixtures" / "invalid-corpora" / "coverage.json").unlink()
+                write_json(inventory_path, inventory)
+                rules = {finding.rule_id for finding in validate_corpus(root).findings}
+                self.assertIn("inventory.anti_vacuity", rules)
+
+    def test_malformed_document_shapes_fail_closed(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        catalog_path = root / "catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        catalog["skills"][0]["profiles"] = None
+        write_json(catalog_path, catalog)
+        provenance_path = root / "provenance.lock.json"
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        provenance["entries"][0]["source"] = "not-an-object"
+        write_json(provenance_path, provenance)
+
+        result = validate_corpus(root)
+        self.assertGreater(len(result.findings), 0)
+        self.assertIn("schema.supported", {finding.rule_id for finding in result.findings})
+
+
+if __name__ == "__main__":
+    unittest.main()

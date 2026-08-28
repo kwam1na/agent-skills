@@ -1,0 +1,40 @@
+{
+  "$id": "https://agent-skills.dev/schemas/release-manifest/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "contentSha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "entryPoint": {
+      "const": "python -m agent_skills.validate --root ."
+    },
+    "files": {
+      "type": "array"
+    },
+    "groups": {
+      "type": "object"
+    },
+    "profile": {
+      "const": "core"
+    },
+    "releaseId": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": "agent-skills-release/1"
+    }
+  },
+  "required": [
+    "contentSha256",
+    "entryPoint",
+    "files",
+    "groups",
+    "profile",
+    "releaseId",
+    "schemaVersion"
+  ],
+  "type": "object"
+}
