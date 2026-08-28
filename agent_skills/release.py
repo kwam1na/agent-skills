@@ -23,6 +23,7 @@ MAX_PATH_DEPTH = 8
 MAX_COMPRESSION_RATIO = 100
 MAX_VERIFY_SECONDS = 5
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+SUPPORTED_PROFILES = frozenset({"core", "linear"})
 
 
 class ReleaseError(ValueError):
@@ -104,18 +105,23 @@ def _packaged_document(root: Path, relative: str) -> dict:
 def _release_identity(release_id: object, profile_id: object) -> tuple[str, str]:
     if not isinstance(release_id, str) or not release_id:
         raise ReleaseError("release.identity: releaseId must be a non-empty string")
-    if profile_id != "core":
-        raise ReleaseError("release.identity: profile must be core")
+    if profile_id not in SUPPORTED_PROFILES:
+        raise ReleaseError("release.identity: unsupported profile")
     return release_id, profile_id
 
 
 def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
     catalog = _packaged_document(root, "catalog.json")
     provenance = _packaged_document(root, "provenance.lock.json")
-    core_profile = _packaged_document(root, "profiles/core.json")
-    profile_documents = {core_profile["id"]: core_profile}
-    if profile_id != "core" or profile_id not in profile_documents:
-        raise ReleaseError("release.profile: the first release is core-only")
+    profile_paths = ["profiles/core.json"]
+    if profile_id == "linear":
+        profile_paths.append("profiles/linear.json")
+    profile_documents = {}
+    for relative in profile_paths:
+        document = _packaged_document(root, relative)
+        profile_documents[document["id"]] = document
+    if profile_id not in profile_documents:
+        raise ReleaseError("release.profile: requested profile is unavailable")
     members = resolve_profile(profile_id, profile_documents)
     skills = {skill["id"]: skill for skill in catalog["skills"]}
     entries = {entry["id"]: entry for entry in provenance["entries"]}
@@ -124,7 +130,11 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
     selected_paths: list[str] = []
     for member in members:
         skill = dict(skills[member])
-        skill["profiles"] = [profile_id]
+        skill["profiles"] = [
+            selected_profile
+            for selected_profile in skill["profiles"]
+            if selected_profile in profile_documents
+        ]
         selected_skills.append(skill)
         entry = entries[skill["provenanceId"]]
         if entry.get("distribution") != "releasable":
@@ -133,15 +143,20 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         selected_paths.extend(output["path"] for output in entry["outputs"])
 
     files: dict[str, bytes] = {
-        "catalog.json": canonical_json({"schemaVersion": catalog["schemaVersion"], "skills": selected_skills}).encode(),
-        "profiles/core.json": canonical_json(profile_documents["core"]).encode(),
-        "provenance.lock.json": canonical_json({
-            "entries": selected_entries,
-            "schemaVersion": provenance["schemaVersion"],
-            "sourceBaseline": provenance["sourceBaseline"],
-        }).encode(),
+        "catalog.json": canonical_json(
+            {"schemaVersion": catalog["schemaVersion"], "skills": selected_skills}
+        ).encode(),
+        "provenance.lock.json": canonical_json(
+            {
+                "entries": selected_entries,
+                "schemaVersion": provenance["schemaVersion"],
+                "sourceBaseline": provenance["sourceBaseline"],
+            }
+        ).encode(),
         "validation-inventory.json": _packaged_bytes(root, "validation-inventory.json"),
     }
+    for selected_profile, document in profile_documents.items():
+        files[f"profiles/{selected_profile}.json"] = canonical_json(document).encode()
     for relative in selected_paths:
         files[relative] = _packaged_bytes(root, relative)
     for relative in (
@@ -221,15 +236,16 @@ def build_release(
         raise ReleaseError("release.source_validation: source corpus is invalid")
     files = _release_view(root, profile_id)
     payload_paths = sorted(files)
+    group = profile_id
     manifest = {
         "contentSha256": _path_digest(payload_paths, files),
         "entryPoint": "python -m agent_skills.validate --root .",
         "files": [
-            {"group": "core", "path": path, "sha256": _digest(files[path])}
+            {"group": group, "path": path, "sha256": _digest(files[path])}
             for path in payload_paths
         ],
         "groups": {
-            "core": {
+            group: {
                 "paths": payload_paths,
                 "sha256": _path_digest(payload_paths, files),
             }
@@ -331,25 +347,27 @@ def verify_release(
     if len(declared) != len(records) or set(declared) != set(payload):
         raise ReleaseError("release.payload_set: missing or unregistered payload")
     for path, record in declared.items():
-        if record.get("group") != "core":
+        if record.get("group") != manifest_profile:
             raise ReleaseError(f"release.group: unassigned payload {path}")
         if record.get("sha256") != _digest(payload[path]):
             raise ReleaseError(f"release.payload_checksum: digest mismatch for {path}")
     if manifest.get("contentSha256") != _path_digest(sorted(payload), payload):
         raise ReleaseError("release.content_checksum: payload digest mismatch")
     groups = manifest.get("groups")
-    if not isinstance(groups, dict) or set(groups) != {"core"}:
-        raise ReleaseError("release.group: core group is required")
-    core = groups["core"]
-    group_paths = core.get("paths") if isinstance(core, dict) else None
+    if not isinstance(groups, dict) or set(groups) != {manifest_profile}:
+        raise ReleaseError("release.group: profile group is required")
+    profile_group = groups[manifest_profile]
+    group_paths = (
+        profile_group.get("paths") if isinstance(profile_group, dict) else None
+    )
     if (
         not isinstance(group_paths, list)
         or len(group_paths) != len(set(group_paths))
         or set(group_paths) != set(payload)
     ):
-        raise ReleaseError("release.group: core group must own the payload")
-    if core.get("sha256") != _path_digest(group_paths, payload):
-        raise ReleaseError("release.group_checksum: core group digest mismatch")
+        raise ReleaseError("release.group: profile group must own the payload")
+    if profile_group.get("sha256") != _path_digest(group_paths, payload):
+        raise ReleaseError("release.group_checksum: profile group digest mismatch")
     if manifest_release_id != metadata_release_id or manifest_profile != metadata_profile:
         raise ReleaseError("release.identity: detached metadata mismatch")
     if extract_to is not None:

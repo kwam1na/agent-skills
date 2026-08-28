@@ -1,0 +1,181 @@
+{
+  "allowedHostOperations": [
+    "create",
+    "read",
+    "update",
+    "search",
+    "relations",
+    "reconciliation"
+  ],
+  "failureOutcomes": {
+    "auth": "auth-required",
+    "malformed": "malformed",
+    "missing": "unavailable",
+    "mutation-ambiguous": "reconciliation-required",
+    "mutation-timeout": "reconciliation-required",
+    "read-ambiguous": "retry",
+    "read-timeout": "retry",
+    "reconciliation-ambiguous": "reconciliation-required",
+    "reconciliation-auth": "reconciliation-required",
+    "reconciliation-malformed": "reconciliation-required",
+    "reconciliation-miss": "reconciliation-required",
+    "reconciliation-timeout": "reconciliation-required",
+    "reconciliation-unavailable": "reconciliation-required",
+    "unsupported": "unsupported"
+  },
+  "mutationSafety": {
+    "authoritativeHostIdempotencyFence": false,
+    "exactReconciliationMayConfirmSuccess": true,
+    "initialMutationAttemptsPerInvocation": 1,
+    "repeatMutationAfterUnconfirmedResult": false
+  },
+  "operationMappings": [
+    {
+      "allowedOutputFields": [
+        "teamReference",
+        "projectReference",
+        "workReference",
+        "auditReference"
+      ],
+      "hostOperations": [
+        "search",
+        "read"
+      ],
+      "trackerOperation": "resolve-context"
+    },
+    {
+      "allowedOutputFields": [
+        "workReference",
+        "auditReference"
+      ],
+      "hostOperations": [
+        "create"
+      ],
+      "trackerOperation": "create-work"
+    },
+    {
+      "allowedOutputFields": [
+        "workReference",
+        "dependencyReferences",
+        "auditReference"
+      ],
+      "hostOperations": [
+        "relations"
+      ],
+      "trackerOperation": "link-dependencies"
+    },
+    {
+      "allowedOutputFields": [
+        "workReference",
+        "status",
+        "auditReference"
+      ],
+      "hostOperations": [
+        "update"
+      ],
+      "trackerOperation": "update-status"
+    },
+    {
+      "allowedOutputFields": [
+        "workReference",
+        "evidenceReference",
+        "auditReference"
+      ],
+      "hostOperations": [
+        "create"
+      ],
+      "trackerOperation": "attach-evidence"
+    },
+    {
+      "allowedOutputFields": [
+        "workReference",
+        "status",
+        "handoffReference",
+        "auditReference"
+      ],
+      "hostOperations": [
+        "update"
+      ],
+      "trackerOperation": "close-or-handoff"
+    }
+  ],
+  "outputPolicy": {
+    "auditReferences": "opaque-redacted",
+    "forbiddenForwarding": [
+      "raw-host-payload",
+      "raw-host-action",
+      "secret",
+      "raw-idempotency-key"
+    ]
+  },
+  "schemaVersion": "agent-skills-linear-tracker-adapter/1",
+  "transportBoundary": {
+    "forbiddenActionMarkers": {
+      "command-downloader": [
+        "curl ",
+        "wget "
+      ],
+      "credential-token-env": [
+        ".env",
+        "access token",
+        "access-token",
+        "access_token",
+        "api key",
+        "api-key",
+        "api_key",
+        "credential",
+        "env var",
+        "environment variable",
+        "getenv",
+        "linear token",
+        "linear-token",
+        "linear_token",
+        "os.environ",
+        "process.env",
+        "secret store",
+        "secret-store",
+        "token store",
+        "token-store"
+      ],
+      "direct-linear-api": [
+        "api.linear.app",
+        "linear.app/api",
+        "linear.app/graphql"
+      ],
+      "fallback-transport": [
+        "fall back to rest",
+        "fallback transport",
+        "fallback-transport",
+        "rest fallback"
+      ],
+      "http-client-or-sdk": [
+        "@linear/sdk",
+        "aiohttp",
+        "axios",
+        "fetch(",
+        "http client",
+        "http request",
+        "httpx",
+        "linear client",
+        "linear-client",
+        "linear-sdk",
+        "linear_client",
+        "linear_sdk",
+        "linearclient",
+        "linear sdk",
+        "requests",
+        "urllib"
+      ],
+      "oauth-flow": [
+        "oauth"
+      ],
+      "subprocess-or-shell-bridge": [
+        "os.system",
+        "shell bridge",
+        "shell-bridge",
+        "subprocess"
+      ]
+    },
+    "mode": "host-native-mcp-only"
+  }
+}

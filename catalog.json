@@ -170,6 +170,32 @@
     },
     {
       "capabilities": [
+        "tracker-adapter",
+        "tracker-operations"
+      ],
+      "degradedBehavior": "Core delivery remains complete and reports omitted optional tracking when the host-native Linear capability is unavailable.",
+      "dependencies": [
+        {
+          "id": "deliver-work",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [
+        "linear-mcp"
+      ],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "linear-tracker-adapter",
+      "path": "skills/linear-tracker-adapter/SKILL.md",
+      "profiles": [
+        "linear"
+      ],
+      "provenanceId": "linear-tracker-adapter"
+    },
+    {
+      "capabilities": [
         "planning-workflow",
         "tracker-operations"
       ],

@@ -11,6 +11,7 @@ from .validate import canonical_json, safe_relative_path
 RECEIPT_SCHEMA = "agent-skills-receipt/1"
 OWNERSHIP = "agent-skills-managed"
 DIGEST = re.compile(r"^[a-f0-9]{64}$")
+SUPPORTED_PROFILES = frozenset({"core", "linear"})
 
 
 class ReceiptError(ValueError):
@@ -27,7 +28,7 @@ def _validate_release(value: object) -> None:
         raise ReceiptError("receipt-invalid: release identity is malformed")
     if not isinstance(value["releaseId"], str) or not value["releaseId"]:
         raise ReceiptError("receipt-invalid: release id is missing")
-    if value["profile"] != "core":
+    if value["profile"] not in SUPPORTED_PROFILES:
         raise ReceiptError("receipt-invalid: unsupported profile")
     for field in ("archiveSha256", "metadataSha256"):
         if not isinstance(value[field], str) or DIGEST.fullmatch(value[field]) is None:

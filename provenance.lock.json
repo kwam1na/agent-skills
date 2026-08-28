@@ -202,6 +202,33 @@
       }
     },
     {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
+      "id": "linear-tracker-adapter",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The provider-specific planning and execution source is narrowed to a host-native adapter for the neutral tracker contract.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/linear-tracker-adapter/SKILL.md",
+          "sha256": "6a39446ebe8228af48578f31c4ee605b7078de3ad1930d249da39b25b04ae602"
+        },
+        {
+          "path": "skills/linear-tracker-adapter/references/adapter-contract.json",
+          "sha256": "053f4bb98357f8c5b6b6d2093cb915e76f2a57526f53d8dace3056cff6e5a658"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "track-skill",
+        "path": ".agents/skills/track",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "d0b51b5efd0ed6a0518b24a201de7b042c04673e965d9e06bf10d03d0687518b"
+      }
+    },
+    {
       "classification": "portable-core",
       "distribution": "releasable",
       "id": "plan-work",
