@@ -46,6 +46,30 @@ the optional Linear adapter is extracted. Cataloged source-only inventory is not
 selectable, and Athena overlays are classification inputs only rather than
 distributable skills.
 
+From a trusted checkout, qualify one exact archive in standalone environments
+with only the bundled fake capability adapter:
+
+```bash
+python3 scripts/qualify-core.py \
+  --archive /tmp/core.zip \
+  --metadata /tmp/core.release.json \
+  --record /tmp/core.qualification.json
+```
+
+The trusted driver verifies and extracts the supplied archive, then runs each
+fixed scenario in a fresh process whose core imports resolve from that extracted
+candidate. The fail-closed record is keyed to the archive, metadata, and a
+driver digest covering the launcher plus the fixed trusted sensors and fixtures
+it executes and the explicit Python module closure used to verify and extract
+the archive. It retains only named assertions and deterministic checkpoint
+summaries: no environment values or local paths. The gate rejects a missing,
+duplicated, or unasserted required scenario so an empty run cannot pass. The
+rollback checkpoint derives a disposable prior fixture; the candidate archive
+named in the record remains the single release under qualification. That prior
+fixture is built only from the verified candidate extraction, never from the
+runner checkout corpus.
+The current record is checked in at `qualifications/core-v1.json`.
+
 ## Repository lifecycle
 
 Run the lifecycle from an extracted release archive. Read-only commands emit
