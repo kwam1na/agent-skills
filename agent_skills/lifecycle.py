@@ -8,6 +8,7 @@ from typing import Callable
 
 from .fs import MANAGED_GIT_ATTRIBUTES, publish_active_marker, repository_paths
 from .generations import GenerationError, GenerationStore, inspect_release
+from .hosts.exposure import HOSTS, ExposureError, ExposureManager
 from .journal import (
     JOURNAL_SCHEMA,
     JournalError,
@@ -28,6 +29,8 @@ from .validate import canonical_json
 ACTIVATION_BOUNDARIES = (
     "staged",
     "generation-ready",
+    "exposing-codex",
+    "exposing-claude-code",
     "verifying",
     "marker-published",
     "marker-committed",
@@ -70,6 +73,7 @@ def require_mutation_authority(
 class Status:
     active: dict | None
     blockers: tuple[str, ...]
+    exposures: tuple[dict[str, str], ...]
     journal_phase: str | None
     lifecycle: str
     recovery_plan: tuple[str, ...]
@@ -78,6 +82,7 @@ class Status:
         return {
             "active": self.active,
             "blockers": list(self.blockers),
+            "exposures": list(self.exposures),
             "journalPhase": self.journal_phase,
             "lifecycle": self.lifecycle,
             "recoveryPlan": list(self.recovery_plan),
@@ -112,6 +117,7 @@ class Lifecycle:
         self.journal_path = self.git_path / "journal.json"
         self.lock_path = self.git_path / "lock.json"
         self.store = GenerationStore(self.managed_root, self.git_path)
+        self.exposure = ExposureManager(self.root)
 
     def _active(self, *, verify: bool = True) -> dict | None:
         if (
@@ -149,6 +155,7 @@ class Lifecycle:
             return Status(
                 None,
                 ("local-divergence",),
+                (),
                 "invalid",
                 "recovery-needed",
                 ("inspect-invalid-journal",),
@@ -159,6 +166,7 @@ class Lifecycle:
             return Status(
                 None,
                 ("receipt-invalid",),
+                (),
                 journal["phase"] if journal else None,
                 "externally-transitioned",
                 ("review-receipt",),
@@ -171,6 +179,7 @@ class Lifecycle:
             return Status(
                 summary,
                 ("local-divergence",),
+                (),
                 journal["phase"] if journal else None,
                 "externally-transitioned",
                 ("review-managed-diff",),
@@ -178,10 +187,28 @@ class Lifecycle:
 
         if journal is not None:
             phase = journal["phase"]
+            exposure_status, exposure_conflict = self.exposure.status(active)
+            try:
+                self.exposure.preflight(journal["target"], journal["prior"])
+            except ExposureError:
+                return Status(
+                    _active_summary(active),
+                    ("exposure-conflict",),
+                    tuple(exposure_status),
+                    phase,
+                    "externally-transitioned",
+                    ("review-host-projections",),
+                )
             if phase not in {"marker-committed", "cleanup"}:
+                if exposure_conflict:
+                    exposure_status = [
+                        {**record, "state": "transitioning"}
+                        for record in exposure_status
+                    ]
                 return Status(
                     _active_summary(active),
                     (),
+                    tuple(exposure_status),
                     phase,
                     "recovery-needed",
                     ("recover",),
@@ -190,26 +217,48 @@ class Lifecycle:
                 return Status(
                     _active_summary(active),
                     ("local-divergence",),
+                    tuple(exposure_status),
                     phase,
                     "externally-transitioned",
                     ("review-managed-diff",),
+                )
+            if exposure_conflict:
+                return Status(
+                    _active_summary(active),
+                    (),
+                    tuple(exposure_status),
+                    phase,
+                    "recovery-needed",
+                    ("recover",),
                 )
             lifecycle = "current" if active is not None else "absent"
             return Status(
                 _active_summary(active),
                 (),
+                tuple(exposure_status),
                 phase,
                 lifecycle,
                 ("finish-cleanup",),
             )
 
         if active is not None:
+            exposure_status, exposure_conflict = self.exposure.status(active)
+            if exposure_conflict:
+                return Status(
+                    _active_summary(active),
+                    ("exposure-conflict",),
+                    tuple(exposure_status),
+                    None,
+                    "externally-transitioned",
+                    ("review-host-projections",),
+                )
             try:
                 retained = self.store.installed_generations()
             except GenerationError:
                 return Status(
                     _active_summary(active),
                     ("local-divergence",),
+                    tuple(exposure_status),
                     None,
                     "externally-transitioned",
                     ("review-orphaned-generations",),
@@ -218,20 +267,29 @@ class Lifecycle:
                 return Status(
                     _active_summary(active),
                     ("local-divergence",),
+                    tuple(exposure_status),
                     None,
                     "externally-transitioned",
                     ("review-orphaned-generations",),
                 )
-            return Status(_active_summary(active), (), None, "current", ())
+            return Status(
+                _active_summary(active),
+                (),
+                tuple(exposure_status),
+                None,
+                "current",
+                (),
+            )
         if self._orphaned_generation_exists():
             return Status(
                 None,
                 ("local-divergence",),
+                (),
                 None,
                 "externally-transitioned",
                 ("review-orphaned-generations",),
             )
-        return Status(None, (), None, "absent", ())
+        return Status(None, (), (), None, "absent", ())
 
     def plan(self, archive: Path, metadata: Path) -> dict[str, object]:
         before = self.status()
@@ -355,6 +413,7 @@ class Lifecycle:
                 self.store.verify(version_from_receipt(target))
                 if target["previous"] is not None:
                     self.store.verify(target["previous"])
+            self.exposure.reconcile(target, prior)
             journal = write_journal(self.journal_path, journal, "marker-committed")
             self._finish_cleanup(journal)
             write_journal(self.journal_path, journal, "cleanup")
@@ -368,6 +427,7 @@ class Lifecycle:
                 self.store.verify(version_from_receipt(prior))
             else:
                 self._write_active(None)
+            self.exposure.reconcile(prior, target)
             self.store.cleanup(self._keep_for(prior), journal["operationId"])
             self.store.cleanup_staging(journal["operationId"])
             self.journal_path.unlink()
@@ -415,23 +475,40 @@ class Lifecycle:
                     "schemaVersion": "agent-skills-operation/1",
                     "status": self.status().as_dict(),
                 }
-            operation_id = uuid.uuid4().hex
-            version, stage = self.store.stage(archive, metadata, operation_id)
-            action = "install" if prior is None else "update"
-            target = make_receipt(
-                version,
+            inspected_target = make_receipt(
+                inspected,
                 version_from_receipt(prior) if prior is not None else None,
             )
+            self.exposure.preflight(inspected_target, prior)
+            operation_id = uuid.uuid4().hex
+            version, stage = self.store.stage(archive, metadata, operation_id)
+            try:
+                action = "install" if prior is None else "update"
+                target = make_receipt(
+                    version,
+                    version_from_receipt(prior) if prior is not None else None,
+                )
+                self.exposure.preflight(target, prior)
+            except (ExposureError, ReceiptError):
+                self.store.cleanup_staging(operation_id)
+                raise
             journal = self._new_journal(action, operation_id, prior, target)
             journal = write_journal(self.journal_path, journal, "staged")
             self._fault(fault, "staged")
             self.store.promote(stage, version)
             journal = write_journal(self.journal_path, journal, "generation-ready")
             self._fault(fault, "generation-ready")
+            for host in HOSTS:
+                self.exposure.reconcile_host(host, target, prior)
+                phase = f"exposing-{host.host}"
+                journal = write_journal(self.journal_path, journal, phase)
+                self._fault(fault, phase)
             self.store.verify(version)
             journal = write_journal(self.journal_path, journal, "verifying")
             self._fault(fault, "verifying")
             self.store.verify(version)
+            self.exposure.preflight(target, prior)
+            self.exposure.switch(target, prior)
             self._write_active(target)
             self._fault(fault, "marker-published")
             journal = write_journal(self.journal_path, journal, "marker-committed")
@@ -497,12 +574,23 @@ class Lifecycle:
                 raise LifecycleError("rollback-unavailable: no verified prior generation is retained")
             target = make_receipt(prior["previous"], version_from_receipt(prior))
             self.store.verify(version_from_receipt(target))
+            self.exposure.preflight(target, prior)
             operation_id = uuid.uuid4().hex
             journal = self._new_journal("rollback", operation_id, prior, target)
-            for phase in ("staged", "generation-ready", "verifying"):
+            for phase in ("staged", "generation-ready"):
+                journal = write_journal(self.journal_path, journal, phase)
+                self._fault(fault, phase)
+            for host in HOSTS:
+                self.exposure.reconcile_host(host, target, prior)
+                phase = f"exposing-{host.host}"
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
             self.store.verify(version_from_receipt(target))
+            journal = write_journal(self.journal_path, journal, "verifying")
+            self._fault(fault, "verifying")
+            self.store.verify(version_from_receipt(target))
+            self.exposure.preflight(target, prior)
+            self.exposure.switch(target, prior)
             self._write_active(target)
             self._fault(fault, "marker-published")
             journal = write_journal(self.journal_path, journal, "marker-committed")
@@ -534,8 +622,21 @@ class Lifecycle:
             if prior is None:
                 return {"action": "no-op", "schemaVersion": "agent-skills-operation/1"}
             operation_id = uuid.uuid4().hex
+            self.exposure.preflight(None, prior)
             journal = self._new_journal("remove", operation_id, prior, None)
-            for phase in ("staged", "generation-ready", "verifying"):
+            for phase in ("staged", "generation-ready"):
+                journal = write_journal(self.journal_path, journal, phase)
+                self._fault(fault, phase)
+            journal = write_journal(self.journal_path, journal, "verifying")
+            self._fault(fault, "verifying")
+            self.store.verify(version_from_receipt(prior))
+            if prior["previous"] is not None:
+                self.store.verify(prior["previous"])
+            self.exposure.preflight(None, prior)
+            self.exposure.switch(None, prior)
+            for host in HOSTS:
+                self.exposure.reconcile_host(host, None, prior)
+                phase = f"exposing-{host.host}"
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
             self._write_active(None)

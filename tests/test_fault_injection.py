@@ -16,7 +16,13 @@ from lifecycle_support import (
 
 class FaultInjectionTests(LifecycleFixture, unittest.TestCase):
     def test_interruption_at_every_activation_boundary_recovers_idempotently(self) -> None:
-        before_marker = {"staged", "generation-ready", "verifying"}
+        before_marker = {
+            "staged",
+            "generation-ready",
+            "exposing-codex",
+            "exposing-claude-code",
+            "verifying",
+        }
         for boundary in ACTIVATION_BOUNDARIES:
             with self.subTest(boundary=boundary):
                 repository = initialize_repository(self.base / boundary)
@@ -68,6 +74,7 @@ class FaultInjectionTests(LifecycleFixture, unittest.TestCase):
     def test_target_swap_between_preflight_and_marker_never_activates(self) -> None:
         lifecycle = Lifecycle(self.repository)
         lifecycle.install(*self.v1, maintainer=True)
+        prior_generation = lifecycle.status().as_dict()["active"]["generation"]
 
         def swap_target(phase: str) -> None:
             if phase != "verifying":
@@ -82,6 +89,33 @@ class FaultInjectionTests(LifecycleFixture, unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "local-divergence"):
             lifecycle.update(*self.v2, maintainer=True, fault=swap_target)
         self.assertEqual(lifecycle.status().as_dict()["active"]["releaseId"], "core-v1")
+        for host in (".agents/skills", ".claude/skills"):
+            projection = self.repository / host / "deliver-work"
+            self.assertIn(prior_generation, projection.resolve().as_posix())
+
+    def test_rollback_target_mutation_at_verifying_keeps_prior_exposure(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        rollback_generation = lifecycle.status().as_dict()["active"]["generation"]
+        lifecycle.update(*self.v2, maintainer=True)
+        current = lifecycle.status().as_dict()["active"]["generation"]
+
+        def mutate_rollback_target(phase: str) -> None:
+            if phase != "verifying":
+                return
+            body = (
+                lifecycle.store.generation_path(rollback_generation)
+                / "skills"
+                / "deliver-work"
+                / "SKILL.md"
+            )
+            body.write_text("mutated rollback target\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "local-divergence"):
+            lifecycle.rollback(maintainer=True, fault=mutate_rollback_target)
+        for host in (".agents/skills", ".claude/skills"):
+            projection = self.repository / host / "deliver-work"
+            self.assertIn(current, projection.resolve().as_posix())
 
     def test_interrupted_obsolete_generation_delete_recovers_and_allows_next_update(self) -> None:
         lifecycle = Lifecycle(self.repository)

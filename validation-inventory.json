@@ -1,5 +1,5 @@
 {
-  "expectedLifecycleScenarioCount": 6,
+  "expectedLifecycleScenarioCount": 20,
   "expectedScenarioCount": 7,
   "lifecycleScenarios": [
     {
@@ -25,6 +25,62 @@
     {
       "id": "tracked-receipt-ownership",
       "sensor": "tests/test_receipt.py"
+    },
+    {
+      "id": "codex-discovery-projection",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "claude-code-discovery-projection",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "cross-host-content-identity",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "host-projection-conflict-and-breakage",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "host-projection-removal",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "host-projection-rollback",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "atomic-shared-host-switch",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "canonical-host-projection-paths",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "legacy-receipt-compatibility",
+      "sensor": "tests/test_lifecycle.py"
+    },
+    {
+      "id": "journal-projection-divergence",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "held-parent-host-switch",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "verify-before-host-switch",
+      "sensor": "tests/test_fault_injection.py"
+    },
+    {
+      "id": "atomic-shared-host-removal",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "windows-fail-closed-host-switch",
+      "sensor": "tests/test_host_exposure.py"
     }
   ],
   "rules": [

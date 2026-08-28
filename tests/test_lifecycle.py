@@ -13,9 +13,11 @@ from unittest import mock
 
 from agent_skills.cli import main as lifecycle_cli
 from agent_skills.generations import inspect_release
+from agent_skills.hosts.exposure import HOSTS, _normalized_link
 from agent_skills.lifecycle import Lifecycle
 from agent_skills.locking import RepositoryLock
 from agent_skills.release import verify_release
+from agent_skills.validate import canonical_json
 
 from lifecycle_support import (
     LifecycleFixture,
@@ -27,6 +29,18 @@ from lifecycle_support import (
 
 
 class LifecycleTests(LifecycleFixture, unittest.TestCase):
+    def _make_active_receipt_legacy(self, lifecycle: Lifecycle) -> None:
+        marker = self.repository / ".agent-skills" / "active.json"
+        receipt = json.loads(marker.read_text(encoding="utf-8"))
+        receipt.pop("exposures")
+        marker.write_text(canonical_json(receipt), encoding="utf-8")
+        current = self.repository / ".agent-skills" / "current"
+        current.unlink(missing_ok=True)
+        for host in HOSTS:
+            root = self.repository / host.root
+            for skill in ("compound-delivery-kernel", "deliver-work"):
+                (root / skill).unlink(missing_ok=True)
+
     def test_absent_and_current_status_are_stable_json(self) -> None:
         lifecycle = Lifecycle(self.repository)
         absent = lifecycle.status()
@@ -36,6 +50,7 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
             {
                 "active": None,
                 "blockers": [],
+                "exposures": [],
                 "journalPhase": None,
                 "lifecycle": "absent",
                 "recoveryPlan": [],
@@ -49,6 +64,53 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         self.assertEqual(current["lifecycle"], "current")
         self.assertEqual(current["active"]["releaseId"], "core-v1")
         self.assertEqual(current["blockers"], [])
+
+    def test_legacy_receipt_status_is_readable_and_update_enriches_it(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        self._make_active_receipt_legacy(lifecycle)
+
+        status = lifecycle.status().as_dict()
+        self.assertEqual(status["lifecycle"], "current")
+        self.assertEqual(status["exposures"], [])
+        lifecycle.update(*self.v2, maintainer=True)
+        self.assertEqual(lifecycle.status().as_dict()["active"]["releaseId"], "core-v2")
+        self.assertEqual(len(lifecycle.status().as_dict()["exposures"]), 2)
+
+    def test_legacy_receipt_can_rollback_to_retained_verified_bytes(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        lifecycle.update(*self.v2, maintainer=True)
+        self._make_active_receipt_legacy(lifecycle)
+
+        lifecycle.rollback(maintainer=True)
+        status = lifecycle.status().as_dict()
+        self.assertEqual(status["active"]["releaseId"], "core-v1")
+        self.assertEqual(len(status["exposures"]), 2)
+
+    def test_legacy_receipt_can_be_removed_without_host_artifacts(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        self._make_active_receipt_legacy(lifecycle)
+
+        lifecycle.remove(maintainer=True)
+        self.assertEqual(lifecycle.status().as_dict()["lifecycle"], "absent")
+
+    def test_legacy_receipt_can_recover_an_interrupted_update(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        self._make_active_receipt_legacy(lifecycle)
+
+        def interrupt(phase: str) -> None:
+            if phase == "staged":
+                raise RuntimeError("stop after legacy journal")
+
+        with self.assertRaisesRegex(RuntimeError, "legacy journal"):
+            lifecycle.update(*self.v2, maintainer=True, fault=interrupt)
+        self.assertEqual(lifecycle.recover(maintainer=True)["action"], "restore-prior")
+        status = lifecycle.status().as_dict()
+        self.assertEqual(status["lifecycle"], "current")
+        self.assertEqual(status["exposures"], [])
 
     def test_install_update_no_op_rollback_remove_preserve_dirty_repository(self) -> None:
         lifecycle = Lifecycle(self.repository)
@@ -175,7 +237,13 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
     def test_tracked_installation_survives_clean_clone_without_journal(self) -> None:
         lifecycle = Lifecycle(self.repository)
         lifecycle.install(*self.v1, maintainer=True)
-        run_git(self.repository, "add", ".agent-skills")
+        run_git(
+            self.repository,
+            "add",
+            ".agent-skills",
+            ".agents/skills",
+            ".claude/skills",
+        )
         run_git(self.repository, "commit", "-qm", "track skill generation")
 
         clone = self.base / "clone"
@@ -194,6 +262,27 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         cloned_status = Lifecycle(clone).status().as_dict()
         self.assertEqual(cloned_status["lifecycle"], "current")
         self.assertEqual(cloned_status["active"]["releaseId"], "core-v1")
+        for host in HOSTS:
+            target = "../../.agent-skills/current/skills/deliver-work"
+            self.assertEqual(
+                _normalized_link(os.readlink(clone / host.root / "deliver-work")),
+                target,
+            )
+            self.assertEqual(
+                run_git(
+                    clone,
+                    "show",
+                    f"HEAD:{(host.root / 'deliver-work').as_posix()}",
+                ),
+                target,
+            )
+        self.assertTrue(
+            _normalized_link(
+                os.readlink(clone / ".agent-skills" / "current")
+            ).startswith(
+                "generations/"
+            )
+        )
         self.assertFalse((clone / ".git" / "agent-skills" / "journal.json").exists())
 
     def test_diverged_managed_checkout_attributes_is_an_external_transition(self) -> None:
@@ -365,12 +454,15 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         sentinel.write_text("preserve\n", encoding="utf-8")
         detached = self.repository / ".agent-skills-detached"
         original_open = os.open
+        managed_opens = 0
         swapped = False
 
         def swapping_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
-            nonlocal swapped
+            nonlocal managed_opens, swapped
             descriptor = original_open(path, flags, *args, **kwargs)
-            if path == ".agent-skills" and kwargs.get("dir_fd") is not None and not swapped:
+            if path == ".agent-skills" and kwargs.get("dir_fd") is not None:
+                managed_opens += 1
+            if managed_opens == 2 and not swapped:
                 os.rename(self.repository / ".agent-skills", detached)
                 os.symlink(outside, self.repository / ".agent-skills", target_is_directory=True)
                 swapped = True
