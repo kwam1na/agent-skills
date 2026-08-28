@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from agent_skills.release import build_release
 
@@ -25,6 +28,30 @@ def _load_runner():
 
 
 class QualificationTests(unittest.TestCase):
+    def _run_qualification(
+        self,
+        archive: Path,
+        metadata: Path,
+        record: Path,
+        cwd: Path,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--archive",
+                str(archive),
+                "--metadata",
+                str(metadata),
+                "--record",
+                str(record),
+            ],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
     def test_complete_archive_qualification_is_reproducible_and_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -51,46 +78,21 @@ class QualificationTests(unittest.TestCase):
             self.assertEqual(first_archive.read_bytes(), second_archive.read_bytes())
             self.assertEqual(first_metadata.read_bytes(), second_metadata.read_bytes())
 
-            extracted = directory / "standalone"
-            subprocess.run(
-                [
-                    sys.executable,
-                    str(ROOT / "scripts" / "build-release.py"),
-                    "verify",
-                    "--archive",
-                    str(first_archive),
-                    "--metadata",
-                    str(first_metadata),
-                    "--extract-to",
-                    str(extracted),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
             record_path = directory / "qualification.json"
             secret = "qualification-secret-must-not-leak"
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(extracted / "scripts" / "qualify-core.py"),
-                    "--archive",
-                    str(first_archive),
-                    "--metadata",
-                    str(first_metadata),
-                    "--record",
-                    str(record_path),
-                ],
-                cwd=directory,
-                env={**os.environ, "QUALIFICATION_SECRET_SENTINEL": secret},
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            environment = {**os.environ, "QUALIFICATION_SECRET_SENTINEL": secret}
+            with mock.patch.dict(os.environ, environment, clear=True):
+                result = self._run_qualification(
+                    first_archive, first_metadata, record_path, directory
+                )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             record = json.loads(record_path.read_text(encoding="utf-8"))
             self.assertEqual(record["release"]["releaseId"], release_id)
             self.assertEqual(record["release"]["archiveSha256"], first.archive_sha256)
+            self.assertEqual(
+                record["qualificationDriverSha256"],
+                hashlib.sha256(SCRIPT.read_bytes()).hexdigest(),
+            )
             self.assertEqual(record["summary"]["result"], "passed")
             self.assertEqual(
                 {scenario["id"] for scenario in record["scenarios"]},
@@ -115,21 +117,11 @@ class QualificationTests(unittest.TestCase):
                 (ROOT / "qualifications" / "core-v1.json").read_bytes(),
             )
 
-            replay = subprocess.run(
-                [
-                    sys.executable,
-                    str(extracted / "scripts" / "qualify-core.py"),
-                    "--archive",
-                    str(second_archive),
-                    "--metadata",
-                    str(second_metadata),
-                    "--record",
-                    str(directory / "replay.json"),
-                ],
-                cwd=directory,
-                capture_output=True,
-                text=True,
-                check=False,
+            replay = self._run_qualification(
+                second_archive,
+                second_metadata,
+                directory / "replay.json",
+                directory,
             )
             self.assertEqual(replay.returncode, 0, replay.stdout + replay.stderr)
             self.assertEqual(
@@ -172,6 +164,82 @@ class QualificationTests(unittest.TestCase):
         self.assertEqual(record["result"], "failed")
         self.assertEqual(record["failure"], "unexpected:RuntimeError")
         self.assertNotIn(secret, json.dumps(record))
+
+    def test_trusted_driver_qualifies_the_supplied_archive_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            candidate = directory / "broken-candidate"
+            shutil.copytree(
+                ROOT,
+                candidate,
+                ignore=shutil.ignore_patterns(".git", "__pycache__"),
+            )
+            router = candidate / "agent_skills" / "router.py"
+            source = router.read_text(encoding="utf-8")
+            router.write_text(
+                source.replace(
+                    "    return WorkflowKind.CLARIFY\n\n\ndef _declared_workflow",
+                    "    return WorkflowKind.IMPLEMENT\n\n\ndef _declared_workflow",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            archive = directory / "broken.zip"
+            metadata = directory / "broken.release.json"
+            build_release(
+                candidate,
+                archive,
+                metadata,
+                release_id="broken-core",
+                profile_id="core",
+            )
+            record_path = directory / "broken.qualification.json"
+
+            result = self._run_qualification(
+                archive, metadata, record_path, directory
+            )
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            self.assertEqual(record["release"]["releaseId"], "broken-core")
+            self.assertEqual(record["summary"]["result"], "failed")
+            trackerless = next(
+                item
+                for item in record["scenarios"]
+                if item["id"] == "trackerless-workflows"
+            )
+            self.assertEqual(trackerless["result"], "failed")
+
+    def test_failed_verification_invalidates_a_prior_passing_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            archive = directory / "core.zip"
+            metadata = directory / "core.release.json"
+            build_release(
+                ROOT,
+                archive,
+                metadata,
+                release_id="core-v1",
+                profile_id="core",
+            )
+            record_path = directory / "qualification.json"
+            first = self._run_qualification(
+                archive, metadata, record_path, directory
+            )
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            self.assertEqual(
+                json.loads(record_path.read_text(encoding="utf-8"))["summary"]["result"],
+                "passed",
+            )
+
+            with archive.open("ab") as target:
+                target.write(b"tampered")
+            second = self._run_qualification(
+                archive, metadata, record_path, directory
+            )
+
+            self.assertEqual(second.returncode, 1, second.stdout + second.stderr)
+            self.assertFalse(record_path.exists())
 
 
 if __name__ == "__main__":

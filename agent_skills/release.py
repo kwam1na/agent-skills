@@ -153,8 +153,6 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
     ):
         files[relative] = _packaged_bytes(root, relative)
     for relative in (
-        "tests/fixtures/adopting-repos/AGENTS.md",
-        "tests/fixtures/adopting-repos/unrelated.txt",
         "tests/fixtures/invalid-corpora/coverage.json",
         "tests/fixtures/valid-corpus/coverage.json",
         "tests/scenarios/core/compound.json",
@@ -188,14 +186,6 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         "agent_skills/router.py",
         "agent_skills/validate.py",
         "agent_skills/workflows.py",
-        "scripts/qualify-core.py",
-        "tests/lifecycle_support.py",
-        "tests/test_host_exposure.py",
-        "tests/test_lifecycle.py",
-        "tests/test_review_and_compounding.py",
-        "tests/test_router.py",
-        "tests/test_tracker_contract.py",
-        "tests/test_workflows.py",
     ):
         files[relative] = _packaged_bytes(root, relative)
     return files

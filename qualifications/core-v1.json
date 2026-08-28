@@ -1,12 +1,13 @@
 {
+  "qualificationDriverSha256": "6563e54ba2c5bfb0890829224e9494f779dc036adbf309078e9cbdf57bbd39ca",
   "redaction": {
     "environmentCaptured": false,
     "pathsCaptured": false,
     "retainedEvidence": "named assertions and deterministic checkpoint summaries"
   },
   "release": {
-    "archiveSha256": "d678efb5e80f2454a85d3a0ba93c2e6a085a4e8e1ca484c6b9f8d566fcd2c370",
-    "metadataSha256": "c3c0c46e242abed6bf942a0799f87a2288eeaef634922835f314b83d6e66759b",
+    "archiveSha256": "48d31872ed420e8b0dc9fe09c8db747e17f44aa58e1b7fa80205a8303c3375dd",
+    "metadataSha256": "14d3ecbd62da12d28da26fead397640f2b8de271194cfe53f21c347deb4c7714",
     "profile": "core",
     "releaseId": "core-v1"
   },

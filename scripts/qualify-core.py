@@ -4,19 +4,36 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / "tests")]
+DRIVER_ROOT = Path(__file__).resolve().parents[1]
 
+
+def _candidate_root(arguments: list[str]) -> Path | None:
+    try:
+        index = arguments.index("--candidate-root")
+        return Path(arguments[index + 1]).resolve()
+    except (ValueError, IndexError):
+        return None
+
+
+CANDIDATE_ROOT = _candidate_root(sys.argv)
+if CANDIDATE_ROOT is None:
+    sys.path.insert(0, str(DRIVER_ROOT))
+else:
+    sys.path[:0] = [str(CANDIDATE_ROOT), str(DRIVER_ROOT / "tests")]
+
+from agent_skills.cli import main as lifecycle_cli
 from agent_skills.release import ReleaseError, verify_release
-from agent_skills.validate import canonical_json
 
 
 SCENARIO_SENSORS = {
@@ -74,6 +91,10 @@ class Checkpoint:
         self.evidence.append(evidence)
 
 
+def canonical_json(value: object) -> str:
+    return json.dumps(value, indent=2, sort_keys=True) + "\n"
+
+
 def _sha256(value: object) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
@@ -118,7 +139,7 @@ def _run_sensor(checkpoint: Checkpoint, sensor: str) -> None:
     )
 
 
-def _run_sensors(checkpoint: Checkpoint, scenario_id: str) -> None:
+def _run_sensors(checkpoint: Checkpoint, scenario_id: str, *_arguments) -> None:
     for sensor in SCENARIO_SENSORS[scenario_id]:
         _run_sensor(checkpoint, sensor)
 
@@ -129,29 +150,30 @@ def _fresh_install(
     archive: Path,
     metadata: Path,
 ) -> None:
-    repository = base / "fresh-install"
-    repository.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
-    result = subprocess.run(
-        (
-            sys.executable,
-            "-m",
-            "agent_skills.cli",
-            "--root",
-            str(repository),
-            "install",
-            "--archive",
-            str(archive),
-            "--metadata",
-            str(metadata),
-            "--maintenance",
-        ),
-        cwd=ROOT,
+    repository = base / "repository"
+    repository.mkdir(parents=True)
+    subprocess.run(
+        ["git", "init", "-q"],
+        cwd=repository,
+        check=True,
         capture_output=True,
-        text=True,
     )
-    checkpoint.check(result.returncode == 0, "exact archive installs through the CLI")
-    status = json.loads(result.stdout)["status"]
+    output = StringIO()
+    with redirect_stdout(output):
+        return_code = lifecycle_cli(
+            [
+                "--root",
+                str(repository),
+                "install",
+                "--archive",
+                str(archive),
+                "--metadata",
+                str(metadata),
+                "--maintenance",
+            ]
+        )
+    checkpoint.check(return_code == 0, "exact archive installs through the CLI")
+    status = json.loads(output.getvalue())["status"]
     checkpoint.check(status["lifecycle"] == "current", "installed lifecycle is current")
     checkpoint.check(
         {item["host"] for item in status["exposures"]} == {"codex", "claude-code"},
@@ -208,6 +230,9 @@ def finalize_record(release: dict[str, str], scenarios: list[dict]) -> dict:
     ordered = sorted(scenarios, key=lambda item: REQUIRED_SCENARIOS.index(item["id"]))
     failed = sum(item["result"] != "passed" for item in ordered)
     return {
+        "qualificationDriverSha256": hashlib.sha256(
+            Path(__file__).read_bytes()
+        ).hexdigest(),
         "redaction": {
             "environmentCaptured": False,
             "pathsCaptured": False,
@@ -227,7 +252,58 @@ def finalize_record(release: dict[str, str], scenarios: list[dict]) -> dict:
     }
 
 
+def _candidate_scenario(
+    scenario_id: str,
+    candidate_root: Path,
+    base: Path,
+    archive: Path,
+    metadata: Path,
+) -> dict:
+    scenario_root = base / scenario_id
+    scenario_root.mkdir()
+    environment = dict(os.environ)
+    environment["AGENT_SKILLS_EXECUTION_CONTEXT"] = ""
+    environment["GITHUB_EVENT_NAME"] = ""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(Path(__file__).resolve()),
+            "--candidate-root",
+            str(candidate_root),
+            "--scenario",
+            scenario_id,
+            "--work-root",
+            str(scenario_root),
+            "--archive",
+            str(archive),
+            "--metadata",
+            str(metadata),
+        ],
+        cwd=scenario_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        record = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        checkpoint = Checkpoint(scenario_id)
+        return _record(
+            checkpoint,
+            "failed",
+            f"candidate-process:{result.returncode}",
+        )
+    if not isinstance(record, dict) or record.get("id") != scenario_id:
+        checkpoint = Checkpoint(scenario_id)
+        return _record(checkpoint, "failed", "candidate-process:invalid-record")
+    return record
+
+
 def qualify(archive: Path, metadata: Path) -> dict:
+    archive = archive.resolve()
+    metadata = metadata.resolve()
     verified = verify_release(archive, metadata)
     release = {
         "archiveSha256": verified.archive_sha256,
@@ -237,57 +313,83 @@ def qualify(archive: Path, metadata: Path) -> dict:
     }
     with tempfile.TemporaryDirectory(prefix="agent-skills-qualification-") as temporary:
         base = Path(temporary)
+        candidate_root = base / "candidate"
+        verify_release(archive, metadata, extract_to=candidate_root)
         scenarios = [
-            _run(
-                "fresh-install-and-host-discovery",
-                lambda checkpoint: _fresh_install(checkpoint, base, archive, metadata),
-            ),
-            *(
-                _run(
-                    scenario_id,
-                    lambda checkpoint, current=scenario_id: _run_sensors(
-                        checkpoint, current
-                    ),
-                )
-                for scenario_id in (
-                    "trackerless-workflows",
-                    "fake-adapter-workflows",
-                )
-            ),
-            _run(
-                "tamper-rejection",
-                lambda checkpoint: _tamper(checkpoint, base, archive, metadata),
-            ),
-            *(
-                _run(
-                    scenario_id,
-                    lambda checkpoint, current=scenario_id: _run_sensors(
-                        checkpoint, current
-                    ),
-                )
-                for scenario_id in (
-                    "rollback",
-                    "missing-capability",
-                    "bounded-review-failure",
-                )
-            ),
+            _candidate_scenario(
+                scenario_id,
+                candidate_root,
+                base,
+                archive,
+                metadata,
+            )
+            for scenario_id in REQUIRED_SCENARIOS
         ]
     return finalize_record(release, scenarios)
 
 
-def main() -> int:
+def _atomic_write(path: Path, contents: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+            target.write(contents)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _internal_main(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--candidate-root", type=Path, required=True)
+    parser.add_argument("--scenario", choices=REQUIRED_SCENARIOS, required=True)
+    parser.add_argument("--work-root", type=Path, required=True)
+    parser.add_argument("--archive", type=Path, required=True)
+    parser.add_argument("--metadata", type=Path, required=True)
+    args = parser.parse_args(arguments)
+    operation = (
+        (lambda checkpoint: _run_sensors(checkpoint, args.scenario))
+        if args.scenario in SCENARIO_SENSORS
+        else (
+            lambda checkpoint: {
+                "fresh-install-and-host-discovery": _fresh_install,
+                "tamper-rejection": _tamper,
+            }[args.scenario](
+                checkpoint,
+                args.work_root,
+                args.archive,
+                args.metadata,
+            )
+        )
+    )
+    record = _run(args.scenario, operation)
+    print(canonical_json(record), end="")
+    return 0 if record["result"] == "passed" else 1
+
+
+def main(arguments: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if arguments is None else arguments)
+    if "--candidate-root" in arguments:
+        return _internal_main(arguments)
     parser = argparse.ArgumentParser()
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--record", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(arguments)
     try:
+        args.record.unlink(missing_ok=True)
         record = qualify(args.archive, args.metadata)
+        _atomic_write(args.record, canonical_json(record))
     except (OSError, ValueError) as error:
         print(canonical_json({"error": type(error).__name__, "ok": False}), end="")
         return 1
-    args.record.parent.mkdir(parents=True, exist_ok=True)
-    args.record.write_text(canonical_json(record), encoding="utf-8")
     print(canonical_json(record), end="")
     return 0 if record["summary"]["result"] == "passed" else 1
 

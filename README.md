@@ -46,8 +46,8 @@ the optional Linear adapter is extracted. Cataloged source-only inventory is not
 selectable, and Athena overlays are classification inputs only rather than
 distributable skills.
 
-Qualify one exact archive in a standalone environment with only the bundled
-fake capability adapter:
+From a trusted checkout, qualify one exact archive in standalone environments
+with only the bundled fake capability adapter:
 
 ```bash
 python3 scripts/qualify-core.py \
@@ -56,12 +56,14 @@ python3 scripts/qualify-core.py \
   --record /tmp/core.qualification.json
 ```
 
-The fail-closed qualification record is keyed to the archive and metadata
+The trusted driver verifies and extracts the supplied archive, then runs each
+fixed scenario in a fresh process whose core imports resolve from that extracted
+candidate. The fail-closed record is keyed to the driver, archive, and metadata
 digests. It retains only named assertions and deterministic checkpoint
 summaries: no environment values or local paths. The gate rejects a missing,
-duplicated, or unasserted required scenario so an empty run cannot pass.
-The rollback checkpoint reuses the corpus lifecycle fixtures; the candidate
-archive named in the record remains the single release under qualification.
+duplicated, or unasserted required scenario so an empty run cannot pass. The
+rollback checkpoint derives a disposable prior fixture; the candidate archive
+named in the record remains the single release under qualification.
 The current record is checked in at `qualifications/core-v1.json`.
 
 ## Repository lifecycle
