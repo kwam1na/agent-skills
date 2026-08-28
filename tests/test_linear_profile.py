@@ -339,11 +339,10 @@ class LinearProfileTests(unittest.TestCase):
                     )
                 )
             )
-            contract_document = json.loads(adapter_files[str(CONTRACT.relative_to(ROOT))])
+            contract_path = CONTRACT.relative_to(ROOT).as_posix()
+            contract_document = json.loads(adapter_files[contract_path])
             del contract_document["transportBoundary"]
-            adapter_files[str(CONTRACT.relative_to(ROOT))] = canonical_json(
-                contract_document
-            )
+            adapter_files[contract_path] = canonical_json(contract_document)
             self.assertEqual(self.transport_findings(adapter_files), {})
 
 
