@@ -2,21 +2,21 @@
   "attestationSha256": "9e59c80307c6cd365abbe646d52effa512610e707b32074fe8a8632cf329cbb3",
   "candidate": {
     "core": {
-      "archiveSha256": "0e5a2e536ce104f0c8c7956f373990064ecae709fe287c4504d30f2a4314094f",
-      "metadataSha256": "9c6f96a9994c0faf6dc84a3d907be60ebd82bb7e5579256c853855010d324d99",
+      "archiveSha256": "004bfcf1c8d245a75d9f696d9f1ac83af4b0e6f2c90a48e3927a916a5b8c5ef8",
+      "metadataSha256": "20b0194b082510d1cb2b7bbbe217888eac444fa28f4610819c76f194493d5e81",
       "profile": "core",
       "releaseId": "core-v1",
-      "sourceTreeSha256": "8ccec01c5464b2aa505008b5b47d2d49dfdf340fde02d7a2e2b0149c181a648f"
+      "sourceTreeSha256": "c7a93cbe887be34309344191eb34549b7afe67761f510f9c8664c0817eb045de"
     },
     "linear": {
-      "archiveSha256": "4df4b51bd631248fef3bfae04dd41410ba791b79cbfac9164084f6d2268f6f72",
-      "metadataSha256": "e0544a2896748d43bc93f41b1d0ae8faba2e84d29515828027e878f79dee9733",
+      "archiveSha256": "b2e6df45467a3c93a1e90e242cbc9140b854446a76471652dea46162ef60b4ab",
+      "metadataSha256": "a23cdd5ceaeab853054f1a9c703eafcfa588fb905356a30df82b03c793b2cf91",
       "profile": "linear",
       "releaseId": "linear-v1",
-      "sourceTreeSha256": "e6db62d646323fa2d984aa439794de469d6c0793047e9d748f8c3038ff290ad6"
+      "sourceTreeSha256": "6b55af12dafc56c33b874945d4f82c566a61a5d900364666909e1e33f55788c8"
     }
   },
-  "coreQualificationSha256": "c88f1b9b8974400e49cf8229f211647226705ae0bd0bac0f63ddc9aec5548063",
+  "coreQualificationSha256": "ff72c32a317ba90d3c7c99fbdfe671f8e0116e278bdf4feb58587fd6a1716b6d",
   "proofBoundary": {
     "live": "external MCP provenance is owned by the protected host-native run",
     "offline": "binds the retained attestation bytes to the retained receipt reference and exact candidate artifacts; it does not independently prove external calls"

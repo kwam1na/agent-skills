@@ -38,6 +38,11 @@ def parser() -> argparse.ArgumentParser:
         command = commands.add_parser(name)
         _release_arguments(command)
         _maintenance(command)
+    adopt = commands.add_parser("adopt")
+    _release_arguments(adopt)
+    adopt.add_argument("--skill", required=True)
+    adopt.add_argument("--expected-prior-sha256", required=True)
+    _maintenance(adopt)
     for name in ("rollback", "remove", "recover"):
         command = commands.add_parser(name)
         _maintenance(command)
@@ -81,6 +86,14 @@ def main(arguments: list[str] | None = None) -> int:
             output = lifecycle.install(
                 args.archive,
                 args.metadata,
+                maintainer=args.maintenance,
+            )
+        elif args.command == "adopt":
+            output = lifecycle.adopt(
+                args.archive,
+                args.metadata,
+                skill=args.skill,
+                expected_prior_sha256=args.expected_prior_sha256,
                 maintainer=args.maintenance,
             )
         elif args.command == "update":

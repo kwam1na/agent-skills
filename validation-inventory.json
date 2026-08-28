@@ -1,5 +1,5 @@
 {
-  "expectedLifecycleScenarioCount": 20,
+  "expectedLifecycleScenarioCount": 28,
   "expectedScenarioCount": 7,
   "lifecycleScenarios": [
     {
@@ -81,6 +81,38 @@
     {
       "id": "windows-fail-closed-host-switch",
       "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "single-workflow-first-adoption",
+      "sensor": "tests/test_adoption.py"
+    },
+    {
+      "id": "adoption-predecessor-authentication",
+      "sensor": "tests/test_adoption.py"
+    },
+    {
+      "id": "adoption-cross-host-prior-safety",
+      "sensor": "tests/test_adoption.py"
+    },
+    {
+      "id": "adoption-offline-rollback-and-removal",
+      "sensor": "tests/test_adoption.py"
+    },
+    {
+      "id": "adoption-interruption-and-tamper-recovery",
+      "sensor": "tests/test_adoption.py"
+    },
+    {
+      "id": "adoption-dependency-free-selection",
+      "sensor": "tests/test_adoption.py"
+    },
+    {
+      "id": "adoption-unrelated-file-preservation",
+      "sensor": "tests/test_adoption.py"
+    },
+    {
+      "id": "adoption-partial-predecessor-delete-recovery",
+      "sensor": "tests/test_adoption.py"
     }
   ],
   "rules": [

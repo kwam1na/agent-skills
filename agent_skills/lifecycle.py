@@ -6,8 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .adoption import AdoptionError, PredecessorStore, body_sha256, skill_body
 from .fs import MANAGED_GIT_ATTRIBUTES, publish_active_marker, repository_paths
-from .generations import GenerationError, GenerationStore, inspect_release
+from .generations import (
+    GenerationError,
+    GenerationStore,
+    inspect_adoption_release,
+    inspect_release,
+)
 from .hosts.exposure import HOSTS, ExposureError, ExposureManager
 from .journal import (
     JOURNAL_SCHEMA,
@@ -96,12 +102,15 @@ class Status:
 def _active_summary(receipt: dict | None) -> dict | None:
     if receipt is None:
         return None
-    return {
+    summary = {
         "archiveSha256": receipt["release"]["archiveSha256"],
         "generation": receipt["generation"],
         "profile": receipt["release"]["profile"],
         "releaseId": receipt["release"]["releaseId"],
     }
+    if "adoption" in receipt:
+        summary["selectedSkills"] = [receipt["adoption"]["skill"]]
+    return summary
 
 
 def _same_receipt(left: dict | None, right: dict | None) -> bool:
@@ -117,6 +126,7 @@ class Lifecycle:
         self.journal_path = self.git_path / "journal.json"
         self.lock_path = self.git_path / "lock.json"
         self.store = GenerationStore(self.managed_root, self.git_path)
+        self.predecessors = PredecessorStore(self.managed_root, self.git_path)
         self.exposure = ExposureManager(self.root)
 
     def _active(self, *, verify: bool = True) -> dict | None:
@@ -138,6 +148,11 @@ class Lifecycle:
             self.store.verify(version_from_receipt(receipt))
             if receipt["previous"] is not None:
                 self.store.verify(receipt["previous"])
+            if "adoption" in receipt:
+                try:
+                    self.predecessors.verify(receipt["adoption"])
+                except AdoptionError as error:
+                    raise GenerationError(str(error)) from error
         return receipt
 
     def _orphaned_generation_exists(self) -> bool:
@@ -145,6 +160,7 @@ class Lifecycle:
         return (
             self.attributes_path.exists()
             or self.attributes_path.is_symlink()
+            or self.predecessors.exists()
             or (root.is_dir() and any(root.iterdir()))
         )
 
@@ -395,8 +411,32 @@ class Lifecycle:
             fault,
         )
         self.store.cleanup_staging(journal["operationId"])
+        self.predecessors.cleanup_staging(journal["operationId"])
         if target is None:
             self._write_active(None)
+            prior = journal["prior"]
+            if prior is not None and "adoption" in prior:
+                self.predecessors.remove(
+                    prior["adoption"],
+                    journal["operationId"],
+                    fault,
+                )
+
+    def _reconcile_target(self, target: dict | None, alternate: dict | None) -> None:
+        if target is not None and "adoption" in target:
+            for host in HOSTS:
+                self.exposure.adopt_host(host, target)
+            self.exposure.switch(target, alternate)
+            return
+        if target is None and alternate is not None and "adoption" in alternate:
+            predecessor_path = self.predecessors.path(alternate["adoption"])
+            if os.path.lexists(predecessor_path):
+                predecessor = self.predecessors.verify(alternate["adoption"])
+                self.exposure.restore_adoption(alternate, predecessor)
+            else:
+                self.exposure.verify_restored_adoption(alternate)
+            return
+        self.exposure.reconcile(target, alternate)
 
     def _recover_locked(self) -> dict[str, object]:
         journal = load_journal(self.journal_path)
@@ -413,7 +453,7 @@ class Lifecycle:
                 self.store.verify(version_from_receipt(target))
                 if target["previous"] is not None:
                     self.store.verify(target["previous"])
-            self.exposure.reconcile(target, prior)
+            self._reconcile_target(target, prior)
             journal = write_journal(self.journal_path, journal, "marker-committed")
             self._finish_cleanup(journal)
             write_journal(self.journal_path, journal, "cleanup")
@@ -427,9 +467,19 @@ class Lifecycle:
                 self.store.verify(version_from_receipt(prior))
             else:
                 self._write_active(None)
-            self.exposure.reconcile(prior, target)
+            self._reconcile_target(prior, target)
             self.store.cleanup(self._keep_for(prior), journal["operationId"])
             self.store.cleanup_staging(journal["operationId"])
+            self.predecessors.cleanup_staging(journal["operationId"])
+            if (
+                target is not None
+                and "adoption" in target
+                and (prior is None or "adoption" not in prior)
+            ):
+                self.predecessors.remove(
+                    target["adoption"],
+                    journal["operationId"],
+                )
             self.journal_path.unlink()
             return {
                 "action": "restore-prior",
@@ -475,9 +525,11 @@ class Lifecycle:
                     "schemaVersion": "agent-skills-operation/1",
                     "status": self.status().as_dict(),
                 }
+            adoption = prior.get("adoption") if prior is not None else None
             inspected_target = make_receipt(
                 inspected,
                 version_from_receipt(prior) if prior is not None else None,
+                adoption,
             )
             self.exposure.preflight(inspected_target, prior)
             operation_id = uuid.uuid4().hex
@@ -487,6 +539,7 @@ class Lifecycle:
                 target = make_receipt(
                     version,
                     version_from_receipt(prior) if prior is not None else None,
+                    adoption,
                 )
                 self.exposure.preflight(target, prior)
             except (ExposureError, ReceiptError):
@@ -559,6 +612,102 @@ class Lifecycle:
             fault=fault,
         )
 
+    def adopt(
+        self,
+        archive: Path,
+        metadata: Path,
+        *,
+        skill: str,
+        expected_prior_sha256: str,
+        maintainer: bool = False,
+        context: str | None = None,
+        fault: FaultHook | None = None,
+    ) -> dict[str, object]:
+        require_mutation_authority(maintainer, context)
+        with RepositoryLock(self.lock_path):
+            self._recover_locked()
+            state = self.status()
+            if state.lifecycle != "absent" or state.blockers:
+                raise LifecycleError(
+                    f"lifecycle.{state.lifecycle}: adoption requires an absent managed installation"
+                )
+            inspected = inspect_adoption_release(
+                archive,
+                metadata,
+                skill,
+            )
+
+            predecessor_hosts: list[str] = []
+            predecessor_body: bytes | None = None
+            for host in HOSTS:
+                path = self.exposure._root(host) / skill
+                if not os.path.lexists(path):
+                    if host.host == "codex":
+                        raise LifecycleError(
+                            "adoption-prior-missing: Codex predecessor is required"
+                        )
+                    continue
+                try:
+                    body = skill_body(path)
+                except AdoptionError as error:
+                    raise LifecycleError(str(error)) from error
+                if body_sha256(body) != expected_prior_sha256:
+                    raise LifecycleError(
+                        f"adoption-prior-mismatch: {host.host} predecessor digest disagrees"
+                    )
+                if predecessor_body is not None and body != predecessor_body:
+                    raise LifecycleError(
+                        "adoption-prior-mismatch: host predecessors are not byte-identical"
+                    )
+                predecessor_body = body
+                predecessor_hosts.append(host.host)
+            if predecessor_body is None:
+                raise LifecycleError("adoption-prior-missing: Codex predecessor is required")
+
+            adoption = {
+                "predecessorHosts": sorted(predecessor_hosts),
+                "predecessorSha256": expected_prior_sha256,
+                "skill": skill,
+            }
+            target = make_receipt(inspected, None, adoption)
+            self.exposure.preflight(target, None)
+            operation_id = uuid.uuid4().hex
+            version, stage = self.store.stage(archive, metadata, operation_id)
+            target = make_receipt(version, None, adoption)
+            journal = self._new_journal("adopt", operation_id, None, target)
+            journal = write_journal(self.journal_path, journal, "staged")
+            self.predecessors.write(adoption, predecessor_body, operation_id)
+            self._fault(fault, "staged")
+            self.store.promote(stage, version)
+            journal = write_journal(self.journal_path, journal, "generation-ready")
+            self._fault(fault, "generation-ready")
+            for host in HOSTS:
+                self.exposure.adopt_host(host, target)
+                phase = f"exposing-{host.host}"
+                journal = write_journal(self.journal_path, journal, phase)
+                self._fault(fault, phase)
+            self.store.verify(version)
+            self.predecessors.verify(adoption)
+            journal = write_journal(self.journal_path, journal, "verifying")
+            self._fault(fault, "verifying")
+            self.store.verify(version)
+            self.predecessors.verify(adoption)
+            self.exposure.preflight(target, None)
+            self.exposure.switch(target, None)
+            self._write_active(target)
+            self._fault(fault, "marker-published")
+            journal = write_journal(self.journal_path, journal, "marker-committed")
+            self._fault(fault, "marker-committed")
+            self._finish_cleanup(journal, fault)
+            journal = write_journal(self.journal_path, journal, "cleanup")
+            self._fault(fault, "cleanup")
+            self.journal_path.unlink()
+            return {
+                "action": "adopt",
+                "schemaVersion": "agent-skills-operation/1",
+                "status": self.status().as_dict(),
+            }
+
     def rollback(
         self,
         *,
@@ -570,9 +719,17 @@ class Lifecycle:
         with RepositoryLock(self.lock_path):
             self._recover_locked()
             prior = self._active()
-            if prior is None or prior["previous"] is None:
+            if prior is None:
                 raise LifecycleError("rollback-unavailable: no verified prior generation is retained")
-            target = make_receipt(prior["previous"], version_from_receipt(prior))
+            if prior["previous"] is None and "adoption" in prior:
+                return self._deactivate_adoption_locked(prior, "rollback", fault)
+            if prior["previous"] is None:
+                raise LifecycleError("rollback-unavailable: no verified prior generation is retained")
+            target = make_receipt(
+                prior["previous"],
+                version_from_receipt(prior),
+                prior.get("adoption"),
+            )
             self.store.verify(version_from_receipt(target))
             self.exposure.preflight(target, prior)
             operation_id = uuid.uuid4().hex
@@ -605,6 +762,41 @@ class Lifecycle:
                 "status": self.status().as_dict(),
             }
 
+    def _deactivate_adoption_locked(
+        self,
+        prior: dict,
+        operation: str,
+        fault: FaultHook | None,
+    ) -> dict[str, object]:
+        self.store.verify(version_from_receipt(prior))
+        predecessor = self.predecessors.verify(prior["adoption"])
+        self.exposure.preflight(None, prior)
+        operation_id = uuid.uuid4().hex
+        journal = self._new_journal(operation, operation_id, prior, None)
+        for phase in ("staged", "generation-ready", "verifying"):
+            journal = write_journal(self.journal_path, journal, phase)
+            self._fault(fault, phase)
+        self.store.verify(version_from_receipt(prior))
+        self.predecessors.verify(prior["adoption"])
+        self.exposure.restore_adoption(prior, predecessor)
+        for host in HOSTS:
+            phase = f"exposing-{host.host}"
+            journal = write_journal(self.journal_path, journal, phase)
+            self._fault(fault, phase)
+        self._write_active(None)
+        self._fault(fault, "marker-published")
+        journal = write_journal(self.journal_path, journal, "marker-committed")
+        self._fault(fault, "marker-committed")
+        self._finish_cleanup(journal, fault)
+        journal = write_journal(self.journal_path, journal, "cleanup")
+        self._fault(fault, "cleanup")
+        self.journal_path.unlink()
+        return {
+            "action": "rollback-adoption" if operation == "rollback" else "remove",
+            "schemaVersion": "agent-skills-operation/1",
+            "status": self.status().as_dict(),
+        }
+
     def remove(
         self,
         *,
@@ -621,6 +813,8 @@ class Lifecycle:
             prior = self._active()
             if prior is None:
                 return {"action": "no-op", "schemaVersion": "agent-skills-operation/1"}
+            if "adoption" in prior:
+                return self._deactivate_adoption_locked(prior, "remove", fault)
             operation_id = uuid.uuid4().hex
             self.exposure.preflight(None, prior)
             journal = self._new_journal("remove", operation_id, prior, None)

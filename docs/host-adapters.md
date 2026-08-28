@@ -46,3 +46,29 @@ Receipts created before host exposure metadata existed remain readable and
 represent an installed but unexposed generation. A later verified update or
 rollback writes the fixed exposure metadata and projections; no separate
 migration mechanism is required.
+
+## Single-workflow first adoption
+
+The maintainer-only adoption command is available only while the managed
+lifecycle is absent. It verifies the complete supplied release, then exposes
+one named workflow already present in Codex. The expected prior SHA-256 must
+match the regular `SKILL.md` in the existing Codex directory. A same-name
+Claude Code directory is accepted only when it contains the same exact body;
+otherwise Claude Code must be absent. Other release workflows are retained in
+the immutable generation but receive no discovery links.
+
+The adoption receipt records the one selected name, prior digest, and hosts
+that owned the predecessor bytes. A separately marked predecessor store keeps
+those bytes under lifecycle ownership. The predecessor is prepared in
+operation-owned private staging and moved into place atomically; recovery can
+safely clear a known partial stage without treating it as an owned predecessor.
+Status verifies both the complete generation and predecessor before reporting
+current. Rollback and removal restore prior host bodies and remove projections
+created for previously absent hosts. If cleanup has already removed predecessor
+storage, recovery completes only after verifying every host already matches the
+receipt's recorded restored state. Verified predecessor storage is moved to
+operation-owned private trash before deletion, so recovery can finish a partial
+delete without reclassifying malformed managed storage as owned. The selected
+catalog member must declare no required or routing dependencies. Any changed
+projection, generation, receipt, predecessor, private stage, or private trash
+blocks mutation for maintainer review.

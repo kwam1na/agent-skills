@@ -20,7 +20,7 @@ JOURNAL_PHASES = (
     "marker-committed",
     "cleanup",
 )
-OPERATIONS = {"install", "update", "rollback", "remove"}
+OPERATIONS = {"adopt", "install", "update", "rollback", "remove"}
 
 
 class JournalError(ValueError):
@@ -52,10 +52,21 @@ def validate_journal(value: object) -> dict:
         validate_receipt(value["prior"])
     if value["target"] is not None:
         validate_receipt(value["target"])
-    if value["operation"] == "remove" and value["target"] is not None:
-        raise JournalError("journal-invalid: remove target must be absent")
-    if value["operation"] != "remove" and value["target"] is None:
+    if value["operation"] == "remove":
+        if value["target"] is not None:
+            raise JournalError("journal-invalid: remove target must be absent")
+        if value["prior"] is None:
+            raise JournalError("journal-invalid: removal predecessor is missing")
+    elif value["operation"] == "rollback" and value["target"] is None:
+        prior = value["prior"]
+        if prior is None or "adoption" not in prior:
+            raise JournalError("journal-invalid: deactivation predecessor is missing")
+    elif value["target"] is None:
         raise JournalError("journal-invalid: activation target is missing")
+    if value["operation"] == "adopt" and (
+        value["prior"] is not None or "adoption" not in value["target"]
+    ):
+        raise JournalError("journal-invalid: adoption endpoints are malformed")
     return value
 
 

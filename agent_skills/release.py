@@ -186,6 +186,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         files[relative] = _packaged_bytes(root, relative)
     for relative in (
         "agent_skills/__init__.py",
+        "agent_skills/adoption.py",
         "agent_skills/capabilities.py",
         "agent_skills/catalog.py",
         "agent_skills/cli.py",
