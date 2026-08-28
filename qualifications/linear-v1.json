@@ -41,11 +41,12 @@
       "result": "passed"
     },
     {
-      "assertionCount": 5,
+      "assertionCount": 6,
       "evidence": [
         "exact optional profile installs as the current generation",
         "installed generation retains the optional profile identity",
         "both fixed hosts expose the current optional generation",
+        "qualification-owned roots isolate both host projections",
         ".agents discovers the installed optional adapter",
         ".claude discovers the installed optional adapter"
       ],
@@ -112,7 +113,7 @@
   ],
   "schemaVersion": "agent-skills-linear-qualification/1",
   "summary": {
-    "assertionCount": 32,
+    "assertionCount": 33,
     "failedScenarioCount": 0,
     "passedScenarioCount": 6,
     "requiredScenarioCount": 6,

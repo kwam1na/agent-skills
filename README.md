@@ -115,6 +115,9 @@ concrete direct endpoint, SDK, and command transport actions while allowing
 non-executable boundary terminology. Authentication, unavailable, unsupported,
 malformed, timeout, and ambiguous outcomes remain deterministic controlled
 boundary checks because intentionally breaking a configured connector is unsafe.
+Install and host-discovery checks run inside qualification-owned temporary home,
+configuration, repository, Codex, and Claude roots, so they do not depend on or
+mutate a runner's existing host installation.
 
 The protected host-native run owns the external MCP provenance. Offline checks
 bind the retained attestation bytes to its receipt reference and exact candidate

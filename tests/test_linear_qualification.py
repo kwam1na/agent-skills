@@ -197,6 +197,42 @@ class LinearQualificationTests(unittest.TestCase):
             self.assertNotIn("rawHostPayload", serialized)
             self.assertNotIn("rawIdempotencyKey", serialized)
 
+    def test_install_discovery_is_hermetic_without_preexisting_host_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            empty_home = directory / "empty-home"
+            empty_home.mkdir()
+            environment = {
+                **os.environ,
+                "AGENT_SKILLS_EXECUTION_CONTEXT": "pull-request",
+                "CLAUDE_CONFIG_DIR": str(empty_home / "claude"),
+                "CODEX_HOME": str(empty_home / "codex"),
+                "GITHUB_EVENT_NAME": "pull_request",
+                "HOME": str(empty_home),
+                "XDG_CONFIG_HOME": str(empty_home / "xdg"),
+            }
+            with mock.patch.dict(os.environ, environment, clear=True):
+                result, record_path, _ = self._run_qualification(
+                    directory,
+                    _host_attestation(),
+                )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            scenario = next(
+                scenario
+                for scenario in record["scenarios"]
+                if scenario["id"] == "linear-install-and-host-discovery"
+            )
+            self.assertEqual(scenario["result"], "passed")
+            self.assertIn(
+                "qualification-owned roots isolate both host projections",
+                scenario["evidence"],
+            )
+            self.assertNotIn(str(empty_home), record_path.read_text(encoding="utf-8"))
+            self.assertFalse((empty_home / "codex").exists())
+            self.assertFalse((empty_home / "claude").exists())
+
     def test_attestation_rejects_duplicate_references_and_broken_operation_causality(
         self,
     ) -> None:

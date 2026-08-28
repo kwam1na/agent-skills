@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -123,6 +124,35 @@ class Checkpoint:
     def retain(self, evidence: list[str]) -> None:
         self.assertion_count += len(evidence)
         self.evidence.extend(evidence)
+
+
+@contextmanager
+def _qualification_host_environment(root: Path):
+    injected = {
+        "AGENT_SKILLS_EXECUTION_CONTEXT": "maintainer",
+        "APPDATA": str(root / "config"),
+        "CLAUDE_CONFIG_DIR": str(root / "hosts" / "claude"),
+        "CODEX_HOME": str(root / "hosts" / "codex"),
+        "HOME": str(root / "home"),
+        "USERPROFILE": str(root / "home"),
+        "XDG_CONFIG_HOME": str(root / "config"),
+    }
+    saved = {
+        name: os.environ.get(name)
+        for name in (*injected, "GITHUB_EVENT_NAME")
+    }
+    try:
+        os.environ.pop("GITHUB_EVENT_NAME", None)
+        os.environ.update(injected)
+        for path in {Path(value) for value in injected.values() if value != "maintainer"}:
+            path.mkdir(parents=True, exist_ok=True)
+        yield
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def canonical_json(value: object) -> str:
@@ -459,19 +489,21 @@ def _install_linear(
     linear_metadata: Path,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="agent-skills-linear-install-") as temporary:
-        repository = Path(temporary) / "repository"
+        qualification_root = Path(temporary)
+        repository = qualification_root / "repository"
         repository.mkdir()
-        subprocess.run(
-            ["git", "init", "-q"],
-            cwd=repository,
-            check=True,
-            capture_output=True,
-        )
-        result = Lifecycle(repository).install(
-            linear_archive,
-            linear_metadata,
-            maintainer=True,
-        )
+        with _qualification_host_environment(qualification_root):
+            subprocess.run(
+                ["git", "init", "-q"],
+                cwd=repository,
+                check=True,
+                capture_output=True,
+            )
+            result = Lifecycle(repository).install(
+                linear_archive,
+                linear_metadata,
+                maintainer=True,
+            )
         checkpoint.check(
             result["status"]["lifecycle"] == "current",
             "exact optional profile installs as the current generation",
@@ -488,6 +520,17 @@ def _install_linear(
                 for exposure in result["status"]["exposures"]
             ),
             "both fixed hosts expose the current optional generation",
+        )
+        host_roots = (
+            repository / ".agents" / "skills",
+            repository / ".claude" / "skills",
+        )
+        checkpoint.check(
+            all(
+                root.is_dir() and root.is_relative_to(qualification_root)
+                for root in host_roots
+            ),
+            "qualification-owned roots isolate both host projections",
         )
         for host in (".agents", ".claude"):
             checkpoint.check(
