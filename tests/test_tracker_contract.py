@@ -177,6 +177,38 @@ class TrackerContractTests(unittest.TestCase):
         self.assertEqual(second, expected)
         self.assertEqual(adapter.mutations, [request])
 
+    def test_invalid_scripted_success_is_not_recorded_or_cached(self) -> None:
+        request = TrackerRequest(
+            TrackerOperation.CREATE_WORK,
+            {"title": "Bounded work"},
+            idempotency_key="invalid-scripted-create",
+        )
+        cases = (
+            AdapterOutcome.success(
+                TrackerOperation.RESOLVE_CONTEXT,
+                {"reference": "wrong-operation"},
+            ),
+            AdapterOutcome.success(
+                request.operation,
+                ["invalid-data"],  # type: ignore[arg-type]
+            ),
+        )
+        for invalid in cases:
+            with self.subTest(invalid=invalid):
+                adapter = InMemoryTrackerAdapter(
+                    scripted={request.operation: [invalid, invalid]}
+                )
+                first = execute_tracker_operation(
+                    CapabilityState.CONFIGURED, request, adapter
+                )
+                second = execute_tracker_operation(
+                    CapabilityState.CONFIGURED, request, adapter
+                )
+                self.assertEqual(first.kind, OutcomeKind.MALFORMED)
+                self.assertEqual(second.kind, OutcomeKind.MALFORMED)
+                self.assertEqual(adapter.mutations, [])
+                self.assertEqual(adapter.scripted[request.operation], [])
+
 
 if __name__ == "__main__":
     unittest.main()

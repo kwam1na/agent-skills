@@ -57,6 +57,8 @@ class InMemoryTrackerAdapter:
             if (
                 isinstance(outcome, AdapterOutcome)
                 and outcome.kind is OutcomeKind.SUCCESS
+                and outcome.operation is request.operation
+                and isinstance(outcome.data, Mapping)
             ):
                 return self._complete(request, key, outcome)
             return outcome
