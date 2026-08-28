@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -9,22 +10,19 @@ import re
 import subprocess
 import sys
 import tempfile
-import unittest
 from pathlib import Path
 
 
 DRIVER_ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(DRIVER_ROOT), str(DRIVER_ROOT / "tests")]
+sys.path.insert(0, str(DRIVER_ROOT))
 
 from agent_skills.lifecycle import Lifecycle
 from agent_skills.release import VerifiedRelease, verify_release
 
 
 CONTRACT_PATH = "skills/linear-tracker-adapter/references/adapter-contract.json"
-STATIC_SENSOR = (
-    "test_linear_profile.LinearProfileTests."
-    "test_linear_archive_has_no_alternate_transport_implementation"
-)
+ADAPTER_ROOT = "skills/linear-tracker-adapter"
+TRUSTED_CONTRACT_SHA256 = "053f4bb98357f8c5b6b6d2093cb915e76f2a57526f53d8dace3056cff6e5a658"
 TRUSTED_EVIDENCE_PATHS = (
     "agent_skills/fs.py",
     "agent_skills/generations.py",
@@ -48,30 +46,11 @@ TRUSTED_EVIDENCE_PATHS = (
 REQUIRED_SCENARIOS = (
     "core-qualification-binding",
     "linear-install-and-host-discovery",
-    "live-host-native-operations",
+    "live-host-attestation",
     "live-reconcile-before-retry",
     "controlled-degraded-outcomes",
     "forbidden-alternate-transport",
 )
-LIVE_EVIDENCE_KEYS = {
-    "auditReferences",
-    "checks",
-    "evidenceSource",
-    "schemaVersion",
-}
-LIVE_CHECKS = {
-    "cleanupCount": 2,
-    "cleanupStatus": "canceled",
-    "createCount": 2,
-    "duplicateCreateAttempts": 0,
-    "initialCreateAttempts": 2,
-    "readCount": 2,
-    "reconciliationMatchCount": 1,
-    "reconciliationSearchCount": 1,
-    "relationCount": 1,
-    "searchCount": 3,
-    "updateCount": 2,
-}
 CONTROLLED_BOUNDARY_OUTCOMES = {
     "auth": "auth-required",
     "malformed": "malformed",
@@ -88,9 +67,40 @@ CONTROLLED_BOUNDARY_OUTCOMES = {
     "reconciliation-unavailable": "reconciliation-required",
     "unsupported": "unsupported",
 }
-AUDIT_REFERENCE = re.compile(r"linear-audit:[a-f0-9]{16}")
-COMMIT_SHA = re.compile(r"[a-f0-9]{40}")
-SHA256 = re.compile(r"[a-f0-9]{64}")
+EXPECTED_LIVE_EVENTS = (
+    ("search", "miss", ("primary",)),
+    ("search", "miss", ("dependency",)),
+    ("create", "success", ("primary",)),
+    ("create", "success", ("dependency",)),
+    ("read", "success", ("primary",)),
+    ("read", "success", ("dependency",)),
+    ("update", "success", ("primary",)),
+    ("update", "success", ("dependency",)),
+    ("relations", "success", ("primary", "dependency")),
+    ("read", "relation-observed", ("primary", "dependency")),
+    ("reconciliation", "unique-match", ("primary",)),
+    ("update", "canceled", ("primary",)),
+    ("update", "canceled", ("dependency",)),
+    ("read", "cleanup-confirmed", ("primary",)),
+    ("read", "cleanup-confirmed", ("dependency",)),
+)
+DECLARED_LIVE_OPERATIONS = {
+    "create",
+    "read",
+    "reconciliation",
+    "relations",
+    "search",
+    "update",
+}
+REFERENCE_PATTERNS = {
+    "audit": re.compile(r"linear-audit:[a-f0-9]{32}"),
+    "event": re.compile(r"linear-event:[a-f0-9]{32}"),
+    "operation": re.compile(r"linear-operation:[a-f0-9]{32}"),
+    "receipt": re.compile(r"linear-receipt:[a-f0-9]{32}"),
+    "session": re.compile(r"linear-session:[a-f0-9]{32}"),
+}
+TICKET_ID = re.compile(r"\b[A-Z]\d{2,}-\d+\b")
+FORBIDDEN_NETWORK_IMPORTS = {"aiohttp", "httpx", "requests", "urllib3"}
 
 
 class QualificationFailure(AssertionError):
@@ -115,19 +125,19 @@ def canonical_json(value: object) -> str:
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
 
 
-def _digest_bytes(contents: bytes) -> str:
+def digest_bytes(contents: bytes) -> str:
     return hashlib.sha256(contents).hexdigest()
 
 
 def _digest(value: object) -> str:
-    return _digest_bytes(canonical_json(value).encode("utf-8"))
+    return digest_bytes(canonical_json(value).encode("utf-8"))
 
 
 def qualification_driver_sha256(root: Path = DRIVER_ROOT) -> str:
     inputs = [
         {
             "path": relative,
-            "sha256": _digest_bytes((root / relative).read_bytes()),
+            "sha256": digest_bytes((root / relative).read_bytes()),
         }
         for relative in TRUSTED_EVIDENCE_PATHS
     ]
@@ -144,50 +154,137 @@ def _load_document(path: Path, name: str) -> dict:
     return value
 
 
-def validate_live_evidence(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != LIVE_EVIDENCE_KEYS:
-        raise ValueError("linear_qualification.live_evidence: unexpected document shape")
-    if value["schemaVersion"] != "agent-skills-linear-live-evidence/1":
-        raise ValueError("linear_qualification.live_evidence: unsupported schema")
-    if value["evidenceSource"] != "live-host-native-linear-mcp":
-        raise ValueError("linear_qualification.live_evidence: success path must be live MCP")
+def _fullmatch(reference: object, kind: str) -> bool:
+    return isinstance(reference, str) and REFERENCE_PATTERNS[kind].fullmatch(reference) is not None
+
+
+def validate_attestation(value: object) -> dict:
+    if not isinstance(value, dict) or set(value) != {
+        "auditReferences",
+        "collector",
+        "entities",
+        "events",
+        "receipt",
+        "schemaVersion",
+        "sessionReference",
+    }:
+        raise ValueError("linear_qualification.attestation: unexpected document shape")
+    if value["schemaVersion"] != "agent-skills-linear-host-attestation/1":
+        raise ValueError("linear_qualification.attestation: unsupported schema")
+    if value["collector"] != {
+        "kind": "trusted-host-side",
+        "transport": "host-native-linear-mcp",
+    }:
+        raise ValueError("linear_qualification.attestation: collector is not trusted host MCP")
     references = value["auditReferences"]
     if (
         not isinstance(references, list)
         or len(references) != 2
         or len(set(references)) != len(references)
-        or any(
-            not isinstance(reference, str)
-            or AUDIT_REFERENCE.fullmatch(reference) is None
-            for reference in references
-        )
+        or any(not _fullmatch(reference, "audit") for reference in references)
     ):
-        raise ValueError("linear_qualification.live_evidence: audit references are invalid")
-    checks = value["checks"]
-    if not isinstance(checks, dict) or set(checks) != set(LIVE_CHECKS):
-        raise ValueError("linear_qualification.live_evidence: check shape is invalid")
-    for name, minimum in LIVE_CHECKS.items():
-        observed = checks[name]
-        if name == "cleanupStatus":
-            valid = observed == minimum
-        elif name in {
-            "cleanupCount",
-            "createCount",
-            "duplicateCreateAttempts",
-            "initialCreateAttempts",
-            "reconciliationMatchCount",
+        raise ValueError("linear_qualification.attestation: audit references are invalid")
+    entities = value["entities"]
+    if not isinstance(entities, list) or len(entities) != 2:
+        raise ValueError("linear_qualification.attestation: entities are invalid")
+    expected_roles = ("primary", "dependency")
+    operation_markers = []
+    entity_references = []
+    for entity, role in zip(entities, expected_roles, strict=True):
+        if not isinstance(entity, dict) or set(entity) != {
+            "auditReference",
+            "finalStatus",
+            "operationMarker",
+            "role",
         }:
-            valid = type(observed) is int and observed == minimum
-        else:
-            valid = type(observed) is int and observed >= minimum
-        if not valid:
-            raise ValueError(f"linear_qualification.live_evidence: invalid check {name}")
+            raise ValueError("linear_qualification.attestation: entity shape is invalid")
+        if (
+            entity["role"] != role
+            or entity["finalStatus"] != "canceled"
+            or not _fullmatch(entity["auditReference"], "audit")
+            or not _fullmatch(entity["operationMarker"], "operation")
+        ):
+            raise ValueError("linear_qualification.attestation: entity evidence is invalid")
+        entity_references.append(entity["auditReference"])
+        operation_markers.append(entity["operationMarker"])
+    if entity_references != references or len(set(operation_markers)) != 2:
+        raise ValueError("linear_qualification.attestation: entity references are inconsistent")
+    receipt = value["receipt"]
+    if (
+        not isinstance(receipt, dict)
+        or set(receipt) != {"externalSystem", "reference"}
+        or receipt["externalSystem"] != "linear"
+        or not _fullmatch(receipt["reference"], "receipt")
+    ):
+        raise ValueError("linear_qualification.attestation: receipt is invalid")
+    if not _fullmatch(value["sessionReference"], "session"):
+        raise ValueError("linear_qualification.attestation: session reference is invalid")
+    events = value["events"]
+    if not isinstance(events, list) or len(events) != len(EXPECTED_LIVE_EVENTS):
+        raise ValueError("linear_qualification.attestation: event count is invalid")
+    event_references = []
+    observed_operations = set()
+    for sequence, (event, expected) in enumerate(
+        zip(events, EXPECTED_LIVE_EVENTS, strict=True),
+        start=1,
+    ):
+        if not isinstance(event, dict) or set(event) != {
+            "eventReference",
+            "operation",
+            "outcome",
+            "roles",
+            "sequence",
+        }:
+            raise ValueError("linear_qualification.attestation: event shape is invalid")
+        operation, outcome, roles = expected
+        if (
+            event["sequence"] != sequence
+            or event["operation"] != operation
+            or event["outcome"] != outcome
+            or not isinstance(event["roles"], list)
+            or tuple(event["roles"]) != roles
+            or not _fullmatch(event["eventReference"], "event")
+        ):
+            raise ValueError("linear_qualification.attestation: event causality is invalid")
+        event_references.append(event["eventReference"])
+        observed_operations.add(event["operation"])
+    if len(set(event_references)) != len(event_references):
+        raise ValueError("linear_qualification.attestation: event references are duplicated")
+    if observed_operations != DECLARED_LIVE_OPERATIONS:
+        raise ValueError("linear_qualification.attestation: operation coverage is incomplete")
+    all_references = [
+        *references,
+        *operation_markers,
+        *event_references,
+        receipt["reference"],
+        value["sessionReference"],
+    ]
+    if len(set(all_references)) != len(all_references):
+        raise ValueError("linear_qualification.attestation: references are duplicated")
+    serialized = canonical_json(value)
+    if (
+        TICKET_ID.search(serialized)
+        or "/Users/" in serialized
+        or "rawHostPayload" in serialized
+        or "rawIdempotencyKey" in serialized
+    ):
+        raise ValueError("linear_qualification.attestation: forbidden retained data")
     return value
 
 
+def load_attestation(path: Path) -> dict:
+    try:
+        contents = path.read_text(encoding="utf-8")
+        value = json.loads(contents)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("linear_qualification.attestation: invalid JSON") from error
+    if canonical_json(value) != contents:
+        raise ValueError("linear_qualification.attestation: canonical JSON is required")
+    return validate_attestation(value)
+
+
 def controlled_boundary_matrix(contract: dict) -> list[dict]:
-    outcomes = contract.get("failureOutcomes")
-    if outcomes != CONTROLLED_BOUNDARY_OUTCOMES:
+    if contract.get("failureOutcomes") != CONTROLLED_BOUNDARY_OUTCOMES:
         raise ValueError("linear_qualification.contract: degraded outcomes changed")
     matrix = []
     for input_name, outcome in sorted(CONTROLLED_BOUNDARY_OUTCOMES.items()):
@@ -213,6 +310,97 @@ def controlled_boundary_matrix(contract: dict) -> list[dict]:
     return matrix
 
 
+def source_tree_sha256(root: Path) -> str:
+    records = [
+        {
+            "path": path.relative_to(root).as_posix(),
+            "sha256": digest_bytes(path.read_bytes()),
+        }
+        for path in sorted(item for item in root.rglob("*") if item.is_file())
+        if path.name != "release-manifest.json"
+    ]
+    return _digest(records)
+
+
+def _python_sources(root: Path) -> dict[str, str]:
+    return {
+        path.relative_to(root).as_posix(): path.read_text(encoding="utf-8")
+        for path in sorted(root.rglob("*.py"))
+    }
+
+
+def _adapter_documents(root: Path, contract: dict) -> dict[str, str]:
+    adapter = root / ADAPTER_ROOT
+    documents = {
+        path.relative_to(root).as_posix(): path.read_text(encoding="utf-8")
+        for path in sorted(adapter.rglob("*"))
+        if path.is_file()
+    }
+    contract_path = root / CONTRACT_PATH
+    contract_bytes = contract_path.read_bytes()
+    if digest_bytes(contract_bytes) != TRUSTED_CONTRACT_SHA256:
+        raise QualificationFailure("candidate contract differs from the trusted contract")
+    candidate_contract = json.loads(contract_bytes)
+    if candidate_contract != contract:
+        raise QualificationFailure("candidate contract differs from the verified input")
+    candidate_contract.pop("transportBoundary")
+    documents[CONTRACT_PATH] = canonical_json(candidate_contract)
+    return documents
+
+
+def assert_candidate_transport_boundary(
+    linear_candidate: Path,
+    core_candidate: Path,
+    contract: dict,
+) -> None:
+    if contract.get("transportBoundary", {}).get("mode") != "host-native-mcp-only":
+        raise QualificationFailure("candidate transport mode is not host-native MCP only")
+    linear_python = _python_sources(linear_candidate)
+    core_python = _python_sources(core_candidate)
+    if linear_python != core_python:
+        raise QualificationFailure("optional candidate adds or changes executable Python")
+    for name, source in linear_python.items():
+        tree = ast.parse(source)
+        imports = {
+            node.module.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module
+        }
+        imports.update(
+            alias.name.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        )
+        forbidden = FORBIDDEN_NETWORK_IMPORTS & imports
+        if forbidden:
+            raise QualificationFailure(
+                f"candidate Python uses forbidden network import in {name}"
+            )
+    names = [path.relative_to(linear_candidate).as_posix() for path in linear_candidate.rglob("*")]
+    forbidden_name_markers = (
+        "api-client",
+        "credential",
+        "fallback-transport",
+        "linear_mcp.py",
+        "oauth",
+        "sdk-client",
+        "subprocess",
+    )
+    if any(marker in name.casefold() for name in names for marker in forbidden_name_markers):
+        raise QualificationFailure("candidate contains a forbidden transport path")
+    documents = _adapter_documents(linear_candidate, contract)
+    for category, markers in contract["transportBoundary"][
+        "forbiddenActionMarkers"
+    ].items():
+        if any(
+            marker in contents.casefold()
+            for contents in documents.values()
+            for marker in markers
+        ):
+            raise QualificationFailure(f"candidate forbidden transport category: {category}")
+
+
 def _record(checkpoint: Checkpoint, result: str, failure: str | None = None) -> dict:
     summary = {
         "assertionCount": checkpoint.assertion_count,
@@ -222,10 +410,7 @@ def _record(checkpoint: Checkpoint, result: str, failure: str | None = None) -> 
         "result": result,
         **({"failure": failure} if failure else {}),
     }
-    return {
-        **summary,
-        "checkpointSha256": _digest(summary),
-    }
+    return {**summary, "checkpointSha256": _digest(summary)}
 
 
 def _run(scenario_id: str, evidence_source: str, operation) -> dict:
@@ -239,12 +424,13 @@ def _run(scenario_id: str, evidence_source: str, operation) -> dict:
     return _record(checkpoint, "passed")
 
 
-def _release_view(release: VerifiedRelease) -> dict[str, str]:
+def _release_view(release: VerifiedRelease, source_tree: str) -> dict[str, str]:
     return {
         "archiveSha256": release.archive_sha256,
         "metadataSha256": release.metadata_sha256,
         "profile": release.profile_id,
         "releaseId": release.release_id,
+        "sourceTreeSha256": source_tree,
     }
 
 
@@ -255,7 +441,13 @@ def _core_binding(
 ) -> None:
     checkpoint.check(core.profile_id == "core", "exact base profile identity verified")
     checkpoint.check(
-        core_record.get("release") == _release_view(core),
+        core_record.get("release")
+        == {
+            "archiveSha256": core.archive_sha256,
+            "metadataSha256": core.metadata_sha256,
+            "profile": core.profile_id,
+            "releaseId": core.release_id,
+        },
         "base qualification names the exact base archive and metadata",
     )
     checkpoint.check(
@@ -302,54 +494,65 @@ def _install_linear(
         )
         for host in (".agents", ".claude"):
             checkpoint.check(
-                (repository / host / "skills" / "linear-tracker-adapter" / "SKILL.md").is_file(),
+                (
+                    repository
+                    / host
+                    / "skills"
+                    / "linear-tracker-adapter"
+                    / "SKILL.md"
+                ).is_file(),
                 f"{host} discovers the installed optional adapter",
             )
 
 
-def _live_operations(checkpoint: Checkpoint, evidence: dict) -> None:
-    checks = evidence["checks"]
-    for name in (
-        "createCount",
-        "readCount",
-        "updateCount",
-        "searchCount",
-        "relationCount",
-    ):
-        checkpoint.check(checks[name] >= 1, f"live host operation passed: {name}")
+def _attestation_scenario(checkpoint: Checkpoint, attestation: dict, contract: dict) -> None:
+    observed = {event["operation"] for event in attestation["events"]}
     checkpoint.check(
-        checks["cleanupCount"] == checks["createCount"]
-        and checks["cleanupStatus"] == "canceled",
-        "every disposable live entity was canceled after evidence capture",
+        observed == set(contract["allowedHostOperations"]) == DECLARED_LIVE_OPERATIONS,
+        "retained host attestation covers all six declared operations",
+    )
+    checkpoint.check(
+        all(entity["finalStatus"] == "canceled" for entity in attestation["entities"]),
+        "retained host attestation records canceled cleanup for both entities",
+    )
+    checkpoint.check(
+        attestation["receipt"]["externalSystem"] == "linear",
+        "retained attestation names one external Linear receipt identity",
     )
 
 
-def _live_reconciliation(checkpoint: Checkpoint, evidence: dict) -> None:
-    checks = evidence["checks"]
+def _reconciliation_scenario(checkpoint: Checkpoint, attestation: dict) -> None:
+    events = attestation["events"]
     checkpoint.check(
-        checks["reconciliationSearchCount"] >= 1,
-        "stable-marker reconciliation ran before any repeat mutation",
+        events[0]["operation"] == "search"
+        and events[0]["outcome"] == "miss"
+        and events[2]["operation"] == "create",
+        "primary create follows an exact-marker miss",
     )
     checkpoint.check(
-        checks["reconciliationMatchCount"] == 1,
-        "stable-marker reconciliation found exactly one intended entity",
+        events[1]["operation"] == "search"
+        and events[1]["outcome"] == "miss"
+        and events[3]["operation"] == "create",
+        "dependency create follows an exact-marker miss",
     )
     checkpoint.check(
-        checks["duplicateCreateAttempts"] == 0,
-        "reconciliation suppressed the duplicate create attempt",
+        events[10]["operation"] == "reconciliation"
+        and events[10]["outcome"] == "unique-match"
+        and sum(event["operation"] == "create" for event in events) == 2,
+        "unique reconciliation suppresses any repeat create",
     )
 
 
 def _controlled_outcomes(checkpoint: Checkpoint, contract: dict) -> None:
     matrix = controlled_boundary_matrix(contract)
-    expected = contract["failureOutcomes"]
     checkpoint.check(
-        len(matrix) == len(expected),
+        len(matrix) == len(CONTROLLED_BOUNDARY_OUTCOMES),
         "controlled boundary matrix covers every declared degraded input",
     )
     for case in matrix:
         checkpoint.check(
-            case["outcome"] == expected[case["input"]] and bool(case["action"]),
+            case["outcome"] == CONTROLLED_BOUNDARY_OUTCOMES[case["input"]]
+            and bool(case["action"]),
             f"controlled boundary normalized: {case['input']} -> {case['outcome']}",
         )
     checkpoint.check(
@@ -362,27 +565,29 @@ def _controlled_outcomes(checkpoint: Checkpoint, contract: dict) -> None:
     )
 
 
-def _static_transport_sensor(checkpoint: Checkpoint) -> None:
-    suite = unittest.defaultTestLoader.loadTestsFromName(STATIC_SENSOR)
-    result = unittest.TestResult()
-    suite.run(result)
+def _transport_scenario(
+    checkpoint: Checkpoint,
+    linear_candidate: Path,
+    core_candidate: Path,
+    contract: dict,
+) -> None:
+    assert_candidate_transport_boundary(linear_candidate, core_candidate, contract)
     checkpoint.check(
-        result.testsRun == 1 and result.wasSuccessful(),
-        "trusted static sensor rejects alternate provider transports",
-        "trusted static forbidden-transport sensor failed",
+        True,
+        "supplied extracted candidate passes the forbidden-transport boundary",
     )
 
 
 def _finalize_record(
     candidate: dict,
     core_record_sha256: str,
-    live_evidence_sha256: str,
-    audit_references: list[str],
+    attestation_sha256: str,
+    attestation: dict,
     scenarios: list[dict],
 ) -> dict:
     ids = tuple(scenario.get("id") for scenario in scenarios)
-    if set(ids) != set(REQUIRED_SCENARIOS) or len(ids) != len(REQUIRED_SCENARIOS):
-        raise ValueError("linear_qualification.anti_vacuity: scenarios are missing or duplicated")
+    if ids != REQUIRED_SCENARIOS:
+        raise ValueError("linear_qualification.anti_vacuity: scenarios are missing or reordered")
     if any(
         scenario.get("result") == "passed"
         and (
@@ -394,26 +599,34 @@ def _finalize_record(
         for scenario in scenarios
     ):
         raise ValueError("linear_qualification.anti_vacuity: passing evidence is empty")
-    ordered = sorted(scenarios, key=lambda item: REQUIRED_SCENARIOS.index(item["id"]))
-    failed = sum(scenario["result"] != "passed" for scenario in ordered)
+    failed = sum(scenario["result"] != "passed" for scenario in scenarios)
     return {
-        "auditReferences": audit_references,
+        "attestationSha256": attestation_sha256,
+        "auditReferences": attestation["auditReferences"],
         "candidate": candidate,
         "coreQualificationSha256": core_record_sha256,
-        "liveEvidenceSha256": live_evidence_sha256,
+        "proofBoundary": {
+            "live": "protected external host-native MCP sensor",
+            "offline": (
+                "authenticates retained attestation bytes, receipt identity, "
+                "candidate artifacts, and deterministic checks; JSON alone does not "
+                "prove external execution"
+            ),
+        },
         "qualificationDriverSha256": qualification_driver_sha256(),
+        "receiptReference": attestation["receipt"]["reference"],
         "redaction": {
             "environmentCaptured": False,
-            "localPathsCaptured": False,
             "hostPayloadsCaptured": False,
-            "retainedEvidence": "opaque audit references and named deterministic assertions",
+            "localPathsCaptured": False,
+            "retainedEvidence": "canonical redacted host attestation and opaque references",
         },
-        "scenarios": ordered,
+        "scenarios": scenarios,
         "schemaVersion": "agent-skills-linear-qualification/1",
         "summary": {
-            "assertionCount": sum(scenario["assertionCount"] for scenario in ordered),
+            "assertionCount": sum(scenario["assertionCount"] for scenario in scenarios),
             "failedScenarioCount": failed,
-            "passedScenarioCount": len(ordered) - failed,
+            "passedScenarioCount": len(scenarios) - failed,
             "requiredScenarioCount": len(REQUIRED_SCENARIOS),
             "result": "failed" if failed else "passed",
         },
@@ -426,72 +639,76 @@ def qualify(
     core_record_path: Path,
     linear_archive: Path,
     linear_metadata: Path,
-    live_evidence_path: Path,
-    source_commit: str,
+    attestation_path: Path,
 ) -> dict:
-    if COMMIT_SHA.fullmatch(source_commit) is None:
-        raise ValueError("linear_qualification.source_commit: expected a full commit SHA")
     core = verify_release(core_archive, core_metadata)
     linear = verify_release(linear_archive, linear_metadata)
     if core.profile_id != "core" or linear.profile_id != "linear":
         raise ValueError("linear_qualification.profile: exact core and linear profiles are required")
     core_record = _load_document(core_record_path, "core_record")
-    live_evidence_bytes = live_evidence_path.read_bytes()
-    live_evidence = validate_live_evidence(
-        _load_document(live_evidence_path, "live_evidence")
-    )
-    contract = _load_document(DRIVER_ROOT / CONTRACT_PATH, "contract")
-    with tempfile.TemporaryDirectory(prefix="agent-skills-linear-extract-") as temporary:
-        verify_release(
-            linear_archive,
-            linear_metadata,
-            extract_to=Path(temporary) / "candidate",
-        )
-    scenarios = [
-        _run(
-            "core-qualification-binding",
-            "trusted-checked-qualification",
-            lambda checkpoint: _core_binding(checkpoint, core, core_record),
-        ),
-        _run(
-            "linear-install-and-host-discovery",
-            "exact-release-runtime",
-            lambda checkpoint: _install_linear(
-                checkpoint,
-                linear_archive,
-                linear_metadata,
+    attestation = load_attestation(attestation_path)
+    attestation_bytes = attestation_path.read_bytes()
+    with tempfile.TemporaryDirectory(prefix="agent-skills-linear-candidates-") as temporary:
+        candidate_root = Path(temporary)
+        core_candidate = candidate_root / "core"
+        linear_candidate = candidate_root / "linear"
+        verify_release(core_archive, core_metadata, extract_to=core_candidate)
+        verify_release(linear_archive, linear_metadata, extract_to=linear_candidate)
+        contract = _load_document(linear_candidate / CONTRACT_PATH, "contract")
+        scenarios = [
+            _run(
+                "core-qualification-binding",
+                "trusted-checked-qualification",
+                lambda checkpoint: _core_binding(checkpoint, core, core_record),
             ),
-        ),
-        _run(
-            "live-host-native-operations",
-            live_evidence["evidenceSource"],
-            lambda checkpoint: _live_operations(checkpoint, live_evidence),
-        ),
-        _run(
-            "live-reconcile-before-retry",
-            live_evidence["evidenceSource"],
-            lambda checkpoint: _live_reconciliation(checkpoint, live_evidence),
-        ),
-        _run(
-            "controlled-degraded-outcomes",
-            "deterministic-controlled-boundary-double",
-            lambda checkpoint: _controlled_outcomes(checkpoint, contract),
-        ),
-        _run(
-            "forbidden-alternate-transport",
-            "trusted-static-sensor",
-            _static_transport_sensor,
-        ),
-    ]
+            _run(
+                "linear-install-and-host-discovery",
+                "exact-release-runtime",
+                lambda checkpoint: _install_linear(
+                    checkpoint,
+                    linear_archive,
+                    linear_metadata,
+                ),
+            ),
+            _run(
+                "live-host-attestation",
+                "protected-external-live-mcp-sensor",
+                lambda checkpoint: _attestation_scenario(
+                    checkpoint,
+                    attestation,
+                    contract,
+                ),
+            ),
+            _run(
+                "live-reconcile-before-retry",
+                "protected-external-live-mcp-sensor",
+                lambda checkpoint: _reconciliation_scenario(checkpoint, attestation),
+            ),
+            _run(
+                "controlled-degraded-outcomes",
+                "deterministic-controlled-boundary-double",
+                lambda checkpoint: _controlled_outcomes(checkpoint, contract),
+            ),
+            _run(
+                "forbidden-alternate-transport",
+                "supplied-extracted-candidate-sensor",
+                lambda checkpoint: _transport_scenario(
+                    checkpoint,
+                    linear_candidate,
+                    core_candidate,
+                    contract,
+                ),
+            ),
+        ]
+        candidate = {
+            "core": _release_view(core, source_tree_sha256(core_candidate)),
+            "linear": _release_view(linear, source_tree_sha256(linear_candidate)),
+        }
     return _finalize_record(
-        {
-            "core": _release_view(core),
-            "linear": _release_view(linear),
-            "sourceCommitSha": source_commit,
-        },
-        _digest_bytes(core_record_path.read_bytes()),
-        _digest_bytes(live_evidence_bytes),
-        live_evidence["auditReferences"],
+        candidate,
+        digest_bytes(core_record_path.read_bytes()),
+        digest_bytes(attestation_bytes),
+        attestation,
         scenarios,
     )
 
@@ -503,97 +720,26 @@ def validate_checked_record(
     core_record_path: Path,
     linear_archive: Path,
     linear_metadata: Path,
-    source_commit: str,
+    attestation_path: Path,
 ) -> None:
-    core = verify_release(core_archive, core_metadata)
-    linear = verify_release(linear_archive, linear_metadata)
-    expected_candidate = {
-        "core": _release_view(core),
-        "linear": _release_view(linear),
-        "sourceCommitSha": source_commit,
-    }
-    if record.get("schemaVersion") != "agent-skills-linear-qualification/1":
-        raise ValueError("linear_qualification.record: unsupported schema")
-    if record.get("candidate") != expected_candidate:
-        raise ValueError("linear_qualification.record: candidate identity mismatch")
-    if record.get("coreQualificationSha256") != _digest_bytes(core_record_path.read_bytes()):
-        raise ValueError("linear_qualification.record: base qualification mismatch")
-    if record.get("qualificationDriverSha256") != qualification_driver_sha256():
-        raise ValueError("linear_qualification.record: trusted driver mismatch")
-    if record.get("summary", {}).get("result") != "passed":
-        raise ValueError("linear_qualification.record: qualification is not passing")
-    if SHA256.fullmatch(str(record.get("liveEvidenceSha256"))) is None:
-        raise ValueError("linear_qualification.record: live evidence digest is invalid")
-    if record.get("redaction") != {
-        "environmentCaptured": False,
-        "hostPayloadsCaptured": False,
-        "localPathsCaptured": False,
-        "retainedEvidence": "opaque audit references and named deterministic assertions",
-    }:
-        raise ValueError("linear_qualification.record: redaction policy is invalid")
-    scenarios = record.get("scenarios")
-    if not isinstance(scenarios, list):
-        raise ValueError("linear_qualification.record: scenarios are missing")
-    ids = tuple(scenario.get("id") for scenario in scenarios if isinstance(scenario, dict))
-    if ids != REQUIRED_SCENARIOS or any(
-        scenario.get("result") != "passed" for scenario in scenarios
-    ):
-        raise ValueError("linear_qualification.record: required scenarios are not passing")
-    expected_sources = {
-        "core-qualification-binding": "trusted-checked-qualification",
-        "linear-install-and-host-discovery": "exact-release-runtime",
-        "live-host-native-operations": "live-host-native-linear-mcp",
-        "live-reconcile-before-retry": "live-host-native-linear-mcp",
-        "controlled-degraded-outcomes": "deterministic-controlled-boundary-double",
-        "forbidden-alternate-transport": "trusted-static-sensor",
-    }
-    for scenario in scenarios:
-        if set(scenario) != {
-            "assertionCount",
-            "checkpointSha256",
-            "evidence",
-            "evidenceSource",
-            "id",
-            "result",
-        }:
-            raise ValueError("linear_qualification.record: scenario shape is invalid")
-        summary = {
-            field: scenario[field]
-            for field in (
-                "assertionCount",
-                "evidence",
-                "evidenceSource",
-                "id",
-                "result",
-            )
-        }
-        if (
-            type(scenario["assertionCount"]) is not int
-            or scenario["assertionCount"] != len(scenario["evidence"])
-            or scenario["evidenceSource"] != expected_sources[scenario["id"]]
-            or scenario["checkpointSha256"] != _digest(summary)
-        ):
-            raise ValueError("linear_qualification.record: scenario evidence is invalid")
-    expected_summary = {
-        "assertionCount": sum(scenario["assertionCount"] for scenario in scenarios),
-        "failedScenarioCount": 0,
-        "passedScenarioCount": len(REQUIRED_SCENARIOS),
-        "requiredScenarioCount": len(REQUIRED_SCENARIOS),
-        "result": "passed",
-    }
-    if record.get("summary") != expected_summary:
-        raise ValueError("linear_qualification.record: summary is invalid")
-    references = record.get("auditReferences")
+    attestation = load_attestation(attestation_path)
+    if record.get("attestationSha256") != digest_bytes(attestation_path.read_bytes()):
+        raise ValueError("linear_qualification.record: attestation mismatch")
     if (
-        not isinstance(references, list)
-        or len(references) != 2
-        or any(
-            not isinstance(reference, str)
-            or AUDIT_REFERENCE.fullmatch(reference) is None
-            for reference in references
-        )
+        record.get("auditReferences") != attestation["auditReferences"]
+        or record.get("receiptReference") != attestation["receipt"]["reference"]
     ):
-        raise ValueError("linear_qualification.record: audit references are invalid")
+        raise ValueError("linear_qualification.record: attestation references mismatch")
+    expected = qualify(
+        core_archive,
+        core_metadata,
+        core_record_path,
+        linear_archive,
+        linear_metadata,
+        attestation_path,
+    )
+    if record != expected:
+        raise ValueError("linear_qualification.record: exact record mismatch")
 
 
 def _atomic_write(path: Path, contents: str) -> None:
@@ -621,8 +767,7 @@ def main(arguments: list[str] | None = None) -> int:
     parser.add_argument("--core-record", type=Path, required=True)
     parser.add_argument("--linear-archive", type=Path, required=True)
     parser.add_argument("--linear-metadata", type=Path, required=True)
-    parser.add_argument("--live-evidence", type=Path, required=True)
-    parser.add_argument("--source-commit", required=True)
+    parser.add_argument("--attestation", type=Path, required=True)
     parser.add_argument("--record", type=Path, required=True)
     args = parser.parse_args(arguments)
     try:
@@ -632,8 +777,7 @@ def main(arguments: list[str] | None = None) -> int:
             args.core_record,
             args.linear_archive,
             args.linear_metadata,
-            args.live_evidence,
-            args.source_commit,
+            args.attestation,
         )
     except Exception as error:
         print(f"qualification failed: {type(error).__name__}", file=sys.stderr)

@@ -1,0 +1,169 @@
+{
+  "auditReferences": [
+    "linear-audit:8a4d7f8afcbd3804cd44eb76dea928c2",
+    "linear-audit:7d30f6cebe04c52382da5e44c5dced23"
+  ],
+  "collector": {
+    "kind": "trusted-host-side",
+    "transport": "host-native-linear-mcp"
+  },
+  "entities": [
+    {
+      "auditReference": "linear-audit:8a4d7f8afcbd3804cd44eb76dea928c2",
+      "finalStatus": "canceled",
+      "operationMarker": "linear-operation:0459e8c8375d06e29b3e9c2327990625",
+      "role": "primary"
+    },
+    {
+      "auditReference": "linear-audit:7d30f6cebe04c52382da5e44c5dced23",
+      "finalStatus": "canceled",
+      "operationMarker": "linear-operation:2220b66fdec3cd78726bec80bac817a1",
+      "role": "dependency"
+    }
+  ],
+  "events": [
+    {
+      "eventReference": "linear-event:1bf559fe42e17bab34cbccc122be3994",
+      "operation": "search",
+      "outcome": "miss",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 1
+    },
+    {
+      "eventReference": "linear-event:1b51080a6026004af80871ca0803e082",
+      "operation": "search",
+      "outcome": "miss",
+      "roles": [
+        "dependency"
+      ],
+      "sequence": 2
+    },
+    {
+      "eventReference": "linear-event:d0cac711572e4c1f40bbcaeb01bf6f74",
+      "operation": "create",
+      "outcome": "success",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 3
+    },
+    {
+      "eventReference": "linear-event:4c16f5149cb5dc350af40847fa1c4d30",
+      "operation": "create",
+      "outcome": "success",
+      "roles": [
+        "dependency"
+      ],
+      "sequence": 4
+    },
+    {
+      "eventReference": "linear-event:d749dadecb964727d619bb84fd29f9ae",
+      "operation": "read",
+      "outcome": "success",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 5
+    },
+    {
+      "eventReference": "linear-event:3287ed0c7bf5f2b57e234d1937e4f522",
+      "operation": "read",
+      "outcome": "success",
+      "roles": [
+        "dependency"
+      ],
+      "sequence": 6
+    },
+    {
+      "eventReference": "linear-event:9eaadf6953e5b412cfffb7c05b687b65",
+      "operation": "update",
+      "outcome": "success",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 7
+    },
+    {
+      "eventReference": "linear-event:2149d29a26ff69dd27c63227aed435a4",
+      "operation": "update",
+      "outcome": "success",
+      "roles": [
+        "dependency"
+      ],
+      "sequence": 8
+    },
+    {
+      "eventReference": "linear-event:be7c1550038cda0d380e0d459a6d0977",
+      "operation": "relations",
+      "outcome": "success",
+      "roles": [
+        "primary",
+        "dependency"
+      ],
+      "sequence": 9
+    },
+    {
+      "eventReference": "linear-event:a81597de93dc36837c3281f00e6c6f53",
+      "operation": "read",
+      "outcome": "relation-observed",
+      "roles": [
+        "primary",
+        "dependency"
+      ],
+      "sequence": 10
+    },
+    {
+      "eventReference": "linear-event:f1f253f21e4e364dcdfd6935a86c18b2",
+      "operation": "reconciliation",
+      "outcome": "unique-match",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 11
+    },
+    {
+      "eventReference": "linear-event:e74ae51a1263251b23fb45045dfddd47",
+      "operation": "update",
+      "outcome": "canceled",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 12
+    },
+    {
+      "eventReference": "linear-event:0331b0aa28ee7d349548c59c6ad0637f",
+      "operation": "update",
+      "outcome": "canceled",
+      "roles": [
+        "dependency"
+      ],
+      "sequence": 13
+    },
+    {
+      "eventReference": "linear-event:76fb1945b9a01f7bf8e3f0c0c6529ffb",
+      "operation": "read",
+      "outcome": "cleanup-confirmed",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 14
+    },
+    {
+      "eventReference": "linear-event:6dfbd68fcb36e84dd87e9f6fc0784556",
+      "operation": "read",
+      "outcome": "cleanup-confirmed",
+      "roles": [
+        "dependency"
+      ],
+      "sequence": 15
+    }
+  ],
+  "receipt": {
+    "externalSystem": "linear",
+    "reference": "linear-receipt:595c87913405ae594b82e935d848715f"
+  },
+  "schemaVersion": "agent-skills-linear-host-attestation/1",
+  "sessionReference": "linear-session:92b673bd5ac614c1c25bb8f83e4c1920"
+}

@@ -88,10 +88,12 @@ The current record is checked in at `qualifications/core-v1.json`.
 
 Qualify the optional Linear profile only after a configured host has exercised
 the live connector with clearly disposable work. The host must search for an
-exact stable marker before each create, retain only opaque audit references and
-named counts, and cancel every disposable entity after the read, update,
-search, relation, and reconciliation checks. Feed that redacted summary to the
-trusted driver together with the exact core and Linear releases:
+exact randomly generated operation marker before each create, retain one
+canonical redacted host attestation, and cancel every disposable entity after
+the create, read, update, search, relation, and reconciliation checks. Post the
+attestation digest and its random receipt reference through the same host-native
+Linear MCP boundary, then feed the retained attestation to the trusted driver
+together with the exact core and Linear releases:
 
 ```bash
 python3 scripts/qualify-linear.py \
@@ -100,20 +102,26 @@ python3 scripts/qualify-linear.py \
   --core-record qualifications/core-v1.json \
   --linear-archive /tmp/linear.zip \
   --linear-metadata /tmp/linear.release.json \
-  --live-evidence /tmp/linear-live-evidence.json \
-  --source-commit <full-commit-sha> \
+  --attestation qualifications/linear-v1.attestation.json \
   --record /tmp/linear.qualification.json
 ```
 
 The checked record at `qualifications/linear-v1.json` binds the passing core
-qualification, both exact archive identities, the source revision, the
-redacted live evidence digest, and the trusted driver inputs. Create, read,
-update, search, relations, reconciliation, and cleanup are live host-native MCP
-evidence. Authentication, unavailable, unsupported, malformed, timeout, and
-ambiguous outcomes are deterministic controlled boundary checks because
-intentionally breaking a configured connector is unsafe. The existing static
-archive sensor remains authoritative for excluding alternate provider
-transports.
+qualification, both exact archive and metadata identities, canonical extracted
+source-tree digests, the exact retained attestation bytes, the external receipt
+identity, and the trusted driver inputs. The transport sensor inspects the
+supplied extracted candidate and its tests inject every forbidden transport
+category into that candidate to prove rejection. Authentication, unavailable,
+unsupported, malformed, timeout, and ambiguous outcomes remain deterministic
+controlled boundary checks because intentionally breaking a configured
+connector is unsafe.
+
+The protected host-side sensor is the evidence that the live MCP calls occurred.
+Offline checks authenticate the retained attestation bytes, receipt identity,
+candidate artifacts, operation causality, and deterministic checks; plain JSON
+alone is not treated as proof of external execution. The retained attestation
+and record contain no host payloads, ticket identifiers, secrets, or local
+paths.
 
 ## Repository lifecycle
 
