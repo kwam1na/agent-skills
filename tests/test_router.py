@@ -60,6 +60,52 @@ class RouterTests(unittest.TestCase):
         )
         self.assertEqual(first, second)
 
+    def test_repository_workflow_overrides_host_hint_and_request(self) -> None:
+        fixture = json.loads(
+            (ROOT / "tests/scenarios/core/repository-discovery.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        for scenario in fixture["scenarios"]:
+            with self.subTest(scenario=scenario):
+                decision = route_workflow(
+                    WorkflowRequest(
+                        scenario["request"],
+                        host_workflow_hint=scenario.get("hostWorkflowHint"),
+                        repository_workflow=scenario.get("repositoryWorkflow"),
+                    )
+                )
+                self.assertEqual(decision.workflow.value, scenario["expectedWorkflow"])
+
+    def test_invalid_repository_workflow_clarifies_actionably(self) -> None:
+        decision = route_workflow(
+            WorkflowRequest(
+                "Implement the bounded parser change",
+                host_workflow_hint="review",
+                repository_workflow="invent-new-workflow",
+            )
+        )
+        self.assertEqual(decision.workflow.value, "clarify")
+        self.assertEqual(decision.route_kind.value, "handoff")
+        self.assertEqual(
+            decision.action,
+            "Choose a declared repository workflow, then resume delivery.",
+        )
+
+    def test_invalid_host_workflow_hint_clarifies_actionably(self) -> None:
+        decision = route_workflow(
+            WorkflowRequest(
+                "Implement the bounded parser change",
+                host_workflow_hint="invent-new-workflow",
+            )
+        )
+        self.assertEqual(decision.workflow.value, "clarify")
+        self.assertEqual(decision.route_kind.value, "handoff")
+        self.assertEqual(
+            decision.action,
+            "Choose a declared host workflow hint, then resume delivery.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

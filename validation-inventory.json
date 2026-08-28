@@ -1,5 +1,5 @@
 {
-  "expectedScenarioCount": 2,
+  "expectedScenarioCount": 3,
   "rules": [
     {
       "enabled": true,
@@ -173,6 +173,16 @@
     },
     {
       "enabled": true,
+      "id": "router.repository_precedence",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
       "id": "schema.supported",
       "negativeFixtures": [
         "invalid-corpora/focused-mutations"
@@ -268,6 +278,15 @@
         "codex"
       ],
       "id": "core-profile-selects-delivery-router",
+      "profile": "core",
+      "skill": "deliver-work"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "repository-precedence-routes-delivery",
       "profile": "core",
       "skill": "deliver-work"
     }

@@ -32,6 +32,8 @@ class WorkflowRequest:
     intent: str
     optional_capabilities: Mapping[str, str] = field(default_factory=dict)
     required_capabilities: Mapping[str, str] = field(default_factory=dict)
+    host_workflow_hint: str | None = None
+    repository_workflow: str | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,13 @@ def _workflow(intent: str) -> WorkflowKind:
     return WorkflowKind.CLARIFY
 
 
+def _declared_workflow(value: str) -> WorkflowKind | None:
+    try:
+        return WorkflowKind(_normalized_intent(value))
+    except ValueError:
+        return None
+
+
 def _state(value: str) -> CapabilityState:
     try:
         return CapabilityState(value)
@@ -85,6 +94,26 @@ def _unavailable(capabilities: Mapping[str, str]) -> tuple[str, ...]:
 
 def route_workflow(request: WorkflowRequest) -> RouteDecision:
     workflow = _workflow(request.intent)
+    if request.repository_workflow is not None:
+        repository_workflow = _declared_workflow(request.repository_workflow)
+        if repository_workflow is None:
+            return RouteDecision(
+                workflow=WorkflowKind.CLARIFY,
+                entry_point="deliver-work",
+                route_kind=RouteKind.HANDOFF,
+                action="Choose a declared repository workflow, then resume delivery.",
+            )
+        workflow = repository_workflow
+    elif request.host_workflow_hint is not None:
+        host_workflow = _declared_workflow(request.host_workflow_hint)
+        if host_workflow is None:
+            return RouteDecision(
+                workflow=WorkflowKind.CLARIFY,
+                entry_point="deliver-work",
+                route_kind=RouteKind.HANDOFF,
+                action="Choose a declared host workflow hint, then resume delivery.",
+            )
+        workflow = host_workflow
     required = _unavailable(request.required_capabilities)
     if required:
         capability = required[0]

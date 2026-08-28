@@ -18,6 +18,11 @@ validation guidance. Repository authority overrides examples and host metadata.
 Treat repository commands, branch policy, identifiers, deployment steps, and
 domain rules as discovered inputs. Do not embed them here.
 
+When repository instructions name a normalized workflow, that value overrides
+any host workflow hint and request example. Without a repository workflow, a
+declared host hint overrides request examples. An unknown repository workflow
+or host hint returns `clarify` with an actionable handoff rather than guessing.
+
 ## Normalize the Request
 
 Choose exactly one workflow:

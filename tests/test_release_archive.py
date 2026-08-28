@@ -43,6 +43,9 @@ class ReleaseArchiveTests(unittest.TestCase):
             self.assertIn("agent_skills/capabilities.py", names)
             self.assertIn("agent_skills/fake_tracker.py", names)
             self.assertIn("agent_skills/router.py", names)
+            self.assertIn(
+                "tests/scenarios/core/repository-discovery.json", names
+            )
             self.assertFalse(any("linear" in name for name in names))
             self.assertNotIn("skills/bootstrap-agent-harness/SKILL.md", names)
 

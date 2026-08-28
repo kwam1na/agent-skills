@@ -23,8 +23,8 @@ RULE_IDS = (
     "inventory.anti_vacuity", "path.case_unique", "path.safe",
     "path.symlink_contained", "profile.closure", "profile.reference",
     "provenance.coverage", "provenance.digest", "provenance.license",
-    "router.deterministic", "schema.supported", "skill.frontmatter",
-    "skill.reference", "skill.structure", "tracker.contract",
+    "router.deterministic", "router.repository_precedence", "schema.supported",
+    "skill.frontmatter", "skill.reference", "skill.structure", "tracker.contract",
 )
 EXPECTED_SCAN_ROOTS = (
     ("catalog", "catalog.json"),

@@ -158,6 +158,25 @@ class TrackerContractTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(len(adapter.mutations), 1)
 
+    def test_scripted_success_with_same_key_does_not_duplicate_mutation(self) -> None:
+        request = TrackerRequest(
+            TrackerOperation.CREATE_WORK,
+            {"title": "Bounded work"},
+            idempotency_key="scripted-create-one",
+        )
+        expected = AdapterOutcome.success(
+            request.operation,
+            {"operation": request.operation.value, "reference": "work-one"},
+        )
+        adapter = InMemoryTrackerAdapter(
+            scripted={request.operation: [expected]}
+        )
+        first = execute_tracker_operation(CapabilityState.CONFIGURED, request, adapter)
+        second = execute_tracker_operation(CapabilityState.CONFIGURED, request, adapter)
+        self.assertEqual(first, expected)
+        self.assertEqual(second, expected)
+        self.assertEqual(adapter.mutations, [request])
+
 
 if __name__ == "__main__":
     unittest.main()

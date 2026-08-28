@@ -105,7 +105,7 @@
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "191115a4b5209988f2bf5adce42dc1aa069dba7950818fc602bb1008a2157d69"
+          "sha256": "51131a81d537fa7a510140ea8468c5f5b899bc2e79e97ddac476cfff0b344611"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",

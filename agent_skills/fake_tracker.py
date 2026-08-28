@@ -5,6 +5,7 @@ from typing import Iterable, Mapping
 from agent_skills.capabilities import (
     AdapterOutcome,
     MUTATING_OPERATIONS,
+    OutcomeKind,
     TrackerOperation,
     TrackerRequest,
 )
@@ -25,6 +26,18 @@ class InMemoryTrackerAdapter:
         self.mutations: list[TrackerRequest] = []
         self._completed: dict[tuple[TrackerOperation, str], AdapterOutcome] = {}
 
+    def _complete(
+        self,
+        request: TrackerRequest,
+        key: tuple[TrackerOperation, str] | None,
+        outcome: AdapterOutcome,
+    ) -> AdapterOutcome:
+        if request.operation in MUTATING_OPERATIONS:
+            self.mutations.append(request)
+        if key is not None:
+            self._completed[key] = outcome
+        return outcome
+
     def execute(self, request: TrackerRequest) -> object:
         if request.operation not in self.supported_operations:
             return AdapterOutcome.unsupported(
@@ -40,14 +53,16 @@ class InMemoryTrackerAdapter:
             return self._completed[key]
         scripted = self.scripted.get(request.operation, [])
         if scripted:
-            return scripted.pop(0)
+            outcome = scripted.pop(0)
+            if (
+                isinstance(outcome, AdapterOutcome)
+                and outcome.kind is OutcomeKind.SUCCESS
+            ):
+                return self._complete(request, key, outcome)
+            return outcome
         sequence = len(self.mutations) + 1
         outcome = AdapterOutcome.success(
             request.operation,
             {"operation": request.operation.value, "sequence": sequence},
         )
-        if request.operation in MUTATING_OPERATIONS:
-            self.mutations.append(request)
-        if key is not None:
-            self._completed[key] = outcome
-        return outcome
+        return self._complete(request, key, outcome)

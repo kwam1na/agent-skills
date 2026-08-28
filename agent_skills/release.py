@@ -142,6 +142,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
     for relative in (
         "tests/fixtures/invalid-corpora/coverage.json",
         "tests/fixtures/valid-corpus/coverage.json",
+        "tests/scenarios/core/repository-discovery.json",
         "tests/scenarios/core/routing.json",
         "tests/scenarios/core/tracker-capability.json",
     ):
