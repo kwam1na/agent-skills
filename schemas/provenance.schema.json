@@ -18,12 +18,12 @@
           "id": {
             "type": "string"
           },
+          "outputs": {
+            "type": "array"
+          },
           "owner": {
             "minLength": 1,
             "type": "string"
-          },
-          "outputs": {
-            "type": "array"
           },
           "source": {
             "type": "object"

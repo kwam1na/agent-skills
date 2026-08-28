@@ -121,6 +121,21 @@ def test_catalog_cannot_duplicate_provenance_classification() -> None:
     print("verified rejection: duplicated catalog classification")
 
 
+def test_reordered_object_keys_reject() -> None:
+    def mutate(root: Path) -> None:
+        path = root / "catalog.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        write_json(path, {
+            "skills": document["skills"],
+            "schemaVersion": document["schemaVersion"],
+        })
+
+    result = with_copy(mutate)
+    require(result.returncode == 1, result.stdout)
+    require("noncanonical serialization: catalog.json" in result.stdout, result.stdout)
+    print("verified rejection: reordered object keys")
+
+
 def test_core_profile_is_exact_and_deterministic() -> None:
     first = run(ROOT, "--profile", "core")
     second = run(ROOT, "--profile", "core")
@@ -144,6 +159,7 @@ def main() -> int:
         test_non_releasable_inventory_cannot_be_selected,
         test_provenance_ordering_rejects,
         test_catalog_cannot_duplicate_provenance_classification,
+        test_reordered_object_keys_reject,
         test_core_profile_is_exact_and_deterministic,
     ]
     for test in tests:

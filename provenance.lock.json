@@ -9,7 +9,6 @@
         "reason": "The existing copied bundle matches the baseline workflow body; host metadata is retained as a host adapter.",
         "status": "source-derived"
       },
-      "owner": "agent-skills-corpus",
       "outputs": [
         {
           "path": "skills/bootstrap-agent-harness/SKILL.md",
@@ -20,6 +19,7 @@
           "sha256": "2fff25699efe4f619dc97d39828ad9fb42afe2f60d31fdd750e8682022081571"
         }
       ],
+      "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "bootstrap-agent-harness",
         "path": ".agents/skills/bootstrap-agent-harness",
@@ -36,13 +36,13 @@
         "reason": "Pre-existing copied body is a recorded derivative of the approved portable-candidate source; workflow extraction is deferred.",
         "status": "modified-derivative"
       },
-      "owner": "agent-skills-corpus",
       "outputs": [
         {
           "path": "skills/compound-delivery-kernel/SKILL.md",
           "sha256": "b4f2450adecbab4817d6f97c9ff5d615581ccde7740372e0e6fe96259b942cc0"
         }
       ],
+      "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "delivery-kernel-skill",
         "path": ".agents/skills/compound-delivery-kernel/SKILL.md",
@@ -59,7 +59,6 @@
         "reason": "Athena's tracker source is retained overlay inventory; U8 must extract a narrow optional adapter before it becomes selectable.",
         "status": "modified-derivative"
       },
-      "owner": "agent-skills-corpus",
       "outputs": [
         {
           "path": "skills/create-linear-ticket/SKILL.md",
@@ -86,6 +85,7 @@
           "sha256": "2af8ae57b9189791ba4bad7f3024e0c587d6c20f306b61196209e58ad5aae255"
         }
       ],
+      "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "track-skill",
         "path": ".agents/skills/track",
@@ -102,7 +102,6 @@
         "reason": "The pre-existing router routes through Linear and remains source-only until U7 extracts a neutral router.",
         "status": "modified-derivative"
       },
-      "owner": "agent-skills-corpus",
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
@@ -113,6 +112,7 @@
           "sha256": "335c1f6f152230f5c7dfac0bce52bd2295d4f44349226eac3fc59de1715d2c04"
         }
       ],
+      "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "deliver-work-skill",
         "path": ".agents/skills/deliver-work",
@@ -129,7 +129,6 @@
         "reason": "Athena's execution source is retained overlay inventory; it cannot be released or selected before U8 extracts a narrow optional adapter.",
         "status": "modified-derivative"
       },
-      "owner": "agent-skills-corpus",
       "outputs": [
         {
           "path": "skills/execute-linear-ticket/SKILL.md",
@@ -144,6 +143,7 @@
           "sha256": "2af8ae57b9189791ba4bad7f3024e0c587d6c20f306b61196209e58ad5aae255"
         }
       ],
+      "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "execute-skill",
         "path": ".agents/skills/execute",

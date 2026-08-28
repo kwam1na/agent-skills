@@ -19,7 +19,7 @@ EXPECTED_VERSIONS = {
 
 
 def canonical_json(value: object) -> str:
-    return json.dumps(value, indent=2, ensure_ascii=False) + "\n"
+    return json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
 
 
 def load_json(path: Path, findings: list[str]) -> object | None:

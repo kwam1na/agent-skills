@@ -50,13 +50,13 @@
       "provenanceId": "create-linear-ticket"
     },
     {
+      "degradedBehavior": "Tracking routes remain unavailable until an adopter explicitly selects the linear profile.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
           "requirement": "required"
         }
       ],
-      "degradedBehavior": "Tracking routes remain unavailable until an adopter explicitly selects the linear profile.",
       "externalTools": [],
       "hosts": [
         "claude-code",
