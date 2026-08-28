@@ -28,16 +28,8 @@ def _records(files: dict[str, str]) -> list[dict[str, str]]:
     return [{"path": path, "sha256": digest} for path, digest in sorted(files.items())]
 
 
-def inspect_release(archive: Path, metadata: Path) -> dict:
-    try:
-        with tempfile.TemporaryDirectory() as temporary:
-            extracted = Path(temporary) / "release"
-            verified = verify_release(archive, metadata, extract_to=extracted)
-            files = checked_files(extracted)
-    except FileNotFoundError as error:
-        raise GenerationError(
-            "source-unavailable: release archive or metadata is unavailable"
-        ) from error
+def _version_from_release(verified: VerifiedRelease, extracted: Path) -> dict:
+    files = checked_files(extracted)
     version = {
         "files": _records(files),
         "generation": verified.archive_sha256,
@@ -49,6 +41,54 @@ def inspect_release(archive: Path, metadata: Path) -> dict:
         },
     }
     validate_version(version)
+    return version
+
+
+def inspect_release(archive: Path, metadata: Path) -> dict:
+    try:
+        with tempfile.TemporaryDirectory() as temporary:
+            extracted = Path(temporary) / "release"
+            verified = verify_release(archive, metadata, extract_to=extracted)
+            return _version_from_release(verified, extracted)
+    except FileNotFoundError as error:
+        raise GenerationError(
+            "source-unavailable: release archive or metadata is unavailable"
+        ) from error
+
+
+def inspect_adoption_release(
+    archive: Path,
+    metadata: Path,
+    skill: str,
+) -> dict:
+    try:
+        with tempfile.TemporaryDirectory() as temporary:
+            extracted = Path(temporary) / "release"
+            verified = verify_release(archive, metadata, extract_to=extracted)
+            version = _version_from_release(verified, extracted)
+            catalog = json.loads((extracted / "catalog.json").read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise GenerationError(
+            "source-unavailable: release archive or metadata is unavailable"
+        ) from error
+    members = {
+        record["id"]: record
+        for record in catalog["skills"]
+        if isinstance(record, dict) and isinstance(record.get("id"), str)
+    }
+    selected = members.get(skill)
+    selected_path = f"skills/{skill}/SKILL.md"
+    if selected is None or selected_path not in {
+        record["path"] for record in version["files"]
+    }:
+        raise GenerationError("adoption-skill-missing: selected skill is absent from release")
+    if any(
+        dependency["requirement"] in {"required", "routing"}
+        for dependency in selected["dependencies"]
+    ):
+        raise GenerationError(
+            "adoption-dependencies-unsupported: selected skill requires other workflows"
+        )
     return version
 
 

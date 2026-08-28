@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from .adoption import AdoptionError, validate_adoption
 from .hosts.exposure import exposure_records
 from .validate import canonical_json, safe_relative_path
 
@@ -77,9 +78,11 @@ def validate_receipt(value: object) -> dict:
     }
     if (
         not isinstance(value, dict)
-        or frozenset(value) not in {
+        or frozenset(value)
+        not in {
             frozenset(required),
             frozenset(required | {"exposures"}),
+            frozenset(required | {"adoption", "exposures"}),
         }
     ):
         raise ReceiptError("receipt-invalid: receipt shape is malformed")
@@ -89,6 +92,15 @@ def validate_receipt(value: object) -> dict:
         raise ReceiptError("receipt-invalid: ownership marker is missing")
     if "exposures" in value and value["exposures"] != exposure_records():
         raise ReceiptError("receipt-invalid: host exposure metadata is malformed")
+    if "adoption" in value:
+        try:
+            validate_adoption(value["adoption"])
+        except AdoptionError as error:
+            raise ReceiptError(str(error)) from error
+        selected = value["adoption"]["skill"]
+        selected_path = f"skills/{selected}/SKILL.md"
+        if selected_path not in {record["path"] for record in value["files"]}:
+            raise ReceiptError("receipt-invalid: adopted skill is absent from release")
     validate_version(
         {
             "files": value["files"],
@@ -121,7 +133,11 @@ def version_from_receipt(receipt: dict) -> dict:
     }
 
 
-def make_receipt(version: dict, previous: dict | None) -> dict:
+def make_receipt(
+    version: dict,
+    previous: dict | None,
+    adoption: dict | None = None,
+) -> dict:
     validate_version(version)
     if previous is not None:
         validate_version(previous)
@@ -134,5 +150,7 @@ def make_receipt(version: dict, previous: dict | None) -> dict:
         "release": version["release"],
         "schemaVersion": RECEIPT_SCHEMA,
     }
+    if adoption is not None:
+        receipt["adoption"] = adoption
     validate_receipt(receipt)
     return receipt

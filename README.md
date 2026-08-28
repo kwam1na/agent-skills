@@ -174,6 +174,29 @@ python -m agent_skills.cli --root /path/to/repository install \
 python -m agent_skills.cli --root /path/to/repository rollback --maintenance
 ```
 
+An absent managed installation may adopt one existing Codex workflow without
+exposing the rest of the profile. The maintainer supplies the expected SHA-256
+of its current `SKILL.md`; Claude Code must have no same-name workflow or the
+same exact bytes:
+
+```bash
+python -m agent_skills.cli --root /path/to/repository adopt \
+  --archive /path/to/core.zip \
+  --metadata /path/to/core.release.json \
+  --skill compound-delivery-kernel \
+  --expected-prior-sha256 <digest> \
+  --maintenance
+```
+
+Adoption still authenticates and retains the complete exact release. Its
+receipt narrows discovery to the named workflow and owns a verified predecessor
+copy. Immediate offline rollback restores each pre-existing host body and
+removes a host projection that adoption created. This first-adoption seam does
+not add partial profile installation, batch selection, or a second lifecycle.
+The selected workflow must declare no required or routing dependencies; the
+command rejects dependency-bearing workflows rather than exposing an incomplete
+selection or expanding it automatically.
+
 The tracked `.agent-skills/active.json` file is both the ownership receipt and
 the active-generation marker. It records the fixed `.agents/skills` and
 `.claude/skills` projections separately from workflow behavior. Content-addressed

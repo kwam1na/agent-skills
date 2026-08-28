@@ -6,6 +6,7 @@ import stat
 import uuid
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from ..adoption import AdoptionError, body_sha256, restore_skill, skill_body
 from .base import HostProjection
 from .claude import CLAUDE_CODE
 from .codex import CODEX
@@ -43,6 +44,8 @@ def exposure_records() -> list[dict[str, str]]:
 def _skill_names(receipt: dict | None) -> tuple[str, ...]:
     if receipt is None or "exposures" not in receipt:
         return ()
+    if "adoption" in receipt:
+        return (receipt["adoption"]["skill"],)
     names: set[str] = set()
     for record in receipt["files"]:
         parts = PurePosixPath(record["path"]).parts
@@ -121,6 +124,23 @@ class ExposureManager:
             return False
         return self._matches_link(path, self._expected_host_target(host, skill))
 
+    @staticmethod
+    def _matches_predecessor(
+        path: Path,
+        host: HostProjection,
+        receipt: dict | None,
+        skill: str,
+    ) -> bool:
+        if receipt is None or receipt.get("adoption", {}).get("skill") != skill:
+            return False
+        adoption = receipt["adoption"]
+        if host.host not in adoption["predecessorHosts"]:
+            return not os.path.lexists(path)
+        try:
+            return body_sha256(skill_body(path)) == adoption["predecessorSha256"]
+        except AdoptionError:
+            return False
+
     def _matches_current(self, receipt: dict | None) -> bool:
         return self._matches_link(
             self.current_path,
@@ -146,6 +166,10 @@ class ExposureManager:
                 if self._matches_host(path, host, target, skill):
                     continue
                 if self._matches_host(path, host, alternate, skill):
+                    continue
+                if self._matches_predecessor(path, host, target, skill):
+                    continue
+                if self._matches_predecessor(path, host, alternate, skill):
                     continue
                 raise ExposureError(
                     f"exposure-conflict: {host.host} projection {host.root / skill} "
@@ -194,6 +218,72 @@ class ExposureManager:
                     f"projection at {host.root / skill}"
                 ) from error
         self._root(host)
+
+    def adopt_host(self, host: HostProjection, target: dict) -> None:
+        adoption = target["adoption"]
+        skill = adoption["skill"]
+        root = self._root(host, create=True)
+        path = root / skill
+        if self._matches_host(path, host, target, skill):
+            return
+        if not self._matches_predecessor(path, host, target, skill):
+            raise ExposureError(
+                f"exposure-conflict: {host.host} predecessor changed after preflight"
+            )
+        if os.path.lexists(path):
+            if path.is_symlink():
+                path.unlink()
+            else:
+                try:
+                    path.joinpath("SKILL.md").unlink()
+                    path.rmdir()
+                except OSError as error:
+                    raise ExposureError(
+                        f"exposure-conflict: {host.host} predecessor could not be retained"
+                    ) from error
+        path.symlink_to(
+            _runtime_link(self._expected_host_target(host, skill)),
+            target_is_directory=True,
+        )
+
+    def restore_adoption(self, receipt: dict, predecessor: bytes) -> None:
+        adoption = receipt["adoption"]
+        skill = adoption["skill"]
+        for host in HOSTS:
+            root = self._root(host, create=host.host in adoption["predecessorHosts"])
+            path = root / skill
+            if host.host in adoption["predecessorHosts"]:
+                if self._matches_predecessor(path, host, receipt, skill):
+                    continue
+                if not self._matches_host(path, host, receipt, skill):
+                    raise ExposureError(
+                        f"exposure-conflict: {host.host} projection changed before restore"
+                    )
+                try:
+                    restore_skill(path, predecessor)
+                except AdoptionError as error:
+                    raise ExposureError(str(error)) from error
+            elif os.path.lexists(path):
+                if not self._matches_host(path, host, receipt, skill):
+                    raise ExposureError(
+                        f"exposure-conflict: {host.host} projection changed before restore"
+                    )
+                path.unlink()
+        self.switch(None, receipt)
+
+    def verify_restored_adoption(self, receipt: dict) -> None:
+        adoption = receipt["adoption"]
+        skill = adoption["skill"]
+        if os.path.lexists(self.current_path):
+            raise ExposureError(
+                "exposure-conflict: shared active projection remains during restore"
+            )
+        for host in HOSTS:
+            root = self._root(host)
+            if not self._matches_predecessor(root / skill, host, receipt, skill):
+                raise ExposureError(
+                    f"exposure-conflict: {host.host} predecessor is not restored"
+                )
 
     def switch(self, target: dict | None, alternate: dict | None) -> None:
         self.preflight(target, alternate)
