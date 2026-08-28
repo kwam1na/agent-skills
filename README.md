@@ -2,8 +2,9 @@
 
 This repository is the deterministic, metadata-first home for a small portable
 agent-skills corpus. Its lifecycle installs only authenticated release archives;
-it does not extract new workflow bodies, expose them to a host discovery root,
-or implement provider-specific adapters.
+it does not extract new workflow bodies or implement provider-specific service
+adapters. One installed generation is exposed to Codex and Claude Code through
+repository-relative links, so neither host owns another editable workflow copy.
 
 `catalog.json` lists every cataloged skill. `profiles/` declares selectable
 workflow sets, and `provenance.lock.json` binds every cataloged file to its
@@ -67,7 +68,11 @@ python -m agent_skills.cli --root /path/to/repository rollback --maintenance
 ```
 
 The tracked `.agent-skills/active.json` file is both the ownership receipt and
-the active-generation marker. Content-addressed generations retain the current
-and immediately prior verified releases. A private journal under Git metadata
-makes interruption recoverable without touching unrelated tracked or untracked
-bytes. Rollback uses the retained prior generation and never fetches its source.
+the active-generation marker. It records the fixed `.agents/skills` and
+`.claude/skills` projections separately from workflow behavior. Content-addressed
+generations retain the current and immediately prior verified releases. A
+private journal under Git metadata makes interruption recoverable without
+touching unrelated tracked or untracked bytes. Rollback uses the retained prior
+generation and never fetches its source.
+
+See `docs/host-adapters.md` for the projection contract and conflict behavior.

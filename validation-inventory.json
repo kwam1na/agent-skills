@@ -1,5 +1,5 @@
 {
-  "expectedLifecycleScenarioCount": 6,
+  "expectedLifecycleScenarioCount": 12,
   "expectedScenarioCount": 7,
   "lifecycleScenarios": [
     {
@@ -25,6 +25,30 @@
     {
       "id": "tracked-receipt-ownership",
       "sensor": "tests/test_receipt.py"
+    },
+    {
+      "id": "codex-discovery-projection",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "claude-code-discovery-projection",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "cross-host-content-identity",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "host-projection-conflict-and-breakage",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "host-projection-removal",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "host-projection-rollback",
+      "sensor": "tests/test_host_exposure.py"
     }
   ],
   "rules": [

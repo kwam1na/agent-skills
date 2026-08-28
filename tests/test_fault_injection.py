@@ -16,7 +16,13 @@ from lifecycle_support import (
 
 class FaultInjectionTests(LifecycleFixture, unittest.TestCase):
     def test_interruption_at_every_activation_boundary_recovers_idempotently(self) -> None:
-        before_marker = {"staged", "generation-ready", "verifying"}
+        before_marker = {
+            "staged",
+            "generation-ready",
+            "exposing-codex",
+            "exposing-claude-code",
+            "verifying",
+        }
         for boundary in ACTIVATION_BOUNDARIES:
             with self.subTest(boundary=boundary):
                 repository = initialize_repository(self.base / boundary)

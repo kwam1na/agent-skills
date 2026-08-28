@@ -1,0 +1,5 @@
+{
+  "host": "codex",
+  "mode": "relative-symlink",
+  "root": ".agents/skills"
+}

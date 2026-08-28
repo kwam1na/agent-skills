@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from .hosts.exposure import exposure_records
 from .validate import canonical_json, safe_relative_path
 
 
@@ -66,6 +67,7 @@ def validate_version(value: object) -> dict:
 
 def validate_receipt(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != {
+        "exposures",
         "files",
         "generation",
         "ownership",
@@ -78,6 +80,8 @@ def validate_receipt(value: object) -> dict:
         raise ReceiptError("receipt-invalid: unsupported receipt schema")
     if value["ownership"] != OWNERSHIP:
         raise ReceiptError("receipt-invalid: ownership marker is missing")
+    if value["exposures"] != exposure_records():
+        raise ReceiptError("receipt-invalid: host exposure metadata is malformed")
     validate_version(
         {
             "files": value["files"],
@@ -115,6 +119,7 @@ def make_receipt(version: dict, previous: dict | None) -> dict:
     if previous is not None:
         validate_version(previous)
     receipt = {
+        "exposures": exposure_records(),
         "files": version["files"],
         "generation": version["generation"],
         "ownership": OWNERSHIP,

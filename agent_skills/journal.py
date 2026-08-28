@@ -13,6 +13,8 @@ JOURNAL_SCHEMA = "agent-skills-journal/1"
 JOURNAL_PHASES = (
     "staged",
     "generation-ready",
+    "exposing-codex",
+    "exposing-claude-code",
     "verifying",
     "marker-committed",
     "cleanup",

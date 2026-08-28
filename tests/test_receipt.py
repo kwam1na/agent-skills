@@ -36,6 +36,7 @@ class ReceiptContractTests(LifecycleFixture, unittest.TestCase):
             canonical_json({**valid, "schemaVersion": "agent-skills-receipt/2"}).encode(),
             canonical_json({**valid, "ownership": "someone-else"}).encode(),
             canonical_json({**valid, "generation": "../outside"}).encode(),
+            canonical_json({**valid, "exposures": list(reversed(valid["exposures"]))}).encode(),
         )
         for contents in mutations:
             with self.subTest(contents=contents[:30]):

@@ -1,8 +1,9 @@
 # Agent Skills Corpus Guide
 
 Keep this repository metadata-first while the workflow bodies are being
-classified. The only current release surface is the deterministic, core-only
-archive. Do not add installers, lifecycle mutation, compatibility engines, or
+classified. The release surface is the deterministic, core-only archive plus
+its transactional repository lifecycle and fixed Codex and Claude Code
+projections. Do not add more hosts, compatibility engines, or
 repository-specific overlays without a separately approved unit.
 
 Use outcome names in durable docs and metadata. Keep ticket and plan-unit

@@ -36,6 +36,7 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
             {
                 "active": None,
                 "blockers": [],
+                "exposures": [],
                 "journalPhase": None,
                 "lifecycle": "absent",
                 "recoveryPlan": [],
@@ -175,7 +176,13 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
     def test_tracked_installation_survives_clean_clone_without_journal(self) -> None:
         lifecycle = Lifecycle(self.repository)
         lifecycle.install(*self.v1, maintainer=True)
-        run_git(self.repository, "add", ".agent-skills")
+        run_git(
+            self.repository,
+            "add",
+            ".agent-skills",
+            ".agents/skills",
+            ".claude/skills",
+        )
         run_git(self.repository, "commit", "-qm", "track skill generation")
 
         clone = self.base / "clone"

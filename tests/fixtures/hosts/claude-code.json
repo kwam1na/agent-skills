@@ -1,0 +1,5 @@
+{
+  "host": "claude-code",
+  "mode": "relative-symlink",
+  "root": ".claude/skills"
+}

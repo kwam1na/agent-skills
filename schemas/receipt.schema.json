@@ -1,5 +1,45 @@
 {
   "$defs": {
+    "claudeExposure": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "const": "claude-code"
+        },
+        "mode": {
+          "const": "relative-symlink"
+        },
+        "root": {
+          "const": ".claude/skills"
+        }
+      },
+      "required": [
+        "host",
+        "mode",
+        "root"
+      ],
+      "type": "object"
+    },
+    "codexExposure": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "const": "codex"
+        },
+        "mode": {
+          "const": "relative-symlink"
+        },
+        "root": {
+          "const": ".agents/skills"
+        }
+      },
+      "required": [
+        "host",
+        "mode",
+        "root"
+      ],
+      "type": "object"
+    },
     "file": {
       "additionalProperties": false,
       "properties": {
@@ -78,6 +118,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "exposures": {
+      "items": false,
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/codexExposure"
+        },
+        {
+          "$ref": "#/$defs/claudeExposure"
+        }
+      ],
+      "type": "array"
+    },
     "files": {
       "$ref": "#/$defs/files"
     },
@@ -106,6 +160,7 @@
     }
   },
   "required": [
+    "exposures",
     "files",
     "generation",
     "ownership",
