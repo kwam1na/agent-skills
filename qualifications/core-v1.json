@@ -1,0 +1,102 @@
+{
+  "redaction": {
+    "environmentCaptured": false,
+    "pathsCaptured": false,
+    "retainedEvidence": "named assertions and deterministic checkpoint summaries"
+  },
+  "release": {
+    "archiveSha256": "d678efb5e80f2454a85d3a0ba93c2e6a085a4e8e1ca484c6b9f8d566fcd2c370",
+    "metadataSha256": "c3c0c46e242abed6bf942a0799f87a2288eeaef634922835f314b83d6e66759b",
+    "profile": "core",
+    "releaseId": "core-v1"
+  },
+  "replay": "python3 scripts/qualify-core.py --archive <archive> --metadata <metadata> --record <record>",
+  "scenarios": [
+    {
+      "assertionCount": 6,
+      "checkpointSha256": "5c413f40aa7d5713135ac5bc72510564c600f951c972fb7e3ec7aaeeae460b5a",
+      "evidence": [
+        "exact archive installs through the CLI",
+        "installed lifecycle is current",
+        "both fixed hosts are reported",
+        "both fixed hosts discover the active generation",
+        ".agents discovers the delivery entry point",
+        ".claude discovers the delivery entry point"
+      ],
+      "id": "fresh-install-and-host-discovery",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 5,
+      "checkpointSha256": "62521e71f180c3ca303645dbdde2f3946d25fdf86e4a0de9d5d6a6b645ad2821",
+      "evidence": [
+        "sensor passed: test_router.RouterTests.test_pinned_intents_route_deterministically",
+        "sensor passed: test_workflows.PlanningWorkflowTests.test_plan_only_returns_a_plan_without_tracker_mutation",
+        "sensor passed: test_workflows.ExecutionWorkflowTests.test_completion_requires_finish_line_sensors_and_approvals",
+        "sensor passed: test_review_and_compounding.ReviewWorkflowTests.test_unanimous_alignment_is_explicit_and_preserves_lens_evidence",
+        "sensor passed: test_review_and_compounding.CompoundingWorkflowTests.test_local_obvious_change_does_not_require_durable_knowledge"
+      ],
+      "id": "trackerless-workflows",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 3,
+      "checkpointSha256": "25bc848969e492bb2765ff5b7f42905b7e57c375d747b28a5d0f7de7b1f55c01",
+      "evidence": [
+        "sensor passed: test_workflows.PlanningWorkflowTests.test_configured_planning_uses_only_normalized_tracker_operations",
+        "sensor passed: test_workflows.ExecutionWorkflowTests.test_configured_execution_records_normalized_progress_and_evidence",
+        "sensor passed: test_tracker_contract.TrackerContractTests.test_fake_adapter_executes_every_operation"
+      ],
+      "id": "fake-adapter-workflows",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 1,
+      "checkpointSha256": "edbbe8ed1c1d8848c8a9102d15664f2085535e2834c73ba324013bee28a8b5f8",
+      "evidence": [
+        "tampered bytes fail the detached archive checksum"
+      ],
+      "id": "tamper-rejection",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 2,
+      "checkpointSha256": "44a5dbb7da3f30b2530e03faa695938525190e310d9748dc93e5c9a36a91ba02",
+      "evidence": [
+        "sensor passed: test_lifecycle.LifecycleTests.test_install_update_no_op_rollback_remove_preserve_dirty_repository",
+        "sensor passed: test_host_exposure.HostExposureTests.test_rollback_restores_both_hosts_to_the_retained_generation"
+      ],
+      "id": "rollback",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 3,
+      "checkpointSha256": "fe1e70cfeadd2641df3f9742e5b84c13f352d1bc14fb6b29f613f62db77092cd",
+      "evidence": [
+        "sensor passed: test_router.RouterTests.test_required_blocked_capability_returns_named_handoff",
+        "sensor passed: test_workflows.PlanningWorkflowTests.test_plan_without_tracker_completes_and_reports_selected_tracking_handoff",
+        "sensor passed: test_tracker_contract.TrackerContractTests.test_missing_capability_is_typed_and_actionable"
+      ],
+      "id": "missing-capability",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 2,
+      "checkpointSha256": "1c4eaeec9dbd87e799e36f98cdcbea9ac946d992cf02d6d383917943a71b6e45",
+      "evidence": [
+        "sensor passed: test_review_and_compounding.ReviewWorkflowTests.test_unresolved_findings_at_loop_bound_block_honestly",
+        "sensor passed: test_review_and_compounding.ReviewWorkflowTests.test_reviewer_failure_is_a_typed_blocked_outcome"
+      ],
+      "id": "bounded-review-failure",
+      "result": "passed"
+    }
+  ],
+  "schemaVersion": "agent-skills-qualification/1",
+  "summary": {
+    "assertionCount": 22,
+    "failedScenarioCount": 0,
+    "passedScenarioCount": 7,
+    "requiredScenarioCount": 7,
+    "result": "passed"
+  }
+}
