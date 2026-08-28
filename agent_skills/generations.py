@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import stat
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 from .fs import FileSafetyError, atomic_write, checked_files, contained_path, sha256_file
 from .receipt import DIGEST, OWNERSHIP, validate_version
@@ -13,6 +16,8 @@ from .validate import canonical_json
 
 
 GENERATION_MARKER = ".agent-skills-generation.json"
+OPERATION_ID = re.compile(r"^[a-f0-9]{32}$")
+CleanupFault = Callable[[str], None]
 
 
 class GenerationError(ValueError):
@@ -57,13 +62,18 @@ class GenerationStore:
         self.generations_root = managed_root / "generations"
         self.private_root = private_root
         self.staging_root = private_root / "staging"
+        self.trash_root = private_root / "trash"
 
     def _assert_managed_roots(self) -> None:
         if self.managed_root.is_symlink() or self.generations_root.is_symlink():
             raise GenerationError("local-divergence: managed root is a symlink")
 
     def _assert_private_roots(self) -> None:
-        if self.private_root.is_symlink() or self.staging_root.is_symlink():
+        if (
+            self.private_root.is_symlink()
+            or self.staging_root.is_symlink()
+            or self.trash_root.is_symlink()
+        ):
             raise GenerationError("local-divergence: private lifecycle root is a symlink")
 
     def generation_path(self, generation: str) -> Path:
@@ -74,7 +84,15 @@ class GenerationStore:
 
     def staging_path(self, operation_id: str) -> Path:
         self._assert_private_roots()
+        if OPERATION_ID.fullmatch(operation_id) is None:
+            raise GenerationError("journal-invalid: operation id is unsafe")
         return contained_path(self.staging_root, operation_id)
+
+    def operation_trash_path(self, operation_id: str) -> Path:
+        self._assert_private_roots()
+        if OPERATION_ID.fullmatch(operation_id) is None:
+            raise GenerationError("journal-invalid: operation id is unsafe")
+        return contained_path(self.trash_root, operation_id)
 
     def stage(
         self,
@@ -173,14 +191,20 @@ class GenerationStore:
                 raise GenerationError("journal-invalid: staging root is a symlink")
             shutil.rmtree(stage)
 
-    def cleanup(self, keep: set[str]) -> None:
+    def cleanup(
+        self,
+        keep: set[str],
+        operation_id: str,
+        fault: CleanupFault | None = None,
+    ) -> None:
         self._assert_managed_roots()
-        if not self.generations_root.exists():
-            return
-        for path in sorted(self.generations_root.iterdir()):
-            if not path.is_dir() or DIGEST.fullmatch(path.name) is None or path.name in keep:
-                continue
-            self.remove_owned(path.name)
+        trash = self.operation_trash_path(operation_id)
+        if self.generations_root.exists():
+            for path in sorted(self.generations_root.iterdir()):
+                if not path.is_dir() or DIGEST.fullmatch(path.name) is None or path.name in keep:
+                    continue
+                self._retire_owned(path.name, trash)
+        self._finish_operation_trash(trash, fault)
 
     def installed_generations(self) -> set[str]:
         self._assert_managed_roots()
@@ -193,7 +217,7 @@ class GenerationStore:
             names.add(path.name)
         return names
 
-    def remove_owned(self, generation: str) -> None:
+    def _retire_owned(self, generation: str, operation_trash: Path) -> None:
         path = self.generation_path(generation)
         if not path.exists():
             return
@@ -213,4 +237,38 @@ class GenerationStore:
             self.verify_path(path, version)
         except (KeyError, TypeError, OSError, json.JSONDecodeError, GenerationError) as error:
             raise GenerationError("local-divergence: refusing to delete unverified generation") from error
-        shutil.rmtree(path)
+        operation_trash.mkdir(parents=True, exist_ok=True)
+        self._assert_private_roots()
+        retired = contained_path(operation_trash, generation)
+        if retired.exists():
+            raise GenerationError("local-divergence: managed and retired generation both exist")
+        os.replace(path, retired)
+
+    def _finish_operation_trash(
+        self,
+        operation_trash: Path,
+        fault: CleanupFault | None,
+    ) -> None:
+        if not operation_trash.exists():
+            return
+        if operation_trash.is_symlink() or not operation_trash.is_dir():
+            raise GenerationError("journal-invalid: operation trash is unsafe")
+        fault_fired = False
+
+        def remove_tree(path: Path) -> None:
+            nonlocal fault_fired
+            for child in sorted(path.iterdir()):
+                mode = child.lstat().st_mode
+                if stat.S_ISDIR(mode):
+                    remove_tree(child)
+                    child.rmdir()
+                else:
+                    child.unlink()
+                if fault is not None and not fault_fired:
+                    fault_fired = True
+                    fault("obsolete-generation-delete-started")
+
+        remove_tree(operation_trash)
+        operation_trash.rmdir()
+        if self.trash_root.exists() and not any(self.trash_root.iterdir()):
+            self.trash_root.rmdir()

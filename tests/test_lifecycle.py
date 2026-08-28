@@ -4,7 +4,11 @@ import json
 import os
 import subprocess
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
+from unittest import mock
 
+from agent_skills.cli import main as lifecycle_cli
 from agent_skills.lifecycle import Lifecycle
 from agent_skills.locking import RepositoryLock
 
@@ -177,6 +181,37 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "maintainer"):
             lifecycle.install(*self.v1)
 
+    def test_mutation_authority_rejects_candidate_provider_and_pull_request_contexts(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        for context in ("candidate", "provider"):
+            with self.subTest(context=context):
+                with self.assertRaisesRegex(ValueError, "context-unsupported"):
+                    lifecycle.install(
+                        *self.v1,
+                        maintainer=True,
+                        context=context,
+                    )
+        self.assertEqual(lifecycle.status().as_dict()["lifecycle"], "absent")
+
+        output = StringIO()
+        with mock.patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}):
+            with redirect_stdout(output):
+                result = lifecycle_cli(
+                    [
+                        "--root",
+                        str(self.repository),
+                        "install",
+                        "--archive",
+                        str(self.v1[0]),
+                        "--metadata",
+                        str(self.v1[1]),
+                        "--maintenance",
+                    ]
+                )
+        self.assertEqual(result, 1)
+        self.assertEqual(json.loads(output.getvalue())["error"]["code"], "context-unsupported")
+        self.assertEqual(lifecycle.status().as_dict()["lifecycle"], "absent")
+
     def test_concurrent_mutation_reports_stable_lock_blocker(self) -> None:
         lifecycle = Lifecycle(self.repository)
         lifecycle.install(*self.v1, maintainer=True)
@@ -198,6 +233,36 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         self.assertIn("local-divergence", status["blockers"])
         with self.assertRaisesRegex(ValueError, "local-divergence"):
             lifecycle.install(*self.v1, maintainer=True)
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "preserve\n")
+        self.assertFalse((outside / "active.json").exists())
+
+    @unittest.skipUnless(
+        os.open in os.supports_dir_fd and os.rename in os.supports_dir_fd,
+        "directory-descriptor replacement is not supported on this host",
+    )
+    def test_active_marker_parent_swap_cannot_redirect_external_write(self) -> None:
+        outside = self.base / "external-managed-root"
+        outside.mkdir()
+        sentinel = outside / "sentinel.txt"
+        sentinel.write_text("preserve\n", encoding="utf-8")
+        detached = self.repository / ".agent-skills-detached"
+        original_open = os.open
+        swapped = False
+
+        def swapping_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+            nonlocal swapped
+            descriptor = original_open(path, flags, *args, **kwargs)
+            if path == ".agent-skills" and kwargs.get("dir_fd") is not None and not swapped:
+                os.rename(self.repository / ".agent-skills", detached)
+                os.symlink(outside, self.repository / ".agent-skills", target_is_directory=True)
+                swapped = True
+            return descriptor
+
+        lifecycle = Lifecycle(self.repository)
+        with mock.patch("agent_skills.fs.os.open", side_effect=swapping_open):
+            with self.assertRaisesRegex(ValueError, "local-divergence"):
+                lifecycle.install(*self.v1, maintainer=True)
+        self.assertTrue(swapped)
         self.assertEqual(sentinel.read_text(encoding="utf-8"), "preserve\n")
         self.assertFalse((outside / "active.json").exists())
 

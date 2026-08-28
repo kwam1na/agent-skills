@@ -5,11 +5,18 @@ import os
 import stat
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 
 class FileSafetyError(ValueError):
     pass
+
+
+DESCRIPTOR_PUBLISH_SUPPORTED = all(
+    function in os.supports_dir_fd
+    for function in (os.open, os.mkdir, os.rename, os.unlink)
+)
 
 
 def sha256_bytes(contents: bytes) -> str:
@@ -80,6 +87,90 @@ def atomic_write(path: Path, contents: bytes) -> None:
             os.close(directory)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def publish_active_marker(repository_root: Path, contents: bytes | None) -> None:
+    """Publish the fixed active marker without following a swapped managed root."""
+    if not DESCRIPTOR_PUBLISH_SUPPORTED:
+        managed_root = repository_root / ".agent-skills"
+        if managed_root.is_symlink():
+            raise FileSafetyError("local-divergence: managed root is a symlink")
+        managed_root.mkdir(exist_ok=True)
+        if managed_root.is_symlink() or not managed_root.resolve().is_relative_to(repository_root):
+            raise FileSafetyError("local-divergence: managed root escaped the repository")
+        active = managed_root / "active.json"
+        if contents is None:
+            active.unlink(missing_ok=True)
+        else:
+            atomic_write(active, contents)
+        if managed_root.is_symlink() or not managed_root.resolve().is_relative_to(repository_root):
+            raise FileSafetyError("local-divergence: managed root changed during publication")
+        return
+
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    root_descriptor = os.open(repository_root, directory_flags | no_follow)
+    try:
+        try:
+            os.mkdir(".agent-skills", mode=0o755, dir_fd=root_descriptor)
+        except FileExistsError:
+            pass
+        try:
+            managed_descriptor = os.open(
+                ".agent-skills",
+                directory_flags | no_follow,
+                dir_fd=root_descriptor,
+            )
+        except OSError as error:
+            raise FileSafetyError("local-divergence: managed root is unsafe") from error
+        try:
+            if contents is None:
+                try:
+                    os.unlink("active.json", dir_fd=managed_descriptor)
+                except FileNotFoundError:
+                    pass
+                os.fsync(managed_descriptor)
+                return
+            temporary = f".active.{uuid.uuid4().hex}.tmp"
+            try:
+                descriptor = os.open(
+                    temporary,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | no_follow,
+                    0o644,
+                    dir_fd=managed_descriptor,
+                )
+                try:
+                    remaining = memoryview(contents)
+                    while remaining:
+                        written = os.write(descriptor, remaining)
+                        if written <= 0:
+                            raise FileSafetyError(
+                                "local-divergence: active marker write did not progress"
+                            )
+                        remaining = remaining[written:]
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+                os.rename(
+                    temporary,
+                    "active.json",
+                    src_dir_fd=managed_descriptor,
+                    dst_dir_fd=managed_descriptor,
+                )
+                os.fsync(managed_descriptor)
+            finally:
+                try:
+                    os.unlink(temporary, dir_fd=managed_descriptor)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(managed_descriptor)
+    finally:
+        os.close(root_descriptor)
 
 
 def checked_files(root: Path) -> dict[str, str]:

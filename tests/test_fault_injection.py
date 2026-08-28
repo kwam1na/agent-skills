@@ -6,7 +6,12 @@ from pathlib import Path
 
 from agent_skills.lifecycle import ACTIVATION_BOUNDARIES, Lifecycle
 
-from lifecycle_support import LifecycleFixture, initialize_repository, run_git
+from lifecycle_support import (
+    LifecycleFixture,
+    build_version,
+    initialize_repository,
+    run_git,
+)
 
 
 class FaultInjectionTests(LifecycleFixture, unittest.TestCase):
@@ -77,6 +82,29 @@ class FaultInjectionTests(LifecycleFixture, unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "local-divergence"):
             lifecycle.update(*self.v2, maintainer=True, fault=swap_target)
         self.assertEqual(lifecycle.status().as_dict()["active"]["releaseId"], "core-v1")
+
+    def test_interrupted_obsolete_generation_delete_recovers_and_allows_next_update(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        lifecycle.update(*self.v2, maintainer=True)
+        v3 = build_version(self.base, "core-v3")
+        v4 = build_version(self.base, "core-v4")
+
+        def interrupt(phase: str) -> None:
+            if phase == "obsolete-generation-delete-started":
+                raise RuntimeError("interrupted private trash deletion")
+
+        with self.assertRaisesRegex(RuntimeError, "interrupted private trash deletion"):
+            lifecycle.update(*v3, maintainer=True, fault=interrupt)
+        self.assertEqual(lifecycle.status().as_dict()["active"]["releaseId"], "core-v3")
+        self.assertTrue(lifecycle.store.trash_root.exists())
+
+        self.assertEqual(lifecycle.recover(maintainer=True)["action"], "complete-current")
+        self.assertEqual(lifecycle.recover(maintainer=True)["action"], "no-op")
+        self.assertFalse(lifecycle.store.trash_root.exists())
+        lifecycle.update(*v4, maintainer=True)
+        self.assertEqual(lifecycle.status().as_dict()["active"]["releaseId"], "core-v4")
+        self.assertEqual(len(lifecycle.store.installed_generations()), 2)
 
 
 if __name__ == "__main__":

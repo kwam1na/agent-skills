@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import shutil
 import stat
@@ -17,6 +18,7 @@ MAX_ENTRIES = 128
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
+MAX_METADATA_BYTES = 64 * 1024
 MAX_PATH_DEPTH = 8
 MAX_COMPRESSION_RATIO = 100
 MAX_VERIFY_SECONDS = 5
@@ -38,14 +40,20 @@ def _digest(contents: bytes) -> str:
     return hashlib.sha256(contents).hexdigest()
 
 
-def _archive_digest(path: Path) -> str:
-    if path.stat().st_size > MAX_ARCHIVE_BYTES:
-        raise ReleaseError("release.archive_limit: compressed archive exceeds limit")
-    digest = hashlib.sha256()
+def _bounded_bytes(path: Path, limit: int, rule_id: str) -> bytes:
     with path.open("rb") as source:
-        while chunk := source.read(64 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
+        contents = source.read(limit + 1)
+    if len(contents) > limit:
+        raise ReleaseError(f"{rule_id}: input exceeds limit")
+    return contents
+
+
+def _archive_bytes(path: Path) -> bytes:
+    return _bounded_bytes(path, MAX_ARCHIVE_BYTES, "release.archive_limit")
+
+
+def _archive_digest(path: Path) -> str:
+    return _digest(_archive_bytes(path))
 
 
 def _path_digest(paths: list[str], files: dict[str, bytes]) -> str:
@@ -53,10 +61,13 @@ def _path_digest(paths: list[str], files: dict[str, bytes]) -> str:
     return _digest(canonical_json(records).encode())
 
 
-def _document(path: Path) -> dict:
-    value = json.loads(path.read_text(encoding="utf-8"))
+def _document_bytes(contents: bytes, name: str) -> dict:
+    try:
+        value = json.loads(contents.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ReleaseError(f"release.document: {name} must be valid UTF-8 JSON") from error
     if not isinstance(value, dict):
-        raise ReleaseError(f"release.document: {path.name} must be an object")
+        raise ReleaseError(f"release.document: {name} must be an object")
     return value
 
 
@@ -238,18 +249,24 @@ def verify_release(
     extract_to: Path | None = None,
 ) -> VerifiedRelease:
     started = time.monotonic()
-    metadata = _document(metadata_path)
+    metadata_bytes = _bounded_bytes(
+        metadata_path,
+        MAX_METADATA_BYTES,
+        "release.metadata_limit",
+    )
+    metadata = _document_bytes(metadata_bytes, metadata_path.name)
     if metadata.get("schemaVersion") != "agent-skills-release-metadata/1":
         raise ReleaseError("release.identity: unsupported detached metadata")
     metadata_release_id, metadata_profile = _release_identity(
         metadata.get("releaseId"), metadata.get("profile")
     )
-    archive_sha = _archive_digest(archive_path)
+    archive_bytes = _archive_bytes(archive_path)
+    archive_sha = _digest(archive_bytes)
     if metadata.get("archiveSha256") != archive_sha:
         raise ReleaseError("release.archive_checksum: detached checksum mismatch")
     files: dict[str, bytes] = {}
     try:
-        with zipfile.ZipFile(archive_path) as archive:
+        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
             infos = archive.infolist()
             if len(infos) > MAX_ENTRIES or len({info.filename for info in infos}) != len(infos):
                 raise ReleaseError("release.entry_limit: too many or duplicate entries")

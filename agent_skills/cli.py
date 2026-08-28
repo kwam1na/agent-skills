@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from .generations import inspect_release
-from .lifecycle import Lifecycle
+from .lifecycle import Lifecycle, require_mutation_authority
 from .locking import RepositoryLock
 from .validate import canonical_json
 
@@ -96,10 +96,7 @@ def main(arguments: list[str] | None = None) -> int:
         elif args.command == "recover":
             output = lifecycle.recover(maintainer=args.maintenance)
         else:
-            if not args.maintenance:
-                raise ValueError(
-                    "maintenance-required: breaking a stale lock requires maintainer authority"
-                )
+            require_mutation_authority(args.maintenance)
             RepositoryLock.break_stale(lifecycle.lock_path)
             output = {
                 "action": "break-stale-lock",

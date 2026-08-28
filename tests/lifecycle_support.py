@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from agent_skills.release import build_release
 from agent_skills.validate import canonical_json
@@ -93,6 +95,14 @@ def unrelated_digest(root: Path) -> str:
 
 class LifecycleFixture:
     def setUp(self) -> None:
+        self.maintenance_environment = mock.patch.dict(
+            os.environ,
+            {
+                "AGENT_SKILLS_EXECUTION_CONTEXT": "",
+                "GITHUB_EVENT_NAME": "",
+            },
+        )
+        self.maintenance_environment.start()
         self.temporary = tempfile.TemporaryDirectory()
         self.base = Path(self.temporary.name)
         self.repository = initialize_repository(self.base)
@@ -101,3 +111,4 @@ class LifecycleFixture:
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+        self.maintenance_environment.stop()

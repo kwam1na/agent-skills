@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .fs import atomic_write, repository_paths
+from .fs import publish_active_marker, repository_paths
 from .generations import GenerationError, GenerationStore, inspect_release
 from .journal import (
     JOURNAL_SCHEMA,
@@ -37,6 +38,32 @@ FaultHook = Callable[[str], None]
 
 class LifecycleError(ValueError):
     pass
+
+
+def require_mutation_authority(
+    maintainer: bool,
+    context: str | None = None,
+) -> None:
+    pull_request_event = os.environ.get("GITHUB_EVENT_NAME") in {
+        "pull_request",
+        "pull_request_target",
+    }
+    declared_context = os.environ.get("AGENT_SKILLS_EXECUTION_CONTEXT") or None
+    unsupported = None
+    if pull_request_event:
+        unsupported = "pull-request"
+    elif context not in {None, "maintainer"}:
+        unsupported = context
+    elif declared_context not in {None, "maintainer"}:
+        unsupported = declared_context
+    if unsupported is not None:
+        raise LifecycleError(
+            f"context-unsupported: lifecycle mutation is forbidden in {unsupported} context"
+        )
+    if not maintainer:
+        raise LifecycleError(
+            "maintenance-required: mutation requires explicit maintainer repository authority"
+        )
 
 
 @dataclass(frozen=True)
@@ -247,13 +274,6 @@ class Lifecycle:
         }
 
     @staticmethod
-    def _require_maintainer(maintainer: bool) -> None:
-        if not maintainer:
-            raise LifecycleError(
-                "maintenance-required: mutation requires explicit maintainer repository authority"
-            )
-
-    @staticmethod
     def _fault(fault: FaultHook | None, phase: str) -> None:
         if fault is not None:
             fault(phase)
@@ -261,11 +281,11 @@ class Lifecycle:
     def _write_active(self, target: dict | None) -> None:
         if self.managed_root.is_symlink():
             raise LifecycleError("local-divergence: managed root is a symlink")
-        if target is None:
-            self.active_path.unlink(missing_ok=True)
-            return
-        validate_receipt(target)
-        atomic_write(self.active_path, canonical_json(target).encode())
+        contents = None
+        if target is not None:
+            validate_receipt(target)
+            contents = canonical_json(target).encode()
+        publish_active_marker(self.root, contents)
 
     def _new_journal(
         self,
@@ -291,9 +311,17 @@ class Lifecycle:
             keep.add(receipt["previous"]["generation"])
         return keep
 
-    def _finish_cleanup(self, journal: dict) -> None:
+    def _finish_cleanup(
+        self,
+        journal: dict,
+        fault: FaultHook | None = None,
+    ) -> None:
         target = journal["target"]
-        self.store.cleanup(self._keep_for(target))
+        self.store.cleanup(
+            self._keep_for(target),
+            journal["operationId"],
+            fault,
+        )
         self.store.cleanup_staging(journal["operationId"])
 
     def _recover_locked(self) -> dict[str, object]:
@@ -322,7 +350,7 @@ class Lifecycle:
         if _same_receipt(active, prior):
             if prior is not None:
                 self.store.verify(version_from_receipt(prior))
-            self.store.cleanup(self._keep_for(prior))
+            self.store.cleanup(self._keep_for(prior), journal["operationId"])
             self.store.cleanup_staging(journal["operationId"])
             self.journal_path.unlink()
             return {
@@ -333,8 +361,13 @@ class Lifecycle:
             "local-divergence: active marker matches neither recovery endpoint"
         )
 
-    def recover(self, *, maintainer: bool = False) -> dict[str, object]:
-        self._require_maintainer(maintainer)
+    def recover(
+        self,
+        *,
+        maintainer: bool = False,
+        context: str | None = None,
+    ) -> dict[str, object]:
+        require_mutation_authority(maintainer, context)
         with RepositoryLock(self.lock_path):
             return self._recover_locked()
 
@@ -345,9 +378,10 @@ class Lifecycle:
         *,
         require_current: bool,
         maintainer: bool,
+        context: str | None,
         fault: FaultHook | None,
     ) -> dict[str, object]:
-        self._require_maintainer(maintainer)
+        require_mutation_authority(maintainer, context)
         with RepositoryLock(self.lock_path):
             self._recover_locked()
             state = self.status()
@@ -384,7 +418,7 @@ class Lifecycle:
             self._fault(fault, "marker-published")
             journal = write_journal(self.journal_path, journal, "marker-committed")
             self._fault(fault, "marker-committed")
-            self._finish_cleanup(journal)
+            self._finish_cleanup(journal, fault)
             journal = write_journal(self.journal_path, journal, "cleanup")
             self._fault(fault, "cleanup")
             self.journal_path.unlink()
@@ -400,6 +434,7 @@ class Lifecycle:
         metadata: Path,
         *,
         maintainer: bool = False,
+        context: str | None = None,
         fault: FaultHook | None = None,
     ) -> dict[str, object]:
         return self._apply_release(
@@ -407,6 +442,7 @@ class Lifecycle:
             metadata,
             require_current=False,
             maintainer=maintainer,
+            context=context,
             fault=fault,
         )
 
@@ -416,6 +452,7 @@ class Lifecycle:
         metadata: Path,
         *,
         maintainer: bool = False,
+        context: str | None = None,
         fault: FaultHook | None = None,
     ) -> dict[str, object]:
         return self._apply_release(
@@ -423,6 +460,7 @@ class Lifecycle:
             metadata,
             require_current=True,
             maintainer=maintainer,
+            context=context,
             fault=fault,
         )
 
@@ -430,9 +468,10 @@ class Lifecycle:
         self,
         *,
         maintainer: bool = False,
+        context: str | None = None,
         fault: FaultHook | None = None,
     ) -> dict[str, object]:
-        self._require_maintainer(maintainer)
+        require_mutation_authority(maintainer, context)
         with RepositoryLock(self.lock_path):
             self._recover_locked()
             prior = self._active()
@@ -450,7 +489,7 @@ class Lifecycle:
             self._fault(fault, "marker-published")
             journal = write_journal(self.journal_path, journal, "marker-committed")
             self._fault(fault, "marker-committed")
-            self._finish_cleanup(journal)
+            self._finish_cleanup(journal, fault)
             journal = write_journal(self.journal_path, journal, "cleanup")
             self._fault(fault, "cleanup")
             self.journal_path.unlink()
@@ -464,9 +503,10 @@ class Lifecycle:
         self,
         *,
         maintainer: bool = False,
+        context: str | None = None,
         fault: FaultHook | None = None,
     ) -> dict[str, object]:
-        self._require_maintainer(maintainer)
+        require_mutation_authority(maintainer, context)
         with RepositoryLock(self.lock_path):
             self._recover_locked()
             state = self.status()
@@ -484,7 +524,7 @@ class Lifecycle:
             self._fault(fault, "marker-published")
             journal = write_journal(self.journal_path, journal, "marker-committed")
             self._fault(fault, "marker-committed")
-            self._finish_cleanup(journal)
+            self._finish_cleanup(journal, fault)
             journal = write_journal(self.journal_path, journal, "cleanup")
             self._fault(fault, "cleanup")
             self.journal_path.unlink()
