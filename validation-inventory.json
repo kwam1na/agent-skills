@@ -1,5 +1,5 @@
 {
-  "expectedLifecycleScenarioCount": 18,
+  "expectedLifecycleScenarioCount": 19,
   "expectedScenarioCount": 7,
   "lifecycleScenarios": [
     {
@@ -73,6 +73,10 @@
     {
       "id": "verify-before-host-switch",
       "sensor": "tests/test_fault_injection.py"
+    },
+    {
+      "id": "atomic-shared-host-removal",
+      "sensor": "tests/test_host_exposure.py"
     }
   ],
   "rules": [

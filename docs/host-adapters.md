@@ -26,11 +26,12 @@ replacement. Status reports each host projection as `current` or `conflict`
 and provides `review-host-projections` when maintainer review is required.
 
 Rollback switches the shared link to the retained verified generation only
-after its final verification and before the active marker changes. Removal
-deletes only stable links proven by the current receipt, leaves unrelated host
-entries untouched, then removes the shared link through the held repository
-directory. Interrupted projection changes are restored or completed through
-the existing repository lifecycle journal.
+after its final verification and before the active marker changes. After final
+verification and preflight, removal unlinks the shared generation through the
+held repository directory so both hosts become unavailable together. It then
+deletes only the now-inert stable links proven by the current receipt and leaves
+unrelated host entries untouched. Interrupted projection changes are restored
+or completed through the existing repository lifecycle journal.
 
 Receipts created before host exposure metadata existed remain readable and
 represent an installed but unexposed generation. A later verified update or

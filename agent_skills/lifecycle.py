@@ -627,15 +627,18 @@ class Lifecycle:
             for phase in ("staged", "generation-ready"):
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
+            journal = write_journal(self.journal_path, journal, "verifying")
+            self._fault(fault, "verifying")
+            self.store.verify(version_from_receipt(prior))
+            if prior["previous"] is not None:
+                self.store.verify(prior["previous"])
+            self.exposure.preflight(None, prior)
+            self.exposure.switch(None, prior)
             for host in HOSTS:
                 self.exposure.reconcile_host(host, None, prior)
                 phase = f"exposing-{host.host}"
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
-            journal = write_journal(self.journal_path, journal, "verifying")
-            self._fault(fault, "verifying")
-            self.exposure.preflight(None, prior)
-            self.exposure.switch(None, prior)
             self._write_active(None)
             self._fault(fault, "marker-published")
             journal = write_journal(self.journal_path, journal, "marker-committed")

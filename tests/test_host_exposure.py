@@ -147,6 +147,30 @@ class HostExposureTests(LifecycleFixture, unittest.TestCase):
         self.assertEqual((local_skill / "SKILL.md").read_text(encoding="utf-8"), "local\n")
         self.assertEqual(lifecycle.status().as_dict()["exposures"], [])
 
+    def test_interrupted_removal_after_first_host_leaves_both_unavailable(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        generation = lifecycle.status().as_dict()["active"]["generation"]
+
+        def interrupt(phase: str) -> None:
+            if phase == "exposing-codex":
+                raise RuntimeError("stop during removal")
+
+        with self.assertRaisesRegex(RuntimeError, "during removal"):
+            lifecycle.remove(maintainer=True, fault=interrupt)
+        for host in HOSTS:
+            projection = self.repository / host.root / "deliver-work"
+            with self.assertRaises(FileNotFoundError):
+                projection.resolve(strict=True)
+
+        status = lifecycle.status().as_dict()
+        self.assertEqual(status["lifecycle"], "recovery-needed")
+        self.assertEqual(status["blockers"], [])
+        self.assertEqual(lifecycle.recover(maintainer=True)["action"], "restore-prior")
+        for host in HOSTS:
+            projection = self.repository / host.root / "deliver-work"
+            self.assertIn(generation, projection.resolve(strict=True).as_posix())
+
     def test_interruption_after_first_host_restores_prior_projection_set(self) -> None:
         lifecycle = Lifecycle(self.repository)
         lifecycle.install(*self.v1, maintainer=True)
