@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
+import sys
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
 from unittest import mock
 
 from agent_skills.cli import main as lifecycle_cli
+from agent_skills.generations import inspect_release
 from agent_skills.lifecycle import Lifecycle
 from agent_skills.locking import RepositoryLock
+from agent_skills.release import verify_release
 
 from lifecycle_support import (
     LifecycleFixture,
@@ -119,6 +124,42 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
             lifecycle.update(missing, self.v2[1], maintainer=True)
         self.assertEqual(lifecycle.status().as_dict()["active"]["releaseId"], "core-v1")
 
+    def test_receipt_uses_the_metadata_bytes_that_verification_authenticated(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        archive, metadata = self.v1
+        verified_metadata = metadata.read_bytes()
+        replacement_metadata = verified_metadata + b"\n"
+        expected_digest = hashlib.sha256(verified_metadata).hexdigest()
+
+        def verify_then_replace(*args: object, **kwargs: object):
+            result = verify_release(*args, **kwargs)
+            metadata.write_bytes(replacement_metadata)
+            return result
+
+        operations = (
+            ("inspection", lambda: inspect_release(archive, metadata)),
+            (
+                "staging",
+                lambda: lifecycle.store.stage(
+                    archive,
+                    metadata,
+                    "a" * 32,
+                )[0],
+            ),
+        )
+        for name, operation in operations:
+            with self.subTest(operation=name):
+                metadata.write_bytes(verified_metadata)
+                with mock.patch(
+                    "agent_skills.generations.verify_release",
+                    side_effect=verify_then_replace,
+                ):
+                    version = operation()
+                self.assertEqual(
+                    version["release"]["metadataSha256"],
+                    expected_digest,
+                )
+
     def test_provenance_failure_never_changes_active_version(self) -> None:
         lifecycle = Lifecycle(self.repository)
         lifecycle.install(*self.v1, maintainer=True)
@@ -219,6 +260,64 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "lock-busy"):
                 lifecycle.update(*self.v2, maintainer=True)
         self.assertEqual(lifecycle.status().as_dict()["active"]["releaseId"], "core-v1")
+
+    def test_stale_recovery_never_deletes_a_replacement_live_lock(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import os, sys; "
+                    "from pathlib import Path; "
+                    "from agent_skills.locking import RepositoryLock; "
+                    "lock = RepositoryLock(Path(sys.argv[1])); "
+                    "lock.__enter__(); "
+                    "os._exit(0)"
+                ),
+                str(lifecycle.lock_path),
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+        )
+        self.assertTrue(lifecycle.lock_path.exists())
+
+        real_unlink = Path.unlink
+        replacement: RepositoryLock | None = None
+
+        def replace_before_delete(
+            target: Path,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            nonlocal replacement
+            real_unlink(target, *args, **kwargs)
+            replacement = RepositoryLock(target)
+            replacement.__enter__()
+            real_unlink(target, *args, **kwargs)
+
+        try:
+            with (
+                mock.patch(
+                    "agent_skills.locking.os.kill",
+                    side_effect=ProcessLookupError,
+                ),
+                mock.patch.object(Path, "unlink", new=replace_before_delete),
+            ):
+                RepositoryLock.break_stale(lifecycle.lock_path)
+
+            if replacement is None:
+                replacement = RepositoryLock(lifecycle.lock_path)
+                replacement.__enter__()
+            self.assertTrue(lifecycle.lock_path.exists())
+            with self.assertRaisesRegex(ValueError, "lock-busy"):
+                RepositoryLock.break_stale(lifecycle.lock_path)
+            with self.assertRaisesRegex(ValueError, "lock-busy"):
+                with RepositoryLock(lifecycle.lock_path):
+                    pass
+        finally:
+            if replacement is not None:
+                replacement.__exit__(None, None, None)
 
     def test_managed_root_symlink_cannot_redirect_writes_or_deletion(self) -> None:
         outside = self.base / "outside"

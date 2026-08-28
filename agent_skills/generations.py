@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-from .fs import FileSafetyError, atomic_write, checked_files, contained_path, sha256_file
+from .fs import FileSafetyError, atomic_write, checked_files, contained_path
 from .receipt import DIGEST, OWNERSHIP, validate_version
 from .release import VerifiedRelease, verify_release
 from .validate import canonical_json
@@ -30,24 +30,20 @@ def _records(files: dict[str, str]) -> list[dict[str, str]]:
 
 def inspect_release(archive: Path, metadata: Path) -> dict:
     try:
-        metadata_before = metadata.read_bytes()
         with tempfile.TemporaryDirectory() as temporary:
             extracted = Path(temporary) / "release"
             verified = verify_release(archive, metadata, extract_to=extracted)
             files = checked_files(extracted)
-        metadata_after = metadata.read_bytes()
     except FileNotFoundError as error:
         raise GenerationError(
             "source-unavailable: release archive or metadata is unavailable"
         ) from error
-    if metadata_after != metadata_before:
-        raise GenerationError("release.metadata_changed: detached metadata changed during verification")
     version = {
         "files": _records(files),
         "generation": verified.archive_sha256,
         "release": {
             "archiveSha256": verified.archive_sha256,
-            "metadataSha256": sha256_file(metadata),
+            "metadataSha256": verified.metadata_sha256,
             "profile": verified.profile_id,
             "releaseId": verified.release_id,
         },
@@ -100,12 +96,6 @@ class GenerationStore:
         metadata: Path,
         operation_id: str,
     ) -> tuple[dict, Path]:
-        try:
-            metadata_before = metadata.read_bytes()
-        except FileNotFoundError as error:
-            raise GenerationError(
-                "source-unavailable: release archive or metadata is unavailable"
-            ) from error
         stage = self.staging_path(operation_id)
         if stage.exists():
             raise GenerationError("generation.staging_conflict: private staging already exists")
@@ -113,7 +103,6 @@ class GenerationStore:
         self._assert_private_roots()
         try:
             verified: VerifiedRelease = verify_release(archive, metadata, extract_to=stage)
-            metadata_after = metadata.read_bytes()
         except FileNotFoundError as error:
             if stage.exists() and not stage.is_symlink():
                 shutil.rmtree(stage)
@@ -124,16 +113,13 @@ class GenerationStore:
             if stage.exists() and not stage.is_symlink():
                 shutil.rmtree(stage)
             raise
-        if metadata_after != metadata_before:
-            shutil.rmtree(stage, ignore_errors=True)
-            raise GenerationError("release.metadata_changed: detached metadata changed during verification")
         files = checked_files(stage)
         version = {
             "files": _records(files),
             "generation": verified.archive_sha256,
             "release": {
                 "archiveSha256": verified.archive_sha256,
-                "metadataSha256": sha256_file(metadata),
+                "metadataSha256": verified.metadata_sha256,
                 "profile": verified.profile_id,
                 "releaseId": verified.release_id,
             },

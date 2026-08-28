@@ -34,6 +34,7 @@ class VerifiedRelease:
     release_id: str
     profile_id: str
     archive_sha256: str
+    metadata_sha256: str
 
 
 def _digest(contents: bytes) -> str:
@@ -232,9 +233,10 @@ def build_release(
         "releaseId": release_id,
         "schemaVersion": "agent-skills-release-metadata/1",
     }
+    metadata_bytes = canonical_json(metadata).encode()
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
-    metadata_path.write_text(canonical_json(metadata), encoding="utf-8")
-    return VerifiedRelease(release_id, profile_id, archive_sha)
+    metadata_path.write_bytes(metadata_bytes)
+    return VerifiedRelease(release_id, profile_id, archive_sha, _digest(metadata_bytes))
 
 
 def _validate_archive_path(name: str) -> None:
@@ -348,4 +350,9 @@ def verify_release(
         if validation.findings:
             shutil.rmtree(extract_to)
             raise ReleaseError("release.standalone_validation: extracted corpus is invalid")
-    return VerifiedRelease(metadata_release_id, metadata_profile, archive_sha)
+    return VerifiedRelease(
+        metadata_release_id,
+        metadata_profile,
+        archive_sha,
+        _digest(metadata_bytes),
+    )
