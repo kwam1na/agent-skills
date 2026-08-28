@@ -1,5 +1,5 @@
 {
-  "description": "Reserved optional tracker profile; U8 adds its extracted adapter.",
+  "description": "Reserved optional tracker profile; it remains empty until the optional Linear adapter is extracted.",
   "id": "linear",
   "includes": [
     "core"

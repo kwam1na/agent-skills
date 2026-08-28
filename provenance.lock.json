@@ -56,7 +56,7 @@
       "id": "create-linear-ticket",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "Athena's tracker source is retained overlay inventory; U8 must extract a narrow optional adapter before it becomes selectable.",
+        "reason": "Athena's tracker source is retained overlay inventory until a narrow optional Linear adapter is extracted.",
         "status": "modified-derivative"
       },
       "outputs": [
@@ -99,7 +99,7 @@
       "id": "deliver-work",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The pre-existing router routes through Linear and remains source-only until U7 extracts a neutral router.",
+        "reason": "The pre-existing router routes through Linear and remains source-only until a tracker-neutral router is extracted.",
         "status": "modified-derivative"
       },
       "outputs": [
@@ -126,7 +126,7 @@
       "id": "execute-linear-ticket",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "Athena's execution source is retained overlay inventory; it cannot be released or selected before U8 extracts a narrow optional adapter.",
+        "reason": "Athena's execution source remains retained overlay inventory until a narrow optional Linear execution adapter is extracted.",
         "status": "modified-derivative"
       },
       "outputs": [

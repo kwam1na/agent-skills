@@ -35,5 +35,6 @@ catalog, core profile, provenance, schemas, inventory, and selected core skill;
 it excludes source-only and optional profile bodies.
 
 The default `core` profile is tracker-neutral. Bootstrap guidance is opt-in;
-the Linear profile is reserved for U8. Cataloged source-only inventory is not selectable, and
-Athena overlays are classification inputs only rather than distributable skills.
+the Linear profile remains empty until the optional Linear adapter is extracted.
+Cataloged source-only inventory is not selectable, and Athena overlays are
+classification inputs only rather than distributable skills.
