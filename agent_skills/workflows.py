@@ -115,6 +115,9 @@ def plan_work(request: PlanningRequest) -> WorkPlan:
     sensors = _sensors(request)
     if not sensors:
         raise ValueError("planning requires at least one verification sensor")
+    out_of_scope = _unique(request.out_of_scope)
+    approval_handoffs = _unique(request.approval_handoffs)
+    posture = _posture(request)
     handoffs = [
         f"optional sensor unavailable: {sensor.name}"
         for sensor in sensors
@@ -128,10 +131,21 @@ def plan_work(request: PlanningRequest) -> WorkPlan:
                 request.tracker_state,
                 TrackerOperation.CREATE_WORK,
                 {
-                    "outcome": outcome,
-                    "scope": scope,
+                    "approvalHandoffs": approval_handoffs,
                     "finishLine": finish_line,
-                    "posture": _posture(request),
+                    "outOfScope": out_of_scope,
+                    "outcome": outcome,
+                    "posture": posture,
+                    "scope": scope,
+                    "sensors": tuple(
+                        {
+                            "available": sensor.available,
+                            "name": sensor.name,
+                            "required": sensor.required,
+                        }
+                        for sensor in sensors
+                    ),
+                    "testScenarios": test_scenarios,
                 },
                 request.tracker_adapter,
                 f"{request.tracking_key}:create" if request.tracking_key else None,
@@ -159,13 +173,13 @@ def plan_work(request: PlanningRequest) -> WorkPlan:
     return WorkPlan(
         outcome=outcome,
         scope=scope,
-        out_of_scope=_unique(request.out_of_scope),
+        out_of_scope=out_of_scope,
         finish_line=finish_line,
         dependencies=dependencies,
         test_scenarios=test_scenarios,
-        posture=_posture(request),
+        posture=posture,
         sensors=sensors,
-        approval_handoffs=_unique(request.approval_handoffs),
+        approval_handoffs=approval_handoffs,
         handoffs=_unique(tuple(handoffs)),
         tracker_outcomes=tracker_outcomes,
     )
@@ -208,6 +222,11 @@ def execute_work(request: ExecutionRequest) -> ExecutionResult:
     evidence = _unique(request.evidence)
 
     blockers = list(_unique(request.blockers))
+    blockers.extend(
+        f"out-of-scope work reported complete: {item}"
+        for item in request.plan.out_of_scope
+        if item in completed_work
+    )
     blockers.extend(
         f"dependency incomplete: {dependency}"
         for dependency in request.plan.dependencies

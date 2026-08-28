@@ -4,8 +4,9 @@ import json
 import unittest
 from pathlib import Path
 
-from agent_skills.capabilities import CapabilityState, OutcomeKind
+from agent_skills.capabilities import CapabilityState, OutcomeKind, TrackerOperation
 from agent_skills.fake_tracker import InMemoryTrackerAdapter
+from agent_skills.router import WorkflowRequest, route_workflow
 from agent_skills.workflows import (
     ExecutionRequest,
     PlanningRequest,
@@ -70,6 +71,31 @@ class PlanningWorkflowTests(unittest.TestCase):
     def test_same_facts_produce_the_same_normalized_plan(self) -> None:
         self.assertEqual(_plan_from_fixture(), _plan_from_fixture())
 
+    def test_diagnosis_only_routes_without_execution_mutation(self) -> None:
+        adapter = InMemoryTrackerAdapter()
+
+        decision = route_workflow(WorkflowRequest("Diagnose the parser failure"))
+
+        self.assertEqual(decision.workflow.value, "diagnose")
+        self.assertFalse(adapter.mutations)
+
+    def test_plan_only_returns_a_plan_without_tracker_mutation(self) -> None:
+        adapter = InMemoryTrackerAdapter()
+        plan = plan_work(
+            PlanningRequest(
+                outcome="bound the parser change",
+                scope=("parser",),
+                finish_line=("focused sensor passes",),
+                test_scenarios=("bounded input is accepted",),
+                repository_sensors=(Sensor("focused sensor"),),
+                tracker_state=CapabilityState.CONFIGURED,
+                tracker_adapter=adapter,
+            )
+        )
+
+        self.assertFalse(plan.tracker_outcomes)
+        self.assertFalse(adapter.mutations)
+
     def test_plan_without_tracker_completes_and_reports_selected_tracking_handoff(self) -> None:
         request = PlanningRequest(
             outcome="bound the parser change",
@@ -95,10 +121,15 @@ class PlanningWorkflowTests(unittest.TestCase):
             PlanningRequest(
                 outcome="bound the parser change",
                 scope=("parser",),
+                out_of_scope=("new parser framework",),
                 finish_line=("focused sensor passes",),
                 test_scenarios=("bounded input is accepted",),
-                repository_sensors=(Sensor("focused sensor"),),
+                repository_sensors=(
+                    Sensor("focused sensor"),
+                    Sensor("optional review", required=False, available=False),
+                ),
                 dependencies=("characterization",),
+                approval_handoffs=("maintainer approval",),
                 tracking_selected=True,
                 tracker_state=CapabilityState.CONFIGURED,
                 tracker_adapter=adapter,
@@ -111,6 +142,41 @@ class PlanningWorkflowTests(unittest.TestCase):
             all(outcome.kind is OutcomeKind.SUCCESS for outcome in plan.tracker_outcomes)
         )
         self.assertEqual(len(adapter.mutations), 2)
+        self.assertEqual(
+            tuple(request.operation for request in adapter.mutations),
+            (
+                TrackerOperation.CREATE_WORK,
+                TrackerOperation.LINK_DEPENDENCIES,
+            ),
+        )
+        self.assertEqual(
+            adapter.mutations[0].payload,
+            {
+                "approvalHandoffs": ("maintainer approval",),
+                "finishLine": ("focused sensor passes",),
+                "outOfScope": ("new parser framework",),
+                "outcome": "bound the parser change",
+                "posture": "test-first",
+                "scope": ("parser",),
+                "sensors": (
+                    {
+                        "available": True,
+                        "name": "focused sensor",
+                        "required": True,
+                    },
+                    {
+                        "available": False,
+                        "name": "optional review",
+                        "required": False,
+                    },
+                ),
+                "testScenarios": ("bounded input is accepted",),
+            },
+        )
+        self.assertEqual(
+            adapter.mutations[1].payload,
+            {"dependencies": ("characterization",)},
+        )
 
     def test_unavailable_optional_sensor_is_reported_without_generic_replacement(self) -> None:
         plan = plan_work(
@@ -171,6 +237,29 @@ class ExecutionWorkflowTests(unittest.TestCase):
         self.assertEqual(result.status, self.fixture["complete"]["expectedStatus"])
         self.assertFalse(result.blockers)
         self.assertFalse(result.handoffs)
+
+    def test_out_of_scope_completed_work_blocks_completion(self) -> None:
+        complete = self.fixture["complete"]
+        result = execute_work(
+            ExecutionRequest(
+                plan=self.plan,
+                completed_work=(
+                    *complete["completedWork"],
+                    "new parser framework",
+                ),
+                completed_finish_line=tuple(complete["completedFinishLine"]),
+                completed_dependencies=tuple(complete["completedDependencies"]),
+                sensor_results=complete["sensors"],
+                approved_handoffs=tuple(complete["approvedHandoffs"]),
+                evidence=tuple(complete["evidence"]),
+            )
+        )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertIn(
+            "out-of-scope work reported complete: new parser framework",
+            result.blockers,
+        )
 
     def test_missing_required_sensor_prevents_completion(self) -> None:
         result = execute_work(
