@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -53,6 +54,57 @@ class ReleaseArchiveTests(unittest.TestCase):
             metadata.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             with self.assertRaisesRegex(ReleaseError, "release.identity"):
                 verify_release(archive, metadata)
+
+    def test_missing_or_typed_release_identity_rejects(self) -> None:
+        metadata_mutations = (
+            ("releaseId", None),
+            ("profile", None),
+            ("profile", "linear"),
+        )
+        for key, value in metadata_mutations:
+            with self.subTest(source="metadata", key=key, value=value), tempfile.TemporaryDirectory() as temporary:
+                archive, metadata = self.build(Path(temporary))
+                document = json.loads(metadata.read_text(encoding="utf-8"))
+                document[key] = value
+                metadata.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                with self.assertRaisesRegex(ReleaseError, "release.identity"):
+                    verify_release(archive, metadata)
+
+        manifest_mutations = (("releaseId", None), ("profile", None), ("profile", "linear"))
+        for key, value in manifest_mutations:
+            with self.subTest(source="manifest", key=key, value=value), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                archive, metadata = self.build(directory)
+                with zipfile.ZipFile(archive) as source:
+                    entries = {name: source.read(name) for name in source.namelist()}
+                manifest = json.loads(entries["release-manifest.json"])
+                manifest[key] = value
+                entries["release-manifest.json"] = (
+                    json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+                ).encode()
+                self._rewrite_archive(archive, entries)
+                self._rewrite_checksum(archive, metadata)
+                with self.assertRaisesRegex(ReleaseError, "release.identity"):
+                    verify_release(archive, metadata)
+
+    def test_build_rejects_symlinked_runtime_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            corpus = directory / "corpus"
+            shutil.copytree(ROOT, corpus, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+            external = directory / "external-validate.py"
+            external.write_text("raise RuntimeError('must not package')\n", encoding="utf-8")
+            runtime = corpus / "agent_skills" / "validate.py"
+            runtime.unlink()
+            runtime.symlink_to(external)
+            with self.assertRaisesRegex(ReleaseError, "release.source_path"):
+                build_release(
+                    corpus,
+                    directory / "core.zip",
+                    directory / "core.release.json",
+                    release_id="core-v1",
+                    profile_id="core",
+                )
 
     def test_missing_and_unregistered_payload_reject(self) -> None:
         missing_paths = (

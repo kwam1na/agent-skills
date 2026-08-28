@@ -40,7 +40,7 @@ RESOURCE_RE = re.compile(
 LEAKAGE_PATTERNS = (
     ("athena-name", re.compile(r"\bathena\b", re.IGNORECASE)),
     ("v26-ticket", re.compile(r"\bV26-\d+\b", re.IGNORECASE)),
-    ("machine-path", re.compile(r"(?:/Users/[^\s`]+|[A-Za-z]:\\\\Users\\\\[^\s`]+)")),
+    ("machine-path", re.compile(r"(?:/Users/[^\s`]+|[A-Za-z]:\\Users\\[^\s`]+)")),
     ("private-url", re.compile(r"https?://(?:[^\s/]*\.)?athena-os\.app\b", re.IGNORECASE)),
     ("project-url", re.compile(r"https?://linear\.app/v26-labs/", re.IGNORECASE)),
     (
@@ -235,6 +235,7 @@ def _validate_inventory(reader: CorpusReader) -> tuple[str, ...]:
 
 def _load_profiles(reader: CorpusReader) -> dict[str, dict]:
     profiles: dict[str, dict] = {}
+    folded_ids: dict[str, str] = {}
     profiles_dir = reader.root / "profiles"
     if not profiles_dir.is_dir():
         reader.findings.append(Finding("catalog.complete", "profiles", "missing profile directory"))
@@ -250,6 +251,17 @@ def _load_profiles(reader: CorpusReader) -> dict[str, dict]:
         elif profile_id in profiles:
             reader.findings.append(Finding("profile.reference", relative, f"duplicate profile id: {profile_id}"))
         else:
+            folded = profile_id.casefold()
+            prior = folded_ids.get(folded)
+            if prior is not None and prior != profile_id:
+                reader.findings.append(
+                    Finding(
+                        "path.case_unique",
+                        relative,
+                        f"case-fold profile id collision with {prior}",
+                    )
+                )
+            folded_ids[folded] = profile_id
             profiles[profile_id] = document
     return profiles
 
@@ -317,7 +329,7 @@ def _validate_scenarios(
         )
 
 
-def _check_path_safety(reader: CorpusReader, catalog_skills: list[dict]) -> None:
+def _check_path_safety(reader: CorpusReader, catalog_skills: list[dict]) -> bool:
     identities: dict[str, str] = {}
     for skill in catalog_skills:
         for value in (skill.get("id"), skill.get("path")):
@@ -332,8 +344,13 @@ def _check_path_safety(reader: CorpusReader, catalog_skills: list[dict]) -> None
         if isinstance(path, str) and not safe_relative_path(path):
             reader.findings.append(Finding("path.safe", path, "unsafe catalog path"))
     skills_root = reader.root / "skills"
+    if skills_root.is_symlink() and not skills_root.resolve().is_relative_to(reader.root):
+        reader.findings.append(
+            Finding("path.symlink_contained", "skills", "skills root symlink escapes corpus root")
+        )
+        return False
     if not skills_root.is_dir():
-        return
+        return False
     for directory, directory_names, filenames in os.walk(skills_root, followlinks=False):
         for name in sorted((*directory_names, *filenames)):
             path = Path(directory) / name
@@ -345,6 +362,7 @@ def _check_path_safety(reader: CorpusReader, catalog_skills: list[dict]) -> None
             identities[folded] = relative
             if path.is_symlink() and not path.resolve().is_relative_to(reader.root):
                 reader.findings.append(Finding("path.symlink_contained", relative, "symlink escapes corpus root"))
+    return True
 
 
 def _frontmatter(skill_path: Path) -> tuple[dict[str, str] | None, str]:
@@ -387,6 +405,11 @@ def _validate_skills(reader: CorpusReader, skills: dict[str, dict]) -> None:
         if not safe_relative_path(relative):
             continue
         skill_path = reader.root / relative
+        if not skill_path.resolve().is_relative_to(reader.root):
+            reader.findings.append(
+                Finding("path.symlink_contained", relative, "skill path escapes corpus root")
+            )
+            continue
         if not skill_path.is_file():
             reader.findings.append(Finding("skill.structure", relative, "missing SKILL.md"))
             continue
@@ -479,7 +502,13 @@ def _validate_core_leakage(
                         Finding("core.leakage", relative, "undeclared host extension")
                     )
             try:
-                contents = (reader.root / relative).read_text(encoding="utf-8")
+                path = reader.root / relative
+                if not path.resolve().is_relative_to(reader.root):
+                    reader.findings.append(
+                        Finding("path.symlink_contained", relative, "core output escapes corpus root")
+                    )
+                    continue
+                contents = path.read_text(encoding="utf-8")
             except (FileNotFoundError, OSError, UnicodeDecodeError):
                 continue
             for class_id, pattern in LEAKAGE_PATTERNS:
@@ -543,11 +572,17 @@ def validate_corpus(root: Path) -> ValidationResult:
         skills[skill["id"]] = skill
     if [skill.get("id") for skill in skill_entries if isinstance(skill, dict)] != sorted(skills):
         findings.append(Finding("document.canonical", "catalog.json", "skills are not sorted by id"))
-    _check_path_safety(reader, [skill for skill in skill_entries if isinstance(skill, dict)])
-    discovered = sorted(
-        path.relative_to(reader.root).as_posix()
-        for path in (reader.root / "skills").glob("*/SKILL.md")
-        if path.is_file()
+    skills_root_contained = _check_path_safety(
+        reader, [skill for skill in skill_entries if isinstance(skill, dict)]
+    )
+    discovered = (
+        sorted(
+            path.relative_to(reader.root).as_posix()
+            for path in (reader.root / "skills").glob("*/SKILL.md")
+            if path.is_file()
+        )
+        if skills_root_contained
+        else []
     )
     catalog_paths = sorted(skill.get("path") for skill in skills.values() if isinstance(skill.get("path"), str))
     if discovered != catalog_paths:
@@ -603,14 +638,23 @@ def validate_corpus(root: Path) -> ValidationResult:
                 continue
             recorded_outputs.append(relative)
             path = reader.root / relative
+            if not path.resolve().is_relative_to(reader.root):
+                findings.append(
+                    Finding("path.symlink_contained", relative, "provenance output escapes corpus root")
+                )
+                continue
             if not path.is_file():
                 findings.append(Finding("provenance.coverage", relative, "missing provenance output"))
             elif output.get("sha256") != sha256_bytes(path.read_bytes()):
                 findings.append(Finding("provenance.digest", relative, "provenance digest drift"))
-    shipped_files = sorted(
-        path.relative_to(reader.root).as_posix()
-        for path in (reader.root / "skills").rglob("*")
-        if path.is_file()
+    shipped_files = (
+        sorted(
+            path.relative_to(reader.root).as_posix()
+            for path in (reader.root / "skills").rglob("*")
+            if path.is_file()
+        )
+        if skills_root_contained
+        else []
     )
     if sorted(recorded_outputs) != shipped_files:
         findings.append(Finding("provenance.coverage", "skills", "provenance does not exactly cover shipped files"))

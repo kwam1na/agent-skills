@@ -64,6 +64,17 @@ class CorpusValidationTests(unittest.TestCase):
             {"skill.frontmatter", "skill.reference", "dependency.reference"} <= rules
         )
 
+    def test_null_dependencies_report_without_crashing(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        catalog_path = root / "catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        catalog["skills"][1]["dependencies"] = None
+        write_json(catalog_path, catalog)
+
+        result = validate_corpus(root)
+        self.assertIn("dependency.reference", {finding.rule_id for finding in result.findings})
+
     def test_missing_skill_deep_reference_and_future_schema_reject(self) -> None:
         temporary, root = self.copied_corpus()
         self.addCleanup(temporary.cleanup)
@@ -106,6 +117,17 @@ class CorpusValidationTests(unittest.TestCase):
         self.assertFalse(safe_relative_path("C:/escape.txt"))
         self.assertFalse(safe_relative_path("C:\\escape.txt"))
 
+    def test_case_fold_profile_id_collision_rejects(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        source = root / "profiles" / "core.json"
+        duplicate = json.loads(source.read_text(encoding="utf-8"))
+        duplicate["id"] = "Core"
+        write_json(root / "profiles" / "collision.json", duplicate)
+
+        findings = validate_corpus(root).findings
+        self.assertIn("path.case_unique", {finding.rule_id for finding in findings})
+
     def test_core_leakage_has_positive_and_negative_controls(self) -> None:
         temporary, root = self.copied_corpus()
         self.addCleanup(temporary.cleanup)
@@ -131,6 +153,7 @@ class CorpusValidationTests(unittest.TestCase):
             "https://athena-os.app/private",
             "https://linear.app/v26-labs/issue/example",
             "api_key=abcdefgh",
+            r"C:\Users\example\repo\SKILL.md",
         )
         for literal in literals:
             with self.subTest(literal=literal):
@@ -166,6 +189,17 @@ class CorpusValidationTests(unittest.TestCase):
             "core.leakage",
             {finding.rule_id for finding in validate_corpus(root).findings},
         )
+
+    def test_escaping_skills_root_symlink_rejects(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        external = Path(temporary.name) / "external-skills"
+        shutil.copytree(root / "skills", external)
+        shutil.rmtree(root / "skills")
+        os.symlink(external, root / "skills")
+
+        findings = validate_corpus(root).findings
+        self.assertIn("path.symlink_contained", {finding.rule_id for finding in findings})
 
     def test_empty_scan_root_and_disabled_rule_fail_anti_vacuity(self) -> None:
         for mutation in ("empty-root", "disabled-rule", "missing-scenario", "missing-fixture"):

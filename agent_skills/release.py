@@ -60,14 +60,48 @@ def _document(path: Path) -> dict:
     return value
 
 
+def _packaged_bytes(root: Path, relative: str) -> bytes:
+    if not safe_relative_path(relative):
+        raise ReleaseError(f"release.source_path: unsafe packaged input {relative}")
+    path = root
+    try:
+        for part in PurePosixPath(relative).parts:
+            path = path / part
+            if path.is_symlink():
+                raise ReleaseError(f"release.source_path: symlinked packaged input {relative}")
+        resolved = path.resolve(strict=True)
+        if not resolved.is_relative_to(root) or not stat.S_ISREG(
+            path.stat(follow_symlinks=False).st_mode
+        ):
+            raise ReleaseError(f"release.source_path: invalid packaged input {relative}")
+        return path.read_bytes()
+    except (FileNotFoundError, OSError) as error:
+        raise ReleaseError(f"release.source_path: unreadable packaged input {relative}") from error
+
+
+def _packaged_document(root: Path, relative: str) -> dict:
+    try:
+        value = json.loads(_packaged_bytes(root, relative))
+    except json.JSONDecodeError as error:
+        raise ReleaseError(f"release.source_document: invalid JSON {relative}") from error
+    if not isinstance(value, dict):
+        raise ReleaseError(f"release.source_document: {relative} must be an object")
+    return value
+
+
+def _release_identity(release_id: object, profile_id: object) -> tuple[str, str]:
+    if not isinstance(release_id, str) or not release_id:
+        raise ReleaseError("release.identity: releaseId must be a non-empty string")
+    if profile_id != "core":
+        raise ReleaseError("release.identity: profile must be core")
+    return release_id, profile_id
+
+
 def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
-    catalog = _document(root / "catalog.json")
-    provenance = _document(root / "provenance.lock.json")
-    profile_documents = {
-        document["id"]: document
-        for path in sorted((root / "profiles").glob("*.json"))
-        if isinstance((document := _document(path)), dict)
-    }
+    catalog = _packaged_document(root, "catalog.json")
+    provenance = _packaged_document(root, "provenance.lock.json")
+    core_profile = _packaged_document(root, "profiles/core.json")
+    profile_documents = {core_profile["id"]: core_profile}
     if profile_id != "core" or profile_id not in profile_documents:
         raise ReleaseError("release.profile: the first release is core-only")
     members = resolve_profile(profile_id, profile_documents)
@@ -94,26 +128,29 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
             "schemaVersion": provenance["schemaVersion"],
             "sourceBaseline": provenance["sourceBaseline"],
         }).encode(),
-        "validation-inventory.json": (root / "validation-inventory.json").read_bytes(),
+        "validation-inventory.json": _packaged_bytes(root, "validation-inventory.json"),
     }
     for relative in selected_paths:
-        files[relative] = (root / relative).read_bytes()
+        files[relative] = _packaged_bytes(root, relative)
     for relative in (
         "schemas/catalog.schema.json",
         "schemas/profile.schema.json",
         "schemas/provenance.schema.json",
         "schemas/release-manifest.schema.json",
     ):
-        files[relative] = (root / relative).read_bytes()
-    for path in sorted((root / "tests" / "fixtures").rglob("*.json")):
-        files[path.relative_to(root).as_posix()] = path.read_bytes()
+        files[relative] = _packaged_bytes(root, relative)
+    for relative in (
+        "tests/fixtures/invalid-corpora/coverage.json",
+        "tests/fixtures/valid-corpus/coverage.json",
+    ):
+        files[relative] = _packaged_bytes(root, relative)
     for relative in (
         "agent_skills/__init__.py",
         "agent_skills/catalog.py",
         "agent_skills/errors.py",
         "agent_skills/validate.py",
     ):
-        files[relative] = (root / relative).read_bytes()
+        files[relative] = _packaged_bytes(root, relative)
     return files
 
 
@@ -137,6 +174,7 @@ def build_release(
     profile_id: str,
 ) -> VerifiedRelease:
     root = root.resolve()
+    release_id, profile_id = _release_identity(release_id, profile_id)
     validation = validate_corpus(root)
     if validation.findings:
         raise ReleaseError("release.source_validation: source corpus is invalid")
@@ -188,6 +226,9 @@ def verify_release(
     metadata = _document(metadata_path)
     if metadata.get("schemaVersion") != "agent-skills-release-metadata/1":
         raise ReleaseError("release.identity: unsupported detached metadata")
+    metadata_release_id, metadata_profile = _release_identity(
+        metadata.get("releaseId"), metadata.get("profile")
+    )
     archive_sha = _archive_digest(archive_path)
     if metadata.get("archiveSha256") != archive_sha:
         raise ReleaseError("release.archive_checksum: detached checksum mismatch")
@@ -225,6 +266,9 @@ def verify_release(
         raise ReleaseError("release.manifest: missing or invalid manifest") from error
     if not isinstance(manifest, dict) or manifest.get("schemaVersion") != "agent-skills-release/1":
         raise ReleaseError("release.manifest: unsupported manifest")
+    manifest_release_id, manifest_profile = _release_identity(
+        manifest.get("releaseId"), manifest.get("profile")
+    )
     if manifest.get("entryPoint") != "python -m agent_skills.validate --root .":
         raise ReleaseError("release.manifest: unsupported entry point")
     records = manifest.get("files")
@@ -258,7 +302,7 @@ def verify_release(
         raise ReleaseError("release.group: core group must own the payload")
     if core.get("sha256") != _path_digest(group_paths, payload):
         raise ReleaseError("release.group_checksum: core group digest mismatch")
-    if manifest.get("releaseId") != metadata.get("releaseId") or manifest.get("profile") != metadata.get("profile"):
+    if manifest_release_id != metadata_release_id or manifest_profile != metadata_profile:
         raise ReleaseError("release.identity: detached metadata mismatch")
     if extract_to is not None:
         if extract_to.exists() and any(extract_to.iterdir()):
@@ -272,4 +316,4 @@ def verify_release(
         if validation.findings:
             shutil.rmtree(extract_to)
             raise ReleaseError("release.standalone_validation: extracted corpus is invalid")
-    return VerifiedRelease(metadata["releaseId"], metadata["profile"], archive_sha)
+    return VerifiedRelease(metadata_release_id, metadata_profile, archive_sha)

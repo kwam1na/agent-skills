@@ -76,7 +76,10 @@ def dependency_findings(
         except (KeyError, ValueError):
             continue
         for skill_id in sorted(selected & skills.keys()):
-            for dependency in skills[skill_id].get("dependencies", []):
+            dependencies = skills[skill_id].get("dependencies")
+            if not isinstance(dependencies, list):
+                dependencies = []
+            for dependency in dependencies:
                 if not isinstance(dependency, dict) or dependency.get("requirement") != "required":
                     continue
                 dependency_id = dependency.get("id")
