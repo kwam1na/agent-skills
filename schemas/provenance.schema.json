@@ -1,0 +1,22 @@
+{
+  "$id": "https://agent-skills.dev/schemas/provenance/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "entries": {
+      "type": "array"
+    },
+    "schemaVersion": {
+      "const": "agent-skills-provenance/1"
+    },
+    "sourceBaseline": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "entries",
+    "schemaVersion",
+    "sourceBaseline"
+  ],
+  "type": "object"
+}

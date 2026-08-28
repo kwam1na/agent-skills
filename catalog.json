@@ -1,0 +1,111 @@
+{
+  "schemaVersion": "agent-skills-catalog/1",
+  "skills": [
+    {
+      "classification": "optional-guidance",
+      "dependencies": [],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "bootstrap-agent-harness",
+      "path": "skills/bootstrap-agent-harness/SKILL.md",
+      "profiles": [
+        "bootstrap"
+      ],
+      "provenanceId": "bootstrap-agent-harness",
+      "releaseStatus": "cataloged-not-default"
+    },
+    {
+      "classification": "portable-core",
+      "dependencies": [],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "compound-delivery-kernel",
+      "path": "skills/compound-delivery-kernel/SKILL.md",
+      "profiles": [
+        "core",
+        "linear"
+      ],
+      "provenanceId": "compound-delivery-kernel",
+      "releaseStatus": "cataloged-core"
+    },
+    {
+      "classification": "optional-adapter",
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [
+        "linear-mcp"
+      ],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "create-linear-ticket",
+      "path": "skills/create-linear-ticket/SKILL.md",
+      "profiles": [
+        "linear"
+      ],
+      "provenanceId": "create-linear-ticket",
+      "releaseStatus": "cataloged-optional"
+    },
+    {
+      "classification": "portable-core",
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        }
+      ],
+      "degradedBehavior": "Tracking routes remain unavailable until an adopter explicitly selects the linear profile.",
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "deliver-work",
+      "path": "skills/deliver-work/SKILL.md",
+      "profiles": [
+        "core",
+        "linear"
+      ],
+      "provenanceId": "deliver-work",
+      "releaseStatus": "cataloged-core"
+    },
+    {
+      "classification": "optional-adapter",
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        },
+        {
+          "id": "create-linear-ticket",
+          "requirement": "routing"
+        }
+      ],
+      "externalTools": [
+        "linear-mcp"
+      ],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "execute-linear-ticket",
+      "path": "skills/execute-linear-ticket/SKILL.md",
+      "profiles": [
+        "linear"
+      ],
+      "provenanceId": "execute-linear-ticket",
+      "releaseStatus": "cataloged-optional"
+    }
+  ]
+}

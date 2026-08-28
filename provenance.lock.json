@@ -1,0 +1,152 @@
+{
+  "entries": [
+    {
+      "classification": "optional-guidance",
+      "id": "bootstrap-agent-harness",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The existing copied bundle matches the baseline workflow body; host metadata is retained as a host adapter.",
+        "status": "source-derived"
+      },
+      "outputs": [
+        {
+          "path": "skills/bootstrap-agent-harness/SKILL.md",
+          "sha256": "dfe7127bbf5b6c8be54af255202782fefe639157e5ed5dedf89a305101bb5aa5"
+        },
+        {
+          "path": "skills/bootstrap-agent-harness/agents/openai.yaml",
+          "sha256": "2fff25699efe4f619dc97d39828ad9fb42afe2f60d31fdd750e8682022081571"
+        }
+      ],
+      "source": {
+        "baselineSourceId": "bootstrap-agent-harness",
+        "path": ".agents/skills/bootstrap-agent-harness",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "dfe7127bbf5b6c8be54af255202782fefe639157e5ed5dedf89a305101bb5aa5"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "id": "compound-delivery-kernel",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "Pre-existing copied body is a recorded derivative of the approved portable-candidate source; workflow extraction is deferred.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/compound-delivery-kernel/SKILL.md",
+          "sha256": "b4f2450adecbab4817d6f97c9ff5d615581ccde7740372e0e6fe96259b942cc0"
+        }
+      ],
+      "source": {
+        "baselineSourceId": "delivery-kernel-skill",
+        "path": ".agents/skills/compound-delivery-kernel/SKILL.md",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "30d72ae4d855b508b7ab59720874e8e76091885992a712d3bd5ccb6e510d451e"
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "id": "create-linear-ticket",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "Pre-existing copied Linear-oriented bundle is classified as opt-in; it is not a default core capability.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/create-linear-ticket/SKILL.md",
+          "sha256": "0f6d3ea275f91cf723d822b5307bec95a0aa337fd402484d49ac8a7302b19530"
+        },
+        {
+          "path": "skills/create-linear-ticket/agents/openai.yaml",
+          "sha256": "5c48e32737027d7522d5354b7cc8840130fe22e1b2ae2e20c4d10a01b8ef1b74"
+        },
+        {
+          "path": "skills/create-linear-ticket/references/atomic-plan-template.md",
+          "sha256": "f2f8dbc01c4cb7790a460e220249ea44e25a3d0959b4185e9af0448f0175f950"
+        },
+        {
+          "path": "skills/create-linear-ticket/references/atomic-ticket-template.md",
+          "sha256": "ba18fac7ca2ada7b2ba3e20b62a328f89b0f57a4cdfb8a5cc901ed536f5a311b"
+        },
+        {
+          "path": "skills/create-linear-ticket/references/linear-execution-notes.md",
+          "sha256": "9e9406d2c48dd7823c65b19b23fead30dc28a4de75d038e8880b61cf7fd80082"
+        },
+        {
+          "path": "skills/create-linear-ticket/references/linear-project-resolution.md",
+          "sha256": "2af8ae57b9189791ba4bad7f3024e0c587d6c20f306b61196209e58ad5aae255"
+        }
+      ],
+      "source": {
+        "baselineSourceId": "track-skill",
+        "path": ".agents/skills/track",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "d0b51b5efd0ed6a0518b24a201de7b042c04673e965d9e06bf10d03d0687518b"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "id": "deliver-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "Pre-existing copied router is a recorded derivative of the portable-candidate source; no new route extraction occurs in this metadata unit.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/deliver-work/SKILL.md",
+          "sha256": "094420e4278d9b63d585752f1be9dc853625e853a8228eac3c7eec1be70aa643"
+        },
+        {
+          "path": "skills/deliver-work/agents/openai.yaml",
+          "sha256": "335c1f6f152230f5c7dfac0bce52bd2295d4f44349226eac3fc59de1715d2c04"
+        }
+      ],
+      "source": {
+        "baselineSourceId": "deliver-work-skill",
+        "path": ".agents/skills/deliver-work",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "9479db1160edb91ba40cbad27c0bfd1df6b6932a85b48d36919478221350acd3"
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "id": "execute-linear-ticket",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "Pre-existing copied Linear execution bundle is classified as opt-in; Athena finish-line and reporting policy are excluded.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/execute-linear-ticket/SKILL.md",
+          "sha256": "7e89dadca3eeb799df0006c8c001f0e54c18c08b0884c3adbd9293bb80ea6407"
+        },
+        {
+          "path": "skills/execute-linear-ticket/agents/openai.yaml",
+          "sha256": "2bedaffdb0b7393990ead5d9cb3357274308b9b66d107357f5df83961f6644df"
+        },
+        {
+          "path": "skills/execute-linear-ticket/references/linear-project-resolution.md",
+          "sha256": "2af8ae57b9189791ba4bad7f3024e0c587d6c20f306b61196209e58ad5aae255"
+        }
+      ],
+      "source": {
+        "baselineSourceId": "execute-skill",
+        "path": ".agents/skills/execute",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "f8a66cf662013f931eabb7f149c8ade7a253d0b06ac534facb347aabeadb1d27"
+      }
+    }
+  ],
+  "schemaVersion": "agent-skills-provenance/1",
+  "sourceBaseline": {
+    "baselineId": "athena-portable-workflows-v1-2026-08-27",
+    "baselinePath": ".agents/portable-overlay-map.json",
+    "repository": "kwamina/athena",
+    "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53"
+  }
+}

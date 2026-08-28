@@ -1,0 +1,12 @@
+{
+  "description": "Optional tracker workflow that adds Linear-oriented ticket creation and execution.",
+  "id": "linear",
+  "includes": [
+    "core"
+  ],
+  "members": [
+    "create-linear-ticket",
+    "execute-linear-ticket"
+  ],
+  "schemaVersion": "agent-skills-profile/1"
+}

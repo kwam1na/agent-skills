@@ -1,0 +1,15 @@
+{
+  "description": "Minimal tracker-neutral delivery posture and default router.",
+  "expectedFiles": [
+    "skills/compound-delivery-kernel/SKILL.md",
+    "skills/deliver-work/SKILL.md",
+    "skills/deliver-work/agents/openai.yaml"
+  ],
+  "id": "core",
+  "includes": [],
+  "members": [
+    "compound-delivery-kernel",
+    "deliver-work"
+  ],
+  "schemaVersion": "agent-skills-profile/1"
+}

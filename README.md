@@ -1,25 +1,20 @@
-# Custom Agent Skills
+# Agent Skills Corpus
 
-This repository syncs a focused set of custom local Codex skills from `/Users/kwamina/.codex/skills`.
+This repository is the deterministic, metadata-first home for a small portable
+agent-skills corpus. It does not install skills or extract new workflow bodies.
 
-## Included Skills
+`catalog.json` lists every shipped skill. `profiles/` declares selectable
+workflow sets, and `provenance.lock.json` binds every shipped file to its
+approved Athena baseline source, revision, license status, modification status,
+and SHA-256 digest.
 
-- `bootstrap-agent-harness`
-- `compound-delivery-kernel`
-- `create-linear-ticket`
-- `execute-linear-ticket`
-- `deliver-work`
-
-## Syncing
-
-Run the bundled sync script from the repository root:
+Validate the checked-in registry with Python 3.11 or newer:
 
 ```bash
-./scripts/sync-local-skills.sh
+python3 scripts/validate-registry.py
+python3 tests/test_registry.py
 ```
 
-You can also pass a different local skills root:
-
-```bash
-./scripts/sync-local-skills.sh /path/to/skills
-```
+The default `core` profile is tracker-neutral. Linear and bootstrap guidance
+are opt-in profiles; Athena overlays are classification inputs only and are not
+shipped by this corpus.

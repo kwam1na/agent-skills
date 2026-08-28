@@ -1,0 +1,18 @@
+{
+  "$id": "https://agent-skills.dev/schemas/catalog/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": "agent-skills-catalog/1"
+    },
+    "skills": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "skills"
+  ],
+  "type": "object"
+}
