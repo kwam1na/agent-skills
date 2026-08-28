@@ -396,7 +396,8 @@ def _node_http_action(contents: str) -> bool:
     module_aliases.update(
         match.group(1)
         for match in re.finditer(
-            rf"\bimport\s+(?:\*\s+as\s+)?({identifier})\s+from\s+"
+            rf"\bimport\s+(?:\*\s+as\s+)?({identifier})"
+            rf"(?:\s*,\s*\{{[^}}]+\}})?\s+from\s+"
             rf"['\"]{module}['\"]",
             contents,
         )
@@ -409,10 +410,20 @@ def _node_http_action(contents: str) -> bool:
             contents,
         )
     }
+    function_aliases.update(
+        match.group(1)
+        for module_alias in module_aliases
+        for match in re.finditer(
+            rf"\b(?:const|let|var)\s+({identifier})\s*=\s*"
+            rf"{re.escape(module_alias)}\.(?:get|request)\b",
+            contents,
+        )
+    )
     bindings = [
         match.group(1)
         for pattern in (
-            rf"\bimport\s*\{{([^}}]+)\}}\s*from\s*['\"]{module}['\"]",
+            rf"\bimport\s*(?:{identifier}\s*,\s*)?\{{([^}}]+)\}}\s*"
+            rf"from\s*['\"]{module}['\"]",
             rf"\b(?:const|let|var)\s*\{{([^}}]+)\}}\s*=\s*"
             rf"require\(\s*['\"]{module}['\"]\s*\)",
         )
@@ -421,12 +432,11 @@ def _node_http_action(contents: str) -> bool:
     for binding_list in bindings:
         for binding in binding_list.split(","):
             match = re.fullmatch(
-                rf"\s*(?:get|request)\s*(?:(?:as|:)\s*({identifier}))?\s*",
+                rf"\s*(get|request)\s*(?:(?:as|:)\s*({identifier}))?\s*",
                 binding,
             )
             if match:
-                original = re.match(r"\s*(get|request)", binding)
-                function_aliases.add(match.group(1) or original.group(1))
+                function_aliases.add(match.group(2) or match.group(1))
 
     endpoint = r"(?:api\.linear\.app|linear\.app/(?:api|graphql))"
     call_suffix = rf"\s*\([^;]{{0,512}}?{endpoint}"

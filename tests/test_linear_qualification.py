@@ -411,6 +411,29 @@ class LinearQualificationTests(unittest.TestCase):
                     'fetchLinear("https://api.linear.app/graphql");\n',
                 ),
                 (
+                    "node-member-assigned-request",
+                    "direct-linear-endpoint",
+                    "skills/linear-tracker-adapter/member-request.js",
+                    'const https = require("node:https");\n'
+                    "const dispatchLinear = https.request;\n"
+                    'dispatchLinear("https://api.linear.app/graphql");\n',
+                ),
+                (
+                    "node-member-assigned-get",
+                    "direct-linear-endpoint",
+                    "skills/linear-tracker-adapter/member-get.mjs",
+                    'import https from "node:https";\n'
+                    "const fetchLinear = https.get;\n"
+                    'fetchLinear("https://api.linear.app/graphql");\n',
+                ),
+                (
+                    "node-combined-import",
+                    "direct-linear-endpoint",
+                    "skills/linear-tracker-adapter/combined-import.mjs",
+                    'import https, { request as issueLinear } from "node:https";\n'
+                    'issueLinear("https://api.linear.app/graphql");\n',
+                ),
+                (
                     "linear-sdk-import",
                     "linear-sdk",
                     "skills/linear-tracker-adapter/transport.ts",
