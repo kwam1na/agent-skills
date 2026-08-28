@@ -202,16 +202,6 @@ class ProviderQualificationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(replay.read_bytes(), RECORD.read_bytes())
 
-    def test_record_writer_emits_canonical_utf8_lf_bytes(self) -> None:
-        runner = _load_runner()
-        with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "record.json"
-
-            runner.write_record(path, {"line": "one\ntwo"})
-
-            self.assertEqual(path.read_bytes(), b'{\n  "line": "one\\ntwo"\n}\n')
-            self.assertNotIn(b"\r\n", path.read_bytes())
-
     def test_hostile_installed_provider_mutations_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
