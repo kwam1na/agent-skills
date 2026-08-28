@@ -77,7 +77,10 @@
           "type": "string"
         },
         "profile": {
-          "const": "core"
+          "enum": [
+            "core",
+            "linear"
+          ]
         },
         "releaseId": {
           "minLength": 1,

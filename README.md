@@ -1,11 +1,12 @@
 # Agent Skills Corpus
 
 This repository is the deterministic, metadata-first home for a small portable
-agent-skills corpus. Its lifecycle installs only authenticated release archives;
-it does not extract new workflow bodies or implement provider-specific service
-adapters. One installed generation is exposed to Codex and Claude Code through
-stable repository-relative links and one shared active-generation link, so
-neither host owns another editable workflow copy or switches independently.
+agent-skills corpus. Its lifecycle installs only authenticated profile-bound
+release archives; it does not extract new workflow bodies or implement direct
+provider service clients. One installed generation is exposed to Codex and
+Claude Code through stable repository-relative links and one shared
+active-generation link, so neither host owns another editable workflow copy or
+switches independently.
 
 `catalog.json` lists every cataloged skill. `profiles/` declares selectable
 workflow sets, and `provenance.lock.json` binds every cataloged file to its
@@ -21,7 +22,7 @@ python3 tests/test_registry.py
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
-Build and verify the one supported core-only release format:
+Build and verify the core profile:
 
 ```bash
 python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-v1
@@ -31,20 +32,35 @@ python3 scripts/build-release.py verify \
   --extract-to /tmp/core-standalone
 ```
 
+Build the optional Linear profile with the same format and lifecycle:
+
+```bash
+python3 scripts/build-release.py build \
+  --archive /tmp/linear.zip \
+  --metadata /tmp/linear.release.json \
+  --release-id linear-v1 \
+  --profile linear
+python3 scripts/build-release.py verify \
+  --archive /tmp/linear.zip \
+  --metadata /tmp/linear.release.json \
+  --extract-to /tmp/linear-standalone
+```
+
 The detached release metadata authenticates the ZIP before it is parsed. The
-manifest then authenticates the complete payload and its single `core` group.
+manifest then authenticates the complete payload and its single profile group.
 Verification is bounded by fixed entry, file-size, expanded-size, path-depth,
 compression-ratio, and elapsed-time limits. The archive contains the validator,
-catalog, core profile, provenance, schemas, inventory, and selected core skills;
-it excludes source-only and optional profile bodies.
+catalog, selected profile closure, provenance, schemas, inventory, and selected
+skills. Core excludes optional profile bodies; Linear adds only its adapter to
+the complete core closure.
 
 The default `core` profile contains the portable delivery posture, normalized
 router, neutral tracker capability contract, bounded planning and execution
 workflows, bounded multi-lens review convergence, and a caller-owned compounding
-decision. Bootstrap guidance is opt-in; the Linear profile remains empty until
-the optional Linear adapter is extracted. Cataloged source-only inventory is not
-selectable, and Athena overlays are classification inputs only rather than
-distributable skills.
+decision. Bootstrap guidance is opt-in. The optional Linear profile adds a
+host-native MCP adapter without changing core behavior when tracking is
+unavailable. Cataloged source-only inventory is not selectable, and Athena
+overlays are classification inputs only rather than distributable skills.
 
 From a trusted checkout, qualify one exact archive in standalone environments
 with only the bundled fake capability adapter:
