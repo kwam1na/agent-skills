@@ -178,10 +178,15 @@ def _normalize_outcome(request: TrackerRequest, value: object) -> AdapterOutcome
 def execute_tracker_operation(
     state: CapabilityState,
     request: TrackerRequest,
-    adapter: TrackerAdapter,
+    adapter: TrackerAdapter | None,
 ) -> AdapterOutcome:
     if state is not CapabilityState.CONFIGURED:
         return _unavailable(state, request.operation)
+    if adapter is None:
+        return _malformed(
+            request.operation,
+            "Provide the configured tracker adapter, then retry.",
+        )
     if request.operation in MUTATING_OPERATIONS and not (
         isinstance(request.idempotency_key, str) and request.idempotency_key.strip()
     ):

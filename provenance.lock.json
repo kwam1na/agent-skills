@@ -105,7 +105,7 @@
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "51131a81d537fa7a510140ea8468c5f5b899bc2e79e97ddac476cfff0b344611"
+          "sha256": "d04140fb57f75c81447d593199c396e5619e559ce63154ac9b361a30f3392c03"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",
@@ -153,6 +153,52 @@
         "path": ".agents/skills/execute",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "f8a66cf662013f931eabb7f149c8ade7a253d0b06ac534facb347aabeadb1d27"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "execute-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The baseline execution slice is narrowed to incremental work, repository sensor evidence, explicit blockers, approval handoffs, and honest completion states.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/execute-work/SKILL.md",
+          "sha256": "82b75b0d2929f21cac375b8c76ea17a6310cb8ddf43c98363916220b0483b009"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "work-skill",
+        "path": ".agents/skills/ce-work",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "43f883389cbfbf5bbf556fdd9fd7acfecd577bf3a6879263e11ea12a7c00c222"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "plan-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The baseline planning slice is narrowed to scope, finish-line, dependency, posture, sensor, and approval-handoff decisions without implementation behavior.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/plan-work/SKILL.md",
+          "sha256": "4347893b7bbe1ea0e60240713082e51a4d13c6b945f7822579f480628d1036bd"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "plan-skill",
+        "path": ".agents/skills/ce-plan",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "5408cccdbafb0ce69e5de1293c2eb40defd313f8e833db09dd0a59e0f2dea438"
       }
     }
   ],

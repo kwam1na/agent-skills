@@ -34,6 +34,10 @@ Choose exactly one workflow:
 - `review` when the request is read-only evaluation.
 - `compound` when the request is to preserve a reusable delivery learning.
 
+Route `plan` through `$plan-work`. Route an approved `implement` request through
+`$execute-work`. Keep diagnosis, review, and compounding on their declared
+handoffs until their portable workflow is selected by the active profile.
+
 Specific user intent wins over keyword examples. The same normalized request
 must select the same workflow and the `deliver-work` entry point.
 

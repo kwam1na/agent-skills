@@ -1,6 +1,6 @@
 {
   "expectedLifecycleScenarioCount": 6,
-  "expectedScenarioCount": 3,
+  "expectedScenarioCount": 5,
   "lifecycleScenarios": [
     {
       "id": "activation-boundary-fault-recovery",
@@ -299,6 +299,15 @@
         "claude-code",
         "codex"
       ],
+      "id": "core-profile-selects-execution-workflow",
+      "profile": "core",
+      "skill": "execute-work"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
       "id": "core-profile-selects-kernel",
       "profile": "core",
       "skill": "compound-delivery-kernel"
@@ -311,6 +320,15 @@
       "id": "core-profile-selects-delivery-router",
       "profile": "core",
       "skill": "deliver-work"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "core-profile-selects-planning-workflow",
+      "profile": "core",
+      "skill": "plan-work"
     },
     {
       "hosts": [

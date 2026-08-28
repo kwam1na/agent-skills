@@ -62,6 +62,14 @@
         {
           "id": "compound-delivery-kernel",
           "requirement": "required"
+        },
+        {
+          "id": "execute-work",
+          "requirement": "routing"
+        },
+        {
+          "id": "plan-work",
+          "requirement": "routing"
         }
       ],
       "externalTools": [],
@@ -99,6 +107,60 @@
       "path": "skills/execute-linear-ticket/SKILL.md",
       "profiles": [],
       "provenanceId": "execute-linear-ticket"
+    },
+    {
+      "capabilities": [
+        "execution-workflow",
+        "tracker-operations"
+      ],
+      "degradedBehavior": "Core execution remains complete when optional tracking or optional sensors are unavailable, and reports the omitted operation honestly.",
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        },
+        {
+          "id": "plan-work",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "execute-work",
+      "path": "skills/execute-work/SKILL.md",
+      "profiles": [
+        "core",
+        "linear"
+      ],
+      "provenanceId": "execute-work"
+    },
+    {
+      "capabilities": [
+        "planning-workflow",
+        "tracker-operations"
+      ],
+      "degradedBehavior": "Planning remains complete without optional tracking and reports unavailable optional sensors without replacing repository authority.",
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "plan-work",
+      "path": "skills/plan-work/SKILL.md",
+      "profiles": [
+        "core",
+        "linear"
+      ],
+      "provenanceId": "plan-work"
     }
   ]
 }
