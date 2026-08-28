@@ -176,7 +176,7 @@ class QualificationTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             copied = Path(temporary) / "trusted-evidence"
-            for relative in runner.TRUSTED_EVIDENCE_PATHS:
+            for relative in runner.trusted_evidence_paths(ROOT):
                 source = ROOT / relative
                 target = copied / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -196,6 +196,22 @@ class QualificationTests(unittest.TestCase):
             self.assertEqual(before, recorded["qualificationDriverSha256"])
             self.assertNotEqual(after_sensor_change, before)
             self.assertNotEqual(after_fixture_change, before)
+
+    def test_trusted_release_verifier_change_changes_the_driver_identity(self) -> None:
+        runner = _load_runner()
+        with tempfile.TemporaryDirectory() as temporary:
+            copied = Path(temporary) / "trusted-evidence"
+            for relative in runner.trusted_evidence_paths(ROOT):
+                source = ROOT / relative
+                target = copied / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+
+            before = runner.qualification_driver_sha256(copied)
+            verifier = copied / "agent_skills" / "release.py"
+            verifier.write_bytes(verifier.read_bytes() + b"\n# changed trusted verifier\n")
+
+            self.assertNotEqual(runner.qualification_driver_sha256(copied), before)
 
     def test_trusted_driver_qualifies_the_supplied_archive_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

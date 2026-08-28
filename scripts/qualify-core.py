@@ -32,9 +32,12 @@ if CANDIDATE_ROOT is None:
 else:
     sys.path[:0] = [str(CANDIDATE_ROOT), str(DRIVER_ROOT / "tests")]
 
-from agent_skills.cli import main as lifecycle_cli
-from agent_skills.lifecycle import Lifecycle
-from agent_skills.release import ReleaseError, build_release, verify_release
+from agent_skills.release import verify_release
+
+if CANDIDATE_ROOT is not None:
+    from agent_skills.cli import main as lifecycle_cli
+    from agent_skills.lifecycle import Lifecycle
+    from agent_skills.release import ReleaseError, build_release
 
 
 SCENARIO_SENSORS = {
@@ -115,9 +118,17 @@ def qualification_driver_sha256(root: Path = DRIVER_ROOT) -> str:
             "path": relative,
             "sha256": hashlib.sha256((root / relative).read_bytes()).hexdigest(),
         }
-        for relative in TRUSTED_EVIDENCE_PATHS
+        for relative in trusted_evidence_paths(root)
     ]
     return _sha256(records)
+
+
+def trusted_evidence_paths(root: Path = DRIVER_ROOT) -> tuple[str, ...]:
+    trusted_python = (
+        path.relative_to(root).as_posix()
+        for path in (root / "agent_skills").rglob("*.py")
+    )
+    return tuple(sorted((*TRUSTED_EVIDENCE_PATHS, *trusted_python)))
 
 
 def _record(checkpoint: Checkpoint, result: str, failure: str | None = None) -> dict:
