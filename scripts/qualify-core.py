@@ -30,7 +30,11 @@ CANDIDATE_ROOT = _candidate_root(sys.argv)
 if CANDIDATE_ROOT is None:
     sys.path.insert(0, str(DRIVER_ROOT))
 else:
-    sys.path[:0] = [str(CANDIDATE_ROOT), str(DRIVER_ROOT / "tests")]
+    sys.path[:0] = [
+        str(CANDIDATE_ROOT),
+        str(CANDIDATE_ROOT / "tests"),
+        str(DRIVER_ROOT / "tests"),
+    ]
 
 from agent_skills.release import verify_release
 
@@ -41,6 +45,17 @@ if CANDIDATE_ROOT is not None:
 
 
 SCENARIO_SENSORS = {
+    "delivery-provider-rails-conformance": (
+        "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_schema_is_one_closed_versioned_message_union",
+        "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_one_fake_provider_independently_conforms_to_shared_cases",
+        "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_one_fake_consumer_independently_conforms_to_shared_cases",
+        "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_request_identity_axes_are_one_to_one_and_cancel_targets_an_attempt",
+        "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_accepted_cancellation_is_correlated_to_the_same_outbound_attempt",
+        "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_consumer_never_combines_events_from_different_attempts",
+        "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_invalid_renegotiation_fails_closed",
+        "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_absorbing_terminal_precedes_late_message_validation",
+        "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_schema_and_fakes_agree_on_named_malformed_messages",
+    ),
     "trackerless-workflows": (
         "test_router.RouterTests.test_pinned_intents_route_deterministically",
         "test_workflows.PlanningWorkflowTests.test_plan_only_returns_a_plan_without_tracker_mutation",
@@ -76,6 +91,7 @@ TRUSTED_EVIDENCE_PATHS = (
     "tests/scenarios/core/review.json",
     "tests/scenarios/core/routing.json",
     "tests/scenarios/core/tracker-capability.json",
+    "tests/test_delivery_provider_rails_contract.py",
     "tests/test_review_and_compounding.py",
     "tests/test_router.py",
     "tests/test_tracker_contract.py",
@@ -83,6 +99,7 @@ TRUSTED_EVIDENCE_PATHS = (
 )
 REQUIRED_SCENARIOS = (
     "fresh-install-and-host-discovery",
+    "delivery-provider-rails-conformance",
     "trackerless-workflows",
     "fake-adapter-workflows",
     "tamper-rejection",
@@ -90,6 +107,7 @@ REQUIRED_SCENARIOS = (
     "missing-capability",
     "bounded-review-failure",
 )
+DELIVERY_RAILS_SENSOR = "tests/test_delivery_provider_rails_contract.py"
 
 
 class QualificationFailure(AssertionError):
@@ -171,6 +189,18 @@ def _run_sensor(checkpoint: Checkpoint, sensor: str) -> None:
 def _run_sensors(checkpoint: Checkpoint, scenario_id: str, *_arguments) -> None:
     for sensor in SCENARIO_SENSORS[scenario_id]:
         _run_sensor(checkpoint, sensor)
+
+
+def _run_delivery_rails_sensors(
+    checkpoint: Checkpoint,
+    candidate_root: Path,
+) -> None:
+    checkpoint.check(
+        (candidate_root / DELIVERY_RAILS_SENSOR).read_bytes()
+        == (DRIVER_ROOT / DELIVERY_RAILS_SENSOR).read_bytes(),
+        "packaged conformance sensor matches the trusted sensor",
+    )
+    _run_sensors(checkpoint, "delivery-provider-rails-conformance")
 
 
 def _fresh_install(
@@ -428,7 +458,14 @@ def _internal_main(arguments: list[str]) -> int:
     parser.add_argument("--metadata", type=Path, required=True)
     args = parser.parse_args(arguments)
     operation = (
-        (lambda checkpoint: _run_sensors(checkpoint, args.scenario))
+        (
+            lambda checkpoint: _run_delivery_rails_sensors(
+                checkpoint,
+                args.candidate_root,
+            )
+        )
+        if args.scenario == "delivery-provider-rails-conformance"
+        else (lambda checkpoint: _run_sensors(checkpoint, args.scenario))
         if args.scenario in SCENARIO_SENSORS
         else (
             lambda checkpoint: {

@@ -1,4 +1,46 @@
 {
+  "attempts": {
+    "cancelled-then-late-success": {
+      "cancellationAccepted": true,
+      "requestId": "cancelled-attempt"
+    },
+    "duplicate-event": {
+      "cancellationAccepted": false,
+      "requestId": "duplicate-event"
+    },
+    "duplicate-request": {
+      "cancellationAccepted": false,
+      "requestId": "duplicate-request"
+    },
+    "indeterminate-then-late-success": {
+      "cancellationAccepted": false,
+      "requestId": "late-success"
+    },
+    "interrupted-attempt": {
+      "cancellationAccepted": false,
+      "requestId": "interrupted"
+    },
+    "malformed-event": {
+      "cancellationAccepted": false,
+      "requestId": "malformed-event"
+    },
+    "supported-complete": {
+      "cancellationAccepted": false,
+      "requestId": "complete"
+    },
+    "terminal-blocked": {
+      "cancellationAccepted": false,
+      "requestId": "blocked-attempt"
+    },
+    "terminal-failed": {
+      "cancellationAccepted": false,
+      "requestId": "failed-attempt"
+    },
+    "terminal-indeterminate": {
+      "cancellationAccepted": false,
+      "requestId": "indeterminate-attempt"
+    }
+  },
   "cases": [
     {
       "expected": {

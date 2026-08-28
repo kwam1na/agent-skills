@@ -97,6 +97,7 @@ class QualificationTests(unittest.TestCase):
             self.assertEqual(
                 {scenario["id"] for scenario in record["scenarios"]},
                 {
+                    "delivery-provider-rails-conformance",
                     "fresh-install-and-host-discovery",
                     "trackerless-workflows",
                     "fake-adapter-workflows",
@@ -257,6 +258,95 @@ class QualificationTests(unittest.TestCase):
                 if item["id"] == "trackerless-workflows"
             )
             self.assertEqual(trackerless["result"], "failed")
+
+    def test_contract_conformance_comes_from_the_supplied_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            candidate = directory / "contract-candidate"
+            shutil.copytree(
+                ROOT,
+                candidate,
+                ignore=shutil.ignore_patterns(".git", "__pycache__"),
+            )
+            fixture_path = (
+                candidate
+                / "tests"
+                / "fixtures"
+                / "delivery-provider-rails-v1.json"
+            )
+            fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+            supported = next(
+                case for case in fixture["cases"] if case["id"] == "supported-complete"
+            )
+            supported["expected"]["consumer"]["status"] = "failed"
+            fixture_path.write_text(
+                json.dumps(fixture, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            archive = directory / "contract-candidate.zip"
+            metadata = directory / "contract-candidate.release.json"
+            build_release(
+                candidate,
+                archive,
+                metadata,
+                release_id="contract-candidate",
+                profile_id="core",
+            )
+            record_path = directory / "contract-candidate.qualification.json"
+
+            result = self._run_qualification(
+                archive,
+                metadata,
+                record_path,
+                directory,
+            )
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            conformance = next(
+                item
+                for item in record["scenarios"]
+                if item["id"] == "delivery-provider-rails-conformance"
+            )
+            self.assertEqual(conformance["result"], "failed")
+
+    def test_modified_packaged_contract_sensor_fails_qualification(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            candidate = directory / "modified-sensor-candidate"
+            shutil.copytree(
+                ROOT,
+                candidate,
+                ignore=shutil.ignore_patterns(".git", "__pycache__"),
+            )
+            sensor = candidate / "tests" / "test_delivery_provider_rails_contract.py"
+            sensor.write_bytes(sensor.read_bytes() + b"\n# candidate-only sensor change\n")
+            archive = directory / "modified-sensor.zip"
+            metadata = directory / "modified-sensor.release.json"
+            build_release(
+                candidate,
+                archive,
+                metadata,
+                release_id="modified-sensor",
+                profile_id="core",
+            )
+            record_path = directory / "modified-sensor.qualification.json"
+
+            result = self._run_qualification(
+                archive,
+                metadata,
+                record_path,
+                directory,
+            )
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            conformance = next(
+                item
+                for item in record["scenarios"]
+                if item["id"] == "delivery-provider-rails-conformance"
+            )
+            self.assertEqual(conformance["result"], "failed")
 
     def test_failed_verification_invalidates_a_prior_passing_record(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

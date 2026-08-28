@@ -165,6 +165,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         "tests/scenarios/core/repository-discovery.json",
         "tests/scenarios/core/routing.json",
         "tests/scenarios/core/tracker-capability.json",
+        "tests/test_delivery_provider_rails_contract.py",
     ):
         files[relative] = _packaged_bytes(root, relative)
     for relative in (

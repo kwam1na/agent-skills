@@ -22,8 +22,10 @@ Terminal outcomes are `success`, `blocked`, `failed`, `cancelled`, and
 `blocked` outcome closes the attempt.
 
 A `cancel` carries a stable `cancellationId`. Repeating the same cancellation is
-idempotent. Once the provider accepts cancellation for an active attempt, that
-attempt may terminate only as `cancelled` or `indeterminate`.
+idempotent. It is malformed unless its `requestId` names an accepted attempt.
+Once the provider accepts cancellation, only events with that same `requestId`
+belong to the cancelled attempt, and that attempt may terminate only as
+`cancelled` or `indeterminate`.
 
 ## Validation and unknown fields
 
@@ -39,12 +41,16 @@ Event sequence numbers start at one and increase by one. An exact repeat at an
 already accepted sequence is a duplicate and is ignored. A conflicting message
 at the same sequence is malformed.
 
-Repeating an identical request with the same request and idempotency identities
-does not execute it again. Reusing those identities with changed content is
-malformed.
+One `requestId` maps to exactly one `idempotencyKey`, and one `idempotencyKey`
+maps to exactly one `requestId`. Repeating the identical pair and content does
+not execute it again. Reusing either identity with a different counterpart or
+changed content is malformed. Every event for the attempt must carry its
+submitted `requestId`; consumers reject another attempt's events rather than
+combining their sequences.
 
-Terminal outcomes are absorbing. Any later event for the same attempt is
-rejected and cannot reopen or replace its outcome.
+Terminal outcomes are absorbing. A consumer rejects any later message before
+validating its shape, so malformed or cross-attempt data cannot reopen or
+replace the recorded outcome.
 
 Cancellation cannot become success: once cancellation is accepted, a later
 success is invalid.
