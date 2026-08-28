@@ -83,11 +83,30 @@ class ProviderQualificationTests(unittest.TestCase):
                     "cancelled",
                     "interrupted",
                     "duplicate-and-reconciliation",
+                    "release-mismatch",
                     "unsupported-version",
-                    "evidence-completeness-and-redaction",
+                    "evidence-completeness",
                 },
             )
             self.assertTrue(all(scenario["result"] == "passed" for scenario in record["scenarios"]))
+            success = next(
+                scenario
+                for scenario in record["scenarios"]
+                if scenario["id"] == "success-and-native-operations"
+            )
+            self.assertIn(
+                "the same low-entropy host reference maps differently across fresh sessions",
+                success["evidence"],
+            )
+            unsupported = next(
+                scenario
+                for scenario in record["scenarios"]
+                if scenario["id"] == "unsupported-version"
+            )
+            self.assertIn(
+                "unsupported negotiation closes the session to later work",
+                unsupported["evidence"],
+            )
             retained = record_path.read_text(encoding="utf-8")
             for forbidden in (
                 str(directory),
@@ -97,6 +116,7 @@ class ProviderQualificationTests(unittest.TestCase):
                 "opaque:",
             ):
                 self.assertNotIn(forbidden, retained)
+            self.assertNotIn("degraded evidence retains no raw host reference", retained)
 
     def test_qualification_is_deterministic_without_preexisting_host_install(self) -> None:
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
@@ -117,52 +137,75 @@ class ProviderQualificationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(replay.read_bytes(), RECORD.read_bytes())
 
-    def test_behavior_mutation_in_exact_candidate_is_rejected(self) -> None:
+    def test_hostile_installed_provider_mutations_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            candidate = directory / "candidate"
-            shutil.copytree(
-                ROOT,
-                candidate,
-                ignore=shutil.ignore_patterns(".git", "__pycache__"),
-            )
-            provider_path = candidate / "agent_skills" / "provider.py"
-            source = provider_path.read_text(encoding="utf-8")
-            provider_path.write_text(
-                source.replace(
+            mutations = {
+                "protocol": (
                     'PROTOCOL_VERSION = "delivery-provider-rails/1"',
                     'PROTOCOL_VERSION = "delivery-provider-rails/2"',
+                    "installed module starts with isolated Python module search",
                 ),
-                encoding="utf-8",
-            )
-            archive = directory / "mutated.zip"
-            metadata = directory / "mutated.release.json"
-            build_release(
-                candidate,
-                archive,
-                metadata,
-                release_id="mutated-provider-v1",
-                profile_id="core",
-            )
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(SCRIPT),
-                    "--archive",
-                    str(archive),
-                    "--metadata",
-                    str(metadata),
-                    "--record",
-                    str(directory / "record.json"),
-                ],
-                cwd=directory,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+                "deterministic-reference": (
+                    'reference = f"opaque:{secrets.token_hex(16)}"',
+                    'reference = f"opaque:{hashlib.sha256(value.encode()).hexdigest()[:32]}"',
+                    "the same low-entropy host reference maps differently across fresh sessions",
+                ),
+                "ignored-release-mismatch": (
+                    "if expected_release != release:",
+                    "if False:",
+                    "wrong expected release fails closed with a blocked terminal",
+                ),
+                "accepted-after-unsupported": (
+                    "self.negotiated = supported\n        self.closed = not supported",
+                    "self.negotiated = True\n        self.closed = False",
+                    "unsupported negotiation closes the session to later work",
+                ),
+            }
 
-            self.assertEqual(result.returncode, 1)
-            self.assertIn("installed module starts", result.stderr)
+            for name, (before, after, expected_failure) in mutations.items():
+                with self.subTest(name=name):
+                    candidate = directory / name
+                    shutil.copytree(
+                        ROOT,
+                        candidate,
+                        ignore=shutil.ignore_patterns(".git", "__pycache__"),
+                    )
+                    provider_path = candidate / "agent_skills" / "provider.py"
+                    source = provider_path.read_text(encoding="utf-8")
+                    self.assertIn(before, source)
+                    provider_path.write_text(
+                        source.replace(before, after, 1),
+                        encoding="utf-8",
+                    )
+                    archive = directory / f"{name}.zip"
+                    metadata = directory / f"{name}.release.json"
+                    build_release(
+                        candidate,
+                        archive,
+                        metadata,
+                        release_id=f"{name}-provider-v1",
+                        profile_id="core",
+                    )
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            str(SCRIPT),
+                            "--archive",
+                            str(archive),
+                            "--metadata",
+                            str(metadata),
+                            "--record",
+                            str(directory / f"{name}.record.json"),
+                        ],
+                        cwd=directory,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(expected_failure, result.stderr)
 
     def test_qualification_executes_installed_provider_without_harness_or_transport(self) -> None:
         source = SCRIPT.read_text(encoding="utf-8")

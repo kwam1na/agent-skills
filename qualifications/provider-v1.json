@@ -31,11 +31,14 @@
       "result": "passed"
     },
     {
-      "assertionCount": 10,
+      "assertionCount": 13,
       "evidence": [
         "aligned installed workflow reaches success",
         "all native operation names survive provider mapping",
         "host references become distinct session-random opaque values",
+        "fresh comparison session completes the installed workflow",
+        "the same low-entropy host reference maps differently across fresh sessions",
+        "opaque references resist practical low-entropy dictionary recovery",
         "installed provider writes the declared evidence manifest",
         "evidence binds the requested candidate tree",
         "evidence contains the declared non-empty claim",
@@ -105,30 +108,40 @@
     {
       "assertionCount": 3,
       "evidence": [
+        "wrong expected release fails closed with a blocked terminal",
+        "release mismatch retains its typed blocker",
+        "release mismatch emits no green evidence"
+      ],
+      "id": "release-mismatch",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 4,
+      "evidence": [
         "unsupported version fails negotiation closed",
         "unsupported version selects no protocol",
-        "provider reports only its exact supported protocol"
+        "provider reports only its exact supported protocol",
+        "unsupported negotiation closes the session to later work"
       ],
       "id": "unsupported-version",
       "result": "passed"
     },
     {
-      "assertionCount": 3,
+      "assertionCount": 2,
       "evidence": [
         "empty review evidence fails anti-vacuity checks",
-        "incomplete evidence cannot emit a manifest",
-        "degraded evidence retains no raw host reference"
+        "incomplete evidence cannot emit a manifest"
       ],
-      "id": "evidence-completeness-and-redaction",
+      "id": "evidence-completeness",
       "result": "passed"
     }
   ],
   "schemaVersion": "agent-skills-provider-qualification/1",
   "summary": {
-    "assertionCount": 40,
+    "assertionCount": 46,
     "failedScenarioCount": 0,
-    "passedScenarioCount": 9,
-    "requiredScenarioCount": 9,
+    "passedScenarioCount": 10,
+    "requiredScenarioCount": 10,
     "result": "passed"
   }
 }

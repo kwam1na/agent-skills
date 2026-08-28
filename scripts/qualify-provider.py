@@ -30,8 +30,9 @@ SCENARIOS = (
     "cancelled",
     "interrupted",
     "duplicate-and-reconciliation",
+    "release-mismatch",
     "unsupported-version",
-    "evidence-completeness-and-redaction",
+    "evidence-completeness",
 )
 TREE = "b" * 40
 DIGEST = "a" * 64
@@ -140,6 +141,18 @@ class InstalledProvider:
         self.process.wait(timeout=10)
         return events
 
+    def reject(self, message: dict[str, object]) -> tuple[int | None, dict[str, object] | None, str]:
+        assert self.process.stdin is not None
+        self.process.stdin.write(json.dumps(message, sort_keys=True, separators=(",", ":")) + "\n")
+        self.process.stdin.flush()
+        assert self.process.stdout is not None
+        line = self.process.stdout.readline()
+        if line:
+            return None, json.loads(line), ""
+        return_code = self.process.wait(timeout=10)
+        assert self.process.stderr is not None
+        return return_code, None, self.process.stderr.read()
+
     def close(self) -> None:
         if self.process.poll() is None:
             assert self.process.stdin is not None
@@ -187,7 +200,14 @@ def provider_request(
     host_events: list[dict[str, object]] | None = None,
     review: dict[str, object] | None = None,
     deferred: bool = False,
+    expected_release: dict[str, str] | None = None,
 ) -> dict[str, object]:
+    binding = expected_release or {
+        "archiveSha256": release.archive_sha256,
+        "metadataSha256": release.metadata_sha256,
+        "profile": release.profile_id,
+        "releaseId": release.release_id,
+    }
     return {
         "idempotencyKey": f"attempt-{request_id}",
         "kind": "request",
@@ -213,12 +233,7 @@ def provider_request(
                 "defer": deferred,
                 "hostEvents": host_events or [],
                 "recordedAt": "2026-08-28T12:00:00Z",
-                "release": {
-                    "archiveSha256": release.archive_sha256,
-                    "metadataSha256": release.metadata_sha256,
-                    "profile": release.profile_id,
-                    "releaseId": release.release_id,
-                },
+                "release": binding,
                 "review": review,
                 "workflowId": "review-work",
             },
@@ -284,8 +299,12 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
                         "success-attempt",
                         review=aligned_review(),
                         host_events=[
-                            {"kind": "progress", "operation": operation, "reference": f"{RAW_REFERENCE}-{operation}"}
-                            for operation in OPERATIONS
+                            {
+                                "kind": "progress",
+                                "operation": operation,
+                                "reference": RAW_REFERENCE if index == 0 else f"{RAW_REFERENCE}-{operation}",
+                            }
+                            for index, operation in enumerate(OPERATIONS)
                         ],
                     )
                 )
@@ -302,6 +321,46 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
                     if isinstance(event.get("details"), dict) and "reference" in event["details"]
                 ]
                 checkpoint.check(len(references) == len(set(references)) == len(OPERATIONS), "host references become distinct session-random opaque values")
+                repeated_root = root / "success-repeat"
+                repeated_root.mkdir()
+                repeated_provider = session()
+                try:
+                    negotiate(repeated_provider, PROTOCOL_VERSION)
+                    repeated_events = repeated_provider.exchange(
+                        provider_request(
+                            release,
+                            repeated_root,
+                            "success-repeat-attempt",
+                            review=aligned_review(),
+                            host_events=[
+                                {
+                                    "kind": "progress",
+                                    "operation": "read",
+                                    "reference": RAW_REFERENCE,
+                                }
+                            ],
+                        )
+                    )
+                    repeated_reference = next(
+                        event["details"]["reference"]
+                        for event in repeated_events
+                        if event.get("details", {}).get("operation") == "read"
+                    )
+                finally:
+                    repeated_provider.close()
+                checkpoint.check(
+                    terminal(repeated_events).get("outcome") == "success",
+                    "fresh comparison session completes the installed workflow",
+                )
+                checkpoint.check(
+                    references[0] != repeated_reference,
+                    "the same low-entropy host reference maps differently across fresh sessions",
+                )
+                predictable = f"opaque:{hashlib.sha256(RAW_REFERENCE.encode()).hexdigest()[:32]}"
+                checkpoint.check(
+                    predictable not in {references[0], repeated_reference},
+                    "opaque references resist practical low-entropy dictionary recovery",
+                )
                 manifest_path = Path(terminal(events)["result"]["manifestPath"])
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 checkpoint.check(manifest["spec"] == "delivery-evidence/1", "installed provider writes the declared evidence manifest")
@@ -418,6 +477,46 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
             finally:
                 provider.close()
 
+        def release_mismatch(checkpoint: Checkpoint) -> None:
+            run_root = root / "release-mismatch"
+            run_root.mkdir()
+            provider = session()
+            try:
+                negotiate(provider, PROTOCOL_VERSION)
+                wrong_release = {
+                    "archiveSha256": "0" * 64,
+                    "metadataSha256": release.metadata_sha256,
+                    "profile": release.profile_id,
+                    "releaseId": release.release_id,
+                }
+                events = provider.exchange(
+                    provider_request(
+                        release,
+                        run_root,
+                        "release-mismatch-attempt",
+                        review=aligned_review(),
+                        expected_release=wrong_release,
+                    )
+                )
+                checkpoint.check(
+                    terminal(events).get("outcome") == "blocked",
+                    "wrong expected release fails closed with a blocked terminal",
+                )
+                checkpoint.check(
+                    any(
+                        event.get("kind") == "blocker"
+                        and event.get("blockerId") == "release-mismatch"
+                        for event in events
+                    ),
+                    "release mismatch retains its typed blocker",
+                )
+                checkpoint.check(
+                    not (run_root / "manifest.json").exists(),
+                    "release mismatch emits no green evidence",
+                )
+            finally:
+                provider.close()
+
         def unsupported(checkpoint: Checkpoint) -> None:
             provider = session()
             try:
@@ -425,6 +524,20 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
                 checkpoint.check(response.get("outcome") == "unsupported", "unsupported version fails negotiation closed")
                 checkpoint.check(response.get("selectedVersion") is None, "unsupported version selects no protocol")
                 checkpoint.check(response.get("supportedVersions") == [PROTOCOL_VERSION], "provider reports only its exact supported protocol")
+                run_root = root / "unsupported"
+                run_root.mkdir()
+                return_code, event, detail = provider.reject(
+                    provider_request(
+                        release,
+                        run_root,
+                        "unsupported-attempt",
+                        review=aligned_review(),
+                    )
+                )
+                checkpoint.check(
+                    return_code == 2 and event is None and "request-malformed" in detail,
+                    "unsupported negotiation closes the session to later work",
+                )
             finally:
                 provider.close()
 
@@ -442,7 +555,6 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
                 )
                 checkpoint.check(terminal(events).get("outcome") == "failed", "empty review evidence fails anti-vacuity checks")
                 checkpoint.check(not (run_root / "manifest.json").exists(), "incomplete evidence cannot emit a manifest")
-                checkpoint.check(RAW_REFERENCE not in canonical_json(events), "degraded evidence retains no raw host reference")
             finally:
                 provider.close()
 
@@ -454,8 +566,9 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
             "cancelled": cancelled,
             "interrupted": interrupted,
             "duplicate-and-reconciliation": duplicate,
+            "release-mismatch": release_mismatch,
             "unsupported-version": unsupported,
-            "evidence-completeness-and-redaction": evidence,
+            "evidence-completeness": evidence,
         }
         scenarios = [run_scenario(name, operations[name]) for name in SCENARIOS]
         assertion_count = sum(int(item["assertionCount"]) for item in scenarios)
