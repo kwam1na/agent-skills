@@ -6,7 +6,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from .catalog import dependency_findings, resolve_profile
 from .errors import Finding
@@ -24,6 +24,14 @@ RULE_IDS = (
     "path.symlink_contained", "profile.closure", "profile.reference",
     "provenance.coverage", "provenance.digest", "provenance.license",
     "schema.supported", "skill.frontmatter", "skill.reference", "skill.structure",
+)
+EXPECTED_SCAN_ROOTS = (
+    ("catalog", "catalog.json"),
+    ("fixture-controls", "tests/fixtures"),
+    ("profiles", "profiles"),
+    ("provenance", "provenance.lock.json"),
+    ("schemas", "schemas"),
+    ("skills", "skills"),
 )
 LINK_RE = re.compile(r"\[[^]]*\]\(([^)]+)\)")
 RESOURCE_RE = re.compile(
@@ -58,7 +66,14 @@ def safe_relative_path(value: object) -> bool:
     if not isinstance(value, str) or not value or "\\" in value:
         return False
     path = PurePosixPath(value)
-    return not path.is_absolute() and ".." not in path.parts and "." not in path.parts
+    windows_path = PureWindowsPath(value)
+    return (
+        not path.is_absolute()
+        and path.as_posix() == value
+        and ".." not in path.parts
+        and not windows_path.drive
+        and not windows_path.is_absolute()
+    )
 
 
 @dataclass(frozen=True)
@@ -121,6 +136,19 @@ def _validate_inventory(reader: CorpusReader) -> tuple[str, ...]:
         )
         root_ids: tuple[str, ...] = ()
     else:
+        declared_roots = [
+            (item.get("id"), item.get("path"))
+            for item in scan_roots
+            if isinstance(item, dict)
+        ]
+        if declared_roots != list(EXPECTED_SCAN_ROOTS):
+            reader.findings.append(
+                Finding(
+                    "inventory.anti_vacuity",
+                    "validation-inventory.json",
+                    "scan root mapping drift",
+                )
+            )
         root_ids = tuple(
             item.get("id")
             for item in scan_roots
@@ -537,6 +565,22 @@ def validate_corpus(root: Path) -> ValidationResult:
             findings.append(Finding("provenance.license", provenance_id, f"missing ownership: {provenance_id}"))
         if not entry.get("license"):
             findings.append(Finding("provenance.license", provenance_id, f"missing license: {provenance_id}"))
+        if not isinstance(entry.get("classification"), str) or not entry["classification"]:
+            findings.append(
+                Finding(
+                    "provenance.coverage",
+                    provenance_id,
+                    f"missing classification: {provenance_id}",
+                )
+            )
+        if entry.get("distribution") not in {"releasable", "source-only"}:
+            findings.append(
+                Finding(
+                    "provenance.coverage",
+                    provenance_id,
+                    f"invalid distribution: {provenance_id}",
+                )
+            )
         outputs = entry.get("outputs")
         if not isinstance(outputs, list) or not outputs:
             findings.append(Finding("provenance.coverage", provenance_id, "missing outputs"))

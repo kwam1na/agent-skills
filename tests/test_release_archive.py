@@ -123,6 +123,19 @@ class ReleaseArchiveTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseError, "release.path"):
                 verify_release(archive, metadata)
 
+    def test_windows_and_noncanonical_archive_paths_reject(self) -> None:
+        for unsafe in ("C:/escape.txt", "a//b", "a/./b", "./a", "alias/"):
+            with self.subTest(unsafe=unsafe), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                archive, metadata = self.build(directory)
+                with zipfile.ZipFile(archive) as source:
+                    entries = {name: source.read(name) for name in source.namelist()}
+                entries[unsafe] = b"bad"
+                self._rewrite_archive(archive, entries)
+                self._rewrite_checksum(archive, metadata)
+                with self.assertRaisesRegex(ReleaseError, "release.path"):
+                    verify_release(archive, metadata)
+
     def test_archive_validates_outside_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

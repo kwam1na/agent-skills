@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_skills.validate import validate_corpus
+from agent_skills.validate import safe_relative_path, validate_corpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +102,10 @@ class CorpusValidationTests(unittest.TestCase):
         rules = {finding.rule_id for finding in validate_corpus(root).findings}
         self.assertTrue({"path.safe", "path.case_unique", "path.symlink_contained"} <= rules)
 
+    def test_windows_drive_path_rejects_on_every_host(self) -> None:
+        self.assertFalse(safe_relative_path("C:/escape.txt"))
+        self.assertFalse(safe_relative_path("C:\\escape.txt"))
+
     def test_core_leakage_has_positive_and_negative_controls(self) -> None:
         temporary, root = self.copied_corpus()
         self.addCleanup(temporary.cleanup)
@@ -181,6 +185,37 @@ class CorpusValidationTests(unittest.TestCase):
                 write_json(inventory_path, inventory)
                 rules = {finding.rule_id for finding in validate_corpus(root).findings}
                 self.assertIn("inventory.anti_vacuity", rules)
+
+    def test_scan_root_mapping_is_exact(self) -> None:
+        for mutation in ("missing", "duplicate", "substituted"):
+            with self.subTest(mutation=mutation):
+                temporary, root = self.copied_corpus()
+                self.addCleanup(temporary.cleanup)
+                inventory_path = root / "validation-inventory.json"
+                inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+                if mutation == "missing":
+                    inventory["scanRoots"].pop()
+                elif mutation == "duplicate":
+                    inventory["scanRoots"].append(dict(inventory["scanRoots"][0]))
+                else:
+                    inventory["scanRoots"][0]["path"] = "README.md"
+                write_json(inventory_path, inventory)
+                rules = {finding.rule_id for finding in validate_corpus(root).findings}
+                self.assertIn("inventory.anti_vacuity", rules)
+
+    def test_missing_classification_and_invalid_distribution_reject(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        provenance_path = root / "provenance.lock.json"
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        provenance["entries"][0]["classification"] = ""
+        provenance["entries"][1]["distribution"] = "internal-maybe"
+        write_json(provenance_path, provenance)
+
+        findings = validate_corpus(root).findings
+        messages = {finding.message for finding in findings}
+        self.assertIn("missing classification: bootstrap-agent-harness", messages)
+        self.assertIn("invalid distribution: compound-delivery-kernel", messages)
 
     def test_malformed_document_shapes_fail_closed(self) -> None:
         temporary, root = self.copied_corpus()
