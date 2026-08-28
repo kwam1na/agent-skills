@@ -44,16 +44,18 @@ def _open_lock(path: Path, *, create: bool) -> int:
         raise
 
 
-def _try_lock(descriptor: int) -> bool:
+def _try_lock(descriptor: int, *, shared: bool = False) -> bool:
     if os.name == "nt":
         os.lseek(descriptor, 0, os.SEEK_SET)
         try:
-            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+            mode = msvcrt.LK_NBRLCK if shared else msvcrt.LK_NBLCK
+            msvcrt.locking(descriptor, mode, 1)
         except OSError:
             return False
         return True
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+        fcntl.flock(descriptor, mode | fcntl.LOCK_NB)
     except BlockingIOError:
         return False
     return True
@@ -102,8 +104,9 @@ def _write_owner(descriptor: int, document: dict | None) -> None:
 
 
 class RepositoryLock:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, shared: bool = False) -> None:
         self.path = path
+        self.shared = shared
         self.descriptor: int | None = None
 
     def __enter__(self) -> "RepositoryLock":
@@ -115,7 +118,7 @@ class RepositoryLock:
         descriptor = _open_lock(self.path, create=True)
         locked = False
         try:
-            if not _try_lock(descriptor):
+            if not _try_lock(descriptor, shared=self.shared):
                 raise LockError(
                     "lock-busy: another lifecycle operation owns the repository lock"
                 )
@@ -124,14 +127,15 @@ class RepositoryLock:
                 raise LockError(
                     "lock-stale: explicit stale-lock recovery is required"
                 )
-            _write_owner(
-                descriptor,
-                {
-                    "createdNs": time.time_ns(),
-                    "pid": os.getpid(),
-                    "schemaVersion": "agent-skills-lock/1",
-                },
-            )
+            if not self.shared:
+                _write_owner(
+                    descriptor,
+                    {
+                        "createdNs": time.time_ns(),
+                        "pid": os.getpid(),
+                        "schemaVersion": "agent-skills-lock/1",
+                    },
+                )
             self.descriptor = descriptor
             return self
         except Exception:
@@ -145,7 +149,8 @@ class RepositoryLock:
         if descriptor is None:
             return
         try:
-            _write_owner(descriptor, None)
+            if not self.shared:
+                _write_owner(descriptor, None)
         finally:
             try:
                 _unlock(descriptor)

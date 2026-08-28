@@ -169,6 +169,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
     ):
         files[relative] = _packaged_bytes(root, relative)
     for relative in (
+        "docs/agent-skills-provider.md",
         "docs/delivery-provider-rails-v1.md",
         "tests/fixtures/delivery-provider-rails-v1.json",
         "tests/fixtures/invalid-corpora/coverage.json",
@@ -200,6 +201,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         "agent_skills/journal.py",
         "agent_skills/lifecycle.py",
         "agent_skills/locking.py",
+        "agent_skills/provider.py",
         "agent_skills/receipt.py",
         "agent_skills/release.py",
         "agent_skills/router.py",
