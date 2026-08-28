@@ -410,7 +410,7 @@ def _atomic_write(path: Path, contents: str) -> None:
     )
     temporary = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as target:
             target.write(contents)
             target.flush()
             os.fsync(target.fileno())
