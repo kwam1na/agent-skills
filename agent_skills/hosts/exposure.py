@@ -12,6 +12,7 @@ from .codex import CODEX
 
 
 HOSTS = (CODEX, CLAUDE_CODE)
+WINDOWS = os.name == "nt"
 
 
 DESCRIPTOR_SWITCH_SUPPORTED = (
@@ -53,10 +54,14 @@ def _skill_names(receipt: dict | None) -> tuple[str, ...]:
 def _normalized_link(value: str) -> str | None:
     if not value or "\x00" in value:
         return None
-    normalized = value.replace("\\", "/") if os.name == "nt" else value
+    normalized = value.replace("\\", "/") if WINDOWS else value
     if PurePosixPath(normalized).is_absolute() or PureWindowsPath(value).is_absolute():
         return None
     return posixpath.normpath(normalized)
+
+
+def _runtime_link(value: str) -> str:
+    return value.replace("/", "\\") if WINDOWS else value
 
 
 class ExposureManager:
@@ -179,7 +184,10 @@ class ExposureManager:
                             f"{host.root / skill} changed after preflight"
                         )
                     path.unlink()
-                path.symlink_to(relative_target, target_is_directory=True)
+                path.symlink_to(
+                    _runtime_link(relative_target),
+                    target_is_directory=True,
+                )
             except OSError as error:
                 raise ExposureError(
                     f"exposure-unavailable: {host.host} could not create a relative "
@@ -207,11 +215,20 @@ class ExposureManager:
                 raise ExposureError("exposure-conflict: shared projection root is a symlink")
             temporary = self.managed_root / f".current.{uuid.uuid4().hex}.tmp"
             try:
-                temporary.symlink_to(expected, target_is_directory=True)
+                temporary.symlink_to(
+                    _runtime_link(expected),
+                    target_is_directory=True,
+                )
                 if self.managed_root.is_symlink():
                     raise ExposureError(
                         "exposure-conflict: shared projection root changed during switch"
                     )
+                if WINDOWS and os.path.lexists(self.current_path):
+                    if not self._matches_current(alternate):
+                        raise ExposureError(
+                            "exposure-conflict: shared active projection changed after preflight"
+                        )
+                    self.current_path.unlink()
                 os.replace(temporary, self.current_path)
             except ExposureError:
                 raise

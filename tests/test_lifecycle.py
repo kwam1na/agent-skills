@@ -13,7 +13,7 @@ from unittest import mock
 
 from agent_skills.cli import main as lifecycle_cli
 from agent_skills.generations import inspect_release
-from agent_skills.hosts.exposure import HOSTS
+from agent_skills.hosts.exposure import HOSTS, _normalized_link
 from agent_skills.lifecycle import Lifecycle
 from agent_skills.locking import RepositoryLock
 from agent_skills.release import verify_release
@@ -263,12 +263,23 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         self.assertEqual(cloned_status["lifecycle"], "current")
         self.assertEqual(cloned_status["active"]["releaseId"], "core-v1")
         for host in HOSTS:
+            target = "../../.agent-skills/current/skills/deliver-work"
             self.assertEqual(
-                os.readlink(clone / host.root / "deliver-work"),
-                "../../.agent-skills/current/skills/deliver-work",
+                _normalized_link(os.readlink(clone / host.root / "deliver-work")),
+                target,
+            )
+            self.assertEqual(
+                run_git(
+                    clone,
+                    "show",
+                    f"HEAD:{(host.root / 'deliver-work').as_posix()}",
+                ),
+                target,
             )
         self.assertTrue(
-            os.readlink(clone / ".agent-skills" / "current").startswith(
+            _normalized_link(
+                os.readlink(clone / ".agent-skills" / "current")
+            ).startswith(
                 "generations/"
             )
         )

@@ -33,6 +33,15 @@ deletes only the now-inert stable links proven by the current receipt and leaves
 unrelated host entries untouched. Interrupted projection changes are restored
 or completed through the existing repository lifecycle journal.
 
+On Windows, directory links use native runtime separators and explicit
+directory-link semantics. Because the standard library cannot atomically
+replace an existing directory link there, the journaled switch removes the
+shared `current` link before installing its prepared replacement. Both hosts
+may be unavailable briefly, but they cannot expose different generations; an
+interruption remains a typed, recoverable transition. Git continues to track
+the canonical POSIX link target, while runtime comparisons normalize the value
+returned by the operating system.
+
 Receipts created before host exposure metadata existed remain readable and
 represent an installed but unexposed generation. A later verified update or
 rollback writes the fixed exposure metadata and projections; no separate

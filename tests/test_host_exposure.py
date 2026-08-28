@@ -160,7 +160,7 @@ class HostExposureTests(LifecycleFixture, unittest.TestCase):
             lifecycle.remove(maintainer=True, fault=interrupt)
         for host in HOSTS:
             projection = self.repository / host.root / "deliver-work"
-            with self.assertRaises(FileNotFoundError):
+            with self.assertRaises(OSError):
                 projection.resolve(strict=True)
 
         status = lifecycle.status().as_dict()
@@ -229,22 +229,111 @@ class HostExposureTests(LifecycleFixture, unittest.TestCase):
         for host in HOSTS:
             projection = self.repository / host.root / "deliver-work"
             self.assertEqual(
-                os.readlink(projection),
+                _normalized_link(os.readlink(projection)),
                 "../../.agent-skills/current/skills/deliver-work",
             )
         self.assertEqual(lifecycle.status().as_dict()["lifecycle"], "current")
 
         windows_link = r"..\..\.agent-skills\current\skills\deliver-work"
-        with mock.patch("agent_skills.hosts.exposure.os.name", "nt"):
+        with mock.patch("agent_skills.hosts.exposure.WINDOWS", True, create=True):
             self.assertEqual(
                 _normalized_link(windows_link),
                 "../../.agent-skills/current/skills/deliver-work",
             )
-        with mock.patch("agent_skills.hosts.exposure.os.name", "posix"):
+        with mock.patch("agent_skills.hosts.exposure.WINDOWS", False, create=True):
             self.assertNotEqual(
                 _normalized_link(windows_link),
                 "../../.agent-skills/current/skills/deliver-work",
             )
+
+    def test_windows_fallback_replaces_existing_current_as_directory_link(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        original_replace = os.replace
+        original_symlink_to = Path.symlink_to
+        directory_flags: list[bool] = []
+        directory_targets: list[str] = []
+
+        def reject_existing_current(
+            source: object,
+            destination: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            if Path(destination) == lifecycle.exposure.current_path:
+                if os.path.lexists(destination):
+                    raise PermissionError("simulated Windows existing-link denial")
+            original_replace(source, destination, *args, **kwargs)
+
+        def recording_symlink_to(
+            path: Path,
+            target: object,
+            target_is_directory: bool = False,
+        ) -> None:
+            directory_flags.append(target_is_directory)
+            directory_targets.append(str(target))
+            original_symlink_to(
+                path,
+                target,
+                target_is_directory=target_is_directory,
+            )
+
+        with (
+            mock.patch("agent_skills.hosts.exposure.DESCRIPTOR_SWITCH_SUPPORTED", False),
+            mock.patch("agent_skills.hosts.exposure.WINDOWS", True, create=True),
+            mock.patch("agent_skills.hosts.exposure.os.replace", side_effect=reject_existing_current),
+            mock.patch.object(Path, "symlink_to", new=recording_symlink_to),
+        ):
+            lifecycle.install(*self.v1, maintainer=True)
+            lifecycle.update(*self.v2, maintainer=True)
+            self.assertEqual(lifecycle.status().as_dict()["lifecycle"], "current")
+
+        self.assertTrue(directory_flags)
+        self.assertTrue(all(directory_flags))
+        self.assertTrue(all("\\" in target for target in directory_targets))
+        self.assertTrue(all("/" not in target for target in directory_targets))
+
+    def test_windows_switch_failure_after_unlink_is_jointly_unavailable_and_recovers(
+        self,
+    ) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        generation = lifecycle.status().as_dict()["active"]["generation"]
+        original_replace = os.replace
+
+        def crash_after_current_unlink(
+            source: object,
+            destination: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            if Path(destination) == lifecycle.exposure.current_path:
+                if os.path.lexists(destination):
+                    raise PermissionError("simulated Windows existing-link denial")
+                raise OSError("simulated interruption after shared unlink")
+            original_replace(source, destination, *args, **kwargs)
+
+        with (
+            mock.patch("agent_skills.hosts.exposure.DESCRIPTOR_SWITCH_SUPPORTED", False),
+            mock.patch("agent_skills.hosts.exposure.WINDOWS", True, create=True),
+            mock.patch(
+                "agent_skills.hosts.exposure.os.replace",
+                side_effect=crash_after_current_unlink,
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "exposure-unavailable"):
+                lifecycle.update(*self.v2, maintainer=True)
+            for host in HOSTS:
+                projection = self.repository / host.root / "deliver-work"
+                with self.assertRaises(OSError):
+                    projection.resolve(strict=True)
+            status = lifecycle.status().as_dict()
+            self.assertEqual(status["lifecycle"], "recovery-needed")
+            self.assertEqual(status["blockers"], [])
+
+        self.assertEqual(lifecycle.recover(maintainer=True)["action"], "restore-prior")
+        for host in HOSTS:
+            projection = self.repository / host.root / "deliver-work"
+            self.assertIn(generation, projection.resolve(strict=True).as_posix())
 
     def test_unfinished_journal_with_user_projection_divergence_needs_review(self) -> None:
         lifecycle = Lifecycle(self.repository)

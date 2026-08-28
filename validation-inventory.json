@@ -1,5 +1,5 @@
 {
-  "expectedLifecycleScenarioCount": 19,
+  "expectedLifecycleScenarioCount": 20,
   "expectedScenarioCount": 7,
   "lifecycleScenarios": [
     {
@@ -76,6 +76,10 @@
     },
     {
       "id": "atomic-shared-host-removal",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "windows-fail-closed-host-switch",
       "sensor": "tests/test_host_exposure.py"
     }
   ],
