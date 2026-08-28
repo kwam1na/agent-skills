@@ -299,6 +299,34 @@ class LinearQualificationTests(unittest.TestCase):
             )
         )
 
+    def test_source_tree_digest_uses_platform_neutral_posix_path_order(self) -> None:
+        runner = _load_runner()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "candidate"
+            skill = root / "adapter" / "SKILL.md"
+            reference = root / "adapter" / "references" / "contract.json"
+            manifest = root / "release-manifest.json"
+            skill.parent.mkdir(parents=True)
+            reference.parent.mkdir(parents=True)
+            skill.write_bytes(b"skill\n")
+            reference.write_bytes(b"reference\n")
+            manifest.write_bytes(b"ignored\n")
+
+            expected = runner._digest(
+                [
+                    {
+                        "path": "adapter/SKILL.md",
+                        "sha256": runner.digest_bytes(b"skill\n"),
+                    },
+                    {
+                        "path": "adapter/references/contract.json",
+                        "sha256": runner.digest_bytes(b"reference\n"),
+                    },
+                ]
+            )
+
+            self.assertEqual(runner.source_tree_sha256(root), expected)
+
     def test_transport_sensor_inspects_only_candidate_delta_and_rejects_real_actions(
         self,
     ) -> None:

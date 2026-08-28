@@ -346,13 +346,17 @@ def controlled_boundary_matrix(contract: dict) -> list[dict]:
 
 
 def source_tree_sha256(root: Path) -> str:
+    files = [
+        (path.relative_to(root).as_posix(), path)
+        for path in root.rglob("*")
+        if path.is_file() and path.name != "release-manifest.json"
+    ]
     records = [
         {
-            "path": path.relative_to(root).as_posix(),
+            "path": relative,
             "sha256": digest_bytes(path.read_bytes()),
         }
-        for path in sorted(item for item in root.rglob("*") if item.is_file())
-        if path.name != "release-manifest.json"
+        for relative, path in sorted(files, key=lambda item: item[0])
     ]
     return _digest(records)
 
