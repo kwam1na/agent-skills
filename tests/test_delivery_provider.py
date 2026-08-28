@@ -13,8 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_skills.lifecycle import Lifecycle
-from agent_skills.provider import DeliveryRailsProvider
-from agent_skills.release import build_release
+from agent_skills.release import build_release, verify_release
 
 from lifecycle_support import initialize_repository
 from test_delivery_provider_rails_contract import SCHEMA_VALIDATOR
@@ -28,6 +27,88 @@ TREE = "b" * 40
 
 def canonical(value: object) -> str:
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
+
+
+class InstalledProvider:
+    def __init__(self, generation: Path, repository: Path) -> None:
+        environment = dict(os.environ)
+        environment.pop("PYTHONPATH", None)
+        self.process = subprocess.Popen(
+            [
+                sys.executable,
+                "-B",
+                "-m",
+                "agent_skills.provider",
+                "--root",
+                str(repository),
+            ],
+            cwd=generation,
+            env=environment,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.last_unmatched: dict[str, object] | None = None
+
+    def _read(self) -> dict[str, object]:
+        assert self.process.stdout is not None
+        line = self.process.stdout.readline()
+        if not line:
+            assert self.process.stderr is not None
+            detail = self.process.stderr.read()
+            raise ValueError(detail or "provider process closed")
+        return json.loads(line)
+
+    def handle(self, message: dict[str, object]) -> list[dict[str, object]]:
+        assert self.process.stdin is not None
+        self.process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
+        self.process.stdin.flush()
+        kind = message["kind"]
+        if kind in {"negotiate", "cancel"}:
+            return [self._read()]
+        if message["payload"]["agentSkills"]["defer"] is True:
+            event = self._read()
+            if event["requestId"] != message["requestId"]:
+                self.last_unmatched = event
+                raise ValueError("active provider attempt terminated")
+            return [event]
+        events = []
+        while True:
+            event = self._read()
+            if event.get("requestId") != message["requestId"]:
+                self.last_unmatched = event
+                raise ValueError("active provider attempt terminated")
+            events.append(event)
+            if event["kind"] == "terminal":
+                return events
+
+    def interrupt(self) -> list[dict[str, object]]:
+        if self.process.stdin is not None and not self.process.stdin.closed:
+            self.process.stdin.close()
+        assert self.process.stdout is not None
+        documents = [json.loads(line) for line in self.process.stdout if line.strip()]
+        self.process.wait(timeout=10)
+        self._close_pipes()
+        return documents
+
+    def close(self) -> None:
+        if self.process.poll() is not None:
+            self._close_pipes()
+            return
+        if self.process.stdin is not None and not self.process.stdin.closed:
+            self.process.stdin.close()
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.terminate()
+            self.process.wait(timeout=10)
+        self._close_pipes()
+
+    def _close_pipes(self) -> None:
+        for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
+            if stream is not None and not stream.closed:
+                stream.close()
 
 
 class DeliveryProviderTests(unittest.TestCase):
@@ -61,10 +142,29 @@ class DeliveryProviderTests(unittest.TestCase):
         }
         self.run_root = self.directory / "run"
         self.run_root.mkdir()
-        self.provider = DeliveryRailsProvider(self.repository)
+        self.generation = (
+            self.repository
+            / ".agent-skills"
+            / "generations"
+            / self.release.archive_sha256
+        )
+        self.providers: list[InstalledProvider] = []
+        self.provider = self.start_provider()
 
     def tearDown(self) -> None:
+        for provider in self.providers:
+            provider.close()
         self.temporary.cleanup()
+
+    def start_provider(self) -> InstalledProvider:
+        provider = InstalledProvider(self.generation, self.repository)
+        self.providers.append(provider)
+        return provider
+
+    def restart_provider(self) -> InstalledProvider:
+        self.provider.close()
+        self.provider = self.start_provider()
+        return self.provider
 
     def negotiate(self, *versions: str) -> dict[str, object]:
         events = self.provider.handle(
@@ -163,7 +263,7 @@ class DeliveryProviderTests(unittest.TestCase):
                 "supportedVersions": [VERSION],
             },
         )
-        other = DeliveryRailsProvider(self.repository)
+        other = self.restart_provider()
         self.assertEqual(
             other.handle({"kind": "negotiate", "supportedVersions": ["future/2"]}),
             [
@@ -252,7 +352,7 @@ class DeliveryProviderTests(unittest.TestCase):
     def test_release_or_workflow_mismatch_blocks_before_false_success(self) -> None:
         for mutation in ("release", "workflow"):
             with self.subTest(mutation=mutation):
-                provider = DeliveryRailsProvider(self.repository)
+                provider = self.restart_provider()
                 provider.handle({"kind": "negotiate", "supportedVersions": [VERSION]})
                 release = {**self.binding, "archiveSha256": "0" * 64}
                 events = provider.handle(
@@ -319,7 +419,7 @@ class DeliveryProviderTests(unittest.TestCase):
         }
         for name, review in scenarios.items():
             with self.subTest(name=name):
-                provider = DeliveryRailsProvider(self.repository)
+                provider = self.restart_provider()
                 provider.handle({"kind": "negotiate", "supportedVersions": [VERSION]})
                 events = provider.handle(self.request(review=review, request_id=f"request-{name}"))
                 self.assert_rail_events(events)
@@ -380,7 +480,7 @@ class DeliveryProviderTests(unittest.TestCase):
     def test_host_blocker_and_failure_are_typed_terminal_outcomes(self) -> None:
         for kind, expected in (("blocker", "blocked"), ("failure", "failed")):
             with self.subTest(kind=kind):
-                provider = DeliveryRailsProvider(self.repository)
+                provider = self.restart_provider()
                 provider.handle({"kind": "negotiate", "supportedVersions": [VERSION]})
                 events = provider.handle(
                     self.request(
@@ -417,11 +517,36 @@ class DeliveryProviderTests(unittest.TestCase):
         self.assertEqual(cancelled[-1]["outcome"], "cancelled")
         self.assertEqual(self.provider.handle({"cancellationId": "cancel-one", "kind": "cancel", "requestId": "request-one", "version": VERSION}), cancelled)
 
-        other = DeliveryRailsProvider(self.repository)
+        self.provider.handle(
+            self.request(
+                request_id="request-two",
+                idempotency_key="attempt-two",
+                defer=True,
+            )
+        )
+        second_cancelled = self.provider.handle(
+            {
+                "cancellationId": "cancel-two",
+                "kind": "cancel",
+                "requestId": "request-two",
+                "version": VERSION,
+            }
+        )
+        self.assertEqual(second_cancelled[-1]["outcome"], "cancelled")
+
+        self.provider.close()
+        other = self.start_provider()
         other.handle({"kind": "negotiate", "supportedVersions": [VERSION]})
-        other.handle(self.request(request_id="request-two", idempotency_key="attempt-two", defer=True))
+        other.handle(
+            self.request(
+                request_id="request-three",
+                idempotency_key="attempt-three",
+                defer=True,
+            )
+        )
         interrupted = other.interrupt()
         self.assert_rail_events(interrupted)
+        self.assertEqual(interrupted[-1]["requestId"], "request-three")
         self.assertEqual(interrupted[-1]["outcome"], "indeterminate")
 
     def test_identical_request_is_idempotent_and_conflicts_fail_closed(self) -> None:
@@ -434,6 +559,147 @@ class DeliveryProviderTests(unittest.TestCase):
         self.assertEqual(first_manifest, (self.run_root / "manifest.json").read_bytes())
         with self.assertRaisesRegex(ValueError, "request identity"):
             self.provider.handle({**request, "idempotencyKey": "different-attempt"})
+
+    def test_cached_success_revalidates_manifest_artifacts_before_replay(self) -> None:
+        self.negotiate(VERSION)
+        request = self.request(review=self.aligned_review())
+        first = self.provider.handle(request)
+        manifest = json.loads((self.run_root / "manifest.json").read_text(encoding="utf-8"))
+        (self.run_root / manifest["artifacts"][0]["path"]).unlink()
+
+        with self.assertRaisesRegex(ValueError, "evidence"):
+            self.provider.handle(request)
+
+        self.assertEqual(first[-1]["outcome"], "success")
+
+    def test_cached_success_revalidates_manifest_digest_before_replay(self) -> None:
+        self.negotiate(VERSION)
+        request = self.request(review=self.aligned_review())
+        self.provider.handle(request)
+        manifest_path = self.run_root / "manifest.json"
+        manifest_path.write_bytes(manifest_path.read_bytes() + b" ")
+
+        with self.assertRaisesRegex(ValueError, "evidence"):
+            self.provider.handle(request)
+
+    def test_second_request_cannot_replace_an_active_attempt(self) -> None:
+        self.negotiate(VERSION)
+        self.provider.handle(self.request(defer=True))
+
+        with self.assertRaisesRegex(ValueError, "active"):
+            self.provider.handle(
+                self.request(
+                    request_id="request-two",
+                    idempotency_key="attempt-two",
+                    defer=True,
+                )
+            )
+
+        self.assertEqual(
+            self.provider.last_unmatched,
+            {
+                "action": "Inspect retained host evidence and start a new attempt.",
+                "kind": "terminal",
+                "outcome": "indeterminate",
+                "requestId": "request-one",
+                "sequence": 2,
+                "summary": "The provider lost the host workflow before a terminal outcome.",
+                "version": VERSION,
+            },
+        )
+
+    def test_host_references_are_not_recoverable_by_dictionary_hashing(self) -> None:
+        self.negotiate(VERSION)
+        raw_reference = "work-one"
+        events = self.provider.handle(
+            self.request(
+                review=self.aligned_review(),
+                host_events=[
+                    {
+                        "kind": "progress",
+                        "operation": "read",
+                        "reference": raw_reference,
+                    }
+                ],
+            )
+        )
+        emitted = events[1]["details"]["reference"]
+        dictionary = ("work-one", "work-two", "issue-one", "context-one")
+        recoverable = {
+            f"opaque:{hashlib.sha256(candidate.encode()).hexdigest()[:32]}"
+            for candidate in dictionary
+        }
+        self.assertNotIn(emitted, recoverable)
+        self.assertNotIn(raw_reference, json.dumps(events))
+        self.assertNotIn(
+            emitted,
+            (self.run_root / "manifest.json").read_text(encoding="utf-8"),
+        )
+
+    def test_mismatched_runtime_cannot_attest_the_active_installed_release(self) -> None:
+        archive = self.directory / "other-provider.zip"
+        metadata = self.directory / "other-provider.release.json"
+        extracted = self.directory / "other-provider"
+        build_release(
+            ROOT,
+            archive,
+            metadata,
+            release_id="other-provider-v1",
+            profile_id="linear",
+        )
+        verify_release(archive, metadata, extract_to=extracted)
+        self.provider.close()
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-m",
+                "agent_skills.provider",
+                "--root",
+                str(self.repository),
+            ],
+            cwd=extracted,
+            input=json.dumps(
+                {"kind": "negotiate", "supportedVersions": [VERSION]},
+                separators=(",", ":"),
+            )
+            + "\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("runtime-mismatch", result.stderr)
+
+    def test_active_provider_prevents_release_switch_until_session_ends(self) -> None:
+        self.negotiate(VERSION)
+        archive = self.directory / "replacement.zip"
+        metadata = self.directory / "replacement.release.json"
+        build_release(
+            ROOT,
+            archive,
+            metadata,
+            release_id="replacement-provider-v1",
+            profile_id="linear",
+        )
+        with mock.patch.dict(
+            os.environ,
+            {"AGENT_SKILLS_EXECUTION_CONTEXT": "", "GITHUB_EVENT_NAME": ""},
+        ):
+            with self.assertRaisesRegex(ValueError, "lock-busy"):
+                Lifecycle(self.repository).update(
+                    archive,
+                    metadata,
+                    maintainer=True,
+                )
+
+        events = self.provider.handle(self.request(review=self.aligned_review()))
+        self.assertEqual(events[-1]["outcome"], "success")
+        self.assertEqual(
+            events[0]["details"]["release"]["releaseId"],
+            "agent-skills-provider-v1",
+        )
 
     def test_manifest_anti_vacuity_and_redaction_fail_closed(self) -> None:
         review = self.aligned_review()
@@ -481,8 +747,16 @@ class DeliveryProviderTests(unittest.TestCase):
 
     def test_installed_release_starts_as_a_standalone_stdio_provider(self) -> None:
         generation = self.repository / ".agent-skills" / "generations" / self.release.archive_sha256
+        self.provider.close()
         result = subprocess.run(
-            [sys.executable, "-m", "agent_skills.provider", "--root", str(self.repository)],
+            [
+                sys.executable,
+                "-B",
+                "-m",
+                "agent_skills.provider",
+                "--root",
+                str(self.repository),
+            ],
             cwd=generation,
             input=json.dumps(
                 {"kind": "negotiate", "supportedVersions": [VERSION]},

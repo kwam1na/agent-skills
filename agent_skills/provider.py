@@ -4,7 +4,7 @@ The adapter owns no agents, tracker client, transport, or delivery policy. It
 verifies the active agent-skills installation, reduces caller-supplied review
 results through the existing portable workflow, and maps the result to the
 published provider-rail documents. Host references are represented only by
-stable opaque digests.
+session-scoped opaque values.
 """
 
 from __future__ import annotations
@@ -13,12 +13,15 @@ import argparse
 import hashlib
 import json
 import re
+import secrets
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .fs import atomic_write
+from . import workflows as workflow_runtime
+from .fs import atomic_write, sha256_file
 from .lifecycle import Lifecycle
+from .locking import RepositoryLock
 from .receipt import load_receipt
 from .validate import canonical_json
 from .workflows import ReviewLensResult, ReviewRequest, ReviewResult, review_work
@@ -55,6 +58,7 @@ class Attempt:
     encoded_request: str
     idempotency_key: str
     events: tuple[dict[str, object], ...]
+    evidence_files: tuple[tuple[str, str], ...]
     deferred: bool
 
 
@@ -89,10 +93,6 @@ def _list(value: object, name: str) -> list[object]:
             "Provide the declared provider input, then retry with a new attempt.",
         )
     return value
-
-
-def _opaque_reference(value: str) -> str:
-    return f"opaque:{hashlib.sha256(value.encode()).hexdigest()[:32]}"
 
 
 def _git_oid(value: object) -> bool:
@@ -149,12 +149,65 @@ class DeliveryRailsProvider:
 
     def __init__(self, repository_root: Path) -> None:
         self.repository_root = repository_root.resolve(strict=True)
+        self.lifecycle = Lifecycle(self.repository_root)
+        self.lock = RepositoryLock(self.lifecycle.lock_path)
+        self.lock.__enter__()
+        self.locked = True
+        try:
+            self.receipt = self._runtime_snapshot()
+        except Exception:
+            self.close()
+            raise
         self.negotiated = False
         self.closed = False
         self.attempts: dict[str, Attempt] = {}
         self.request_ids_by_key: dict[str, str] = {}
         self.active_request_id: str | None = None
         self.cancellations: dict[str, tuple[str, tuple[dict[str, object], ...]]] = {}
+        self.opaque_references: dict[str, str] = {}
+
+    def close(self) -> None:
+        if getattr(self, "locked", False):
+            self.lock.__exit__(None, None, None)
+            self.locked = False
+
+    def _runtime_snapshot(self) -> dict:
+        status = self.lifecycle.status()
+        receipt = load_receipt(self.repository_root / ".agent-skills" / "active.json")
+        if status.lifecycle != "current" or status.blockers:
+            raise ProviderInputError(
+                "blocked",
+                "installation-unavailable",
+                "The active workflow installation is not current.",
+                "Restore a verified active agent-skills installation.",
+            )
+        generation = self.lifecycle.store.generation_path(receipt["generation"])
+        records = {record["path"]: record["sha256"] for record in receipt["files"]}
+        runtime_paths = {
+            "agent_skills/provider.py": Path(__file__).resolve(),
+            "agent_skills/workflows.py": Path(workflow_runtime.__file__).resolve(),
+        }
+        for relative, runtime_path in runtime_paths.items():
+            expected = (generation / relative).resolve()
+            if (
+                runtime_path != expected
+                or relative not in records
+                or sha256_file(runtime_path) != records[relative]
+            ):
+                raise ProviderInputError(
+                    "blocked",
+                    "runtime-mismatch",
+                    "The executing provider runtime is not the active installed generation.",
+                    "Start the provider from the verified active generation.",
+                )
+        return receipt
+
+    def _opaque_reference(self, value: str) -> str:
+        reference = self.opaque_references.get(value)
+        if reference is None:
+            reference = f"opaque:{secrets.token_hex(16)}"
+            self.opaque_references[value] = reference
+        return reference
 
     def handle(self, message: object) -> list[dict[str, object]]:
         document = _object(message, "protocol message")
@@ -228,8 +281,16 @@ class DeliveryRailsProvider:
         encoded = canonical_json(message)
         prior = self.attempts.get(request_id)
         prior_request_id = self.request_ids_by_key.get(idempotency_key)
+        if self.active_request_id is not None and request_id != self.active_request_id:
+            raise ProviderInputError(
+                "failed",
+                "attempt-active",
+                "Another accepted provider attempt is still active.",
+                "Terminate the active attempt before starting another request.",
+            )
         if prior is not None:
             if prior.encoded_request == encoded and prior.idempotency_key == idempotency_key:
+                self._revalidate_evidence(prior)
                 return [dict(event) for event in prior.events]
             raise ProviderInputError(
                 "failed",
@@ -247,10 +308,18 @@ class DeliveryRailsProvider:
 
         try:
             events, deferred = self._execute(request_id, _object(message["payload"], "payload"))
+            evidence_files = self._evidence_snapshot(events)
         except ProviderInputError as error:
             events = _failure_events(request_id, 1, error)
+            evidence_files = ()
             deferred = False
-        attempt = Attempt(encoded, idempotency_key, tuple(events), deferred)
+        attempt = Attempt(
+            encoded,
+            idempotency_key,
+            tuple(events),
+            evidence_files,
+            deferred,
+        )
         self.attempts[request_id] = attempt
         self.request_ids_by_key[idempotency_key] = request_id
         self.active_request_id = request_id if deferred else None
@@ -356,7 +425,7 @@ class DeliveryRailsProvider:
                 "The review evidence could not be written to the allocated run root.",
                 "Restore the allocated run root and start a new attempt.",
             ) from error
-        manifest_reference = _opaque_reference(manifest_path.as_posix())
+        manifest_reference = self._opaque_reference(manifest_path.as_posix())
         events.append(
             _event(
                 request_id,
@@ -389,26 +458,7 @@ class DeliveryRailsProvider:
         workflow_id: str,
         expected_release: dict[str, object],
     ) -> dict[str, str]:
-        try:
-            status = Lifecycle(self.repository_root).status()
-            receipt = load_receipt(
-                self.repository_root / ".agent-skills" / "active.json"
-            )
-        except (OSError, ValueError) as error:
-            raise ProviderInputError(
-                "blocked",
-                "installation-unavailable",
-                "The active workflow installation could not be verified.",
-                "Restore a verified active agent-skills installation.",
-            ) from error
-        if status.lifecycle != "current" or status.blockers:
-            raise ProviderInputError(
-                "blocked",
-                "installation-unavailable",
-                "The active workflow installation is not current.",
-                "Restore a verified active agent-skills installation.",
-            )
-        release = receipt["release"]
+        release = self.receipt["release"]
         if expected_release != release:
             raise ProviderInputError(
                 "blocked",
@@ -418,7 +468,7 @@ class DeliveryRailsProvider:
             )
         workflow_path = f"skills/{workflow_id}/SKILL.md"
         record = next(
-            (item for item in receipt["files"] if item["path"] == workflow_path),
+            (item for item in self.receipt["files"] if item["path"] == workflow_path),
             None,
         )
         if record is None:
@@ -436,8 +486,8 @@ class DeliveryRailsProvider:
             "workflowSha256": record["sha256"],
         }
 
-    @staticmethod
     def _host_event(
+        self,
         request_id: str,
         sequence: int,
         value: object,
@@ -460,7 +510,7 @@ class DeliveryRailsProvider:
             )
         details = {
             "operation": operation,
-            "reference": _opaque_reference(reference),
+            "reference": self._opaque_reference(reference),
         }
         if kind == "progress":
             return (
@@ -646,7 +696,7 @@ class DeliveryRailsProvider:
                 "actionable": actionable,
                 "blocking": blocking,
                 "disposition": disposition,
-                "id": f"finding-{hashlib.sha256(f'{finding_id}:{source}'.encode()).hexdigest()[:24]}",
+                "id": f"finding-{len(findings) + 1}",
                 "scope": scope,
                 "severity": severity,
             }
@@ -842,6 +892,58 @@ class DeliveryRailsProvider:
         atomic_write(path, canonical_json(manifest).encode())
         return path
 
+    @staticmethod
+    def _evidence_snapshot(
+        events: list[dict[str, object]],
+    ) -> tuple[tuple[str, str], ...]:
+        terminal = events[-1]
+        if terminal.get("kind") != "terminal" or terminal.get("outcome") != "success":
+            return ()
+        result = _object(terminal.get("result"), "terminal result")
+        manifest_path = Path(_string(result.get("manifestPath"), "manifest path"))
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            document = _object(manifest, "evidence manifest")
+            artifacts = _list(document.get("artifacts"), "evidence artifacts")
+            files = [(manifest_path, sha256_file(manifest_path))]
+            for raw in artifacts:
+                artifact = _object(raw, "evidence artifact")
+                relative = Path(_string(artifact.get("path"), "artifact path"))
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise ValueError("unsafe artifact path")
+                path = manifest_path.parent / relative
+                digest = _string(artifact.get("sha256"), "artifact digest")
+                if sha256_file(path) != digest:
+                    raise ValueError("artifact digest mismatch")
+                files.append((path, digest))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+            raise ProviderInputError(
+                "failed",
+                "evidence-incomplete",
+                "The produced review evidence is incomplete or unreadable.",
+                "Rebuild complete review evidence in the allocated run root.",
+            ) from error
+        return tuple((path.as_posix(), digest) for path, digest in files)
+
+    @staticmethod
+    def _revalidate_evidence(attempt: Attempt) -> None:
+        try:
+            valid = all(
+                not Path(path).is_symlink()
+                and Path(path).is_file()
+                and sha256_file(Path(path)) == digest
+                for path, digest in attempt.evidence_files
+            )
+        except OSError:
+            valid = False
+        if not valid:
+            raise ProviderInputError(
+                "failed",
+                "evidence-replay-invalid",
+                "Cached success evidence no longer matches the completed attempt.",
+                "Start a new attempt and rebuild the review evidence.",
+            )
+
     def _cancel(self, message: dict[str, object]) -> list[dict[str, object]]:
         request_id = message.get("requestId")
         cancellation_id = message.get("cancellationId")
@@ -899,6 +1001,7 @@ class DeliveryRailsProvider:
             attempt.encoded_request,
             attempt.idempotency_key,
             (*attempt.events, *events),
+            attempt.evidence_files,
             False,
         )
         self.active_request_id = None
@@ -921,6 +1024,7 @@ class DeliveryRailsProvider:
             attempt.encoded_request,
             attempt.idempotency_key,
             (*attempt.events, event),
+            attempt.evidence_files,
             False,
         )
         self.active_request_id = None
@@ -937,16 +1041,27 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the agent-skills delivery provider.")
     parser.add_argument("--root", type=Path, default=Path.cwd())
     arguments = parser.parse_args(argv)
-    provider = DeliveryRailsProvider(arguments.root)
+    provider: DeliveryRailsProvider | None = None
     try:
+        provider = DeliveryRailsProvider(arguments.root)
         for line in sys.stdin:
             if not line.strip():
                 continue
             _write_documents(provider.handle(json.loads(line)))
         _write_documents(provider.interrupt())
-    except (json.JSONDecodeError, ProviderInputError) as error:
-        sys.stderr.write(f"provider input rejected: {type(error).__name__}\n")
+    except (json.JSONDecodeError, OSError, ValueError) as error:
+        if provider is not None:
+            _write_documents(provider.interrupt())
+        detail = (
+            f"{error.blocker_id}: {error.summary}"
+            if isinstance(error, ProviderInputError)
+            else type(error).__name__
+        )
+        sys.stderr.write(f"provider input rejected: {detail}\n")
         return 2
+    finally:
+        if provider is not None:
+            provider.close()
     return 0
 
 

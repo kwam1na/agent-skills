@@ -7,10 +7,11 @@ workflow results, verifies that the requested workflow belongs to the current
 installed release, reduces review results through `review-work`, and emits
 ordered progress, evidence, blocker, and terminal documents.
 
-Run an installed provider as a line-delimited JSON process:
+Run the provider from the exact active generation directory as a line-delimited
+JSON process:
 
 ```sh
-python -m agent_skills.provider --root /path/to/adopting-repository
+python -B -m agent_skills.provider --root /path/to/adopting-repository
 ```
 
 The consumer first sends `negotiate`, then a rail `request`. The opaque request
@@ -22,9 +23,12 @@ root fields. Its `agentSkills` object names:
 - typed findings and the informational review timestamp;
 - optional host events already produced by native tools.
 
-The release identity must match all four fields in `.agent-skills/active.json`,
-and the workflow file digest is read from that verified receipt. A mismatch is
-a typed blocker before review evidence can be emitted.
+The release identity must match all four fields in `.agent-skills/active.json`.
+At startup, the provider holds the repository lifecycle lock, verifies its own
+module and portable workflow against that generation's receipt, and keeps that
+snapshot stable until the process exits. A source checkout, another installed
+generation, a release switch, or a content mismatch fails closed before review
+evidence can be emitted.
 
 ## Host event mapping
 
@@ -40,10 +44,12 @@ owning its transport:
 | `relations` | progress, evidence, blocker, or failure |
 | `reconciliation` | progress, evidence, blocker, or failure |
 
-Host references become deterministic opaque digests. Raw host payloads,
-actions, credentials, idempotency keys, and transport details are never copied
-into retained events or evidence. A host blocker or failure prevents success.
-The provider neither retries mutations nor performs reconciliation itself.
+Host references become session-random opaque values backed only by an in-memory
+mapping. They cannot be recovered by hashing a small reference dictionary, and
+they are never copied into deterministic manifests. Raw host payloads, actions,
+credentials, idempotency keys, and transport details are never copied into
+retained events or evidence. A host blocker or failure prevents success. The
+provider neither retries mutations nor performs reconciliation itself.
 
 ## Review evidence
 
@@ -62,5 +68,6 @@ manifest through its existing evidence recorder.
 Cancellation is accepted only for an active deferred attempt. Loss of the host
 workflow before a terminal result becomes `indeterminate`; neither outcome can
 become success later. Repeating an identical request is idempotent within the
-provider session, while conflicting request or idempotency identities fail
-closed.
+provider session, and cached success is replayed only while its manifest and
+approval digests still match. A different request is rejected while an attempt
+is active; conflicting request or idempotency identities fail closed.
