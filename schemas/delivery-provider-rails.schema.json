@@ -1,0 +1,348 @@
+{
+  "$defs": {
+    "blocker": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/text"
+        },
+        "blockerId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "details": {
+          "type": "object"
+        },
+        "kind": {
+          "const": "blocker"
+        },
+        "requestId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "summary": {
+          "$ref": "#/$defs/text"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        }
+      },
+      "required": [
+        "blockerId",
+        "kind",
+        "requestId",
+        "sequence",
+        "summary",
+        "version"
+      ],
+      "type": "object"
+    },
+    "cancel": {
+      "additionalProperties": false,
+      "properties": {
+        "cancellationId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "const": "cancel"
+        },
+        "reason": {
+          "$ref": "#/$defs/text"
+        },
+        "requestId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        }
+      },
+      "required": [
+        "cancellationId",
+        "kind",
+        "requestId",
+        "version"
+      ],
+      "type": "object"
+    },
+    "evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "details": {
+          "type": "object"
+        },
+        "evidenceId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "const": "evidence"
+        },
+        "requestId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "summary": {
+          "$ref": "#/$defs/text"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        }
+      },
+      "required": [
+        "evidenceId",
+        "kind",
+        "requestId",
+        "sequence",
+        "summary",
+        "version"
+      ],
+      "type": "object"
+    },
+    "identifier": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "type": "string"
+    },
+    "negotiate": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "negotiate"
+        },
+        "supportedVersions": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "kind",
+        "supportedVersions"
+      ],
+      "type": "object"
+    },
+    "negotiation": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "supported"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "selectedVersion": {
+                "$ref": "#/$defs/version"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "unsupported"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "selectedVersion": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "negotiation"
+        },
+        "outcome": {
+          "enum": [
+            "supported",
+            "unsupported"
+          ]
+        },
+        "selectedVersion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/version"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "supportedVersions": {
+          "const": [
+            "delivery-provider-rails/1"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "outcome",
+        "selectedVersion",
+        "supportedVersions"
+      ],
+      "type": "object"
+    },
+    "progress": {
+      "additionalProperties": false,
+      "properties": {
+        "details": {
+          "type": "object"
+        },
+        "kind": {
+          "const": "progress"
+        },
+        "requestId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "summary": {
+          "$ref": "#/$defs/text"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        }
+      },
+      "required": [
+        "kind",
+        "requestId",
+        "sequence",
+        "summary",
+        "version"
+      ],
+      "type": "object"
+    },
+    "request": {
+      "additionalProperties": false,
+      "properties": {
+        "idempotencyKey": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "payload": {
+          "type": "object"
+        },
+        "requestId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "kind",
+        "payload",
+        "requestId",
+        "version"
+      ],
+      "type": "object"
+    },
+    "sequence": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "terminal": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/text"
+        },
+        "details": {
+          "type": "object"
+        },
+        "kind": {
+          "const": "terminal"
+        },
+        "outcome": {
+          "enum": [
+            "blocked",
+            "cancelled",
+            "failed",
+            "indeterminate",
+            "success"
+          ]
+        },
+        "requestId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "result": {
+          "type": "object"
+        },
+        "sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "summary": {
+          "$ref": "#/$defs/text"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        }
+      },
+      "required": [
+        "kind",
+        "outcome",
+        "requestId",
+        "sequence",
+        "summary",
+        "version"
+      ],
+      "type": "object"
+    },
+    "text": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "type": "string"
+    },
+    "version": {
+      "const": "delivery-provider-rails/1"
+    }
+  },
+  "$id": "urn:delivery-provider-rails:schema:1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/negotiate"
+    },
+    {
+      "$ref": "#/$defs/negotiation"
+    },
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/progress"
+    },
+    {
+      "$ref": "#/$defs/evidence"
+    },
+    {
+      "$ref": "#/$defs/blocker"
+    },
+    {
+      "$ref": "#/$defs/terminal"
+    },
+    {
+      "$ref": "#/$defs/cancel"
+    }
+  ]
+}
