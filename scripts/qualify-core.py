@@ -64,6 +64,11 @@ SCENARIO_SENSORS = {
     ),
 }
 TRUSTED_EVIDENCE_PATHS = (
+    "agent_skills/__init__.py",
+    "agent_skills/catalog.py",
+    "agent_skills/errors.py",
+    "agent_skills/release.py",
+    "agent_skills/validate.py",
     "scripts/qualify-core.py",
     "tests/scenarios/core/compound.json",
     "tests/scenarios/core/execute.json",
@@ -118,17 +123,9 @@ def qualification_driver_sha256(root: Path = DRIVER_ROOT) -> str:
             "path": relative,
             "sha256": hashlib.sha256((root / relative).read_bytes()).hexdigest(),
         }
-        for relative in trusted_evidence_paths(root)
+        for relative in TRUSTED_EVIDENCE_PATHS
     ]
     return _sha256(records)
-
-
-def trusted_evidence_paths(root: Path = DRIVER_ROOT) -> tuple[str, ...]:
-    trusted_python = (
-        path.relative_to(root).as_posix()
-        for path in (root / "agent_skills").rglob("*.py")
-    )
-    return tuple(sorted((*TRUSTED_EVIDENCE_PATHS, *trusted_python)))
 
 
 def _record(checkpoint: Checkpoint, result: str, failure: str | None = None) -> dict:

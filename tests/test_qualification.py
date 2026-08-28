@@ -176,7 +176,7 @@ class QualificationTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             copied = Path(temporary) / "trusted-evidence"
-            for relative in runner.trusted_evidence_paths(ROOT):
+            for relative in runner.TRUSTED_EVIDENCE_PATHS:
                 source = ROOT / relative
                 target = copied / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -201,7 +201,7 @@ class QualificationTests(unittest.TestCase):
         runner = _load_runner()
         with tempfile.TemporaryDirectory() as temporary:
             copied = Path(temporary) / "trusted-evidence"
-            for relative in runner.trusted_evidence_paths(ROOT):
+            for relative in runner.TRUSTED_EVIDENCE_PATHS:
                 source = ROOT / relative
                 target = copied / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -289,7 +289,7 @@ class QualificationTests(unittest.TestCase):
             self.assertEqual(second.returncode, 1, second.stdout + second.stderr)
             self.assertFalse(record_path.exists())
 
-    def test_omitted_runner_corpus_change_does_not_affect_exact_candidate(self) -> None:
+    def test_omitted_runner_content_does_not_affect_exact_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             archive = directory / "core.zip"
@@ -315,6 +315,10 @@ class QualificationTests(unittest.TestCase):
             )
             omitted = runner / "skills" / "bootstrap-agent-harness" / "SKILL.md"
             omitted.write_bytes(omitted.read_bytes() + b"\n<!-- unrelated runner bytes -->\n")
+            candidate_only = runner / "agent_skills" / "router.py"
+            candidate_only.write_bytes(
+                candidate_only.read_bytes() + b"\n# unused runner mirror change\n"
+            )
             actual_record = directory / "actual.json"
             actual = self._run_qualification(
                 archive,
@@ -324,6 +328,11 @@ class QualificationTests(unittest.TestCase):
                 runner / "scripts" / "qualify-core.py",
             )
 
+            runner_module = _load_runner()
+            self.assertEqual(
+                runner_module.qualification_driver_sha256(runner),
+                runner_module.qualification_driver_sha256(ROOT),
+            )
             self.assertEqual(actual.returncode, 0, actual.stdout + actual.stderr)
             self.assertEqual(actual_record.read_bytes(), expected_record.read_bytes())
 
