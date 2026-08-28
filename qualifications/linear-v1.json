@@ -1,0 +1,128 @@
+{
+  "auditReferences": [
+    "linear-audit:07be08363ed306c7",
+    "linear-audit:8b2d959621316632"
+  ],
+  "candidate": {
+    "core": {
+      "archiveSha256": "47e0752fbef5d2322a885f874f0c59b4db668a054d7e0c383f69dcde05a58b39",
+      "metadataSha256": "3518f19f30498d656893fc4d6f6dbcadd9dad1b89945f1264ea0e88212f9d081",
+      "profile": "core",
+      "releaseId": "core-v1"
+    },
+    "linear": {
+      "archiveSha256": "7305c896ba8a70a635de651dec8aa79ecbf201c6031251efb3ec6f2098e5cab4",
+      "metadataSha256": "34b73bb06ac95fa623aa88361d083c4affe3d9d04b33fc072cad13d54de42fba",
+      "profile": "linear",
+      "releaseId": "linear-v1"
+    },
+    "sourceCommitSha": "7987895a5e5afc3e7d7ab92464bf114e7cef0cf9"
+  },
+  "coreQualificationSha256": "baacbb3023c3522be032b621254a016dd084bb7cd9b9e56e5791bc3769f05990",
+  "liveEvidenceSha256": "15096b87bb393fce8abbfe26c0609d5dc4bd781ca1e7e1266d4c38e3719d8007",
+  "qualificationDriverSha256": "12c681729c1124d756e1fe3465536472bb95f1fc3d0d4c153761ac446f8ac29e",
+  "redaction": {
+    "environmentCaptured": false,
+    "hostPayloadsCaptured": false,
+    "localPathsCaptured": false,
+    "retainedEvidence": "opaque audit references and named deterministic assertions"
+  },
+  "scenarios": [
+    {
+      "assertionCount": 3,
+      "checkpointSha256": "b6e74cfdedf69f05422a0c6bc361e166d913a048c79248429b9758ef42f8462c",
+      "evidence": [
+        "exact base profile identity verified",
+        "base qualification names the exact base archive and metadata",
+        "base qualification is passing"
+      ],
+      "evidenceSource": "trusted-checked-qualification",
+      "id": "core-qualification-binding",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 5,
+      "checkpointSha256": "a764ab215163762a7fe99c3d3b7e0dbbac395517db5c6cba9b97213c4971c2d1",
+      "evidence": [
+        "exact optional profile installs as the current generation",
+        "installed generation retains the optional profile identity",
+        "both fixed hosts expose the current optional generation",
+        ".agents discovers the installed optional adapter",
+        ".claude discovers the installed optional adapter"
+      ],
+      "evidenceSource": "exact-release-runtime",
+      "id": "linear-install-and-host-discovery",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 6,
+      "checkpointSha256": "56e84977632dc606327e6e6a3f7f5ebfff47221562beaa2d6407a6385d7865a4",
+      "evidence": [
+        "live host operation passed: createCount",
+        "live host operation passed: readCount",
+        "live host operation passed: updateCount",
+        "live host operation passed: searchCount",
+        "live host operation passed: relationCount",
+        "every disposable live entity was canceled after evidence capture"
+      ],
+      "evidenceSource": "live-host-native-linear-mcp",
+      "id": "live-host-native-operations",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 3,
+      "checkpointSha256": "8af2187854459963ca41fdf3013bb6b1855003b973e641a40d1e5f5c4e92cbbb",
+      "evidence": [
+        "stable-marker reconciliation ran before any repeat mutation",
+        "stable-marker reconciliation found exactly one intended entity",
+        "reconciliation suppressed the duplicate create attempt"
+      ],
+      "evidenceSource": "live-host-native-linear-mcp",
+      "id": "live-reconcile-before-retry",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 16,
+      "checkpointSha256": "8d9b86274be7ee08def0822b12e8b2a57bb918cca7011ec37f4bfe69430a8c62",
+      "evidence": [
+        "controlled boundary matrix covers every declared degraded input",
+        "controlled boundary normalized: auth -> auth-required",
+        "controlled boundary normalized: malformed -> malformed",
+        "controlled boundary normalized: missing -> unavailable",
+        "controlled boundary normalized: mutation-ambiguous -> reconciliation-required",
+        "controlled boundary normalized: mutation-timeout -> reconciliation-required",
+        "controlled boundary normalized: read-ambiguous -> retry",
+        "controlled boundary normalized: read-timeout -> retry",
+        "controlled boundary normalized: reconciliation-ambiguous -> reconciliation-required",
+        "controlled boundary normalized: reconciliation-auth -> reconciliation-required",
+        "controlled boundary normalized: reconciliation-malformed -> reconciliation-required",
+        "controlled boundary normalized: reconciliation-miss -> reconciliation-required",
+        "controlled boundary normalized: reconciliation-timeout -> reconciliation-required",
+        "controlled boundary normalized: reconciliation-unavailable -> reconciliation-required",
+        "controlled boundary normalized: unsupported -> unsupported",
+        "controlled ambiguous mutations never repeat before reconciliation"
+      ],
+      "evidenceSource": "deterministic-controlled-boundary-double",
+      "id": "controlled-degraded-outcomes",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 1,
+      "checkpointSha256": "853ed8a2809ac1a27109160e73274799e77980afda05b5a5f0a7364bc6b18cdf",
+      "evidence": [
+        "trusted static sensor rejects alternate provider transports"
+      ],
+      "evidenceSource": "trusted-static-sensor",
+      "id": "forbidden-alternate-transport",
+      "result": "passed"
+    }
+  ],
+  "schemaVersion": "agent-skills-linear-qualification/1",
+  "summary": {
+    "assertionCount": 34,
+    "failedScenarioCount": 0,
+    "passedScenarioCount": 6,
+    "requiredScenarioCount": 6,
+    "result": "passed"
+  }
+}

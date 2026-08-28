@@ -86,6 +86,35 @@ fixture is built only from the verified candidate extraction, never from the
 runner checkout corpus.
 The current record is checked in at `qualifications/core-v1.json`.
 
+Qualify the optional Linear profile only after a configured host has exercised
+the live connector with clearly disposable work. The host must search for an
+exact stable marker before each create, retain only opaque audit references and
+named counts, and cancel every disposable entity after the read, update,
+search, relation, and reconciliation checks. Feed that redacted summary to the
+trusted driver together with the exact core and Linear releases:
+
+```bash
+python3 scripts/qualify-linear.py \
+  --core-archive /tmp/core.zip \
+  --core-metadata /tmp/core.release.json \
+  --core-record qualifications/core-v1.json \
+  --linear-archive /tmp/linear.zip \
+  --linear-metadata /tmp/linear.release.json \
+  --live-evidence /tmp/linear-live-evidence.json \
+  --source-commit <full-commit-sha> \
+  --record /tmp/linear.qualification.json
+```
+
+The checked record at `qualifications/linear-v1.json` binds the passing core
+qualification, both exact archive identities, the source revision, the
+redacted live evidence digest, and the trusted driver inputs. Create, read,
+update, search, relations, reconciliation, and cleanup are live host-native MCP
+evidence. Authentication, unavailable, unsupported, malformed, timeout, and
+ambiguous outcomes are deterministic controlled boundary checks because
+intentionally breaking a configured connector is unsafe. The existing static
+archive sensor remains authoritative for excluding alternate provider
+transports.
+
 ## Repository lifecycle
 
 Run the lifecycle from an extracted release archive. Read-only commands emit
