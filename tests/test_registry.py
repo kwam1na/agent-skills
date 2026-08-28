@@ -143,9 +143,12 @@ def test_core_profile_is_exact_and_deterministic() -> None:
     require(first.stdout == second.stdout, "profile resolution is not deterministic")
     require(json.loads(first.stdout) == {
         "files": [
-            "skills/compound-delivery-kernel/SKILL.md"
+            "skills/compound-delivery-kernel/SKILL.md",
+            "skills/deliver-work/SKILL.md",
+            "skills/deliver-work/agents/openai.yaml",
+            "skills/deliver-work/references/capability-contract.md",
         ],
-        "members": ["compound-delivery-kernel"],
+        "members": ["compound-delivery-kernel", "deliver-work"],
         "profile": "core",
     }, first.stdout)
     print("verified resolution: exact deterministic core profile")

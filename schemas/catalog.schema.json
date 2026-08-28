@@ -10,6 +10,12 @@
       "items": {
         "additionalProperties": false,
         "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "degradedBehavior": {
             "type": "string"
           },

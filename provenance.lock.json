@@ -33,13 +33,13 @@
       "id": "compound-delivery-kernel",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "Pre-existing copied body is a recorded derivative of the approved portable-candidate source; workflow extraction is deferred.",
+        "reason": "The portable delivery posture is narrowed to repository authority, bounded execution, review, and compounding outcomes.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/compound-delivery-kernel/SKILL.md",
-          "sha256": "b4f2450adecbab4817d6f97c9ff5d615581ccde7740372e0e6fe96259b942cc0"
+          "sha256": "d7a651c9392a36f923784771f24a532acca81fa223b865be46cba842c061e706"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -95,21 +95,25 @@
     },
     {
       "classification": "portable-core",
-      "distribution": "source-only",
+      "distribution": "releasable",
       "id": "deliver-work",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The pre-existing router routes through Linear and remains source-only until a tracker-neutral router is extracted.",
+        "reason": "The baseline routing slice is rewritten as a portable router and neutral capability contract while provider-specific source remains separate.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "094420e4278d9b63d585752f1be9dc853625e853a8228eac3c7eec1be70aa643"
+          "sha256": "51131a81d537fa7a510140ea8468c5f5b899bc2e79e97ddac476cfff0b344611"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",
           "sha256": "335c1f6f152230f5c7dfac0bce52bd2295d4f44349226eac3fc59de1715d2c04"
+        },
+        {
+          "path": "skills/deliver-work/references/capability-contract.md",
+          "sha256": "91276829f9369fc8dce2e55e2bec727b3514b16e0878dd29f6d0b55668384e6f"
         }
       ],
       "owner": "agent-skills-corpus",

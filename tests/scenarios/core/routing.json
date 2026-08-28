@@ -1,0 +1,35 @@
+{
+  "scenarios": [
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "clarify",
+      "request": "I have a rough feature idea"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "implement",
+      "request": "Implement the bounded parser change"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "diagnose",
+      "request": "Diagnose the failing archive check"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "plan",
+      "request": "Plan the smallest safe migration"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "review",
+      "request": "Review this change without editing"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "compound",
+      "request": "Compound the reusable learning from this delivery"
+    }
+  ],
+  "schemaVersion": "agent-skills-routing-scenarios/1"
+}

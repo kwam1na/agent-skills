@@ -138,7 +138,7 @@ class CorpusValidationTests(unittest.TestCase):
         self.assertIn("core.leakage", rules)
 
         skill.write_text(
-            original + "\nPublic standard: https://json-schema.org/draft/2020-12/schema\n",
+            original + "\nPublic standard: JSON Schema draft 2020-12.\n",
             encoding="utf-8",
         )
         self.assertNotIn(
@@ -152,6 +152,11 @@ class CorpusValidationTests(unittest.TestCase):
             "/Users/example/work",
             "https://athena-os.app/private",
             "https://linear.app/v26-labs/issue/example",
+            "MCP transport",
+            "HTTP request",
+            "SDK client",
+            "OAuth flow",
+            "credential store",
             "api_key=abcdefgh",
             r"C:\Users\example\repo\SKILL.md",
         )

@@ -142,12 +142,18 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
     for relative in (
         "tests/fixtures/invalid-corpora/coverage.json",
         "tests/fixtures/valid-corpus/coverage.json",
+        "tests/scenarios/core/repository-discovery.json",
+        "tests/scenarios/core/routing.json",
+        "tests/scenarios/core/tracker-capability.json",
     ):
         files[relative] = _packaged_bytes(root, relative)
     for relative in (
         "agent_skills/__init__.py",
+        "agent_skills/capabilities.py",
         "agent_skills/catalog.py",
         "agent_skills/errors.py",
+        "agent_skills/fake_tracker.py",
+        "agent_skills/router.py",
         "agent_skills/validate.py",
     ):
         files[relative] = _packaged_bytes(root, relative)
