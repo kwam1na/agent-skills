@@ -209,6 +209,30 @@ class TrackerContractTests(unittest.TestCase):
                 self.assertEqual(adapter.mutations, [])
                 self.assertEqual(adapter.scripted[request.operation], [])
 
+    def test_non_mutating_idempotency_key_does_not_cache_result(self) -> None:
+        request = TrackerRequest(
+            TrackerOperation.RESOLVE_CONTEXT,
+            {"query": "current context"},
+            idempotency_key="ignored-read-key",
+        )
+        first_expected = AdapterOutcome.success(
+            request.operation,
+            {"reference": "context-one"},
+        )
+        second_expected = AdapterOutcome.success(
+            request.operation,
+            {"reference": "context-two"},
+        )
+        adapter = InMemoryTrackerAdapter(
+            scripted={request.operation: [first_expected, second_expected]}
+        )
+        first = execute_tracker_operation(CapabilityState.CONFIGURED, request, adapter)
+        second = execute_tracker_operation(CapabilityState.CONFIGURED, request, adapter)
+        self.assertEqual(first, first_expected)
+        self.assertEqual(second, second_expected)
+        self.assertEqual(adapter.mutations, [])
+        self.assertEqual(adapter.scripted[request.operation], [])
+
 
 if __name__ == "__main__":
     unittest.main()

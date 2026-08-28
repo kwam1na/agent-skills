@@ -46,7 +46,8 @@ class InMemoryTrackerAdapter:
             )
         key = (
             (request.operation, request.idempotency_key)
-            if request.idempotency_key is not None
+            if request.operation in MUTATING_OPERATIONS
+            and request.idempotency_key is not None
             else None
         )
         if key is not None and key in self._completed:
