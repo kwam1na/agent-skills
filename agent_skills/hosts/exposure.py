@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import posixpath
+import stat
 import uuid
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -11,6 +12,23 @@ from .codex import CODEX
 
 
 HOSTS = (CODEX, CLAUDE_CODE)
+
+
+DESCRIPTOR_SWITCH_SUPPORTED = (
+    all(
+        function in os.supports_dir_fd
+        for function in (
+            os.open,
+            os.mkdir,
+            os.readlink,
+            os.rename,
+            os.stat,
+            os.symlink,
+            os.unlink,
+        )
+    )
+    and os.stat in os.supports_follow_symlinks
+)
 
 
 class ExposureError(ValueError):
@@ -172,29 +190,144 @@ class ExposureManager:
     def switch(self, target: dict | None, alternate: dict | None) -> None:
         self.preflight(target, alternate)
         expected = self._expected_current_target(target)
-        if expected is None:
-            if os.path.lexists(self.current_path):
-                if not self._matches_current(alternate):
+        alternate_expected = self._expected_current_target(alternate)
+        if not DESCRIPTOR_SWITCH_SUPPORTED:
+            if expected is None:
+                if os.path.lexists(self.current_path):
+                    if not self._matches_current(alternate):
+                        raise ExposureError(
+                            "exposure-conflict: shared active projection changed after preflight"
+                        )
+                    self.current_path.unlink()
+                return
+            if self._matches_current(target):
+                return
+            self.managed_root.mkdir(exist_ok=True)
+            if self.managed_root.is_symlink():
+                raise ExposureError("exposure-conflict: shared projection root is a symlink")
+            temporary = self.managed_root / f".current.{uuid.uuid4().hex}.tmp"
+            try:
+                temporary.symlink_to(expected, target_is_directory=True)
+                if self.managed_root.is_symlink():
+                    raise ExposureError(
+                        "exposure-conflict: shared projection root changed during switch"
+                    )
+                os.replace(temporary, self.current_path)
+            except ExposureError:
+                raise
+            except OSError as error:
+                raise ExposureError(
+                    "exposure-unavailable: shared active projection could not be switched"
+                ) from error
+            finally:
+                temporary.unlink(missing_ok=True)
+            return
+
+        directory_flags = (
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        no_follow = getattr(os, "O_NOFOLLOW", 0)
+        try:
+            root_descriptor = os.open(
+                self.repository_root,
+                directory_flags | no_follow,
+            )
+        except OSError as error:
+            raise ExposureError(
+                "exposure-unavailable: repository root could not be held for projection switch"
+            ) from error
+        try:
+            try:
+                os.mkdir(".agent-skills", mode=0o755, dir_fd=root_descriptor)
+            except FileExistsError:
+                pass
+            try:
+                managed_descriptor = os.open(
+                    ".agent-skills",
+                    directory_flags | no_follow,
+                    dir_fd=root_descriptor,
+                )
+            except OSError as error:
+                raise ExposureError(
+                    "exposure-conflict: shared projection root is unsafe"
+                ) from error
+            try:
+                held = os.fstat(managed_descriptor)
+                current_root = os.stat(
+                    ".agent-skills",
+                    dir_fd=root_descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    not stat.S_ISDIR(current_root.st_mode)
+                    or (current_root.st_dev, current_root.st_ino)
+                    != (held.st_dev, held.st_ino)
+                ):
+                    raise ExposureError(
+                        "exposure-conflict: shared projection root changed during switch"
+                    )
+
+                try:
+                    current = _normalized_link(
+                        os.readlink("current", dir_fd=managed_descriptor)
+                    )
+                    current_exists = True
+                except FileNotFoundError:
+                    current = None
+                    current_exists = False
+                except OSError as error:
+                    raise ExposureError(
+                        "exposure-conflict: shared active projection changed after preflight"
+                    ) from error
+
+                if current_exists and current is None:
                     raise ExposureError(
                         "exposure-conflict: shared active projection changed after preflight"
                     )
-                self.current_path.unlink()
-            return
-        if self._matches_current(target):
-            return
-        self.managed_root.mkdir(exist_ok=True)
-        if self.managed_root.is_symlink():
-            raise ExposureError("exposure-conflict: shared projection root is a symlink")
-        temporary = self.managed_root / f".current.{uuid.uuid4().hex}.tmp"
-        try:
-            temporary.symlink_to(expected, target_is_directory=True)
-            os.replace(temporary, self.current_path)
-        except OSError as error:
-            raise ExposureError(
-                "exposure-unavailable: shared active projection could not be switched"
-            ) from error
+                if current_exists and current == expected:
+                    return
+                if current_exists and current != alternate_expected:
+                    raise ExposureError(
+                        "exposure-conflict: shared active projection changed after preflight"
+                    )
+                if expected is None:
+                    if current_exists:
+                        os.unlink("current", dir_fd=managed_descriptor)
+                        os.fsync(managed_descriptor)
+                    return
+
+                temporary = f".current.{uuid.uuid4().hex}.tmp"
+                try:
+                    os.symlink(
+                        expected,
+                        temporary,
+                        target_is_directory=True,
+                        dir_fd=managed_descriptor,
+                    )
+                    os.rename(
+                        temporary,
+                        "current",
+                        src_dir_fd=managed_descriptor,
+                        dst_dir_fd=managed_descriptor,
+                    )
+                    os.fsync(managed_descriptor)
+                finally:
+                    try:
+                        os.unlink(temporary, dir_fd=managed_descriptor)
+                    except FileNotFoundError:
+                        pass
+            except ExposureError:
+                raise
+            except OSError as error:
+                raise ExposureError(
+                    "exposure-unavailable: shared active projection could not be switched"
+                ) from error
+            finally:
+                os.close(managed_descriptor)
         finally:
-            temporary.unlink(missing_ok=True)
+            os.close(root_descriptor)
 
     def reconcile(self, target: dict | None, alternate: dict | None) -> None:
         self.preflight(target, alternate)

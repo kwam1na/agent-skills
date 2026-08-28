@@ -172,12 +172,13 @@ class HostExposureTests(LifecycleFixture, unittest.TestCase):
         first = lifecycle.status().as_dict()["active"]["generation"]
         second = lifecycle.plan(*self.v2)["target"]["generation"]
 
-        def interrupt(phase: str) -> None:
-            if phase == "exposure-switched":
+        def interrupt_marker(target: dict | None) -> None:
+            if target is not None:
                 raise RuntimeError("stop after shared switch")
 
-        with self.assertRaisesRegex(RuntimeError, "shared switch"):
-            lifecycle.update(*self.v2, maintainer=True, fault=interrupt)
+        with mock.patch.object(lifecycle, "_write_active", side_effect=interrupt_marker):
+            with self.assertRaisesRegex(RuntimeError, "shared switch"):
+                lifecycle.update(*self.v2, maintainer=True)
 
         resolved = {
             (self.repository / host.root / "deliver-work").resolve().as_posix()
@@ -242,6 +243,102 @@ class HostExposureTests(LifecycleFixture, unittest.TestCase):
         self.assertEqual(status["recoveryPlan"], ["review-host-projections"])
         with self.assertRaisesRegex(ValueError, "exposure-conflict"):
             lifecycle.recover(maintainer=True)
+
+    @unittest.skipUnless(
+        all(
+            function in os.supports_dir_fd
+            for function in (os.open, os.readlink, os.rename, os.symlink, os.unlink)
+        ),
+        "directory-descriptor projection replacement is not supported on this host",
+    )
+    def test_shared_switch_parent_swap_cannot_redirect_update(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        outside = self.base / "external-managed-root"
+        outside.mkdir()
+        outside_current = outside / "current"
+        outside_current.write_text("preserve\n", encoding="utf-8")
+        detached = self.repository / ".agent-skills-detached"
+        original_open = os.open
+        original_symlink_to = Path.symlink_to
+        swapped = False
+
+        def swap_parent() -> None:
+            nonlocal swapped
+            if swapped:
+                return
+            os.rename(self.repository / ".agent-skills", detached)
+            os.symlink(outside, self.repository / ".agent-skills", target_is_directory=True)
+            swapped = True
+
+        def swapping_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+            descriptor = original_open(path, flags, *args, **kwargs)
+            if path == ".agent-skills" and kwargs.get("dir_fd") is not None and not swapped:
+                swap_parent()
+            return descriptor
+
+        def swapping_symlink_to(path: Path, *args: object, **kwargs: object) -> None:
+            if path.name.startswith(".current."):
+                swap_parent()
+            original_symlink_to(path, *args, **kwargs)
+
+        with (
+            mock.patch("agent_skills.hosts.exposure.os.open", side_effect=swapping_open),
+            mock.patch.object(Path, "symlink_to", new=swapping_symlink_to),
+        ):
+            with self.assertRaises(ValueError):
+                lifecycle.update(*self.v2, maintainer=True)
+        self.assertTrue(swapped)
+        self.assertFalse(outside_current.is_symlink())
+        self.assertEqual(outside_current.read_text(encoding="utf-8"), "preserve\n")
+
+    @unittest.skipUnless(
+        all(
+            function in os.supports_dir_fd
+            for function in (os.open, os.readlink, os.rename, os.symlink, os.unlink)
+        ),
+        "directory-descriptor projection removal is not supported on this host",
+    )
+    def test_shared_switch_parent_swap_cannot_redirect_removal(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        outside = self.base / "external-removal-root"
+        outside.mkdir()
+        outside_current = outside / "current"
+        outside_current.write_text("preserve\n", encoding="utf-8")
+        detached = self.repository / ".agent-skills-detached"
+        original_open = os.open
+        original_unlink = Path.unlink
+        swapped = False
+
+        def swap_parent() -> None:
+            nonlocal swapped
+            if swapped:
+                return
+            os.rename(self.repository / ".agent-skills", detached)
+            os.symlink(outside, self.repository / ".agent-skills", target_is_directory=True)
+            swapped = True
+
+        def swapping_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+            descriptor = original_open(path, flags, *args, **kwargs)
+            if path == ".agent-skills" and kwargs.get("dir_fd") is not None and not swapped:
+                swap_parent()
+            return descriptor
+
+        def swapping_unlink(path: Path, *args: object, **kwargs: object) -> None:
+            if path == lifecycle.exposure.current_path:
+                swap_parent()
+            original_unlink(path, *args, **kwargs)
+
+        with (
+            mock.patch("agent_skills.hosts.exposure.os.open", side_effect=swapping_open),
+            mock.patch.object(Path, "unlink", new=swapping_unlink),
+        ):
+            with self.assertRaises(ValueError):
+                lifecycle.remove(maintainer=True)
+        self.assertTrue(swapped)
+        self.assertFalse(outside_current.is_symlink())
+        self.assertEqual(outside_current.read_text(encoding="utf-8"), "preserve\n")
 
 
 if __name__ == "__main__":

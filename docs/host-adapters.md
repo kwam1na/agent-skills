@@ -11,10 +11,13 @@ repository discovery roots:
 Each selected skill name has a stable, canonical POSIX link to
 `.agent-skills/current/skills/<skill>`. The shared `current` link selects one
 verified directory under `.agent-skills/generations/`. Updates and rollbacks
-prepare both fixed host roots first, then atomically replace that one shared
-link, so host readers cannot resolve different generations. The workflow body
-and its resources remain in one immutable generation. Host projection metadata
-in the active receipt describes discovery only and cannot redefine behavior.
+prepare both fixed host roots, finish final generation verification and
+projection preflight, then atomically replace that one shared link through a
+held repository directory. Host readers cannot resolve different generations,
+and replacing the managed parent cannot redirect the switch outside the
+repository. The workflow body and its resources remain in one immutable
+generation. Host projection metadata in the active receipt describes discovery
+only and cannot redefine behavior.
 
 Install and update preflight every selected name in both roots. An unrelated
 entry with the same name, a broken link, or a link that does not match the
@@ -22,12 +25,12 @@ active or target receipt produces the `exposure-conflict` blocker before
 replacement. Status reports each host projection as `current` or `conflict`
 and provides `review-host-projections` when maintainer review is required.
 
-Rollback switches the shared link to the retained verified generation before
-the active marker changes. Removal first removes the shared link, making both
-hosts unavailable together, then deletes only stable links proven by the
-current receipt and leaves unrelated host entries untouched. Interrupted
-projection changes are restored or completed through the existing repository
-lifecycle journal.
+Rollback switches the shared link to the retained verified generation only
+after its final verification and before the active marker changes. Removal
+deletes only stable links proven by the current receipt, leaves unrelated host
+entries untouched, then removes the shared link through the held repository
+directory. Interrupted projection changes are restored or completed through
+the existing repository lifecycle journal.
 
 Receipts created before host exposure metadata existed remain readable and
 represent an installed but unexposed generation. A later verified update or

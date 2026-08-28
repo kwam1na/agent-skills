@@ -31,7 +31,6 @@ ACTIVATION_BOUNDARIES = (
     "generation-ready",
     "exposing-codex",
     "exposing-claude-code",
-    "exposure-switched",
     "verifying",
     "marker-published",
     "marker-committed",
@@ -504,14 +503,12 @@ class Lifecycle:
                 phase = f"exposing-{host.host}"
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
-            self.exposure.switch(target, prior)
-            journal = write_journal(self.journal_path, journal, "exposure-switched")
-            self._fault(fault, "exposure-switched")
             self.store.verify(version)
-            self.exposure.preflight(target, target)
             journal = write_journal(self.journal_path, journal, "verifying")
             self._fault(fault, "verifying")
             self.store.verify(version)
+            self.exposure.preflight(target, prior)
+            self.exposure.switch(target, prior)
             self._write_active(target)
             self._fault(fault, "marker-published")
             journal = write_journal(self.journal_path, journal, "marker-committed")
@@ -588,13 +585,12 @@ class Lifecycle:
                 phase = f"exposing-{host.host}"
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
-            self.exposure.switch(target, prior)
-            journal = write_journal(self.journal_path, journal, "exposure-switched")
-            self._fault(fault, "exposure-switched")
             self.store.verify(version_from_receipt(target))
-            self.exposure.preflight(target, target)
             journal = write_journal(self.journal_path, journal, "verifying")
             self._fault(fault, "verifying")
+            self.store.verify(version_from_receipt(target))
+            self.exposure.preflight(target, prior)
+            self.exposure.switch(target, prior)
             self._write_active(target)
             self._fault(fault, "marker-published")
             journal = write_journal(self.journal_path, journal, "marker-committed")
@@ -631,9 +627,6 @@ class Lifecycle:
             for phase in ("staged", "generation-ready"):
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
-            self.exposure.switch(None, prior)
-            journal = write_journal(self.journal_path, journal, "exposure-switched")
-            self._fault(fault, "exposure-switched")
             for host in HOSTS:
                 self.exposure.reconcile_host(host, None, prior)
                 phase = f"exposing-{host.host}"
@@ -641,6 +634,8 @@ class Lifecycle:
                 self._fault(fault, phase)
             journal = write_journal(self.journal_path, journal, "verifying")
             self._fault(fault, "verifying")
+            self.exposure.preflight(None, prior)
+            self.exposure.switch(None, prior)
             self._write_active(None)
             self._fault(fault, "marker-published")
             journal = write_journal(self.journal_path, journal, "marker-committed")

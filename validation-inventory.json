@@ -1,5 +1,5 @@
 {
-  "expectedLifecycleScenarioCount": 16,
+  "expectedLifecycleScenarioCount": 18,
   "expectedScenarioCount": 7,
   "lifecycleScenarios": [
     {
@@ -65,6 +65,14 @@
     {
       "id": "journal-projection-divergence",
       "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "held-parent-host-switch",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "verify-before-host-switch",
+      "sensor": "tests/test_fault_injection.py"
     }
   ],
   "rules": [

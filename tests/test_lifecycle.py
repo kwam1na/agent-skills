@@ -443,12 +443,15 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         sentinel.write_text("preserve\n", encoding="utf-8")
         detached = self.repository / ".agent-skills-detached"
         original_open = os.open
+        managed_opens = 0
         swapped = False
 
         def swapping_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
-            nonlocal swapped
+            nonlocal managed_opens, swapped
             descriptor = original_open(path, flags, *args, **kwargs)
-            if path == ".agent-skills" and kwargs.get("dir_fd") is not None and not swapped:
+            if path == ".agent-skills" and kwargs.get("dir_fd") is not None:
+                managed_opens += 1
+            if managed_opens == 2 and not swapped:
                 os.rename(self.repository / ".agent-skills", detached)
                 os.symlink(outside, self.repository / ".agent-skills", target_is_directory=True)
                 swapped = True
