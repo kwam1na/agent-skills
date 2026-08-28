@@ -1,0 +1,57 @@
+{
+  "$id": "https://agent-skills.dev/schemas/provenance/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "entries": {
+      "items": {
+        "properties": {
+          "classification": {
+            "type": "string"
+          },
+          "distribution": {
+            "enum": [
+              "releasable",
+              "source-only"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "outputs": {
+            "type": "array"
+          },
+          "owner": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "source": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "classification",
+          "distribution",
+          "id",
+          "owner",
+          "outputs",
+          "source"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "schemaVersion": {
+      "const": "agent-skills-provenance/1"
+    },
+    "sourceBaseline": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "entries",
+    "schemaVersion",
+    "sourceBaseline"
+  ],
+  "type": "object"
+}

@@ -1,0 +1,9 @@
+{
+  "description": "Reserved optional tracker profile; U8 adds its extracted adapter.",
+  "id": "linear",
+  "includes": [
+    "core"
+  ],
+  "members": [],
+  "schemaVersion": "agent-skills-profile/1"
+}

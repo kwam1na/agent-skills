@@ -1,0 +1,12 @@
+{
+  "description": "Minimal tracker-neutral delivery posture.",
+  "expectedFiles": [
+    "skills/compound-delivery-kernel/SKILL.md"
+  ],
+  "id": "core",
+  "includes": [],
+  "members": [
+    "compound-delivery-kernel"
+  ],
+  "schemaVersion": "agent-skills-profile/1"
+}

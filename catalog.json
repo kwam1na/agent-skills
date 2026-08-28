@@ -1,0 +1,94 @@
+{
+  "schemaVersion": "agent-skills-catalog/1",
+  "skills": [
+    {
+      "dependencies": [],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "bootstrap-agent-harness",
+      "path": "skills/bootstrap-agent-harness/SKILL.md",
+      "profiles": [
+        "bootstrap"
+      ],
+      "provenanceId": "bootstrap-agent-harness"
+    },
+    {
+      "dependencies": [],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "compound-delivery-kernel",
+      "path": "skills/compound-delivery-kernel/SKILL.md",
+      "profiles": [
+        "core",
+        "linear"
+      ],
+      "provenanceId": "compound-delivery-kernel"
+    },
+    {
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [
+        "linear-mcp"
+      ],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "create-linear-ticket",
+      "path": "skills/create-linear-ticket/SKILL.md",
+      "profiles": [],
+      "provenanceId": "create-linear-ticket"
+    },
+    {
+      "degradedBehavior": "Tracking routes remain unavailable until an adopter explicitly selects the linear profile.",
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "deliver-work",
+      "path": "skills/deliver-work/SKILL.md",
+      "profiles": [],
+      "provenanceId": "deliver-work"
+    },
+    {
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        },
+        {
+          "id": "create-linear-ticket",
+          "requirement": "routing"
+        }
+      ],
+      "externalTools": [
+        "linear-mcp"
+      ],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "execute-linear-ticket",
+      "path": "skills/execute-linear-ticket/SKILL.md",
+      "profiles": [],
+      "provenanceId": "execute-linear-ticket"
+    }
+  ]
+}

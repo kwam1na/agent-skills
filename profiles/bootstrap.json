@@ -1,0 +1,13 @@
+{
+  "description": "Optional guidance for creating an agent-ready repository.",
+  "expectedFiles": [
+    "skills/bootstrap-agent-harness/SKILL.md",
+    "skills/bootstrap-agent-harness/agents/openai.yaml"
+  ],
+  "id": "bootstrap",
+  "includes": [],
+  "members": [
+    "bootstrap-agent-harness"
+  ],
+  "schemaVersion": "agent-skills-profile/1"
+}
