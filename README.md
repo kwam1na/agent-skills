@@ -126,6 +126,32 @@ artifacts, then deterministically replay the redacted event causality; they do
 not independently prove external calls. The retained attestation and record
 contain no host payloads, ticket identifiers, secrets, or local paths.
 
+Qualify the installed delivery provider separately from any adopting
+repository's delivery runner:
+
+```bash
+python3 scripts/qualify-provider.py \
+  --archive /tmp/core.zip \
+  --metadata /tmp/core.release.json \
+  --record /tmp/provider.qualification.json
+```
+
+The qualifier verifies and freshly installs the supplied release into
+qualification-owned repository and host roots, then starts the provider from
+the active generation with `python -B -m agent_skills.provider`. It drives the
+exact protocol through line-delimited JSON and independently inspects the
+written manifest and reviewer artifacts. Its deterministic record covers
+success, blocked, failed, cancelled, interrupted, duplicate, unsupported
+version, reconciliation, anti-vacuity, completeness, and redaction behavior
+while retaining no local paths or opaque host references. The checked record is
+`qualifications/provider-v1.json`.
+
+This offline proof establishes the behavior of the exact installed provider
+bytes and their evidence output. Host and connector provenance remains the
+responsibility of the protected external run that supplies host events; the
+controlled host-event inputs used here do not independently prove external
+calls.
+
 ## Repository lifecycle
 
 Run the lifecycle from an extracted release archive. Read-only commands emit

@@ -1,0 +1,147 @@
+{
+  "installedProviderSha256": "3f68ac3d677384c6229a3a8215c969bd211c477afbdea1712e564d634e82504f",
+  "proofBoundary": {
+    "external": "Host and connector provenance remains owned by the protected external run that supplies host events.",
+    "offline": "This record proves exact installed provider execution, retained evidence behavior, and deterministic replay; controlled host events do not independently prove external calls."
+  },
+  "protocolVersion": "delivery-provider-rails/1",
+  "redaction": {
+    "environmentCaptured": false,
+    "localPathsCaptured": false,
+    "opaqueReferencesCaptured": false,
+    "rawPayloadsCaptured": false
+  },
+  "release": {
+    "archiveSha256": "0e5a2e536ce104f0c8c7956f373990064ecae709fe287c4504d30f2a4314094f",
+    "metadataSha256": "9c6f96a9994c0faf6dc84a3d907be60ebd82bb7e5579256c853855010d324d99",
+    "profile": "core",
+    "releaseId": "core-v1"
+  },
+  "replay": "python3 scripts/qualify-provider.py --archive <archive> --metadata <metadata> --record <record>",
+  "scenarios": [
+    {
+      "assertionCount": 4,
+      "evidence": [
+        "exact candidate installation is current",
+        "qualification-owned repository exposes both fixed hosts",
+        "installed module starts with isolated Python module search",
+        "installed module negotiates the exact protocol"
+      ],
+      "id": "fresh-install-and-startup",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 13,
+      "evidence": [
+        "aligned installed workflow reaches success",
+        "all native operation names survive provider mapping",
+        "host references become distinct session-random opaque values",
+        "fresh comparison session completes the installed workflow",
+        "the same low-entropy host reference maps differently across fresh sessions",
+        "opaque references resist practical low-entropy dictionary recovery",
+        "installed provider writes the declared evidence manifest",
+        "evidence binds the requested candidate tree",
+        "evidence contains the declared non-empty claim",
+        "evidence names every completed required lens",
+        "evidence contains one approval per required lens",
+        "all retained approval bytes match their digests",
+        "raw host references are absent from retained provider evidence"
+      ],
+      "id": "success-and-native-operations",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 5,
+      "evidence": [
+        "host blocker maps to terminal blocked",
+        "blocked retains an actionable blocker",
+        "blocked retains explicit retry guidance",
+        "blocked cannot emit green evidence",
+        "blocked retains no raw host reference"
+      ],
+      "id": "blocked",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 5,
+      "evidence": [
+        "host failure maps to terminal failed",
+        "failed retains an actionable blocker",
+        "failed retains explicit retry guidance",
+        "failed cannot emit green evidence",
+        "failed retains no raw host reference"
+      ],
+      "id": "failed",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 4,
+      "evidence": [
+        "deferred attempt is active before cancellation",
+        "active deferred attempt reaches cancelled",
+        "duplicate cancellation is correlated and idempotent",
+        "cancelled attempt emits no green evidence"
+      ],
+      "id": "cancelled",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 3,
+      "evidence": [
+        "host loss reaches indeterminate",
+        "interruption stays correlated to its attempt",
+        "interrupted attempt emits no green evidence"
+      ],
+      "id": "interrupted",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 3,
+      "evidence": [
+        "identical request replays the same accepted attempt",
+        "duplicate request preserves exact evidence bytes",
+        "caller-owned reconciliation is preserved without an internal retry"
+      ],
+      "id": "duplicate-and-reconciliation",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 3,
+      "evidence": [
+        "wrong expected release fails closed with a blocked terminal",
+        "release mismatch retains its typed blocker",
+        "release mismatch emits no green evidence"
+      ],
+      "id": "release-mismatch",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 4,
+      "evidence": [
+        "unsupported version fails negotiation closed",
+        "unsupported version selects no protocol",
+        "provider reports only its exact supported protocol",
+        "unsupported negotiation closes the session to later work"
+      ],
+      "id": "unsupported-version",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 2,
+      "evidence": [
+        "empty review evidence fails anti-vacuity checks",
+        "incomplete evidence cannot emit a manifest"
+      ],
+      "id": "evidence-completeness",
+      "result": "passed"
+    }
+  ],
+  "schemaVersion": "agent-skills-provider-qualification/1",
+  "summary": {
+    "assertionCount": 46,
+    "failedScenarioCount": 0,
+    "passedScenarioCount": 10,
+    "requiredScenarioCount": 10,
+    "result": "passed"
+  }
+}
