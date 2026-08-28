@@ -1,5 +1,32 @@
 {
+  "expectedLifecycleScenarioCount": 6,
   "expectedScenarioCount": 3,
+  "lifecycleScenarios": [
+    {
+      "id": "activation-boundary-fault-recovery",
+      "sensor": "tests/test_fault_injection.py"
+    },
+    {
+      "id": "clean-install-update-rollback",
+      "sensor": "tests/test_lifecycle.py"
+    },
+    {
+      "id": "dirty-target-preservation",
+      "sensor": "tests/test_lifecycle.py"
+    },
+    {
+      "id": "integrity-and-provenance-block-activation",
+      "sensor": "tests/test_lifecycle.py"
+    },
+    {
+      "id": "stable-status-contract",
+      "sensor": "tests/test_lifecycle.py"
+    },
+    {
+      "id": "tracked-receipt-ownership",
+      "sensor": "tests/test_receipt.py"
+    }
+  ],
   "rules": [
     {
       "enabled": true,
@@ -252,6 +279,10 @@
     {
       "id": "provenance",
       "path": "provenance.lock.json"
+    },
+    {
+      "id": "runtime",
+      "path": "agent_skills"
     },
     {
       "id": "schemas",

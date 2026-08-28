@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -9,8 +11,15 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
-from agent_skills.release import ReleaseError, build_release, verify_release
+from agent_skills.release import (
+    ReleaseError,
+    _path_digest,
+    build_release,
+    verify_release,
+)
+from agent_skills.validate import canonical_json
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +64,64 @@ class ReleaseArchiveTests(unittest.TestCase):
             archive.write_bytes(archive.read_bytes() + b"tampered")
             with self.assertRaisesRegex(ReleaseError, "release.archive_checksum"):
                 verify_release(archive, metadata)
+
+    def test_archive_replacement_after_read_cannot_change_verified_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            archive, metadata = self.build(directory)
+            with zipfile.ZipFile(archive) as trusted:
+                trusted_cli = trusted.read("agent_skills/cli.py")
+                entries = {name: trusted.read(name) for name in trusted.namelist()}
+            entries["agent_skills/cli.py"] = trusted_cli + b"\nSWAPPED_ARCHIVE = True\n"
+            manifest = json.loads(entries["release-manifest.json"])
+            payload = {
+                path: contents
+                for path, contents in entries.items()
+                if path != "release-manifest.json"
+            }
+            for record in manifest["files"]:
+                record["sha256"] = hashlib.sha256(payload[record["path"]]).hexdigest()
+            paths = sorted(payload)
+            manifest["contentSha256"] = _path_digest(paths, payload)
+            manifest["groups"]["core"]["sha256"] = _path_digest(paths, payload)
+            entries["release-manifest.json"] = canonical_json(manifest).encode()
+            replacement = directory / "replacement.zip"
+            self._rewrite_archive(replacement, entries)
+
+            original_open = Path.open
+            swapped = False
+
+            class SwapAfterRead(io.BufferedIOBase):
+                def __init__(self, source: io.BufferedReader) -> None:
+                    self.source = source
+
+                def read(self, _size: int = -1) -> bytes:
+                    nonlocal swapped
+                    if swapped:
+                        return b""
+                    contents = self.source.read()
+                    self.source.close()
+                    os.replace(replacement, archive)
+                    swapped = True
+                    return contents
+
+                def __enter__(self) -> "SwapAfterRead":
+                    return self
+
+                def __exit__(self, *_args: object) -> None:
+                    self.source.close()
+
+            def swapping_open(path: Path, *args: object, **kwargs: object):
+                opened = original_open(path, *args, **kwargs)
+                if path == archive and args and args[0] == "rb" and not swapped:
+                    return SwapAfterRead(opened)
+                return opened
+
+            extracted = directory / "extracted"
+            with mock.patch.object(Path, "open", swapping_open):
+                verify_release(archive, metadata, extract_to=extracted)
+            self.assertTrue(swapped)
+            self.assertEqual((extracted / "agent_skills" / "cli.py").read_bytes(), trusted_cli)
 
     def test_release_identity_mismatch_rejects(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -212,6 +279,86 @@ class ReleaseArchiveTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            release_validation = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_skills.cli",
+                    "validate",
+                    "--archive",
+                    str(archive),
+                    "--metadata",
+                    str(metadata),
+                ],
+                cwd=extracted,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                release_validation.returncode,
+                0,
+                release_validation.stdout + release_validation.stderr,
+            )
+
+            adopting = directory / "adopting"
+            adopting.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=adopting, check=True)
+            install = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_skills.cli",
+                    "--root",
+                    str(adopting),
+                    "install",
+                    "--archive",
+                    str(archive),
+                    "--metadata",
+                    str(metadata),
+                    "--maintenance",
+                ],
+                cwd=extracted,
+                capture_output=True,
+                text=True,
+                check=False,
+                env={
+                    **os.environ,
+                    "AGENT_SKILLS_EXECUTION_CONTEXT": "",
+                    "GITHUB_EVENT_NAME": "",
+                },
+            )
+            self.assertEqual(install.returncode, 0, install.stdout + install.stderr)
+            self.assertEqual(json.loads(install.stdout)["status"]["lifecycle"], "current")
+            status_command = [
+                sys.executable,
+                "-m",
+                "agent_skills.cli",
+                "--root",
+                str(adopting),
+                "status",
+            ]
+            first_status = subprocess.run(
+                status_command,
+                cwd=extracted,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            second_status = subprocess.run(
+                status_command,
+                cwd=extracted,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(first_status.returncode, 0, first_status.stderr)
+            self.assertEqual(first_status.stdout, second_status.stdout)
+            self.assertEqual(
+                json.loads(first_status.stdout)["schemaVersion"],
+                "agent-skills-status/1",
+            )
 
     @staticmethod
     def _rewrite_archive(path: Path, entries: dict[str, bytes]) -> None:
