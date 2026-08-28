@@ -108,6 +108,7 @@ class InstalledProvider:
             stderr=subprocess.PIPE,
             text=True,
         )
+        self.closed = False
 
     def _read(self) -> dict[str, object]:
         assert self.process.stdout is not None
@@ -134,12 +135,13 @@ class InstalledProvider:
                 return events
 
     def interrupt(self) -> list[dict[str, object]]:
-        assert self.process.stdin is not None
-        self.process.stdin.close()
-        assert self.process.stdout is not None
-        events = [json.loads(line) for line in self.process.stdout if line.strip()]
-        self.process.wait(timeout=10)
-        return events
+        try:
+            assert self.process.stdin is not None
+            self.process.stdin.close()
+            assert self.process.stdout is not None
+            return [json.loads(line) for line in self.process.stdout if line.strip()]
+        finally:
+            self.close()
 
     def reject(self, message: dict[str, object]) -> tuple[int | None, dict[str, object] | None, str]:
         assert self.process.stdin is not None
@@ -154,11 +156,34 @@ class InstalledProvider:
         return return_code, None, self.process.stderr.read()
 
     def close(self) -> None:
-        if self.process.poll() is None:
-            assert self.process.stdin is not None
-            if not self.process.stdin.closed:
-                self.process.stdin.close()
-            self.process.wait(timeout=10)
+        if self.closed:
+            return
+        try:
+            if self.process.poll() is None:
+                assert self.process.stdin is not None
+                if not self.process.stdin.closed:
+                    try:
+                        self.process.stdin.close()
+                    except OSError:
+                        pass
+                try:
+                    self.process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.process.terminate()
+                    try:
+                        self.process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        self.process.kill()
+                        self.process.wait(timeout=10)
+        finally:
+            for stream in (
+                self.process.stdin,
+                self.process.stdout,
+                self.process.stderr,
+            ):
+                if stream is not None and not stream.closed:
+                    stream.close()
+            self.closed = True
 
 
 def negotiate(provider: InstalledProvider, *versions: str) -> dict[str, object]:
@@ -321,6 +346,7 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
                     if isinstance(event.get("details"), dict) and "reference" in event["details"]
                 ]
                 checkpoint.check(len(references) == len(set(references)) == len(OPERATIONS), "host references become distinct session-random opaque values")
+                provider.close()
                 repeated_root = root / "success-repeat"
                 repeated_root.mkdir()
                 repeated_provider = session()
@@ -439,15 +465,18 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
             run_root = root / "interrupted"
             run_root.mkdir()
             provider = session()
-            negotiate(provider, PROTOCOL_VERSION)
-            provider.exchange(
-                provider_request(release, run_root, "interrupt-attempt", deferred=True),
-                deferred=True,
-            )
-            events = provider.interrupt()
-            checkpoint.check(terminal(events).get("outcome") == "indeterminate", "host loss reaches indeterminate")
-            checkpoint.check(terminal(events).get("requestId") == "interrupt-attempt", "interruption stays correlated to its attempt")
-            checkpoint.check(not (run_root / "manifest.json").exists(), "interrupted attempt emits no green evidence")
+            try:
+                negotiate(provider, PROTOCOL_VERSION)
+                provider.exchange(
+                    provider_request(release, run_root, "interrupt-attempt", deferred=True),
+                    deferred=True,
+                )
+                events = provider.interrupt()
+                checkpoint.check(terminal(events).get("outcome") == "indeterminate", "host loss reaches indeterminate")
+                checkpoint.check(terminal(events).get("requestId") == "interrupt-attempt", "interruption stays correlated to its attempt")
+                checkpoint.check(not (run_root / "manifest.json").exists(), "interrupted attempt emits no green evidence")
+            finally:
+                provider.close()
 
         def duplicate(checkpoint: Checkpoint) -> None:
             run_root = root / "duplicate"

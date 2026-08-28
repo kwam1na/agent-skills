@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -8,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from agent_skills.release import build_release
 
@@ -15,6 +17,14 @@ from agent_skills.release import build_release
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-provider.py"
 RECORD = ROOT / "qualifications" / "provider-v1.json"
+
+
+def _load_runner():
+    spec = importlib.util.spec_from_file_location("qualify_provider", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class ProviderQualificationTests(unittest.TestCase):
@@ -128,6 +138,61 @@ class ProviderQualificationTests(unittest.TestCase):
             self.assertEqual(first_record.read_bytes(), second_record.read_bytes())
             self.assertFalse((Path(first) / "empty-codex").exists())
             self.assertFalse((Path(first) / "empty-claude").exists())
+
+    def test_qualification_never_overlaps_sessions_and_releases_every_process_handle(self) -> None:
+        runner = _load_runner()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            archive = directory / "core.zip"
+            metadata = directory / "core.release.json"
+            build_release(
+                ROOT,
+                archive,
+                metadata,
+                release_id="core-v1",
+                profile_id="core",
+            )
+            original = runner.InstalledProvider
+            active = 0
+            instances = []
+
+            class StrictSequentialProvider(original):
+                def __init__(self, *arguments, **keywords):
+                    nonlocal active
+                    if active:
+                        raise AssertionError("provider sessions overlapped")
+                    super().__init__(*arguments, **keywords)
+                    active += 1
+                    self.test_closed = False
+                    instances.append(self)
+
+                def close(self):
+                    nonlocal active
+                    try:
+                        super().close()
+                    finally:
+                        if not self.test_closed:
+                            self.test_closed = True
+                            active -= 1
+
+            with mock.patch.object(runner, "InstalledProvider", StrictSequentialProvider):
+                record = runner.qualify(archive, metadata)
+
+            self.assertEqual(record["summary"]["result"], "passed")
+            self.assertEqual(active, 0)
+            self.assertTrue(instances)
+            self.assertTrue(all(instance.process.poll() is not None for instance in instances))
+            self.assertTrue(
+                all(
+                    stream is None or stream.closed
+                    for instance in instances
+                    for stream in (
+                        instance.process.stdin,
+                        instance.process.stdout,
+                        instance.process.stderr,
+                    )
+                )
+            )
 
     def test_checked_record_replays_exactly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
