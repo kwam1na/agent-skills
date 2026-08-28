@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .fs import publish_active_marker, repository_paths
+from .fs import MANAGED_GIT_ATTRIBUTES, publish_active_marker, repository_paths
 from .generations import GenerationError, GenerationStore, inspect_release
 from .journal import (
     JOURNAL_SCHEMA,
@@ -108,15 +108,25 @@ class Lifecycle:
         self.root, self.git_path = repository_paths(root)
         self.managed_root = self.root / ".agent-skills"
         self.active_path = self.managed_root / "active.json"
+        self.attributes_path = self.managed_root / ".gitattributes"
         self.journal_path = self.git_path / "journal.json"
         self.lock_path = self.git_path / "lock.json"
         self.store = GenerationStore(self.managed_root, self.git_path)
 
     def _active(self, *, verify: bool = True) -> dict | None:
-        if self.managed_root.is_symlink() or self.active_path.is_symlink():
+        if (
+            self.managed_root.is_symlink()
+            or self.active_path.is_symlink()
+            or self.attributes_path.is_symlink()
+        ):
             raise GenerationError("local-divergence: active marker root is a symlink")
         if not self.active_path.exists():
             return None
+        try:
+            if self.attributes_path.read_bytes() != MANAGED_GIT_ATTRIBUTES:
+                raise GenerationError("local-divergence: managed Git attributes disagree")
+        except OSError as error:
+            raise GenerationError("local-divergence: managed Git attributes are unreadable") from error
         receipt = load_receipt(self.active_path)
         if verify:
             self.store.verify(version_from_receipt(receipt))
@@ -126,7 +136,11 @@ class Lifecycle:
 
     def _orphaned_generation_exists(self) -> bool:
         root = self.store.generations_root
-        return root.is_dir() and any(root.iterdir())
+        return (
+            self.attributes_path.exists()
+            or self.attributes_path.is_symlink()
+            or (root.is_dir() and any(root.iterdir()))
+        )
 
     def status(self) -> Status:
         try:
@@ -323,6 +337,8 @@ class Lifecycle:
             fault,
         )
         self.store.cleanup_staging(journal["operationId"])
+        if target is None:
+            self._write_active(None)
 
     def _recover_locked(self) -> dict[str, object]:
         journal = load_journal(self.journal_path)
@@ -350,6 +366,8 @@ class Lifecycle:
         if _same_receipt(active, prior):
             if prior is not None:
                 self.store.verify(version_from_receipt(prior))
+            else:
+                self._write_active(None)
             self.store.cleanup(self._keep_for(prior), journal["operationId"])
             self.store.cleanup_staging(journal["operationId"])
             self.journal_path.unlink()

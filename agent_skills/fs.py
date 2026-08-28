@@ -13,6 +13,9 @@ class FileSafetyError(ValueError):
     pass
 
 
+MANAGED_GIT_ATTRIBUTES = b"* -text\n"
+
+
 DESCRIPTOR_PUBLISH_SUPPORTED = all(
     function in os.supports_dir_fd
     for function in (os.open, os.mkdir, os.rename, os.unlink)
@@ -90,7 +93,7 @@ def atomic_write(path: Path, contents: bytes) -> None:
 
 
 def publish_active_marker(repository_root: Path, contents: bytes | None) -> None:
-    """Publish the fixed active marker without following a swapped managed root."""
+    """Publish fixed tracked lifecycle metadata under a verified managed root."""
     if not DESCRIPTOR_PUBLISH_SUPPORTED:
         managed_root = repository_root / ".agent-skills"
         if managed_root.is_symlink():
@@ -99,9 +102,12 @@ def publish_active_marker(repository_root: Path, contents: bytes | None) -> None
         if managed_root.is_symlink() or not managed_root.resolve().is_relative_to(repository_root):
             raise FileSafetyError("local-divergence: managed root escaped the repository")
         active = managed_root / "active.json"
+        attributes = managed_root / ".gitattributes"
         if contents is None:
             active.unlink(missing_ok=True)
+            attributes.unlink(missing_ok=True)
         else:
+            atomic_write(attributes, MANAGED_GIT_ATTRIBUTES)
             atomic_write(active, contents)
         if managed_root.is_symlink() or not managed_root.resolve().is_relative_to(repository_root):
             raise FileSafetyError("local-divergence: managed root changed during publication")
@@ -128,45 +134,52 @@ def publish_active_marker(repository_root: Path, contents: bytes | None) -> None
         except OSError as error:
             raise FileSafetyError("local-divergence: managed root is unsafe") from error
         try:
-            if contents is None:
+            def publish(name: str, value: bytes | None) -> None:
+                if value is None:
+                    try:
+                        os.unlink(name, dir_fd=managed_descriptor)
+                    except FileNotFoundError:
+                        pass
+                    return
+                temporary = f".{name}.{uuid.uuid4().hex}.tmp"
                 try:
-                    os.unlink("active.json", dir_fd=managed_descriptor)
-                except FileNotFoundError:
-                    pass
-                os.fsync(managed_descriptor)
-                return
-            temporary = f".active.{uuid.uuid4().hex}.tmp"
-            try:
-                descriptor = os.open(
-                    temporary,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | no_follow,
-                    0o644,
-                    dir_fd=managed_descriptor,
-                )
-                try:
-                    remaining = memoryview(contents)
-                    while remaining:
-                        written = os.write(descriptor, remaining)
-                        if written <= 0:
-                            raise FileSafetyError(
-                                "local-divergence: active marker write did not progress"
-                            )
-                        remaining = remaining[written:]
-                    os.fsync(descriptor)
+                    descriptor = os.open(
+                        temporary,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | no_follow,
+                        0o644,
+                        dir_fd=managed_descriptor,
+                    )
+                    try:
+                        remaining = memoryview(value)
+                        while remaining:
+                            written = os.write(descriptor, remaining)
+                            if written <= 0:
+                                raise FileSafetyError(
+                                    "local-divergence: lifecycle metadata write did not progress"
+                                )
+                            remaining = remaining[written:]
+                        os.fsync(descriptor)
+                    finally:
+                        os.close(descriptor)
+                    os.rename(
+                        temporary,
+                        name,
+                        src_dir_fd=managed_descriptor,
+                        dst_dir_fd=managed_descriptor,
+                    )
                 finally:
-                    os.close(descriptor)
-                os.rename(
-                    temporary,
-                    "active.json",
-                    src_dir_fd=managed_descriptor,
-                    dst_dir_fd=managed_descriptor,
-                )
-                os.fsync(managed_descriptor)
-            finally:
-                try:
-                    os.unlink(temporary, dir_fd=managed_descriptor)
-                except FileNotFoundError:
-                    pass
+                    try:
+                        os.unlink(temporary, dir_fd=managed_descriptor)
+                    except FileNotFoundError:
+                        pass
+
+            if contents is None:
+                publish("active.json", None)
+                publish(".gitattributes", None)
+            else:
+                publish(".gitattributes", MANAGED_GIT_ATTRIBUTES)
+                publish("active.json", contents)
+            os.fsync(managed_descriptor)
         finally:
             os.close(managed_descriptor)
     finally:

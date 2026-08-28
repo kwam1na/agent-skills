@@ -106,6 +106,7 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         self.assertEqual(len(generations), 2)
         lifecycle.remove(maintainer=True)
         self.assertEqual(lifecycle.status().as_dict()["lifecycle"], "absent")
+        self.assertFalse((self.repository / ".agent-skills" / ".gitattributes").exists())
         self.assertEqual(unrelated_digest(self.repository), before)
         self.assertEqual(dirty_tracked.read_text(encoding="utf-8"), "dirty tracked bytes\n")
         self.assertEqual(dirty_untracked.read_text(encoding="utf-8"), "dirty untracked bytes\n")
@@ -179,13 +180,31 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
 
         clone = self.base / "clone"
         subprocess.run(
-            ["git", "clone", "-q", str(self.repository), str(clone)],
+            [
+                "git",
+                "-c",
+                "core.autocrlf=true",
+                "clone",
+                "-q",
+                str(self.repository),
+                str(clone),
+            ],
             check=True,
         )
         cloned_status = Lifecycle(clone).status().as_dict()
         self.assertEqual(cloned_status["lifecycle"], "current")
         self.assertEqual(cloned_status["active"]["releaseId"], "core-v1")
         self.assertFalse((clone / ".git" / "agent-skills" / "journal.json").exists())
+
+    def test_diverged_managed_checkout_attributes_is_an_external_transition(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        attributes = self.repository / ".agent-skills" / ".gitattributes"
+        attributes.write_text("* text\n", encoding="utf-8")
+
+        status = lifecycle.status().as_dict()
+        self.assertEqual(status["lifecycle"], "externally-transitioned")
+        self.assertIn("local-divergence", status["blockers"])
 
     def test_plan_and_diff_are_read_only_and_deterministic(self) -> None:
         lifecycle = Lifecycle(self.repository)
