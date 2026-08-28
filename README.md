@@ -4,7 +4,8 @@ This repository is the deterministic, metadata-first home for a small portable
 agent-skills corpus. Its lifecycle installs only authenticated release archives;
 it does not extract new workflow bodies or implement provider-specific service
 adapters. One installed generation is exposed to Codex and Claude Code through
-repository-relative links, so neither host owns another editable workflow copy.
+stable repository-relative links and one shared active-generation link, so
+neither host owns another editable workflow copy or switches independently.
 
 `catalog.json` lists every cataloged skill. `profiles/` declares selectable
 workflow sets, and `provenance.lock.json` binds every cataloged file to its

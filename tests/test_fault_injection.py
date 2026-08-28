@@ -21,6 +21,7 @@ class FaultInjectionTests(LifecycleFixture, unittest.TestCase):
             "generation-ready",
             "exposing-codex",
             "exposing-claude-code",
+            "exposure-switched",
             "verifying",
         }
         for boundary in ACTIVATION_BOUNDARIES:

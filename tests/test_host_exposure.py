@@ -5,8 +5,9 @@ import json
 import os
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from agent_skills.hosts.exposure import HOSTS
+from agent_skills.hosts.exposure import HOSTS, _normalized_link
 from agent_skills.lifecycle import Lifecycle
 
 from lifecycle_support import LifecycleFixture, unrelated_digest
@@ -157,10 +158,90 @@ class HostExposureTests(LifecycleFixture, unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "first host"):
             lifecycle.update(*self.v2, maintainer=True, fault=interrupt)
+        for host in HOSTS:
+            projection = self.repository / host.root / "deliver-work"
+            self.assertIn(first, projection.resolve().as_posix())
         self.assertEqual(lifecycle.recover(maintainer=True)["action"], "restore-prior")
         for host in HOSTS:
             projection = self.repository / host.root / "deliver-work"
             self.assertIn(first, projection.resolve().as_posix())
+
+    def test_one_shared_switch_moves_both_hosts_without_a_mixed_generation(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        first = lifecycle.status().as_dict()["active"]["generation"]
+        second = lifecycle.plan(*self.v2)["target"]["generation"]
+
+        def interrupt(phase: str) -> None:
+            if phase == "exposure-switched":
+                raise RuntimeError("stop after shared switch")
+
+        with self.assertRaisesRegex(RuntimeError, "shared switch"):
+            lifecycle.update(*self.v2, maintainer=True, fault=interrupt)
+
+        resolved = {
+            (self.repository / host.root / "deliver-work").resolve().as_posix()
+            for host in HOSTS
+        }
+        self.assertEqual(len(resolved), 1)
+        self.assertIn(second, resolved.pop())
+        status = lifecycle.status().as_dict()
+        self.assertEqual(status["active"]["generation"], first)
+        self.assertEqual(status["lifecycle"], "recovery-needed")
+        self.assertEqual(status["blockers"], [])
+        self.assertTrue(
+            all(exposure["state"] == "transitioning" for exposure in status["exposures"])
+        )
+
+    def test_projection_text_is_canonical_posix_across_platform_separators(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        with mock.patch(
+            "agent_skills.hosts.exposure.os.path.relpath",
+            return_value=r"..\..\.agent-skills\wrong",
+        ):
+            lifecycle.install(*self.v1, maintainer=True)
+
+        for host in HOSTS:
+            projection = self.repository / host.root / "deliver-work"
+            self.assertEqual(
+                os.readlink(projection),
+                "../../.agent-skills/current/skills/deliver-work",
+            )
+        self.assertEqual(lifecycle.status().as_dict()["lifecycle"], "current")
+
+        windows_link = r"..\..\.agent-skills\current\skills\deliver-work"
+        with mock.patch("agent_skills.hosts.exposure.os.name", "nt"):
+            self.assertEqual(
+                _normalized_link(windows_link),
+                "../../.agent-skills/current/skills/deliver-work",
+            )
+        with mock.patch("agent_skills.hosts.exposure.os.name", "posix"):
+            self.assertNotEqual(
+                _normalized_link(windows_link),
+                "../../.agent-skills/current/skills/deliver-work",
+            )
+
+    def test_unfinished_journal_with_user_projection_divergence_needs_review(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+
+        def interrupt(phase: str) -> None:
+            if phase == "exposing-codex":
+                raise RuntimeError("stop during exposure")
+
+        with self.assertRaisesRegex(RuntimeError, "during exposure"):
+            lifecycle.update(*self.v2, maintainer=True, fault=interrupt)
+        projection = self.repository / ".claude" / "skills" / "deliver-work"
+        projection.unlink()
+        projection.mkdir()
+        (projection / "SKILL.md").write_text("user-owned\n", encoding="utf-8")
+
+        status = lifecycle.status().as_dict()
+        self.assertEqual(status["lifecycle"], "externally-transitioned")
+        self.assertIn("exposure-conflict", status["blockers"])
+        self.assertEqual(status["recoveryPlan"], ["review-host-projections"])
+        with self.assertRaisesRegex(ValueError, "exposure-conflict"):
+            lifecycle.recover(maintainer=True)
 
 
 if __name__ == "__main__":

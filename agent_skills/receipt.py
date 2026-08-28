@@ -66,21 +66,27 @@ def validate_version(value: object) -> dict:
 
 
 def validate_receipt(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != {
-        "exposures",
+    required = {
         "files",
         "generation",
         "ownership",
         "previous",
         "release",
         "schemaVersion",
-    }:
+    }
+    if (
+        not isinstance(value, dict)
+        or frozenset(value) not in {
+            frozenset(required),
+            frozenset(required | {"exposures"}),
+        }
+    ):
         raise ReceiptError("receipt-invalid: receipt shape is malformed")
     if value["schemaVersion"] != RECEIPT_SCHEMA:
         raise ReceiptError("receipt-invalid: unsupported receipt schema")
     if value["ownership"] != OWNERSHIP:
         raise ReceiptError("receipt-invalid: ownership marker is missing")
-    if value["exposures"] != exposure_records():
+    if "exposures" in value and value["exposures"] != exposure_records():
         raise ReceiptError("receipt-invalid: host exposure metadata is malformed")
     validate_version(
         {

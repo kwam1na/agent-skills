@@ -1,5 +1,5 @@
 {
-  "expectedLifecycleScenarioCount": 12,
+  "expectedLifecycleScenarioCount": 16,
   "expectedScenarioCount": 7,
   "lifecycleScenarios": [
     {
@@ -48,6 +48,22 @@
     },
     {
       "id": "host-projection-rollback",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "atomic-shared-host-switch",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "canonical-host-projection-paths",
+      "sensor": "tests/test_host_exposure.py"
+    },
+    {
+      "id": "legacy-receipt-compatibility",
+      "sensor": "tests/test_lifecycle.py"
+    },
+    {
+      "id": "journal-projection-divergence",
       "sensor": "tests/test_host_exposure.py"
     }
   ],

@@ -160,7 +160,6 @@
     }
   },
   "required": [
-    "exposures",
     "files",
     "generation",
     "ownership",

@@ -31,6 +31,7 @@ ACTIVATION_BOUNDARIES = (
     "generation-ready",
     "exposing-codex",
     "exposing-claude-code",
+    "exposure-switched",
     "verifying",
     "marker-published",
     "marker-committed",
@@ -188,7 +189,23 @@ class Lifecycle:
         if journal is not None:
             phase = journal["phase"]
             exposure_status, exposure_conflict = self.exposure.status(active)
+            try:
+                self.exposure.preflight(journal["target"], journal["prior"])
+            except ExposureError:
+                return Status(
+                    _active_summary(active),
+                    ("exposure-conflict",),
+                    tuple(exposure_status),
+                    phase,
+                    "externally-transitioned",
+                    ("review-host-projections",),
+                )
             if phase not in {"marker-committed", "cleanup"}:
+                if exposure_conflict:
+                    exposure_status = [
+                        {**record, "state": "transitioning"}
+                        for record in exposure_status
+                    ]
                 return Status(
                     _active_summary(active),
                     (),
@@ -487,6 +504,9 @@ class Lifecycle:
                 phase = f"exposing-{host.host}"
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
+            self.exposure.switch(target, prior)
+            journal = write_journal(self.journal_path, journal, "exposure-switched")
+            self._fault(fault, "exposure-switched")
             self.store.verify(version)
             self.exposure.preflight(target, target)
             journal = write_journal(self.journal_path, journal, "verifying")
@@ -568,6 +588,9 @@ class Lifecycle:
                 phase = f"exposing-{host.host}"
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
+            self.exposure.switch(target, prior)
+            journal = write_journal(self.journal_path, journal, "exposure-switched")
+            self._fault(fault, "exposure-switched")
             self.store.verify(version_from_receipt(target))
             self.exposure.preflight(target, target)
             journal = write_journal(self.journal_path, journal, "verifying")
@@ -608,6 +631,9 @@ class Lifecycle:
             for phase in ("staged", "generation-ready"):
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
+            self.exposure.switch(None, prior)
+            journal = write_journal(self.journal_path, journal, "exposure-switched")
+            self._fault(fault, "exposure-switched")
             for host in HOSTS:
                 self.exposure.reconcile_host(host, None, prior)
                 phase = f"exposing-{host.host}"
