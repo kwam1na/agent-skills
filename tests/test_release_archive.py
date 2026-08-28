@@ -45,6 +45,7 @@ class ReleaseArchiveTests(unittest.TestCase):
             with zipfile.ZipFile(first) as release:
                 names = release.namelist()
             self.assertIn("skills/compound-delivery-kernel/SKILL.md", names)
+            self.assertIn("skills/compound-learning/SKILL.md", names)
             self.assertIn("skills/deliver-work/SKILL.md", names)
             self.assertIn(
                 "skills/deliver-work/references/capability-contract.md", names
@@ -53,8 +54,11 @@ class ReleaseArchiveTests(unittest.TestCase):
             self.assertIn("agent_skills/fake_tracker.py", names)
             self.assertIn("agent_skills/router.py", names)
             self.assertIn("agent_skills/workflows.py", names)
+            self.assertIn("skills/review-work/SKILL.md", names)
+            self.assertIn("tests/scenarios/core/compound.json", names)
             self.assertIn("tests/scenarios/core/execute.json", names)
             self.assertIn("tests/scenarios/core/plan.json", names)
+            self.assertIn("tests/scenarios/core/review.json", names)
             self.assertIn(
                 "tests/scenarios/core/repository-discovery.json", names
             )

@@ -34,6 +34,29 @@
       "provenanceId": "compound-delivery-kernel"
     },
     {
+      "capabilities": [
+        "compounding-workflow"
+      ],
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "compound-learning",
+      "path": "skills/compound-learning/SKILL.md",
+      "profiles": [
+        "core",
+        "linear"
+      ],
+      "provenanceId": "compound-learning"
+    },
+    {
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
@@ -64,11 +87,19 @@
           "requirement": "required"
         },
         {
+          "id": "compound-learning",
+          "requirement": "routing"
+        },
+        {
           "id": "execute-work",
           "requirement": "routing"
         },
         {
           "id": "plan-work",
+          "requirement": "routing"
+        },
+        {
+          "id": "review-work",
           "requirement": "routing"
         }
       ],
@@ -161,6 +192,29 @@
         "linear"
       ],
       "provenanceId": "plan-work"
+    },
+    {
+      "capabilities": [
+        "review-workflow"
+      ],
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "review-work",
+      "path": "skills/review-work/SKILL.md",
+      "profiles": [
+        "core",
+        "linear"
+      ],
+      "provenanceId": "review-work"
     }
   ]
 }

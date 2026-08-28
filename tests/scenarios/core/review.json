@@ -1,0 +1,237 @@
+{
+  "loopBound": {
+    "expectedBlocker": "review loop exhausted after 2 rounds",
+    "expectedStatus": "blocked",
+    "maxRounds": 2,
+    "requiredLenses": [
+      "correctness",
+      "testing"
+    ],
+    "rounds": [
+      [
+        {
+          "evidence": [
+            "parser.py:42"
+          ],
+          "findings": [
+            "empty input is accepted"
+          ],
+          "lens": "correctness",
+          "outcome": "changes-requested"
+        },
+        {
+          "evidence": [
+            "test_parser.py:18"
+          ],
+          "findings": [],
+          "lens": "testing",
+          "outcome": "aligned"
+        }
+      ],
+      [
+        {
+          "evidence": [
+            "parser.py:47"
+          ],
+          "findings": [
+            "empty input still bypasses validation"
+          ],
+          "lens": "correctness",
+          "outcome": "changes-requested"
+        },
+        {
+          "evidence": [
+            "test_parser.py:25"
+          ],
+          "findings": [],
+          "lens": "testing",
+          "outcome": "aligned"
+        }
+      ]
+    ]
+  },
+  "noActionableFindings": {
+    "expectedDissentCount": 0,
+    "expectedStatus": "aligned",
+    "maxRounds": 1,
+    "requiredLenses": [
+      "correctness",
+      "testing"
+    ],
+    "rounds": [
+      [
+        {
+          "evidence": [
+            "parser.py:1-60"
+          ],
+          "findings": [],
+          "lens": "correctness",
+          "outcome": "aligned"
+        },
+        {
+          "evidence": [
+            "test_parser.py:1-35"
+          ],
+          "findings": [],
+          "lens": "testing",
+          "outcome": "aligned"
+        }
+      ]
+    ]
+  },
+  "resolvedDissent": {
+    "expectedDissentCount": 1,
+    "expectedStatus": "aligned",
+    "maxRounds": 3,
+    "requiredLenses": [
+      "correctness",
+      "testing"
+    ],
+    "rounds": [
+      [
+        {
+          "evidence": [
+            "parser.py:42"
+          ],
+          "findings": [
+            "empty input is accepted"
+          ],
+          "lens": "correctness",
+          "outcome": "changes-requested"
+        },
+        {
+          "evidence": [
+            "test_parser.py:18"
+          ],
+          "findings": [],
+          "lens": "testing",
+          "outcome": "aligned"
+        }
+      ],
+      [
+        {
+          "evidence": [
+            "parser.py:48"
+          ],
+          "findings": [],
+          "lens": "correctness",
+          "outcome": "aligned"
+        },
+        {
+          "evidence": [
+            "test_parser.py:28"
+          ],
+          "findings": [],
+          "lens": "testing",
+          "outcome": "aligned"
+        }
+      ]
+    ]
+  },
+  "reviewerFailure": {
+    "expectedFailure": {
+      "lens": "testing",
+      "reason": "reviewer unavailable"
+    },
+    "expectedStatus": "blocked",
+    "maxRounds": 2,
+    "requiredLenses": [
+      "correctness",
+      "testing"
+    ],
+    "rounds": [
+      [
+        {
+          "evidence": [
+            "parser.py:1-60"
+          ],
+          "findings": [],
+          "lens": "correctness",
+          "outcome": "aligned"
+        },
+        {
+          "evidence": [],
+          "failure": "reviewer unavailable",
+          "findings": [],
+          "lens": "testing",
+          "outcome": "failed"
+        }
+      ]
+    ]
+  },
+  "unanimousAlignment": {
+    "expectedLenses": [
+      "correctness",
+      "testing",
+      "maintainability"
+    ],
+    "expectedStatus": "aligned",
+    "maxRounds": 2,
+    "requiredLenses": [
+      "correctness",
+      "testing",
+      "maintainability"
+    ],
+    "rounds": [
+      [
+        {
+          "evidence": [
+            "parser.py:1-60"
+          ],
+          "findings": [],
+          "lens": "correctness",
+          "outcome": "aligned"
+        },
+        {
+          "evidence": [
+            "test_parser.py:1-35"
+          ],
+          "findings": [],
+          "lens": "testing",
+          "outcome": "aligned"
+        },
+        {
+          "evidence": [
+            "parser.py:12-48"
+          ],
+          "findings": [],
+          "lens": "maintainability",
+          "outcome": "aligned"
+        }
+      ]
+    ]
+  },
+  "unresolvedDisagreement": {
+    "expectedDissent": [
+      "empty input is accepted"
+    ],
+    "expectedStatus": "unresolved",
+    "maxRounds": 3,
+    "requiredLenses": [
+      "correctness",
+      "testing"
+    ],
+    "rounds": [
+      [
+        {
+          "evidence": [
+            "parser.py:42"
+          ],
+          "findings": [
+            "empty input is accepted"
+          ],
+          "lens": "correctness",
+          "outcome": "changes-requested"
+        },
+        {
+          "evidence": [
+            "test_parser.py:18"
+          ],
+          "findings": [],
+          "lens": "testing",
+          "outcome": "aligned"
+        }
+      ]
+    ]
+  }
+}

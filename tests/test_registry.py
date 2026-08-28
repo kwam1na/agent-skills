@@ -148,17 +148,21 @@ def test_core_profile_is_exact_and_deterministic() -> None:
     require(json.loads(first.stdout) == {
         "files": [
             "skills/compound-delivery-kernel/SKILL.md",
+            "skills/compound-learning/SKILL.md",
             "skills/deliver-work/SKILL.md",
             "skills/deliver-work/agents/openai.yaml",
             "skills/deliver-work/references/capability-contract.md",
             "skills/execute-work/SKILL.md",
             "skills/plan-work/SKILL.md",
+            "skills/review-work/SKILL.md",
         ],
         "members": [
             "compound-delivery-kernel",
+            "compound-learning",
             "deliver-work",
             "execute-work",
             "plan-work",
+            "review-work",
         ],
         "profile": "core",
     }, first.stdout)
