@@ -33,11 +33,12 @@ class QualificationTests(unittest.TestCase):
         metadata: Path,
         record: Path,
         cwd: Path,
+        script: Path = SCRIPT,
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
                 sys.executable,
-                str(SCRIPT),
+                str(script),
                 "--archive",
                 str(archive),
                 "--metadata",
@@ -187,14 +188,14 @@ class QualificationTests(unittest.TestCase):
 
             after_sensor_change = runner.qualification_driver_sha256(copied)
             sensor.write_bytes(sensor_bytes)
-            host_fixture = copied / "tests" / "fixtures" / "hosts" / "codex.json"
-            host_fixture.write_bytes(host_fixture.read_bytes() + b"\n")
+            trusted_fixture = copied / "tests" / "scenarios" / "core" / "routing.json"
+            trusted_fixture.write_bytes(trusted_fixture.read_bytes() + b"\n")
 
-            after_host_fixture_change = runner.qualification_driver_sha256(copied)
+            after_fixture_change = runner.qualification_driver_sha256(copied)
 
             self.assertEqual(before, recorded["qualificationDriverSha256"])
             self.assertNotEqual(after_sensor_change, before)
-            self.assertNotEqual(after_host_fixture_change, before)
+            self.assertNotEqual(after_fixture_change, before)
 
     def test_trusted_driver_qualifies_the_supplied_archive_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -271,6 +272,44 @@ class QualificationTests(unittest.TestCase):
 
             self.assertEqual(second.returncode, 1, second.stdout + second.stderr)
             self.assertFalse(record_path.exists())
+
+    def test_omitted_runner_corpus_change_does_not_affect_exact_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            archive = directory / "core.zip"
+            metadata = directory / "core.release.json"
+            build_release(
+                ROOT,
+                archive,
+                metadata,
+                release_id="core-v1",
+                profile_id="core",
+            )
+            expected_record = directory / "expected.json"
+            expected = self._run_qualification(
+                archive, metadata, expected_record, directory
+            )
+            self.assertEqual(expected.returncode, 0, expected.stdout + expected.stderr)
+
+            runner = directory / "mutated-runner"
+            shutil.copytree(
+                ROOT,
+                runner,
+                ignore=shutil.ignore_patterns(".git", "__pycache__"),
+            )
+            omitted = runner / "skills" / "bootstrap-agent-harness" / "SKILL.md"
+            omitted.write_bytes(omitted.read_bytes() + b"\n<!-- unrelated runner bytes -->\n")
+            actual_record = directory / "actual.json"
+            actual = self._run_qualification(
+                archive,
+                metadata,
+                actual_record,
+                directory,
+                runner / "scripts" / "qualify-core.py",
+            )
+
+            self.assertEqual(actual.returncode, 0, actual.stdout + actual.stderr)
+            self.assertEqual(actual_record.read_bytes(), expected_record.read_bytes())
 
 
 if __name__ == "__main__":

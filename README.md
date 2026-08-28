@@ -64,7 +64,9 @@ it executes. It retains only named assertions and deterministic checkpoint
 summaries: no environment values or local paths. The gate rejects a missing,
 duplicated, or unasserted required scenario so an empty run cannot pass. The
 rollback checkpoint derives a disposable prior fixture; the candidate archive
-named in the record remains the single release under qualification.
+named in the record remains the single release under qualification. That prior
+fixture is built only from the verified candidate extraction, never from the
+runner checkout corpus.
 The current record is checked in at `qualifications/core-v1.json`.
 
 ## Repository lifecycle

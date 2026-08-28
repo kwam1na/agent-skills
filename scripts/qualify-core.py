@@ -33,7 +33,8 @@ else:
     sys.path[:0] = [str(CANDIDATE_ROOT), str(DRIVER_ROOT / "tests")]
 
 from agent_skills.cli import main as lifecycle_cli
-from agent_skills.release import ReleaseError, verify_release
+from agent_skills.lifecycle import Lifecycle
+from agent_skills.release import ReleaseError, build_release, verify_release
 
 
 SCENARIO_SENSORS = {
@@ -49,10 +50,6 @@ SCENARIO_SENSORS = {
         "test_workflows.ExecutionWorkflowTests.test_configured_execution_records_normalized_progress_and_evidence",
         "test_tracker_contract.TrackerContractTests.test_fake_adapter_executes_every_operation",
     ),
-    "rollback": (
-        "test_lifecycle.LifecycleTests.test_install_update_no_op_rollback_remove_preserve_dirty_repository",
-        "test_host_exposure.HostExposureTests.test_rollback_restores_both_hosts_to_the_retained_generation",
-    ),
     "missing-capability": (
         "test_router.RouterTests.test_required_blocked_capability_returns_named_handoff",
         "test_workflows.PlanningWorkflowTests.test_plan_without_tracker_completes_and_reports_selected_tracking_handoff",
@@ -65,19 +62,12 @@ SCENARIO_SENSORS = {
 }
 TRUSTED_EVIDENCE_PATHS = (
     "scripts/qualify-core.py",
-    "tests/fixtures/adopting-repos/AGENTS.md",
-    "tests/fixtures/adopting-repos/unrelated.txt",
-    "tests/fixtures/hosts/claude-code.json",
-    "tests/fixtures/hosts/codex.json",
-    "tests/lifecycle_support.py",
     "tests/scenarios/core/compound.json",
     "tests/scenarios/core/execute.json",
     "tests/scenarios/core/plan.json",
     "tests/scenarios/core/review.json",
     "tests/scenarios/core/routing.json",
     "tests/scenarios/core/tracker-capability.json",
-    "tests/test_host_exposure.py",
-    "tests/test_lifecycle.py",
     "tests/test_review_and_compounding.py",
     "tests/test_router.py",
     "tests/test_tracker_contract.py",
@@ -242,6 +232,52 @@ def _tamper(
         checkpoint.check(False, "tampered bytes fail the detached archive checksum")
 
 
+def _rollback(
+    checkpoint: Checkpoint,
+    base: Path,
+    archive: Path,
+    metadata: Path,
+) -> None:
+    if CANDIDATE_ROOT is None:
+        raise QualificationFailure("candidate root is required")
+    prior_archive = base / "prior.zip"
+    prior_metadata = base / "prior.release.json"
+    build_release(
+        CANDIDATE_ROOT,
+        prior_archive,
+        prior_metadata,
+        release_id="qualification-prior-fixture",
+        profile_id="core",
+    )
+    repository = base / "repository"
+    repository.mkdir(parents=True)
+    subprocess.run(
+        ["git", "init", "-q"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    lifecycle = Lifecycle(repository)
+    lifecycle.install(prior_archive, prior_metadata, maintainer=True)
+    lifecycle.update(archive, metadata, maintainer=True)
+    candidate = lifecycle.status().as_dict()
+    checkpoint.check(
+        candidate["active"]["archiveSha256"]
+        == verify_release(archive, metadata).archive_sha256,
+        "exact candidate archive becomes active before rollback",
+    )
+    result = lifecycle.rollback(maintainer=True)
+    checkpoint.check(result["action"] == "rollback", "rollback uses the retained generation")
+    checkpoint.check(
+        result["status"]["active"]["releaseId"] == "qualification-prior-fixture",
+        "rollback restores the derived prior fixture",
+    )
+    checkpoint.check(
+        all(item["state"] == "current" for item in result["status"]["exposures"]),
+        "both host projections follow the rolled-back generation",
+    )
+
+
 def finalize_record(release: dict[str, str], scenarios: list[dict]) -> dict:
     ids = tuple(item.get("id") for item in scenarios)
     if set(ids) != set(REQUIRED_SCENARIOS) or len(ids) != len(REQUIRED_SCENARIOS):
@@ -390,6 +426,7 @@ def _internal_main(arguments: list[str]) -> int:
             lambda checkpoint: {
                 "fresh-install-and-host-discovery": _fresh_install,
                 "tamper-rejection": _tamper,
+                "rollback": _rollback,
             }[args.scenario](
                 checkpoint,
                 args.work_root,

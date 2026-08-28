@@ -1,5 +1,5 @@
 {
-  "qualificationDriverSha256": "711a5c88a15db474afbe3d93e6a060b1b198dc05466addcfde6e72a5fbd9bfd4",
+  "qualificationDriverSha256": "1af81c655f1b8bd2b5ade6e96a3f8f95c5673d9612e0f3506583ffdd18dc2619",
   "redaction": {
     "environmentCaptured": false,
     "pathsCaptured": false,
@@ -61,11 +61,13 @@
       "result": "passed"
     },
     {
-      "assertionCount": 2,
-      "checkpointSha256": "44a5dbb7da3f30b2530e03faa695938525190e310d9748dc93e5c9a36a91ba02",
+      "assertionCount": 4,
+      "checkpointSha256": "59de8cfb3def7f05e555cdd446b9fdef3dff403c2f1fb4f468c6bd517ed7d060",
       "evidence": [
-        "sensor passed: test_lifecycle.LifecycleTests.test_install_update_no_op_rollback_remove_preserve_dirty_repository",
-        "sensor passed: test_host_exposure.HostExposureTests.test_rollback_restores_both_hosts_to_the_retained_generation"
+        "exact candidate archive becomes active before rollback",
+        "rollback uses the retained generation",
+        "rollback restores the derived prior fixture",
+        "both host projections follow the rolled-back generation"
       ],
       "id": "rollback",
       "result": "passed"
@@ -94,7 +96,7 @@
   ],
   "schemaVersion": "agent-skills-qualification/1",
   "summary": {
-    "assertionCount": 22,
+    "assertionCount": 24,
     "failedScenarioCount": 0,
     "passedScenarioCount": 7,
     "requiredScenarioCount": 7,
