@@ -111,8 +111,9 @@ qualification, both exact archive and metadata identities, canonical extracted
 source-tree digests, the exact retained attestation bytes, and its retained
 external receipt reference. The transport sensor inspects only the delta between
 the supplied extracted Linear and core candidates. Its tests prove rejection of
-concrete direct endpoint, SDK, and command transport actions while allowing
-non-executable boundary terminology. Authentication, unavailable, unsupported,
+concrete direct endpoint, SDK, Node HTTP(S), and command transport actions while
+allowing non-executable boundary terminology and unrelated extension code.
+Authentication, unavailable, unsupported,
 malformed, timeout, and ambiguous outcomes remain deterministic controlled
 boundary checks because intentionally breaking a configured connector is unsafe.
 Install and host-discovery checks run inside qualification-owned temporary home,

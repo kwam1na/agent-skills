@@ -366,28 +366,66 @@ class LinearQualificationTests(unittest.TestCase):
                 "# Never use api.linear.app or @linear/sdk as an alternate transport.\n",
                 encoding="utf-8",
             )
+            extension = harmless / "skills/linear-tracker-adapter/extension.js"
+            extension.write_text(
+                "export const normalizeReference = value => value.trim();\n",
+                encoding="utf-8",
+            )
+            inactive_transport = (
+                harmless / "skills/linear-tracker-adapter/inactive_transport.js"
+            )
+            inactive_transport.write_text(
+                'const transport = require("node:https");\n'
+                'const documented = "https://api.linear.app/graphql";\n'
+                "export { documented, transport };\n",
+                encoding="utf-8",
+            )
             runner.inspect_candidate_transport_boundary(harmless, core_candidate, contract)
 
             hostile = (
                 (
+                    "python-direct-endpoint",
                     "direct-linear-endpoint",
                     "skills/linear-tracker-adapter/transport.py",
                     'import requests\nrequests.post("https://api.linear.app/graphql")\n',
                 ),
                 (
+                    "node-require-alias",
+                    "direct-linear-endpoint",
+                    "skills/linear-tracker-adapter/transport.cjs",
+                    'const transport = require("node:https");\n'
+                    'transport.request("https://api.linear.app/graphql");\n',
+                ),
+                (
+                    "node-import-alias",
+                    "direct-linear-endpoint",
+                    "skills/linear-tracker-adapter/transport.mjs",
+                    'import { request as send } from "node:https";\n'
+                    'send("https://api.linear.app/graphql");\n',
+                ),
+                (
+                    "node-destructured-require",
+                    "direct-linear-endpoint",
+                    "skills/linear-tracker-adapter/transport.js",
+                    'const { get: fetchLinear } = require("https");\n'
+                    'fetchLinear("https://api.linear.app/graphql");\n',
+                ),
+                (
+                    "linear-sdk-import",
                     "linear-sdk",
                     "skills/linear-tracker-adapter/transport.ts",
                     'import { LinearClient } from "@linear/sdk";\nnew LinearClient();\n',
                 ),
                 (
+                    "shell-command",
                     "command-transport",
                     "skills/linear-tracker-adapter/transport.sh",
                     "curl https://example.invalid/provider\n",
                 ),
             )
-            for category, relative, source in hostile:
-                with self.subTest(category=category):
-                    mutated = directory / f"mutated-{category}"
+            for case_name, category, relative, source in hostile:
+                with self.subTest(case=case_name):
+                    mutated = directory / f"mutated-{case_name}"
                     shutil.copytree(linear_candidate, mutated)
                     target = mutated / relative
                     target.write_text(source, encoding="utf-8")

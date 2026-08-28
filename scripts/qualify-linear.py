@@ -382,6 +382,70 @@ def _actionable_instruction(contents: str, marker: str) -> bool:
     )
 
 
+def _node_http_action(contents: str) -> bool:
+    identifier = r"[a-z_$][a-z0-9_$]*"
+    module = r"(?:node:)?https?"
+    module_aliases = {
+        match.group(1)
+        for match in re.finditer(
+            rf"\b(?:const|let|var)\s+({identifier})\s*=\s*"
+            rf"require\(\s*['\"]{module}['\"]\s*\)",
+            contents,
+        )
+    }
+    module_aliases.update(
+        match.group(1)
+        for match in re.finditer(
+            rf"\bimport\s+(?:\*\s+as\s+)?({identifier})\s+from\s+"
+            rf"['\"]{module}['\"]",
+            contents,
+        )
+    )
+    function_aliases = {
+        match.group(1)
+        for match in re.finditer(
+            rf"\b(?:const|let|var)\s+({identifier})\s*=\s*"
+            rf"require\(\s*['\"]{module}['\"]\s*\)\.(?:get|request)\b",
+            contents,
+        )
+    }
+    bindings = [
+        match.group(1)
+        for pattern in (
+            rf"\bimport\s*\{{([^}}]+)\}}\s*from\s*['\"]{module}['\"]",
+            rf"\b(?:const|let|var)\s*\{{([^}}]+)\}}\s*=\s*"
+            rf"require\(\s*['\"]{module}['\"]\s*\)",
+        )
+        for match in re.finditer(pattern, contents)
+    ]
+    for binding_list in bindings:
+        for binding in binding_list.split(","):
+            match = re.fullmatch(
+                rf"\s*(?:get|request)\s*(?:(?:as|:)\s*({identifier}))?\s*",
+                binding,
+            )
+            if match:
+                original = re.match(r"\s*(get|request)", binding)
+                function_aliases.add(match.group(1) or original.group(1))
+
+    endpoint = r"(?:api\.linear\.app|linear\.app/(?:api|graphql))"
+    call_suffix = rf"\s*\([^;]{{0,512}}?{endpoint}"
+    if re.search(
+        rf"require\(\s*['\"]{module}['\"]\s*\)\.(?:get|request){call_suffix}",
+        contents,
+    ):
+        return True
+    if any(
+        re.search(rf"\b{re.escape(alias)}\.(?:get|request){call_suffix}", contents)
+        for alias in module_aliases
+    ):
+        return True
+    return any(
+        re.search(rf"\b{re.escape(alias)}{call_suffix}", contents)
+        for alias in function_aliases
+    )
+
+
 def inspect_candidate_transport_boundary(
     linear_candidate: Path,
     core_candidate: Path,
@@ -413,9 +477,15 @@ def inspect_candidate_transport_boundary(
             contents,
         )
         http_action = HTTP_CLIENT_ACTION.search(contents)
+        node_http_action = _node_http_action(contents)
         if any(
             marker in contents
-            and (http_action or command_action or _actionable_instruction(contents, marker))
+            and (
+                http_action
+                or node_http_action
+                or command_action
+                or _actionable_instruction(contents, marker)
+            )
             for marker in DIRECT_LINEAR_ENDPOINTS
         ):
             raise QualificationFailure("candidate alternate transport: direct-linear-endpoint")
