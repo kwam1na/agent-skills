@@ -67,6 +67,8 @@ TRUSTED_EVIDENCE_PATHS = (
     "scripts/qualify-core.py",
     "tests/fixtures/adopting-repos/AGENTS.md",
     "tests/fixtures/adopting-repos/unrelated.txt",
+    "tests/fixtures/hosts/claude-code.json",
+    "tests/fixtures/hosts/codex.json",
     "tests/lifecycle_support.py",
     "tests/scenarios/core/compound.json",
     "tests/scenarios/core/execute.json",

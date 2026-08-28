@@ -182,12 +182,19 @@ class QualificationTests(unittest.TestCase):
                 shutil.copyfile(source, target)
             before = runner.qualification_driver_sha256(copied)
             sensor = copied / "tests" / "test_router.py"
-            sensor.write_bytes(sensor.read_bytes() + b"\n# changed trusted sensor\n")
+            sensor_bytes = sensor.read_bytes()
+            sensor.write_bytes(sensor_bytes + b"\n# changed trusted sensor\n")
 
-            after = runner.qualification_driver_sha256(copied)
+            after_sensor_change = runner.qualification_driver_sha256(copied)
+            sensor.write_bytes(sensor_bytes)
+            host_fixture = copied / "tests" / "fixtures" / "hosts" / "codex.json"
+            host_fixture.write_bytes(host_fixture.read_bytes() + b"\n")
+
+            after_host_fixture_change = runner.qualification_driver_sha256(copied)
 
             self.assertEqual(before, recorded["qualificationDriverSha256"])
-            self.assertNotEqual(after, before)
+            self.assertNotEqual(after_sensor_change, before)
+            self.assertNotEqual(after_host_fixture_change, before)
 
     def test_trusted_driver_qualifies_the_supplied_archive_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
