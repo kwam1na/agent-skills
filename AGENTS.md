@@ -4,9 +4,9 @@ Keep this repository metadata-first while the workflow bodies are being
 classified. Do not add installers, generators, release archives, compatibility
 engines, or repository-specific overlays without a separately approved unit.
 
-When a shipped skill changes, update its catalog entry, every selected profile,
-and the corresponding provenance output digest in the same change. Keep JSON
-serialized as two-space-indented UTF-8 with a final newline, then run:
+When a releasable skill changes, update its catalog entry, every selected
+profile, and the corresponding provenance output digest in the same change.
+Keep JSON serialized as two-space-indented UTF-8 with a final newline, then run:
 
 ```bash
 python3 scripts/validate-registry.py

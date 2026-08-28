@@ -3,9 +3,12 @@
 The approved Athena V26-1413 baseline is the source of classification evidence,
 not a corpus to copy wholesale. `provenance.lock.json` records the source path,
 immutable revision, output classification, modification status, output file
-digest, and licensing status for every shipped file.
+digest, licensing status, and owner for every cataloged file.
 
-The default profile contains only portable-core entries. Linear is an
-optional-adapter profile, and bootstrap is optional guidance. Athena-specific
-merge gates, telemetry, deployment, reporting, generated-artifact policy, and
-domain rules are deliberately absent from both catalog and profile closures.
+Classification and distribution status live only in `provenance.lock.json`.
+The default profile contains only releasable portable-core entries. Bootstrap
+is optional guidance, while the Linear profile is reserved for U8. Athena-derived
+source-only inventory remains cataloged for traceability but cannot be selected
+until a later unit extracts a releasable adapter. Athena-specific merge gates,
+telemetry, deployment, reporting, generated-artifact policy, and domain rules
+are deliberately absent from all selectable profile closures.

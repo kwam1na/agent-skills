@@ -1,12 +1,9 @@
 {
-  "description": "Optional tracker workflow that adds Linear-oriented ticket creation and execution.",
+  "description": "Reserved optional tracker profile; U8 adds its extracted adapter.",
   "id": "linear",
   "includes": [
     "core"
   ],
-  "members": [
-    "create-linear-ticket",
-    "execute-linear-ticket"
-  ],
+  "members": [],
   "schemaVersion": "agent-skills-profile/1"
 }

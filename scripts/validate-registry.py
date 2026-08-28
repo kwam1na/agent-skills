@@ -101,6 +101,14 @@ def validate(root: Path) -> tuple[list[str], dict[str, object] | None, dict[str,
         }
         if len(provenance_by_id) != len(provenance_entries):
             findings.append("duplicate or invalid provenance id")
+        if [entry.get("id") for entry in provenance_entries] != sorted(provenance_by_id):
+            findings.append("provenance entries are not sorted by id")
+        for entry in provenance_entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("outputs"), list):
+                continue
+            paths = [output.get("path") for output in entry["outputs"] if isinstance(output, dict)]
+            if len(paths) != len(entry["outputs"]) or paths != sorted(paths):
+                findings.append(f"provenance outputs are not sorted by path: {entry.get('id')}")
 
     skills = catalog.get("skills")
     skills_by_id: dict[str, dict] = {}
@@ -123,9 +131,9 @@ def validate(root: Path) -> tuple[list[str], dict[str, object] | None, dict[str,
     )
     catalog_paths = sorted(skill.get("path") for skill in skills_by_id.values())
     if catalog_paths != discovered_paths:
-        findings.append("catalog skill paths do not exactly match shipped SKILL.md files")
+        findings.append("catalog skill paths do not exactly match cataloged SKILL.md files")
 
-    shipped_files = sorted(
+    cataloged_files = sorted(
         path.relative_to(ROOT).as_posix()
         for path in (ROOT / "skills").rglob("*")
         if path.is_file()
@@ -136,10 +144,12 @@ def validate(root: Path) -> tuple[list[str], dict[str, object] | None, dict[str,
         for output in entry.get("outputs", [])
         if isinstance(output, dict)
     )
-    if recorded_outputs != shipped_files:
-        findings.append("provenance outputs do not exactly match shipped files")
+    if recorded_outputs != cataloged_files:
+        findings.append("provenance outputs do not exactly match cataloged files")
 
     for skill_id, skill in skills_by_id.items():
+        if "classification" in skill:
+            findings.append(f"catalog duplicates provenance classification: {skill_id}")
         provenance_id = skill.get("provenanceId")
         if provenance_id not in provenance_by_id:
             findings.append(f"missing provenance record for skill: {skill_id}")
@@ -161,6 +171,11 @@ def validate(root: Path) -> tuple[list[str], dict[str, object] | None, dict[str,
         for member in members:
             if member not in skills_by_id:
                 findings.append(f"unknown profile member: {profile_id} -> {member}")
+                continue
+            provenance_id = skills_by_id[member].get("provenanceId")
+            entry = provenance_by_id.get(provenance_id)
+            if entry and entry.get("distribution") != "releasable":
+                findings.append(f"non-releasable profile member: {profile_id} -> {member}")
 
     if not findings:
         for profile_id, profile in profiles.items():
@@ -185,11 +200,22 @@ def validate(root: Path) -> tuple[list[str], dict[str, object] | None, dict[str,
             )
             if skill.get("profiles") != selected_by:
                 findings.append(f"catalog/profile membership drift: {skill_id}")
+            entry = provenance_by_id[skill["provenanceId"]]
+            if entry.get("distribution") == "releasable" and not selected_by:
+                findings.append(f"releasable skill lacks profile: {skill_id}")
+            if entry.get("distribution") == "source-only" and selected_by:
+                findings.append(f"source-only inventory is selected: {skill_id}")
 
     for provenance_id, entry in provenance_by_id.items():
         source = entry.get("source", {})
         if source.get("revision") != BASELINE_REVISION:
             findings.append(f"unapproved source revision: {provenance_id}")
+        if not isinstance(entry.get("classification"), str) or not entry["classification"]:
+            findings.append(f"missing classification: {provenance_id}")
+        if not isinstance(entry.get("owner"), str) or not entry["owner"]:
+            findings.append(f"missing ownership: {provenance_id}")
+        if entry.get("distribution") not in {"releasable", "source-only"}:
+            findings.append(f"invalid distribution: {provenance_id}")
         if not entry.get("license"):
             findings.append(f"missing license: {provenance_id}")
         outputs = entry.get("outputs")

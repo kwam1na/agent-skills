@@ -2,12 +2,14 @@
   "entries": [
     {
       "classification": "optional-guidance",
+      "distribution": "releasable",
       "id": "bootstrap-agent-harness",
       "license": "LicenseRef-Athena-internal",
       "modification": {
         "reason": "The existing copied bundle matches the baseline workflow body; host metadata is retained as a host adapter.",
         "status": "source-derived"
       },
+      "owner": "agent-skills-corpus",
       "outputs": [
         {
           "path": "skills/bootstrap-agent-harness/SKILL.md",
@@ -27,12 +29,14 @@
     },
     {
       "classification": "portable-core",
+      "distribution": "releasable",
       "id": "compound-delivery-kernel",
       "license": "LicenseRef-Athena-internal",
       "modification": {
         "reason": "Pre-existing copied body is a recorded derivative of the approved portable-candidate source; workflow extraction is deferred.",
         "status": "modified-derivative"
       },
+      "owner": "agent-skills-corpus",
       "outputs": [
         {
           "path": "skills/compound-delivery-kernel/SKILL.md",
@@ -47,13 +51,15 @@
       }
     },
     {
-      "classification": "optional-adapter",
+      "classification": "retained-overlay",
+      "distribution": "source-only",
       "id": "create-linear-ticket",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "Pre-existing copied Linear-oriented bundle is classified as opt-in; it is not a default core capability.",
+        "reason": "Athena's tracker source is retained overlay inventory; U8 must extract a narrow optional adapter before it becomes selectable.",
         "status": "modified-derivative"
       },
+      "owner": "agent-skills-corpus",
       "outputs": [
         {
           "path": "skills/create-linear-ticket/SKILL.md",
@@ -89,12 +95,14 @@
     },
     {
       "classification": "portable-core",
+      "distribution": "source-only",
       "id": "deliver-work",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "Pre-existing copied router is a recorded derivative of the portable-candidate source; no new route extraction occurs in this metadata unit.",
+        "reason": "The pre-existing router routes through Linear and remains source-only until U7 extracts a neutral router.",
         "status": "modified-derivative"
       },
+      "owner": "agent-skills-corpus",
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
@@ -113,13 +121,15 @@
       }
     },
     {
-      "classification": "optional-adapter",
+      "classification": "retained-overlay",
+      "distribution": "source-only",
       "id": "execute-linear-ticket",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "Pre-existing copied Linear execution bundle is classified as opt-in; Athena finish-line and reporting policy are excluded.",
+        "reason": "Athena's execution source is retained overlay inventory; it cannot be released or selected before U8 extracts a narrow optional adapter.",
         "status": "modified-derivative"
       },
+      "owner": "agent-skills-corpus",
       "outputs": [
         {
           "path": "skills/execute-linear-ticket/SKILL.md",

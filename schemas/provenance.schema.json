@@ -4,6 +4,41 @@
   "additionalProperties": false,
   "properties": {
     "entries": {
+      "items": {
+        "properties": {
+          "classification": {
+            "type": "string"
+          },
+          "distribution": {
+            "enum": [
+              "releasable",
+              "source-only"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "owner": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "outputs": {
+            "type": "array"
+          },
+          "source": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "classification",
+          "distribution",
+          "id",
+          "owner",
+          "outputs",
+          "source"
+        ],
+        "type": "object"
+      },
       "type": "array"
     },
     "schemaVersion": {

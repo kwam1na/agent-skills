@@ -67,6 +67,60 @@ def test_unknown_profile_member_rejects() -> None:
     print("verified rejection: unknown profile member")
 
 
+def test_missing_ownership_rejects() -> None:
+    def mutate(root: Path) -> None:
+        path = root / "provenance.lock.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["entries"][0].pop("owner", None)
+        write_json(path, document)
+
+    result = with_copy(mutate)
+    require(result.returncode == 1, result.stdout)
+    require("missing ownership: bootstrap-agent-harness" in result.stdout, result.stdout)
+    print("verified rejection: missing ownership")
+
+
+def test_non_releasable_inventory_cannot_be_selected() -> None:
+    def mutate(root: Path) -> None:
+        path = root / "profiles" / "linear.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["members"].append("execute-linear-ticket")
+        write_json(path, document)
+
+    result = with_copy(mutate)
+    require(result.returncode == 1, result.stdout)
+    require("non-releasable profile member: linear -> execute-linear-ticket" in result.stdout, result.stdout)
+    print("verified rejection: non-releasable inventory member")
+
+
+def test_provenance_ordering_rejects() -> None:
+    def mutate(root: Path) -> None:
+        path = root / "provenance.lock.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["entries"].reverse()
+        document["entries"][0]["outputs"].reverse()
+        write_json(path, document)
+
+    result = with_copy(mutate)
+    require(result.returncode == 1, result.stdout)
+    require("provenance entries are not sorted by id" in result.stdout, result.stdout)
+    require("provenance outputs are not sorted by path: execute-linear-ticket" in result.stdout, result.stdout)
+    print("verified rejection: provenance ordering")
+
+
+def test_catalog_cannot_duplicate_provenance_classification() -> None:
+    def mutate(root: Path) -> None:
+        path = root / "catalog.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["skills"][0]["classification"] = "optional-guidance"
+        write_json(path, document)
+
+    result = with_copy(mutate)
+    require(result.returncode == 1, result.stdout)
+    require("catalog duplicates provenance classification: bootstrap-agent-harness" in result.stdout, result.stdout)
+    print("verified rejection: duplicated catalog classification")
+
+
 def test_core_profile_is_exact_and_deterministic() -> None:
     first = run(ROOT, "--profile", "core")
     second = run(ROOT, "--profile", "core")
@@ -74,11 +128,9 @@ def test_core_profile_is_exact_and_deterministic() -> None:
     require(first.stdout == second.stdout, "profile resolution is not deterministic")
     require(json.loads(first.stdout) == {
         "files": [
-            "skills/compound-delivery-kernel/SKILL.md",
-            "skills/deliver-work/SKILL.md",
-            "skills/deliver-work/agents/openai.yaml",
+            "skills/compound-delivery-kernel/SKILL.md"
         ],
-        "members": ["compound-delivery-kernel", "deliver-work"],
+        "members": ["compound-delivery-kernel"],
         "profile": "core",
     }, first.stdout)
     print("verified resolution: exact deterministic core profile")
@@ -88,6 +140,10 @@ def main() -> int:
     tests = [
         test_missing_provenance_rejects,
         test_unknown_profile_member_rejects,
+        test_missing_ownership_rejects,
+        test_non_releasable_inventory_cannot_be_selected,
+        test_provenance_ordering_rejects,
+        test_catalog_cannot_duplicate_provenance_classification,
         test_core_profile_is_exact_and_deterministic,
     ]
     for test in tests:

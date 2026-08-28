@@ -2,7 +2,6 @@
   "schemaVersion": "agent-skills-catalog/1",
   "skills": [
     {
-      "classification": "optional-guidance",
       "dependencies": [],
       "externalTools": [],
       "hosts": [
@@ -14,11 +13,9 @@
       "profiles": [
         "bootstrap"
       ],
-      "provenanceId": "bootstrap-agent-harness",
-      "releaseStatus": "cataloged-not-default"
+      "provenanceId": "bootstrap-agent-harness"
     },
     {
-      "classification": "portable-core",
       "dependencies": [],
       "externalTools": [],
       "hosts": [
@@ -31,11 +28,9 @@
         "core",
         "linear"
       ],
-      "provenanceId": "compound-delivery-kernel",
-      "releaseStatus": "cataloged-core"
+      "provenanceId": "compound-delivery-kernel"
     },
     {
-      "classification": "optional-adapter",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
@@ -51,14 +46,10 @@
       ],
       "id": "create-linear-ticket",
       "path": "skills/create-linear-ticket/SKILL.md",
-      "profiles": [
-        "linear"
-      ],
-      "provenanceId": "create-linear-ticket",
-      "releaseStatus": "cataloged-optional"
+      "profiles": [],
+      "provenanceId": "create-linear-ticket"
     },
     {
-      "classification": "portable-core",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
@@ -73,15 +64,10 @@
       ],
       "id": "deliver-work",
       "path": "skills/deliver-work/SKILL.md",
-      "profiles": [
-        "core",
-        "linear"
-      ],
-      "provenanceId": "deliver-work",
-      "releaseStatus": "cataloged-core"
+      "profiles": [],
+      "provenanceId": "deliver-work"
     },
     {
-      "classification": "optional-adapter",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
@@ -101,11 +87,8 @@
       ],
       "id": "execute-linear-ticket",
       "path": "skills/execute-linear-ticket/SKILL.md",
-      "profiles": [
-        "linear"
-      ],
-      "provenanceId": "execute-linear-ticket",
-      "releaseStatus": "cataloged-optional"
+      "profiles": [],
+      "provenanceId": "execute-linear-ticket"
     }
   ]
 }
