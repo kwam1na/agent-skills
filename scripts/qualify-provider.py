@@ -68,6 +68,10 @@ def canonical_json(value: object) -> str:
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
 
 
+def write_record(path: Path, value: object) -> None:
+    path.write_bytes(canonical_json(value).encode("utf-8"))
+
+
 @contextmanager
 def isolated_host_environment(root: Path):
     injected = {
@@ -645,7 +649,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"provider qualification failed: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
     arguments.record.parent.mkdir(parents=True, exist_ok=True)
-    arguments.record.write_text(canonical_json(record), encoding="utf-8")
+    write_record(arguments.record, record)
     print(canonical_json(record), end="")
     return 0
 
