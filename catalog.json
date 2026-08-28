@@ -16,6 +16,9 @@
       "provenanceId": "bootstrap-agent-harness"
     },
     {
+      "capabilities": [
+        "delivery-posture"
+      ],
       "dependencies": [],
       "externalTools": [],
       "hosts": [
@@ -50,7 +53,11 @@
       "provenanceId": "create-linear-ticket"
     },
     {
-      "degradedBehavior": "Tracking routes remain unavailable until an adopter explicitly selects the linear profile.",
+      "capabilities": [
+        "tracker-operations",
+        "workflow-routing"
+      ],
+      "degradedBehavior": "Optional tracking routes remain unavailable until an adopter selects a conforming tracker profile.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
@@ -64,7 +71,10 @@
       ],
       "id": "deliver-work",
       "path": "skills/deliver-work/SKILL.md",
-      "profiles": [],
+      "profiles": [
+        "core",
+        "linear"
+      ],
       "provenanceId": "deliver-work"
     },
     {

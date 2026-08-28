@@ -1,0 +1,26 @@
+{
+  "operations": [
+    "resolve-context",
+    "create-work",
+    "link-dependencies",
+    "update-status",
+    "attach-evidence",
+    "close-or-handoff"
+  ],
+  "outcomes": [
+    "success",
+    "unavailable",
+    "unsupported",
+    "malformed",
+    "auth-required",
+    "retry",
+    "reconciliation-required"
+  ],
+  "schemaVersion": "agent-skills-tracker-scenarios/1",
+  "states": [
+    "absent",
+    "available",
+    "configured",
+    "blocked"
+  ]
+}

@@ -1,9 +1,19 @@
 {
-  "expectedScenarioCount": 1,
+  "expectedScenarioCount": 2,
   "rules": [
     {
       "enabled": true,
       "id": "catalog.complete",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "core.boundary",
       "negativeFixtures": [
         "invalid-corpora/focused-mutations"
       ],
@@ -153,6 +163,16 @@
     },
     {
       "enabled": true,
+      "id": "router.deterministic",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
       "id": "schema.supported",
       "negativeFixtures": [
         "invalid-corpora/focused-mutations"
@@ -190,6 +210,16 @@
       "positiveFixtures": [
         "valid-corpus/checked-in"
       ]
+    },
+    {
+      "enabled": true,
+      "id": "tracker.contract",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
     }
   ],
   "scanRoots": [
@@ -204,6 +234,10 @@
     {
       "id": "profiles",
       "path": "profiles"
+    },
+    {
+      "id": "scenario-controls",
+      "path": "tests/scenarios"
     },
     {
       "id": "provenance",
@@ -227,6 +261,15 @@
       "id": "core-profile-selects-kernel",
       "profile": "core",
       "skill": "compound-delivery-kernel"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "core-profile-selects-delivery-router",
+      "profile": "core",
+      "skill": "deliver-work"
     }
   ],
   "schemaVersion": "agent-skills-validation-inventory/1"

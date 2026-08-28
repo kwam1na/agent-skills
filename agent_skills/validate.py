@@ -18,17 +18,19 @@ SCHEMA_VERSIONS = {
     "provenance.lock.json": "agent-skills-provenance/1",
 }
 RULE_IDS = (
-    "catalog.complete", "core.leakage", "dependency.cycle",
+    "catalog.complete", "core.boundary", "core.leakage", "dependency.cycle",
     "dependency.reference", "dependency.required_closure", "document.canonical",
     "inventory.anti_vacuity", "path.case_unique", "path.safe",
     "path.symlink_contained", "profile.closure", "profile.reference",
     "provenance.coverage", "provenance.digest", "provenance.license",
-    "schema.supported", "skill.frontmatter", "skill.reference", "skill.structure",
+    "router.deterministic", "schema.supported", "skill.frontmatter",
+    "skill.reference", "skill.structure", "tracker.contract",
 )
 EXPECTED_SCAN_ROOTS = (
     ("catalog", "catalog.json"),
     ("fixture-controls", "tests/fixtures"),
     ("profiles", "profiles"),
+    ("scenario-controls", "tests/scenarios"),
     ("provenance", "provenance.lock.json"),
     ("schemas", "schemas"),
     ("skills", "skills"),
@@ -44,6 +46,13 @@ LEAKAGE_PATTERNS = (
     ("private-url", re.compile(r"https?://(?:[^\s/]*\.)?athena-os\.app\b", re.IGNORECASE)),
     ("project-url", re.compile(r"https?://linear\.app/v26-labs/", re.IGNORECASE)),
     (
+        "provider-boundary",
+        re.compile(
+            r"\b(?:linear|mcp|https?|sdk|oauth|credentials?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "secret-literal",
         re.compile(
             r"(?:api[_-]?key|password|secret|access[_-]?token)"
@@ -51,6 +60,11 @@ LEAKAGE_PATTERNS = (
             re.IGNORECASE,
         ),
     ),
+)
+CORE_RUNTIME_PATHS = (
+    "agent_skills/capabilities.py",
+    "agent_skills/fake_tracker.py",
+    "agent_skills/router.py",
 )
 
 
@@ -514,6 +528,19 @@ def _validate_core_leakage(
             for class_id, pattern in LEAKAGE_PATTERNS:
                 if pattern.search(contents):
                     reader.findings.append(Finding("core.leakage", relative, f"forbidden {class_id} literal"))
+    for relative in CORE_RUNTIME_PATHS:
+        try:
+            contents = (reader.root / relative).read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError, UnicodeDecodeError):
+            reader.findings.append(
+                Finding("core.boundary", relative, "missing core runtime module")
+            )
+            continue
+        for class_id, pattern in LEAKAGE_PATTERNS:
+            if pattern.search(contents):
+                reader.findings.append(
+                    Finding("core.boundary", relative, f"forbidden {class_id} literal")
+                )
 
 
 def validate_corpus(root: Path) -> ValidationResult:

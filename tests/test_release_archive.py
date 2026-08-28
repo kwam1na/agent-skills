@@ -36,6 +36,13 @@ class ReleaseArchiveTests(unittest.TestCase):
             with zipfile.ZipFile(first) as release:
                 names = release.namelist()
             self.assertIn("skills/compound-delivery-kernel/SKILL.md", names)
+            self.assertIn("skills/deliver-work/SKILL.md", names)
+            self.assertIn(
+                "skills/deliver-work/references/capability-contract.md", names
+            )
+            self.assertIn("agent_skills/capabilities.py", names)
+            self.assertIn("agent_skills/fake_tracker.py", names)
+            self.assertIn("agent_skills/router.py", names)
             self.assertFalse(any("linear" in name for name in names))
             self.assertNotIn("skills/bootstrap-agent-harness/SKILL.md", names)
 
