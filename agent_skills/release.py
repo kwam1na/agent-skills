@@ -146,6 +146,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         files[relative] = _packaged_bytes(root, relative)
     for relative in (
         "schemas/catalog.schema.json",
+        "schemas/delivery-provider-rails.schema.json",
         "schemas/profile.schema.json",
         "schemas/provenance.schema.json",
         "schemas/receipt.schema.json",
@@ -153,6 +154,8 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
     ):
         files[relative] = _packaged_bytes(root, relative)
     for relative in (
+        "docs/delivery-provider-rails-v1.md",
+        "tests/fixtures/delivery-provider-rails-v1.json",
         "tests/fixtures/invalid-corpora/coverage.json",
         "tests/fixtures/valid-corpus/coverage.json",
         "tests/scenarios/core/compound.json",
@@ -162,6 +165,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         "tests/scenarios/core/repository-discovery.json",
         "tests/scenarios/core/routing.json",
         "tests/scenarios/core/tracker-capability.json",
+        "tests/test_delivery_provider_rails_contract.py",
     ):
         files[relative] = _packaged_bytes(root, relative)
     for relative in (

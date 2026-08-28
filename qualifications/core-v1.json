@@ -1,13 +1,13 @@
 {
-  "qualificationDriverSha256": "977f9a49e7e7e904fdf21df32726576f02e8b2f5ccad1adfc6ace0ab50cd4156",
+  "qualificationDriverSha256": "4c5d5795adc68d12704cb904b56dfd56bf84220f4e787a87fac43673babd8e46",
   "redaction": {
     "environmentCaptured": false,
     "pathsCaptured": false,
     "retainedEvidence": "named assertions and deterministic checkpoint summaries"
   },
   "release": {
-    "archiveSha256": "48d31872ed420e8b0dc9fe09c8db747e17f44aa58e1b7fa80205a8303c3375dd",
-    "metadataSha256": "14d3ecbd62da12d28da26fead397640f2b8de271194cfe53f21c347deb4c7714",
+    "archiveSha256": "32672da76d846f6f78ba9ee4fc78547f354c623fa43086353f58ac07e9998ba3",
+    "metadataSha256": "10c40e7d9710902f2d3fd749059bab5cc094111a124ec3d28d015ba95e19e30a",
     "profile": "core",
     "releaseId": "core-v1"
   },
@@ -25,6 +25,25 @@
         ".claude discovers the delivery entry point"
       ],
       "id": "fresh-install-and-host-discovery",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 11,
+      "checkpointSha256": "7d991fc8bb71458c199a6aef86f9aee83cf113b2718c7d4498bb52796a1bb312",
+      "evidence": [
+        "packaged conformance sensor matches the trusted sensor",
+        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_schema_is_one_closed_versioned_message_union",
+        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_shared_fixture_covers_required_cases_and_all_event_outcomes",
+        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_one_fake_provider_independently_conforms_to_shared_cases",
+        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_one_fake_consumer_independently_conforms_to_shared_cases",
+        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_request_identity_axes_are_one_to_one_and_cancel_targets_an_attempt",
+        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_accepted_cancellation_is_correlated_to_the_same_outbound_attempt",
+        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_consumer_never_combines_events_from_different_attempts",
+        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_invalid_renegotiation_fails_closed",
+        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_absorbing_terminal_precedes_late_message_validation",
+        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_schema_and_fakes_agree_on_named_malformed_messages"
+      ],
+      "id": "delivery-provider-rails-conformance",
       "result": "passed"
     },
     {
@@ -96,10 +115,10 @@
   ],
   "schemaVersion": "agent-skills-qualification/1",
   "summary": {
-    "assertionCount": 24,
+    "assertionCount": 35,
     "failedScenarioCount": 0,
-    "passedScenarioCount": 7,
-    "requiredScenarioCount": 7,
+    "passedScenarioCount": 8,
+    "requiredScenarioCount": 8,
     "result": "passed"
   }
 }

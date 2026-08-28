@@ -1,0 +1,734 @@
+{
+  "attempts": {
+    "cancelled-then-late-success": {
+      "cancellationAccepted": true,
+      "requestId": "cancelled-attempt"
+    },
+    "duplicate-event": {
+      "cancellationAccepted": false,
+      "requestId": "duplicate-event"
+    },
+    "duplicate-request": {
+      "cancellationAccepted": false,
+      "requestId": "duplicate-request"
+    },
+    "indeterminate-then-late-success": {
+      "cancellationAccepted": false,
+      "requestId": "late-success"
+    },
+    "interrupted-attempt": {
+      "cancellationAccepted": false,
+      "requestId": "interrupted"
+    },
+    "malformed-event": {
+      "cancellationAccepted": false,
+      "requestId": "malformed-event"
+    },
+    "supported-complete": {
+      "cancellationAccepted": false,
+      "requestId": "complete"
+    },
+    "terminal-blocked": {
+      "cancellationAccepted": false,
+      "requestId": "blocked-attempt"
+    },
+    "terminal-failed": {
+      "cancellationAccepted": false,
+      "requestId": "failed-attempt"
+    },
+    "terminal-indeterminate": {
+      "cancellationAccepted": false,
+      "requestId": "indeterminate-attempt"
+    }
+  },
+  "cases": [
+    {
+      "expected": {
+        "consumer": {
+          "acceptedCount": 4,
+          "duplicateCount": 0,
+          "rejectedCount": 0,
+          "status": "success"
+        },
+        "provider": {
+          "cancellationCount": 0,
+          "duplicateCount": 0,
+          "executionCount": 1,
+          "status": "accepted"
+        }
+      },
+      "id": "supported-complete",
+      "inbound": [
+        {
+          "kind": "negotiate",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "idempotencyKey": "attempt-complete",
+          "kind": "request",
+          "payload": {
+            "objective": "Complete the bounded delivery"
+          },
+          "requestId": "complete",
+          "version": "delivery-provider-rails/1"
+        }
+      ],
+      "outbound": [
+        {
+          "kind": "negotiation",
+          "outcome": "supported",
+          "selectedVersion": "delivery-provider-rails/1",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "kind": "progress",
+          "requestId": "complete",
+          "sequence": 1,
+          "summary": "Work started",
+          "version": "delivery-provider-rails/1"
+        },
+        {
+          "details": {
+            "check": "focused"
+          },
+          "evidenceId": "proof-one",
+          "kind": "evidence",
+          "requestId": "complete",
+          "sequence": 2,
+          "summary": "Focused proof retained",
+          "version": "delivery-provider-rails/1"
+        },
+        {
+          "action": "Resolve the bounded dependency",
+          "blockerId": "dependency-one",
+          "kind": "blocker",
+          "requestId": "complete",
+          "sequence": 3,
+          "summary": "Dependency needs attention",
+          "version": "delivery-provider-rails/1"
+        },
+        {
+          "kind": "terminal",
+          "outcome": "success",
+          "requestId": "complete",
+          "result": {
+            "finishLine": "satisfied"
+          },
+          "sequence": 4,
+          "summary": "Delivery complete",
+          "version": "delivery-provider-rails/1"
+        }
+      ]
+    },
+    {
+      "expected": {
+        "consumer": {
+          "acceptedCount": 0,
+          "duplicateCount": 0,
+          "rejectedCount": 0,
+          "status": "unsupported"
+        },
+        "provider": {
+          "cancellationCount": 0,
+          "duplicateCount": 0,
+          "executionCount": 0,
+          "status": "unsupported"
+        }
+      },
+      "id": "unsupported-negotiation",
+      "inbound": [
+        {
+          "kind": "negotiate",
+          "supportedVersions": []
+        }
+      ],
+      "outbound": [
+        {
+          "kind": "negotiation",
+          "outcome": "unsupported",
+          "selectedVersion": null,
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        }
+      ]
+    },
+    {
+      "expected": {
+        "consumer": {
+          "acceptedCount": 0,
+          "duplicateCount": 0,
+          "rejectedCount": 0,
+          "status": "supported"
+        },
+        "provider": {
+          "cancellationCount": 0,
+          "duplicateCount": 0,
+          "executionCount": 0,
+          "status": "malformed"
+        }
+      },
+      "id": "malformed-request",
+      "inbound": [
+        {
+          "kind": "negotiate",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "idempotencyKey": "attempt-malformed",
+          "kind": "request",
+          "payload": {},
+          "requestId": "malformed-request",
+          "unexpected": true,
+          "version": "delivery-provider-rails/1"
+        }
+      ],
+      "outbound": [
+        {
+          "kind": "negotiation",
+          "outcome": "supported",
+          "selectedVersion": "delivery-provider-rails/1",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        }
+      ]
+    },
+    {
+      "expected": {
+        "consumer": {
+          "acceptedCount": 0,
+          "duplicateCount": 0,
+          "rejectedCount": 0,
+          "status": "malformed"
+        },
+        "provider": {
+          "cancellationCount": 0,
+          "duplicateCount": 0,
+          "executionCount": 1,
+          "status": "accepted"
+        }
+      },
+      "id": "malformed-event",
+      "inbound": [
+        {
+          "kind": "negotiate",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "idempotencyKey": "attempt-malformed-event",
+          "kind": "request",
+          "payload": {},
+          "requestId": "malformed-event",
+          "version": "delivery-provider-rails/1"
+        }
+      ],
+      "outbound": [
+        {
+          "kind": "negotiation",
+          "outcome": "supported",
+          "selectedVersion": "delivery-provider-rails/1",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "kind": "progress",
+          "requestId": "malformed-event",
+          "sequence": 1,
+          "summary": "Malformed progress",
+          "unexpected": true,
+          "version": "delivery-provider-rails/1"
+        }
+      ]
+    },
+    {
+      "expected": {
+        "consumer": {
+          "acceptedCount": 1,
+          "duplicateCount": 0,
+          "rejectedCount": 0,
+          "status": "success"
+        },
+        "provider": {
+          "cancellationCount": 0,
+          "duplicateCount": 1,
+          "executionCount": 1,
+          "status": "accepted"
+        }
+      },
+      "id": "duplicate-request",
+      "inbound": [
+        {
+          "kind": "negotiate",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "idempotencyKey": "attempt-duplicate",
+          "kind": "request",
+          "payload": {},
+          "requestId": "duplicate-request",
+          "version": "delivery-provider-rails/1"
+        },
+        {
+          "idempotencyKey": "attempt-duplicate",
+          "kind": "request",
+          "payload": {},
+          "requestId": "duplicate-request",
+          "version": "delivery-provider-rails/1"
+        }
+      ],
+      "outbound": [
+        {
+          "kind": "negotiation",
+          "outcome": "supported",
+          "selectedVersion": "delivery-provider-rails/1",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "kind": "terminal",
+          "outcome": "success",
+          "requestId": "duplicate-request",
+          "sequence": 1,
+          "summary": "Executed once",
+          "version": "delivery-provider-rails/1"
+        }
+      ]
+    },
+    {
+      "expected": {
+        "consumer": {
+          "acceptedCount": 2,
+          "duplicateCount": 1,
+          "rejectedCount": 0,
+          "status": "success"
+        },
+        "provider": {
+          "cancellationCount": 0,
+          "duplicateCount": 0,
+          "executionCount": 1,
+          "status": "accepted"
+        }
+      },
+      "id": "duplicate-event",
+      "inbound": [
+        {
+          "kind": "negotiate",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "idempotencyKey": "attempt-duplicate-event",
+          "kind": "request",
+          "payload": {},
+          "requestId": "duplicate-event",
+          "version": "delivery-provider-rails/1"
+        }
+      ],
+      "outbound": [
+        {
+          "kind": "negotiation",
+          "outcome": "supported",
+          "selectedVersion": "delivery-provider-rails/1",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "kind": "progress",
+          "requestId": "duplicate-event",
+          "sequence": 1,
+          "summary": "One checkpoint",
+          "version": "delivery-provider-rails/1"
+        },
+        {
+          "kind": "progress",
+          "requestId": "duplicate-event",
+          "sequence": 1,
+          "summary": "One checkpoint",
+          "version": "delivery-provider-rails/1"
+        },
+        {
+          "kind": "terminal",
+          "outcome": "success",
+          "requestId": "duplicate-event",
+          "sequence": 2,
+          "summary": "Duplicate ignored",
+          "version": "delivery-provider-rails/1"
+        }
+      ]
+    },
+    {
+      "expected": {
+        "consumer": {
+          "acceptedCount": 2,
+          "duplicateCount": 0,
+          "rejectedCount": 0,
+          "status": "indeterminate"
+        },
+        "provider": {
+          "cancellationCount": 0,
+          "duplicateCount": 0,
+          "executionCount": 1,
+          "status": "accepted"
+        }
+      },
+      "id": "interrupted-attempt",
+      "inbound": [
+        {
+          "kind": "negotiate",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "idempotencyKey": "attempt-interrupted",
+          "kind": "request",
+          "payload": {},
+          "requestId": "interrupted",
+          "version": "delivery-provider-rails/1"
+        }
+      ],
+      "interrupted": true,
+      "outbound": [
+        {
+          "kind": "negotiation",
+          "outcome": "supported",
+          "selectedVersion": "delivery-provider-rails/1",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "kind": "progress",
+          "requestId": "interrupted",
+          "sequence": 1,
+          "summary": "Work observed",
+          "version": "delivery-provider-rails/1"
+        },
+        {
+          "evidenceId": "proof-before-interruption",
+          "kind": "evidence",
+          "requestId": "interrupted",
+          "sequence": 2,
+          "summary": "Partial proof observed",
+          "version": "delivery-provider-rails/1"
+        }
+      ]
+    },
+    {
+      "expected": {
+        "consumer": {
+          "acceptedCount": 2,
+          "duplicateCount": 0,
+          "rejectedCount": 1,
+          "status": "cancelled"
+        },
+        "provider": {
+          "cancellationCount": 1,
+          "duplicateCount": 1,
+          "executionCount": 1,
+          "status": "cancelled"
+        }
+      },
+      "id": "cancelled-then-late-success",
+      "inbound": [
+        {
+          "kind": "negotiate",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "idempotencyKey": "attempt-cancelled",
+          "kind": "request",
+          "payload": {},
+          "requestId": "cancelled-attempt",
+          "version": "delivery-provider-rails/1"
+        },
+        {
+          "cancellationId": "cancel-once",
+          "kind": "cancel",
+          "reason": "Consumer stopped the attempt",
+          "requestId": "cancelled-attempt",
+          "version": "delivery-provider-rails/1"
+        },
+        {
+          "cancellationId": "cancel-once",
+          "kind": "cancel",
+          "reason": "Consumer stopped the attempt",
+          "requestId": "cancelled-attempt",
+          "version": "delivery-provider-rails/1"
+        }
+      ],
+      "outbound": [
+        {
+          "kind": "negotiation",
+          "outcome": "supported",
+          "selectedVersion": "delivery-provider-rails/1",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "kind": "progress",
+          "requestId": "cancelled-attempt",
+          "sequence": 1,
+          "summary": "Work started",
+          "version": "delivery-provider-rails/1"
+        },
+        {
+          "kind": "terminal",
+          "outcome": "cancelled",
+          "requestId": "cancelled-attempt",
+          "sequence": 2,
+          "summary": "Cancellation accepted",
+          "version": "delivery-provider-rails/1"
+        },
+        {
+          "kind": "terminal",
+          "outcome": "success",
+          "requestId": "cancelled-attempt",
+          "sequence": 3,
+          "summary": "Invalid late success",
+          "version": "delivery-provider-rails/1"
+        }
+      ]
+    },
+    {
+      "afterInterruption": [
+        {
+          "kind": "terminal",
+          "outcome": "success",
+          "requestId": "late-success",
+          "sequence": 2,
+          "summary": "Invalid late success",
+          "version": "delivery-provider-rails/1"
+        }
+      ],
+      "expected": {
+        "consumer": {
+          "acceptedCount": 1,
+          "duplicateCount": 0,
+          "rejectedCount": 1,
+          "status": "indeterminate"
+        },
+        "provider": {
+          "cancellationCount": 0,
+          "duplicateCount": 0,
+          "executionCount": 1,
+          "status": "accepted"
+        }
+      },
+      "id": "indeterminate-then-late-success",
+      "inbound": [
+        {
+          "kind": "negotiate",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "idempotencyKey": "attempt-late-success",
+          "kind": "request",
+          "payload": {},
+          "requestId": "late-success",
+          "version": "delivery-provider-rails/1"
+        }
+      ],
+      "interrupted": true,
+      "outbound": [
+        {
+          "kind": "negotiation",
+          "outcome": "supported",
+          "selectedVersion": "delivery-provider-rails/1",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "kind": "progress",
+          "requestId": "late-success",
+          "sequence": 1,
+          "summary": "Work observed",
+          "version": "delivery-provider-rails/1"
+        }
+      ]
+    },
+    {
+      "expected": {
+        "consumer": {
+          "acceptedCount": 2,
+          "duplicateCount": 0,
+          "rejectedCount": 0,
+          "status": "blocked"
+        },
+        "provider": {
+          "cancellationCount": 0,
+          "duplicateCount": 0,
+          "executionCount": 1,
+          "status": "accepted"
+        }
+      },
+      "id": "terminal-blocked",
+      "inbound": [
+        {
+          "kind": "negotiate",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "idempotencyKey": "attempt-blocked",
+          "kind": "request",
+          "payload": {},
+          "requestId": "blocked-attempt",
+          "version": "delivery-provider-rails/1"
+        }
+      ],
+      "outbound": [
+        {
+          "kind": "negotiation",
+          "outcome": "supported",
+          "selectedVersion": "delivery-provider-rails/1",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "action": "Resolve the named dependency",
+          "blockerId": "dependency-blocker",
+          "kind": "blocker",
+          "requestId": "blocked-attempt",
+          "sequence": 1,
+          "summary": "Dependency unavailable",
+          "version": "delivery-provider-rails/1"
+        },
+        {
+          "action": "Resume with a new attempt after resolution",
+          "kind": "terminal",
+          "outcome": "blocked",
+          "requestId": "blocked-attempt",
+          "sequence": 2,
+          "summary": "Delivery blocked",
+          "version": "delivery-provider-rails/1"
+        }
+      ]
+    },
+    {
+      "expected": {
+        "consumer": {
+          "acceptedCount": 1,
+          "duplicateCount": 0,
+          "rejectedCount": 0,
+          "status": "failed"
+        },
+        "provider": {
+          "cancellationCount": 0,
+          "duplicateCount": 0,
+          "executionCount": 1,
+          "status": "accepted"
+        }
+      },
+      "id": "terminal-failed",
+      "inbound": [
+        {
+          "kind": "negotiate",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "idempotencyKey": "attempt-failed",
+          "kind": "request",
+          "payload": {},
+          "requestId": "failed-attempt",
+          "version": "delivery-provider-rails/1"
+        }
+      ],
+      "outbound": [
+        {
+          "kind": "negotiation",
+          "outcome": "supported",
+          "selectedVersion": "delivery-provider-rails/1",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "kind": "terminal",
+          "outcome": "failed",
+          "requestId": "failed-attempt",
+          "sequence": 1,
+          "summary": "Delivery failed",
+          "version": "delivery-provider-rails/1"
+        }
+      ]
+    },
+    {
+      "expected": {
+        "consumer": {
+          "acceptedCount": 1,
+          "duplicateCount": 0,
+          "rejectedCount": 0,
+          "status": "indeterminate"
+        },
+        "provider": {
+          "cancellationCount": 0,
+          "duplicateCount": 0,
+          "executionCount": 1,
+          "status": "accepted"
+        }
+      },
+      "id": "terminal-indeterminate",
+      "inbound": [
+        {
+          "kind": "negotiate",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "idempotencyKey": "attempt-indeterminate",
+          "kind": "request",
+          "payload": {},
+          "requestId": "indeterminate-attempt",
+          "version": "delivery-provider-rails/1"
+        }
+      ],
+      "outbound": [
+        {
+          "kind": "negotiation",
+          "outcome": "supported",
+          "selectedVersion": "delivery-provider-rails/1",
+          "supportedVersions": [
+            "delivery-provider-rails/1"
+          ]
+        },
+        {
+          "kind": "terminal",
+          "outcome": "indeterminate",
+          "requestId": "indeterminate-attempt",
+          "sequence": 1,
+          "summary": "Final state could not be established",
+          "version": "delivery-provider-rails/1"
+        }
+      ]
+    }
+  ],
+  "contractVersion": "delivery-provider-rails/1",
+  "schemaVersion": "delivery-provider-rails-conformance/1"
+}
