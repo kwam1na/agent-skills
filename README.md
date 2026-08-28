@@ -58,8 +58,9 @@ python3 scripts/qualify-core.py \
 
 The trusted driver verifies and extracts the supplied archive, then runs each
 fixed scenario in a fresh process whose core imports resolve from that extracted
-candidate. The fail-closed record is keyed to the driver, archive, and metadata
-digests. It retains only named assertions and deterministic checkpoint
+candidate. The fail-closed record is keyed to the archive, metadata, and a
+driver digest covering the launcher plus the fixed trusted sensors and fixtures
+it executes. It retains only named assertions and deterministic checkpoint
 summaries: no environment values or local paths. The gate rejects a missing,
 duplicated, or unasserted required scenario so an empty run cannot pass. The
 rollback checkpoint derives a disposable prior fixture; the candidate archive

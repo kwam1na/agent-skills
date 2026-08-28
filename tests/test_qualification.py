@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import hashlib
 import json
 import os
 import shutil
@@ -91,7 +90,7 @@ class QualificationTests(unittest.TestCase):
             self.assertEqual(record["release"]["archiveSha256"], first.archive_sha256)
             self.assertEqual(
                 record["qualificationDriverSha256"],
-                hashlib.sha256(SCRIPT.read_bytes()).hexdigest(),
+                _load_runner().qualification_driver_sha256(ROOT),
             )
             self.assertEqual(record["summary"]["result"], "passed")
             self.assertEqual(
@@ -164,6 +163,31 @@ class QualificationTests(unittest.TestCase):
         self.assertEqual(record["result"], "failed")
         self.assertEqual(record["failure"], "unexpected:RuntimeError")
         self.assertNotIn(secret, json.dumps(record))
+
+    def test_trusted_sensor_change_changes_the_driver_identity(self) -> None:
+        runner = _load_runner()
+        recorded = json.loads(
+            (ROOT / "qualifications" / "core-v1.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            recorded["qualificationDriverSha256"],
+            runner.qualification_driver_sha256(ROOT),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            copied = Path(temporary) / "trusted-evidence"
+            for relative in runner.TRUSTED_EVIDENCE_PATHS:
+                source = ROOT / relative
+                target = copied / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+            before = runner.qualification_driver_sha256(copied)
+            sensor = copied / "tests" / "test_router.py"
+            sensor.write_bytes(sensor.read_bytes() + b"\n# changed trusted sensor\n")
+
+            after = runner.qualification_driver_sha256(copied)
+
+            self.assertEqual(before, recorded["qualificationDriverSha256"])
+            self.assertNotEqual(after, before)
 
     def test_trusted_driver_qualifies_the_supplied_archive_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

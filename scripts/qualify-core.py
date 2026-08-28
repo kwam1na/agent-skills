@@ -63,6 +63,24 @@ SCENARIO_SENSORS = {
         "test_review_and_compounding.ReviewWorkflowTests.test_reviewer_failure_is_a_typed_blocked_outcome",
     ),
 }
+TRUSTED_EVIDENCE_PATHS = (
+    "scripts/qualify-core.py",
+    "tests/fixtures/adopting-repos/AGENTS.md",
+    "tests/fixtures/adopting-repos/unrelated.txt",
+    "tests/lifecycle_support.py",
+    "tests/scenarios/core/compound.json",
+    "tests/scenarios/core/execute.json",
+    "tests/scenarios/core/plan.json",
+    "tests/scenarios/core/review.json",
+    "tests/scenarios/core/routing.json",
+    "tests/scenarios/core/tracker-capability.json",
+    "tests/test_host_exposure.py",
+    "tests/test_lifecycle.py",
+    "tests/test_review_and_compounding.py",
+    "tests/test_router.py",
+    "tests/test_tracker_contract.py",
+    "tests/test_workflows.py",
+)
 REQUIRED_SCENARIOS = (
     "fresh-install-and-host-discovery",
     "trackerless-workflows",
@@ -97,6 +115,17 @@ def canonical_json(value: object) -> str:
 
 def _sha256(value: object) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def qualification_driver_sha256(root: Path = DRIVER_ROOT) -> str:
+    records = [
+        {
+            "path": relative,
+            "sha256": hashlib.sha256((root / relative).read_bytes()).hexdigest(),
+        }
+        for relative in TRUSTED_EVIDENCE_PATHS
+    ]
+    return _sha256(records)
 
 
 def _record(checkpoint: Checkpoint, result: str, failure: str | None = None) -> dict:
@@ -230,9 +259,7 @@ def finalize_record(release: dict[str, str], scenarios: list[dict]) -> dict:
     ordered = sorted(scenarios, key=lambda item: REQUIRED_SCENARIOS.index(item["id"]))
     failed = sum(item["result"] != "passed" for item in ordered)
     return {
-        "qualificationDriverSha256": hashlib.sha256(
-            Path(__file__).read_bytes()
-        ).hexdigest(),
+        "qualificationDriverSha256": qualification_driver_sha256(),
         "redaction": {
             "environmentCaptured": False,
             "pathsCaptured": False,
