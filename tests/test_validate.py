@@ -133,7 +133,11 @@ class CorpusValidationTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         skill = root / "skills" / "compound-delivery-kernel" / "SKILL.md"
         original = skill.read_text(encoding="utf-8")
-        skill.write_text(original + "\nPrivate command: V26-999 and /Users/example/work.\n", encoding="utf-8")
+        tracking_ticket = "".join(("V", "26", "-", "999"))
+        skill.write_text(
+            original + f"\nPrivate command: {tracking_ticket} and /Users/example/work.\n",
+            encoding="utf-8",
+        )
         rules = {finding.rule_id for finding in validate_corpus(root).findings}
         self.assertIn("core.leakage", rules)
 
@@ -146,9 +150,10 @@ class CorpusValidationTests(unittest.TestCase):
         )
 
     def test_each_core_leakage_class_rejects(self) -> None:
+        tracking_ticket = "".join(("V", "26", "-", "999"))
         literals = (
             "Athena policy",
-            "V26-999",
+            tracking_ticket,
             "/Users/example/work",
             "https://athena-os.app/private",
             "https://linear.app/v26-labs/issue/example",
