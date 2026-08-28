@@ -47,6 +47,7 @@ if CANDIDATE_ROOT is not None:
 SCENARIO_SENSORS = {
     "delivery-provider-rails-conformance": (
         "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_schema_is_one_closed_versioned_message_union",
+        "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_shared_fixture_covers_required_cases_and_all_event_outcomes",
         "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_one_fake_provider_independently_conforms_to_shared_cases",
         "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_one_fake_consumer_independently_conforms_to_shared_cases",
         "test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_request_identity_axes_are_one_to_one_and_cancel_targets_an_attempt",

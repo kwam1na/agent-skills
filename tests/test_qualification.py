@@ -348,6 +348,58 @@ class QualificationTests(unittest.TestCase):
             )
             self.assertEqual(conformance["result"], "failed")
 
+    def test_missing_required_contract_case_fails_qualification(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            candidate = directory / "missing-case-candidate"
+            shutil.copytree(
+                ROOT,
+                candidate,
+                ignore=shutil.ignore_patterns(".git", "__pycache__"),
+            )
+            fixture_path = (
+                candidate
+                / "tests"
+                / "fixtures"
+                / "delivery-provider-rails-v1.json"
+            )
+            fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+            fixture["cases"] = [
+                case
+                for case in fixture["cases"]
+                if case["id"] != "unsupported-negotiation"
+            ]
+            fixture_path.write_text(
+                json.dumps(fixture, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            archive = directory / "missing-case.zip"
+            metadata = directory / "missing-case.release.json"
+            build_release(
+                candidate,
+                archive,
+                metadata,
+                release_id="missing-case",
+                profile_id="core",
+            )
+            record_path = directory / "missing-case.qualification.json"
+
+            result = self._run_qualification(
+                archive,
+                metadata,
+                record_path,
+                directory,
+            )
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            conformance = next(
+                item
+                for item in record["scenarios"]
+                if item["id"] == "delivery-provider-rails-conformance"
+            )
+            self.assertEqual(conformance["result"], "failed")
+
     def test_failed_verification_invalidates_a_prior_passing_record(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

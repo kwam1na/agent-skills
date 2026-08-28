@@ -1,5 +1,5 @@
 {
-  "qualificationDriverSha256": "7c5aaefa40f247cc04b7aeedb62be2a52ea4bbe1da4dd02af29eebb80af701ee",
+  "qualificationDriverSha256": "4c5d5795adc68d12704cb904b56dfd56bf84220f4e787a87fac43673babd8e46",
   "redaction": {
     "environmentCaptured": false,
     "pathsCaptured": false,
@@ -28,11 +28,12 @@
       "result": "passed"
     },
     {
-      "assertionCount": 10,
-      "checkpointSha256": "490b2c251159147c40a3b7849157694f5d03d373c19e3a53a58a07a5f637bca7",
+      "assertionCount": 11,
+      "checkpointSha256": "7d991fc8bb71458c199a6aef86f9aee83cf113b2718c7d4498bb52796a1bb312",
       "evidence": [
         "packaged conformance sensor matches the trusted sensor",
         "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_schema_is_one_closed_versioned_message_union",
+        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_shared_fixture_covers_required_cases_and_all_event_outcomes",
         "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_one_fake_provider_independently_conforms_to_shared_cases",
         "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_one_fake_consumer_independently_conforms_to_shared_cases",
         "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_request_identity_axes_are_one_to_one_and_cancel_targets_an_attempt",
@@ -114,7 +115,7 @@
   ],
   "schemaVersion": "agent-skills-qualification/1",
   "summary": {
-    "assertionCount": 34,
+    "assertionCount": 35,
     "failedScenarioCount": 0,
     "passedScenarioCount": 8,
     "requiredScenarioCount": 8,
