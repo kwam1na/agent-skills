@@ -4,13 +4,17 @@
     "skills/compound-delivery-kernel/SKILL.md",
     "skills/deliver-work/SKILL.md",
     "skills/deliver-work/agents/openai.yaml",
-    "skills/deliver-work/references/capability-contract.md"
+    "skills/deliver-work/references/capability-contract.md",
+    "skills/execute-work/SKILL.md",
+    "skills/plan-work/SKILL.md"
   ],
   "id": "core",
   "includes": [],
   "members": [
     "compound-delivery-kernel",
-    "deliver-work"
+    "deliver-work",
+    "execute-work",
+    "plan-work"
   ],
   "schemaVersion": "agent-skills-profile/1"
 }

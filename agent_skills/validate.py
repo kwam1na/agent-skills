@@ -66,6 +66,7 @@ CORE_RUNTIME_PATHS = (
     "agent_skills/capabilities.py",
     "agent_skills/fake_tracker.py",
     "agent_skills/router.py",
+    "agent_skills/workflows.py",
 )
 
 

@@ -1,0 +1,66 @@
+{
+  "expected": {
+    "approvalHandoffs": [
+      "maintainer approval"
+    ],
+    "dependencies": [
+      "parser characterization"
+    ],
+    "finishLine": [
+      "parser accepts the bounded format",
+      "required sensors pass"
+    ],
+    "outOfScope": [
+      "new parser framework"
+    ],
+    "posture": "characterization-first",
+    "sensors": [
+      "focused parser test",
+      "repository validation"
+    ],
+    "testScenarios": [
+      "existing bounded input remains accepted",
+      "malformed input remains rejected"
+    ]
+  },
+  "request": {
+    "approvalHandoffs": [
+      "maintainer approval"
+    ],
+    "dependencies": [
+      "parser characterization"
+    ],
+    "existingBehavior": true,
+    "finishLine": [
+      "parser accepts the bounded format",
+      "required sensors pass"
+    ],
+    "genericSensors": [
+      "generic test suite"
+    ],
+    "outOfScope": [
+      "new parser framework"
+    ],
+    "outcome": "preserve the bounded parser behavior",
+    "repositorySensors": [
+      {
+        "available": true,
+        "name": "focused parser test",
+        "required": true
+      },
+      {
+        "available": true,
+        "name": "repository validation",
+        "required": true
+      }
+    ],
+    "scope": [
+      "bounded parser behavior"
+    ],
+    "testScenarios": [
+      "existing bounded input remains accepted",
+      "malformed input remains rejected"
+    ]
+  },
+  "schemaVersion": "agent-skills-plan-scenarios/1"
+}

@@ -98,7 +98,11 @@ def test_provenance_ordering_rejects() -> None:
         path = root / "provenance.lock.json"
         document = json.loads(path.read_text(encoding="utf-8"))
         document["entries"].reverse()
-        document["entries"][0]["outputs"].reverse()
+        next(
+            entry
+            for entry in document["entries"]
+            if entry["id"] == "execute-linear-ticket"
+        )["outputs"].reverse()
         write_json(path, document)
 
     result = with_copy(mutate)
@@ -147,8 +151,15 @@ def test_core_profile_is_exact_and_deterministic() -> None:
             "skills/deliver-work/SKILL.md",
             "skills/deliver-work/agents/openai.yaml",
             "skills/deliver-work/references/capability-contract.md",
+            "skills/execute-work/SKILL.md",
+            "skills/plan-work/SKILL.md",
         ],
-        "members": ["compound-delivery-kernel", "deliver-work"],
+        "members": [
+            "compound-delivery-kernel",
+            "deliver-work",
+            "execute-work",
+            "plan-work",
+        ],
         "profile": "core",
     }, first.stdout)
     print("verified resolution: exact deterministic core profile")

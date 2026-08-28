@@ -67,6 +67,19 @@ class TrackerContractTests(unittest.TestCase):
                 self.assertEqual(outcome.kind, OutcomeKind.UNAVAILABLE)
                 self.assertTrue(outcome.action)
 
+    def test_configured_state_without_adapter_is_malformed_not_an_exception(self) -> None:
+        outcome = execute_tracker_operation(
+            CapabilityState.CONFIGURED,
+            TrackerRequest(TrackerOperation.RESOLVE_CONTEXT, {}),
+            None,
+        )
+
+        self.assertEqual(outcome.kind, OutcomeKind.MALFORMED)
+        self.assertEqual(
+            outcome.action,
+            "Provide the configured tracker adapter, then retry.",
+        )
+
     def test_scripted_failure_paths_remain_typed_and_actionable(self) -> None:
         request = TrackerRequest(
             TrackerOperation.CREATE_WORK,

@@ -52,6 +52,9 @@ class ReleaseArchiveTests(unittest.TestCase):
             self.assertIn("agent_skills/capabilities.py", names)
             self.assertIn("agent_skills/fake_tracker.py", names)
             self.assertIn("agent_skills/router.py", names)
+            self.assertIn("agent_skills/workflows.py", names)
+            self.assertIn("tests/scenarios/core/execute.json", names)
+            self.assertIn("tests/scenarios/core/plan.json", names)
             self.assertIn(
                 "tests/scenarios/core/repository-discovery.json", names
             )

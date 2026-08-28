@@ -7,13 +7,18 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CORE_PATHS = (
+CORE_RUNTIME_PATHS = (
     "agent_skills/capabilities.py",
     "agent_skills/fake_tracker.py",
     "agent_skills/router.py",
+    "agent_skills/workflows.py",
+)
+CORE_SKILL_PATHS = (
     "skills/compound-delivery-kernel/SKILL.md",
     "skills/deliver-work/SKILL.md",
     "skills/deliver-work/references/capability-contract.md",
+    "skills/execute-work/SKILL.md",
+    "skills/plan-work/SKILL.md",
 )
 FORBIDDEN = re.compile(
     r"\b(?:linear|mcp|https?|sdk|oauth|credentials?)\b", re.IGNORECASE
@@ -22,14 +27,14 @@ FORBIDDEN = re.compile(
 
 class CoreBoundaryTests(unittest.TestCase):
     def test_core_has_no_provider_or_transport_vocabulary(self) -> None:
-        for relative in CORE_PATHS:
+        for relative in (*CORE_RUNTIME_PATHS, *CORE_SKILL_PATHS):
             with self.subTest(path=relative):
                 text = (ROOT / relative).read_text(encoding="utf-8")
                 self.assertIsNone(FORBIDDEN.search(text))
 
     def test_core_python_imports_only_standard_library_and_core_modules(self) -> None:
         allowed_roots = {"__future__", "dataclasses", "enum", "re", "typing", "unicodedata"}
-        for relative in CORE_PATHS[:3]:
+        for relative in CORE_RUNTIME_PATHS:
             with self.subTest(path=relative):
                 tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
                 imported = {
@@ -44,6 +49,23 @@ class CoreBoundaryTests(unittest.TestCase):
                     for alias in node.names
                 )
                 self.assertLessEqual(imported, allowed_roots | {"agent_skills"})
+
+    def test_planning_and_execution_have_no_repository_provider_dependencies(self) -> None:
+        forbidden = re.compile(
+            r"\b(?:Athena|Compound Engineering|delivery harness|Linear|MCP)\b",
+            re.IGNORECASE,
+        )
+        for relative in (
+            "agent_skills/workflows.py",
+            "skills/execute-work/SKILL.md",
+            "skills/plan-work/SKILL.md",
+            "tests/scenarios/core/execute.json",
+            "tests/scenarios/core/plan.json",
+        ):
+            with self.subTest(path=relative):
+                self.assertIsNone(
+                    forbidden.search((ROOT / relative).read_text(encoding="utf-8"))
+                )
 
 
 if __name__ == "__main__":

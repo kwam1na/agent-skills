@@ -37,10 +37,11 @@ catalog, core profile, provenance, schemas, inventory, and selected core skills;
 it excludes source-only and optional profile bodies.
 
 The default `core` profile contains the portable delivery posture, normalized
-router, and neutral tracker capability contract. Bootstrap guidance is opt-in;
-the Linear profile remains empty until the optional Linear adapter is extracted.
-Cataloged source-only inventory is not selectable, and Athena overlays are
-classification inputs only rather than distributable skills.
+router, neutral tracker capability contract, and bounded planning and execution
+workflows. Bootstrap guidance is opt-in; the Linear profile remains empty until
+the optional Linear adapter is extracted. Cataloged source-only inventory is not
+selectable, and Athena overlays are classification inputs only rather than
+distributable skills.
 
 ## Repository lifecycle
 
