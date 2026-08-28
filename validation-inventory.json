@@ -1,0 +1,233 @@
+{
+  "expectedScenarioCount": 1,
+  "rules": [
+    {
+      "enabled": true,
+      "id": "catalog.complete",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "core.leakage",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "dependency.cycle",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "dependency.reference",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "dependency.required_closure",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "document.canonical",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "inventory.anti_vacuity",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "path.case_unique",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "path.safe",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "path.symlink_contained",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "profile.closure",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "profile.reference",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "provenance.coverage",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "provenance.digest",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "provenance.license",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "schema.supported",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "skill.frontmatter",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "skill.reference",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "skill.structure",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    }
+  ],
+  "scanRoots": [
+    {
+      "id": "catalog",
+      "path": "catalog.json"
+    },
+    {
+      "id": "fixture-controls",
+      "path": "tests/fixtures"
+    },
+    {
+      "id": "profiles",
+      "path": "profiles"
+    },
+    {
+      "id": "provenance",
+      "path": "provenance.lock.json"
+    },
+    {
+      "id": "schemas",
+      "path": "schemas"
+    },
+    {
+      "id": "skills",
+      "path": "skills"
+    }
+  ],
+  "scenarios": [
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "core-profile-selects-kernel",
+      "profile": "core",
+      "skill": "compound-delivery-kernel"
+    }
+  ],
+  "schemaVersion": "agent-skills-validation-inventory/1"
+}
