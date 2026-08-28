@@ -32,6 +32,7 @@ EXPECTED_SCAN_ROOTS = (
     ("profiles", "profiles"),
     ("scenario-controls", "tests/scenarios"),
     ("provenance", "provenance.lock.json"),
+    ("runtime", "agent_skills"),
     ("schemas", "schemas"),
     ("skills", "skills"),
 )
@@ -244,6 +245,33 @@ def _validate_inventory(reader: CorpusReader) -> tuple[str, ...]:
                 "scenarios must not be empty",
             )
         )
+    lifecycle_scenarios = inventory.get("lifecycleScenarios")
+    if not isinstance(lifecycle_scenarios, list) or not lifecycle_scenarios:
+        reader.findings.append(
+            Finding(
+                "inventory.anti_vacuity",
+                "validation-inventory.json",
+                "lifecycle scenarios must not be empty",
+            )
+        )
+    else:
+        lifecycle_ids = [
+            scenario.get("id")
+            for scenario in lifecycle_scenarios
+            if isinstance(scenario, dict)
+        ]
+        if (
+            inventory.get("expectedLifecycleScenarioCount") != len(lifecycle_scenarios)
+            or len(lifecycle_ids) != len(lifecycle_scenarios)
+            or len(lifecycle_ids) != len(set(lifecycle_ids))
+        ):
+            reader.findings.append(
+                Finding(
+                    "inventory.anti_vacuity",
+                    "validation-inventory.json",
+                    "lifecycle scenario coverage drift",
+                )
+            )
     return root_ids
 
 
@@ -550,7 +578,7 @@ def validate_corpus(root: Path) -> ValidationResult:
     catalog = reader.load_json("catalog.json")
     provenance_document = reader.load_json("provenance.lock.json")
     profiles = _load_profiles(reader)
-    for schema_name in ("catalog", "profile", "provenance", "release-manifest"):
+    for schema_name in ("catalog", "profile", "provenance", "receipt", "release-manifest"):
         relative = f"schemas/{schema_name}.schema.json"
         schema = reader.load_json(relative)
         if not isinstance(schema, dict) or not isinstance(schema.get("$id"), str):

@@ -213,6 +213,81 @@ class ReleaseArchiveTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+            release_validation = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_skills.cli",
+                    "validate",
+                    "--archive",
+                    str(archive),
+                    "--metadata",
+                    str(metadata),
+                ],
+                cwd=extracted,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                release_validation.returncode,
+                0,
+                release_validation.stdout + release_validation.stderr,
+            )
+
+            adopting = directory / "adopting"
+            adopting.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=adopting, check=True)
+            install = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_skills.cli",
+                    "--root",
+                    str(adopting),
+                    "install",
+                    "--archive",
+                    str(archive),
+                    "--metadata",
+                    str(metadata),
+                    "--maintenance",
+                ],
+                cwd=extracted,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(install.returncode, 0, install.stdout + install.stderr)
+            self.assertEqual(json.loads(install.stdout)["status"]["lifecycle"], "current")
+            status_command = [
+                sys.executable,
+                "-m",
+                "agent_skills.cli",
+                "--root",
+                str(adopting),
+                "status",
+            ]
+            first_status = subprocess.run(
+                status_command,
+                cwd=extracted,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            second_status = subprocess.run(
+                status_command,
+                cwd=extracted,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(first_status.returncode, 0, first_status.stderr)
+            self.assertEqual(first_status.stdout, second_status.stdout)
+            self.assertEqual(
+                json.loads(first_status.stdout)["schemaVersion"],
+                "agent-skills-status/1",
+            )
+
     @staticmethod
     def _rewrite_archive(path: Path, entries: dict[str, bytes]) -> None:
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as target:

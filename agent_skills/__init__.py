@@ -1,1 +1,1 @@
-"""Offline validation and release helpers for the agent-skills corpus."""
+"""Offline validation, release, and repository lifecycle helpers."""

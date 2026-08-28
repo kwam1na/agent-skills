@@ -1,0 +1,117 @@
+{
+  "$defs": {
+    "file": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "files": {
+      "items": {
+        "$ref": "#/$defs/file"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "release": {
+      "additionalProperties": false,
+      "properties": {
+        "archiveSha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "metadataSha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "profile": {
+          "const": "core"
+        },
+        "releaseId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "archiveSha256",
+        "metadataSha256",
+        "profile",
+        "releaseId"
+      ],
+      "type": "object"
+    },
+    "version": {
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "$ref": "#/$defs/files"
+        },
+        "generation": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "release": {
+          "$ref": "#/$defs/release"
+        }
+      },
+      "required": [
+        "files",
+        "generation",
+        "release"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://agent-skills.dev/schemas/receipt/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "files": {
+      "$ref": "#/$defs/files"
+    },
+    "generation": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "ownership": {
+      "const": "agent-skills-managed"
+    },
+    "previous": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/version"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "release": {
+      "$ref": "#/$defs/release"
+    },
+    "schemaVersion": {
+      "const": "agent-skills-receipt/1"
+    }
+  },
+  "required": [
+    "files",
+    "generation",
+    "ownership",
+    "previous",
+    "release",
+    "schemaVersion"
+  ],
+  "type": "object"
+}

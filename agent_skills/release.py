@@ -136,6 +136,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         "schemas/catalog.schema.json",
         "schemas/profile.schema.json",
         "schemas/provenance.schema.json",
+        "schemas/receipt.schema.json",
         "schemas/release-manifest.schema.json",
     ):
         files[relative] = _packaged_bytes(root, relative)
@@ -151,8 +152,16 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         "agent_skills/__init__.py",
         "agent_skills/capabilities.py",
         "agent_skills/catalog.py",
+        "agent_skills/cli.py",
         "agent_skills/errors.py",
         "agent_skills/fake_tracker.py",
+        "agent_skills/fs.py",
+        "agent_skills/generations.py",
+        "agent_skills/journal.py",
+        "agent_skills/lifecycle.py",
+        "agent_skills/locking.py",
+        "agent_skills/receipt.py",
+        "agent_skills/release.py",
         "agent_skills/router.py",
         "agent_skills/validate.py",
     ):

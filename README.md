@@ -1,8 +1,9 @@
 # Agent Skills Corpus
 
 This repository is the deterministic, metadata-first home for a small portable
-agent-skills corpus. It does not install skills or implement provider-specific
-adapters.
+agent-skills corpus. Its lifecycle installs only authenticated release archives;
+it does not extract new workflow bodies, expose them to a host discovery root,
+or implement provider-specific adapters.
 
 `catalog.json` lists every cataloged skill. `profiles/` declares selectable
 workflow sets, and `provenance.lock.json` binds every cataloged file to its
@@ -40,3 +41,31 @@ router, and neutral tracker capability contract. Bootstrap guidance is opt-in;
 the Linear profile remains empty until the optional Linear adapter is extracted.
 Cataloged source-only inventory is not selectable, and Athena overlays are
 classification inputs only rather than distributable skills.
+
+## Repository lifecycle
+
+Run the lifecycle from an extracted release archive. Read-only commands emit
+canonical JSON:
+
+```bash
+python -m agent_skills.cli --root /path/to/repository status
+python -m agent_skills.cli --root /path/to/repository plan \
+  --archive /path/to/core.zip \
+  --metadata /path/to/core.release.json
+```
+
+Mutation is an explicit repository-maintenance action:
+
+```bash
+python -m agent_skills.cli --root /path/to/repository install \
+  --archive /path/to/core.zip \
+  --metadata /path/to/core.release.json \
+  --maintenance
+python -m agent_skills.cli --root /path/to/repository rollback --maintenance
+```
+
+The tracked `.agent-skills/active.json` file is both the ownership receipt and
+the active-generation marker. Content-addressed generations retain the current
+and immediately prior verified releases. A private journal under Git metadata
+makes interruption recoverable without touching unrelated tracked or untracked
+bytes. Rollback uses the retained prior generation and never fetches its source.
