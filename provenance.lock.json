@@ -51,6 +51,29 @@
       }
     },
     {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "compound-learning",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The reusable-learning threshold is narrowed to an evidence-backed caller-owned decision; repository knowledge formats remain overlays.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/compound-learning/SKILL.md",
+          "sha256": "3074dd2cd2600185dc420973c5c762b4222fdc60671992ecfbbbd9878e949521"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "compound-skill",
+        "path": ".agents/skills/ce-compound",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "bfaf2f0e34460bb3baaa55da7e34e61b134cd139fe7ff6a7bd81a4a9db6da73d"
+      }
+    },
+    {
       "classification": "retained-overlay",
       "distribution": "source-only",
       "id": "create-linear-ticket",
@@ -105,7 +128,7 @@
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "d04140fb57f75c81447d593199c396e5619e559ce63154ac9b361a30f3392c03"
+          "sha256": "11a3f8839a15754a511b787c05e809447aebe871e9dcdc7bdd0a18f1f1f357fa"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",
@@ -199,6 +222,29 @@
         "path": ".agents/skills/ce-plan",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "5408cccdbafb0ce69e5de1293c2eb40defd313f8e833db09dd0a59e0f2dea438"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "review-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The review source is narrowed to caller-selected lenses, evidence-bearing convergence, visible dissent, typed failure, and bounded outcomes; repository reviewer policy remains an overlay.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/review-work/SKILL.md",
+          "sha256": "7858bf1bc9494bbb9f13a32bb472c6ea0614d9a7200d2e4e967f031ebecff152"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "review-skill",
+        "path": ".agents/skills/ce-code-review",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "54ee28663a49d11d0e8afa5c213b9c9819feef3b93f7ccd8afd02bc60446032e"
       }
     }
   ],

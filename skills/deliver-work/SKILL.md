@@ -35,8 +35,9 @@ Choose exactly one workflow:
 - `compound` when the request is to preserve a reusable delivery learning.
 
 Route `plan` through `$plan-work`. Route an approved `implement` request through
-`$execute-work`. Keep diagnosis, review, and compounding on their declared
-handoffs until their portable workflow is selected by the active profile.
+`$execute-work`, `review` through `$review-work`, and `compound` through
+`$compound-learning`. Keep diagnosis on its declared handoff until a portable
+workflow is selected by the active profile.
 
 Specific user intent wins over keyword examples. The same normalized request
 must select the same workflow and the `deliver-work` entry point.

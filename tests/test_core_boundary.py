@@ -15,10 +15,12 @@ CORE_RUNTIME_PATHS = (
 )
 CORE_SKILL_PATHS = (
     "skills/compound-delivery-kernel/SKILL.md",
+    "skills/compound-learning/SKILL.md",
     "skills/deliver-work/SKILL.md",
     "skills/deliver-work/references/capability-contract.md",
     "skills/execute-work/SKILL.md",
     "skills/plan-work/SKILL.md",
+    "skills/review-work/SKILL.md",
 )
 FORBIDDEN = re.compile(
     r"\b(?:linear|mcp|https?|sdk|oauth|credentials?)\b", re.IGNORECASE
@@ -50,17 +52,21 @@ class CoreBoundaryTests(unittest.TestCase):
                 )
                 self.assertLessEqual(imported, allowed_roots | {"agent_skills"})
 
-    def test_planning_and_execution_have_no_repository_provider_dependencies(self) -> None:
+    def test_portable_workflows_have_no_repository_provider_dependencies(self) -> None:
         forbidden = re.compile(
             r"\b(?:Athena|Compound Engineering|delivery harness|Linear|MCP)\b",
             re.IGNORECASE,
         )
         for relative in (
             "agent_skills/workflows.py",
+            "skills/compound-learning/SKILL.md",
             "skills/execute-work/SKILL.md",
             "skills/plan-work/SKILL.md",
+            "skills/review-work/SKILL.md",
+            "tests/scenarios/core/compound.json",
             "tests/scenarios/core/execute.json",
             "tests/scenarios/core/plan.json",
+            "tests/scenarios/core/review.json",
         ):
             with self.subTest(path=relative):
                 self.assertIsNone(

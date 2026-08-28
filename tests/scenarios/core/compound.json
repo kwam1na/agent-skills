@@ -1,0 +1,18 @@
+{
+  "notRequired": {
+    "expectedAction": "Record no durable learning in the caller-owned handoff.",
+    "expectedStatus": "not-required",
+    "noLearningReason": "The change is local, obvious, and unlikely to recur."
+  },
+  "required": {
+    "evidence": [
+      "A review found the same missing boundary twice."
+    ],
+    "expectedAction": "Preserve the reusable learning using repository-owned guidance.",
+    "expectedStatus": "required",
+    "learning": "Validate the boundary before reporting completion.",
+    "reusableReasons": [
+      "Future deliveries can repeat this failure mode."
+    ]
+  }
+}

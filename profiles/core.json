@@ -2,19 +2,23 @@
   "description": "Minimal tracker-neutral delivery posture.",
   "expectedFiles": [
     "skills/compound-delivery-kernel/SKILL.md",
+    "skills/compound-learning/SKILL.md",
     "skills/deliver-work/SKILL.md",
     "skills/deliver-work/agents/openai.yaml",
     "skills/deliver-work/references/capability-contract.md",
     "skills/execute-work/SKILL.md",
-    "skills/plan-work/SKILL.md"
+    "skills/plan-work/SKILL.md",
+    "skills/review-work/SKILL.md"
   ],
   "id": "core",
   "includes": [],
   "members": [
     "compound-delivery-kernel",
+    "compound-learning",
     "deliver-work",
     "execute-work",
-    "plan-work"
+    "plan-work",
+    "review-work"
   ],
   "schemaVersion": "agent-skills-profile/1"
 }
