@@ -86,6 +86,46 @@ fixture is built only from the verified candidate extraction, never from the
 runner checkout corpus.
 The current record is checked in at `qualifications/core-v1.json`.
 
+Qualify the optional Linear profile only after a configured host has exercised
+the live connector with clearly disposable work. The host must search for an
+exact randomly generated operation marker before each create, retain one
+canonical redacted host attestation, and cancel every disposable entity after
+the create, read, update, search, relation, and reconciliation checks. Post the
+attestation digest and its random receipt reference through the same host-native
+Linear MCP boundary, then feed the retained attestation to the trusted driver
+together with the exact core and Linear releases:
+
+```bash
+python3 scripts/qualify-linear.py \
+  --core-archive /tmp/core.zip \
+  --core-metadata /tmp/core.release.json \
+  --core-record qualifications/core-v1.json \
+  --linear-archive /tmp/linear.zip \
+  --linear-metadata /tmp/linear.release.json \
+  --attestation qualifications/linear-v1.attestation.json \
+  --record /tmp/linear.qualification.json
+```
+
+The checked record at `qualifications/linear-v1.json` binds the passing core
+qualification, both exact archive and metadata identities, canonical extracted
+source-tree digests, the exact retained attestation bytes, and its retained
+external receipt reference. The transport sensor inspects only the delta between
+the supplied extracted Linear and core candidates. Its tests prove rejection of
+concrete direct endpoint, SDK, Node HTTP(S), and command transport actions while
+allowing non-executable boundary terminology and unrelated extension code.
+Authentication, unavailable, unsupported,
+malformed, timeout, and ambiguous outcomes remain deterministic controlled
+boundary checks because intentionally breaking a configured connector is unsafe.
+Install and host-discovery checks run inside qualification-owned temporary home,
+configuration, repository, Codex, and Claude roots, so they do not depend on or
+mutate a runner's existing host installation.
+
+The protected host-native run owns the external MCP provenance. Offline checks
+bind the retained attestation bytes to its receipt reference and exact candidate
+artifacts, then deterministically replay the redacted event causality; they do
+not independently prove external calls. The retained attestation and record
+contain no host payloads, ticket identifiers, secrets, or local paths.
+
 ## Repository lifecycle
 
 Run the lifecycle from an extracted release archive. Read-only commands emit
