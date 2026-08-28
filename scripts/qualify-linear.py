@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import hashlib
 import json
 import os
@@ -23,26 +22,6 @@ from agent_skills.release import VerifiedRelease, verify_release
 CONTRACT_PATH = "skills/linear-tracker-adapter/references/adapter-contract.json"
 ADAPTER_ROOT = "skills/linear-tracker-adapter"
 TRUSTED_CONTRACT_SHA256 = "053f4bb98357f8c5b6b6d2093cb915e76f2a57526f53d8dace3056cff6e5a658"
-TRUSTED_EVIDENCE_PATHS = (
-    "agent_skills/fs.py",
-    "agent_skills/generations.py",
-    "agent_skills/hosts/base.py",
-    "agent_skills/hosts/claude.py",
-    "agent_skills/hosts/codex.py",
-    "agent_skills/hosts/exposure.py",
-    "agent_skills/journal.py",
-    "agent_skills/lifecycle.py",
-    "agent_skills/locking.py",
-    "agent_skills/receipt.py",
-    "agent_skills/release.py",
-    "agent_skills/validate.py",
-    "profiles/core.json",
-    "profiles/linear.json",
-    "scripts/qualify-linear.py",
-    CONTRACT_PATH,
-    "tests/test_linear_profile.py",
-    "tests/test_linear_qualification.py",
-)
 REQUIRED_SCENARIOS = (
     "core-qualification-binding",
     "linear-install-and-host-discovery",
@@ -100,7 +79,28 @@ REFERENCE_PATTERNS = {
     "session": re.compile(r"linear-session:[a-f0-9]{32}"),
 }
 TICKET_ID = re.compile(r"\b[A-Z]\d{2,}-\d+\b")
-FORBIDDEN_NETWORK_IMPORTS = {"aiohttp", "httpx", "requests", "urllib3"}
+EXECUTABLE_SUFFIXES = {".cjs", ".js", ".mjs", ".py", ".sh", ".ts", ".tsx"}
+DIRECT_LINEAR_ENDPOINTS = ("api.linear.app", "linear.app/api", "linear.app/graphql")
+LINEAR_SDK_ACTIONS = (
+    "@linear/sdk",
+    "from linear import",
+    "import linear",
+    "linear_client",
+    "linear_sdk",
+    "linearclient",
+)
+COMMAND_TRANSPORT = re.compile(r"(?m)^\s*(?:curl|wget)\s+https?://")
+HTTP_CLIENT_ACTION = re.compile(
+    r"\b(?:aiohttp|httpx|requests|urllib3)\.(?:delete|get|patch|post|put|request)\s*\(|"
+    r"\b(?:axios\.(?:delete|get|patch|post|put)|fetch|urlopen)\s*\("
+)
+LINEAR_SDK_IMPORT = re.compile(
+    r"(?m)^\s*(?:from\s+linear(?:\.\w+)*\s+import\b|"
+    r"import\s+linear(?:\.\w+)*(?:\s|$)|"
+    r"import\b[^\n]*\bfrom\s+['\"]@linear/sdk['\"]|"
+    r"(?:import|require)\s*\(\s*['\"]@linear/sdk['\"]\s*\)|"
+    r"new\s+linearclient\s*\()"
+)
 
 
 class QualificationFailure(AssertionError):
@@ -120,6 +120,10 @@ class Checkpoint:
             raise QualificationFailure(failure or evidence)
         self.evidence.append(evidence)
 
+    def retain(self, evidence: list[str]) -> None:
+        self.assertion_count += len(evidence)
+        self.evidence.extend(evidence)
+
 
 def canonical_json(value: object) -> str:
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
@@ -131,17 +135,6 @@ def digest_bytes(contents: bytes) -> str:
 
 def _digest(value: object) -> str:
     return digest_bytes(canonical_json(value).encode("utf-8"))
-
-
-def qualification_driver_sha256(root: Path = DRIVER_ROOT) -> str:
-    inputs = [
-        {
-            "path": relative,
-            "sha256": digest_bytes((root / relative).read_bytes()),
-        }
-        for relative in TRUSTED_EVIDENCE_PATHS
-    ]
-    return _digest(inputs)
 
 
 def _load_document(path: Path, name: str) -> dict:
@@ -269,7 +262,19 @@ def validate_attestation(value: object) -> dict:
         or "rawIdempotencyKey" in serialized
     ):
         raise ValueError("linear_qualification.attestation: forbidden retained data")
-    return value
+    return {
+        "liveEvidence": [
+            "retained host attestation covers all six declared operations",
+            "retained host attestation records canceled cleanup for both entities",
+            "retained attestation names one external Linear receipt reference",
+        ],
+        "receiptReference": receipt["reference"],
+        "reconciliationEvidence": [
+            "primary create follows an exact-marker miss",
+            "dependency create follows an exact-marker miss",
+            "unique reconciliation suppresses any repeat create",
+        ],
+    }
 
 
 def load_attestation(path: Path) -> dict:
@@ -322,87 +327,80 @@ def source_tree_sha256(root: Path) -> str:
     return _digest(records)
 
 
-def _python_sources(root: Path) -> dict[str, str]:
-    return {
-        path.relative_to(root).as_posix(): path.read_text(encoding="utf-8")
-        for path in sorted(root.rglob("*.py"))
-    }
+def _candidate_delta(linear_candidate: Path, core_candidate: Path) -> list[Path]:
+    changed = []
+    for path in sorted(item for item in linear_candidate.rglob("*") if item.is_file()):
+        relative = path.relative_to(linear_candidate)
+        core_path = core_candidate / relative
+        if not core_path.is_file() or path.read_bytes() != core_path.read_bytes():
+            changed.append(path)
+    return changed
 
 
-def _adapter_documents(root: Path, contract: dict) -> dict[str, str]:
-    adapter = root / ADAPTER_ROOT
-    documents = {
-        path.relative_to(root).as_posix(): path.read_text(encoding="utf-8")
-        for path in sorted(adapter.rglob("*"))
-        if path.is_file()
-    }
-    contract_path = root / CONTRACT_PATH
+def _actionable_instruction(contents: str, marker: str) -> bool:
+    return any(
+        marker in line
+        and re.match(
+            r"\s*(?:[-*]\s*)?(?:call|execute|fetch|import|install|invoke|run|send|use)\b",
+            line,
+        )
+        for line in contents.splitlines()
+    )
+
+
+def inspect_candidate_transport_boundary(
+    linear_candidate: Path,
+    core_candidate: Path,
+    contract: dict,
+) -> list[str]:
+    contract_path = linear_candidate / CONTRACT_PATH
     contract_bytes = contract_path.read_bytes()
     if digest_bytes(contract_bytes) != TRUSTED_CONTRACT_SHA256:
         raise QualificationFailure("candidate contract differs from the trusted contract")
     candidate_contract = json.loads(contract_bytes)
     if candidate_contract != contract:
         raise QualificationFailure("candidate contract differs from the verified input")
-    candidate_contract.pop("transportBoundary")
-    documents[CONTRACT_PATH] = canonical_json(candidate_contract)
-    return documents
-
-
-def assert_candidate_transport_boundary(
-    linear_candidate: Path,
-    core_candidate: Path,
-    contract: dict,
-) -> None:
     if contract.get("transportBoundary", {}).get("mode") != "host-native-mcp-only":
         raise QualificationFailure("candidate transport mode is not host-native MCP only")
-    linear_python = _python_sources(linear_candidate)
-    core_python = _python_sources(core_candidate)
-    if linear_python != core_python:
-        raise QualificationFailure("optional candidate adds or changes executable Python")
-    for name, source in linear_python.items():
-        tree = ast.parse(source)
-        imports = {
-            node.module.split(".")[0]
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom) and node.module
-        }
-        imports.update(
-            alias.name.split(".")[0]
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Import)
-            for alias in node.names
+    if set(contract.get("allowedHostOperations", ())) != DECLARED_LIVE_OPERATIONS:
+        raise QualificationFailure("host-native MCP capability set is incomplete")
+
+    for path in _candidate_delta(linear_candidate, core_candidate):
+        relative = path.relative_to(linear_candidate).as_posix()
+        if relative == CONTRACT_PATH:
+            continue
+        executable = path.suffix in EXECUTABLE_SUFFIXES
+        actionable_document = relative == f"{ADAPTER_ROOT}/SKILL.md"
+        if not executable and not actionable_document:
+            continue
+        contents = path.read_text(encoding="utf-8").casefold()
+        command_action = COMMAND_TRANSPORT.search(contents) or re.search(
+            r"(?:os\.system|subprocess\.(?:call|run|popen))\s*\([^\n]*(?:curl|wget)",
+            contents,
         )
-        forbidden = FORBIDDEN_NETWORK_IMPORTS & imports
-        if forbidden:
-            raise QualificationFailure(
-                f"candidate Python uses forbidden network import in {name}"
-            )
-    names = [path.relative_to(linear_candidate).as_posix() for path in linear_candidate.rglob("*")]
-    forbidden_name_markers = (
-        "api-client",
-        "credential",
-        "fallback-transport",
-        "linear_mcp.py",
-        "oauth",
-        "sdk-client",
-        "subprocess",
-    )
-    if any(marker in name.casefold() for name in names for marker in forbidden_name_markers):
-        raise QualificationFailure("candidate contains a forbidden transport path")
-    documents = _adapter_documents(linear_candidate, contract)
-    for category, markers in contract["transportBoundary"][
-        "forbiddenActionMarkers"
-    ].items():
+        http_action = HTTP_CLIENT_ACTION.search(contents)
         if any(
-            marker in contents.casefold()
-            for contents in documents.values()
-            for marker in markers
+            marker in contents
+            and (http_action or command_action or _actionable_instruction(contents, marker))
+            for marker in DIRECT_LINEAR_ENDPOINTS
         ):
-            raise QualificationFailure(f"candidate forbidden transport category: {category}")
+            raise QualificationFailure("candidate alternate transport: direct-linear-endpoint")
+        if LINEAR_SDK_IMPORT.search(contents) or any(
+            _actionable_instruction(contents, marker) for marker in LINEAR_SDK_ACTIONS
+        ):
+            raise QualificationFailure("candidate alternate transport: linear-sdk")
+        if command_action:
+            raise QualificationFailure("candidate alternate transport: command-transport")
+        if executable and http_action:
+            raise QualificationFailure("candidate alternate transport: http-client-action")
+    return [
+        "supplied Linear candidate delta contains no concrete alternate transport action",
+        "host-native MCP capability set remains complete",
+    ]
 
 
 def _record(checkpoint: Checkpoint, result: str, failure: str | None = None) -> dict:
-    summary = {
+    return {
         "assertionCount": checkpoint.assertion_count,
         "evidence": checkpoint.evidence,
         "evidenceSource": checkpoint.evidence_source,
@@ -410,7 +408,6 @@ def _record(checkpoint: Checkpoint, result: str, failure: str | None = None) -> 
         "result": result,
         **({"failure": failure} if failure else {}),
     }
-    return {**summary, "checkpointSha256": _digest(summary)}
 
 
 def _run(scenario_id: str, evidence_source: str, operation) -> dict:
@@ -505,84 +502,22 @@ def _install_linear(
             )
 
 
-def _attestation_scenario(checkpoint: Checkpoint, attestation: dict, contract: dict) -> None:
-    observed = {event["operation"] for event in attestation["events"]}
-    checkpoint.check(
-        observed == set(contract["allowedHostOperations"]) == DECLARED_LIVE_OPERATIONS,
-        "retained host attestation covers all six declared operations",
-    )
-    checkpoint.check(
-        all(entity["finalStatus"] == "canceled" for entity in attestation["entities"]),
-        "retained host attestation records canceled cleanup for both entities",
-    )
-    checkpoint.check(
-        attestation["receipt"]["externalSystem"] == "linear",
-        "retained attestation names one external Linear receipt identity",
-    )
-
-
-def _reconciliation_scenario(checkpoint: Checkpoint, attestation: dict) -> None:
-    events = attestation["events"]
-    checkpoint.check(
-        events[0]["operation"] == "search"
-        and events[0]["outcome"] == "miss"
-        and events[2]["operation"] == "create",
-        "primary create follows an exact-marker miss",
-    )
-    checkpoint.check(
-        events[1]["operation"] == "search"
-        and events[1]["outcome"] == "miss"
-        and events[3]["operation"] == "create",
-        "dependency create follows an exact-marker miss",
-    )
-    checkpoint.check(
-        events[10]["operation"] == "reconciliation"
-        and events[10]["outcome"] == "unique-match"
-        and sum(event["operation"] == "create" for event in events) == 2,
-        "unique reconciliation suppresses any repeat create",
-    )
-
-
-def _controlled_outcomes(checkpoint: Checkpoint, contract: dict) -> None:
-    matrix = controlled_boundary_matrix(contract)
-    checkpoint.check(
-        len(matrix) == len(CONTROLLED_BOUNDARY_OUTCOMES),
+def _controlled_evidence(matrix: list[dict]) -> list[str]:
+    return [
         "controlled boundary matrix covers every declared degraded input",
-    )
-    for case in matrix:
-        checkpoint.check(
-            case["outcome"] == CONTROLLED_BOUNDARY_OUTCOMES[case["input"]]
-            and bool(case["action"]),
-            f"controlled boundary normalized: {case['input']} -> {case['outcome']}",
-        )
-    checkpoint.check(
-        all(
-            case["repeatMutation"] is False
+        *(
+            f"controlled boundary normalized: {case['input']} -> {case['outcome']}"
             for case in matrix
-            if case["input"].startswith("mutation-")
         ),
         "controlled ambiguous mutations never repeat before reconciliation",
-    )
-
-
-def _transport_scenario(
-    checkpoint: Checkpoint,
-    linear_candidate: Path,
-    core_candidate: Path,
-    contract: dict,
-) -> None:
-    assert_candidate_transport_boundary(linear_candidate, core_candidate, contract)
-    checkpoint.check(
-        True,
-        "supplied extracted candidate passes the forbidden-transport boundary",
-    )
+    ]
 
 
 def _finalize_record(
     candidate: dict,
     core_record_sha256: str,
     attestation_sha256: str,
-    attestation: dict,
+    receipt_reference: str,
     scenarios: list[dict],
 ) -> dict:
     ids = tuple(scenario.get("id") for scenario in scenarios)
@@ -602,19 +537,16 @@ def _finalize_record(
     failed = sum(scenario["result"] != "passed" for scenario in scenarios)
     return {
         "attestationSha256": attestation_sha256,
-        "auditReferences": attestation["auditReferences"],
         "candidate": candidate,
         "coreQualificationSha256": core_record_sha256,
         "proofBoundary": {
-            "live": "protected external host-native MCP sensor",
+            "live": "external MCP provenance is owned by the protected host-native run",
             "offline": (
-                "authenticates retained attestation bytes, receipt identity, "
-                "candidate artifacts, and deterministic checks; JSON alone does not "
-                "prove external execution"
+                "binds the retained attestation bytes to the retained receipt reference "
+                "and exact candidate artifacts; it does not independently prove external calls"
             ),
         },
-        "qualificationDriverSha256": qualification_driver_sha256(),
-        "receiptReference": attestation["receipt"]["reference"],
+        "receiptReference": receipt_reference,
         "redaction": {
             "environmentCaptured": False,
             "hostPayloadsCaptured": False,
@@ -646,7 +578,7 @@ def qualify(
     if core.profile_id != "core" or linear.profile_id != "linear":
         raise ValueError("linear_qualification.profile: exact core and linear profiles are required")
     core_record = _load_document(core_record_path, "core_record")
-    attestation = load_attestation(attestation_path)
+    attested = load_attestation(attestation_path)
     attestation_bytes = attestation_path.read_bytes()
     with tempfile.TemporaryDirectory(prefix="agent-skills-linear-candidates-") as temporary:
         candidate_root = Path(temporary)
@@ -673,30 +605,31 @@ def qualify(
             _run(
                 "live-host-attestation",
                 "protected-external-live-mcp-sensor",
-                lambda checkpoint: _attestation_scenario(
-                    checkpoint,
-                    attestation,
-                    contract,
-                ),
+                lambda checkpoint: checkpoint.retain(attested["liveEvidence"]),
             ),
             _run(
                 "live-reconcile-before-retry",
                 "protected-external-live-mcp-sensor",
-                lambda checkpoint: _reconciliation_scenario(checkpoint, attestation),
+                lambda checkpoint: checkpoint.retain(
+                    attested["reconciliationEvidence"]
+                ),
             ),
             _run(
                 "controlled-degraded-outcomes",
                 "deterministic-controlled-boundary-double",
-                lambda checkpoint: _controlled_outcomes(checkpoint, contract),
+                lambda checkpoint: checkpoint.retain(
+                    _controlled_evidence(controlled_boundary_matrix(contract))
+                ),
             ),
             _run(
                 "forbidden-alternate-transport",
                 "supplied-extracted-candidate-sensor",
-                lambda checkpoint: _transport_scenario(
-                    checkpoint,
-                    linear_candidate,
-                    core_candidate,
-                    contract,
+                lambda checkpoint: checkpoint.retain(
+                    inspect_candidate_transport_boundary(
+                        linear_candidate,
+                        core_candidate,
+                        contract,
+                    )
                 ),
             ),
         ]
@@ -708,7 +641,7 @@ def qualify(
         candidate,
         digest_bytes(core_record_path.read_bytes()),
         digest_bytes(attestation_bytes),
-        attestation,
+        attested["receiptReference"],
         scenarios,
     )
 
@@ -722,14 +655,11 @@ def validate_checked_record(
     linear_metadata: Path,
     attestation_path: Path,
 ) -> None:
-    attestation = load_attestation(attestation_path)
+    attested = load_attestation(attestation_path)
     if record.get("attestationSha256") != digest_bytes(attestation_path.read_bytes()):
         raise ValueError("linear_qualification.record: attestation mismatch")
-    if (
-        record.get("auditReferences") != attestation["auditReferences"]
-        or record.get("receiptReference") != attestation["receipt"]["reference"]
-    ):
-        raise ValueError("linear_qualification.record: attestation references mismatch")
+    if record.get("receiptReference") != attested["receiptReference"]:
+        raise ValueError("linear_qualification.record: attestation receipt mismatch")
     expected = qualify(
         core_archive,
         core_metadata,

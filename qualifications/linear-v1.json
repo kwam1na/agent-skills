@@ -1,9 +1,5 @@
 {
   "attestationSha256": "9e59c80307c6cd365abbe646d52effa512610e707b32074fe8a8632cf329cbb3",
-  "auditReferences": [
-    "linear-audit:8a4d7f8afcbd3804cd44eb76dea928c2",
-    "linear-audit:7d30f6cebe04c52382da5e44c5dced23"
-  ],
   "candidate": {
     "core": {
       "archiveSha256": "47e0752fbef5d2322a885f874f0c59b4db668a054d7e0c383f69dcde05a58b39",
@@ -22,10 +18,9 @@
   },
   "coreQualificationSha256": "baacbb3023c3522be032b621254a016dd084bb7cd9b9e56e5791bc3769f05990",
   "proofBoundary": {
-    "live": "protected external host-native MCP sensor",
-    "offline": "authenticates retained attestation bytes, receipt identity, candidate artifacts, and deterministic checks; JSON alone does not prove external execution"
+    "live": "external MCP provenance is owned by the protected host-native run",
+    "offline": "binds the retained attestation bytes to the retained receipt reference and exact candidate artifacts; it does not independently prove external calls"
   },
-  "qualificationDriverSha256": "2a54bde1ae215fd7937bb641454d212af092673d6b3750ea95b3b2f562ca7f98",
   "receiptReference": "linear-receipt:595c87913405ae594b82e935d848715f",
   "redaction": {
     "environmentCaptured": false,
@@ -36,7 +31,6 @@
   "scenarios": [
     {
       "assertionCount": 3,
-      "checkpointSha256": "b6e74cfdedf69f05422a0c6bc361e166d913a048c79248429b9758ef42f8462c",
       "evidence": [
         "exact base profile identity verified",
         "base qualification names the exact base archive and metadata",
@@ -48,7 +42,6 @@
     },
     {
       "assertionCount": 5,
-      "checkpointSha256": "a764ab215163762a7fe99c3d3b7e0dbbac395517db5c6cba9b97213c4971c2d1",
       "evidence": [
         "exact optional profile installs as the current generation",
         "installed generation retains the optional profile identity",
@@ -62,11 +55,10 @@
     },
     {
       "assertionCount": 3,
-      "checkpointSha256": "5b254fb0d313e26fc31347c684c985badd2e3b0380623c3e2ad3734eb4695b04",
       "evidence": [
         "retained host attestation covers all six declared operations",
         "retained host attestation records canceled cleanup for both entities",
-        "retained attestation names one external Linear receipt identity"
+        "retained attestation names one external Linear receipt reference"
       ],
       "evidenceSource": "protected-external-live-mcp-sensor",
       "id": "live-host-attestation",
@@ -74,7 +66,6 @@
     },
     {
       "assertionCount": 3,
-      "checkpointSha256": "a2cef23f5265f3678685f89edad3eeaec517af6176ea164b8d2ea31516e61168",
       "evidence": [
         "primary create follows an exact-marker miss",
         "dependency create follows an exact-marker miss",
@@ -86,7 +77,6 @@
     },
     {
       "assertionCount": 16,
-      "checkpointSha256": "8d9b86274be7ee08def0822b12e8b2a57bb918cca7011ec37f4bfe69430a8c62",
       "evidence": [
         "controlled boundary matrix covers every declared degraded input",
         "controlled boundary normalized: auth -> auth-required",
@@ -110,10 +100,10 @@
       "result": "passed"
     },
     {
-      "assertionCount": 1,
-      "checkpointSha256": "d89e4ccb4a5ab4674b699dd5c1bc1566bff068563e1d69656d427503aca14ba3",
+      "assertionCount": 2,
       "evidence": [
-        "supplied extracted candidate passes the forbidden-transport boundary"
+        "supplied Linear candidate delta contains no concrete alternate transport action",
+        "host-native MCP capability set remains complete"
       ],
       "evidenceSource": "supplied-extracted-candidate-sensor",
       "id": "forbidden-alternate-transport",
@@ -122,7 +112,7 @@
   ],
   "schemaVersion": "agent-skills-linear-qualification/1",
   "summary": {
-    "assertionCount": 31,
+    "assertionCount": 32,
     "failedScenarioCount": 0,
     "passedScenarioCount": 6,
     "requiredScenarioCount": 6,

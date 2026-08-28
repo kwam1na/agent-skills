@@ -185,6 +185,11 @@ class LinearQualificationTests(unittest.TestCase):
                 record["receiptReference"],
                 _host_attestation()["receipt"]["reference"],
             )
+            self.assertNotIn("auditReferences", record)
+            self.assertNotIn("qualificationDriverSha256", record)
+            self.assertTrue(
+                all("checkpointSha256" not in scenario for scenario in record["scenarios"])
+            )
             self.assertEqual(record["summary"]["result"], "passed")
             serialized = record_path.read_text(encoding="utf-8")
             self.assertNotIn(str(directory), serialized)
@@ -258,7 +263,7 @@ class LinearQualificationTests(unittest.TestCase):
             )
         )
 
-    def test_transport_sensor_inspects_supplied_candidate_and_rejects_each_category(
+    def test_transport_sensor_inspects_only_candidate_delta_and_rejects_real_actions(
         self,
     ) -> None:
         runner = _load_runner()
@@ -277,28 +282,56 @@ class LinearQualificationTests(unittest.TestCase):
                     / "skills/linear-tracker-adapter/references/adapter-contract.json"
                 ).read_text(encoding="utf-8")
             )
-            runner.assert_candidate_transport_boundary(
+            evidence = runner.inspect_candidate_transport_boundary(
                 linear_candidate,
                 core_candidate,
                 contract,
             )
+            self.assertIn("host-native MCP capability set remains complete", evidence)
 
-            for category, markers in contract["transportBoundary"][
-                "forbiddenActionMarkers"
-            ].items():
+            harmless = directory / "harmless-prose"
+            shutil.copytree(linear_candidate, harmless)
+            skill = harmless / "skills/linear-tracker-adapter/SKILL.md"
+            skill.write_text(
+                skill.read_text(encoding="utf-8")
+                + "\nDiscuss credential, OAuth, and subprocess boundaries without executing them.\n",
+                encoding="utf-8",
+            )
+            notes = harmless / "skills/linear-tracker-adapter/boundary_notes.py"
+            notes.write_text(
+                "# Never use api.linear.app or @linear/sdk as an alternate transport.\n",
+                encoding="utf-8",
+            )
+            runner.inspect_candidate_transport_boundary(harmless, core_candidate, contract)
+
+            hostile = (
+                (
+                    "direct-linear-endpoint",
+                    "skills/linear-tracker-adapter/transport.py",
+                    'import requests\nrequests.post("https://api.linear.app/graphql")\n',
+                ),
+                (
+                    "linear-sdk",
+                    "skills/linear-tracker-adapter/transport.ts",
+                    'import { LinearClient } from "@linear/sdk";\nnew LinearClient();\n',
+                ),
+                (
+                    "command-transport",
+                    "skills/linear-tracker-adapter/transport.sh",
+                    "curl https://example.invalid/provider\n",
+                ),
+            )
+            for category, relative, source in hostile:
                 with self.subTest(category=category):
                     mutated = directory / f"mutated-{category}"
                     shutil.copytree(linear_candidate, mutated)
-                    skill = mutated / "skills/linear-tracker-adapter/SKILL.md"
-                    skill.write_text(
-                        skill.read_text(encoding="utf-8") + f"\n{markers[0]}\n",
-                        encoding="utf-8",
-                    )
+                    target = mutated / relative
+                    target.write_text(source, encoding="utf-8")
                     with self.assertRaisesRegex(
                         runner.QualificationFailure,
                         category,
                     ):
-                        runner.assert_candidate_transport_boundary(
+                        runner.inspect_candidate_transport_boundary(
                             mutated,
                             core_candidate,
                             contract,

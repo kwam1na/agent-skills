@@ -108,20 +108,19 @@ python3 scripts/qualify-linear.py \
 
 The checked record at `qualifications/linear-v1.json` binds the passing core
 qualification, both exact archive and metadata identities, canonical extracted
-source-tree digests, the exact retained attestation bytes, the external receipt
-identity, and the trusted driver inputs. The transport sensor inspects the
-supplied extracted candidate and its tests inject every forbidden transport
-category into that candidate to prove rejection. Authentication, unavailable,
-unsupported, malformed, timeout, and ambiguous outcomes remain deterministic
-controlled boundary checks because intentionally breaking a configured
-connector is unsafe.
+source-tree digests, the exact retained attestation bytes, and its retained
+external receipt reference. The transport sensor inspects only the delta between
+the supplied extracted Linear and core candidates. Its tests prove rejection of
+concrete direct endpoint, SDK, and command transport actions while allowing
+non-executable boundary terminology. Authentication, unavailable, unsupported,
+malformed, timeout, and ambiguous outcomes remain deterministic controlled
+boundary checks because intentionally breaking a configured connector is unsafe.
 
-The protected host-side sensor is the evidence that the live MCP calls occurred.
-Offline checks authenticate the retained attestation bytes, receipt identity,
-candidate artifacts, operation causality, and deterministic checks; plain JSON
-alone is not treated as proof of external execution. The retained attestation
-and record contain no host payloads, ticket identifiers, secrets, or local
-paths.
+The protected host-native run owns the external MCP provenance. Offline checks
+bind the retained attestation bytes to its receipt reference and exact candidate
+artifacts, then deterministically replay the redacted event causality; they do
+not independently prove external calls. The retained attestation and record
+contain no host payloads, ticket identifiers, secrets, or local paths.
 
 ## Repository lifecycle
 
