@@ -4,6 +4,7 @@ import ast
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -700,6 +701,28 @@ class DeliveryProviderTests(unittest.TestCase):
             events[0]["details"]["release"]["releaseId"],
             "agent-skills-provider-v1",
         )
+
+    def test_forced_process_exit_does_not_leave_a_stale_lifecycle_lock(self) -> None:
+        signals = [signal.SIGTERM]
+        if os.name != "nt" and hasattr(signal, "SIGKILL"):
+            signals.append(signal.SIGKILL)
+
+        for exit_signal in signals:
+            with self.subTest(signal=exit_signal.name):
+                provider = self.restart_provider()
+                provider.handle(
+                    {"kind": "negotiate", "supportedVersions": [VERSION]}
+                )
+                provider.process.send_signal(exit_signal)
+                provider.process.wait(timeout=10)
+                provider._close_pipes()
+
+                fresh = self.start_provider()
+                self.provider = fresh
+                response = fresh.handle(
+                    {"kind": "negotiate", "supportedVersions": [VERSION]}
+                )
+                self.assertEqual(response[0]["outcome"], "supported")
 
     def test_manifest_anti_vacuity_and_redaction_fail_closed(self) -> None:
         review = self.aligned_review()

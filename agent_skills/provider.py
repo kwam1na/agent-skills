@@ -150,7 +150,7 @@ class DeliveryRailsProvider:
     def __init__(self, repository_root: Path) -> None:
         self.repository_root = repository_root.resolve(strict=True)
         self.lifecycle = Lifecycle(self.repository_root)
-        self.lock = RepositoryLock(self.lifecycle.lock_path)
+        self.lock = RepositoryLock(self.lifecycle.lock_path, shared=True)
         self.lock.__enter__()
         self.locked = True
         try:

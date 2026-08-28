@@ -24,11 +24,12 @@ root fields. Its `agentSkills` object names:
 - optional host events already produced by native tools.
 
 The release identity must match all four fields in `.agent-skills/active.json`.
-At startup, the provider holds the repository lifecycle lock, verifies its own
-module and portable workflow against that generation's receipt, and keeps that
-snapshot stable until the process exits. A source checkout, another installed
-generation, a release switch, or a content mismatch fails closed before review
-evidence can be emitted.
+At startup, the provider takes a shared OS lifecycle lock without writing a
+mutation-owner record, verifies its own module and portable workflow against
+that generation's receipt, and keeps that snapshot stable until the process
+exits. The operating system releases the shared lock even after forced process
+termination. A source checkout, another installed generation, a release switch,
+or a content mismatch fails closed before review evidence can be emitted.
 
 ## Host event mapping
 
