@@ -33,8 +33,32 @@ is plan-only, do not edit code.
 - Keep partial progress explicit. Do not broaden scope to make an adjacent idea
   fit the current delivery.
 
+Before choosing a change surface from a failing sensor, confirm that its failing
+assertion represents the repository's intended behavior rather than incidental
+sensor mechanics. Read the assertion's stated contract and, when the distinction
+is unclear, the smallest relevant history or neighboring evidence. If the
+product already satisfies the intended behavior, correct the smallest sensor
+defect without weakening that behavior. Do not reshape valid product behavior
+solely to satisfy an accidental formatting or extraction constraint.
+
 When work becomes blocked, retain completed work and evidence, name the blocker,
 and provide the approval or decision handoff needed to continue.
+
+## Keep the Delivery Loop Observable
+
+Before claiming `complete`, record the outcome of every kernel phase rather
+than collapsing the delivery into implementation plus tests:
+
+- name the selected execution posture and the evidence that followed it;
+- record the review outcome, who or what produced it, and the evidence reviewed;
+  when no repository- or host-selected independent review is available, say so
+  and retain the bounded acceptance-criteria review instead of implying
+  independent review occurred; and
+- record the compounding outcome and its reason or next action.
+
+A missing posture, review, or compounding outcome leaves the delivery `partial`.
+An unavailable review blocks completion only when repository authority, host
+policy, or the approved plan requires that review.
 
 ## Verify the Finish Line
 
@@ -63,7 +87,8 @@ result.
 
 ## Handoff
 
-Report the result category, completed scope and finish-line items, sensor
-results, retained evidence, unresolved blockers, pending approvals, and any
-optional operation that was not performed. Never claim completion from progress
-alone or from a passing sensor set that does not cover the declared finish line.
+Report the result category, execution posture, completed scope and finish-line
+items, sensor results, retained evidence, review provenance and outcome,
+compounding outcome, unresolved blockers, pending approvals, and any optional
+operation that was not performed. Never claim completion from progress alone or
+from a passing sensor set that does not cover the declared finish line.

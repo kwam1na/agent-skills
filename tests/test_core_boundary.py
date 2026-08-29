@@ -28,6 +28,23 @@ FORBIDDEN = re.compile(
 
 
 class CoreBoundaryTests(unittest.TestCase):
+    def test_execution_handoff_keeps_every_kernel_phase_observable(self) -> None:
+        text = (ROOT / "skills/execute-work/SKILL.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+
+        for required in (
+            "selected execution posture",
+            "review outcome",
+            "who or what produced it",
+            "compounding outcome",
+            "leaves the delivery `partial`",
+            "incidental sensor mechanics",
+            "without weakening that behavior",
+            "accidental formatting or extraction constraint",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, normalized)
+
     def test_core_has_no_provider_or_transport_vocabulary(self) -> None:
         for relative in (*CORE_RUNTIME_PATHS, *CORE_SKILL_PATHS):
             with self.subTest(path=relative):
