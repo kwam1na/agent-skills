@@ -33,6 +33,14 @@ is plan-only, do not edit code.
 - Keep partial progress explicit. Do not broaden scope to make an adjacent idea
   fit the current delivery.
 
+Before choosing a change surface from a failing sensor, confirm that its failing
+assertion represents the repository's intended behavior rather than incidental
+sensor mechanics. Read the assertion's stated contract and, when the distinction
+is unclear, the smallest relevant history or neighboring evidence. If the
+product already satisfies the intended behavior, correct the smallest sensor
+defect without weakening that behavior. Do not reshape valid product behavior
+solely to satisfy an accidental formatting or extraction constraint.
+
 When work becomes blocked, retain completed work and evidence, name the blocker,
 and provide the approval or decision handoff needed to continue.
 
