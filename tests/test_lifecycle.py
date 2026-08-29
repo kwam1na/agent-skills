@@ -29,10 +29,18 @@ from lifecycle_support import (
 
 
 class LifecycleTests(LifecycleFixture, unittest.TestCase):
+    def _repository_directories(self) -> set[str]:
+        return {
+            path.relative_to(self.repository).as_posix()
+            for path in self.repository.rglob("*")
+            if path.is_dir() and self.repository / ".git" not in path.parents
+        }
+
     def _make_active_receipt_legacy(self, lifecycle: Lifecycle) -> None:
         marker = self.repository / ".agent-skills" / "active.json"
         receipt = json.loads(marker.read_text(encoding="utf-8"))
         receipt.pop("exposures")
+        receipt.pop("createdDirectories")
         marker.write_text(canonical_json(receipt), encoding="utf-8")
         current = self.repository / ".agent-skills" / "current"
         current.unlink(missing_ok=True)
@@ -172,6 +180,152 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         self.assertEqual(unrelated_digest(self.repository), before)
         self.assertEqual(dirty_tracked.read_text(encoding="utf-8"), "dirty tracked bytes\n")
         self.assertEqual(dirty_untracked.read_text(encoding="utf-8"), "dirty untracked bytes\n")
+
+    def test_fresh_install_remove_from_installed_generation_restores_directory_layout(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        before_directories = self._repository_directories()
+        before_unrelated = unrelated_digest(self.repository)
+
+        lifecycle.install(*self.v1, maintainer=True)
+        receipt = json.loads(
+            (self.repository / ".agent-skills" / "active.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        created_directories = receipt["createdDirectories"]
+        lifecycle.update(*self.v2, maintainer=True)
+        self.assertEqual(
+            json.loads(
+                (self.repository / ".agent-skills" / "active.json").read_text(
+                    encoding="utf-8"
+                )
+            )["createdDirectories"],
+            created_directories,
+        )
+        lifecycle.rollback(maintainer=True)
+        self.assertEqual(
+            json.loads(
+                (self.repository / ".agent-skills" / "active.json").read_text(
+                    encoding="utf-8"
+                )
+            )["createdDirectories"],
+            created_directories,
+        )
+        self.v1[0].unlink()
+        self.v1[1].unlink()
+
+        if os.name == "nt":
+            environment = {**os.environ, "PYTHONPATH": ".agent-skills/current"}
+            command = [
+                sys.executable,
+                "-B",
+                "-m",
+                "agent_skills.cli",
+                "--root",
+                ".",
+                "remove",
+                "--maintenance",
+            ]
+        else:
+            environment = None
+            command = [
+                "sh",
+                "-c",
+                "PYTHONPATH=.agent-skills/current python3 -B -m agent_skills.cli "
+                "--root . remove --maintenance",
+            ]
+        result = subprocess.run(
+            command,
+            cwd=self.repository,
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(json.loads(result.stdout)["status"]["lifecycle"], "absent")
+        self.assertEqual(self._repository_directories(), before_directories)
+        self.assertEqual(unrelated_digest(self.repository), before_unrelated)
+
+    def test_remove_preserves_content_added_to_a_created_directory(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        local_file = self.repository / ".claude" / "local.json"
+        local_file.write_text('{"existing": true}\n', encoding="utf-8")
+
+        lifecycle.remove(maintainer=True)
+
+        self.assertEqual(local_file.read_text(encoding="utf-8"), '{"existing": true}\n')
+        self.assertTrue(self.repository.joinpath(".claude").is_dir())
+
+    def test_directory_pruning_never_follows_a_replaced_parent_symlink(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        receipt = json.loads(
+            (self.repository / ".agent-skills" / "active.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        claude_root = self.repository / ".claude"
+        for projection in (claude_root / "skills").iterdir():
+            projection.unlink()
+        (claude_root / "skills").rmdir()
+        claude_root.rmdir()
+        outside = self.base / "outside"
+        outside.joinpath("skills").mkdir(parents=True)
+        claude_root.symlink_to(outside, target_is_directory=True)
+
+        with self.assertRaisesRegex(ValueError, "could not be removed safely"):
+            lifecycle._prune_created_directories(receipt)
+        with mock.patch.object(os, "supports_dir_fd", set()):
+            with self.assertRaisesRegex(ValueError, "became a symlink"):
+                lifecycle._prune_created_directories(receipt)
+
+        self.assertTrue(outside.joinpath("skills").is_dir())
+
+    def test_remove_preserves_discovery_directories_that_predated_install(self) -> None:
+        local_skill = self.repository / ".agents" / "skills" / "local-workflow"
+        local_skill.mkdir(parents=True)
+        (local_skill / "SKILL.md").write_text("local workflow\n", encoding="utf-8")
+        self.repository.joinpath(".claude").mkdir()
+        self.repository.joinpath(".claude", "launch.json").write_text(
+            '{"existing": true}\n',
+            encoding="utf-8",
+        )
+        self.repository.joinpath(".agent-skills").mkdir()
+        before_directories = self._repository_directories()
+        before_unrelated = unrelated_digest(self.repository)
+
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        receipt = json.loads(
+            (self.repository / ".agent-skills" / "active.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            receipt["createdDirectories"],
+            [".agent-skills/generations", ".claude/skills"],
+        )
+
+        lifecycle.remove(maintainer=True)
+
+        self.assertEqual(self._repository_directories(), before_directories)
+        self.assertEqual(unrelated_digest(self.repository), before_unrelated)
+        self.assertEqual(
+            (local_skill / "SKILL.md").read_text(encoding="utf-8"),
+            "local workflow\n",
+        )
+
+    def test_fresh_install_rollback_points_to_remove(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"rollback-unavailable: .*use remove --maintenance to return to absent",
+        ):
+            lifecycle.rollback(maintainer=True)
 
     def test_invalid_or_missing_release_never_changes_active_version(self) -> None:
         lifecycle = Lifecycle(self.repository)

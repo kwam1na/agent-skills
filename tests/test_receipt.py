@@ -4,6 +4,7 @@ import json
 import unittest
 
 from agent_skills.lifecycle import Lifecycle
+from agent_skills.receipt import validate_receipt
 from agent_skills.validate import canonical_json
 
 from lifecycle_support import LifecycleFixture
@@ -24,6 +25,19 @@ class ReceiptContractTests(LifecycleFixture, unittest.TestCase):
         self.assertRegex(document["release"]["metadataSha256"], r"^[a-f0-9]{64}$")
         self.assertEqual(document["ownership"], "agent-skills-managed")
         self.assertIsNone(document["previous"])
+        self.assertEqual(
+            document["createdDirectories"],
+            [
+                ".agent-skills",
+                ".agent-skills/generations",
+                ".agents",
+                ".agents/skills",
+                ".claude",
+                ".claude/skills",
+            ],
+        )
+        document["createdDirectories"] = list(reversed(document["createdDirectories"]))
+        self.assertEqual(validate_receipt(document), document)
 
     def test_corrupt_future_or_forged_receipt_never_authorizes_mutation(self) -> None:
         lifecycle = Lifecycle(self.repository)
@@ -43,6 +57,22 @@ class ReceiptContractTests(LifecycleFixture, unittest.TestCase):
                 }
             ).encode(),
             canonical_json({**valid, "exposures": list(reversed(valid["exposures"]))}).encode(),
+            canonical_json({**valid, "createdDirectories": ["../outside"]}).encode(),
+            canonical_json({**valid, "createdDirectories": [{}]}).encode(),
+            canonical_json({**valid, "createdDirectories": "not-a-list"}).encode(),
+            canonical_json(
+                {
+                    **valid,
+                    "createdDirectories": [".agents", ".agents"],
+                }
+            ).encode(),
+            canonical_json(
+                {
+                    key: value
+                    for key, value in valid.items()
+                    if key != "exposures"
+                }
+            ).encode(),
         )
         for contents in mutations:
             with self.subTest(contents=contents[:30]):

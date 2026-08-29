@@ -13,6 +13,16 @@ RECEIPT_SCHEMA = "agent-skills-receipt/1"
 OWNERSHIP = "agent-skills-managed"
 DIGEST = re.compile(r"^[a-f0-9]{64}$")
 SUPPORTED_PROFILES = frozenset({"core", "linear"})
+MANAGED_REPOSITORY_DIRECTORIES = frozenset(
+    {
+        ".agent-skills",
+        ".agent-skills/generations",
+        ".agents",
+        ".agents/skills",
+        ".claude",
+        ".claude/skills",
+    }
+)
 
 
 class ReceiptError(ValueError):
@@ -54,6 +64,16 @@ def _validate_files(value: object) -> None:
         raise ReceiptError("receipt-invalid: installed files are not unique and sorted")
 
 
+def _validate_created_directories(value: object) -> None:
+    if (
+        not isinstance(value, list)
+        or any(not isinstance(path, str) for path in value)
+        or len(value) != len(set(value))
+        or any(path not in MANAGED_REPOSITORY_DIRECTORIES for path in value)
+    ):
+        raise ReceiptError("receipt-invalid: created directories are malformed")
+
+
 def validate_version(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != {"files", "generation", "release"}:
         raise ReceiptError("receipt-invalid: version record is malformed")
@@ -83,6 +103,10 @@ def validate_receipt(value: object) -> dict:
             frozenset(required),
             frozenset(required | {"exposures"}),
             frozenset(required | {"adoption", "exposures"}),
+            frozenset(required | {"createdDirectories", "exposures"}),
+            frozenset(
+                required | {"adoption", "createdDirectories", "exposures"}
+            ),
         }
     ):
         raise ReceiptError("receipt-invalid: receipt shape is malformed")
@@ -92,6 +116,8 @@ def validate_receipt(value: object) -> dict:
         raise ReceiptError("receipt-invalid: ownership marker is missing")
     if "exposures" in value and value["exposures"] != exposure_records():
         raise ReceiptError("receipt-invalid: host exposure metadata is malformed")
+    if "createdDirectories" in value:
+        _validate_created_directories(value["createdDirectories"])
     if "adoption" in value:
         try:
             validate_adoption(value["adoption"])
@@ -137,6 +163,7 @@ def make_receipt(
     version: dict,
     previous: dict | None,
     adoption: dict | None = None,
+    created_directories: list[str] | None = None,
 ) -> dict:
     validate_version(version)
     if previous is not None:
@@ -152,5 +179,7 @@ def make_receipt(
     }
     if adoption is not None:
         receipt["adoption"] = adoption
+    if created_directories is not None:
+        receipt["createdDirectories"] = sorted(created_directories)
     validate_receipt(receipt)
     return receipt

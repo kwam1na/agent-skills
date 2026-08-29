@@ -15,6 +15,34 @@ from lifecycle_support import (
 
 
 class FaultInjectionTests(LifecycleFixture, unittest.TestCase):
+    def _repository_directories(self, repository: Path) -> set[str]:
+        return {
+            path.relative_to(repository).as_posix()
+            for path in repository.rglob("*")
+            if path.is_dir() and repository / ".git" not in path.parents
+        }
+
+    def test_interrupted_fresh_install_recovery_restores_directory_layout(self) -> None:
+        for boundary in ("generation-ready", "exposing-codex"):
+            with self.subTest(boundary=boundary):
+                repository = initialize_repository(self.base / f"fresh-{boundary}")
+                before_directories = self._repository_directories(repository)
+                lifecycle = Lifecycle(repository)
+
+                def interrupt(phase: str) -> None:
+                    if phase == boundary:
+                        raise RuntimeError(f"interrupted:{phase}")
+
+                with self.assertRaisesRegex(RuntimeError, f"interrupted:{boundary}"):
+                    lifecycle.install(*self.v1, maintainer=True, fault=interrupt)
+
+                self.assertEqual(lifecycle.recover(maintainer=True)["action"], "restore-prior")
+                self.assertEqual(lifecycle.status().as_dict()["lifecycle"], "absent")
+                self.assertEqual(
+                    self._repository_directories(repository),
+                    before_directories,
+                )
+
     def test_interruption_at_every_activation_boundary_recovers_idempotently(self) -> None:
         before_marker = {
             "staged",

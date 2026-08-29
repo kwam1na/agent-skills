@@ -1,5 +1,5 @@
 {
-  "expectedLifecycleScenarioCount": 28,
+  "expectedLifecycleScenarioCount": 29,
   "expectedScenarioCount": 7,
   "lifecycleScenarios": [
     {
@@ -12,6 +12,10 @@
     },
     {
       "id": "dirty-target-preservation",
+      "sensor": "tests/test_lifecycle.py"
+    },
+    {
+      "id": "fresh-install-exact-removal",
       "sensor": "tests/test_lifecycle.py"
     },
     {
