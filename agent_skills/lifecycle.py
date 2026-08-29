@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import uuid
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from .journal import (
 )
 from .locking import RepositoryLock
 from .receipt import (
+    MANAGED_REPOSITORY_DIRECTORIES,
     ReceiptError,
     load_receipt,
     make_receipt,
@@ -128,6 +130,82 @@ class Lifecycle:
         self.store = GenerationStore(self.managed_root, self.git_path)
         self.predecessors = PredecessorStore(self.managed_root, self.git_path)
         self.exposure = ExposureManager(self.root)
+
+    def _created_directories(self, prior: dict | None) -> list[str] | None:
+        if prior is not None:
+            return prior.get("createdDirectories")
+        return sorted(
+            path
+            for path in MANAGED_REPOSITORY_DIRECTORIES
+            if not (self.root / path).exists()
+        )
+
+    def _prune_created_directories(self, receipt: dict | None) -> None:
+        if receipt is None:
+            return
+        created = receipt.get("createdDirectories", [])
+        for relative in sorted(
+            created,
+            key=lambda value: (len(Path(value).parts), value),
+            reverse=True,
+        ):
+            self._prune_created_directory(relative)
+
+    def _prune_created_directory(self, relative: str) -> None:
+        parts = Path(relative).parts
+        directory_flags = (
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        no_follow = getattr(os, "O_NOFOLLOW", 0)
+        descriptor_removal = (
+            no_follow
+            and os.open in os.supports_dir_fd
+            and os.rmdir in os.supports_dir_fd
+        )
+        if not descriptor_removal:
+            current = self.root
+            for part in parts:
+                current /= part
+                if current.is_symlink():
+                    raise LifecycleError(
+                        "local-divergence: lifecycle-created directory became a symlink"
+                    )
+            try:
+                current.rmdir()
+            except FileNotFoundError:
+                return
+            except OSError as error:
+                if error.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+                    return
+                raise LifecycleError(
+                    "local-divergence: lifecycle-created directory could not be removed safely"
+                ) from error
+            return
+
+        descriptors = [os.open(self.root, directory_flags | no_follow)]
+        try:
+            for part in parts[:-1]:
+                descriptors.append(
+                    os.open(
+                        part,
+                        directory_flags | no_follow,
+                        dir_fd=descriptors[-1],
+                    )
+                )
+            os.rmdir(parts[-1], dir_fd=descriptors[-1])
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            if error.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+                return
+            raise LifecycleError(
+                "local-divergence: lifecycle-created directory could not be removed safely"
+            ) from error
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
 
     def _active(self, *, verify: bool = True) -> dict | None:
         if (
@@ -421,6 +499,7 @@ class Lifecycle:
                     journal["operationId"],
                     fault,
                 )
+            self._prune_created_directories(prior)
 
     def _reconcile_target(self, target: dict | None, alternate: dict | None) -> None:
         if target is not None and "adoption" in target:
@@ -480,6 +559,8 @@ class Lifecycle:
                     target["adoption"],
                     journal["operationId"],
                 )
+            if prior is None:
+                self._prune_created_directories(target)
             self.journal_path.unlink()
             return {
                 "action": "restore-prior",
@@ -526,10 +607,12 @@ class Lifecycle:
                     "status": self.status().as_dict(),
                 }
             adoption = prior.get("adoption") if prior is not None else None
+            created_directories = self._created_directories(prior)
             inspected_target = make_receipt(
                 inspected,
                 version_from_receipt(prior) if prior is not None else None,
                 adoption,
+                created_directories,
             )
             self.exposure.preflight(inspected_target, prior)
             operation_id = uuid.uuid4().hex
@@ -540,6 +623,7 @@ class Lifecycle:
                     version,
                     version_from_receipt(prior) if prior is not None else None,
                     adoption,
+                    created_directories,
                 )
                 self.exposure.preflight(target, prior)
             except (ExposureError, ReceiptError):
@@ -669,11 +753,22 @@ class Lifecycle:
                 "predecessorSha256": expected_prior_sha256,
                 "skill": skill,
             }
-            target = make_receipt(inspected, None, adoption)
+            created_directories = self._created_directories(None)
+            target = make_receipt(
+                inspected,
+                None,
+                adoption,
+                created_directories,
+            )
             self.exposure.preflight(target, None)
             operation_id = uuid.uuid4().hex
             version, stage = self.store.stage(archive, metadata, operation_id)
-            target = make_receipt(version, None, adoption)
+            target = make_receipt(
+                version,
+                None,
+                adoption,
+                created_directories,
+            )
             journal = self._new_journal("adopt", operation_id, None, target)
             journal = write_journal(self.journal_path, journal, "staged")
             self.predecessors.write(adoption, predecessor_body, operation_id)
@@ -724,11 +819,15 @@ class Lifecycle:
             if prior["previous"] is None and "adoption" in prior:
                 return self._deactivate_adoption_locked(prior, "rollback", fault)
             if prior["previous"] is None:
-                raise LifecycleError("rollback-unavailable: no verified prior generation is retained")
+                raise LifecycleError(
+                    "rollback-unavailable: no verified prior generation is retained; "
+                    "use remove --maintenance to return to absent"
+                )
             target = make_receipt(
                 prior["previous"],
                 version_from_receipt(prior),
                 prior.get("adoption"),
+                prior.get("createdDirectories"),
             )
             self.store.verify(version_from_receipt(target))
             self.exposure.preflight(target, prior)

@@ -74,6 +74,21 @@
       ],
       "type": "object"
     },
+    "createdDirectories": {
+      "items": {
+        "enum": [
+          ".agent-skills",
+          ".agent-skills/generations",
+          ".agents",
+          ".agents/skills",
+          ".claude",
+          ".claude/skills"
+        ]
+      },
+      "maxItems": 6,
+      "type": "array",
+      "uniqueItems": true
+    },
     "file": {
       "additionalProperties": false,
       "properties": {
@@ -157,11 +172,17 @@
   "dependentRequired": {
     "adoption": [
       "exposures"
+    ],
+    "createdDirectories": [
+      "exposures"
     ]
   },
   "properties": {
     "adoption": {
       "$ref": "#/$defs/adoption"
+    },
+    "createdDirectories": {
+      "$ref": "#/$defs/createdDirectories"
     },
     "exposures": {
       "items": false,

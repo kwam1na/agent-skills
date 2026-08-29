@@ -171,8 +171,40 @@ python -m agent_skills.cli --root /path/to/repository install \
   --archive /path/to/core.zip \
   --metadata /path/to/core.release.json \
   --maintenance
+```
+
+After installation or adoption completes, start a fresh agent session so Codex
+or Claude Code discovers the new repository-relative skill links. An already
+running session is not expected to refresh its discovered skills dynamically.
+
+Rollback and removal have different finish lines. Rollback restores a retained
+prior generation (or an adopted predecessor). A first installation has no prior
+generation, so rollback fails with guidance to use removal instead:
+
+```bash
 python -m agent_skills.cli --root /path/to/repository rollback --maintenance
 ```
+
+To return a first installation to `absent`, run removal. The installed
+generation contains the lifecycle code, so this command does not require the
+original checkout, release archive, or network access when run from the
+repository root:
+
+```bash
+PYTHONPATH=.agent-skills/current python3 -B -m agent_skills.cli \
+  --root . remove --maintenance
+```
+
+In PowerShell, run the same installed lifecycle with:
+
+```powershell
+$env:PYTHONPATH = ".agent-skills/current"
+python -B -m agent_skills.cli --root . remove --maintenance
+```
+
+Removal deletes only managed projections and lifecycle-created empty discovery
+directories. It preserves discovery directories that predated installation and
+all unrelated tracked or untracked bytes.
 
 An absent managed installation may adopt one existing Codex workflow without
 exposing the rest of the profile. The maintainer supplies the expected SHA-256
