@@ -275,7 +275,7 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         outside.joinpath("skills").mkdir(parents=True)
         claude_root.symlink_to(outside, target_is_directory=True)
 
-        with self.assertRaisesRegex(ValueError, "could not be removed safely"):
+        with self.assertRaisesRegex(ValueError, "lifecycle-created directory"):
             lifecycle._prune_created_directories(receipt)
         with mock.patch.object(os, "supports_dir_fd", set()):
             with self.assertRaisesRegex(ValueError, "became a symlink"):
