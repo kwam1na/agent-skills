@@ -12,13 +12,18 @@ CORE_RUNTIME_PATHS = (
     "agent_skills/fake_tracker.py",
     "agent_skills/router.py",
     "agent_skills/workflows.py",
+    "agent_skills/workflow_graph.py",
+    "agent_skills/diagnosis.py",
+    "agent_skills/review_orchestration.py",
 )
 CORE_SKILL_PATHS = (
     "skills/compound-delivery-kernel/SKILL.md",
     "skills/compound-learning/SKILL.md",
     "skills/deliver-work/SKILL.md",
     "skills/deliver-work/references/capability-contract.md",
+    "skills/diagnose-work/SKILL.md",
     "skills/execute-work/SKILL.md",
+    "skills/obtain-review/SKILL.md",
     "skills/plan-work/SKILL.md",
     "skills/review-work/SKILL.md",
 )
@@ -52,14 +57,18 @@ class CoreBoundaryTests(unittest.TestCase):
                 self.assertIsNone(FORBIDDEN.search(text))
 
     def test_core_python_imports_only_standard_library_and_core_modules(self) -> None:
-        allowed_roots = {"__future__", "dataclasses", "enum", "re", "typing", "unicodedata"}
+        allowed_roots = {"__future__", "copy", "dataclasses", "enum", "hashlib", "json", "pathlib", "re", "typing", "unicodedata"}
         for relative in CORE_RUNTIME_PATHS:
             with self.subTest(path=relative):
                 tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ImportFrom) and node.level:
+                        self.assertEqual(node.level, 1)
+                        self.assertIn(node.module, {"workflow_graph", "workflows"})
                 imported = {
                     node.module.split(".")[0]
                     for node in ast.walk(tree)
-                    if isinstance(node, ast.ImportFrom) and node.module
+                    if isinstance(node, ast.ImportFrom) and node.module and not node.level
                 }
                 imported.update(
                     alias.name.split(".")[0]
@@ -76,12 +85,19 @@ class CoreBoundaryTests(unittest.TestCase):
         )
         for relative in (
             "agent_skills/workflows.py",
+            "agent_skills/workflow_graph.py",
+            "agent_skills/diagnosis.py",
+            "agent_skills/review_orchestration.py",
             "skills/compound-learning/SKILL.md",
+            "skills/diagnose-work/SKILL.md",
             "skills/execute-work/SKILL.md",
+            "skills/obtain-review/SKILL.md",
             "skills/plan-work/SKILL.md",
             "skills/review-work/SKILL.md",
             "tests/scenarios/core/compound.json",
             "tests/scenarios/core/execute.json",
+            "tests/scenarios/core/diagnose.json",
+            "tests/scenarios/core/obtain-review.json",
             "tests/scenarios/core/plan.json",
             "tests/scenarios/core/review.json",
         ):

@@ -1,13 +1,13 @@
 {
-  "qualificationDriverSha256": "36e936fd3bd899070560eff6a340544d33b7724751bce9d208a8a1f8c4488b90",
+  "qualificationDriverSha256": "85e8ecad2c9d462c32f3bccb9a122d8fbc1275e199e31778138fcb22ea20c889",
   "redaction": {
     "environmentCaptured": false,
     "pathsCaptured": false,
     "retainedEvidence": "named assertions and deterministic checkpoint summaries"
   },
   "release": {
-    "archiveSha256": "f8b39590bae786767cff1cfd849382884a0b66f12ef9978f752dbcb28c230f26",
-    "metadataSha256": "cd0094de0eba4077e05af0c12e10b2a692d93e30e58b7d6aa8495cb0a53899fe",
+    "archiveSha256": "25dd462a818cf2134c08be27181ba123adfa74bf2c367884a411b8b664523fc6",
+    "metadataSha256": "e3b4904148b45df90937f2f383f1ef1e5cb0ba60a27291602edf89609c3a3ffa",
     "profile": "core",
     "releaseId": "core-v1"
   },
@@ -28,10 +28,11 @@
       "result": "passed"
     },
     {
-      "assertionCount": 11,
-      "checkpointSha256": "7d991fc8bb71458c199a6aef86f9aee83cf113b2718c7d4498bb52796a1bb312",
+      "assertionCount": 13,
+      "checkpointSha256": "db0edb2372d10ce3ca450f3a367f269ccc79e4b807dbf7c5fe0e4ea5306d07f0",
       "evidence": [
-        "packaged conformance sensor matches the trusted sensor",
+        "packaged evidence matches trusted bytes: tests/test_delivery_provider_rails_contract.py",
+        "sensor and public-artifact reads use the extracted candidate: test_delivery_provider_rails_contract",
         "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_schema_is_one_closed_versioned_message_union",
         "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_shared_fixture_covers_required_cases_and_all_event_outcomes",
         "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_one_fake_provider_independently_conforms_to_shared_cases",
@@ -41,7 +42,8 @@
         "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_consumer_never_combines_events_from_different_attempts",
         "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_invalid_renegotiation_fails_closed",
         "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_absorbing_terminal_precedes_late_message_validation",
-        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_schema_and_fakes_agree_on_named_malformed_messages"
+        "sensor passed: test_delivery_provider_rails_contract.DeliveryProviderRailsContractTests.test_schema_and_fakes_agree_on_named_malformed_messages",
+        "runtime imports use the extracted candidate"
       ],
       "id": "delivery-provider-rails-conformance",
       "result": "passed"
@@ -111,14 +113,101 @@
       ],
       "id": "bounded-review-failure",
       "result": "passed"
+    },
+    {
+      "assertionCount": 16,
+      "checkpointSha256": "3ecf4baeef7680e8588f22cdbacbeb2c668c49bd8b6820443b70372941330502",
+      "evidence": [
+        "packaged evidence matches trusted bytes: tests/test_workflow_graph_contract.py",
+        "packaged evidence matches trusted bytes: tests/consumers/workflow_consumer.py",
+        "packaged evidence matches trusted bytes: tests/fixtures/workflow-graph/result-templates.json",
+        "sensor and public-artifact reads use the extracted candidate: test_workflow_graph_contract",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_schema_engine_is_exactly_pinned_and_consumer_does_not_import_runtime",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_complete_canonical_graph_and_strict_matrix",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_intake_diagnosis_plan_returns_to_same_checkpoint",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_unknown_fields_versions_and_exact_binding_reject",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_required_prerequisite_and_conditional_diagnosis",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_contextual_and_produced_candidate_binding",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_review_acquisition_requires_exact_repair_origin_evidence",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_contextual_diagnosis_and_plan_reject_candidate_b_after_checkpoint_a",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_digest_shapes_reject_terminal_newline_even_when_context_matches",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_unbound_public_templates_admit_only_after_harness_binding",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_independent_consumer_catches_planted_validator_and_schema_drift",
+        "runtime imports use the extracted candidate"
+      ],
+      "id": "workflow-graph-conformance",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 14,
+      "checkpointSha256": "8c3ff9a2ef6c93c24eb9cf054d13d9bbb81e257b76436894f17b707fe4c2e3d8",
+      "evidence": [
+        "packaged evidence matches trusted bytes: tests/test_diagnosis.py",
+        "packaged evidence matches trusted bytes: tests/scenarios/core/diagnose.json",
+        "sensor and public-artifact reads use the extracted candidate: test_diagnosis",
+        "sensor passed: test_diagnosis.DiagnosisTests.test_complete_evidence_backed_chain_confirms",
+        "sensor passed: test_diagnosis.DiagnosisTests.test_uncertain_link_needs_observed_satisfied_prediction",
+        "sensor passed: test_diagnosis.DiagnosisTests.test_contradiction_cannot_confirm_even_if_link_is_marked_certain",
+        "sensor passed: test_diagnosis.DiagnosisTests.test_unavailable_reproduction_and_missing_observation_are_inconclusive",
+        "sensor passed: test_diagnosis.DiagnosisTests.test_missing_required_condition_blocks_with_action",
+        "sensor passed: test_diagnosis.DiagnosisTests.test_ruled_out_hypotheses_assumptions_and_limits_are_retained",
+        "sensor passed: test_diagnosis.DiagnosisTests.test_subflows_return_to_same_context_without_mutating_or_aliasing",
+        "sensor passed: test_diagnosis.DiagnosisTests.test_binding_rejects_stale_context_and_injected_authority",
+        "sensor passed: test_diagnosis.DiagnosisTests.test_confirmation_does_not_satisfy_implementation_approval",
+        "sensor passed: test_diagnosis.DiagnosisTests.test_each_release_field_reference_version_and_prerequisite_remains_exact",
+        "runtime imports use the extracted candidate"
+      ],
+      "id": "diagnosis-causal-evidence",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 16,
+      "checkpointSha256": "448295fffbd834a70624c6a20a3ac060e1583f3bd0370734548188ec126515f9",
+      "evidence": [
+        "packaged evidence matches trusted bytes: tests/test_review_orchestration.py",
+        "packaged evidence matches trusted bytes: tests/consumers/workflow_consumer.py",
+        "packaged evidence matches trusted bytes: tests/scenarios/core/obtain-review.json",
+        "sensor and public-artifact reads use the extracted candidate: test_review_orchestration",
+        "sensor passed: test_review_orchestration.ReviewAcquisitionTests.test_lenses_reject_before_realization_inputs_exist",
+        "sensor passed: test_review_orchestration.ReviewAcquisitionTests.test_prepared_inputs_are_bounded_ordered_and_copied",
+        "sensor passed: test_review_orchestration.ReviewAcquisitionTests.test_all_projection_states_and_complete_retained_evidence",
+        "sensor passed: test_review_orchestration.ReviewAcquisitionTests.test_normalization_default_independence_and_no_aliasing",
+        "sensor passed: test_review_orchestration.ReviewAcquisitionTests.test_envelope_entries_preserve_exact_caller_order",
+        "sensor passed: test_review_orchestration.ReviewAcquisitionTests.test_all_binding_components_reject_at_envelope_and_lens_boundary",
+        "sensor passed: test_review_orchestration.ReviewAcquisitionTests.test_closed_malformed_result_states_and_authority_claims_reject",
+        "sensor passed: test_review_orchestration.ReviewAcquisitionTests.test_attestation_binds_exact_result_and_distinct_realization",
+        "sensor passed: test_review_orchestration.ReviewAcquisitionTests.test_unsupported_self_claims_and_nonobtained_attestation_reject",
+        "sensor passed: test_review_orchestration.ReviewAcquisitionTests.test_sequential_realization_and_acquisition_never_call_reducer",
+        "sensor passed: test_review_orchestration.ReviewAcquisitionTests.test_independent_consumer_rejects_stale_a_and_accepts_complete_fresh_b",
+        "runtime imports use the extracted candidate"
+      ],
+      "id": "review-acquisition-exact-rounds",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 8,
+      "checkpointSha256": "ebb5066e12eb9fd657cd834bd819c764945a86739048831801af1adb41ffdd82",
+      "evidence": [
+        "packaged evidence matches trusted bytes: tests/test_workflow_graph_contract.py",
+        "packaged evidence matches trusted bytes: tests/consumers/workflow_consumer.py",
+        "sensor and public-artifact reads use the extracted candidate: test_workflow_graph_contract",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_omission_effective_requiredness_and_closed_overlay",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_all_stages_statuses_and_typed_outputs",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_edges_repair_diagnosis_and_required_handoffs",
+        "sensor passed: test_workflow_graph_contract.WorkflowGraphContractTests.test_feedback_cannot_claim_trust_or_learning_written",
+        "runtime imports use the extracted candidate"
+      ],
+      "id": "authority-negative-handoffs",
+      "result": "passed"
     }
   ],
   "schemaVersion": "agent-skills-qualification/1",
   "summary": {
-    "assertionCount": 35,
+    "assertionCount": 91,
     "failedScenarioCount": 0,
-    "passedScenarioCount": 8,
-    "requiredScenarioCount": 8,
+    "passedScenarioCount": 12,
+    "requiredScenarioCount": 12,
     "result": "passed"
-  }
+  },
+  "workflowGraphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7"
 }

@@ -1,0 +1,130 @@
+{
+  "schemaVersion": "workflow-result-templates/1",
+  "description": "Unbound templates: harness supplies exact release/graph/subject and independently captured candidate references at runtime.",
+  "results": [
+    {
+      "stageId": "intake",
+      "status": "succeeded",
+      "output": {
+        "kind": "scoped-subject",
+        "evidenceRef": "retained-output"
+      },
+      "evidenceRefs": [
+        "retained-observation"
+      ],
+      "limitations": []
+    },
+    {
+      "stageId": "diagnose",
+      "status": "succeeded",
+      "output": {
+        "kind": "confirmed",
+        "evidenceRef": "retained-output"
+      },
+      "evidenceRefs": [
+        "retained-observation"
+      ],
+      "limitations": []
+    },
+    {
+      "stageId": "plan",
+      "status": "succeeded",
+      "output": {
+        "kind": "bounded-plan",
+        "evidenceRef": "retained-output"
+      },
+      "evidenceRefs": [
+        "retained-observation"
+      ],
+      "limitations": []
+    },
+    {
+      "stageId": "implement",
+      "status": "succeeded",
+      "output": {
+        "kind": "delivery-candidate",
+        "evidenceRef": "retained-output"
+      },
+      "evidenceRefs": [
+        "retained-observation"
+      ],
+      "limitations": []
+    },
+    {
+      "stageId": "review.acquire",
+      "status": "succeeded",
+      "output": {
+        "kind": "review-acquisition-envelope",
+        "evidenceRef": "retained-output"
+      },
+      "evidenceRefs": [
+        "retained-observation"
+      ],
+      "limitations": []
+    },
+    {
+      "stageId": "review.reduce",
+      "status": "succeeded",
+      "output": {
+        "kind": "review-round-aligned",
+        "evidenceRef": "retained-output"
+      },
+      "evidenceRefs": [
+        "retained-observation"
+      ],
+      "limitations": []
+    },
+    {
+      "stageId": "publish.handoff",
+      "status": "succeeded",
+      "output": {
+        "kind": "published",
+        "evidenceRef": "retained-output",
+        "adapterRef": "publication-evidence"
+      },
+      "evidenceRefs": [
+        "retained-observation"
+      ],
+      "limitations": []
+    },
+    {
+      "stageId": "feedback.handoff",
+      "status": "succeeded",
+      "output": {
+        "kind": "feedback-available",
+        "evidenceRef": "retained-output",
+        "adapterRef": "feedback-evidence",
+        "trust": "untrusted"
+      },
+      "evidenceRefs": [
+        "retained-observation"
+      ],
+      "limitations": []
+    },
+    {
+      "stageId": "finish.verify",
+      "status": "succeeded",
+      "output": {
+        "kind": "finish-evidence-satisfied",
+        "evidenceRef": "retained-output"
+      },
+      "evidenceRefs": [
+        "retained-observation"
+      ],
+      "limitations": []
+    },
+    {
+      "stageId": "compound",
+      "status": "succeeded",
+      "output": {
+        "kind": "learning-required",
+        "evidenceRef": "retained-output",
+        "preservationHandoffRef": "repository-preservation"
+      },
+      "evidenceRefs": [
+        "retained-observation"
+      ],
+      "limitations": []
+    }
+  ]
+}

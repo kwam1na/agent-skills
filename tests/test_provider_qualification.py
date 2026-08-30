@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import shutil
@@ -11,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_skills.release import build_release
+from agent_skills.release import VerifiedRelease, build_release
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,63 @@ def _load_runner():
 
 
 class ProviderQualificationTests(unittest.TestCase):
+    def test_record_cannot_overwrite_a_qualification_input(self) -> None:
+        runner = _load_runner()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            archive, metadata = directory / "candidate.zip", directory / "candidate.json"
+            for target in (archive, metadata):
+                target.write_bytes(b"retained input")
+            for output in (archive, metadata):
+                with self.subTest(output=output.name), \
+                        mock.patch.object(runner, "qualify", return_value={}) as qualify, \
+                        mock.patch.object(sys, "stderr"), mock.patch.object(sys, "stdout"):
+                    result = runner.main([
+                        "--archive", str(archive), "--metadata", str(metadata), "--record", str(output),
+                    ])
+                    self.assertEqual(result, 1)
+                    qualify.assert_not_called()
+                    self.assertEqual(output.read_bytes(), b"retained input")
+
+    def test_failed_qualification_removes_stale_success_record(self) -> None:
+        runner = _load_runner()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            record = directory / "previous-success.json"
+            record.write_text('{"summary":{"result":"passed"}}\n')
+            with mock.patch.object(runner, "qualify", side_effect=runner.QualificationFailure("probe failed")), \
+                    mock.patch.object(sys, "stderr"):
+                result = runner.main([
+                    "--archive", str(directory / "candidate.zip"),
+                    "--metadata", str(directory / "candidate.json"),
+                    "--record", str(record),
+                ])
+            self.assertEqual(result, 1)
+            self.assertFalse(record.exists())
+
+    def test_missing_duplicate_or_unasserted_scenarios_cannot_qualify(self) -> None:
+        runner = _load_runner()
+        release = VerifiedRelease("fixture", "core", "a" * 64, "b" * 64)
+        cases = (
+            ((), 1, "synthetic assertion"),
+            (runner.SCENARIOS[:-1], 1, "synthetic assertion"),
+            ((*runner.SCENARIOS, runner.SCENARIOS[0]), 1, "synthetic assertion"),
+            (runner.SCENARIOS, 0, "synthetic assertion"),
+            (runner.SCENARIOS, True, "synthetic assertion"),
+            (runner.SCENARIOS, 1, " "),
+        )
+        for scenario_names, count, evidence in cases:
+            with self.subTest(scenarios=scenario_names, assertions=count, evidence=evidence), \
+                    mock.patch.object(runner, "verify_release", return_value=release), \
+                    mock.patch.object(runner, "Lifecycle"), \
+                    mock.patch.object(runner, "sha256_file", return_value="a" * 64), \
+                    mock.patch.object(runner, "SCENARIOS", scenario_names), \
+                    mock.patch.object(runner, "run_scenario", side_effect=lambda name, operation: {
+                        "id": name, "assertionCount": count, "evidence": [evidence], "result": "passed",
+                    }):
+                with self.assertRaises(runner.QualificationFailure):
+                    runner.qualify(Path("candidate.zip"), Path("candidate.json"))
+
     def _run(self, directory: Path, *, record: Path | None = None):
         archive = directory / "core.zip"
         metadata = directory / "core.release.json"
@@ -82,6 +140,10 @@ class ProviderQualificationTests(unittest.TestCase):
             self.assertRegex(record["release"]["archiveSha256"], r"^[a-f0-9]{64}$")
             self.assertRegex(record["release"]["metadataSha256"], r"^[a-f0-9]{64}$")
             self.assertRegex(record["installedProviderSha256"], r"^[a-f0-9]{64}$")
+            self.assertEqual(
+                record["workflowGraphSha256"],
+                hashlib.sha256((ROOT / "workflows/delivery-v1.json").read_bytes()).hexdigest(),
+            )
             self.assertEqual(record["summary"]["result"], "passed")
             self.assertEqual(
                 {scenario["id"] for scenario in record["scenarios"]},
@@ -99,6 +161,8 @@ class ProviderQualificationTests(unittest.TestCase):
                 },
             )
             self.assertTrue(all(scenario["result"] == "passed" for scenario in record["scenarios"]))
+            fresh = next(item for item in record["scenarios"] if item["id"] == "fresh-install-and-startup")
+            self.assertIn("installed workflow graph and both new skills match the exact candidate", fresh["evidence"])
             success = next(
                 scenario
                 for scenario in record["scenarios"]

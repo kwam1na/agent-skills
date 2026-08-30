@@ -1,0 +1,47 @@
+{
+  "candidateA": {
+    "dispositions": [
+      "changes-requested",
+      "aligned",
+      "aligned"
+    ],
+    "expectedReduction": "unresolved",
+    "round": 1
+  },
+  "candidateB": {
+    "dispositions": [
+      "aligned",
+      "aligned",
+      "aligned"
+    ],
+    "expectedReduction": "aligned",
+    "round": 2
+  },
+  "projection": [
+    {
+      "outcome": "aligned",
+      "state": "obtained"
+    },
+    {
+      "outcome": "changes-requested",
+      "state": "obtained"
+    },
+    {
+      "failure": "review-acquisition-failed",
+      "state": "failed"
+    },
+    {
+      "failure": "review-acquisition-indeterminate",
+      "state": "indeterminate"
+    },
+    {
+      "omitted": true,
+      "state": "missing"
+    }
+  ],
+  "requestedLenses": [
+    "correctness",
+    "testing",
+    "security"
+  ]
+}

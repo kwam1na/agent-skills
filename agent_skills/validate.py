@@ -15,8 +15,8 @@ from .errors import Finding
 BASELINE_REVISION = "342850073464a2c9b6198d32d11475f5fa5cbe53"
 SCHEMA_VERSIONS = {
     "catalog.json": "agent-skills-catalog/1",
-    "provenance.lock.json": "agent-skills-provenance/1",
 }
+PROVENANCE_VERSIONS = {"agent-skills-provenance/1", "agent-skills-provenance/2"}
 RULE_IDS = (
     "catalog.complete", "core.boundary", "core.leakage", "dependency.cycle",
     "dependency.reference", "dependency.required_closure", "document.canonical",
@@ -67,6 +67,11 @@ CORE_RUNTIME_PATHS = (
     "agent_skills/fake_tracker.py",
     "agent_skills/router.py",
     "agent_skills/workflows.py",
+)
+WORKFLOW_RUNTIME_PATHS = (
+    "agent_skills/workflow_graph.py",
+    "agent_skills/diagnosis.py",
+    "agent_skills/review_orchestration.py",
 )
 
 
@@ -557,7 +562,12 @@ def _validate_core_leakage(
             for class_id, pattern in LEAKAGE_PATTERNS:
                 if pattern.search(contents):
                     reader.findings.append(Finding("core.leakage", relative, f"forbidden {class_id} literal"))
-    for relative in CORE_RUNTIME_PATHS:
+    runtime_paths = CORE_RUNTIME_PATHS
+    # Retained releases predate these members and keep their original closure.
+    # Selecting either new workflow requires the complete shared runtime scan.
+    if {"diagnose-work", "obtain-review"}.intersection(members):
+        runtime_paths += WORKFLOW_RUNTIME_PATHS
+    for relative in runtime_paths:
         try:
             contents = (reader.root / relative).read_text(encoding="utf-8")
         except (FileNotFoundError, OSError, UnicodeDecodeError):
@@ -570,6 +580,79 @@ def _validate_core_leakage(
                 reader.findings.append(
                     Finding("core.boundary", relative, f"forbidden {class_id} literal")
                 )
+
+
+def _validate_provenance_source(
+    entry: dict, version: object, findings: list[Finding]
+) -> None:
+    """Validate origin declarations, not external approval authenticity or Git data."""
+    provenance_id = entry["id"]
+    source = entry.get("source")
+    if not isinstance(source, dict):
+        findings.append(Finding("schema.supported", provenance_id, "provenance source must be an object"))
+        return
+
+    def reject(message: str) -> None:
+        findings.append(Finding("provenance.coverage", provenance_id, message))
+
+    def nonempty(value: object) -> bool:
+        return isinstance(value, str) and bool(value.strip())
+
+    if version == "agent-skills-provenance/1":
+        # Retained archives keep their original baseline semantics. New kinds
+        # cannot downgrade to this version to bypass their required fields.
+        if source.get("revision") != BASELINE_REVISION:
+            reject("unapproved source revision")
+        if "kind" in source or "repository" in source:
+            reject("per-entry origin requires provenance version 2")
+        return
+
+    modification = entry.get("modification")
+    if (
+        not isinstance(modification, dict)
+        or set(modification) != {"reason", "status"}
+        or not nonempty(modification.get("reason"))
+        or modification.get("status") not in (
+            "source-derived", "modified-derivative", "independently-authored"
+        )
+    ):
+        reject("version 2 requires closed modification status and reason")
+
+    kind = source.get("kind")
+    if kind == "repository-source":
+        required = {"kind", "repository", "revision", "path", "sha256"}
+        if not required <= source.keys() or source.keys() - required - {"baselineSourceId"}:
+            reject("repository source has missing or unknown fields")
+        if not nonempty(source.get("repository")):
+            reject("repository source requires a repository identity")
+        if not isinstance(source.get("revision"), str) or not re.fullmatch(r"[0-9a-f]{40}", source["revision"]):
+            reject("repository source requires an immutable full revision")
+        if not nonempty(source.get("path")) or source.get("path") == "." or not safe_relative_path(source.get("path")):
+            reject("repository source requires a safe relative path")
+        if not isinstance(source.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", source["sha256"]):
+            reject("repository source requires a source sha256")
+        if "baselineSourceId" in source and not nonempty(source["baselineSourceId"]):
+            reject("repository source baseline reference must not be empty")
+        if isinstance(modification, dict) and modification.get("status") == "independently-authored":
+            reject("repository source cannot claim independent authorship")
+    elif kind == "independent-origin":
+        if set(source) != {"kind", "rationale", "ownerApproval"}:
+            reject("independent origin has missing or unknown fields")
+        if not nonempty(source.get("rationale")):
+            reject("independent origin requires a rationale")
+        approval = source.get("ownerApproval")
+        if (
+            not isinstance(approval, dict)
+            or set(approval) != {"owner", "reference"}
+            or not nonempty(approval.get("owner"))
+            or approval.get("owner") != entry.get("owner")
+            or not nonempty(approval.get("reference"))
+        ):
+            reject("independent origin requires matching owner approval and evidence reference")
+        if not isinstance(modification, dict) or modification.get("status") != "independently-authored":
+            reject("independent origin cannot claim repository derivation")
+    else:
+        reject("unknown or missing provenance source kind")
 
 
 def validate_corpus(root: Path) -> ValidationResult:
@@ -590,6 +673,9 @@ def validate_corpus(root: Path) -> ValidationResult:
         document = catalog if filename == "catalog.json" else provenance_document
         if document.get("schemaVersion") != expected:
             findings.append(Finding("schema.supported", filename, "unsupported schema version"))
+    provenance_version = provenance_document.get("schemaVersion")
+    if not isinstance(provenance_version, str) or provenance_version not in PROVENANCE_VERSIONS:
+        findings.append(Finding("schema.supported", "provenance.lock.json", "unsupported schema version"))
 
     provenance_entries = provenance_document.get("entries")
     if not isinstance(provenance_entries, list):
@@ -646,13 +732,8 @@ def validate_corpus(root: Path) -> ValidationResult:
 
     recorded_outputs: list[str] = []
     for provenance_id, entry in sorted(provenance.items()):
-        source = entry.get("source")
-        if not isinstance(source, dict):
-            findings.append(Finding("schema.supported", provenance_id, "provenance source must be an object"))
-            source = {}
-        if source.get("revision") != BASELINE_REVISION:
-            findings.append(Finding("provenance.coverage", provenance_id, "unapproved source revision"))
-        if not entry.get("owner"):
+        _validate_provenance_source(entry, provenance_version, findings)
+        if not isinstance(entry.get("owner"), str) or not entry["owner"].strip():
             findings.append(Finding("provenance.license", provenance_id, f"missing ownership: {provenance_id}"))
         if not entry.get("license"):
             findings.append(Finding("provenance.license", provenance_id, f"missing license: {provenance_id}"))
@@ -676,7 +757,7 @@ def validate_corpus(root: Path) -> ValidationResult:
         if not isinstance(outputs, list) or not outputs:
             findings.append(Finding("provenance.coverage", provenance_id, "missing outputs"))
             continue
-        output_paths = [output.get("path") for output in outputs if isinstance(output, dict)]
+        output_paths = [output["path"] for output in outputs if isinstance(output, dict) and isinstance(output.get("path"), str)]
         if len(output_paths) != len(outputs) or output_paths != sorted(output_paths):
             findings.append(
                 Finding(

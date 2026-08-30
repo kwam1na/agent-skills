@@ -9,14 +9,19 @@ active-generation link, so neither host owns another editable workflow copy or
 switches independently.
 
 `catalog.json` lists every cataloged skill. `profiles/` declares selectable
-workflow sets, and `provenance.lock.json` binds every cataloged file to its
-approved Athena baseline source, revision, license status, modification status,
-and SHA-256 digest.
+workflow sets, and `provenance.lock.json` binds every cataloged file to its own
+immutable repository source or explicitly approved independent origin, license
+status, modification status, and SHA-256 digest. Historical source baselines are
+not silently advanced when a new skill is added.
 
 Validate the checked-in registry and hostile fixture suite with Python 3.11 or
-newer:
+newer. Inside your chosen virtual environment, install the optional test extra
+once; production remains standard-library-only. Qualification uses isolated
+Python processes, so the pinned schema engine must be installed in that same
+interpreter, not available only through a user-site or search-path override:
 
 ```bash
+python3 -m pip install -e ".[test]"
 python3 scripts/validate-registry.py
 python3 tests/test_registry.py
 python3 -m unittest discover -s tests -p 'test_*.py'
@@ -56,11 +61,25 @@ the complete core closure.
 
 The default `core` profile contains the portable delivery posture, normalized
 router, neutral tracker capability contract, bounded planning and execution
-workflows, bounded multi-lens review convergence, and a caller-owned compounding
-decision. Bootstrap guidance is opt-in. The optional Linear profile adds a
+workflows, evidence-first diagnosis, exact caller-selected review acquisition,
+bounded multi-lens review convergence, and a caller-owned compounding decision.
+Bootstrap guidance is opt-in. The optional Linear profile adds a
 host-native MCP adapter without changing core behavior when tracking is
 unavailable. Cataloged source-only inventory is not selectable, and Athena
 overlays are classification inputs only rather than distributable skills.
+
+The [portable workflow graph](docs/workflow-graph-v1.md) declares ten canonical
+stages and closed, exactly bound stage results. `diagnose-work` returns causal
+evidence without granting fix authority. `obtain-review` retains one ordered,
+candidate-bound acquisition round and projects it into unchanged `review-work`
+inputs; only that reducer decides convergence. Publication and feedback are
+upstream-owned evidence handoffs, not operations supplied by this corpus.
+The active host and adopting harness still own realization, permissions, durable
+checkpoints, candidate capture, policy, and finish-line authority.
+Routing keeps `entry_point` fixed at `deliver-work`. The additive
+`RouteDecision.workflow_skill` property identifies the released downstream skill
+(`diagnose-work` for diagnosis), or returns `None` for clarification or a blocked
+handoff. Repository workflow selection still takes precedence over host hints.
 
 From a trusted checkout, qualify one exact archive in standalone environments
 with only the bundled fake capability adapter:
@@ -77,7 +96,9 @@ fixed scenario in a fresh process whose core imports resolve from that extracted
 candidate. The fail-closed record is keyed to the archive, metadata, and a
 driver digest covering the launcher plus the fixed trusted sensors and fixtures
 it executes and the explicit Python module closure used to verify and extract
-the archive. It retains only named assertions and deterministic checkpoint
+the archive. New workflow sensors and their independent schema consumer execute
+from the extracted candidate with trusted-byte checks. It retains only named
+assertions and deterministic checkpoint
 summaries: no environment values or local paths. The gate rejects a missing,
 duplicated, or unasserted required scenario so an empty run cannot pass. The
 rollback checkpoint derives a disposable prior fixture; the candidate archive
@@ -86,14 +107,38 @@ fixture is built only from the verified candidate extraction, never from the
 runner checkout corpus.
 The current record is checked in at `qualifications/core-v1.json`.
 
-Qualify the optional Linear profile only after a configured host has exercised
-the live connector with clearly disposable work. The host must search for an
-exact randomly generated operation marker before each create, retain one
-canonical redacted host attestation, and cancel every disposable entity after
-the create, read, update, search, relation, and reconciliation checks. Post the
-attestation digest and its random receipt reference through the same host-native
-Linear MCP boundary, then feed the retained attestation to the trusted driver
-together with the exact core and Linear releases:
+Qualify the optional Linear profile only after an authorized maintainer's
+configured host has exercised the live connector with clearly disposable work.
+Before any live operation, build and verify both archives, then independently
+freeze a canonical collector input. Never derive this expected input from the
+attestation it will later validate.
+
+The collector input is `agent-skills-linear-collector-binding/1`:
+
+| Field | Required value |
+| --- | --- |
+| `schemaVersion` | `agent-skills-linear-collector-binding/1` |
+| `releases` | Exactly `core` and `linear`, each with `releaseId`, `profile`, `archiveSha256`, and `metadataSha256` from independent archive verification |
+| `graphSha256` | SHA-256 of the exact `workflows/delivery-v1.json` bytes, identical in both extracted archives |
+| `subjectRef` | `workflow-subject-ref/1` with a nonempty opaque qualification identity |
+| `candidateRef` | `workflow-candidate-ref/1` with a nonempty opaque candidate identity |
+
+Each reference is an object with `schemaVersion` and `opaque`. Use fresh redacted
+opaque identities, not ticket identifiers, paths, or host payloads. Serialize the
+collector input and attestation with sorted keys, two-space indentation, and a
+final newline. The checked input is
+`qualifications/linear-v1.collector-binding.json`; it is not part of either archive.
+Qualification also rebuilds the supplied Linear archive's core projection and
+requires its archive and metadata bytes to match the separately qualified core.
+
+The host searches for an exact random operation marker before each create,
+retains the redacted live event sequence, and cancels both disposable entities
+after create, read, update, search, relation, and reconciliation checks. The
+`agent-skills-linear-host-attestation/2` document includes `collectorBinding`
+equal to the frozen input, plus the existing collector, audit, entity, event,
+session, and receipt fields. Post its digest and random receipt reference through
+the same host-native Linear MCP boundary. Then pass the retained attestation and
+the independently frozen input to the offline driver:
 
 ```bash
 python3 scripts/qualify-linear.py \
@@ -102,14 +147,18 @@ python3 scripts/qualify-linear.py \
   --core-record qualifications/core-v1.json \
   --linear-archive /tmp/linear.zip \
   --linear-metadata /tmp/linear.release.json \
+  --collector-binding qualifications/linear-v1.collector-binding.json \
   --attestation qualifications/linear-v1.attestation.json \
   --record /tmp/linear.qualification.json
 ```
 
-The checked record at `qualifications/linear-v1.json` binds the passing core
+The version-2 checked record at `qualifications/linear-v1.json` binds the passing core
 qualification, both exact archive and metadata identities, canonical extracted
-source-tree digests, the exact retained attestation bytes, and its retained
-external receipt reference. The transport sensor inspects only the delta between
+source-tree digests, the frozen collector input and its digest, the exact retained
+attestation bytes, and its external receipt reference. Old unbound attestations,
+any candidate or graph mismatch, and unavailable protected collection block a
+new qualification; none may be copied forward as fresh evidence. The transport
+sensor inspects only the delta between
 the supplied extracted Linear and core candidates. Its tests prove rejection of
 concrete direct endpoint, SDK, Node HTTP(S), and command transport actions while
 allowing non-executable boundary terminology and unrelated extension code.
@@ -122,8 +171,9 @@ mutate a runner's existing host installation.
 
 The protected host-native run owns the external MCP provenance. Offline checks
 bind the retained attestation bytes to its receipt reference and exact candidate
-artifacts, then deterministically replay the redacted event causality; they do
-not independently prove external calls. The retained attestation and record
+artifacts and independently frozen input, then deterministically replay the
+redacted event causality; they do not independently prove external calls or
+collector authorization. The retained attestation and record
 contain no host payloads, ticket identifiers, secrets, or local paths.
 
 Qualify the installed delivery provider separately from any adopting
@@ -145,6 +195,10 @@ success, blocked, failed, cancelled, interrupted, duplicate, unsupported
 version, reconciliation, anti-vacuity, completeness, and redaction behavior
 while retaining no local paths or opaque host references. The checked record is
 `qualifications/provider-v1.json`.
+Its `workflowGraphSha256` names the actual installed graph, and the installation
+scenario compares that graph and both new skill bodies with the verified
+candidate. A failed qualifier cannot leave an earlier success record at the
+requested output path; missing, duplicate, or unasserted scenarios reject.
 
 This offline proof establishes the behavior of the exact installed provider
 bytes and their evidence output. Host and connector provenance remains the

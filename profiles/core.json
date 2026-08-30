@@ -6,7 +6,9 @@
     "skills/deliver-work/SKILL.md",
     "skills/deliver-work/agents/openai.yaml",
     "skills/deliver-work/references/capability-contract.md",
+    "skills/diagnose-work/SKILL.md",
     "skills/execute-work/SKILL.md",
+    "skills/obtain-review/SKILL.md",
     "skills/plan-work/SKILL.md",
     "skills/review-work/SKILL.md"
   ],
@@ -16,7 +18,9 @@
     "compound-delivery-kernel",
     "compound-learning",
     "deliver-work",
+    "diagnose-work",
     "execute-work",
+    "obtain-review",
     "plan-work",
     "review-work"
   ],

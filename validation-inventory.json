@@ -1,6 +1,6 @@
 {
-  "expectedLifecycleScenarioCount": 29,
-  "expectedScenarioCount": 7,
+  "expectedLifecycleScenarioCount": 30,
+  "expectedScenarioCount": 9,
   "lifecycleScenarios": [
     {
       "id": "activation-boundary-fault-recovery",
@@ -117,6 +117,10 @@
     {
       "id": "adoption-partial-predecessor-delete-recovery",
       "sensor": "tests/test_adoption.py"
+    },
+    {
+      "id": "portable-workflow-profile-release-and-offline-rollback",
+      "sensor": "tests/test_release_integration.py"
     }
   ],
   "rules": [
@@ -448,6 +452,24 @@
       "id": "repository-precedence-routes-delivery",
       "profile": "core",
       "skill": "deliver-work"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "core-profile-selects-diagnosis-workflow",
+      "profile": "core",
+      "skill": "diagnose-work"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "core-profile-selects-review-acquisition-workflow",
+      "profile": "core",
+      "skill": "obtain-review"
     }
   ],
   "schemaVersion": "agent-skills-validation-inventory/1"

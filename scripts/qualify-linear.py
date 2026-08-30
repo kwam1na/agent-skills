@@ -17,14 +17,16 @@ DRIVER_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DRIVER_ROOT))
 
 from agent_skills.lifecycle import Lifecycle
-from agent_skills.release import VerifiedRelease, verify_release
+from agent_skills.release import VerifiedRelease, build_release, verify_release
 
 
 CONTRACT_PATH = "skills/linear-tracker-adapter/references/adapter-contract.json"
 ADAPTER_ROOT = "skills/linear-tracker-adapter"
+GRAPH_PATH = "workflows/delivery-v1.json"
 TRUSTED_CONTRACT_SHA256 = "053f4bb98357f8c5b6b6d2093cb915e76f2a57526f53d8dace3056cff6e5a658"
 REQUIRED_SCENARIOS = (
     "core-qualification-binding",
+    "collector-candidate-binding",
     "linear-install-and-host-discovery",
     "live-host-attestation",
     "live-reconcile-before-retry",
@@ -181,10 +183,65 @@ def _fullmatch(reference: object, kind: str) -> bool:
     return isinstance(reference, str) and REFERENCE_PATTERNS[kind].fullmatch(reference) is not None
 
 
-def validate_attestation(value: object) -> dict:
+def validate_collector_binding(value: object) -> dict:
+    prefix = "linear_qualification.collector_binding"
+    if not isinstance(value, dict) or set(value) != {
+        "schemaVersion",
+        "releases",
+        "graphSha256",
+        "subjectRef",
+        "candidateRef",
+    }:
+        raise ValueError(f"{prefix}: unexpected document shape")
+    if value["schemaVersion"] != "agent-skills-linear-collector-binding/1":
+        raise ValueError(f"{prefix}: unsupported schema")
+    releases = value["releases"]
+    if not isinstance(releases, dict) or set(releases) != {"core", "linear"}:
+        raise ValueError(f"{prefix}: exact release pair is required")
+    digests = [value["graphSha256"]]
+    for profile, release in releases.items():
+        if not isinstance(release, dict) or set(release) != {
+            "archiveSha256",
+            "metadataSha256",
+            "profile",
+            "releaseId",
+        }:
+            raise ValueError(f"{prefix}: release shape is invalid")
+        if (
+            release["profile"] != profile
+            or not isinstance(release["releaseId"], str)
+            or not release["releaseId"].strip()
+        ):
+            raise ValueError(f"{prefix}: release identity is invalid")
+        digests.extend((release["archiveSha256"], release["metadataSha256"]))
+    if any(
+        not isinstance(digest, str) or re.fullmatch(r"[a-f0-9]{64}", digest) is None
+        for digest in digests
+    ):
+        raise ValueError(f"{prefix}: invalid digest")
+    for kind in ("subject", "candidate"):
+        reference = value[f"{kind}Ref"]
+        if (
+            not isinstance(reference, dict)
+            or set(reference) != {"schemaVersion", "opaque"}
+            or reference["schemaVersion"] != f"workflow-{kind}-ref/1"
+            or not isinstance(reference["opaque"], str)
+            or not reference["opaque"].strip()
+        ):
+            raise ValueError(f"{prefix}: invalid versioned opaque reference")
+    return value
+
+
+def load_collector_binding(path: Path) -> dict:
+    return validate_collector_binding(_load_canonical(path, "collector_binding"))
+
+
+def validate_attestation(value: object, expected_binding: dict) -> dict:
+    validate_collector_binding(expected_binding)
     if not isinstance(value, dict) or set(value) != {
         "auditReferences",
         "collector",
+        "collectorBinding",
         "entities",
         "events",
         "receipt",
@@ -192,8 +249,11 @@ def validate_attestation(value: object) -> dict:
         "sessionReference",
     }:
         raise ValueError("linear_qualification.attestation: unexpected document shape")
-    if value["schemaVersion"] != "agent-skills-linear-host-attestation/1":
+    if value["schemaVersion"] != "agent-skills-linear-host-attestation/2":
         raise ValueError("linear_qualification.attestation: unsupported schema")
+    validate_collector_binding(value["collectorBinding"])
+    if value["collectorBinding"] != expected_binding:
+        raise ValueError("linear_qualification.attestation: collector binding mismatch")
     if value["collector"] != {
         "kind": "trusted-host-side",
         "transport": "host-native-linear-mcp",
@@ -203,8 +263,8 @@ def validate_attestation(value: object) -> dict:
     if (
         not isinstance(references, list)
         or len(references) != 2
-        or len(set(references)) != len(references)
         or any(not _fullmatch(reference, "audit") for reference in references)
+        or len(set(references)) != len(references)
     ):
         raise ValueError("linear_qualification.attestation: audit references are invalid")
     entities = value["entities"]
@@ -261,7 +321,8 @@ def validate_attestation(value: object) -> dict:
             raise ValueError("linear_qualification.attestation: event shape is invalid")
         operation, outcome, roles = expected
         if (
-            event["sequence"] != sequence
+            type(event["sequence"]) is not int
+            or event["sequence"] != sequence
             or event["operation"] != operation
             or event["outcome"] != outcome
             or not isinstance(event["roles"], list)
@@ -294,6 +355,7 @@ def validate_attestation(value: object) -> dict:
         raise ValueError("linear_qualification.attestation: forbidden retained data")
     return {
         "liveEvidence": [
+            "retained host attestation matches the independently frozen collector binding",
             "retained host attestation covers all six declared operations",
             "retained host attestation records canceled cleanup for both entities",
             "retained attestation names one external Linear receipt reference",
@@ -307,15 +369,19 @@ def validate_attestation(value: object) -> dict:
     }
 
 
-def load_attestation(path: Path) -> dict:
+def _load_canonical(path: Path, name: str) -> dict:
     try:
         contents = path.read_text(encoding="utf-8")
         value = json.loads(contents)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError("linear_qualification.attestation: invalid JSON") from error
+        raise ValueError(f"linear_qualification.{name}: invalid JSON or unavailable input") from error
     if canonical_json(value) != contents:
-        raise ValueError("linear_qualification.attestation: canonical JSON is required")
-    return validate_attestation(value)
+        raise ValueError(f"linear_qualification.{name}: canonical JSON is required")
+    return value
+
+
+def load_attestation(path: Path, expected_binding: dict) -> dict:
+    return validate_attestation(_load_canonical(path, "attestation"), expected_binding)
 
 
 def controlled_boundary_matrix(contract: dict) -> list[dict]:
@@ -545,10 +611,41 @@ def _release_view(release: VerifiedRelease, source_tree: str) -> dict[str, str]:
     }
 
 
+def validate_candidate_binding(
+    binding: dict,
+    core: VerifiedRelease,
+    linear: VerifiedRelease,
+    core_candidate: Path,
+    linear_candidate: Path,
+) -> list[str]:
+    validate_collector_binding(binding)
+    for release in (core, linear):
+        if binding["releases"][release.profile_id] != {
+            "archiveSha256": release.archive_sha256,
+            "metadataSha256": release.metadata_sha256,
+            "profile": release.profile_id,
+            "releaseId": release.release_id,
+        }:
+            raise ValueError("linear_qualification.collector_binding: verified release mismatch")
+    for candidate in (core_candidate, linear_candidate):
+        try:
+            graph_bytes = (candidate / GRAPH_PATH).read_bytes()
+        except OSError as error:
+            raise ValueError("linear_qualification.collector_binding: released graph unavailable") from error
+        if digest_bytes(graph_bytes) != binding["graphSha256"]:
+            raise ValueError("linear_qualification.collector_binding: released graph mismatch")
+    return [
+        "frozen collector input names both verified four-field release identities",
+        "both exact archives contain the independently frozen graph bytes",
+        "subject and candidate references match independently frozen versioned opaque input",
+    ]
+
+
 def _core_binding(
     checkpoint: Checkpoint,
     core: VerifiedRelease,
     core_record: dict,
+    graph_sha256: str,
 ) -> None:
     checkpoint.check(core.profile_id == "core", "exact base profile identity verified")
     checkpoint.check(
@@ -560,6 +657,10 @@ def _core_binding(
             "releaseId": core.release_id,
         },
         "base qualification names the exact base archive and metadata",
+    )
+    checkpoint.check(
+        core_record.get("workflowGraphSha256") == graph_sha256,
+        "base qualification binds the exact released workflow graph",
     )
     checkpoint.check(
         core_record.get("summary", {}).get("result") == "passed",
@@ -646,31 +747,43 @@ def _finalize_record(
     attestation_sha256: str,
     receipt_reference: str,
     scenarios: list[dict],
+    collector_binding: dict,
+    collector_binding_sha256: str,
 ) -> dict:
+    if not isinstance(scenarios, list) or any(
+        not isinstance(scenario, dict) for scenario in scenarios
+    ):
+        raise ValueError("linear_qualification.anti_vacuity: scenarios are invalid")
     ids = tuple(scenario.get("id") for scenario in scenarios)
     if ids != REQUIRED_SCENARIOS:
         raise ValueError("linear_qualification.anti_vacuity: scenarios are missing or reordered")
-    if any(
-        scenario.get("result") == "passed"
-        and (
-            type(scenario.get("assertionCount")) is not int
-            or scenario["assertionCount"] < 1
-            or not scenario.get("evidence")
-            or not scenario.get("evidenceSource")
-        )
-        for scenario in scenarios
-    ):
-        raise ValueError("linear_qualification.anti_vacuity: passing evidence is empty")
+    for scenario in scenarios:
+        evidence = scenario.get("evidence")
+        count = scenario.get("assertionCount")
+        if (
+            scenario.get("result") not in ("passed", "failed")
+            or type(count) is not int
+            or count < 0
+            or not isinstance(evidence, list)
+            or any(not isinstance(item, str) or not item.strip() for item in evidence)
+            or not isinstance(scenario.get("evidenceSource"), str)
+            or not scenario["evidenceSource"].strip()
+            or (scenario["result"] == "passed" and (count < 1 or count != len(evidence)))
+        ):
+            raise ValueError("linear_qualification.anti_vacuity: passing evidence is empty or invalid")
     failed = sum(scenario["result"] != "passed" for scenario in scenarios)
     return {
         "attestationSha256": attestation_sha256,
         "candidate": candidate,
+        "collectorBinding": collector_binding,
+        "collectorBindingSha256": collector_binding_sha256,
         "coreQualificationSha256": core_record_sha256,
         "proofBoundary": {
             "live": "external MCP provenance is owned by the protected host-native run",
             "offline": (
                 "binds the retained attestation bytes to the retained receipt reference "
-                "and exact candidate artifacts; it does not independently prove external calls"
+                "and independently frozen release, graph, subject, and candidate input; "
+                "it does not independently prove external calls or collector authorization"
             ),
         },
         "receiptReference": receipt_reference,
@@ -681,7 +794,7 @@ def _finalize_record(
             "retainedEvidence": "canonical redacted host attestation and opaque references",
         },
         "scenarios": scenarios,
-        "schemaVersion": "agent-skills-linear-qualification/1",
+        "schemaVersion": "agent-skills-linear-qualification/2",
         "summary": {
             "assertionCount": sum(scenario["assertionCount"] for scenario in scenarios),
             "failedScenarioCount": failed,
@@ -699,13 +812,15 @@ def qualify(
     linear_archive: Path,
     linear_metadata: Path,
     attestation_path: Path,
+    collector_binding_path: Path,
 ) -> dict:
     core = verify_release(core_archive, core_metadata)
     linear = verify_release(linear_archive, linear_metadata)
     if core.profile_id != "core" or linear.profile_id != "linear":
         raise ValueError("linear_qualification.profile: exact core and linear profiles are required")
     core_record = _load_document(core_record_path, "core_record")
-    attested = load_attestation(attestation_path)
+    binding = load_collector_binding(collector_binding_path)
+    attested = load_attestation(attestation_path, binding)
     attestation_bytes = attestation_path.read_bytes()
     with tempfile.TemporaryDirectory(prefix="agent-skills-linear-candidates-") as temporary:
         candidate_root = Path(temporary)
@@ -713,12 +828,36 @@ def qualify(
         linear_candidate = candidate_root / "linear"
         verify_release(core_archive, core_metadata, extract_to=core_candidate)
         verify_release(linear_archive, linear_metadata, extract_to=linear_candidate)
+        binding_evidence = validate_candidate_binding(
+            binding,
+            core,
+            linear,
+            core_candidate,
+            linear_candidate,
+        )
+        projected_core = build_release(
+            linear_candidate,
+            candidate_root / "projected-core.zip",
+            candidate_root / "projected-core.release.json",
+            release_id=core.release_id,
+            profile_id="core",
+        )
+        if projected_core != core:
+            raise ValueError("linear_qualification.core_binding: Linear contains different core bytes")
+        binding_evidence.append("Linear's core projection exactly matches the qualified core archive and metadata")
         contract = _load_document(linear_candidate / CONTRACT_PATH, "contract")
         scenarios = [
             _run(
                 "core-qualification-binding",
                 "trusted-checked-qualification",
-                lambda checkpoint: _core_binding(checkpoint, core, core_record),
+                lambda checkpoint: _core_binding(
+                    checkpoint, core, core_record, binding["graphSha256"],
+                ),
+            ),
+            _run(
+                "collector-candidate-binding",
+                "independently-frozen-collector-input",
+                lambda checkpoint: checkpoint.retain(binding_evidence),
             ),
             _run(
                 "linear-install-and-host-discovery",
@@ -770,6 +909,8 @@ def qualify(
         digest_bytes(attestation_bytes),
         attested["receiptReference"],
         scenarios,
+        binding,
+        digest_bytes(collector_binding_path.read_bytes()),
     )
 
 
@@ -781,8 +922,10 @@ def validate_checked_record(
     linear_archive: Path,
     linear_metadata: Path,
     attestation_path: Path,
+    collector_binding_path: Path,
 ) -> None:
-    attested = load_attestation(attestation_path)
+    binding = load_collector_binding(collector_binding_path)
+    attested = load_attestation(attestation_path, binding)
     if record.get("attestationSha256") != digest_bytes(attestation_path.read_bytes()):
         raise ValueError("linear_qualification.record: attestation mismatch")
     if record.get("receiptReference") != attested["receiptReference"]:
@@ -794,8 +937,9 @@ def validate_checked_record(
         linear_archive,
         linear_metadata,
         attestation_path,
+        collector_binding_path,
     )
-    if record != expected:
+    if record != expected or expected["summary"]["result"] != "passed":
         raise ValueError("linear_qualification.record: exact record mismatch")
 
 
@@ -825,9 +969,23 @@ def main(arguments: list[str] | None = None) -> int:
     parser.add_argument("--linear-archive", type=Path, required=True)
     parser.add_argument("--linear-metadata", type=Path, required=True)
     parser.add_argument("--attestation", type=Path, required=True)
+    parser.add_argument("--collector-binding", type=Path, required=True)
     parser.add_argument("--record", type=Path, required=True)
     args = parser.parse_args(arguments)
+    inputs = (
+        args.core_archive,
+        args.core_metadata,
+        args.core_record,
+        args.linear_archive,
+        args.linear_metadata,
+        args.attestation,
+        args.collector_binding,
+    )
+    if any(args.record.resolve() == path.resolve() for path in inputs):
+        print("qualification failed: record must not overwrite an input", file=sys.stderr)
+        return 1
     try:
+        args.record.unlink(missing_ok=True)
         record = qualify(
             args.core_archive,
             args.core_metadata,
@@ -835,11 +993,12 @@ def main(arguments: list[str] | None = None) -> int:
             args.linear_archive,
             args.linear_metadata,
             args.attestation,
+            args.collector_binding,
         )
+        _atomic_write(args.record, canonical_json(record))
     except Exception as error:
         print(f"qualification failed: {type(error).__name__}", file=sys.stderr)
         return 1
-    _atomic_write(args.record, canonical_json(record))
     print(canonical_json(record), end="")
     return 0 if record["summary"]["result"] == "passed" else 1
 

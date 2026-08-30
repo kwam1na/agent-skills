@@ -19,6 +19,22 @@ repository. The workflow body and its resources remain in one immutable
 generation. Host projection metadata in the active receipt describes discovery
 only and cannot redefine behavior.
 
+The core profile exposes `diagnose-work` and `obtain-review` through both roots
+alongside the existing workflows; the Linear profile contains that same core
+plus its existing tracker adapter. `deliver-work` remains the single intake
+entry point. Its additive `RouteDecision.workflow_skill` property names the
+released downstream workflow only for direct or degraded routes; an unresolved
+handoff has no executable target. Repository workflow selection still overrides
+a host hint, which overrides request examples.
+
+Hosts realize the canonical stages declared in `workflows/delivery-v1.json` and
+return closed `workflow-stage-result/1` envelopes. Diagnosis supplies causal
+evidence without fix authority. Review acquisition gathers caller-selected lenses
+for unchanged `review-work`; separate labels do not prove independent execution.
+The harness owns authenticated context, attempts, permission checks, durable
+state, publication and feedback capability bindings, and finish-line authority.
+Neither a graph edge nor a normalized result grants that authority.
+
 Install and update preflight every selected name in both roots. An unrelated
 entry with the same name, a broken link, or a link that does not match the
 active or target receipt produces the `exposure-conflict` blocker before

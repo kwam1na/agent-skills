@@ -1,0 +1,18 @@
+{
+  "id": "per-entry-provenance-origins",
+  "independent": {
+    "kind": "independent-origin",
+    "ownerApproval": {
+      "owner": "fixture-owner",
+      "reference": "fixture-approval-only"
+    },
+    "rationale": "Independently authored fixture, not derived repository material."
+  },
+  "repository": {
+    "kind": "repository-source",
+    "path": "skills/example/SKILL.md",
+    "repository": "example/source",
+    "revision": "0123456789abcdef0123456789abcdef01234567",
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+}

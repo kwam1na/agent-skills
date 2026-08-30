@@ -91,7 +91,15 @@
           "requirement": "routing"
         },
         {
+          "id": "diagnose-work",
+          "requirement": "routing"
+        },
+        {
           "id": "execute-work",
+          "requirement": "routing"
+        },
+        {
+          "id": "obtain-review",
           "requirement": "routing"
         },
         {
@@ -115,6 +123,29 @@
         "linear"
       ],
       "provenanceId": "deliver-work"
+    },
+    {
+      "capabilities": [
+        "diagnosis-workflow"
+      ],
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "diagnose-work",
+      "path": "skills/diagnose-work/SKILL.md",
+      "profiles": [
+        "core",
+        "linear"
+      ],
+      "provenanceId": "diagnose-work"
     },
     {
       "dependencies": [
@@ -193,6 +224,33 @@
         "linear"
       ],
       "provenanceId": "linear-tracker-adapter"
+    },
+    {
+      "capabilities": [
+        "review-acquisition"
+      ],
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        },
+        {
+          "id": "review-work",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "obtain-review",
+      "path": "skills/obtain-review/SKILL.md",
+      "profiles": [
+        "core",
+        "linear"
+      ],
+      "provenanceId": "obtain-review"
     },
     {
       "capabilities": [

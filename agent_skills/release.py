@@ -210,6 +210,24 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         "agent_skills/workflows.py",
     ):
         files[relative] = _packaged_bytes(root, relative)
+    if {"diagnose-work", "obtain-review"}.intersection(members):
+        for relative in (
+            "agent_skills/workflow_graph.py",
+            "agent_skills/diagnosis.py",
+            "agent_skills/review_orchestration.py",
+            "workflows/delivery-v1.json",
+            "schemas/workflow-graph.schema.json",
+            "schemas/workflow-stage-result.schema.json",
+            "docs/workflow-graph-v1.md",
+            "tests/consumers/workflow_consumer.py",
+            "tests/fixtures/workflow-graph/result-templates.json",
+            "tests/scenarios/core/diagnose.json",
+            "tests/scenarios/core/obtain-review.json",
+            "tests/test_workflow_graph_contract.py",
+            "tests/test_diagnosis.py",
+            "tests/test_review_orchestration.py",
+        ):
+            files[relative] = _packaged_bytes(root, relative)
     return files
 
 

@@ -44,6 +44,19 @@ class RouteDecision:
     unavailable_capabilities: tuple[str, ...] = ()
     action: str = ""
 
+    @property
+    def workflow_skill(self) -> str | None:
+        """Released downstream workflow, never an authorization to execute it."""
+        if self.route_kind is RouteKind.HANDOFF:
+            return None
+        return {
+            WorkflowKind.IMPLEMENT: "execute-work",
+            WorkflowKind.DIAGNOSE: "diagnose-work",
+            WorkflowKind.PLAN: "plan-work",
+            WorkflowKind.REVIEW: "review-work",
+            WorkflowKind.COMPOUND: "compound-learning",
+        }.get(self.workflow)
+
 
 ROUTES = (
     (WorkflowKind.COMPOUND, re.compile(r"\b(?:compound|reusable learning)\b")),
