@@ -1,0 +1,509 @@
+{
+  "schemaVersion": "workflow-graph/1",
+  "graphId": "portable-delivery/1",
+  "stages": [
+    {
+      "id": "intake",
+      "semanticKind": "scope-work",
+      "prerequisites": [],
+      "mutationClass": "none",
+      "requiredness": "required",
+      "candidateBinding": "forbidden",
+      "requiredInputs": [
+        "work-request"
+      ],
+      "optionalInputs": [],
+      "successOutputs": [
+        "scoped-subject"
+      ],
+      "statuses": [
+        "succeeded",
+        "blocked",
+        "failed"
+      ],
+      "evidenceAdapter": {
+        "requirement": "none"
+      },
+      "edges": [
+        {
+          "to": "diagnose",
+          "when": "success"
+        },
+        {
+          "to": "plan",
+          "when": "success"
+        }
+      ]
+    },
+    {
+      "id": "diagnose",
+      "semanticKind": "establish-causal-evidence",
+      "prerequisites": [
+        {
+          "stageId": "intake",
+          "when": "always",
+          "outputs": [
+            "scoped-subject"
+          ],
+          "allowOmitted": false
+        },
+        {
+          "stageId": "$invoking-stage",
+          "when": "diagnostic-subflow",
+          "outputs": [],
+          "allowOmitted": false
+        }
+      ],
+      "mutationClass": "none",
+      "requiredness": "policy-skippable",
+      "candidateBinding": "checkpoint-contextual",
+      "requiredInputs": [
+        "scoped-subject",
+        "diagnostic-observations"
+      ],
+      "optionalInputs": [],
+      "successOutputs": [
+        "confirmed"
+      ],
+      "statuses": [
+        "succeeded",
+        "blocked",
+        "failed",
+        "indeterminate"
+      ],
+      "evidenceAdapter": {
+        "requirement": "optional",
+        "ref": "diagnostic-evidence"
+      },
+      "edges": [
+        {
+          "to": "plan",
+          "when": "diagnosis-return"
+        },
+        {
+          "to": "implement",
+          "when": "diagnosis-return"
+        },
+        {
+          "to": "review.acquire",
+          "when": "diagnosis-return"
+        },
+        {
+          "to": "review.reduce",
+          "when": "diagnosis-return"
+        },
+        {
+          "to": "feedback.handoff",
+          "when": "diagnosis-return"
+        }
+      ]
+    },
+    {
+      "id": "plan",
+      "semanticKind": "bound-implementation-work",
+      "prerequisites": [
+        {
+          "stageId": "intake",
+          "when": "always",
+          "outputs": [
+            "scoped-subject"
+          ],
+          "allowOmitted": false
+        },
+        {
+          "stageId": "diagnose",
+          "when": "diagnosis-invoked",
+          "outputs": [
+            "confirmed"
+          ],
+          "allowOmitted": false
+        }
+      ],
+      "mutationClass": "workspace",
+      "requiredness": "required",
+      "candidateBinding": "checkpoint-contextual",
+      "requiredInputs": [
+        "scoped-subject"
+      ],
+      "optionalInputs": [
+        "confirmed"
+      ],
+      "successOutputs": [
+        "bounded-plan"
+      ],
+      "statuses": [
+        "succeeded",
+        "blocked",
+        "failed"
+      ],
+      "evidenceAdapter": {
+        "requirement": "none"
+      },
+      "edges": [
+        {
+          "to": "diagnose",
+          "when": "success"
+        },
+        {
+          "to": "implement",
+          "when": "success"
+        }
+      ]
+    },
+    {
+      "id": "implement",
+      "semanticKind": "produce-or-revise-candidate",
+      "prerequisites": [
+        {
+          "stageId": "plan",
+          "when": "always",
+          "outputs": [
+            "bounded-plan"
+          ],
+          "allowOmitted": false
+        },
+        {
+          "stageId": "diagnose",
+          "when": "diagnosis-invoked",
+          "outputs": [
+            "confirmed"
+          ],
+          "allowOmitted": false
+        }
+      ],
+      "mutationClass": "workspace",
+      "requiredness": "required",
+      "candidateBinding": "produced-on-success",
+      "requiredInputs": [
+        "bounded-plan"
+      ],
+      "optionalInputs": [
+        "confirmed",
+        "current-candidate"
+      ],
+      "successOutputs": [
+        "delivery-candidate"
+      ],
+      "statuses": [
+        "succeeded",
+        "blocked",
+        "failed",
+        "indeterminate"
+      ],
+      "evidenceAdapter": {
+        "requirement": "none"
+      },
+      "edges": [
+        {
+          "to": "diagnose",
+          "when": "success"
+        },
+        {
+          "to": "review.acquire",
+          "when": "success"
+        }
+      ]
+    },
+    {
+      "id": "review.acquire",
+      "semanticKind": "obtain-caller-selected-lens-evidence",
+      "prerequisites": [
+        {
+          "stageId": "implement",
+          "when": "always",
+          "outputs": [
+            "delivery-candidate"
+          ],
+          "allowOmitted": false
+        },
+        {
+          "stageId": "$repair-source",
+          "when": "repair-loop",
+          "outputs": [
+            "review-round-changes-requested",
+            "feedback-available"
+          ],
+          "allowOmitted": false
+        }
+      ],
+      "mutationClass": "none",
+      "requiredness": "required",
+      "candidateBinding": "required",
+      "requiredInputs": [
+        "delivery-candidate",
+        "requested-lenses",
+        "review-round"
+      ],
+      "optionalInputs": [],
+      "successOutputs": [
+        "review-acquisition-envelope"
+      ],
+      "statuses": [
+        "succeeded",
+        "blocked",
+        "failed",
+        "indeterminate"
+      ],
+      "evidenceAdapter": {
+        "requirement": "required",
+        "ref": "review-evidence"
+      },
+      "edges": [
+        {
+          "to": "diagnose",
+          "when": "success"
+        },
+        {
+          "to": "review.reduce",
+          "when": "success"
+        }
+      ]
+    },
+    {
+      "id": "review.reduce",
+      "semanticKind": "reduce-exact-review-round",
+      "prerequisites": [
+        {
+          "stageId": "review.acquire",
+          "when": "always",
+          "outputs": [
+            "review-acquisition-envelope"
+          ],
+          "allowOmitted": false
+        }
+      ],
+      "mutationClass": "none",
+      "requiredness": "required",
+      "candidateBinding": "required",
+      "requiredInputs": [
+        "projected-lens-results",
+        "retained-acquisition-envelope"
+      ],
+      "optionalInputs": [],
+      "successOutputs": [
+        "review-round-aligned",
+        "review-round-changes-requested"
+      ],
+      "statuses": [
+        "succeeded",
+        "blocked",
+        "failed"
+      ],
+      "evidenceAdapter": {
+        "requirement": "none"
+      },
+      "edges": [
+        {
+          "to": "diagnose",
+          "when": "review-round-changes-requested"
+        },
+        {
+          "to": "implement",
+          "when": "review-round-changes-requested"
+        },
+        {
+          "to": "publish.handoff",
+          "when": "review-round-aligned"
+        },
+        {
+          "to": "finish.verify",
+          "when": "aligned-publication-omitted"
+        }
+      ]
+    },
+    {
+      "id": "publish.handoff",
+      "semanticKind": "consume-upstream-publication-evidence",
+      "prerequisites": [
+        {
+          "stageId": "review.reduce",
+          "when": "always",
+          "outputs": [
+            "review-round-aligned"
+          ],
+          "allowOmitted": false
+        }
+      ],
+      "mutationClass": "external",
+      "requiredness": "policy-skippable",
+      "candidateBinding": "required",
+      "requiredInputs": [
+        "aligned-candidate",
+        "named-capability-reference"
+      ],
+      "optionalInputs": [],
+      "successOutputs": [
+        "published"
+      ],
+      "statuses": [
+        "succeeded",
+        "blocked",
+        "failed",
+        "indeterminate"
+      ],
+      "evidenceAdapter": {
+        "requirement": "required",
+        "ref": "publication-evidence"
+      },
+      "edges": [
+        {
+          "to": "feedback.handoff",
+          "when": "success"
+        },
+        {
+          "to": "finish.verify",
+          "when": "success"
+        }
+      ]
+    },
+    {
+      "id": "feedback.handoff",
+      "semanticKind": "consume-normalized-external-feedback-evidence",
+      "prerequisites": [
+        {
+          "stageId": "publish.handoff",
+          "when": "always",
+          "outputs": [
+            "published"
+          ],
+          "allowOmitted": false
+        }
+      ],
+      "mutationClass": "none",
+      "requiredness": "policy-skippable",
+      "candidateBinding": "required",
+      "requiredInputs": [
+        "published-change-reference",
+        "normalized-untrusted-feedback"
+      ],
+      "optionalInputs": [],
+      "successOutputs": [
+        "feedback-available",
+        "feedback-empty"
+      ],
+      "statuses": [
+        "succeeded",
+        "blocked",
+        "failed",
+        "indeterminate"
+      ],
+      "evidenceAdapter": {
+        "requirement": "required",
+        "ref": "feedback-evidence"
+      },
+      "edges": [
+        {
+          "to": "diagnose",
+          "when": "feedback-available"
+        },
+        {
+          "to": "plan",
+          "when": "feedback-available"
+        },
+        {
+          "to": "implement",
+          "when": "feedback-available"
+        },
+        {
+          "to": "finish.verify",
+          "when": "success"
+        }
+      ]
+    },
+    {
+      "id": "finish.verify",
+      "semanticKind": "verify-finish-line-evidence",
+      "prerequisites": [
+        {
+          "stageId": "review.reduce",
+          "when": "always",
+          "outputs": [
+            "review-round-aligned"
+          ],
+          "allowOmitted": false
+        },
+        {
+          "stageId": "publish.handoff",
+          "when": "effective",
+          "outputs": [
+            "published"
+          ],
+          "allowOmitted": true
+        },
+        {
+          "stageId": "feedback.handoff",
+          "when": "effective",
+          "outputs": [
+            "feedback-available",
+            "feedback-empty"
+          ],
+          "allowOmitted": true
+        }
+      ],
+      "mutationClass": "none",
+      "requiredness": "required",
+      "candidateBinding": "required",
+      "requiredInputs": [
+        "exact-candidate",
+        "repository-finish-line-requirements",
+        "upstream-evidence"
+      ],
+      "optionalInputs": [],
+      "successOutputs": [
+        "finish-evidence-satisfied"
+      ],
+      "statuses": [
+        "succeeded",
+        "blocked",
+        "failed",
+        "indeterminate"
+      ],
+      "evidenceAdapter": {
+        "requirement": "required",
+        "ref": "finish-line-evidence"
+      },
+      "edges": [
+        {
+          "to": "compound",
+          "when": "success"
+        }
+      ]
+    },
+    {
+      "id": "compound",
+      "semanticKind": "decide-reusable-learning",
+      "prerequisites": [
+        {
+          "stageId": "finish.verify",
+          "when": "always",
+          "outputs": [
+            "finish-evidence-satisfied"
+          ],
+          "allowOmitted": false
+        }
+      ],
+      "mutationClass": "none",
+      "requiredness": "required",
+      "candidateBinding": "required",
+      "requiredInputs": [
+        "delivery-evidence",
+        "limitations",
+        "residual-risks"
+      ],
+      "optionalInputs": [],
+      "successOutputs": [
+        "learning-required",
+        "no-reusable-learning"
+      ],
+      "statuses": [
+        "succeeded",
+        "blocked",
+        "failed"
+      ],
+      "evidenceAdapter": {
+        "requirement": "none"
+      },
+      "edges": []
+    }
+  ]
+}

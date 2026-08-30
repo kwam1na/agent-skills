@@ -36,8 +36,9 @@ Choose exactly one workflow:
 
 Route `plan` through `$plan-work`. Route an approved `implement` request through
 `$execute-work`, `review` through `$review-work`, and `compound` through
-`$compound-learning`. Keep diagnosis on its declared handoff until a portable
-workflow is selected by the active profile.
+`$compound-learning`. Route `diagnose` through `$diagnose-work` to retain causal
+evidence without authorizing a fix. When caller-selected review lenses need
+realization, `$obtain-review` acquires the exact round for unchanged `$review-work`.
 
 Specific user intent wins over keyword examples. The same normalized request
 must select the same workflow and the `deliver-work` entry point.

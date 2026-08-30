@@ -22,7 +22,9 @@
       "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "bootstrap-agent-harness",
+        "kind": "repository-source",
         "path": ".agents/skills/bootstrap-agent-harness",
+        "repository": "kwamina/athena",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "dfe7127bbf5b6c8be54af255202782fefe639157e5ed5dedf89a305101bb5aa5"
       }
@@ -45,7 +47,9 @@
       "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "delivery-kernel-skill",
+        "kind": "repository-source",
         "path": ".agents/skills/compound-delivery-kernel/SKILL.md",
+        "repository": "kwamina/athena",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "30d72ae4d855b508b7ab59720874e8e76091885992a712d3bd5ccb6e510d451e"
       }
@@ -68,7 +72,9 @@
       "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "compound-skill",
+        "kind": "repository-source",
         "path": ".agents/skills/ce-compound",
+        "repository": "kwamina/athena",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "bfaf2f0e34460bb3baaa55da7e34e61b134cd139fe7ff6a7bd81a4a9db6da73d"
       }
@@ -111,7 +117,9 @@
       "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "track-skill",
+        "kind": "repository-source",
         "path": ".agents/skills/track",
+        "repository": "kwamina/athena",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "d0b51b5efd0ed6a0518b24a201de7b042c04673e965d9e06bf10d03d0687518b"
       }
@@ -128,7 +136,7 @@
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "11a3f8839a15754a511b787c05e809447aebe871e9dcdc7bdd0a18f1f1f357fa"
+          "sha256": "58edd2da0fd1d49599b9f80207466a138ad36f3e24fcd0edd8d5e32fe2ff0a6c"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",
@@ -142,9 +150,35 @@
       "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "deliver-work-skill",
+        "kind": "repository-source",
         "path": ".agents/skills/deliver-work",
+        "repository": "kwamina/athena",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "9479db1160edb91ba40cbad27c0bfd1df6b6932a85b48d36919478221350acd3"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "diagnose-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "Evidence-first causal diagnosis is extracted without repository policy, tool selection, or fix authority.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/diagnose-work/SKILL.md",
+          "sha256": "1e1ac2dba414784f6af0b68cd4eca2db89fdd5d7b03d4056391880ad7283e77b"
+        }
+      ],
+      "owner": "delivery-agent/user-delegated",
+      "source": {
+        "kind": "repository-source",
+        "path": ".agents/skills/ce-debug/SKILL.md",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "6bc5dd51457bb4a640f15b12609912b53bda193699def51e3bfce5966dabd11a"
       }
     },
     {
@@ -173,7 +207,9 @@
       "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "execute-skill",
+        "kind": "repository-source",
         "path": ".agents/skills/execute",
+        "repository": "kwamina/athena",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "f8a66cf662013f931eabb7f149c8ade7a253d0b06ac534facb347aabeadb1d27"
       }
@@ -196,7 +232,9 @@
       "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "work-skill",
+        "kind": "repository-source",
         "path": ".agents/skills/ce-work",
+        "repository": "kwamina/athena",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "43f883389cbfbf5bbf556fdd9fd7acfecd577bf3a6879263e11ea12a7c00c222"
       }
@@ -223,9 +261,36 @@
       "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "track-skill",
+        "kind": "repository-source",
         "path": ".agents/skills/track",
+        "repository": "kwamina/athena",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "d0b51b5efd0ed6a0518b24a201de7b042c04673e965d9e06bf10d03d0687518b"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "obtain-review",
+      "license": "NOASSERTION",
+      "modification": {
+        "reason": "Independently authored portable acquisition and projection contract; no repository-source derivation or new license grant is asserted.",
+        "status": "independently-authored"
+      },
+      "outputs": [
+        {
+          "path": "skills/obtain-review/SKILL.md",
+          "sha256": "2a855a78a0952b082cbb3deb1a2bb954fed7e1de6bc659ca8aaf12ed564be59b"
+        }
+      ],
+      "owner": "delivery-agent/user-delegated",
+      "source": {
+        "kind": "independent-origin",
+        "ownerApproval": {
+          "owner": "delivery-agent/user-delegated",
+          "reference": "codex-thread:01a04fe6-13db-76b0-b049-b66771e85314"
+        },
+        "rationale": "Authored from the approved portable review acquisition contract, not derived from Athena source; realization and authority remain upstream."
       }
     },
     {
@@ -246,7 +311,9 @@
       "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "plan-skill",
+        "kind": "repository-source",
         "path": ".agents/skills/ce-plan",
+        "repository": "kwamina/athena",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "5408cccdbafb0ce69e5de1293c2eb40defd313f8e833db09dd0a59e0f2dea438"
       }
@@ -269,13 +336,15 @@
       "owner": "agent-skills-corpus",
       "source": {
         "baselineSourceId": "review-skill",
+        "kind": "repository-source",
         "path": ".agents/skills/ce-code-review",
+        "repository": "kwamina/athena",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "54ee28663a49d11d0e8afa5c213b9c9819feef3b93f7ccd8afd02bc60446032e"
       }
     }
   ],
-  "schemaVersion": "agent-skills-provenance/1",
+  "schemaVersion": "agent-skills-provenance/2",
   "sourceBaseline": {
     "baselineId": "athena-portable-workflows-v1-2026-08-27",
     "baselinePath": ".agents/portable-overlay-map.json",

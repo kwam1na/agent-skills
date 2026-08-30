@@ -1,0 +1,285 @@
+{
+  "entries": [
+    {
+      "classification": "optional-guidance",
+      "distribution": "releasable",
+      "id": "bootstrap-agent-harness",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The existing copied bundle matches the baseline workflow body; host metadata is retained as a host adapter.",
+        "status": "source-derived"
+      },
+      "outputs": [
+        {
+          "path": "skills/bootstrap-agent-harness/SKILL.md",
+          "sha256": "dfe7127bbf5b6c8be54af255202782fefe639157e5ed5dedf89a305101bb5aa5"
+        },
+        {
+          "path": "skills/bootstrap-agent-harness/agents/openai.yaml",
+          "sha256": "2fff25699efe4f619dc97d39828ad9fb42afe2f60d31fdd750e8682022081571"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "bootstrap-agent-harness",
+        "path": ".agents/skills/bootstrap-agent-harness",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "dfe7127bbf5b6c8be54af255202782fefe639157e5ed5dedf89a305101bb5aa5"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "compound-delivery-kernel",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The portable delivery posture is narrowed to repository authority, bounded execution, review, and compounding outcomes.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/compound-delivery-kernel/SKILL.md",
+          "sha256": "d7a651c9392a36f923784771f24a532acca81fa223b865be46cba842c061e706"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "delivery-kernel-skill",
+        "path": ".agents/skills/compound-delivery-kernel/SKILL.md",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "30d72ae4d855b508b7ab59720874e8e76091885992a712d3bd5ccb6e510d451e"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "compound-learning",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The reusable-learning threshold is narrowed to an evidence-backed caller-owned decision; repository knowledge formats remain overlays.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/compound-learning/SKILL.md",
+          "sha256": "3074dd2cd2600185dc420973c5c762b4222fdc60671992ecfbbbd9878e949521"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "compound-skill",
+        "path": ".agents/skills/ce-compound",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "bfaf2f0e34460bb3baaa55da7e34e61b134cd139fe7ff6a7bd81a4a9db6da73d"
+      }
+    },
+    {
+      "classification": "retained-overlay",
+      "distribution": "source-only",
+      "id": "create-linear-ticket",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "Athena's tracker source is retained overlay inventory until a narrow optional Linear adapter is extracted.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/create-linear-ticket/SKILL.md",
+          "sha256": "0f6d3ea275f91cf723d822b5307bec95a0aa337fd402484d49ac8a7302b19530"
+        },
+        {
+          "path": "skills/create-linear-ticket/agents/openai.yaml",
+          "sha256": "5c48e32737027d7522d5354b7cc8840130fe22e1b2ae2e20c4d10a01b8ef1b74"
+        },
+        {
+          "path": "skills/create-linear-ticket/references/atomic-plan-template.md",
+          "sha256": "f2f8dbc01c4cb7790a460e220249ea44e25a3d0959b4185e9af0448f0175f950"
+        },
+        {
+          "path": "skills/create-linear-ticket/references/atomic-ticket-template.md",
+          "sha256": "ba18fac7ca2ada7b2ba3e20b62a328f89b0f57a4cdfb8a5cc901ed536f5a311b"
+        },
+        {
+          "path": "skills/create-linear-ticket/references/linear-execution-notes.md",
+          "sha256": "9e9406d2c48dd7823c65b19b23fead30dc28a4de75d038e8880b61cf7fd80082"
+        },
+        {
+          "path": "skills/create-linear-ticket/references/linear-project-resolution.md",
+          "sha256": "2af8ae57b9189791ba4bad7f3024e0c587d6c20f306b61196209e58ad5aae255"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "track-skill",
+        "path": ".agents/skills/track",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "d0b51b5efd0ed6a0518b24a201de7b042c04673e965d9e06bf10d03d0687518b"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "deliver-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The baseline routing slice is rewritten as a portable router and neutral capability contract while provider-specific source remains separate.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/deliver-work/SKILL.md",
+          "sha256": "11a3f8839a15754a511b787c05e809447aebe871e9dcdc7bdd0a18f1f1f357fa"
+        },
+        {
+          "path": "skills/deliver-work/agents/openai.yaml",
+          "sha256": "335c1f6f152230f5c7dfac0bce52bd2295d4f44349226eac3fc59de1715d2c04"
+        },
+        {
+          "path": "skills/deliver-work/references/capability-contract.md",
+          "sha256": "91276829f9369fc8dce2e55e2bec727b3514b16e0878dd29f6d0b55668384e6f"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "deliver-work-skill",
+        "path": ".agents/skills/deliver-work",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "9479db1160edb91ba40cbad27c0bfd1df6b6932a85b48d36919478221350acd3"
+      }
+    },
+    {
+      "classification": "retained-overlay",
+      "distribution": "source-only",
+      "id": "execute-linear-ticket",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "Athena's execution source remains retained overlay inventory until a narrow optional Linear execution adapter is extracted.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/execute-linear-ticket/SKILL.md",
+          "sha256": "7e89dadca3eeb799df0006c8c001f0e54c18c08b0884c3adbd9293bb80ea6407"
+        },
+        {
+          "path": "skills/execute-linear-ticket/agents/openai.yaml",
+          "sha256": "2bedaffdb0b7393990ead5d9cb3357274308b9b66d107357f5df83961f6644df"
+        },
+        {
+          "path": "skills/execute-linear-ticket/references/linear-project-resolution.md",
+          "sha256": "2af8ae57b9189791ba4bad7f3024e0c587d6c20f306b61196209e58ad5aae255"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "execute-skill",
+        "path": ".agents/skills/execute",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "f8a66cf662013f931eabb7f149c8ade7a253d0b06ac534facb347aabeadb1d27"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "execute-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The baseline execution slice is narrowed to incremental work, repository sensor evidence, explicit blockers, approval handoffs, and honest completion states.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/execute-work/SKILL.md",
+          "sha256": "33ee613ce298fb17935d6788a5485130c141dc82439eec2a501cb110be8ec3e4"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "work-skill",
+        "path": ".agents/skills/ce-work",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "43f883389cbfbf5bbf556fdd9fd7acfecd577bf3a6879263e11ea12a7c00c222"
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
+      "id": "linear-tracker-adapter",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The provider-specific planning and execution source is narrowed to a host-native adapter for the neutral tracker contract.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/linear-tracker-adapter/SKILL.md",
+          "sha256": "6a39446ebe8228af48578f31c4ee605b7078de3ad1930d249da39b25b04ae602"
+        },
+        {
+          "path": "skills/linear-tracker-adapter/references/adapter-contract.json",
+          "sha256": "053f4bb98357f8c5b6b6d2093cb915e76f2a57526f53d8dace3056cff6e5a658"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "track-skill",
+        "path": ".agents/skills/track",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "d0b51b5efd0ed6a0518b24a201de7b042c04673e965d9e06bf10d03d0687518b"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "plan-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The baseline planning slice is narrowed to scope, finish-line, dependency, posture, sensor, and approval-handoff decisions without implementation behavior.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/plan-work/SKILL.md",
+          "sha256": "4347893b7bbe1ea0e60240713082e51a4d13c6b945f7822579f480628d1036bd"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "plan-skill",
+        "path": ".agents/skills/ce-plan",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "5408cccdbafb0ce69e5de1293c2eb40defd313f8e833db09dd0a59e0f2dea438"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "review-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The review source is narrowed to caller-selected lenses, evidence-bearing convergence, visible dissent, typed failure, and bounded outcomes; repository reviewer policy remains an overlay.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/review-work/SKILL.md",
+          "sha256": "7858bf1bc9494bbb9f13a32bb472c6ea0614d9a7200d2e4e967f031ebecff152"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "review-skill",
+        "path": ".agents/skills/ce-code-review",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "54ee28663a49d11d0e8afa5c213b9c9819feef3b93f7ccd8afd02bc60446032e"
+      }
+    }
+  ],
+  "schemaVersion": "agent-skills-provenance/1",
+  "sourceBaseline": {
+    "baselineId": "athena-portable-workflows-v1-2026-08-27",
+    "baselinePath": ".agents/portable-overlay-map.json",
+    "repository": "kwamina/athena",
+    "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53"
+  }
+}

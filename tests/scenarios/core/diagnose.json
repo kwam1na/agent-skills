@@ -1,0 +1,42 @@
+{
+  "assumption": "The captured request represents the reported environment",
+  "limitation": "Only the captured request environment was inspected",
+  "links": [
+    {
+      "cause": "empty token reaches parser",
+      "effect": "decoder rejects empty input",
+      "evidenceRefs": [
+        "source:decoder-guard"
+      ]
+    },
+    {
+      "cause": "decoder rejects empty input",
+      "effect": "request fails with invalid token",
+      "evidenceRefs": [
+        "trace:request-failure"
+      ]
+    }
+  ],
+  "prediction": {
+    "evidenceRefs": [
+      "probe:direct-decoder"
+    ],
+    "observedResult": "Direct decoder rejects empty input",
+    "outcome": "satisfied",
+    "statement": "The direct decoder path also rejects empty input"
+  },
+  "recommendation": "Add a regression test for the empty-token boundary before separately authorized remediation",
+  "reproductionEvidenceRefs": [
+    "probe:empty-token"
+  ],
+  "ruledOut": {
+    "evidenceRefs": [
+      "trace:before-transport"
+    ],
+    "reason": "The token is already empty before transport",
+    "statement": "The transport truncates a valid token"
+  },
+  "schemaVersion": "agent-skills-diagnosis-scenarios/1",
+  "symptom": "request fails with invalid token",
+  "trigger": "empty token reaches parser"
+}

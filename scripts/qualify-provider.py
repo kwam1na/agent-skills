@@ -292,6 +292,7 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
             Lifecycle(repository).install(archive, metadata, maintainer=True)
         generation = repository / ".agent-skills" / "generations" / release.archive_sha256
         provider_path = generation / "agent_skills" / "provider.py"
+        graph_path = generation / "workflows" / "delivery-v1.json"
 
         def session() -> InstalledProvider:
             return InstalledProvider(generation, repository)
@@ -302,6 +303,17 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
             checkpoint.check(
                 {item["host"] for item in status.exposures} == {"codex", "claude-code"},
                 "qualification-owned repository exposes both fixed hosts",
+            )
+            checkpoint.check(
+                all(
+                    (generation / relative).read_bytes() == (extracted / relative).read_bytes()
+                    for relative in (
+                        "workflows/delivery-v1.json",
+                        "skills/diagnose-work/SKILL.md",
+                        "skills/obtain-review/SKILL.md",
+                    )
+                ),
+                "installed workflow graph and both new skills match the exact candidate",
             )
             provider = session()
             try:
@@ -599,10 +611,23 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
             "unsupported-version": unsupported,
             "evidence-completeness": evidence,
         }
+        if len(SCENARIOS) != len(operations) or set(SCENARIOS) != set(operations):
+            raise QualificationFailure("required provider scenarios are missing or duplicated")
         scenarios = [run_scenario(name, operations[name]) for name in SCENARIOS]
+        if any(
+            item["id"] != name
+            or item["result"] != "passed"
+            or type(item["assertionCount"]) is not int
+            or item["assertionCount"] < 1
+            or item["assertionCount"] != len(item["evidence"])
+            or any(not isinstance(value, str) or not value.strip() for value in item["evidence"])
+            for name, item in zip(SCENARIOS, scenarios)
+        ):
+            raise QualificationFailure("provider scenario evidence is incomplete")
         assertion_count = sum(int(item["assertionCount"]) for item in scenarios)
         return {
             "installedProviderSha256": sha256_file(provider_path),
+            "workflowGraphSha256": sha256_file(graph_path),
             "proofBoundary": {
                 "external": "Host and connector provenance remains owned by the protected external run that supplies host events.",
                 "offline": "This record proves exact installed provider execution, retained evidence behavior, and deterministic replay; controlled host events do not independently prove external calls.",
@@ -639,7 +664,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--record", type=Path, required=True)
     arguments = parser.parse_args(argv)
+    if any(arguments.record.resolve() == path.resolve() for path in (arguments.archive, arguments.metadata)):
+        print("provider qualification failed: record must not overwrite an input", file=sys.stderr)
+        return 1
     try:
+        arguments.record.unlink(missing_ok=True)
         record = qualify(arguments.archive, arguments.metadata)
     except (OSError, ValueError, subprocess.SubprocessError, QualificationFailure) as error:
         print(f"provider qualification failed: {type(error).__name__}: {error}", file=sys.stderr)
