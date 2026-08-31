@@ -294,6 +294,460 @@
       }
     },
     {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-adversarial",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/adversarial.md",
+          "sha256": "ae9969a9835d66a8fd0b4dca434915f23e2904b5f3865035f887583338571b0d"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-adversarial-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-adversarial-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "10c048173c86e8cdbf295fb6e7f04595902466dad201bf56d29e23fcc317a8bc"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-adversarial-document",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/adversarial-document.md",
+          "sha256": "57f13fa7506e0906d900a96da56e52671d6aed37662492dd69bb8ddccf42db21"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-adversarial-document-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-adversarial-document-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "64f53b939d70fef8b98081e0e716ac57245a4223f4693b50b68a341d6735d400"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-api-contract",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/api-contract.md",
+          "sha256": "a04f0415e773b55526cfc9407dbd4f89a7553954930a12060c1625ab14498524"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-api-contract-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-api-contract-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "a72c578e0ef9ec36b5e8038b4e21685df73e99d4bc16227f717d104bfdbfeb0a"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-architecture",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/architecture.md",
+          "sha256": "c06bb9aa9103c9cefbf5973d963d253e71729267afa082e8c7d48c75a5e7383f"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-architecture-strategist",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-architecture-strategist.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "fc4b7f1509c18abc21733a41214a7e946780de8900c53cf04de2186685550215"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-coherence",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped. Substance from ce-spec-flow-analyzer is folded in rather than shipped as a near-duplicate charter.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/coherence.md",
+          "sha256": "4d95807647528c32157179ccf5dde11c669757e1849b7a602b838a91f62c3865"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-coherence-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-coherence-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "f37c49be80d20673f189f08184000dfe4d842c384436bd9141ae0ef9cacad354"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-data-integrity",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/data-integrity.md",
+          "sha256": "61b75cb83fc65b8b6fa9a25502362280b4c2761d564166041e1b65e5b179d871"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-data-integrity-guardian",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-data-integrity-guardian.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "347d596bf1e88296bd0caddb7de32a9b9ea2ac8f849d09aa3323d346310a2a86"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-feasibility",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/feasibility.md",
+          "sha256": "96d39502ab285500af7257aba122684042e0a7e28af6183f6d0336b65961f0df"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-feasibility-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-feasibility-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "3473e9b00cbaa0ffa11f85548cabc27ffd1d0db17d2fc27e66b556a42ab36b01"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-maintainability",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped. Substance from ce-pattern-recognition-specialist is folded in rather than shipped as a near-duplicate charter.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/maintainability.md",
+          "sha256": "1da8efccc419a012f5f9ed48c206dadab56efdb44b4488d6ad54ad076e56c691"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-maintainability-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-maintainability-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "961aa326d70c5aacffd0da239373b369030661a7c85c41556c4187b81b850cde"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-outcome-correctness",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/outcome-correctness.md",
+          "sha256": "a5d96a825150e40b840cd91b55c2d7480f5ee7e481004464062afb8ef5430e2c"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-correctness-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-correctness-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "ad9109c34c38e6992f5b1a48090d97b8a66b5f943a9d0525ad290325a3aa3254"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-performance",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped. Substance from ce-performance-oracle is folded in rather than shipped as a near-duplicate charter.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/performance.md",
+          "sha256": "c2081d53c1170217f85c41e25058ebf21b1705d17428ccc881422dac3e10abd7"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-performance-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-performance-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "efbc47187e7c1db5d6a866af85cbd17793b050c9eb17562a1fb640af653e74a6"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-product",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/product.md",
+          "sha256": "05bdfbf83f85b101c407fdb9ed809dbe33af3ed2314cf4cd130bf6df03240970"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-product-lens-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-product-lens-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "3640eb11e238ffad994e0c182723b27550dadbdf262972af62c3f8da567b8d4e"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-project-standards",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/project-standards.md",
+          "sha256": "72b547422e66609403b3e3382d22f18f242f1ff71b3d3c94ad8c2bc3dcb833d7"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-project-standards-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-project-standards-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "912946be877ee20974fbb32f312a1811af945bb0668fc786ff99fba8167d473e"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-reliability",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/reliability.md",
+          "sha256": "427bd06015a4ef32d3423e3e56c4a0a113fb1a28a73bad6e7b6068b08e3bb6c3"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-reliability-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-reliability-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "fc932495cc074f830c61324ea66066927756d7fba995b2d13023aa3a5b732354"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-scope",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/scope.md",
+          "sha256": "117fe6a8ab8cdd125460b2b80ab2510000ca7ab1ac68b10643b27480bb428e6c"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-scope-guardian-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-scope-guardian-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "a1f85b17849c59b156f15380f2e47f6c84ac44830796a86e11fb93be8f317280"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-security",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped. Substance from ce-security-lens-reviewer, ce-security-sentinel is folded in rather than shipped as a near-duplicate charter.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/security.md",
+          "sha256": "f66e55bec2638faaf7ae981bdcba192c09cdc5170f8f2405ff6d890643a04a06"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-security-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-security-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "b44acfab82dab3c0dd03a3a9df523fefad63b7065577cbe97af889aabcf02fdd"
+      }
+    },
+    {
+      "classification": "reviewer-persona-metadata",
+      "distribution": "releasable",
+      "id": "persona-set-metadata",
+      "license": "Apache-2.0",
+      "modification": {
+        "reason": "The shipped-charter manifest and the include/exclude adjudication covering every reviewer-agent source file considered. Independently authored metadata about the adapted set; it carries no adapted prose.",
+        "status": "independently-authored"
+      },
+      "outputs": [
+        {
+          "path": "personas/manifest.json",
+          "sha256": "c982e2835063de1fe3986130093e33538f65605eb62124e461d957fbedca1e4e"
+        },
+        {
+          "path": "personas/source-adjudication.json",
+          "sha256": "15a07326dcafbc2cdfc96152014aa5c64e117111dff12087c826a8d9dbf6640f"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "kind": "independent-origin",
+        "ownerApproval": {
+          "owner": "agent-skills-corpus",
+          "reference": "V26-1492 reviewer-persona set adjudication"
+        },
+        "rationale": "The manifest and the adjudication are decisions about which upstream reviewer files ship and which do not. They restate no upstream prose."
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-simplicity",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/simplicity.md",
+          "sha256": "c2e88a11be816b1a8aace86154f05f8fa9a0aba6634806ab0524c24a535b3aaa"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-code-simplicity-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-code-simplicity-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "46d0c51deba4d370ca729ad0138c535395d170c0547070c4b1d9dd8d5ee30f64"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-testing-policy",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/testing-policy.md",
+          "sha256": "ad8a1577e9a5f6de5b0bc431b704dcb72aecd67652b8cd97f8d5706a61864aff"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-testing-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-testing-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "251aebac37d54edc4356485d6f37711bc58839d8a9920a337ae93de51a90e50e"
+      }
+    },
+    {
       "classification": "portable-core",
       "distribution": "releasable",
       "id": "plan-work",

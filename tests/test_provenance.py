@@ -186,10 +186,16 @@ class ProvenanceTests(unittest.TestCase):
     def test_legacy_release_metadata_verifies_and_extracts_after_migration(self) -> None:
         self.document["schemaVersion"] = "agent-skills-provenance/1"
         for entry in self.document["entries"]:
-            if entry["source"].get("kind") == "independent-origin":
+            if (
+                entry["source"].get("kind") == "independent-origin"
+                or entry["source"].get("revision") != LEGACY_REVISION
+            ):
                 # This is a constructed legacy-format compatibility fixture,
                 # not a claim that newly authored production material existed
-                # in the retained baseline archive.
+                # in the retained baseline archive. Version 1 can express only
+                # the frozen baseline revision, so material sourced from any
+                # other revision — every reviewer charter — is stood in for
+                # here rather than misdeclared.
                 entry["source"] = {
                     "baselineSourceId": "synthetic-legacy-fixture",
                     "path": "fixture/SKILL.md",

@@ -1,0 +1,91 @@
+{
+  "personas": [
+    {
+      "path": "personas/adversarial.md",
+      "personaId": "persona.adversarial",
+      "provenanceId": "persona-adversarial"
+    },
+    {
+      "path": "personas/adversarial-document.md",
+      "personaId": "persona.adversarial-document",
+      "provenanceId": "persona-adversarial-document"
+    },
+    {
+      "path": "personas/api-contract.md",
+      "personaId": "persona.api-contract",
+      "provenanceId": "persona-api-contract"
+    },
+    {
+      "path": "personas/architecture.md",
+      "personaId": "persona.architecture",
+      "provenanceId": "persona-architecture"
+    },
+    {
+      "path": "personas/coherence.md",
+      "personaId": "persona.coherence",
+      "provenanceId": "persona-coherence"
+    },
+    {
+      "path": "personas/data-integrity.md",
+      "personaId": "persona.data-integrity",
+      "provenanceId": "persona-data-integrity"
+    },
+    {
+      "path": "personas/feasibility.md",
+      "personaId": "persona.feasibility",
+      "provenanceId": "persona-feasibility"
+    },
+    {
+      "path": "personas/maintainability.md",
+      "personaId": "persona.maintainability",
+      "provenanceId": "persona-maintainability"
+    },
+    {
+      "path": "personas/outcome-correctness.md",
+      "personaId": "persona.outcome-correctness",
+      "provenanceId": "persona-outcome-correctness"
+    },
+    {
+      "path": "personas/performance.md",
+      "personaId": "persona.performance",
+      "provenanceId": "persona-performance"
+    },
+    {
+      "path": "personas/product.md",
+      "personaId": "persona.product",
+      "provenanceId": "persona-product"
+    },
+    {
+      "path": "personas/project-standards.md",
+      "personaId": "persona.project-standards",
+      "provenanceId": "persona-project-standards"
+    },
+    {
+      "path": "personas/reliability.md",
+      "personaId": "persona.reliability",
+      "provenanceId": "persona-reliability"
+    },
+    {
+      "path": "personas/scope.md",
+      "personaId": "persona.scope",
+      "provenanceId": "persona-scope"
+    },
+    {
+      "path": "personas/security.md",
+      "personaId": "persona.security",
+      "provenanceId": "persona-security"
+    },
+    {
+      "path": "personas/simplicity.md",
+      "personaId": "persona.simplicity",
+      "provenanceId": "persona-simplicity"
+    },
+    {
+      "path": "personas/testing-policy.md",
+      "personaId": "persona.testing-policy",
+      "provenanceId": "persona-testing-policy"
+    }
+  ],
+  "schemaVersion": "reviewer-persona-manifest/1",
+  "sourceAdjudication": "personas/source-adjudication.json"
+}
