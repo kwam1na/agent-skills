@@ -142,13 +142,34 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         selected_entries.append(entry)
         selected_paths.extend(output["path"] for output in entry["outputs"])
 
+    # The shipped reviewer charters ride every profile: the policy layer
+    # resolves a lens to a charter by identity, so a release that omitted them
+    # would compile no adopter policy that activates a lens. Their provenance
+    # entries are selected here too, so the release-time releasable check and
+    # the manifest closure cover charter bytes exactly as they cover skills.
+    persona_manifest = _packaged_document(root, "personas/manifest.json")
+    persona_paths = ["personas/manifest.json", "personas/source-adjudication.json"]
+    for persona in persona_manifest["personas"]:
+        entry = entries[persona["provenanceId"]]
+        if entry.get("distribution") != "releasable":
+            raise ReleaseError(f"release.persona: non-releasable charter {persona['personaId']}")
+        if entry not in selected_entries:
+            selected_entries.append(entry)
+        persona_paths.append(persona["path"])
+    metadata_entry = entries["persona-set-metadata"]
+    if metadata_entry.get("distribution") != "releasable":
+        raise ReleaseError("release.persona: non-releasable charter-set metadata")
+    if metadata_entry not in selected_entries:
+        selected_entries.append(metadata_entry)
+    selected_paths.extend(persona_paths)
+
     files: dict[str, bytes] = {
         "catalog.json": canonical_json(
             {"schemaVersion": catalog["schemaVersion"], "skills": selected_skills}
         ).encode(),
         "provenance.lock.json": canonical_json(
             {
-                "entries": selected_entries,
+                "entries": sorted(selected_entries, key=lambda entry: entry["id"]),
                 "schemaVersion": provenance["schemaVersion"],
                 "sourceBaseline": provenance["sourceBaseline"],
             }

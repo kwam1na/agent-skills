@@ -15,14 +15,14 @@
     "graphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7",
     "releases": {
       "core": {
-        "archiveSha256": "25dd462a818cf2134c08be27181ba123adfa74bf2c367884a411b8b664523fc6",
-        "metadataSha256": "e3b4904148b45df90937f2f383f1ef1e5cb0ba60a27291602edf89609c3a3ffa",
+        "archiveSha256": "bffec8f3d149f709b3607678b4e521ed333a2c65e488625b33c0ef4a99573751",
+        "metadataSha256": "50b1e8fba7864508e64756a4133967a730ce9c13c7f9f6de3c7fa7fa0bd4b592",
         "profile": "core",
         "releaseId": "core-v1"
       },
       "linear": {
-        "archiveSha256": "7a6945ffb0ea1f119a49e4d91085e802395858c2032fce5a696e7d26ed3cec54",
-        "metadataSha256": "b277ad9ac31b42b527ec1bc223e5b38553a299d00e53a0512922302fdd38bf2b",
+        "archiveSha256": "8011323c64df09976cde2cd2e213cbbf8e97cc1c4754f3cc696410a9cbb6610c",
+        "metadataSha256": "e724dd42139047342100fc8e954f17c99d33a9e8d116592afa0f266162e6ec21",
         "profile": "linear",
         "releaseId": "linear-v1"
       }

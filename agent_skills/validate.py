@@ -21,7 +21,8 @@ RULE_IDS = (
     "catalog.complete", "core.boundary", "core.leakage", "dependency.cycle",
     "dependency.reference", "dependency.required_closure", "document.canonical",
     "inventory.anti_vacuity", "path.case_unique", "path.safe",
-    "path.symlink_contained", "profile.closure", "profile.reference",
+    "path.symlink_contained", "persona.manifest", "persona.neutrality",
+    "profile.closure", "profile.reference",
     "provenance.coverage", "provenance.digest", "provenance.license",
     "router.deterministic", "router.repository_precedence", "schema.supported",
     "skill.frontmatter", "skill.reference", "skill.structure", "tracker.contract",
@@ -29,6 +30,7 @@ RULE_IDS = (
 EXPECTED_SCAN_ROOTS = (
     ("catalog", "catalog.json"),
     ("fixture-controls", "tests/fixtures"),
+    ("personas", "personas"),
     ("profiles", "profiles"),
     ("scenario-controls", "tests/scenarios"),
     ("provenance", "provenance.lock.json"),
@@ -582,6 +584,162 @@ def _validate_core_leakage(
                 )
 
 
+PERSONA_MANIFEST = "personas/manifest.json"
+PERSONA_MANIFEST_VERSION = "reviewer-persona-manifest/1"
+PERSONA_ADJUDICATION = "personas/source-adjudication.json"
+PERSONA_ADJUDICATION_VERSION = "reviewer-persona-source-adjudication/1"
+PERSONA_DISPOSITIONS = frozenset({"adapted", "merged", "excluded"})
+
+# A shipped charter is host-neutral and stack-neutral: it names no host, no
+# model, no tool surface, no presentation binding, and no language or
+# framework. A host difference must keep surfacing as a graded capability
+# rather than as a divergent charter rendering.
+PERSONA_BINDING_PATTERNS = (
+    ("host", re.compile(r"claude|codex|cursor|copilot|openai|anthropic", re.IGNORECASE)),
+    ("model", re.compile(r"\b(opus|sonnet|haiku|gpt-?\d)", re.IGNORECASE)),
+    ("tool", re.compile(r"\btools:\s|\bGrep\b|\bGlob\b|\bBash\b|\bsubagent\b|\bMCP\b")),
+    ("frontmatter", re.compile(r"\A---\n")),
+    ("presentation", re.compile(r"(?m)^color:\s")),
+    (
+        "stack",
+        re.compile(
+            r"\b(rails|django|swift|swiftui|uikit|kotlin|golang|typescript|javascript"
+            r"|python|ruby|rspec|activerecord|stimulus|turbo|postgres|mysql|sqlite"
+            r"|react|vue|angular|node\.js|xcode)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def _validate_personas(reader: CorpusReader, provenance: dict[str, dict]) -> None:
+    """The shipped reviewer charter set: its manifest, its adjudication, and its neutrality.
+
+    Every claim here is per-member as well as set-wide. A set-wide sweep alone
+    would pass for free if the manifest were absent, so the manifest's own
+    presence and each declared member are checked explicitly.
+    """
+    personas_root = reader.root / "personas"
+    if not personas_root.is_dir():
+        reader.findings.append(Finding("persona.manifest", "personas", "no shipped charter directory"))
+        return
+
+    manifest = reader.load_json(PERSONA_MANIFEST)
+    if not isinstance(manifest, dict):
+        reader.findings.append(Finding("persona.manifest", PERSONA_MANIFEST, "manifest is missing or unreadable"))
+        return
+    if manifest.get("schemaVersion") != PERSONA_MANIFEST_VERSION:
+        reader.findings.append(Finding("schema.supported", PERSONA_MANIFEST, "unsupported manifest schema version"))
+    if manifest.get("sourceAdjudication") != PERSONA_ADJUDICATION:
+        reader.findings.append(Finding("persona.manifest", PERSONA_MANIFEST, "manifest does not point at its adjudication"))
+
+    declared = manifest.get("personas")
+    if not isinstance(declared, list) or not declared:
+        reader.findings.append(Finding("persona.manifest", PERSONA_MANIFEST, "manifest declares no charters"))
+        return
+
+    persona_ids: list[str] = []
+    declared_paths: list[str] = []
+    for entry in declared:
+        if not isinstance(entry, dict) or set(entry) != {"path", "personaId", "provenanceId"}:
+            reader.findings.append(Finding("persona.manifest", PERSONA_MANIFEST, "charter record has missing or unknown fields"))
+            continue
+        persona_id, relative, provenance_id = entry["personaId"], entry["path"], entry["provenanceId"]
+        if not isinstance(persona_id, str) or not persona_id.startswith("persona."):
+            reader.findings.append(Finding("persona.manifest", PERSONA_MANIFEST, f"invalid charter identity: {persona_id!r}"))
+            continue
+        persona_ids.append(persona_id)
+        if not isinstance(relative, str) or not safe_relative_path(relative) or not relative.startswith("personas/"):
+            reader.findings.append(Finding("path.safe", persona_id, f"unsafe charter path: {relative!r}"))
+            continue
+        declared_paths.append(relative)
+        if not (reader.root / relative).is_file():
+            reader.findings.append(Finding("persona.manifest", relative, "manifest names a charter the corpus does not carry"))
+            continue
+        entry_provenance = provenance.get(provenance_id) if isinstance(provenance_id, str) else None
+        if entry_provenance is None:
+            reader.findings.append(Finding("provenance.coverage", persona_id, "charter names no provenance record"))
+        elif relative not in [
+            output.get("path") for output in entry_provenance.get("outputs", []) if isinstance(output, dict)
+        ]:
+            reader.findings.append(Finding("provenance.coverage", persona_id, "charter provenance does not record its own bytes"))
+
+    if persona_ids != sorted(persona_ids):
+        reader.findings.append(Finding("document.canonical", PERSONA_MANIFEST, "charters are not sorted by identity"))
+    if len(set(persona_ids)) != len(persona_ids) or len(set(declared_paths)) != len(declared_paths):
+        reader.findings.append(Finding("persona.manifest", PERSONA_MANIFEST, "duplicate charter identity or path"))
+
+    shipped_charters = sorted(
+        path.relative_to(reader.root).as_posix() for path in personas_root.glob("*.md") if path.is_file()
+    )
+    if shipped_charters != sorted(declared_paths):
+        reader.findings.append(Finding("persona.manifest", "personas", "manifest does not exactly cover the shipped charters"))
+
+    for relative in shipped_charters:
+        try:
+            contents = (reader.root / relative).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            reader.findings.append(Finding("persona.manifest", relative, "charter is unreadable"))
+            continue
+        for label, pattern in PERSONA_BINDING_PATTERNS:
+            if pattern.search(contents):
+                reader.findings.append(Finding("persona.neutrality", relative, f"charter carries a {label} binding"))
+
+    _validate_persona_adjudication(reader, set(persona_ids))
+
+
+def _validate_persona_adjudication(reader: CorpusReader, persona_ids: set[str]) -> None:
+    """Every considered source file carries a recorded decision, and the decisions cover the set."""
+    document = reader.load_json(PERSONA_ADJUDICATION)
+    if not isinstance(document, dict):
+        reader.findings.append(Finding("persona.manifest", PERSONA_ADJUDICATION, "adjudication is missing or unreadable"))
+        return
+    if document.get("schemaVersion") != PERSONA_ADJUDICATION_VERSION:
+        reader.findings.append(Finding("schema.supported", PERSONA_ADJUDICATION, "unsupported adjudication schema version"))
+    rules = document.get("exclusionRules")
+    known_rules = set(rules) if isinstance(rules, dict) else set()
+    source = document.get("source")
+    expected_count = source.get("observedFileCount") if isinstance(source, dict) else None
+
+    rows = document.get("adjudications")
+    if not isinstance(rows, list) or not rows:
+        reader.findings.append(Finding("persona.manifest", PERSONA_ADJUDICATION, "adjudication records no decisions"))
+        return
+    if not isinstance(expected_count, int) or expected_count != len(rows):
+        reader.findings.append(
+            Finding("persona.manifest", PERSONA_ADJUDICATION, "decision count does not match the observed source count")
+        )
+
+    files: list[str] = []
+    adapted_to: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("sourceFile"), str):
+            reader.findings.append(Finding("persona.manifest", PERSONA_ADJUDICATION, "invalid decision record"))
+            continue
+        files.append(row["sourceFile"])
+        disposition, reason = row.get("disposition"), row.get("reason")
+        if disposition not in PERSONA_DISPOSITIONS:
+            reader.findings.append(Finding("persona.manifest", row["sourceFile"], "unknown disposition"))
+            continue
+        if not isinstance(reason, str) or not reason.strip():
+            reader.findings.append(Finding("persona.manifest", row["sourceFile"], "decision carries no reason"))
+        if disposition in {"adapted", "merged"}:
+            persona_id = row.get("personaId")
+            if persona_id not in persona_ids:
+                reader.findings.append(Finding("persona.manifest", row["sourceFile"], "decision names an unshipped charter"))
+            elif disposition == "adapted":
+                if persona_id in adapted_to:
+                    reader.findings.append(Finding("persona.manifest", row["sourceFile"], "charter has more than one primary source"))
+                adapted_to[persona_id] = row["sourceFile"]
+        elif row.get("exclusionRule") not in known_rules:
+            reader.findings.append(Finding("persona.manifest", row["sourceFile"], "exclusion names an undeclared rule"))
+
+    if files != sorted(files) or len(set(files)) != len(files):
+        reader.findings.append(Finding("document.canonical", PERSONA_ADJUDICATION, "decisions are not sorted and unique by source file"))
+    for persona_id in sorted(persona_ids - set(adapted_to)):
+        reader.findings.append(Finding("persona.manifest", persona_id, "shipped charter has no adapted source decision"))
+
+
 def _validate_provenance_source(
     entry: dict, version: object, findings: list[Finding]
 ) -> None:
@@ -784,10 +942,15 @@ def validate_corpus(root: Path) -> ValidationResult:
                 findings.append(Finding("provenance.coverage", relative, "missing provenance output"))
             elif output.get("sha256") != sha256_bytes(path.read_bytes()):
                 findings.append(Finding("provenance.digest", relative, "provenance digest drift"))
+    # Provenance covers every shipped byte, not only the skill bodies: the
+    # reviewer charters ship from `personas/` and carry the same license and
+    # attribution obligations, so a charter added without a provenance entry
+    # must fail here rather than at the public distribution flip.
     shipped_files = (
         sorted(
             path.relative_to(reader.root).as_posix()
-            for path in (reader.root / "skills").rglob("*")
+            for root in ("skills", "personas")
+            for path in (reader.root / root).rglob("*")
             if path.is_file()
         )
         if skills_root_contained
@@ -905,6 +1068,7 @@ def validate_corpus(root: Path) -> ValidationResult:
     findings.extend(dependency_findings(skills, profiles))
     _validate_skills(reader, skills)
     _validate_core_leakage(reader, profiles, skills, provenance)
+    _validate_personas(reader, provenance)
     return _result(findings, profiles, skills, scan_roots)
 
 

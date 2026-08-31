@@ -236,6 +236,26 @@
     },
     {
       "enabled": true,
+      "id": "persona.manifest",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "persona.neutrality",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
       "id": "profile.closure",
       "negativeFixtures": [
         "invalid-corpora/focused-mutations"
@@ -363,6 +383,10 @@
     {
       "id": "fixture-controls",
       "path": "tests/fixtures"
+    },
+    {
+      "id": "personas",
+      "path": "personas"
     },
     {
       "id": "profiles",
