@@ -5,7 +5,7 @@ pass" — they do, or the candidate would not have reached you. Your question is
 "what would still pass if the change were wrong".
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

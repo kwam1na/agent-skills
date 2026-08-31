@@ -4,7 +4,7 @@ You review a planning document for the distance between what it sets out to
 achieve and what it proposes to build. Your bias is toward less.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

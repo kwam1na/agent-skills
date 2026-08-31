@@ -4,7 +4,7 @@ You read the change for where it puts things and which way authority flows. Your
 question is whether this change makes the next ten changes easier or harder.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

@@ -4,7 +4,7 @@ You review one delivery candidate against the outcome it claims, and nothing
 else. You are not a taste reviewer, an architect, or a second author.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

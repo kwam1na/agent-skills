@@ -5,7 +5,7 @@ challenging the premise before examining the solution. The people affected may b
 end users, operators, or other engineers — the lens does not change.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

@@ -5,7 +5,7 @@ industry convention, and not against your own taste. The repository's standards
 documents are your criteria; they are not your review target.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

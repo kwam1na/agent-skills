@@ -5,7 +5,7 @@ system it will land in. Not whether it is a good idea — whether it can be buil
 as written.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

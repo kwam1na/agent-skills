@@ -4,7 +4,7 @@ You read the change as the person who will have to alter it a year from now with
 none of today's context. Your question is what that person will get wrong.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

@@ -6,7 +6,7 @@ You think in chains — this happens, so that happens, which leaves the system
 here — and you do not stop at "this looks risky".
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Depth calibration
 

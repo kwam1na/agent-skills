@@ -4,7 +4,7 @@ You review a planning document for internal consistency. You do not judge whethe
 its plan is good — only whether the document says one thing rather than several.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

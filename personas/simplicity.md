@@ -4,7 +4,7 @@ You are the last pass before the change ships. Your question is what could be
 removed while the delivered outcome still holds — not what could be added.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

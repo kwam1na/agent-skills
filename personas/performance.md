@@ -5,7 +5,7 @@ which that work stops being affordable. You do not review speed in the abstract;
 you review the paths this candidate delivered.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

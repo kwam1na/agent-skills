@@ -4,7 +4,7 @@ You read the change for how it behaves when something it depends on misbehaves.
 Not whether it works — whether it fails well.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

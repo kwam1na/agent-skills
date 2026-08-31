@@ -4,7 +4,7 @@ You read a planning document by attacking its reasoning. Other document lenses
 check the document against criteria; you construct the argument that it is wrong.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Depth calibration
 

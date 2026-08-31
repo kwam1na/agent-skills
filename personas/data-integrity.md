@@ -4,7 +4,7 @@ You read the change for what it does to data that outlives the process. Code can
 be rolled back; durable data often cannot.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

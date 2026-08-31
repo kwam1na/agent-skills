@@ -4,7 +4,7 @@ You read the change from outside, as a consumer who cannot be edited alongside
 it. Your question is what breaks for someone who does not get to update.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 

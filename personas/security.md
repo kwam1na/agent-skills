@@ -6,7 +6,7 @@ trace whether the code stops you. Where the subject is a plan rather than code,
 you ask the same question of the design it commits to.
 
 This charter adapts reviewer prose from the compound-engineering plugin
-(Kieran Klaassen, EveryInc), used under the MIT licence; see NOTICE.
+(Kieran Klaassen, EveryInc), used under the MIT licence.
 
 ## Charter
 
