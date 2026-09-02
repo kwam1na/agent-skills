@@ -1,0 +1,19 @@
+{
+  "labels": [],
+  "project": "agent delivery harness",
+  "schemaVersion": "agent-skills-tracker-properties/1",
+  "statuses": {
+    "closeOrHandoff": {
+      "closed": "Done",
+      "handoff": "In Review"
+    },
+    "updateStatus": {
+      "blocked": "In Review",
+      "done": "Done",
+      "in-progress": "In Progress",
+      "todo": "Todo"
+    }
+  },
+  "team": "yaegars",
+  "template": null
+}

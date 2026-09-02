@@ -13,6 +13,8 @@ from .errors import Finding
 
 
 BASELINE_REVISION = "342850073464a2c9b6198d32d11475f5fa5cbe53"
+REPOSITORY_INSTRUCTIONS = "AGENTS.md"
+TRACKER_PROPERTIES = ".agents/tracker-properties.json"
 SCHEMA_VERSIONS = {
     "catalog.json": "agent-skills-catalog/1",
 }
@@ -142,6 +144,43 @@ class CorpusReader:
         if canonical_json(value) != contents:
             self.findings.append(Finding("document.canonical", relative, f"noncanonical serialization: {relative}"))
         return value
+
+
+def _validate_tracker_properties(reader: CorpusReader) -> None:
+    """An adopting repository declares its tracker properties; a release does not.
+
+    The document is repository-owned configuration rather than release payload,
+    so it is required only where the repository's own instruction file is
+    present. A released corpus extracted on its own is unaffected.
+    """
+    if not (reader.root / REPOSITORY_INSTRUCTIONS).is_file():
+        return
+    try:
+        contents = (reader.root / TRACKER_PROPERTIES).read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        reader.findings.append(
+            Finding(
+                "tracker.contract",
+                TRACKER_PROPERTIES,
+                "missing tracker properties document",
+            )
+        )
+        return
+    try:
+        document = json.loads(contents)
+    except json.JSONDecodeError as error:
+        reader.findings.append(
+            Finding("tracker.contract", TRACKER_PROPERTIES, f"invalid JSON: {error.msg}")
+        )
+        return
+    if not isinstance(document, dict):
+        reader.findings.append(
+            Finding(
+                "tracker.contract",
+                TRACKER_PROPERTIES,
+                "tracker properties must be an object",
+            )
+        )
 
 
 def _validate_inventory(reader: CorpusReader) -> tuple[str, ...]:
@@ -817,6 +856,7 @@ def validate_corpus(root: Path) -> ValidationResult:
     findings: list[Finding] = []
     reader = CorpusReader(root, findings)
     scan_roots = _validate_inventory(reader)
+    _validate_tracker_properties(reader)
     catalog = reader.load_json("catalog.json")
     provenance_document = reader.load_json("provenance.lock.json")
     profiles = _load_profiles(reader)

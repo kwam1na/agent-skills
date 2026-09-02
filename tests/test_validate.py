@@ -277,6 +277,38 @@ class CorpusValidationTests(unittest.TestCase):
         self.assertGreater(len(result.findings), 0)
         self.assertIn("schema.supported", {finding.rule_id for finding in result.findings})
 
+    def test_absent_or_malformed_tracker_properties_reject(self) -> None:
+        for mutation in ("absent", "malformed", "not-an-object"):
+            with self.subTest(mutation=mutation):
+                temporary, root = self.copied_corpus()
+                self.addCleanup(temporary.cleanup)
+                properties = root / ".agents" / "tracker-properties.json"
+                self.assertEqual(validate_corpus(root).findings, ())
+                if mutation == "absent":
+                    properties.unlink()
+                elif mutation == "malformed":
+                    properties.write_text("{", encoding="utf-8")
+                else:
+                    write_json(properties, ["yaegars"])
+
+                findings = validate_corpus(root).findings
+                self.assertEqual(
+                    [finding.rule_id for finding in findings], ["tracker.contract"]
+                )
+                self.assertEqual(
+                    findings[0].artifact, ".agents/tracker-properties.json"
+                )
+
+    def test_release_corpus_without_repository_instructions_needs_no_properties(
+        self,
+    ) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        (root / ".agents" / "tracker-properties.json").unlink()
+        (root / "AGENTS.md").unlink()
+
+        self.assertEqual(validate_corpus(root).findings, ())
+
 
 if __name__ == "__main__":
     unittest.main()

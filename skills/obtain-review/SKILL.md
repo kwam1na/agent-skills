@@ -119,6 +119,24 @@ lens. In its own report the lens records in its evidence what that item must
 say: the outcome the item must reach, the deferral's identifier, and the lens
 that filed it. A lens is read-only and files nothing itself.
 
+## Realize a lens by convention where the harness supplies none
+
+Where no harness-supplied realization exists for a selected lens, realize it by
+this convention rather than by improvising one per delivery. One subagent per
+lens. The charter is supplied to it verbatim beside the round brief, and the
+executor composes nothing about the charter itself. A lens is read-only, apart
+from the restore-on-exit allowance the adversarial charter already grants
+itself. No two lenses in a round share context. The evidence names the model
+class the lens ran under.
+
+Evidence obtained by this convention records independence as `host-convention`,
+naming this section, rather than leaving the realization described as
+unverified. The acquisition entry's typed `independence` is unchanged by the
+convention and stays `{"status": "unverified"}` until harness-supplied
+attestation evidence upgrades it, because a declared procedure is not a proof of
+distinct realization. This section declares that procedure only: it builds no
+realization runtime, and this workflow launches no subordinate runtime.
+
 ## Independence and repair
 
 Default independence to `{"status": "unverified"}`. A different label, prompt,
