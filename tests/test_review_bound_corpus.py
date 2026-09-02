@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "skills/review-work/SKILL.md": (
-        "The workflow default is three rounds",
+        "The workflow default is four rounds",
+        "a repository instruction file may declare a smaller bound; a larger"
+        " bound is an operator decision recorded before the first round",
         "every round obtained for the delivery counts against it, across every loop",
         "typed blocker `review.loop-bound-reached` naming the open findings and does"
         " not run another round",
@@ -24,6 +26,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " delivery",
         "its delta runs from the candidate of that lens's most recent"
         " result-carrying entry",
+        "A grace round obtained at the bound is such a verification round, like"
+        " any other, with no special kind, scope, or carry-forward",
         "that lens's own retained entry from every prior round of the delivery in"
         " which it was selected",
         "binding tuple with its result-less state where the acquisition failed",
@@ -70,9 +74,18 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "The executor closes, defers, and declines nothing on its own judgement",
         "With dissent open, record the typed blocker `review.loop-bound-reached`"
         " naming the open findings, report `partial`, and stop",
-        "record the same blocker naming the unreviewed change, report `partial`, and"
-        " stop",
         "record the same blocker naming the failed lens, report `partial`, and stop",
+        "When every lens is aligned at the bound and a required change would alter"
+        " the candidate, the delivery obtains exactly one grace verification round"
+        " for that change",
+        "at most once per delivery, declared as the grace round when it is obtained",
+        "The grace round is an ordinary verification round under the same lens set"
+        " and the same carry-forward rules",
+        "If the grace round does not align, or a further candidate change is required"
+        " after it, record the typed blocker `review.loop-bound-reached` naming"
+        " what is open, report `partial`, and stop",
+        "The grace round is not available with dissent open or after a failed"
+        " acquisition",
         "Before the delivery reports done, every finding any lens recorded as a"
         " deferral has a tracked follow-up item recorded through the tracker's"
         " `create-work`",
@@ -86,7 +99,7 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "skills/compound-delivery-kernel/SKILL.md": (
         "Declare the round bound before the first round; every round of the delivery"
-        " counts; the default is three rounds",
+        " counts; the default is four rounds",
         "Later rounds verify closure and review the delta",
         "only P0 and P1 findings block",
         "the lens, not the executor, closes or defers a finding",
@@ -94,6 +107,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " filed",
     ),
 }
+
+FORBIDDEN_PHRASES: tuple[str, ...] = (
+    "three rounds",
+)
 
 
 class ReviewBoundCorpusTests(unittest.TestCase):
@@ -107,6 +124,15 @@ class ReviewBoundCorpusTests(unittest.TestCase):
             for phrase in phrases:
                 with self.subTest(path=relative, phrase=phrase):
                     self.assertIn(phrase, normalized)
+
+    def test_superseded_default_bound_is_absent(self) -> None:
+        for relative in REQUIRED_PHRASES:
+            normalized = " ".join(
+                (ROOT / relative).read_text(encoding="utf-8").split()
+            )
+            for phrase in FORBIDDEN_PHRASES:
+                with self.subTest(path=relative, phrase=phrase):
+                    self.assertNotIn(phrase, normalized)
 
 
 if __name__ == "__main__":
