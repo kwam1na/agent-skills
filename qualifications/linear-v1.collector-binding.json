@@ -1,26 +1,26 @@
 {
   "candidateRef": {
-    "opaque": "qualification-candidate:f9dd43227d19257553bd95fe0d4d74af",
+    "opaque": "qualification-candidate:e13b0943c92fd3d453f82f41ca79303c",
     "schemaVersion": "workflow-candidate-ref/1"
   },
   "graphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7",
   "releases": {
     "core": {
-      "archiveSha256": "2acbc0568ef6477202dee799981079a4406aea077517d320f39a380d8a291c1f",
-      "metadataSha256": "c9d0ea4e99a09d33d738b473865cbabb1f2b49e713ac845a41adb130bfa1c526",
+      "archiveSha256": "268123a3466cd9f17de15fd086ff4c90dcdd1deae4691b8edb244bdbc1cc43b1",
+      "metadataSha256": "fb3dc9d1ec2b5b28f393b054bc5e3884d87cad91f025724b317dc8f9d5229047",
       "profile": "core",
       "releaseId": "core-v1"
     },
     "linear": {
-      "archiveSha256": "77f55f2f92a51ba5798309ce7143ef1538f89ec3ab1ce699cad1921c7bc4fc54",
-      "metadataSha256": "85dfe1a121d0aa608cb7c89ab486375d9108a40bb51d75fca0fcd3792af782ac",
+      "archiveSha256": "9b8c5c50426c1ea881980033e9d9e9480e5f298abc113698c38f6cb28a50192d",
+      "metadataSha256": "dfaad72ce2c8c876c8518ced9b7068d1ed277310814b758b970905db404d0c3e",
       "profile": "linear",
       "releaseId": "linear-v1"
     }
   },
   "schemaVersion": "agent-skills-linear-collector-binding/1",
   "subjectRef": {
-    "opaque": "qualification-subject:669bf11a3409b8c0be325a6a184b6caa",
+    "opaque": "qualification-subject:8a4e022d866fd7bda0987482bcb7b55c",
     "schemaVersion": "workflow-subject-ref/1"
   }
 }

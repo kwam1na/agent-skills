@@ -44,6 +44,8 @@ Plan -> Work -> Review -> Compound.
 Choose the smallest durable response to a reusable learning: update existing
 guidance, add a focused sensor, record a follow-up, or explicitly record that no
 durable learning emerged. Do not create documentation for obvious one-off work.
+Name the tracked follow-up item recorded for every deferral any lens filed as
+part of the delivery's record.
 
 ## Handoff
 

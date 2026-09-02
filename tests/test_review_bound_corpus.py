@@ -14,6 +14,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " not run another round",
         "by that lens's closure report, by that lens's withdrawal with its reason,"
         " or, for a finding it filed as a deferral, by that deferral",
+        "A deferral's follow-up is a tracked item the executor records before the"
+        " delivery reports done",
+        "the deferral's evidence names what that item must say, and the lens files"
+        " nothing itself",
     ),
     "skills/obtain-review/SKILL.md": (
         "A lens's assessment round is its first result-carrying round for the"
@@ -47,6 +51,13 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " or by that lens's withdrawal with its reason, never by a later deferral",
         "a finding the lens filed as a deferral is discharged by that deferral",
         "A new finding outside the delta is filed only at P0",
+        "recorded as a deferral with a follow-up item",
+        "belong in `evidence` as deferrals with a follow-up item",
+        "A deferral's follow-up is a tracked item, and the executor records it, not"
+        " the lens",
+        "the lens records in its evidence what that item must say: the outcome the"
+        " item must reach, the deferral's identifier, and the lens that filed it",
+        "A lens is read-only and files nothing itself",
     ),
     "skills/execute-work/SKILL.md": (
         "state the bound in effect for the delivery",
@@ -62,6 +73,16 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "record the same blocker naming the unreviewed change, report `partial`, and"
         " stop",
         "record the same blocker naming the failed lens, report `partial`, and stop",
+        "Before the delivery reports done, every finding any lens recorded as a"
+        " deferral has a tracked follow-up item recorded through the tracker's"
+        " `create-work`",
+        "one item per shippable outcome, each deferral cited by its identifier and"
+        " the lens that filed it, related to the delivering work item",
+        "A deferral with no tracked item is an open item for the finish line",
+        "record the typed blocker `review.deferral-untracked` naming the deferrals"
+        " that lack one, report `partial`, and stop",
+        "Where no tracker is configured, those follow-up items are the actionable"
+        " tracking handoff in the result rather than a blocker",
     ),
     "skills/compound-delivery-kernel/SKILL.md": (
         "Declare the round bound before the first round; every round of the delivery"
@@ -69,6 +90,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Later rounds verify closure and review the delta",
         "only P0 and P1 findings block",
         "the lens, not the executor, closes or defers a finding",
+        "Name the tracked follow-up item recorded for every deferral any lens"
+        " filed",
     ),
 }
 
