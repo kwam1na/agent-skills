@@ -76,6 +76,14 @@ failed lens, report `partial`, and stop. Before the bound a failed acquisition
 is not terminal: obtain the next round within the remaining bound, and that
 round is the latest the reducer judges.
 
+Before the delivery reports done, every finding any lens recorded as a deferral
+has a tracked follow-up item recorded through the tracker's `create-work`, one
+item per shippable outcome, each deferral cited by its identifier and the lens
+that filed it, related to the delivering work item. A deferral with no tracked
+item is an open item for the finish line: record the typed blocker
+`review.deferral-untracked` naming the deferrals that lack one, report
+`partial`, and stop.
+
 ## Keep the Delivery Loop Observable
 
 Before claiming `complete`, record the outcome of every kernel phase rather
