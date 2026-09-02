@@ -60,7 +60,9 @@ round for the delivery, and it reviews the whole delivered diff. Every later
 result-carrying round of that lens is a verification round, including a round
 obtained after alignment because the candidate changed, and its delta runs from
 the candidate of that lens's most recent result-carrying entry, so a round in
-which that lens's acquisition failed is spanned rather than skipped.
+which that lens's acquisition failed is spanned rather than skipped. A grace
+round obtained at the bound is such a verification round, like any other, with
+no special kind, scope, or carry-forward.
 
 For a verification round the caller supplies each lens, as its `contextRefs`,
 that lens's own retained entry from every prior round of the delivery in which

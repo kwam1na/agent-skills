@@ -66,15 +66,23 @@ its follow-up; declined only where that lens withdrew the finding, with its
 stated reason; or open, named in the blocker when the bound is reached. The
 executor closes, defers, and declines nothing on its own judgement.
 
-Reaching the bound is terminal in all three of its forms. With dissent open,
-record the typed blocker `review.loop-bound-reached` naming the open findings,
-report `partial`, and stop. Without dissent but with a repair, rebase, or fix
-still required that would change the candidate, record the same blocker naming
-the unreviewed change, report `partial`, and stop. With the latest round blocked
-by a failed acquisition and no round left, record the same blocker naming the
-failed lens, report `partial`, and stop. Before the bound a failed acquisition
-is not terminal: obtain the next round within the remaining bound, and that
-round is the latest the reducer judges.
+Reaching the bound is terminal in both of its forms. With dissent open, record
+the typed blocker `review.loop-bound-reached` naming the open findings, report
+`partial`, and stop. With the latest round blocked by a failed acquisition and
+no round left, record the same blocker naming the failed lens, report `partial`,
+and stop. Before the bound a failed acquisition is not terminal: obtain the next
+round within the remaining bound, and that round is the latest the reducer
+judges.
+
+When every lens is aligned at the bound and a required change would alter the
+candidate, the delivery obtains exactly one grace verification round for that
+change, at most once per delivery, declared as the grace round when it is
+obtained. The grace round is an ordinary verification round under the same lens
+set and the same carry-forward rules. If the grace round does not align, or a
+further candidate change is required after it, record the typed blocker
+`review.loop-bound-reached` naming what is open, report `partial`, and stop. The
+grace round is not available with dissent open or where the latest round was
+blocked by a failed acquisition.
 
 Before the delivery reports done, every finding any lens recorded as a deferral
 has a tracked follow-up item recorded through the tracker's `create-work`, one
