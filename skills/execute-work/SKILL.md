@@ -81,7 +81,8 @@ obtained. The grace round is an ordinary verification round under the same lens
 set and the same carry-forward rules. If the grace round does not align, or a
 further candidate change is required after it, record the typed blocker
 `review.loop-bound-reached` naming what is open, report `partial`, and stop. The
-grace round is not available with dissent open or after a failed acquisition.
+grace round is not available with dissent open or where the latest round was
+blocked by a failed acquisition.
 
 Before the delivery reports done, every finding any lens recorded as a deferral
 has a tracked follow-up item recorded through the tracker's `create-work`, one

@@ -11,7 +11,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "The workflow default is four rounds",
         "a repository instruction file may declare a smaller bound; a larger"
         " bound is an operator decision recorded before the first round",
-        "every round obtained for the delivery counts against it, across every loop",
+        "every round obtained for the delivery counts against it, across every loop"
+        ", except one grace verification round obtained at the bound",
         "typed blocker `review.loop-bound-reached` naming the open findings and does"
         " not run another round",
         "by that lens's closure report, by that lens's withdrawal with its reason,"
@@ -84,8 +85,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "If the grace round does not align, or a further candidate change is required"
         " after it, record the typed blocker `review.loop-bound-reached` naming"
         " what is open, report `partial`, and stop",
-        "The grace round is not available with dissent open or after a failed"
-        " acquisition",
+        "The grace round is not available with dissent open or where the latest"
+        " round was blocked by a failed acquisition",
         "Before the delivery reports done, every finding any lens recorded as a"
         " deferral has a tracked follow-up item recorded through the tracker's"
         " `create-work`",
@@ -99,7 +100,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "skills/compound-delivery-kernel/SKILL.md": (
         "Declare the round bound before the first round; every round of the delivery"
-        " counts; the default is four rounds",
+        " counts, except one grace round obtained at the bound; the default is"
+        " four rounds",
         "Later rounds verify closure and review the delta",
         "only P0 and P1 findings block",
         "the lens, not the executor, closes or defers a finding",

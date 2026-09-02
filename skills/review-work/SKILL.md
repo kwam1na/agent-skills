@@ -17,10 +17,11 @@ repository's review authority.
 Provide the required lens names, a positive round bound, and the completed lens
 results for each round. The round bound is declared by the caller before the
 first round and belongs to the delivery: every round obtained for the delivery
-counts against it, across every loop, and every round already obtained is
-supplied to each reduction. The workflow default is four rounds, and a
-repository instruction file may declare a smaller bound; a larger bound is an
-operator decision recorded before the first round.
+counts against it, across every loop, except one grace verification round
+obtained at the bound, and every round already obtained is supplied to each
+reduction. The workflow default is four rounds, and a repository instruction
+file may declare a smaller bound; a larger bound is an operator decision
+recorded before the first round.
 
 Every aligned or changes-requested result includes
 caller-owned evidence. A changes-requested result also names its actionable
