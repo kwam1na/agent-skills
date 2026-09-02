@@ -81,6 +81,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "A deferral with no tracked item is an open item for the finish line",
         "record the typed blocker `review.deferral-untracked` naming the deferrals"
         " that lack one, report `partial`, and stop",
+        "Where no tracker is configured, those follow-up items are the actionable"
+        " tracking handoff in the result rather than a blocker",
     ),
     "skills/compound-delivery-kernel/SKILL.md": (
         "Declare the round bound before the first round; every round of the delivery"

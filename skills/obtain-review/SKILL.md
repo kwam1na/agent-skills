@@ -102,10 +102,10 @@ Only P0 and P1 findings inside the round's scope are actionable. Deferrable
 findings, P2 and P3 under the charter's severity vocabulary and a P1 first filed
 outside the delta in a verification round, belong in `evidence` as deferrals
 with a follow-up item rather than in `findings`. A carried finding's filed
-severity and in-scope status are a floor: the filing lens may raise them on re-check and
-never lower them, and a raised finding is treated as filed at the new severity
-from that round, so a carried deferral raised to P0 blocks under the
-out-of-delta rule. A carried P0 or P1 is discharged only by the filing lens's
+severity and in-scope status are a floor: the filing lens may raise them on
+re-check and never lower them, and a raised finding is treated as filed at the
+new severity from that round, so a carried deferral raised to P0 blocks under
+the out-of-delta rule. A carried P0 or P1 is discharged only by the filing lens's
 closure report or by that lens's withdrawal with its reason, never by a later
 deferral; a finding the lens filed as a deferral is discharged by that deferral.
 A finding is closed, deferred, or declined only by the lens that filed it, in

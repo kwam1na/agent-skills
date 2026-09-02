@@ -82,7 +82,8 @@ item per shippable outcome, each deferral cited by its identifier and the lens
 that filed it, related to the delivering work item. A deferral with no tracked
 item is an open item for the finish line: record the typed blocker
 `review.deferral-untracked` naming the deferrals that lack one, report
-`partial`, and stop.
+`partial`, and stop. Where no tracker is configured, those follow-up items are
+the actionable tracking handoff in the result rather than a blocker.
 
 ## Keep the Delivery Loop Observable
 

@@ -1,54 +1,54 @@
 {
-  "attestationSha256": "9ca7bb4c663ce09bad1a00f12015e31235e6666261b7bbbdd1d309971c9b8428",
+  "attestationSha256": "ede218f194721f088517e81d40798c0c8a6e9ca107eb15be8a9386e12bee8053",
   "candidate": {
     "core": {
-      "archiveSha256": "55fe2217c86aedb3964cd0f17b40c5d4c43ac71756973ef60cf3d4922dcbac08",
-      "metadataSha256": "9880beba3e6dded12eecf54767b9576e6a928e3ace4a45ee6b739e49b1291f3f",
+      "archiveSha256": "268123a3466cd9f17de15fd086ff4c90dcdd1deae4691b8edb244bdbc1cc43b1",
+      "metadataSha256": "fb3dc9d1ec2b5b28f393b054bc5e3884d87cad91f025724b317dc8f9d5229047",
       "profile": "core",
       "releaseId": "core-v1",
-      "sourceTreeSha256": "9766adbb48bfa49b951887ac2ea7a8c510139da0be5ca5599523d72f14b1ce23"
+      "sourceTreeSha256": "dda2d31299bc6dd0c2c826bd0b4d9ab54e2d161c711ae40112f880fe794a9dec"
     },
     "linear": {
-      "archiveSha256": "7b259bcd079a68d5c70e8eddca3156ac7a567da37d686fbb9c6fb9819c5fc5ca",
-      "metadataSha256": "6665bbea22c8debcdab7e627416531e175c223655b7b60a3ef04710e5e5c4786",
+      "archiveSha256": "9b8c5c50426c1ea881980033e9d9e9480e5f298abc113698c38f6cb28a50192d",
+      "metadataSha256": "dfaad72ce2c8c876c8518ced9b7068d1ed277310814b758b970905db404d0c3e",
       "profile": "linear",
       "releaseId": "linear-v1",
-      "sourceTreeSha256": "cc5e10f944a1e544f13f607900e1683feb9a447bb7f289aa65e856feb07ac28b"
+      "sourceTreeSha256": "71ee7d0b9bf625df888a2c89f87e294e2643a499ca0b95049cb1928842d7acd6"
     }
   },
   "collectorBinding": {
     "candidateRef": {
-      "opaque": "qualification-candidate:f464234524ffc5959e1bd425d324422c",
+      "opaque": "qualification-candidate:e13b0943c92fd3d453f82f41ca79303c",
       "schemaVersion": "workflow-candidate-ref/1"
     },
     "graphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7",
     "releases": {
       "core": {
-        "archiveSha256": "55fe2217c86aedb3964cd0f17b40c5d4c43ac71756973ef60cf3d4922dcbac08",
-        "metadataSha256": "9880beba3e6dded12eecf54767b9576e6a928e3ace4a45ee6b739e49b1291f3f",
+        "archiveSha256": "268123a3466cd9f17de15fd086ff4c90dcdd1deae4691b8edb244bdbc1cc43b1",
+        "metadataSha256": "fb3dc9d1ec2b5b28f393b054bc5e3884d87cad91f025724b317dc8f9d5229047",
         "profile": "core",
         "releaseId": "core-v1"
       },
       "linear": {
-        "archiveSha256": "7b259bcd079a68d5c70e8eddca3156ac7a567da37d686fbb9c6fb9819c5fc5ca",
-        "metadataSha256": "6665bbea22c8debcdab7e627416531e175c223655b7b60a3ef04710e5e5c4786",
+        "archiveSha256": "9b8c5c50426c1ea881980033e9d9e9480e5f298abc113698c38f6cb28a50192d",
+        "metadataSha256": "dfaad72ce2c8c876c8518ced9b7068d1ed277310814b758b970905db404d0c3e",
         "profile": "linear",
         "releaseId": "linear-v1"
       }
     },
     "schemaVersion": "agent-skills-linear-collector-binding/1",
     "subjectRef": {
-      "opaque": "qualification-subject:0ca32e04773ca472cd767eadc45708a5",
+      "opaque": "qualification-subject:8a4e022d866fd7bda0987482bcb7b55c",
       "schemaVersion": "workflow-subject-ref/1"
     }
   },
-  "collectorBindingSha256": "a7c1ec097e9390f2630544cce2be929f6352e2fabc7e1ae1faa6a7b1a759fec9",
-  "coreQualificationSha256": "08f31c88da7fe8d972923704c3697fc3938dc7e348715fc6efdeed4f977071c3",
+  "collectorBindingSha256": "1d8bbea5e0510959719973420ced25a05a243dd1b3ead60eef28ea1c0b29f4c0",
+  "coreQualificationSha256": "11d5d47c716a1c954053bf8bf15c5065511120e32aa516446dd9a1846ad438e8",
   "proofBoundary": {
     "live": "external MCP provenance is owned by the protected host-native run",
     "offline": "binds the retained attestation bytes to the retained receipt reference and independently frozen release, graph, subject, and candidate input; it does not independently prove external calls or collector authorization"
   },
-  "receiptReference": "linear-receipt:a4f517b5010bf5e2155c958f7d9521cf",
+  "receiptReference": "linear-receipt:725fc3335843d24789c292a6996faf60",
   "redaction": {
     "environmentCaptured": false,
     "hostPayloadsCaptured": false,
