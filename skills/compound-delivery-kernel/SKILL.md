@@ -31,6 +31,10 @@ Plan -> Work -> Review -> Compound.
 ## Review
 
 - Review against acceptance criteria, repository authority, and sensor evidence.
+- Declare the round bound before the first round; every round of the delivery
+  counts; the default is three rounds.
+- Later rounds verify closure and review the delta; only P0 and P1 findings
+  block; the lens, not the executor, closes or defers a finding.
 - Use specialized review only when the change's risk warrants it.
 - Treat concrete findings as work, then rerun the proving sensor.
 - Do not expand scope for speculative hardening or unrelated cleanup.

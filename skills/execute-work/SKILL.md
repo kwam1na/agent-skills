@@ -44,12 +44,46 @@ solely to satisfy an accidental formatting or extraction constraint.
 When work becomes blocked, retain completed work and evidence, name the blocker,
 and provide the approval or decision handoff needed to continue.
 
+## Bound the Review Loop
+
+Before the first review round, state the bound in effect for the delivery,
+quoting the repository instruction that sets it if any, and state the lenses.
+Never declare a second bound for the same delivery. The lens set is declared
+before the first round and held unchanged for the delivery: every declared lens
+is selected in every round, no lens is added after the first round, and dropping
+a lens disposes of nothing it filed.
+
+For each verification round, supply each lens its own retained entry from every
+prior round in which it was selected, result-less entries included, and, for
+each of the two references its delta spans, a pair of the exact `candidateRef`
+text (its `opaque` member) and the revision the repository instructions declare
+it resolves to, and nothing else.
+
+After each round, record a disposition for every finding, each citing the lens:
+closed only by citing the closure report of the lens that filed it in a named
+later round; deferred only where that lens itself recorded the deferral, with
+its follow-up; declined only where that lens withdrew the finding, with its
+stated reason; or open, named in the blocker when the bound is reached. The
+executor closes, defers, and declines nothing on its own judgement.
+
+Reaching the bound is terminal in all three of its forms. With dissent open,
+record the typed blocker `review.loop-bound-reached` naming the open findings,
+report `partial`, and stop. Without dissent but with a repair, rebase, or fix
+still required that would change the candidate, record the same blocker naming
+the unreviewed change, report `partial`, and stop. With the latest round blocked
+by a failed acquisition and no round left, record the same blocker naming the
+failed lens, report `partial`, and stop. Before the bound a failed acquisition
+is not terminal: obtain the next round within the remaining bound, and that
+round is the latest the reducer judges.
+
 ## Keep the Delivery Loop Observable
 
 Before claiming `complete`, record the outcome of every kernel phase rather
 than collapsing the delivery into implementation plus tests:
 
 - name the selected execution posture and the evidence that followed it;
+- name the review round bound in effect for the delivery and the rounds obtained
+  against it, and record a disposition for every finding, each citing the lens;
 - record the review outcome, who or what produced it, and the evidence reviewed;
   when no repository- or host-selected independent review is available, say so
   and retain the bounded acceptance-criteria review instead of implying
