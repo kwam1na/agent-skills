@@ -80,22 +80,22 @@
       }
     },
     {
-      "classification": "retained-overlay",
-      "distribution": "source-only",
+      "classification": "optional-adapter",
+      "distribution": "releasable",
       "id": "create-linear-ticket",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "Athena's tracker source is retained overlay inventory until a narrow optional Linear adapter is extracted.",
+        "reason": "The retained tracker source is narrowed to a decomposition workflow that reaches the tracker only through the optional adapter.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/create-linear-ticket/SKILL.md",
-          "sha256": "0f6d3ea275f91cf723d822b5307bec95a0aa337fd402484d49ac8a7302b19530"
+          "sha256": "894ef53b9a3bd192409facf64eb4d2d3af99d55e38f25ca87ad204d30a21010b"
         },
         {
           "path": "skills/create-linear-ticket/agents/openai.yaml",
-          "sha256": "5c48e32737027d7522d5354b7cc8840130fe22e1b2ae2e20c4d10a01b8ef1b74"
+          "sha256": "a3f6f571700d3036747f461efb3540fafee79de345866374048bb6c679c19084"
         },
         {
           "path": "skills/create-linear-ticket/references/atomic-plan-template.md",
@@ -104,14 +104,6 @@
         {
           "path": "skills/create-linear-ticket/references/atomic-ticket-template.md",
           "sha256": "ba18fac7ca2ada7b2ba3e20b62a328f89b0f57a4cdfb8a5cc901ed536f5a311b"
-        },
-        {
-          "path": "skills/create-linear-ticket/references/linear-execution-notes.md",
-          "sha256": "9e9406d2c48dd7823c65b19b23fead30dc28a4de75d038e8880b61cf7fd80082"
-        },
-        {
-          "path": "skills/create-linear-ticket/references/linear-project-resolution.md",
-          "sha256": "2af8ae57b9189791ba4bad7f3024e0c587d6c20f306b61196209e58ad5aae255"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -182,26 +174,22 @@
       }
     },
     {
-      "classification": "retained-overlay",
-      "distribution": "source-only",
+      "classification": "optional-adapter",
+      "distribution": "releasable",
       "id": "execute-linear-ticket",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "Athena's execution source remains retained overlay inventory until a narrow optional Linear execution adapter is extracted.",
+        "reason": "The retained execution source is narrowed to an execution workflow that reaches the tracker only through the optional adapter.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/execute-linear-ticket/SKILL.md",
-          "sha256": "7e89dadca3eeb799df0006c8c001f0e54c18c08b0884c3adbd9293bb80ea6407"
+          "sha256": "5b1b2e54b6e9414ca4e930398cacf830b8f5282c3fd4c69d04cc2561ac4a00f8"
         },
         {
           "path": "skills/execute-linear-ticket/agents/openai.yaml",
-          "sha256": "2bedaffdb0b7393990ead5d9cb3357274308b9b66d107357f5df83961f6644df"
-        },
-        {
-          "path": "skills/execute-linear-ticket/references/linear-project-resolution.md",
-          "sha256": "2af8ae57b9189791ba4bad7f3024e0c587d6c20f306b61196209e58ad5aae255"
+          "sha256": "b6d90a3ba0dfede39e1721c789a1468aaf64563cb84d3abb940f37bce2238f18"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -251,7 +239,7 @@
       "outputs": [
         {
           "path": "skills/linear-tracker-adapter/SKILL.md",
-          "sha256": "6a39446ebe8228af48578f31c4ee605b7078de3ad1930d249da39b25b04ae602"
+          "sha256": "05a9815683b4a97c19995b1a59323e7e30e5cd0528ff71d23ae1755be62e0145"
         },
         {
           "path": "skills/linear-tracker-adapter/references/adapter-contract.json",

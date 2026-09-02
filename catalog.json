@@ -57,22 +57,31 @@
       "provenanceId": "compound-learning"
     },
     {
+      "degradedBehavior": "Decomposition remains complete and reports the undecomposed candidates plus every omitted mutation when the host-native tracker capability is unavailable.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
           "requirement": "required"
+        },
+        {
+          "id": "linear-tracker-adapter",
+          "requirement": "required"
+        },
+        {
+          "id": "plan-work",
+          "requirement": "routing"
         }
       ],
-      "externalTools": [
-        "linear-mcp"
-      ],
+      "externalTools": [],
       "hosts": [
         "claude-code",
         "codex"
       ],
       "id": "create-linear-ticket",
       "path": "skills/create-linear-ticket/SKILL.md",
-      "profiles": [],
+      "profiles": [
+        "linear"
+      ],
       "provenanceId": "create-linear-ticket"
     },
     {
@@ -148,26 +157,47 @@
       "provenanceId": "diagnose-work"
     },
     {
+      "degradedBehavior": "Execution remains complete and reports every omitted tracking mutation when the host-native tracker capability is unavailable.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
           "requirement": "required"
         },
         {
+          "id": "compound-learning",
+          "requirement": "required"
+        },
+        {
           "id": "create-linear-ticket",
           "requirement": "routing"
+        },
+        {
+          "id": "execute-work",
+          "requirement": "required"
+        },
+        {
+          "id": "linear-tracker-adapter",
+          "requirement": "required"
+        },
+        {
+          "id": "obtain-review",
+          "requirement": "required"
+        },
+        {
+          "id": "review-work",
+          "requirement": "required"
         }
       ],
-      "externalTools": [
-        "linear-mcp"
-      ],
+      "externalTools": [],
       "hosts": [
         "claude-code",
         "codex"
       ],
       "id": "execute-linear-ticket",
       "path": "skills/execute-linear-ticket/SKILL.md",
-      "profiles": [],
+      "profiles": [
+        "linear"
+      ],
       "provenanceId": "execute-linear-ticket"
     },
     {

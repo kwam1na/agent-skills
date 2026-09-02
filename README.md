@@ -56,17 +56,19 @@ manifest then authenticates the complete payload and its single profile group.
 Verification is bounded by fixed entry, file-size, expanded-size, path-depth,
 compression-ratio, and elapsed-time limits. The archive contains the validator,
 catalog, selected profile closure, provenance, schemas, inventory, and selected
-skills. Core excludes optional profile bodies; Linear adds only its adapter to
-the complete core closure.
+skills. Core excludes optional profile bodies; Linear adds its adapter and the two
+tracking workflows that call the adapter to the complete core closure.
 
 The default `core` profile contains the portable delivery posture, normalized
 router, neutral tracker capability contract, bounded planning and execution
 workflows, evidence-first diagnosis, exact caller-selected review acquisition,
 bounded multi-lens review convergence, and a caller-owned compounding decision.
 Bootstrap guidance is opt-in. The optional Linear profile adds a
-host-native MCP adapter without changing core behavior when tracking is
-unavailable. Cataloged source-only inventory is not selectable, and Athena
-overlays are classification inputs only rather than distributable skills.
+host-native MCP adapter plus the decomposition and tracked-execution workflows
+that reach the tracker only through it, without changing core behavior when
+tracking is unavailable. A cataloged source-only entry is never selectable, and
+Athena overlays remain classification inputs: what ships is a narrowed
+derivative, never copied repository policy.
 
 The [portable workflow graph](docs/workflow-graph-v1.md) declares ten canonical
 stages and closed, exactly bound stage results. `diagnose-work` returns causal

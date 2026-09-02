@@ -1,111 +1,161 @@
 ---
 name: create-linear-ticket
-description: Use when approved work needs to be split into atomic, parallelizable Linear tickets.
+description: Use when approved work needs to be split into atomic tracked work items through the optional tracker capability.
 ---
 
-# Creating Linear Tickets
+# Decomposing Work Into Tracked Items
 
-Turn approved work into Linear issues that are small enough to ship independently and clear enough to hand straight to execution. If the tickets already exist and the user wants implementation, stop and use `$execute-linear-ticket`.
+Turn approved work into tracked items small enough to ship independently and
+clear enough to hand straight to execution. Decomposition sits between planning
+and implementation: use `$plan-work` when the plan itself is missing, and
+`$execute-linear-ticket` when the items already exist and the caller wants
+implementation.
 
 ## Delivery Posture
 
-Apply `$compound-delivery-kernel` when shaping tickets. Linear tickets should describe the work to ship, while the skills system owns the delivery workflow. Repos provide sensors such as tests, validation maps, harness review commands, runtime checks, docs drift checks, and CI; do not encode the agent workflow into repo instructions unless the repo is missing a sensor that should become a follow-up.
+Apply `$compound-delivery-kernel` when shaping items. The tracker owns the work
+record, the repository owns sensors, and the skills system owns the delivery
+workflow. Do not encode the agent workflow into repository instructions unless
+the repository is missing a sensor that should become a follow-up.
 
 ## When to Use
 
-- The user asks to create tickets from approved work or a validated plan.
-- The user wants a plan turned into parallelizable Linear issues.
-- The user wants broad work decomposed into atomic implementation tickets.
+- The caller asks to create tracked items from approved work or a validated plan.
+- The caller wants a plan turned into parallelizable work items.
+- The caller wants broad work decomposed into atomic implementation items.
 
 Do not use this skill when:
-- the relevant tickets already exist
-- the user wants implementation rather than ticket creation
-- the main problem is execution hygiene rather than ticket shape
+- the relevant items already exist
+- the caller wants implementation rather than decomposition
+- the main problem is execution hygiene rather than item shape
 
-## Shared Context
+## Tracker Boundary
 
-Apply `references/linear-project-resolution.md` before any Linear mutation. Treat the resolved team/project as required context and report it in the handoff.
+Reach the tracker only through the neutral operations that
+`$linear-tracker-adapter` maps. That adapter owns properties resolution,
+outcome normalization, and mutation safety; this skill supplies no
+provider-specific resolution of its own.
 
-Use this resolution order before asking the user for context:
-- If a Linear issue ID is present, call `get_issue` first and derive the team/project from the issue.
-- If no issue id is present, look for explicit project/team names and validate them with `get_team` and `get_project`.
-- If neither source resolves context, inspect the current working directory the skill was invoked from.
-- Build candidate project names from the current directory basename, the git repo root basename when it differs, and obvious workspace metadata such as `package.json` names.
-- If exactly one confident project match exists, use it automatically and report that it was cwd-derived.
-- If the issue exists but has no project, stop and ask instead of silently falling back.
-- If the named or derived project does not exist in Linear, stop and surface the mismatch clearly.
+- `resolve-context` establishes the target context before any mutation. Treat
+  the returned references as required context and report them in the handoff.
+- `create-work` records one decomposed item.
+- `link-dependencies` records true blockers between created items.
+
+Carry a stable idempotency key per mutation. When an outcome is not confirmed,
+stop and report it; never repeat the mutation. Consume only the normalized
+outcome, never a raw host payload.
+
+This skill has no operation for rewriting an existing item's body or labels.
+When an existing item is wrong, hand that off rather than editing it here.
 
 ## Workflow
 
 1. Confirm intent.
-- If the issues already exist, stop and use `$execute-linear-ticket`.
-- If the user is mixing planning, ticket creation, and implementation, finish ticket creation first and then hand off to `$execute-linear-ticket`.
+- If the items already exist, stop and use `$execute-linear-ticket`.
+- If planning, decomposition, and implementation are mixed, finish decomposition
+  first and then hand off to `$execute-linear-ticket`.
 
 2. Produce a concrete plan.
-- Prefer `superpowers:writing-plans`.
-- If it is unavailable, use `references/atomic-plan-template.md`.
+- Prefer `$plan-work`.
+- If a bounded plan is already approved, use `references/atomic-plan-template.md`
+  to render it as a checklist.
 - The output should be a checklist of concrete implementation outcomes.
-- Include the execution posture for each behavior-bearing task: `test-first`, `characterization-first`, or `sensor-only`.
-- Include the repo sensors expected to prove the task: targeted tests, broader suites, typecheck/build/lint, harness or review commands, runtime scenarios, CI-equivalent checks, or other project-specific sensors.
+- Include the execution posture for each behavior-bearing task: `test-first`,
+  `characterization-first`, or `sensor-only`.
+- Include the repository sensors expected to prove the task: targeted tests,
+  broader suites, typecheck, build, lint, review commands, runtime scenarios, or
+  other project-specific sensors.
 
-3. Convert the plan into ticket candidates.
-- Default to one actionable checklist item per ticket.
+3. Convert the plan into item candidates.
+- Default to one actionable checklist item per tracked item.
 - Merge only when implementation and validation are inseparable.
 - Split whenever outcomes can be shipped and tested independently.
-- Preserve execution posture, test scenarios, expected sensors, and compounding opportunities from the plan in each ticket candidate.
+- Preserve execution posture, test scenarios, expected sensors, and compounding
+  opportunities from the plan in each candidate.
 
 4. Enforce atomicity.
-- Each ticket should have one shippable outcome.
-- Each ticket should be independently mergeable and testable.
+- Each item should have one shippable outcome.
+- Each item should be independently mergeable and testable.
 - Record dependencies only for true blockers.
-- Do not force frontend/backend splits unless the work naturally separates that way.
-- If a feature materially changes what the repo does, create a ticket to refresh the repo docs and agent docs so they capture the repo's new standing after the feature lands.
-- Atomic tickets do not require one PR per ticket. If several tickets will all touch the same generated or derived artifacts, keep the tickets separate in Linear but mark them as a coordinated execution batch that can land through one integration PR.
+- Do not force frontend or backend splits unless the work naturally separates.
+- If a feature materially changes what the repository does, create an item to
+  refresh the repository and agent documentation so they capture its new
+  standing.
+- Atomic items do not require one change set per item. If several items will all
+  touch the same generated or derived artifacts, keep them separate in the
+  tracker but mark them as a coordinated batch that can land through one
+  integration change set.
 
 5. Detect generated-artifact batches.
-- Look for shared outputs that are cheap to regenerate but expensive to merge repeatedly: codegen, graph artifacts, harness docs, indexes, snapshots, lockfiles, or other derived repo state.
-- If multiple tickets would all churn those surfaces, prefer parallel implementation branches or worktrees per ticket followed by one integration branch that regenerates the shared artifacts once.
-- Call this out explicitly in the ticket bodies or creation handoff so execution does not default back to one PR per ticket.
+- Look for shared outputs that are cheap to regenerate but expensive to merge
+  repeatedly: codegen, graph artifacts, indexes, snapshots, lockfiles, or other
+  derived repository state.
+- If multiple items would all churn those surfaces, prefer parallel branches or
+  worktrees per item followed by one integration branch that regenerates the
+  shared artifacts once.
+- Say so explicitly in the item bodies or the handoff so execution does not
+  default back to one change set per item.
 
-6. Build deterministic ticket bodies.
+6. Build deterministic item bodies.
 - Use `references/atomic-ticket-template.md`.
-- Every ticket should include `Scope`, `Acceptance Criteria`, `Test Scenarios`, `Execution Posture`, `Expected Sensors`, and `Compounding Opportunity`.
-- Add security, authorization, or idempotency scenarios only when the work actually touches those areas.
-- `Execution Posture` must default to `test-first` for new behavior and bug fixes, `characterization-first` for unclear legacy behavior, and `sensor-only` only for pure docs, generated artifacts, configuration, or mechanical changes with no behavior.
-- `Expected Sensors` should name the project checks the executor should run; keep them project-specific when known, but do not invent repo commands that have not been discovered.
-- `Compounding Opportunity` should name likely reusable learnings, missing sensors, or skill updates; write `None expected` when there is no meaningful opportunity.
+- Every item should include `Scope`, `Acceptance Criteria`, `Test Scenarios`,
+  `Execution Posture`, `Expected Sensors`, and `Compounding Opportunity`.
+- Add security, authorization, or idempotency scenarios only when the work
+  actually touches those areas.
+- `Execution Posture` defaults to `test-first` for new behavior and bug fixes,
+  `characterization-first` for unclear legacy behavior, and `sensor-only` only
+  for pure documentation, generated artifacts, configuration, or mechanical
+  changes with no behavior.
+- `Expected Sensors` should name the project checks the executor should run;
+  keep them project-specific when known, and do not invent repository commands
+  that have not been discovered.
+- `Compounding Opportunity` should name likely reusable learnings, missing
+  sensors, or skill updates; write `None expected` when there is none.
 
-7. Create or update in Linear.
-- Verify access to the resolved context first.
-- Prefer direct Linear MCP operations.
-- If mutation fails in-session, use the fallback in `references/linear-execution-notes.md`.
-- Check for near-duplicate active issues before creating new ones.
-- Apply explicit labels first; add project or domain labels only when requested or clearly useful.
+7. Record the items.
+- Establish context with `resolve-context` first.
+- Record each candidate with `create-work`, then record true blockers with
+  `link-dependencies`.
+- Use `resolve-context` to check for a near-duplicate active item before
+  recording a new one.
+- If the tracker capability is absent, unconfigured, or blocked, report the
+  normalized outcome, perform no mutation, and hand off the undecomposed
+  candidates so the caller can record them.
 
 8. Return the execution handoff.
-- Include resolved context, created issues, dependency map, and assumptions.
-- If the tickets form a coordinated generated-artifact batch, say so directly and recommend a single integration PR after parallel ticket execution.
+- Include resolved context, recorded items, dependency map, and assumptions.
+- If the items form a coordinated generated-artifact batch, say so directly and
+  recommend a single integration change set after parallel execution.
 - If implementation is next, say `Use $execute-linear-ticket for implementation.`
 
 ## Output
 
-- `Resolved Context`: issue source or cwd-derived context, team, project
-- `Plan Source`: `Superpowers` or `Fallback template`
-- `Created Issues`: key, title, URL, labels
+- `Resolved Context`: the references returned by `resolve-context`
+- `Plan Source`: `Planning workflow` or `Approved plan`
+- `Recorded Items`: title and returned reference per item
 - `Execution Plan`: `Can Start Now` and `Blocked`
-- `Integration Strategy`: `One PR per ticket` or `Single integration PR after parallel execution`
-- `Delivery Posture`: execution posture and expected sensors by issue
+- `Integration Strategy`: `One change set per item` or `Single integration change
+  set after parallel execution`
+- `Delivery Posture`: execution posture and expected sensors by item
 - `Compound Notes`: likely learning, skill, or follow-up sensor opportunities
-- `Assumptions`: scope splits, label mappings, or context clarifications
+- `Assumptions`: scope splits, property choices, or context clarifications
+- `Omitted Tracking`: any mutation that was not performed, and why
 
 ## Guardrails
 
 - Optimize for minimum dependency chains and maximum parallel execution.
-- Do not create tickets directly from vague scope; if the work is not concrete enough to become a checklist, plan first.
-- Do not create umbrella tickets when the plan yields separable implementation outcomes.
-- Avoid implementation detail that does not help define the ticket.
-- Treat repo and agent documentation refresh as required follow-up work when a feature changes capabilities, workflows, architecture, or other durable repo behavior; keep the repo honest about its standing behavior.
-- Prefer a single integration PR when separate ticket PRs would mostly fight over regenerated artifacts rather than represent meaningful review boundaries.
-- Do not make Linear tickets into implementation scripts. Capture outcomes, tests, sensors, posture, and boundaries; let execution skills choose the detailed path.
-- Do not let a ticket omit tests for behavior-bearing work unless the posture explains why characterization or sensor-only validation is more appropriate.
-- Ticket creation is done when Linear is up to date and the next execution order is obvious.
+- Do not decompose vague scope; if the work is not concrete enough to become a
+  checklist, plan first.
+- Do not create umbrella items when the plan yields separable outcomes.
+- Avoid implementation detail that does not help define the item.
+- Treat repository and agent documentation refresh as required follow-up work
+  when a feature changes capabilities, workflows, architecture, or other durable
+  behavior.
+- Prefer a single integration change set when separate ones would mostly fight
+  over regenerated artifacts rather than represent meaningful review boundaries.
+- Do not make tracked items into implementation scripts. Capture outcomes,
+  tests, sensors, posture, and boundaries; let execution choose the path.
+- Do not let an item omit tests for behavior-bearing work unless the posture
+  explains why characterization or sensor-only validation is more appropriate.
+- Decomposition is done when the tracker is up to date and the next execution
+  order is obvious.

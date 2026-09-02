@@ -21,11 +21,12 @@ only and cannot redefine behavior.
 
 The core profile exposes `diagnose-work` and `obtain-review` through both roots
 alongside the existing workflows; the Linear profile contains that same core
-plus its existing tracker adapter. `deliver-work` remains the single intake
-entry point. Its additive `RouteDecision.workflow_skill` property names the
-released downstream workflow only for direct or degraded routes; an unresolved
-handoff has no executable target. Repository workflow selection still overrides
-a host hint, which overrides request examples.
+plus its tracker adapter and the two tracking workflows that reach the tracker
+through it. `deliver-work` remains the single intake entry point. Its additive
+`RouteDecision.workflow_skill` property names the released downstream workflow
+only for direct or degraded routes; an unresolved handoff has no executable
+target. Repository workflow selection still overrides a host hint, which
+overrides request examples.
 
 Hosts realize the canonical stages declared in `workflows/delivery-v1.json` and
 return closed `workflow-stage-result/1` envelopes. Diagnosis supplies causal

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -81,15 +82,75 @@ def test_missing_ownership_rejects() -> None:
 
 
 def test_non_releasable_inventory_cannot_be_selected() -> None:
+    fixture = "retained-inventory-fixture"
+
     def mutate(root: Path) -> None:
-        path = root / "profiles" / "linear.json"
-        document = json.loads(path.read_text(encoding="utf-8"))
-        document["members"].append("execute-linear-ticket")
-        write_json(path, document)
+        body = (
+            "---\n"
+            f"name: {fixture}\n"
+            "description: Synthetic retained inventory used as a selection control.\n"
+            "---\n"
+            "\n"
+            "# Retained Inventory Fixture\n"
+            "\n"
+            "Retained inventory that no profile may select.\n"
+        )
+        skill_path = root / "skills" / fixture / "SKILL.md"
+        skill_path.parent.mkdir(parents=True)
+        skill_path.write_text(body, encoding="utf-8")
+        output = f"skills/{fixture}/SKILL.md"
+
+        catalog_path = root / "catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        catalog["skills"].append({
+            "dependencies": [],
+            "externalTools": [],
+            "hosts": ["claude-code", "codex"],
+            "id": fixture,
+            "path": output,
+            "profiles": ["linear"],
+            "provenanceId": fixture,
+        })
+        catalog["skills"].sort(key=lambda skill: skill["id"])
+        write_json(catalog_path, catalog)
+
+        provenance_path = root / "provenance.lock.json"
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        provenance["entries"].append({
+            "classification": "retained-overlay",
+            "distribution": "source-only",
+            "id": fixture,
+            "license": "LicenseRef-Athena-internal",
+            "modification": {
+                "reason": "Synthetic retained inventory for the selection control.",
+                "status": "independently-authored",
+            },
+            "outputs": [{
+                "path": output,
+                "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            }],
+            "owner": "agent-skills-corpus",
+            "source": {
+                "kind": "independent-origin",
+                "ownerApproval": {
+                    "owner": "agent-skills-corpus",
+                    "reference": "registry-selection-control",
+                },
+                "rationale": "Selection control authored for this sensor only.",
+            },
+        })
+        provenance["entries"].sort(key=lambda entry: entry["id"])
+        write_json(provenance_path, provenance)
+
+        profile_path = root / "profiles" / "linear.json"
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        profile["members"] = sorted([*profile["members"], fixture])
+        profile["expectedFiles"] = sorted([*profile["expectedFiles"], output])
+        write_json(profile_path, profile)
 
     result = with_copy(mutate)
     require(result.returncode == 1, result.stdout)
-    require("non-releasable profile member: linear -> execute-linear-ticket" in result.stdout, result.stdout)
+    require(f"non-releasable profile member: linear -> {fixture}" in result.stdout, result.stdout)
     print("verified rejection: non-releasable inventory member")
 
 

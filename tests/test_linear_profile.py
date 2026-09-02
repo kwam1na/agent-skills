@@ -19,6 +19,19 @@ from lifecycle_support import initialize_repository
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "skills/linear-tracker-adapter/references/adapter-contract.json"
+ADAPTER = ROOT / "skills/linear-tracker-adapter/SKILL.md"
+PROPERTIES_DOCUMENT = ".agents/tracker-properties.json"
+TRACKING_WORKFLOWS = ("create-linear-ticket", "execute-linear-ticket")
+# Resolution that belongs to the adapter must not reappear as a native call in
+# a tracking workflow body.
+PROVIDER_TOOL_IDENTIFIERS = (
+    "get_issue",
+    "get_project",
+    "get_team",
+    "list_issues",
+    "save_comment",
+    "save_issue",
+)
 
 
 class LinearProfileTests(unittest.TestCase):
@@ -190,6 +203,47 @@ class LinearProfileTests(unittest.TestCase):
                     self.transport_findings({"hostile": hostile_content}),
                     {"hostile": [category]},
                 )
+
+    def test_adapter_declares_the_repository_tracker_properties_document(self) -> None:
+        adapter = ADAPTER.read_text(encoding="utf-8")
+
+        self.assertIn(f"`{PROPERTIES_DOCUMENT}`", adapter)
+        self.assertNotIn(f"]({PROPERTIES_DOCUMENT})", adapter)
+
+    def test_tracking_workflows_use_neutral_operations_through_the_adapter(self) -> None:
+        operations = {
+            entry["trackerOperation"] for entry in self.contract()["operationMappings"]
+        }
+        bodies = {
+            skill: (ROOT / f"skills/{skill}/SKILL.md").read_text(encoding="utf-8")
+            for skill in TRACKING_WORKFLOWS
+        }
+
+        named = set()
+        for skill, body in bodies.items():
+            with self.subTest(skill=skill):
+                self.assertIn("$linear-tracker-adapter", body)
+                mentioned = {
+                    operation for operation in operations if f"`{operation}`" in body
+                }
+                self.assertTrue(mentioned)
+                named |= mentioned
+                for identifier in PROVIDER_TOOL_IDENTIFIERS:
+                    self.assertNotIn(identifier, body)
+        self.assertEqual(named, operations)
+
+    def test_linear_archive_ships_the_tracking_workflows(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            archive, metadata = self.build(directory, "tracking")
+            extracted = directory / "extracted"
+            verify_release(archive, metadata, extract_to=extracted)
+
+            for skill in TRACKING_WORKFLOWS:
+                with self.subTest(skill=skill):
+                    self.assertTrue(
+                        (extracted / f"skills/{skill}/SKILL.md").is_file()
+                    )
 
     def test_linear_archive_is_deterministic_verified_and_installable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
