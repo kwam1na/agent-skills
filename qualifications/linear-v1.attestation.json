@@ -21,8 +21,8 @@
         "releaseId": "core-v1"
       },
       "linear": {
-        "archiveSha256": "88b7899711f7a29faa67a9ab82dba441a5e9273ec39ce4a62afe4613874cc4d6",
-        "metadataSha256": "5b6ba25ba09fb823f75d0d5cd6abc61fac6bf291bc88ba4416ce175d3bf2cb2d",
+        "archiveSha256": "460e5d80155fd9547f2853e9054acbc98d7bcff7d101c3812c644acf383cafb5",
+        "metadataSha256": "1266d77a119da3141cb9fc183e1ae2c5e0bd28fc69eb53da7aa14aa489a7075a",
         "profile": "linear",
         "releaseId": "linear-v1"
       }

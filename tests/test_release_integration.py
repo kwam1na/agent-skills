@@ -59,12 +59,26 @@ class ReleaseIntegrationTests(unittest.TestCase):
         core_members = resolve_profile("core", profiles)
         self.assertIn("diagnose-work", core_members)
         self.assertIn("obtain-review", core_members)
-        self.assertEqual(resolve_profile("linear", profiles), sorted([*core_members, "linear-tracker-adapter"]))
+        self.assertEqual(
+            resolve_profile("linear", profiles),
+            sorted([
+                *core_members,
+                "create-linear-ticket",
+                "execute-linear-ticket",
+                "linear-tracker-adapter",
+            ]),
+        )
         core = _release_view(ROOT, "core")
         linear = _release_view(ROOT, "linear")
         self.assertLessEqual(NEW_PAYLOAD, core.keys())
         self.assertEqual(set(linear) - set(core), {
             "profiles/linear.json",
+            "skills/create-linear-ticket/SKILL.md",
+            "skills/create-linear-ticket/agents/openai.yaml",
+            "skills/create-linear-ticket/references/atomic-plan-template.md",
+            "skills/create-linear-ticket/references/atomic-ticket-template.md",
+            "skills/execute-linear-ticket/SKILL.md",
+            "skills/execute-linear-ticket/agents/openai.yaml",
             "skills/linear-tracker-adapter/SKILL.md",
             "skills/linear-tracker-adapter/references/adapter-contract.json",
         })

@@ -1,5 +1,5 @@
 {
-  "attestationSha256": "e09df727312939e0b7c2084c6361448af34c1757de54473aa83533104c921b94",
+  "attestationSha256": "71f671aba7de74e2dad35fa8e64f376e7f1ef9226d0b0106cf4d1f8e9b76c5d3",
   "candidate": {
     "core": {
       "archiveSha256": "9ce12f12c4096e346154ef377fc89187c9168944d6e59b9d6596feb98e57d2ed",
@@ -9,11 +9,11 @@
       "sourceTreeSha256": "7b5fe158f3340e4c07454d788db628c601cccc80cb1f0e25a3bf7c91eed28021"
     },
     "linear": {
-      "archiveSha256": "88b7899711f7a29faa67a9ab82dba441a5e9273ec39ce4a62afe4613874cc4d6",
-      "metadataSha256": "5b6ba25ba09fb823f75d0d5cd6abc61fac6bf291bc88ba4416ce175d3bf2cb2d",
+      "archiveSha256": "460e5d80155fd9547f2853e9054acbc98d7bcff7d101c3812c644acf383cafb5",
+      "metadataSha256": "1266d77a119da3141cb9fc183e1ae2c5e0bd28fc69eb53da7aa14aa489a7075a",
       "profile": "linear",
       "releaseId": "linear-v1",
-      "sourceTreeSha256": "64601127b051b450b67099e283f0d0646fb92c2fdae04c5bbf6b80e17a1e9bed"
+      "sourceTreeSha256": "7ef9bbe70ee3638db5c66a190f90ad47437420d50ea662cae1334a9f0c5c502d"
     }
   },
   "collectorBinding": {
@@ -30,8 +30,8 @@
         "releaseId": "core-v1"
       },
       "linear": {
-        "archiveSha256": "88b7899711f7a29faa67a9ab82dba441a5e9273ec39ce4a62afe4613874cc4d6",
-        "metadataSha256": "5b6ba25ba09fb823f75d0d5cd6abc61fac6bf291bc88ba4416ce175d3bf2cb2d",
+        "archiveSha256": "460e5d80155fd9547f2853e9054acbc98d7bcff7d101c3812c644acf383cafb5",
+        "metadataSha256": "1266d77a119da3141cb9fc183e1ae2c5e0bd28fc69eb53da7aa14aa489a7075a",
         "profile": "linear",
         "releaseId": "linear-v1"
       }
@@ -42,7 +42,7 @@
       "schemaVersion": "workflow-subject-ref/1"
     }
   },
-  "collectorBindingSha256": "190d5e211cea53480793432e66336a3fd8301a969ecc370ccf970dbbe37605f9",
+  "collectorBindingSha256": "3cb3b75932556fa4219f49f5dcb2b4abc54066622a74316fb3d5a0f6a5b9f10f",
   "coreQualificationSha256": "a681544a349182d1b698e14ce719191820e808ee9e544638945582471587b37f",
   "proofBoundary": {
     "live": "external MCP provenance is owned by the protected host-native run",

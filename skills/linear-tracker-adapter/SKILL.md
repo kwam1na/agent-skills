@@ -15,6 +15,31 @@ exact mapping, output, failure, and mutation rules in the
 Use only the host's native Linear MCP capability. The adapter contract's
 `transportBoundary` is exhaustive; no other provider access path is allowed.
 
+## Resolve Tracker Properties
+
+The adopting repository declares its tracker properties in one fixed
+repository-relative document at `.agents/tracker-properties.json`: the team,
+the project, the labels, the status names this adapter maps `update-status` and
+`close-or-handoff` onto, and the identity of the item template to apply. That
+document is the seam a different tracking skill would replace, so read it as
+declared data and never write to it.
+
+Resolve context in this order and stop at the first source that resolves:
+
+1. The properties document, when it is present and names the needed property.
+2. An explicit work reference in the prompt, resolved with `resolve-context`.
+3. Explicit team or project names in the prompt, validated with
+   `resolve-context` before use.
+4. The invoking working directory: its basename, the repository root basename
+   when it differs, and obvious workspace metadata names. Validate every
+   candidate with `resolve-context` before use, and report that the context was
+   directory-derived.
+
+Stop and ask the caller for context when zero plausible candidates remain, when
+more than one remains, when a resolved item carries no project, or when explicit
+names conflict with the resolved item. When a named or derived property does not
+exist in the tracker, surface the mismatch instead of substituting another.
+
 ## Operation Mapping
 
 Map the neutral operations directly:

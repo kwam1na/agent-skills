@@ -3,10 +3,16 @@
   "expectedFiles": [
     "skills/compound-delivery-kernel/SKILL.md",
     "skills/compound-learning/SKILL.md",
+    "skills/create-linear-ticket/SKILL.md",
+    "skills/create-linear-ticket/agents/openai.yaml",
+    "skills/create-linear-ticket/references/atomic-plan-template.md",
+    "skills/create-linear-ticket/references/atomic-ticket-template.md",
     "skills/deliver-work/SKILL.md",
     "skills/deliver-work/agents/openai.yaml",
     "skills/deliver-work/references/capability-contract.md",
     "skills/diagnose-work/SKILL.md",
+    "skills/execute-linear-ticket/SKILL.md",
+    "skills/execute-linear-ticket/agents/openai.yaml",
     "skills/execute-work/SKILL.md",
     "skills/linear-tracker-adapter/SKILL.md",
     "skills/linear-tracker-adapter/references/adapter-contract.json",
@@ -19,6 +25,8 @@
     "core"
   ],
   "members": [
+    "create-linear-ticket",
+    "execute-linear-ticket",
     "linear-tracker-adapter"
   ],
   "schemaVersion": "agent-skills-profile/1"

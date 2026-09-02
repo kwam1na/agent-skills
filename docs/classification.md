@@ -30,9 +30,10 @@ retained inventory, not a third way to bypass origin validation.
 
 Classification and distribution status live only in `provenance.lock.json`.
 The default profile contains only releasable portable-core entries. Bootstrap
-is optional guidance. The Linear profile adds only the narrow host-native
-tracker adapter to the complete core profile. Athena-derived source-only
-inventory remains cataloged for traceability and is not selected by that
-adapter profile. Athena-specific merge gates,
+is optional guidance. The Linear profile adds the narrow host-native tracker
+adapter, plus the decomposition and tracked-execution workflows that reach the
+tracker only through that adapter, to the complete core profile. A
+`source-only` entry, whenever one is retained, stays cataloged for
+traceability and is never selected by a profile. Athena-specific merge gates,
 telemetry, deployment, reporting, generated-artifact policy, and domain rules
 are deliberately absent from all selectable profile closures.
