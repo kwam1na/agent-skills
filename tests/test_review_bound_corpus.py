@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
+    "skills/review-work/SKILL.md": (
+        "The workflow default is three rounds",
+        "every round obtained for the delivery counts against it, across every loop",
+        "typed blocker `review.loop-bound-reached` naming the open findings and does"
+        " not run another round",
+        "by that lens's closure report, by that lens's withdrawal with its reason,"
+        " or, for a finding it filed as a deferral, by that deferral",
+    ),
+    "skills/obtain-review/SKILL.md": (
+        "A lens's assessment round is its first result-carrying round for the"
+        " delivery",
+        "its delta runs from the candidate of that lens's most recent"
+        " result-carrying entry",
+        "that lens's own retained entry from every prior round of the delivery in"
+        " which it was selected",
+        "binding tuple with its result-less state where the acquisition failed",
+        "and nothing else, nothing narrower",
+        "The previous round's `candidateRef` is read from the lens's most recent"
+        " entry",
+        "An assessment round spans no delta and needs no resolution pair",
+        "a pair of the exact `candidateRef` text (its `opaque` member) and the"
+        " revision it resolves to",
+        "matches each pair's `candidateRef` text by equality, never by parsing",
+        "The lens re-derives its carried set from those entries",
+        "returns `changes-requested` with a P0 finding naming the defect",
+        "when a round is accounted for by neither an obtained entry nor a"
+        " result-less one",
+        "when a resolution is missing, unpaired, or paired with a reference that is"
+        " neither of the two the delta spans",
+        "or when any narrower scope is supplied",
+        "report each one closed, open, raised with its new severity, withdrawn with"
+        " its reason, or still deferred",
+        "then to review the delta between the previous round's candidate and this"
+        " one",
+        "filed severity and in-scope status are a floor: the filing lens may raise"
+        " them on re-check and never lower them",
+        "A carried P0 or P1 is discharged only by the filing lens's closure report"
+        " or by that lens's withdrawal with its reason, never by a later deferral",
+        "a finding the lens filed as a deferral is discharged by that deferral",
+        "A new finding outside the delta is filed only at P0",
+    ),
+    "skills/execute-work/SKILL.md": (
+        "state the bound in effect for the delivery",
+        "Never declare a second bound for the same delivery",
+        "The lens set is declared before the first round and held unchanged for the"
+        " delivery",
+        "no lens is added after the first round",
+        "dropping a lens disposes of nothing it filed",
+        "record a disposition for every finding, each citing the lens",
+        "The executor closes, defers, and declines nothing on its own judgement",
+        "With dissent open, record the typed blocker `review.loop-bound-reached`"
+        " naming the open findings, report `partial`, and stop",
+        "record the same blocker naming the unreviewed change, report `partial`, and"
+        " stop",
+        "record the same blocker naming the failed lens, report `partial`, and stop",
+    ),
+    "skills/compound-delivery-kernel/SKILL.md": (
+        "Declare the round bound before the first round; every round of the delivery"
+        " counts; the default is three rounds",
+        "Later rounds verify closure and review the delta",
+        "only P0 and P1 findings block",
+        "the lens, not the executor, closes or defers a finding",
+    ),
+}
+
+
+class ReviewBoundCorpusTests(unittest.TestCase):
+    """Pin the bounded-convergence rules in the shipped workflow text."""
+
+    def test_bounded_convergence_phrases_are_present(self) -> None:
+        for relative, phrases in REQUIRED_PHRASES.items():
+            normalized = " ".join(
+                (ROOT / relative).read_text(encoding="utf-8").split()
+            )
+            for phrase in phrases:
+                with self.subTest(path=relative, phrase=phrase):
+                    self.assertIn(phrase, normalized)
+
+
+if __name__ == "__main__":
+    unittest.main()

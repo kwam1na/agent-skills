@@ -53,6 +53,65 @@ Unknown fields, malformed evidence, wrong versions, or any binding mismatch
 reject. Acquisition has no round-level status or convergence output. A lens may
 say `aligned`; only unchanged `review-work` reduces the complete round.
 
+## Round kinds
+
+Round kind is per lens. A lens's assessment round is its first result-carrying
+round for the delivery, and it reviews the whole delivered diff. Every later
+result-carrying round of that lens is a verification round, including a round
+obtained after alignment because the candidate changed, and its delta runs from
+the candidate of that lens's most recent result-carrying entry, so a round in
+which that lens's acquisition failed is spanned rather than skipped.
+
+For a verification round the caller supplies each lens, as its `contextRefs`,
+that lens's own retained entry from every prior round of the delivery in which
+it was selected, contiguous over rounds 1 through N-1, binding tuple and result
+together where the state is `obtained` and binding tuple with its result-less
+state where the acquisition failed, so every prior report arrives bound to its
+round and its `candidateRef`; plus, for each of the two `candidateRef` values
+the delta spans, that reference's declared resolution as a pair of the exact
+`candidateRef` text (its `opaque` member) and the revision it resolves to; and
+nothing else, nothing narrower. The previous round's `candidateRef` is read from
+the lens's most recent entry, never supplied beside it. An assessment round
+spans no delta and needs no resolution pair.
+
+`contextRefs` are material, not scope. The lens re-derives its carried set from
+those entries rather than from any list the caller hands it, and derives the
+delta itself from that entry's `candidateRef` and the current round's. A
+`candidateRef` is opaque and is never parsed, so the adopting repository's
+instructions declare how a `candidateRef` resolves to a revision, and the lens
+matches each pair's `candidateRef` text by equality, never by parsing, against
+its most recent entry and the current binding. A lens that finds its
+carry-forward defective returns `changes-requested` with a P0 finding naming the
+defect, which blocks and which only that lens can close: when the supplied
+entries are not exactly its own entries for every prior round of the delivery,
+when a round is accounted for by neither an obtained entry nor a result-less
+one, when a resolution is missing, unpaired, or paired with a reference that is
+neither of the two the delta spans, or when any narrower scope is supplied. A
+lens cannot return `failed`; the envelope's `failed` state is the caller's
+record of an acquisition failure, carries no result, and is never how a lens
+speaks.
+
+In a verification round the realization asks each lens to re-check every carried
+finding of its own, deferrals included, and report each one closed, open, raised
+with its new severity, withdrawn with its reason, or still deferred, and only
+then to review the delta between the previous round's candidate and this one. A
+new finding outside the delta is filed only at P0; a P1 first filed outside the
+delta is recorded as a deferral with a follow-up.
+
+Only P0 and P1 findings inside the round's scope are actionable. Deferrable
+findings, P2 and P3 under the charter's severity vocabulary and a P1 first filed
+outside the delta in a verification round, belong in `evidence` as deferrals
+with a follow-up rather than in `findings`. A carried finding's filed severity
+and in-scope status are a floor: the filing lens may raise them on re-check and
+never lower them, and a raised finding is treated as filed at the new severity
+from that round, so a carried deferral raised to P0 blocks under the
+out-of-delta rule. A carried P0 or P1 is discharged only by the filing lens's
+closure report or by that lens's withdrawal with its reason, never by a later
+deferral; a finding the lens filed as a deferral is discharged by that deferral.
+A finding is closed, deferred, or declined only by the lens that filed it, in
+its own report, with its reason. `aligned` means every carried finding
+discharged and no actionable finding open.
+
 ## Independence and repair
 
 Default independence to `{"status": "unverified"}`. A different label, prompt,
