@@ -31,7 +31,10 @@ selection, and emit `review.round.opened` for each round before its realization,
 naming the round, the declared bound that round counts against, the candidate it
 binds, and the lenses it carries. Without the bound beside the round a reader
 cannot tell round 1 of 4 from round 1 of 1, and the `review.loop-bound-reached`
-blocker is legible only against a bound the journal states. A reopened round is
+blocker is legible only against a bound the journal states. Where the round
+belongs to a loop that declares no bound of its own, the emission names the
+round and states that the loop is unbounded, which is what naming no bound
+looks like where none may be invented. A reopened round is
 emitted under the number it already carries, with a member naming why it
 reopened. Emit both through the run-event command the repository's root
 instruction file declares, when it declares one; where the repository declares
@@ -61,8 +64,9 @@ Only an `obtained` entry carries `result`.
 - `obtained`: normalize an `aligned` or `changes-requested` result. Both need
   evidence; only `changes-requested` has nonempty findings. A result may also
   carry `lateFindings`, each naming one of that same result's own `findings`
-  that the lens raised late; a first round carries none. Project it to the
-  existing `ReviewLensResult`.
+  that the lens raised late; a lens carries none on its assessment round, and
+  acquisition rejects the member outright in a first round, where no lens has a
+  round behind it. Project it to the existing `ReviewLensResult`.
 - `failed`: project a failed lens with code `review-acquisition-failed`.
 - `indeterminate`: project a failed lens with code
   `review-acquisition-indeterminate`.
@@ -179,8 +183,8 @@ carries stay one per round and its delta runs from the replayed candidate.
 Realize every lens with a brief that states where in the loop its round sits.
 The brief names the round number and the declared bound as round k of N, and
 says whether this round is the grace round obtained at the bound. Where the
-round is a plan review, whose loop carries no declared bound, the brief names
-the round number and says the loop is unbounded.
+round is a plan review, whose loop declares no bound of its own, the brief
+names the round number and says the loop is unbounded.
 
 The brief carries the mandate: every reviewer, in plan review and delivery
 review alike, optimizes for the lowest number of rounds, and a finding the lens
@@ -189,12 +193,16 @@ the lens for a conscious effort to find everything it can within the
 allocation, not across it.
 
 The brief states the expectation that follows: every finding the lens can raise
-against lines unchanged since the previous round was expected in that round. A
-finding raised in a round after the first against lines unchanged since the
-round before it is still a finding, judged on its merits like any other, and
-the lens records it in its result as a late finding. The mark is dissent about
-the lens, not about the candidate, and it never changes what the round reduces
-to.
+against lines unchanged since its own previous round was expected in that
+round. A finding the lens raises after its assessment round against lines
+unchanged since its own most recent result-carrying round is still a finding,
+judged on its merits like any other, and the lens marks it late in its own
+report. The mark is dissent about the lens, not about the candidate, and it
+never changes what the round reduces to. Such a finding falls outside that
+round's delta, so the out-of-delta rule above still decides where the lens puts
+it: `lateFindings` names only findings the result filed, and a late finding
+that rule keeps out of `findings` is marked late in the deferral it records
+instead.
 
 The last round is judged exactly as any other, and the brief says so. A lens
 neither aligns because no repair room remains nor blocks to force an

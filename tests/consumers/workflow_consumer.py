@@ -78,7 +78,8 @@ class FakeConsumer:
             lens_result = {"type": "object", "additionalProperties": False,
                            "required": ["outcome", "findings", "evidence"],
                            "properties": {"outcome": {"enum": ["aligned", "changes-requested"]},
-                                          "findings": texts, "evidence": {**texts, "minItems": 1}}}
+                                          "findings": texts, "evidence": {**texts, "minItems": 1},
+                                          "lateFindings": texts}}
             lens_entries = []
             for lens in self.review_lenses:
                 lens_entries.append({"type": "object", "additionalProperties": False,

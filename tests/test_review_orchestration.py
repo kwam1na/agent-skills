@@ -331,12 +331,16 @@ class ReviewAcquisitionTests(unittest.TestCase):
     def test_late_finding_marks_are_carried_and_malformed_marks_reject(self):
         ctx = context("candidate-B", 2)
         value = envelope(self.lenses, ctx, ["changes-requested", "aligned", "aligned"])
-        value["entries"][0]["result"]["lateFindings"] = [" Correct the boundary check. ",
-                                                         "Correct the boundary check."]
+        value["entries"][0]["result"]["findings"] = ["Correct the boundary check.",
+                                                     "Restore the dropped assertion."]
+        value["entries"][0]["result"]["lateFindings"] = [" Restore the dropped assertion. ",
+                                                         "Restore the dropped assertion."]
         acquired = obtain_review(value, self.lenses, ctx)
-        self.assertEqual(acquired.results[0].late_findings, ("Correct the boundary check.",))
+        self.assertEqual(acquired.results[0].findings,
+                         ("Correct the boundary check.", "Restore the dropped assertion."))
+        self.assertEqual(acquired.results[0].late_findings, ("Restore the dropped assertion.",))
         self.assertEqual(acquired.envelope["entries"][0]["result"]["lateFindings"],
-                         ["Correct the boundary check."])
+                         ["Restore the dropped assertion."])
         self.assertNotIn("lateFindings", acquired.envelope["entries"][1]["result"])
         self.assertEqual(acquired.results[1].late_findings, ())
         for mark in ("Correct the boundary check.", ["Unfiled finding."], [""], [None], {}, None):

@@ -57,7 +57,7 @@ itself.
 round.
 
 A lens result may mark some of its own findings as late: findings that lens
-raised against lines unchanged since its previous round. A late finding is
+raised against lines unchanged since its own previous round. A late finding is
 still a finding and is reduced exactly like any other, so the mark never
 changes the outcome of a round. The mark is visible dissent about the lens
 rather than about the candidate, and the returned value carries every marked

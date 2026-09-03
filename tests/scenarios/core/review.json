@@ -38,9 +38,11 @@
             "retry.py:88"
           ],
           "findings": [
-            "the retry path swallows the error"
+            "the retry path swallows the error",
+            "the backoff cap is never applied"
           ],
           "lateFindings": [
+            "the retry path swallows the error",
             "the retry path swallows the error"
           ],
           "lens": "correctness",

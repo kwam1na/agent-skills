@@ -268,7 +268,7 @@
       "outputs": [
         {
           "path": "skills/obtain-review/SKILL.md",
-          "sha256": "6cb4de78941e6dc4f5c3a46ed9aa4116c6f00c01cd2c6d270e3400f2efa0ffb4"
+          "sha256": "91566b25528aea04270f870a1970f710e38176f45fb5eace17eb23ef933cd05b"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -772,7 +772,7 @@
       "outputs": [
         {
           "path": "skills/review-work/SKILL.md",
-          "sha256": "19c1b67340c0f7cc7bfb52b044dee8374a58c05e391791e1cb98794cabea6738"
+          "sha256": "3cfe6954d624b4344e7512ea6f692c60605b518bb5582ea1d109f0a3f175b04e"
         }
       ],
       "owner": "agent-skills-corpus",

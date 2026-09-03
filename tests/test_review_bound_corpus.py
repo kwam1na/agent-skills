@@ -28,7 +28,7 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " not invalidate rounds already carried, and the delivery's closing record"
         " names the bound release's `releaseId` and `archiveSha256`",
         "A lens result may mark some of its own findings as late: findings that"
-        " lens raised against lines unchanged since its previous round",
+        " lens raised against lines unchanged since its own previous round",
         "A late finding is still a finding and is reduced exactly like any other,"
         " so the mark never changes the outcome of a round",
         "The mark is visible dissent about the lens rather than about the"
@@ -109,24 +109,30 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "the superseded entry stays in the delivery's history but is not"
         " supplied as carry-forward",
         "A result may also carry `lateFindings`, each naming one of that same"
-        " result's own `findings` that the lens raised late; a first round"
-        " carries none",
+        " result's own `findings` that the lens raised late; a lens carries none"
+        " on its assessment round, and acquisition rejects the member outright in"
+        " a first round, where no lens has a round behind it",
         "Realize every lens with a brief that states where in the loop its round"
         " sits",
         "The brief names the round number and the declared bound as round k of N,"
         " and says whether this round is the grace round obtained at the bound",
-        "Where the round is a plan review, whose loop carries no declared bound,"
-        " the brief names the round number and says the loop is unbounded",
+        "Where the round is a plan review, whose loop declares no bound of its"
+        " own, the brief names the round number and says the loop is unbounded",
         "every reviewer, in plan review and delivery review alike, optimizes for"
         " the lowest number of rounds, and a finding the lens can raise now is"
         " raised now",
         "asks the lens for a conscious effort to find everything it can within"
         " the allocation, not across it",
-        "every finding the lens can raise against lines unchanged since the"
+        "every finding the lens can raise against lines unchanged since its own"
         " previous round was expected in that round",
-        "A finding raised in a round after the first against lines unchanged"
-        " since the round before it is still a finding, judged on its merits like"
-        " any other, and the lens records it in its result as a late finding",
+        "A finding the lens raises after its assessment round against lines"
+        " unchanged since its own most recent result-carrying round is still a"
+        " finding, judged on its merits like any other, and the lens marks it late"
+        " in its own report",
+        "Such a finding falls outside that round's delta, so the out-of-delta rule"
+        " above still decides where the lens puts it: `lateFindings` names only"
+        " findings the result filed, and a late finding that rule keeps out of"
+        " `findings` is marked late in the deferral it records instead",
         "The mark is dissent about the lens, not about the candidate, and it"
         " never changes what the round reduces to",
         "The last round is judged exactly as any other, and the brief says so",
