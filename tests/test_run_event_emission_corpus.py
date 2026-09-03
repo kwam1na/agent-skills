@@ -68,14 +68,22 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " from round 1 of 1",
         "the `review.loop-bound-reached` blocker is legible only against a bound"
         " the journal states",
+        "The caller also supplies the round bound it declared for the delivery,"
+        " the same bound `$review-work` reduces against; the bound is not part"
+        " of the harness's comparison context and is never invented for an"
+        " emission",
     ),
     "skills/execute-work/SKILL.md": (
         "This list is not the whole journal",
-        "`$obtain-review` emits `lens.selected` and `review.round.opened`, the"
-        " caller emits `review.round.closed` once `$review-work` reduces a"
-        " round, and `$compound-learning` emits `compounding.recorded`",
+        "`$obtain-review` emits `lens.selected` and `review.round.opened`,"
+        " `$compound-learning` emits `compounding.recorded`, and this workflow,"
+        " as `$review-work`'s caller, emits `review.round.closed` once that"
+        " reducer has closed a round",
         "A delivery that obtains review or compounds and emits none of those has"
         " an incomplete journal even though every point above was honoured",
+        "The two `$obtain-review` and `$compound-learning` entries are owned by"
+        " the skill named beside them, and this workflow neither restates their"
+        " rules nor emits them in that skill's place",
         "Every cost this delivery reports names its unit and that unit's"
         " coverage",
         "Spell the unit in kebab-case and identically for every run of the same"
