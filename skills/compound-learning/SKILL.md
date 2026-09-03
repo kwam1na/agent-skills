@@ -25,6 +25,13 @@ conflicting inputs return `blocked` rather than inventing knowledge.
 
 ## Handoff
 
+Emit `compounding.recorded` with the decision's outcome, and with the reference
+the handoff names where a required learning has one, through the run-event
+command the repository's root instruction file declares, when it declares one.
+Where the repository declares none, proceed silently, with no handoff and no
+blocker. The emission records the decision; it is not the durable state, and
+this workflow still writes none.
+
 For a required learning, hand the decision to the adopting repository's
 existing guidance, sensor, skill, or follow-up workflow. For a not-required
 decision, record that outcome in the caller-owned delivery handoff. This

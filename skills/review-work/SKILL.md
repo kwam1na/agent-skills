@@ -55,6 +55,14 @@ itself.
 `review.loop-bound-reached` naming the open findings and does not run another
 round.
 
+The caller emits `review.round.closed` once a round is reduced, through the
+run-event command the repository's root instruction file declares, when it
+declares one, naming the round, the candidate it bound, the reduced outcome, its
+findings by severity, and the round's self-reported cost; where the repository
+declares none, the caller proceeds silently, with no handoff and no blocker.
+That emission is observability, not review state, and this workflow neither
+performs it nor reads it back. The caller-selected lens list is unchanged by it.
+
 Retain prior rounds, dissent, and typed reviewer failures in the returned value.
 A later complete round may establish alignment without deleting that history.
 
