@@ -146,6 +146,23 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Where no tracker is configured, those follow-up items are the actionable"
         " tracking handoff in the result rather than a blocker",
     ),
+    "skills/plan-work/SKILL.md": (
+        "Plan review carries no round bound",
+        "Planning is the most important point in delivery, and a plan is cheap to"
+        " revise and expensive to get wrong",
+        "This loop is the review of the plan, and it is not the delivery review"
+        " that `$review-work` bounds",
+        "A plan review that is not converging ends by decision rather than by"
+        " count",
+        "Each plan-review lens carries this mandate in its own round brief",
+        "the plan review loop is left boundless: it runs until its lenses align,"
+        " and no round count ends it",
+        "This is a recorded decision rather than an omission, so a later plan"
+        " review does not re-derive the question",
+        "every lens reviewing a plan optimizes for the lowest number of rounds",
+        "every finding a lens can raise against the plan as it stands is raised in"
+        " the current round, not held for a later one",
+    ),
     "skills/compound-delivery-kernel/SKILL.md": (
         "Declare the round bound before the first round; every round of the delivery"
         " counts, except one grace round obtained at the bound and a round"

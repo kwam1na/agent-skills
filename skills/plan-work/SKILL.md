@@ -42,6 +42,34 @@ missing decision. Do not hide an assumption that would materially change the
 outcome. Plans contain decisions and evidence targets, not implementation code
 or command choreography.
 
+## Review the Plan Without a Round Bound
+
+Plan review carries no round bound. Planning is the most important point in
+delivery, and a plan is cheap to revise and expensive to get wrong, so the plan
+review loop is left boundless: it runs until its lenses align, and no round
+count ends it. This loop is the review of the plan, and it is not the delivery
+review that `$review-work` bounds; the absence of a count here changes nothing
+about that review. This is a recorded decision rather than an omission, so a
+later plan review does not re-derive the question.
+
+A plan review that is not converging ends by decision rather than by count. The
+operator ends it on that judgement, and one sufficient signal is a round after
+the first that raises a finding not raised before while leaving the number of
+open findings no lower than the round before it.
+
+In place of a bound, every lens reviewing a plan optimizes for the lowest number
+of rounds: every finding a lens can raise against the plan as it stands is
+raised in the current round, not held for a later one. A lens that withholds a
+finding it could already state spends a round the plan did not need. Each
+plan-review lens carries this mandate in its own round brief, so a lens holding
+only its brief can act on it.
+
+The mandate answers what two plans landed on the same day cost. One reached
+alignment only at review round fourteen, with one lens filing a new finding in
+each of rounds one through thirteen and closing it in the round after. The other
+ran forty-one six-lens rounds. Neither loop was long because its plan was
+unusually hard; both were long because findings arrived one round at a time.
+
 ## Resolve Optional Operations
 
 Tracking is optional unless repository authority or the user makes it required.
