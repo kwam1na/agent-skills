@@ -183,8 +183,10 @@ A reopened round is realized like the round it reopens, keeping that round's
 kind, its lens set, and its carry-forward rules, so the lenses see the candidate
 the delivery will actually submit. When a round reopens, the lens's retained entry for that
 round number is the replay's entry: the superseded entry stays in the delivery's
-history but is not supplied as carry-forward, so the entries a later round
-carries stay one per round and its delta runs from the replayed candidate.
+history but is supplied neither as carry-forward nor as that round's entry to
+the reduction, so the entries a later round carries stay one per round, the
+reduction receives one entry per lens per round, and its delta runs from the
+replayed candidate.
 
 ## The round brief
 
