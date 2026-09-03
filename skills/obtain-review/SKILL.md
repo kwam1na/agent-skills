@@ -98,10 +98,10 @@ no special kind, scope, or carry-forward.
 
 For a verification round the caller supplies each lens, as its `contextRefs`,
 that lens's own retained entry from every prior round of the delivery in which
-it was selected, contiguous over rounds 1 through N-1, binding tuple and result
-together where the state is `obtained` and binding tuple with its result-less
-state where the acquisition failed, so every prior report arrives bound to its
-round and its `candidateRef`; plus, for each of the two `candidateRef` values
+it was selected, contiguous over every round of the delivery before this one,
+binding tuple and result together where the state is `obtained` and binding
+tuple with its result-less state where the acquisition failed, so every prior
+report arrives bound to its round and its `candidateRef`; plus, for each of the two `candidateRef` values
 the delta spans, that reference's declared resolution as a pair of the exact
 `candidateRef` text (its `opaque` member) and the revision it resolves to; and
 nothing else, nothing narrower. The previous round's `candidateRef` is read from
