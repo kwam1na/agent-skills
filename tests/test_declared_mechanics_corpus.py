@@ -36,9 +36,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " particular heading",
         "Relocating a pinned phrase under an unrelated heading therefore leaves"
         " its pin green, and that is the accepted contract",
-        "Where a phrase reads off its own position, pin it together with its"
-        " neighbouring text as one phrase, rather than anchoring every pin in"
-        " the corpus to a heading",
+        "Where a phrase reads off its own position, pin what it depends on, its"
+        " neighbouring text carried with it as one phrase or the heading it reads"
+        " against, rather than anchoring every pin in the corpus to a heading",
     ),
     "docs/host-adapters.md": (
         "An adopting repository's overlay names what that repository adds: its"

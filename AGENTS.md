@@ -31,9 +31,10 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 A corpus pin asserts that its phrase is present in the whitespace-normalized
 file, not that the phrase sits under any particular heading. Relocating a pinned
 phrase under an unrelated heading therefore leaves its pin green, and that is the
-accepted contract: the pins guard shipped wording against deletion and silent
-rewording, while where a rule sits is a review judgement. Where a phrase reads
-off its own position, pin it together with its neighbouring text as one phrase,
+accepted contract: the pins guard the repository's durable wording against
+deletion and silent rewording, while where a rule sits is a review judgement.
+Where a phrase reads off its own position, pin what it depends on, its
+neighbouring text carried with it as one phrase or the heading it reads against,
 rather than anchoring every pin in the corpus to a heading.
 
 Proving a corpus pin red by mutating a file `provenance.lock.json` covers takes
