@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # reference resolves, the typed blocker vocabulary and its coining rule, the
 # convention for realizing a lens where the harness supplies no realization, the
 # install convention an adopting repository and its executors follow, the
-# release cadence, and how a red proof of a pin on a provenance-covered file
-# must move the digests.
+# release cadence, how a red proof of a pin on a provenance-covered file must
+# move the digests, and what a corpus pin asserts about a phrase it matches.
 REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "AGENTS.md": (
         "resolves, in this repository, to the commit whose tree carries the"
@@ -31,6 +31,14 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Mutate the text and refresh that file's output digest together, so the"
         " build succeeds and the pin's own assertion is what fails, then restore"
         " both",
+        "A corpus pin asserts that its phrase is present in the"
+        " whitespace-normalized file, not that the phrase sits under any"
+        " particular heading",
+        "Relocating a pinned phrase under an unrelated heading therefore leaves"
+        " its pin green, and that is the accepted contract",
+        "Where a phrase reads off its own position, pin what it depends on, its"
+        " neighbouring text carried with it as one phrase or the heading it reads"
+        " against, rather than anchoring every pin in the corpus to a heading",
     ),
     "docs/host-adapters.md": (
         "An adopting repository's overlay names what that repository adds: its"
