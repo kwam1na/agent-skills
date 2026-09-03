@@ -134,7 +134,7 @@ A missing posture, review, or compounding outcome leaves the delivery `partial`.
 An unavailable review blocks completion only when repository authority, host
 policy, or the approved plan requires that review.
 
-### Emit the Run's Events
+## Emit the Run's Events
 
 Emit each event below through the run-event command the repository's root
 instruction file declares, when it declares one, at the moment its rule names.
