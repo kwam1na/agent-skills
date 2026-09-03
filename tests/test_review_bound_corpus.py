@@ -102,9 +102,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " sit behind",
         "A reopened round is realized like the round it reopens, keeping that"
         " round's kind, its lens set, and its carry-forward rules",
-        "where it is unchanged the replay reopens the round already open at that"
-        " identity, carrying its number, its declared lens set, and its carried"
-        " findings",
+        "where it is unchanged the replay reopens the round the previous"
+        " candidate was reviewed under, whether that round is still open or"
+        " already closed, carrying its number, its declared lens set, and its"
+        " carried findings",
         "Every later result-carrying round of that lens that advances the round"
         " counter is a verification round",
         "identity is unchanged only when the diff of the new candidate against"
