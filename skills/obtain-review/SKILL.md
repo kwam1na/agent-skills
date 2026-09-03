@@ -149,7 +149,10 @@ discharged and no actionable finding open.
 A deferral's follow-up is a tracked item, and the executor records it, not the
 lens. In its own report the lens records in its evidence what that item must
 say: the outcome the item must reach, the deferral's identifier, and the lens
-that filed it. A lens is read-only and files nothing itself.
+that filed it. A lens is read-only and files nothing itself. One tracked item
+may carry several deferrals, one item per shippable outcome. Where no tracker is
+configured, those follow-up items are the actionable tracking handoff in the
+result rather than a blocker.
 
 ## Reopen a round the base moved under
 

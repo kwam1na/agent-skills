@@ -41,7 +41,9 @@ An actionable finding is one a lens filed at P0 or P1 inside the round's scope.
 A deferral recorded in evidence is not a finding. A deferral's follow-up is a
 tracked item the executor records before the delivery reports done; the
 deferral's evidence names what that item must say, and the lens files nothing
-itself.
+itself. One tracked item may carry several deferrals, one item per shippable
+outcome. Where no tracker is configured, those follow-up items are the
+actionable tracking handoff in the result rather than a blocker.
 
 - `aligned` means every required lens in the latest round has evidence and no
   actionable findings, each lens having discharged every carried finding of its

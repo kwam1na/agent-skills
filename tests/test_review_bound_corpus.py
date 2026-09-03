@@ -23,6 +23,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " delivery reports done",
         "the deferral's evidence names what that item must say, and the lens files"
         " nothing itself",
+        "One tracked item may carry several deferrals, one item per shippable"
+        " outcome",
+        "Where no tracker is configured, those follow-up items are the actionable"
+        " tracking handoff in the result rather than a blocker",
         "The review is bound to the release installed when the delivery's first"
         " round is acquired: a release installed mid-review is recorded and does"
         " not invalidate rounds already carried, and the delivery's closing record"
@@ -80,6 +84,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "the lens records in its evidence what that item must say: the outcome the"
         " item must reach, the deferral's identifier, and the lens that filed it",
         "A lens is read-only and files nothing itself",
+        "One tracked item may carry several deferrals, one item per shippable"
+        " outcome",
+        "Where no tracker is configured, those follow-up items are the actionable"
+        " tracking handoff in the result rather than a blocker",
         "A round obtained only because the base moved, under an unchanged"
         " deliverable identity, does not count against the bound",
         "Within that case the round counter advances only when the candidate's"
@@ -219,6 +227,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "the lens, not the executor, closes or defers a finding",
         "Name the tracked follow-up item recorded for every deferral any lens"
         " filed",
+        "One tracked item may carry several deferrals, one item per shippable"
+        " outcome",
+        "Where no tracker is configured, those follow-up items are the actionable"
+        " tracking handoff in the result rather than a blocker",
     ),
 }
 
