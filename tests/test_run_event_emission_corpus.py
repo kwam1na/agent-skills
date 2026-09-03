@@ -80,9 +80,10 @@ CAPABILITY_PHRASES: dict[str, tuple[str, ...]] = {
 
 # The vocabulary the harness and Athena dogfood runs found missing: an emitted
 # round is unreadable without its bound, a cost without its unit and coverage
-# does not compare, a gate timed after the fact costs another run, a skipped
-# sensor has nowhere to go, and an executor reading only the emit-point list
-# never learns about the entries other skills own.
+# does not compare, a `run.ended` cost that is not the handoff's own cost makes
+# the journal disagree with the report, a gate timed after the fact costs
+# another run, a skipped sensor has nowhere to go, and an executor reading only
+# the emit-point list never learns about the entries other skills own.
 REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "skills/obtain-review/SKILL.md": (
         "naming the round, the declared bound that round counts against, the"
@@ -117,6 +118,13 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "The two `$obtain-review` and `$compound-learning` entries are owned by"
         " the skill named beside them, and this workflow neither restates their"
         " rules nor emits them in that skill's place",
+        # One pair: the `run.ended` cost and the handoff's cost are the same
+        # cost, so both halves are pinned together and removing either one
+        # leaves the other reading as a cost of its own.
+        "`run.ended` last, carrying the delivery's result category and its"
+        " self-reported cost, the same cost the handoff reports",
+        "compounding outcome, the delivery's self-reported cost, unresolved"
+        " blockers",
         "Every cost this delivery reports names its unit and that unit's"
         " coverage",
         "Spell the unit in kebab-case and identically for every run of the same"
