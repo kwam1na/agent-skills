@@ -76,7 +76,8 @@ say `aligned`; only unchanged `review-work` reduces the complete round.
 
 Round kind is per lens. A lens's assessment round is its first result-carrying
 round for the delivery, and it reviews the whole delivered diff. Every later
-result-carrying round of that lens is a verification round, including a round
+result-carrying round of that lens that advances the round counter is a
+verification round, including a round
 obtained after alignment because the candidate changed, and its delta runs from
 the candidate of that lens's most recent result-carrying entry, so a round in
 which that lens's acquisition failed is spanned rather than skipped. A grace
@@ -141,11 +142,14 @@ that filed it. A lens is read-only and files nothing itself.
 ## Reopen a round the base moved under
 
 A round obtained only because the base moved does not count against the bound.
-The round counter advances only when the candidate's deliverable identity
-differs from the round before; where it is unchanged the replay reopens the
-round already open at that identity, carrying its number, its declared lens set,
-and its carried findings. The bound measures dissent, not the merge traffic a
-delivery happens to sit behind.
+Within that case the round counter advances only when the candidate's
+deliverable identity differs from the round before; where it is unchanged the
+replay reopens the round already open at that identity, carrying its number, its
+declared lens set, and its carried findings. A round obtained for any other
+reason counts against the bound even where the identity is unchanged, so a round
+obtained to dispute a finding, or to retry an acquisition that failed, on an
+unchanged candidate spends the bound like any other. The bound measures dissent,
+not the merge traffic a delivery happens to sit behind.
 
 The candidate's deliverable identity is the delivered change itself, not the
 commit that carries it: identity is unchanged only when the diff of the new
@@ -159,9 +163,9 @@ Nothing else may stand in for the comparison — not the reason the base moved,
 not the disjointness of the upstream commits, and not a lens's agreement that
 nothing changed.
 
-A reopened round is realized like the round it reopens, under the same lens set
-and the same carry-forward rules, so the lenses see the candidate the delivery
-will actually submit. When a round reopens, the lens's retained entry for that
+A reopened round is realized like the round it reopens, keeping that round's
+kind, its lens set, and its carry-forward rules, so the lenses see the candidate
+the delivery will actually submit. When a round reopens, the lens's retained entry for that
 round number is the replay's entry: the superseded entry stays in the delivery's
 history but is not supplied as carry-forward, so the entries a later round
 carries stay one per round and its delta runs from the replayed candidate.

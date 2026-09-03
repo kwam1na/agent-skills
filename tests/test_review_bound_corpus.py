@@ -12,7 +12,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "a repository instruction file may declare a smaller bound; a larger"
         " bound is an operator decision recorded before the first round",
         "every round obtained for the delivery counts against it, across every loop"
-        ", except one grace verification round obtained at the bound",
+        ", except one grace verification round obtained at the bound and a round"
+        " reopened because the base moved under an unchanged deliverable"
+        " identity",
         "typed blocker `review.loop-bound-reached` naming the open findings and does"
         " not run another round",
         "by that lens's closure report, by that lens's withdrawal with its reason,"
@@ -69,11 +71,23 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "A lens is read-only and files nothing itself",
         "A round obtained only because the base moved does not count against the"
         " bound",
-        "The round counter advances only when the candidate's deliverable"
-        " identity differs from the round before",
+        "Within that case the round counter advances only when the candidate's"
+        " deliverable identity differs from the round before",
+        "A round obtained for any other reason counts against the bound even"
+        " where the identity is unchanged",
+        "a round obtained to dispute a finding, or to retry an acquisition that"
+        " failed, on an unchanged candidate spends the bound like any other",
+        "The bound measures dissent, not the merge traffic a delivery happens to"
+        " sit behind",
+        "A reopened round is realized like the round it reopens, keeping that"
+        " round's kind, its lens set, and its carry-forward rules",
+        "Where B carries A's deliverable identity unchanged, that round is a"
+        " reopening of A's round rather than a new one",
         "where it is unchanged the replay reopens the round already open at that"
         " identity, carrying its number, its declared lens set, and its carried"
         " findings",
+        "Every later result-carrying round of that lens that advances the round"
+        " counter is a verification round",
         "identity is unchanged only when the diff of the new candidate against"
         " its base is byte-identical to the diff of the previous candidate"
         " against its base, over the same set of paths, with no path added,"
@@ -135,8 +149,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "skills/compound-delivery-kernel/SKILL.md": (
         "Declare the round bound before the first round; every round of the delivery"
-        " counts, except one grace round obtained at the bound; the default is"
-        " four rounds",
+        " counts, except one grace round obtained at the bound and a round"
+        " reopened because the base moved under an unchanged deliverable"
+        " identity; the default is four rounds",
         "Later rounds verify closure and review the delta",
         "only P0 and P1 findings block",
         "the lens, not the executor, closes or defers a finding",
