@@ -31,6 +31,7 @@ def _review_result(scenario: dict[str, object]):
                 findings=tuple(item["findings"]),
                 evidence=tuple(item["evidence"]),
                 failure=item.get("failure"),
+                late_findings=tuple(item.get("lateFindings", ())),
             )
             for item in round_results
         )
@@ -106,6 +107,31 @@ class ReviewWorkflowTests(unittest.TestCase):
         self.assertEqual(result.failures[0].lens, scenario["expectedFailure"]["lens"])
         self.assertEqual(result.failures[0].reason, scenario["expectedFailure"]["reason"])
         self.assertEqual(result.blockers, ("reviewer failed: testing in round 1",))
+
+    def test_late_findings_stay_visible_without_changing_convergence(self) -> None:
+        scenario = self.fixture["lateFinding"]
+        unmarked = json.loads(json.dumps(scenario))
+        for round_results in unmarked["rounds"]:
+            for item in round_results:
+                item.pop("lateFindings", None)
+
+        result = _review_result(scenario)
+        without_marks = _review_result(unmarked)
+
+        self.assertEqual(result.status, scenario["expectedStatus"])
+        self.assertEqual(result.status, without_marks.status)
+        self.assertEqual(
+            [item.findings for item in result.dissent],
+            [item.findings for item in without_marks.dissent],
+        )
+        self.assertEqual(without_marks.late_findings, ())
+        self.assertEqual(
+            [
+                {"finding": item.finding, "lens": item.lens, "round": item.round_number}
+                for item in result.late_findings
+            ],
+            scenario["expectedLateFindings"],
+        )
 
     def test_missing_evidence_blocks_alignment(self) -> None:
         result = review_work(

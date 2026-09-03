@@ -27,6 +27,13 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " round is acquired: a release installed mid-review is recorded and does"
         " not invalidate rounds already carried, and the delivery's closing record"
         " names the bound release's `releaseId` and `archiveSha256`",
+        "A lens result may mark some of its own findings as late: findings that"
+        " lens raised against lines unchanged since its previous round",
+        "A late finding is still a finding and is reduced exactly like any other,"
+        " so the mark never changes the outcome of a round",
+        "The mark is visible dissent about the lens rather than about the"
+        " candidate, and the returned value carries every marked finding with the"
+        " lens and the round that filed it",
     ),
     "skills/obtain-review/SKILL.md": (
         "A lens's assessment round is its first result-carrying round for the"
@@ -101,6 +108,31 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "the lens's retained entry for that round number is the replay's entry",
         "the superseded entry stays in the delivery's history but is not"
         " supplied as carry-forward",
+        "A result may also carry `lateFindings`, each naming one of that same"
+        " result's own `findings` that the lens raised late; a first round"
+        " carries none",
+        "Realize every lens with a brief that states where in the loop its round"
+        " sits",
+        "The brief names the round number and the declared bound as round k of N,"
+        " and says whether this round is the grace round obtained at the bound",
+        "Where the round is a plan review, whose loop carries no declared bound,"
+        " the brief names the round number and says the loop is unbounded",
+        "every reviewer, in plan review and delivery review alike, optimizes for"
+        " the lowest number of rounds, and a finding the lens can raise now is"
+        " raised now",
+        "asks the lens for a conscious effort to find everything it can within"
+        " the allocation, not across it",
+        "every finding the lens can raise against lines unchanged since the"
+        " previous round was expected in that round",
+        "A finding raised in a round after the first against lines unchanged"
+        " since the round before it is still a finding, judged on its merits like"
+        " any other, and the lens records it in its result as a late finding",
+        "The mark is dissent about the lens, not about the candidate, and it"
+        " never changes what the round reduces to",
+        "The last round is judged exactly as any other, and the brief says so",
+        "A lens neither aligns because no repair room remains nor blocks to force"
+        " an escalation; the grace round and the deferral rule handle a real"
+        " finding raised at the bound",
     ),
     "skills/execute-work/SKILL.md": (
         "state the bound in effect for the delivery",

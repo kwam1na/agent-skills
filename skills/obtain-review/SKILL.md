@@ -43,9 +43,10 @@ selection and never decides it.
 
 Use `prepare_review` in `agent_skills.review_orchestration` to create ordered,
 in-process host inputs. Supply each selected lens's bounded `contextRefs` and
-the expected result shape `review-lens-result/1`: `outcome`, `findings`, and
-`evidence`. These refs identify caller-retained material; they are not inline
-transcripts, arbitrary execution payloads, or authority grants. Host realization
+the expected result shape `review-lens-result/1`: `outcome`, `findings`,
+`evidence`, and the optional `lateFindings`. These refs identify
+caller-retained material; they are not inline transcripts, arbitrary execution
+payloads, or authority grants. Host realization
 may be sequential. Launching, permissions, retries, and scheduling remain with
 the active host and harness.
 
@@ -58,7 +59,9 @@ the binding tuple and has `lens`, `state`, and optional `independence` metadata.
 Only an `obtained` entry carries `result`.
 
 - `obtained`: normalize an `aligned` or `changes-requested` result. Both need
-  evidence; only `changes-requested` has nonempty findings. Project it to the
+  evidence; only `changes-requested` has nonempty findings. A result may also
+  carry `lateFindings`, each naming one of that same result's own `findings`
+  that the lens raised late; a first round carries none. Project it to the
   existing `ReviewLensResult`.
 - `failed`: project a failed lens with code `review-acquisition-failed`.
 - `indeterminate`: project a failed lens with code
@@ -170,6 +173,33 @@ the delivery will actually submit. When a round reopens, the lens's retained ent
 round number is the replay's entry: the superseded entry stays in the delivery's
 history but is not supplied as carry-forward, so the entries a later round
 carries stay one per round and its delta runs from the replayed candidate.
+
+## The round brief
+
+Realize every lens with a brief that states where in the loop its round sits.
+The brief names the round number and the declared bound as round k of N, and
+says whether this round is the grace round obtained at the bound. Where the
+round is a plan review, whose loop carries no declared bound, the brief names
+the round number and says the loop is unbounded.
+
+The brief carries the mandate: every reviewer, in plan review and delivery
+review alike, optimizes for the lowest number of rounds, and a finding the lens
+can raise now is raised now. Beside the round and the bound, the mandate asks
+the lens for a conscious effort to find everything it can within the
+allocation, not across it.
+
+The brief states the expectation that follows: every finding the lens can raise
+against lines unchanged since the previous round was expected in that round. A
+finding raised in a round after the first against lines unchanged since the
+round before it is still a finding, judged on its merits like any other, and
+the lens records it in its result as a late finding. The mark is dissent about
+the lens, not about the candidate, and it never changes what the round reduces
+to.
+
+The last round is judged exactly as any other, and the brief says so. A lens
+neither aligns because no repair room remains nor blocks to force an
+escalation; the grace round and the deferral rule handle a real finding raised
+at the bound.
 
 ## Realize a lens by convention where the harness supplies none
 

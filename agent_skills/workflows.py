@@ -354,12 +354,22 @@ class ReviewLensResult:
     findings: tuple[str, ...] = ()
     evidence: tuple[str, ...] = ()
     failure: str | None = None
+    late_findings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class ReviewFailure:
     lens: str
     reason: str
+
+
+@dataclass(frozen=True)
+class ReviewLateFinding:
+    """A finding a lens raised against lines its own earlier round already saw."""
+
+    lens: str
+    round_number: int
+    finding: str
 
 
 @dataclass(frozen=True)
@@ -377,6 +387,7 @@ class ReviewResult:
     failures: tuple[ReviewFailure, ...]
     blockers: tuple[str, ...]
     action: str
+    late_findings: tuple[ReviewLateFinding, ...] = ()
 
 
 def _normalized_lens_result(result: ReviewLensResult) -> ReviewLensResult:
@@ -387,6 +398,7 @@ def _normalized_lens_result(result: ReviewLensResult) -> ReviewLensResult:
         findings=_unique(result.findings),
         evidence=_unique(result.evidence),
         failure=failure,
+        late_findings=_unique(result.late_findings),
     )
 
 
@@ -472,6 +484,14 @@ def review_work(request: ReviewRequest) -> ReviewResult:
         for result in results
         if result.outcome == "failed" and result.failure is not None
     )
+    # A late finding is dissent about the lens, not about the candidate: it stays
+    # visible here and never reaches the convergence decision below.
+    late_findings = tuple(
+        ReviewLateFinding(result.lens, number, finding)
+        for number, results in enumerate(rounds, start=1)
+        for result in results
+        for finding in result.late_findings
+    )
 
     if not rounds:
         return ReviewResult(
@@ -481,6 +501,7 @@ def review_work(request: ReviewRequest) -> ReviewResult:
             failures=(),
             blockers=(),
             action="Run the required review lenses.",
+            late_findings=(),
         )
 
     latest = rounds[-1]
@@ -513,6 +534,7 @@ def review_work(request: ReviewRequest) -> ReviewResult:
         failures=failures,
         blockers=_unique(tuple(blockers)),
         action=action,
+        late_findings=late_findings,
     )
 
 
