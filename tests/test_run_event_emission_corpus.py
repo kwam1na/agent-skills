@@ -161,6 +161,17 @@ EMIT_POINT_LIST_CLOSE: tuple[str, str] = (
 )
 
 
+# The emit points are a section in their own right, not a subsection. Nested
+# under a section that opens "Before claiming `complete`", their timing reads as
+# bounded by the end of the delivery, while the first point fires `run.started`
+# at the earliest moment of the run. Archived text is whitespace-normalized, so
+# a deeper heading contains the shallower one as a substring: the pin is the
+# pair, and the negative half is the load-bearing one.
+UNNESTED_SECTIONS: dict[str, tuple[str, ...]] = {
+    "skills/execute-work/SKILL.md": ("Emit the Run's Events",),
+}
+
+
 class RunEventEmissionCorpusTests(unittest.TestCase):
     """Pin the emit points in the skill text a release actually ships."""
 
@@ -234,6 +245,13 @@ class RunEventEmissionCorpusTests(unittest.TestCase):
     def test_the_qualifying_paragraph_follows_the_emit_point_list(self) -> None:
         relative, phrase = EMIT_POINT_LIST_CLOSE
         self.assertIn(phrase, self.archived[relative])
+
+    def test_each_emit_section_stands_unnested(self) -> None:
+        for relative, headings in UNNESTED_SECTIONS.items():
+            for heading in headings:
+                with self.subTest(path=relative, heading=heading):
+                    self.assertIn(f"## {heading}", self.archived[relative])
+                    self.assertNotIn(f"### {heading}", self.archived[relative])
 
 
 if __name__ == "__main__":
