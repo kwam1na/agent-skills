@@ -159,8 +159,9 @@ result rather than a blocker.
 A round obtained only because the base moved, under an unchanged deliverable
 identity, does not count against the bound. Within that case the round counter
 advances only when the candidate's deliverable identity differs from the round
-before; where it is unchanged the replay reopens the round already open at that
-identity, carrying its number, its declared lens set, and its carried findings.
+before; where it is unchanged the replay reopens the round the previous
+candidate was reviewed under, whether that round is still open or already
+closed, carrying its number, its declared lens set, and its carried findings.
 A round obtained for any other reason counts against the bound even where the
 identity is unchanged, so a round obtained to dispute a finding, to carry an
 authorized repair, or to retry an acquisition that failed, on an unchanged
