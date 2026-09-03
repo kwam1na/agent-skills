@@ -134,6 +134,14 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "A sensor considered and deliberately not run is a judgement call rather"
         " than an absence: record it with `decision.recorded` naming the sensor"
         " and why it does not apply",
+        # The enumeration is the one place a reader counts the forks that emit,
+        # so it is pinned whole: the skipped sensor the finish-line paragraph
+        # sends to `decision.recorded` is a member of it, and a member dropped
+        # from either passage leaves the two disagreeing.
+        "Named forks: the branch name, a review round obtained on an unchanged"
+        " candidate, a separate worktree for a lens that mutates, a skill read"
+        " rather than invoked, a sensor considered and deliberately not run,"
+        " and any value supplied by hand that should have been discoverable",
         "Reading the root instruction file for the run-event declaration is"
         " capability discovery, not the authority reading this point orders: it"
         " precedes `run.started`",
