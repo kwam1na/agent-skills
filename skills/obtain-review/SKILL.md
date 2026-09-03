@@ -191,6 +191,14 @@ replayed candidate.
 
 ## The round brief
 
+The brief is [the round brief template](references/round-brief-template.md)
+filled in, not composed. An executor realizing a lens fills the template's
+members rather than composing the brief's shape from this text, and its members
+are `Binding tuple`, `Round and bound`, `Fewest-rounds mandate`, `Carry-forward
+entries`, `Candidate reference resolutions`, `Charter`, and `Result shape`. This
+section states what those members must say; the template states where each one
+goes.
+
 Realize every lens with a brief that states where in the loop its round sits.
 The brief names the round number and the declared bound as round k of N, and
 says whether this round is the grace round obtained at the bound. Where the

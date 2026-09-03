@@ -268,7 +268,11 @@
       "outputs": [
         {
           "path": "skills/obtain-review/SKILL.md",
-          "sha256": "d23675c36916e62b665c406f1959a276158fe760bc14d2ea08d70b1ca185673e"
+          "sha256": "84740fdb60b300dd451c7c26d1e45af26796e461c593c45133f0cb1d9bde2075"
+        },
+        {
+          "path": "skills/obtain-review/references/round-brief-template.md",
+          "sha256": "206a0704eed87b13f126754a6c1c26437005eb9bf6569fc80842a8eb914b5391"
         }
       ],
       "owner": "delivery-agent/user-delegated",
