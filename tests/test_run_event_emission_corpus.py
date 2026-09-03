@@ -133,6 +133,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "A sensor considered and deliberately not run is a judgement call rather"
         " than an absence: record it with `decision.recorded` naming the sensor"
         " and why it does not apply",
+        "Reading the root instruction file for the run-event declaration is"
+        " capability discovery, not the authority reading this point orders: it"
+        " precedes `run.started`, because nothing can be emitted until the"
+        " delivery knows whether a command exists to emit through",
     ),
 }
 

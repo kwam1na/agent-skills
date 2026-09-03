@@ -144,7 +144,11 @@ evidence. No gate, approval, or finish-line decision reads it, and a refused or
 failed emission never changes a command's outcome or the delivery's result.
 
 - `run.started` before reading repository authority, naming the host and the
-  installed workflow release the delivery runs under.
+  installed workflow release the delivery runs under. Reading the root
+  instruction file for the run-event declaration is capability discovery, not
+  the authority reading this point orders: it precedes `run.started`, because
+  nothing can be emitted until the delivery knows whether a command exists to
+  emit through. Everything else that file governs is read after.
 - `ticket.read` and `posture.declared` once that authority and the work item
   have been read and the posture is chosen.
 - `decision.recorded` at every fork resolved by judgement rather than by a
