@@ -176,8 +176,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "dropping a lens disposes of nothing it filed",
         "record a disposition for every finding, each citing the lens",
         "The executor closes, defers, and declines nothing on its own judgement",
-        "With dissent open, record the typed blocker `review.loop-bound-reached`"
-        " naming the open findings, report `partial`, and stop",
+        "Reaching the bound is terminal. With dissent open, record the typed"
+        " blocker `review.loop-bound-reached` naming the open findings, report"
+        " `partial`, and stop",
         "record the same blocker naming the failed lens, report `partial`, and stop",
         "When every lens is aligned at the bound and a required change would alter"
         " the candidate, the delivery obtains exactly one grace verification round"
