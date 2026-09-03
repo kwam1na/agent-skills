@@ -20,12 +20,18 @@ Obtain the trusted comparison context from the harness, separately from reviewer
 output: exact release (`releaseId`, `profile`, `archiveSha256`,
 `metadataSha256`), exact graph digest, versioned opaque subject and candidate
 references, and a positive integer round. Never let an incoming result supply
-its own trusted comparison values. Preserve opaque references exactly.
+its own trusted comparison values. Preserve opaque references exactly. The
+caller also supplies the round bound it declared for the delivery, the same
+bound `$review-work` reduces against; the bound is not part of the harness's
+comparison context and is never invented for an emission.
 
 Emit `lens.selected` before asking the host to realize any lens, naming the
 mandated pair the caller declared, the full selected set, and the reason for the
 selection, and emit `review.round.opened` for each round before its realization,
-naming the round, the candidate it binds, and the lenses it carries. Emit both
+naming the round, the declared bound that round counts against, the candidate it
+binds, and the lenses it carries. Without the bound beside the round a reader
+cannot tell round 1 of 4 from round 1 of 1, and the `review.loop-bound-reached`
+blocker is legible only against a bound the journal states. Emit both
 through the run-event command the repository's root instruction file declares,
 when it declares one; where the repository declares none, proceed silently, with
 no handoff and no blocker. Give the run's identifier to any lens realized in

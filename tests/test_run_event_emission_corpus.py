@@ -55,6 +55,55 @@ CAPABILITY_PHRASES: dict[str, tuple[str, ...]] = {
 }
 
 
+# The vocabulary the harness and Athena dogfood runs found missing: an emitted
+# round is unreadable without its bound, a cost without its unit and coverage
+# does not compare, a gate timed after the fact costs another run, a skipped
+# sensor has nowhere to go, and an executor reading only the emit-point list
+# never learns about the entries other skills own.
+REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
+    "skills/obtain-review/SKILL.md": (
+        "naming the round, the declared bound that round counts against, the"
+        " candidate it binds, and the lenses it carries",
+        "Without the bound beside the round a reader cannot tell round 1 of 4"
+        " from round 1 of 1",
+        "the `review.loop-bound-reached` blocker is legible only against a bound"
+        " the journal states",
+        "The caller also supplies the round bound it declared for the delivery,"
+        " the same bound `$review-work` reduces against; the bound is not part"
+        " of the harness's comparison context and is never invented for an"
+        " emission",
+    ),
+    "skills/execute-work/SKILL.md": (
+        "This list is not the whole journal",
+        "`$obtain-review` emits `lens.selected` and `review.round.opened`,"
+        " `$compound-learning` emits `compounding.recorded`, and this workflow,"
+        " as `$review-work`'s caller, emits `review.round.closed` once that"
+        " reducer has closed a round",
+        "A delivery that obtains review or compounds and emits none of those has"
+        " an incomplete journal even though every point above was honoured",
+        "The two `$obtain-review` and `$compound-learning` entries are owned by"
+        " the skill named beside them, and this workflow neither restates their"
+        " rules nor emits them in that skill's place",
+        "Every cost this delivery reports names its unit and that unit's"
+        " coverage",
+        "Spell the unit in kebab-case and identically for every run of the same"
+        " repository, so two runs compare rather than silently failing to",
+        "where the host meters the tokens of dispatched subagents, that unit is"
+        " `subagent-tokens`",
+        "Where the host exposes no accounting for the executor's own session,"
+        " report the part of the cost the executor can see and say that it is a"
+        " part, so the total is never read as the whole",
+        "Time a repository gate while it runs and retain that wall time beside"
+        " its outcome, because `gate.reported` needs how long the gate ran and a"
+        " finished run's duration cannot be recovered afterward except by"
+        " running the gate again",
+        "A sensor considered and deliberately not run is a judgement call rather"
+        " than an absence: record it with `decision.recorded` naming the sensor"
+        " and why it does not apply",
+    ),
+}
+
+
 class RunEventEmissionCorpusTests(unittest.TestCase):
     """Pin the emit points in the skill text a release actually ships."""
 
@@ -77,7 +126,7 @@ class RunEventEmissionCorpusTests(unittest.TestCase):
                     relative: " ".join(
                         release.read(relative).decode("utf-8").split()
                     )
-                    for relative in CAPABILITY_PHRASES
+                    for relative in {*CAPABILITY_PHRASES, *REQUIRED_PHRASES}
                 }
 
     def test_each_skill_names_the_kinds_it_emits(self) -> None:
@@ -88,6 +137,12 @@ class RunEventEmissionCorpusTests(unittest.TestCase):
 
     def test_each_skill_states_the_optional_capability_rule(self) -> None:
         for relative, phrases in CAPABILITY_PHRASES.items():
+            for phrase in phrases:
+                with self.subTest(path=relative, phrase=phrase):
+                    self.assertIn(phrase, self.archived[relative])
+
+    def test_each_skill_states_the_emit_point_vocabulary(self) -> None:
+        for relative, phrases in REQUIRED_PHRASES.items():
             for phrase in phrases:
                 with self.subTest(path=relative, phrase=phrase):
                     self.assertIn(phrase, self.archived[relative])
