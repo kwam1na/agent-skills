@@ -18,8 +18,9 @@ Provide the required lens names, a positive round bound, and the completed lens
 results for each round. The round bound is declared by the caller before the
 first round and belongs to the delivery: every round obtained for the delivery
 counts against it, across every loop, except one grace verification round
-obtained at the bound, and every round already obtained is supplied to each
-reduction. The workflow default is four rounds, and a repository instruction
+obtained at the bound and a round reopened because the base moved under an
+unchanged deliverable identity, and every round already obtained is supplied to
+each reduction. The workflow default is four rounds, and a repository instruction
 file may declare a smaller bound; a larger bound is an operator decision
 recorded before the first round. The review is bound to the release installed
 when the delivery's first round is acquired: a release installed mid-review is

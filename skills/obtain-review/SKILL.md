@@ -31,10 +31,11 @@ selection, and emit `review.round.opened` for each round before its realization,
 naming the round, the declared bound that round counts against, the candidate it
 binds, and the lenses it carries. Without the bound beside the round a reader
 cannot tell round 1 of 4 from round 1 of 1, and the `review.loop-bound-reached`
-blocker is legible only against a bound the journal states. Emit both
-through the run-event command the repository's root instruction file declares,
-when it declares one; where the repository declares none, proceed silently, with
-no handoff and no blocker. Give the run's identifier to any lens realized in
+blocker is legible only against a bound the journal states. A reopened round is
+emitted under the number it already carries, with a member naming why it
+reopened. Emit both through the run-event command the repository's root
+instruction file declares, when it declares one; where the repository declares
+none, proceed silently, with no handoff and no blocker. Give the run's identifier to any lens realized in
 another worktree of the same repository so its own emissions join this run; a
 lens realized in a different repository shares no run and is given none. This
 workflow keeps the caller-selected lens list unchanged; emission records the
@@ -75,7 +76,8 @@ say `aligned`; only unchanged `review-work` reduces the complete round.
 
 Round kind is per lens. A lens's assessment round is its first result-carrying
 round for the delivery, and it reviews the whole delivered diff. Every later
-result-carrying round of that lens is a verification round, including a round
+result-carrying round of that lens that advances the round counter is a
+verification round, including a round
 obtained after alignment because the candidate changed, and its delta runs from
 the candidate of that lens's most recent result-carrying entry, so a round in
 which that lens's acquisition failed is spanned rather than skipped. A grace
@@ -136,6 +138,38 @@ A deferral's follow-up is a tracked item, and the executor records it, not the
 lens. In its own report the lens records in its evidence what that item must
 say: the outcome the item must reach, the deferral's identifier, and the lens
 that filed it. A lens is read-only and files nothing itself.
+
+## Reopen a round the base moved under
+
+A round obtained only because the base moved, under an unchanged deliverable
+identity, does not count against the bound. Within that case the round counter
+advances only when the candidate's deliverable identity differs from the round
+before; where it is unchanged the replay reopens the round already open at that
+identity, carrying its number, its declared lens set, and its carried findings.
+A round obtained for any other reason counts against the bound even where the
+identity is unchanged, so a round obtained to dispute a finding, to carry an
+authorized repair, or to retry an acquisition that failed, on an unchanged
+candidate spends the bound like any other. The bound measures dissent,
+not the merge traffic a delivery happens to sit behind.
+
+The candidate's deliverable identity is the delivered change itself, not the
+commit that carries it: identity is unchanged only when the diff of the new
+candidate against its base is byte-identical to the diff of the previous
+candidate against its base, over the same set of paths, with no path added,
+removed, or renamed. The executor computes that comparison and retains its
+output as evidence; a comparison that was not run, or that reports any
+difference at all, is a differing identity, so a rebase whose conflict
+resolution altered one delivered byte spends a round like any other change.
+Nothing else may stand in for the comparison — not the reason the base moved,
+not the disjointness of the upstream commits, and not a lens's agreement that
+nothing changed.
+
+A reopened round is realized like the round it reopens, keeping that round's
+kind, its lens set, and its carry-forward rules, so the lenses see the candidate
+the delivery will actually submit. When a round reopens, the lens's retained entry for that
+round number is the replay's entry: the superseded entry stays in the delivery's
+history but is not supplied as carry-forward, so the entries a later round
+carries stay one per round and its delta runs from the replayed candidate.
 
 ## Realize a lens by convention where the harness supplies none
 
