@@ -67,6 +67,27 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "the lens records in its evidence what that item must say: the outcome the"
         " item must reach, the deferral's identifier, and the lens that filed it",
         "A lens is read-only and files nothing itself",
+        "A round obtained only because the base moved does not count against the"
+        " bound",
+        "The round counter advances only when the candidate's deliverable"
+        " identity differs from the round before",
+        "where it is unchanged the replay reopens the round already open at that"
+        " identity, carrying its number, its declared lens set, and its carried"
+        " findings",
+        "identity is unchanged only when the diff of the new candidate against"
+        " its base is byte-identical to the diff of the previous candidate"
+        " against its base, over the same set of paths, with no path added,"
+        " removed, or renamed",
+        "The executor computes that comparison and retains its output as"
+        " evidence; a comparison that was not run, or that reports any"
+        " difference at all, is a differing identity",
+        "a rebase whose conflict resolution altered one delivered byte spends a"
+        " round like any other change",
+        "not the reason the base moved, not the disjointness of the upstream"
+        " commits, and not a lens's agreement that nothing changed",
+        "the lens's retained entry for that round number is the replay's entry",
+        "the superseded entry stays in the delivery's history but is not"
+        " supplied as carry-forward",
     ),
     "skills/execute-work/SKILL.md": (
         "state the bound in effect for the delivery",

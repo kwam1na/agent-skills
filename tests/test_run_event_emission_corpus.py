@@ -68,6 +68,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " from round 1 of 1",
         "the `review.loop-bound-reached` blocker is legible only against a bound"
         " the journal states",
+        "A reopened round is emitted under the number it already carries, with a"
+        " member naming why it reopened",
         "The caller also supplies the round bound it declared for the delivery,"
         " the same bound `$review-work` reduces against; the bound is not part"
         " of the harness's comparison context and is never invented for an"
