@@ -16,6 +16,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "AGENTS.md": (
         "resolves, in this repository, to the commit whose tree carries the"
         " reviewed text",
+        "For a verification round the executor supplies that resolution beside"
+        " the exact reference text",
         "a lens matches the pair by exact text rather than by parsing the"
         " reference",
         "Cut releases at batch boundaries, not per ruling. Operator rulings"
