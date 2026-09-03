@@ -21,7 +21,10 @@ counts against it, across every loop, except one grace verification round
 obtained at the bound, and every round already obtained is supplied to each
 reduction. The workflow default is four rounds, and a repository instruction
 file may declare a smaller bound; a larger bound is an operator decision
-recorded before the first round.
+recorded before the first round. The review is bound to the release installed
+when the delivery's first round is acquired: a release installed mid-review is
+recorded and does not invalidate rounds already carried, and the delivery's
+closing record names the bound release's `releaseId` and `archiveSha256`.
 
 Every aligned or changes-requested result includes
 caller-owned evidence. A changes-requested result also names its actionable

@@ -48,10 +48,13 @@ and provide the approval or decision handoff needed to continue.
 
 Before the first review round, state the bound in effect for the delivery,
 quoting the repository instruction that sets it if any, and state the lenses.
-Never declare a second bound for the same delivery. The lens set is declared
-before the first round and held unchanged for the delivery: every declared lens
-is selected in every round, no lens is added after the first round, and dropping
-a lens disposes of nothing it filed.
+Never declare a second bound for the same delivery. The review is bound to the
+release installed when the delivery's first round is acquired: record a release
+installed mid-review, keep every round already carried valid, and name the
+bound release's `releaseId` and `archiveSha256` in the delivery's closing
+record. The lens set is declared before the first round and held unchanged for
+the delivery: every declared lens is selected in every round, no lens is added
+after the first round, and dropping a lens disposes of nothing it filed.
 
 For each verification round, supply each lens its own retained entry from every
 prior round in which it was selected, result-less entries included, and, for
