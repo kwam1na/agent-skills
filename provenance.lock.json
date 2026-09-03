@@ -272,7 +272,7 @@
         },
         {
           "path": "skills/obtain-review/references/round-brief-template.md",
-          "sha256": "206a0704eed87b13f126754a6c1c26437005eb9bf6569fc80842a8eb914b5391"
+          "sha256": "de5dbaf9c7ada43a5795537136497fa8f64be17cc144e653304d1be4c7fbb344"
         }
       ],
       "owner": "delivery-agent/user-delegated",

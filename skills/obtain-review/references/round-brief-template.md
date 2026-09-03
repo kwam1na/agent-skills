@@ -52,16 +52,18 @@ no repair room remains nor blocks to force an escalation.
 ## Carry-forward entries
 
 The lens's own retained entry from every prior round of the delivery in which it
-was selected, contiguous over rounds 1 through N-1: binding tuple and result
-together where the state is `obtained`, and binding tuple with its result-less
-state where the acquisition failed. Nothing else, nothing narrower.
+was selected, contiguous over every round of the delivery before this one:
+binding tuple and result together where the state is `obtained`, and binding
+tuple with its result-less state where the acquisition failed. Nothing else,
+nothing narrower.
 
 - round 1: `<entry>`
 - round 2: `<entry>`
 
 An assessment round carries none. The lens re-derives its carried set from these
-entries and derives the delta itself from the previous entry's `candidateRef`
-and this round's.
+entries and derives the delta itself from the `candidateRef` of its most recent
+result-carrying entry and this round's, so a round in which its acquisition
+failed is spanned rather than skipped.
 
 ## Candidate reference resolutions
 
@@ -92,7 +94,9 @@ optional `lateFindings`.
 - `outcome`: `aligned` or `changes-requested`. Only `changes-requested` carries
   nonempty findings; both carry evidence.
 - `findings`: only P0 and P1 findings inside the round's scope are actionable.
-  In a verification round a new finding outside the delta is filed only at P0.
+  In a verification round a new finding outside the delta is filed only at P0,
+  and a P1 first filed outside the delta is recorded as a deferral with a
+  follow-up item rather than as a finding.
 - `evidence`: the re-check of every carried finding of this lens, deferrals
   included, each reported closed, open, raised with its new severity, withdrawn
   with its reason, or still deferred; the deferrable findings, each with what
