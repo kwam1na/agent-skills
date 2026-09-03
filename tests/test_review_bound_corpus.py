@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "skills/review-work/SKILL.md": (
         "The workflow default is four rounds",
+        # Pinned by operator decision on the item reconciling these pins.
         "a repository instruction file may declare a smaller bound; a larger"
         " bound is an operator decision recorded before the first round",
         "every round obtained for the delivery counts against it, across every loop"
