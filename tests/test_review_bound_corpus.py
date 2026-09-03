@@ -202,6 +202,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " that lack one, report `partial`, and stop",
         "Where no tracker is configured, those follow-up items are the actionable"
         " tracking handoff in the result rather than a blocker",
+        "name the release the review is bound to by its `releaseId` and"
+        " `archiveSha256`, and any release installed mid-review; this list is the"
+        " delivery's closing record for that identity",
     ),
     "skills/plan-work/SKILL.md": (
         "Plan review carries no round bound",

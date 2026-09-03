@@ -124,6 +124,9 @@ than collapsing the delivery into implementation plus tests:
 - name the selected execution posture and the evidence that followed it;
 - name the review round bound in effect for the delivery and the rounds obtained
   against it, and record a disposition for every finding, each citing the lens;
+- name the release the review is bound to by its `releaseId` and
+  `archiveSha256`, and any release installed mid-review; this list is the
+  delivery's closing record for that identity;
 - record the review outcome, who or what produced it, and the evidence reviewed;
   when no repository- or host-selected independent review is available, say so
   and retain the bounded acceptance-criteria review instead of implying
