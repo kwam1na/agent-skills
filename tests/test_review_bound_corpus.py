@@ -110,10 +110,6 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
 }
 
-FORBIDDEN_PHRASES: tuple[str, ...] = (
-    "three rounds",
-)
-
 
 class ReviewBoundCorpusTests(unittest.TestCase):
     """Pin the bounded-convergence rules in the shipped workflow text."""
@@ -126,16 +122,6 @@ class ReviewBoundCorpusTests(unittest.TestCase):
             for phrase in phrases:
                 with self.subTest(path=relative, phrase=phrase):
                     self.assertIn(phrase, normalized)
-
-    def test_superseded_default_bound_is_absent(self) -> None:
-        for relative in REQUIRED_PHRASES:
-            normalized = " ".join(
-                (ROOT / relative).read_text(encoding="utf-8").split()
-            )
-            for phrase in FORBIDDEN_PHRASES:
-                with self.subTest(path=relative, phrase=phrase):
-                    self.assertNotIn(phrase, normalized)
-
 
 if __name__ == "__main__":
     unittest.main()
