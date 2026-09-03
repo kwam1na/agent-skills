@@ -268,7 +268,7 @@
       "outputs": [
         {
           "path": "skills/obtain-review/SKILL.md",
-          "sha256": "e43b8b9a504954fe9943dafca4c69a373f209f2f972827230f45da819b2490b8"
+          "sha256": "ca5a13a12a10958b1a1db144389ea86a9d8db688a776553fb40d9314af74ffde"
         }
       ],
       "owner": "delivery-agent/user-delegated",
