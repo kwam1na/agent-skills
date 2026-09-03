@@ -233,9 +233,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "The mandate answers what two plans landed on the same day cost. One"
         " reached alignment only at review round fourteen, with one lens filing a"
         " new finding in each of rounds one through thirteen and closing it in the"
-        " round after. The other ran forty-one six-lens rounds",
-        "Neither loop was long because its plan was unusually hard; both were long"
-        " because findings arrived one round at a time",
+        " round after. The other ran forty-one six-lens rounds. Neither loop was"
+        " long because its plan was unusually hard; both were long because findings"
+        " arrived one round at a time",
     ),
     "skills/compound-delivery-kernel/SKILL.md": (
         "Declare the round bound before the first round; every round of the delivery"
