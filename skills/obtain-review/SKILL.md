@@ -142,14 +142,14 @@ that filed it. A lens is read-only and files nothing itself.
 ## Reopen a round the base moved under
 
 A round obtained only because the base moved, under an unchanged deliverable
-identity, does not count against the bound. Within that case the round counter advances only when the candidate's
-deliverable identity differs from the round before; where it is unchanged the
-replay reopens the round already open at that identity, carrying its number, its
-declared lens set, and its carried findings. A round obtained for any other
-reason, other than a repair that leaves the deliverable identity unchanged,
-counts against the bound even where the identity is unchanged, so a round
-obtained to dispute a finding, or to retry an acquisition that failed, on an
-unchanged candidate spends the bound like any other. The bound measures dissent,
+identity, does not count against the bound. Within that case the round counter
+advances only when the candidate's deliverable identity differs from the round
+before; where it is unchanged the replay reopens the round already open at that
+identity, carrying its number, its declared lens set, and its carried findings.
+A round obtained for any other reason counts against the bound even where the
+identity is unchanged, so a round obtained to dispute a finding, to carry an
+authorized repair, or to retry an acquisition that failed, on an unchanged
+candidate spends the bound like any other. The bound measures dissent,
 not the merge traffic a delivery happens to sit behind.
 
 The candidate's deliverable identity is the delivered change itself, not the
@@ -204,7 +204,8 @@ attestations embedded in an untrusted envelope as trusted evidence.
 
 If an authorized repair changes candidate A to B, obtain a wholly new round
 bound to B, including every selected lens. Retain A's evidence as history, never
-reuse it to satisfy B. Where B carries A's deliverable identity unchanged, that
-round is a reopening of A's round rather than a new one, under the rule above,
-and it is still bound to B and still carries every selected lens. The harness owns new-round allocation and candidate
+reuse it to satisfy B. Where the base moved under B and B carries A's deliverable
+identity unchanged, that round is a reopening of A's round rather than a new
+one, under the rule above, and it is still bound to B and still carries every
+selected lens. The harness owns new-round allocation and candidate
 capture; acquisition cannot advance a checkpoint or authorize the repair.

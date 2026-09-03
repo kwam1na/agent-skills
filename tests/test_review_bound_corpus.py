@@ -73,17 +73,18 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " deliverable identity, does not count against the bound",
         "Within that case the round counter advances only when the candidate's"
         " deliverable identity differs from the round before",
-        "A round obtained for any other reason, other than a repair that leaves"
-        " the deliverable identity unchanged, counts against the bound even"
+        "A round obtained for any other reason counts against the bound even"
         " where the identity is unchanged",
-        "a round obtained to dispute a finding, or to retry an acquisition that"
-        " failed, on an unchanged candidate spends the bound like any other",
+        "a round obtained to dispute a finding, to carry an authorized repair,"
+        " or to retry an acquisition that failed, on an unchanged candidate"
+        " spends the bound like any other",
         "The bound measures dissent, not the merge traffic a delivery happens to"
         " sit behind",
         "A reopened round is realized like the round it reopens, keeping that"
         " round's kind, its lens set, and its carry-forward rules",
-        "Where B carries A's deliverable identity unchanged, that round is a"
-        " reopening of A's round rather than a new one",
+        "Where the base moved under B and B carries A's deliverable identity"
+        " unchanged, that round is a reopening of A's round rather than a new"
+        " one",
         "where it is unchanged the replay reopens the round already open at that"
         " identity, carrying its number, its declared lens set, and its carried"
         " findings",
