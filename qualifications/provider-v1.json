@@ -12,8 +12,8 @@
     "rawPayloadsCaptured": false
   },
   "release": {
-    "archiveSha256": "eb8b9431547407185ec85b4a5cadd0fff95e3d284459c3484fc621cccd8adbeb",
-    "metadataSha256": "271d64f010feb42c3ebdb2c9677b85adc6b47ce10678832606d8c8f10b7cf561",
+    "archiveSha256": "defb4b3e88dc76aab8d5c0d7c99028ef7848f13fedd54caad0f2544744d02d8b",
+    "metadataSha256": "aeabb0810696f69aa7a9e4aceb213bc6f0dee6d83eb4879fda11e5787944ad6e",
     "profile": "core",
     "releaseId": "core-v1"
   },
