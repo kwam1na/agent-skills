@@ -10,9 +10,9 @@ Use outcome names in durable docs and metadata. Keep ticket and plan-unit
 identifiers in delivery records rather than standing source language.
 
 A `candidateRef` naming a review candidate resolves, in this repository, to the
-commit whose tree carries the reviewed text. The executor supplies that
-resolution beside the exact reference text, and a lens matches the pair by exact
-text rather than by parsing the reference.
+commit whose tree carries the reviewed text. For a verification round the
+executor supplies that resolution beside the exact reference text, and a lens
+matches the pair by exact text rather than by parsing the reference.
 
 Cut releases at batch boundaries, not per ruling. Operator rulings
 accumulate as merged text on the default branch, and one release carries
