@@ -19,9 +19,9 @@ from agent_skills.release import build_release, verify_release
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
-ATTESTATION = ROOT / "qualifications" / "linear-v1.attestation.json"
-RECORD = ROOT / "qualifications" / "linear-v1.json"
-BINDING = ROOT / "qualifications" / "linear-v1.collector-binding.json"
+ATTESTATION = ROOT / "qualifications" / "linear-v2.attestation.json"
+RECORD = ROOT / "qualifications" / "linear-v2.json"
+BINDING = ROOT / "qualifications" / "linear-v2.collector-binding.json"
 
 
 def _load_runner():
@@ -364,7 +364,7 @@ class LinearQualificationTests(unittest.TestCase):
             ROOT,
             linear_archive,
             linear_metadata,
-            release_id="linear-v1",
+            release_id="linear-v2",
             profile_id="linear",
         )
         return core_archive, core_metadata, linear_archive, linear_metadata
@@ -382,7 +382,7 @@ class LinearQualificationTests(unittest.TestCase):
             changed_archive = directory / "changed-linear.zip"
             changed_metadata = directory / "changed-linear.release.json"
             build_release(divergent, changed_archive, changed_metadata,
-                          release_id="linear-v1", profile_id="linear")
+                          release_id="linear-v2", profile_id="linear")
             verify_release(changed_archive, changed_metadata)
             with mock.patch.object(self, "_build_candidates", return_value=(
                 core_archive, core_metadata, changed_archive, changed_metadata,
@@ -824,6 +824,19 @@ class LinearQualificationTests(unittest.TestCase):
                     tampered_attestation,
                     BINDING,
                 )
+
+    def test_checked_artifacts_and_readme_name_the_current_release_id(self) -> None:
+        self.assertEqual(
+            sorted(path.name for path in (ROOT / "qualifications").glob("linear-*")),
+            [
+                "linear-v2.attestation.json",
+                "linear-v2.collector-binding.json",
+                "linear-v2.json",
+            ],
+        )
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("--release-id linear-v2", readme)
+        self.assertNotIn("linear-v1", readme)
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
         durable_paths = [ROOT / "README.md"]

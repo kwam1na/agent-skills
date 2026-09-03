@@ -7,14 +7,34 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 # Mechanics an executor would otherwise re-derive per delivery: how a candidate
-# reference resolves, the typed blocker vocabulary and its coining rule, and the
-# convention for realizing a lens where the harness supplies no realization.
+# reference resolves, the typed blocker vocabulary and its coining rule, the
+# convention for realizing a lens where the harness supplies no realization, and
+# the install convention an adopting repository and its executors follow.
 REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "AGENTS.md": (
         "resolves, in this repository, to the commit whose tree carries the"
         " reviewed text",
         "a lens matches the pair by exact text rather than by parsing the"
         " reference",
+        "Cut releases at batch boundaries, not per ruling. Operator rulings"
+        " accumulate as merged text on the default branch, and one release"
+        " carries them",
+    ),
+    "docs/host-adapters.md": (
+        "An adopting repository's overlay names what that repository adds: its"
+        " gate, its sensors, its worktree and branch rules, how it realizes a"
+        " reviewer, and its protected paths",
+        "For every rule the installed workflow already carries, the overlay"
+        " references the installed workflow rather than restating it; it does"
+        " not restate the review round bound, the grace round, the deferral"
+        " rules, or the rules for resolving a finding",
+        "A release install in a consumer is delivered `sensor-only`, with"
+        " `active.json` as the declared review scope",
+        "Its sensors are the lifecycle status sensor \u2014 `lifecycle: current`,"
+        " empty `blockers`, and the new generation active \u2014 together with any"
+        " policy recompilation that consumer performs",
+        "Everything under the installed generation's directory is generated"
+        " release payload, outside review scope by declaration",
     ),
     "skills/execute-work/SKILL.md": (
         "| Typed blocker | Raised when |",

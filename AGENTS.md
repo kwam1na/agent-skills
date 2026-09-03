@@ -14,6 +14,10 @@ commit whose tree carries the reviewed text. The executor supplies that
 resolution beside the exact reference text, and a lens matches the pair by exact
 text rather than by parsing the reference.
 
+Cut releases at batch boundaries, not per ruling. Operator rulings
+accumulate as merged text on the default branch, and one release carries
+them.
+
 When a releasable skill changes, update its catalog entry, every selected
 profile, and the corresponding provenance output digest in the same change.
 Keep JSON serialized as two-space-indented UTF-8 with a final newline, then run:

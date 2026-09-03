@@ -62,7 +62,7 @@ class LinearProfileTests(unittest.TestCase):
             ROOT,
             archive,
             metadata,
-            release_id="linear-v1",
+            release_id="linear-v2",
             profile_id="linear",
         )
         return archive, metadata

@@ -89,3 +89,19 @@ delete without reclassifying malformed managed storage as owned. The selected
 catalog member must declare no required or routing dependencies. Any changed
 projection, generation, receipt, predecessor, private stage, or private trash
 blocks mutation for maintainer review.
+
+## Consumer overlays and release installs
+
+An adopting repository's overlay names what that repository adds: its gate, its
+sensors, its worktree and branch rules, how it realizes a reviewer, and its
+protected paths. For every rule the installed workflow already carries, the
+overlay references the installed workflow rather than restating it; it does not
+restate the review round bound, the grace round, the deferral rules, or the
+rules for resolving a finding.
+
+A release install in a consumer is delivered `sensor-only`, with `active.json`
+as the declared review scope. Its sensors are the lifecycle status sensor —
+`lifecycle: current`, empty `blockers`, and the new generation active — together
+with any policy recompilation that consumer performs. Everything under the
+installed generation's directory is generated release payload, outside review
+scope by declaration.
