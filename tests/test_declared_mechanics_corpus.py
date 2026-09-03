@@ -8,8 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Mechanics an executor would otherwise re-derive per delivery: how a candidate
 # reference resolves, the typed blocker vocabulary and its coining rule, the
-# convention for realizing a lens where the harness supplies no realization, and
-# the install convention an adopting repository and its executors follow.
+# convention for realizing a lens where the harness supplies no realization, the
+# install convention an adopting repository and its executors follow, the
+# release cadence, and how a red proof of a pin on a provenance-covered file
+# must move the digests.
 REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "AGENTS.md": (
         "resolves, in this repository, to the commit whose tree carries the"
@@ -19,6 +21,14 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Cut releases at batch boundaries, not per ruling. Operator rulings"
         " accumulate as merged text on the default branch, and one release"
         " carries them",
+        "by mutating a file `provenance.lock.json` covers takes the digests"
+        " with it",
+        "mutating the pinned text alone raises"
+        " `release.source_validation: source corpus is invalid` across the"
+        " suite before those assertions run",
+        "Mutate the text and refresh that file's output digest together, so the"
+        " build succeeds and the pin's own assertion is what fails, then restore"
+        " both",
     ),
     "docs/host-adapters.md": (
         "An adopting repository's overlay names what that repository adds: its"
