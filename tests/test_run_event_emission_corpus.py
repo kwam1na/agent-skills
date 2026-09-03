@@ -95,9 +95,12 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " member naming why it reopened",
         "Where the round belongs to a loop that declares no bound of its own, the"
         " emission names the round and states that the loop is unbounded",
-        "A grace verification round obtained at the bound names that same"
-        " declared bound and states that it is the grace round obtained outside"
-        " the count",
+        # Anchored to the tail of the emission rule it qualifies: "that same
+        # declared bound" reads off its position, so the same sentence pasted
+        # anywhere else in the file names no bound at all.
+        "looks like where none may be invented. A grace verification round"
+        " obtained at the bound names that same declared bound and states that"
+        " it is the grace round obtained outside the count",
         "The caller also supplies the round bound it declared for the delivery,"
         " the same bound `$review-work` reduces against; the bound is not part"
         " of the harness's comparison context and is never invented for an"

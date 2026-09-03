@@ -36,13 +36,12 @@ belongs to a loop that declares no bound of its own, the emission names the
 round and states that the loop is unbounded, which is what naming no bound
 looks like where none may be invented. A grace verification round obtained at
 the bound names that same declared bound and states that it is the grace round
-obtained outside the count, because it is the one round `$review-work` does not
-count against the bound, and a journal that named the bound alone would show a
-fifth round counted against a bound of four. The mark describes the emission,
-not the round: the grace round stays an ordinary verification round in kind,
-scope, and carry-forward. A reopened round is
-emitted under the number it already carries, with a member naming why it
-reopened. Emit both through the run-event command the repository's root
+obtained outside the count, because `$review-work` does not count it against
+the bound, and a journal that named the bound alone would show a fifth round
+counted against a bound of four. The mark describes the emission, not the
+round: the grace round stays an ordinary verification round in kind, scope, and
+carry-forward. A reopened round is emitted under the number it already carries,
+with a member naming why it reopened. Emit both through the run-event command the repository's root
 instruction file declares, when it declares one; where the repository declares
 none, proceed silently, with no handoff and no blocker. Give the run's identifier to any lens realized in
 another worktree of the same repository so its own emissions join this run; a
