@@ -32,6 +32,29 @@ EMITTED_KINDS: dict[str, tuple[str, ...]] = {
     "skills/compound-learning/SKILL.md": ("`compounding.recorded`",),
 }
 
+# Ownership above is single, so naming a kind is also denied where the skill
+# does not own it: an executor reading any shipped skill learns each kind's one
+# emit point rather than a second, competing one. `execute-work` is the sole
+# skill that names kinds it does not own, and it names them only to point at
+# their owners, so its references are enumerated here instead of inferred.
+REFERENCED_KINDS: dict[str, tuple[str, ...]] = {
+    "skills/execute-work/SKILL.md": (
+        "`lens.selected`",
+        "`review.round.opened`",
+        "`review.round.closed`",
+        "`compounding.recorded`",
+    ),
+}
+
+OWNED_KINDS: frozenset[str] = frozenset(
+    kind for kinds in EMITTED_KINDS.values() for kind in kinds
+)
+
+# Kinds no skill owns because nothing in the corpus emits them. The run-event
+# command writes this one, so a shipped skill naming it sends an executor to an
+# emit point no skill has.
+UNOWNED_KINDS: tuple[str, ...] = ("`command.completed`",)
+
 # The capability is optional and repository-declared, and an absent one is
 # silent rather than a handoff or a blocker.
 CAPABILITY_PHRASES: dict[str, tuple[str, ...]] = {
@@ -121,29 +144,56 @@ class RunEventEmissionCorpusTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        archived: dict[str, str] = {}
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            archive = directory / "core.zip"
-            build_release(
-                ROOT,
-                archive,
-                directory / "core.release.json",
-                release_id="core-v1",
-                profile_id="core",
-            )
-            with zipfile.ZipFile(archive) as release:
-                cls.archived = {
-                    relative: " ".join(
-                        release.read(relative).decode("utf-8").split()
-                    )
-                    for relative in {*CAPABILITY_PHRASES, *REQUIRED_PHRASES}
-                }
+            # Every profile, because a skill only one of them ships names its
+            # emit points for that profile's adopters and nobody else's.
+            for profile_id in ("core", "linear"):
+                archive = directory / f"{profile_id}.zip"
+                build_release(
+                    ROOT,
+                    archive,
+                    directory / f"{profile_id}.release.json",
+                    release_id=f"{profile_id}-v1",
+                    profile_id=profile_id,
+                )
+                with zipfile.ZipFile(archive) as release:
+                    for relative in release.namelist():
+                        if not relative.startswith("skills/"):
+                            continue
+                        if not relative.endswith(".md"):
+                            continue
+                        if relative in archived:
+                            continue
+                        archived[relative] = " ".join(
+                            release.read(relative).decode("utf-8").split()
+                        )
+        cls.archived = archived
 
     def test_each_skill_names_the_kinds_it_emits(self) -> None:
         for relative, kinds in EMITTED_KINDS.items():
             for kind in kinds:
                 with self.subTest(path=relative, kind=kind):
                     self.assertIn(kind, self.archived[relative])
+
+    def test_each_kind_has_exactly_one_owner(self) -> None:
+        owner: dict[str, str] = {}
+        for relative, kinds in EMITTED_KINDS.items():
+            for kind in kinds:
+                with self.subTest(kind=kind):
+                    self.assertNotIn(kind, owner)
+                owner[kind] = relative
+
+    def test_no_skill_names_a_kind_it_does_not_own(self) -> None:
+        for relative, text in sorted(self.archived.items()):
+            allowed = set(EMITTED_KINDS.get(relative, ())) | set(
+                REFERENCED_KINDS.get(relative, ())
+            )
+            denied = sorted(OWNED_KINDS - allowed) + list(UNOWNED_KINDS)
+            for kind in denied:
+                with self.subTest(path=relative, kind=kind):
+                    self.assertNotIn(kind, text)
 
     def test_each_skill_states_the_optional_capability_rule(self) -> None:
         for relative, phrases in CAPABILITY_PHRASES.items():
