@@ -28,12 +28,16 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " not invalidate rounds already carried, and the delivery's closing record"
         " names the bound release's `releaseId` and `archiveSha256`",
         "A lens result may mark some of its own findings as late: findings that"
-        " lens raised against lines unchanged since its own previous round",
+        " lens raised against lines unchanged since its own most recent"
+        " result-carrying round before this one",
         "A late finding is still a finding and is reduced exactly like any other,"
         " so the mark never changes the outcome of a round",
         "The mark is visible dissent about the lens rather than about the"
         " candidate, and the returned value carries every marked finding with the"
         " lens and the round that filed it",
+        "A late finding a lens recorded as a deferral rather than as a finding is"
+        " marked late in that deferral, and neither the returned value nor the"
+        " count below carries it",
     ),
     "skills/obtain-review/SKILL.md": (
         "A lens's assessment round is its first result-carrying round for the"
@@ -116,15 +120,19 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " sits",
         "The brief names the round number and the declared bound as round k of N,"
         " and says whether this round is the grace round obtained at the bound",
-        "Where the round is a plan review, whose loop declares no bound of its"
-        " own, the brief names the round number and says the loop is unbounded",
+        "Where the round belongs to a loop that declares no bound of its own, the"
+        " brief names the round number and says the loop is unbounded",
+        "Review of a plan, which repeats until the plan is sound, is such a loop:"
+        " its rounds are realized outside the bound-and-reduction machinery"
+        " `$review-work` describes, count against no bound that workflow reduces"
+        " against, and reach no `review.loop-bound-reached`",
         "every reviewer, in plan review and delivery review alike, optimizes for"
         " the lowest number of rounds, and a finding the lens can raise now is"
         " raised now",
         "asks the lens for a conscious effort to find everything it can within"
         " the allocation, not across it",
         "every finding the lens can raise against lines unchanged since its own"
-        " previous round was expected in that round",
+        " most recent result-carrying round was expected in that round",
         "A finding the lens raises after its assessment round against lines"
         " unchanged since its own most recent result-carrying round is still a"
         " finding, judged on its merits like any other, and the lens marks it late"

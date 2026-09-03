@@ -343,6 +343,14 @@ class ReviewAcquisitionTests(unittest.TestCase):
                          ["Restore the dropped assertion."])
         self.assertNotIn("lateFindings", acquired.envelope["entries"][1]["result"])
         self.assertEqual(acquired.results[1].late_findings, ())
+        fake = FakeConsumer(ROOT, {**self.ctx, **ctx, "completedStages": {
+            "implement": {"status": "succeeded", "outputKind": "delivery-candidate",
+                          "evidenceRef": "A"}}})
+        fake.set_review_context(self.lenses, 2)
+        unmarked = envelope(self.lenses, ctx, ["changes-requested", "aligned", "aligned"])
+        self.assertEqual(fake.review_round(value), fake.review_round(unmarked))
+        self.assertEqual(fake.review_history[0]["entries"][0]["result"]["lateFindings"],
+                         value["entries"][0]["result"]["lateFindings"])
         for mark in ("Correct the boundary check.", ["Unfiled finding."], [""], [None], {}, None):
             bad = copy.deepcopy(value)
             bad["entries"][0]["result"]["lateFindings"] = mark

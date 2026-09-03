@@ -57,12 +57,14 @@ itself.
 round.
 
 A lens result may mark some of its own findings as late: findings that lens
-raised against lines unchanged since its own previous round. A late finding is
-still a finding and is reduced exactly like any other, so the mark never
-changes the outcome of a round. The mark is visible dissent about the lens
-rather than about the candidate, and the returned value carries every marked
-finding with the lens and the round that filed it, so a lens's misses stay
-readable across the delivery.
+raised against lines unchanged since its own most recent result-carrying round
+before this one. A late finding is still a finding and is reduced exactly like
+any other, so the mark never changes the outcome of a round. The mark is
+visible dissent about the lens rather than about the candidate, and the
+returned value carries every marked finding with the lens and the round that
+filed it, so a lens's misses stay readable across the delivery. A late finding
+a lens recorded as a deferral rather than as a finding is marked late in that
+deferral, and neither the returned value nor the count below carries it.
 
 The caller emits `review.round.closed` once a round is reduced, through the
 run-event command the repository's root instruction file declares, when it
