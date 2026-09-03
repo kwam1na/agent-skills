@@ -58,6 +58,14 @@ Tracking is optional unless repository authority or the user requires it. When
 optional tracking is unavailable, complete the core delivery and report that no
 tracking mutation was performed.
 
+Emitting a delivery's run events is a separate optional capability, declared by
+the repository's root instruction file naming a run-event command. Where the
+repository declares none, every workflow that would emit proceeds silently, with
+no handoff and no blocker, because nothing authoritative reads what is emitted.
+The run identifier is host mechanics: it is allocated when the run starts and
+resolved from the run store for the invoking worktree, never read from work-item
+content and never invented for an emission.
+
 ## Continue Through the Kernel
 
 After routing, follow the kernel's Plan -> Work -> Review -> Compound loop. Keep

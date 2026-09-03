@@ -66,7 +66,7 @@
       "outputs": [
         {
           "path": "skills/compound-learning/SKILL.md",
-          "sha256": "3074dd2cd2600185dc420973c5c762b4222fdc60671992ecfbbbd9878e949521"
+          "sha256": "16a53ddf49d2f366e606dd49026635fa8d231b3dc52c30c2c5d1c165a9b05506"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -128,7 +128,7 @@
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "58edd2da0fd1d49599b9f80207466a138ad36f3e24fcd0edd8d5e32fe2ff0a6c"
+          "sha256": "7492bec9ff4082f3314829c1d197ac3c83b5ef7d60e019f8658f95993ba91b31"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",
@@ -214,7 +214,7 @@
       "outputs": [
         {
           "path": "skills/execute-work/SKILL.md",
-          "sha256": "dc0c6d5b06a02eb8b2dbe9e652d78e2a0e961a3451687d6c0ba8da463beeaafa"
+          "sha256": "fd5f42f9b0ad44c5f6a7aa87115fcec1c1dbd06a3edea12ba9169452ec908674"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -268,7 +268,7 @@
       "outputs": [
         {
           "path": "skills/obtain-review/SKILL.md",
-          "sha256": "b6c70e2b425036954fd8898db8e008e31781d8a10c1a87074529bdeab616dd67"
+          "sha256": "dd448383d4f5d75cafa9252a740bee6c33354b063470af0a73704a54ef8a2873"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -772,7 +772,7 @@
       "outputs": [
         {
           "path": "skills/review-work/SKILL.md",
-          "sha256": "bd3f3cf5d3955263437d4e97a3992dfe2e6e38fd91d0c3a1a58ff50972adc9ff"
+          "sha256": "0d84656aedc9ac04fdb8bcf9fa6d87f3c29ea49f58e2a4105e97ccaa5e05ea01"
         }
       ],
       "owner": "agent-skills-corpus",

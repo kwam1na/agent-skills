@@ -48,6 +48,11 @@ and provide the approval or decision handoff needed to continue.
 
 Before the first review round, state the bound in effect for the delivery,
 quoting the repository instruction that sets it if any, and state the lenses.
+The mandated lenses are the two the delivery product ships, correctness and
+testing, under the names the adopting repository declares for them. Every other
+lens is the executor's own selection, chosen by the depth of the delivery, and
+the declaration names the mandated pair, the full selected set, and the reason
+for the selection. A repository cannot widen what counts as mandated.
 Never declare a second bound for the same delivery. The review is bound to the
 release installed when the delivery's first round is acquired: record a release
 installed mid-review, keep every round already carried valid, and name the
@@ -129,6 +134,33 @@ A missing posture, review, or compounding outcome leaves the delivery `partial`.
 An unavailable review blocks completion only when repository authority, host
 policy, or the approved plan requires that review.
 
+### Emit the Run's Events
+
+Emit each event below through the run-event command the repository's root
+instruction file declares, when it declares one, at the moment its rule names.
+The capability is optional: where the repository declares none, proceed
+silently, with no handoff and no blocker. What is emitted is observability, not
+evidence. No gate, approval, or finish-line decision reads it, and a refused or
+failed emission never changes a command's outcome or the delivery's result.
+
+- `run.started` before reading repository authority, naming the host and the
+  installed workflow release the delivery runs under.
+- `ticket.read` and `posture.declared` once that authority and the work item
+  have been read and the posture is chosen.
+- `decision.recorded` at every fork resolved by judgement rather than by a
+  discovered rule, naming the fork and the choice. Named forks: the branch
+  name, a review round obtained on an unchanged candidate, a separate worktree
+  for a lens that mutates, a skill read rather than invoked, and any value
+  supplied by hand that should have been discoverable.
+- `gate.reported` after a repository gate that is not a command of the
+  installed delivery product, naming that gate's label, its outcome, and how
+  long it ran.
+- `pr.opened` when the change proposal is opened, bound to the candidate it
+  carries.
+- `blocker.recorded` for each typed blocker raised, naming its token.
+- `run.ended` last, carrying the delivery's result category and its
+  self-reported cost, the same cost the handoff reports.
+
 ## Verify the Finish Line
 
 Run the smallest honest targeted sensors before broader repository gates. An
@@ -158,6 +190,7 @@ result.
 
 Report the result category, execution posture, completed scope and finish-line
 items, sensor results, retained evidence, review provenance and outcome,
-compounding outcome, unresolved blockers, pending approvals, and any optional
-operation that was not performed. Never claim completion from progress alone or
-from a passing sensor set that does not cover the declared finish line.
+compounding outcome, the delivery's self-reported cost, unresolved blockers,
+pending approvals, and any optional operation that was not performed. Never
+claim completion from progress alone or from a passing sensor set that does not
+cover the declared finish line.

@@ -22,6 +22,18 @@ output: exact release (`releaseId`, `profile`, `archiveSha256`,
 references, and a positive integer round. Never let an incoming result supply
 its own trusted comparison values. Preserve opaque references exactly.
 
+Emit `lens.selected` before asking the host to realize any lens, naming the
+mandated pair the caller declared, the full selected set, and the reason for the
+selection, and emit `review.round.opened` for each round before its realization,
+naming the round, the candidate it binds, and the lenses it carries. Emit both
+through the run-event command the repository's root instruction file declares,
+when it declares one; where the repository declares none, proceed silently, with
+no handoff and no blocker. Give the run's identifier to any lens realized in
+another worktree of the same repository so its own emissions join this run; a
+lens realized in a different repository shares no run and is given none. This
+workflow keeps the caller-selected lens list unchanged; emission records the
+selection and never decides it.
+
 Use `prepare_review` in `agent_skills.review_orchestration` to create ordered,
 in-process host inputs. Supply each selected lens's bounded `contextRefs` and
 the expected result shape `review-lens-result/1`: `outcome`, `findings`, and
