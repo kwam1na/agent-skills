@@ -55,7 +55,13 @@ later plan review does not re-derive the question.
 A plan review that is not converging ends by decision rather than by count. The
 operator ends it on that judgement, and one sufficient signal is a round after
 the first that raises a finding not raised before while leaving the number of
-open findings no lower than the round before it.
+open findings no lower than the round before it. Where that signal reaches the
+operator is the caller's responsibility and outside this section's scope: a
+plan-review round is realized by subagents, and this workflow neither carries a
+channel to the operator nor assumes one. The caller running the loop is what
+puts each round in front of the operator who may end it, and where the caller
+surfaces nothing the loop still runs to alignment with no one positioned to end
+it early.
 
 In place of a bound, every lens reviewing a plan optimizes for the lowest number
 of rounds: every finding a lens can raise against the plan as it stands is
