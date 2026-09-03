@@ -15,6 +15,8 @@ from .errors import Finding
 BASELINE_REVISION = "342850073464a2c9b6198d32d11475f5fa5cbe53"
 REPOSITORY_INSTRUCTIONS = "AGENTS.md"
 TRACKER_PROPERTIES = ".agents/tracker-properties.json"
+TRACKER_PROPERTY_NAMES = ("labels", "project", "statuses", "team", "template")
+TRACKER_STATUS_OPERATIONS = ("closeOrHandoff", "updateStatus")
 SCHEMA_VERSIONS = {
     "catalog.json": "agent-skills-catalog/1",
 }
@@ -179,6 +181,30 @@ def _validate_tracker_properties(reader: CorpusReader) -> None:
                 "tracker.contract",
                 TRACKER_PROPERTIES,
                 "tracker properties must be an object",
+            )
+        )
+        return
+    absent = [name for name in TRACKER_PROPERTY_NAMES if name not in document]
+    if absent:
+        reader.findings.append(
+            Finding(
+                "tracker.contract",
+                TRACKER_PROPERTIES,
+                f"tracker properties omit {', '.join(absent)}",
+            )
+        )
+        return
+    statuses = document["statuses"]
+    if not isinstance(statuses, dict) or any(
+        not isinstance(statuses.get(operation), dict) or not statuses[operation]
+        for operation in TRACKER_STATUS_OPERATIONS
+    ):
+        reader.findings.append(
+            Finding(
+                "tracker.contract",
+                TRACKER_PROPERTIES,
+                "tracker properties declare no status names for"
+                " update-status and close-or-handoff",
             )
         )
 

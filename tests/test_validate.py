@@ -278,7 +278,14 @@ class CorpusValidationTests(unittest.TestCase):
         self.assertIn("schema.supported", {finding.rule_id for finding in result.findings})
 
     def test_absent_or_malformed_tracker_properties_reject(self) -> None:
-        for mutation in ("absent", "malformed", "not-an-object"):
+        for mutation in (
+            "absent",
+            "malformed",
+            "not-an-object",
+            "no-declared-properties",
+            "dropped-property",
+            "no-mapped-statuses",
+        ):
             with self.subTest(mutation=mutation):
                 temporary, root = self.copied_corpus()
                 self.addCleanup(temporary.cleanup)
@@ -288,8 +295,17 @@ class CorpusValidationTests(unittest.TestCase):
                     properties.unlink()
                 elif mutation == "malformed":
                     properties.write_text("{", encoding="utf-8")
-                else:
+                elif mutation == "not-an-object":
                     write_json(properties, ["yaegars"])
+                else:
+                    declared = json.loads(properties.read_text(encoding="utf-8"))
+                    if mutation == "no-declared-properties":
+                        declared = {}
+                    elif mutation == "dropped-property":
+                        declared.pop("team")
+                    else:
+                        declared["statuses"] = {"closeOrHandoff": {}, "updateStatus": {}}
+                    write_json(properties, declared)
 
                 findings = validate_corpus(root).findings
                 self.assertEqual(
