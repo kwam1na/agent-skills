@@ -150,8 +150,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
 
 
 # The paragraph that qualifies the emit-point list reads off its own position:
-# `This list` and `every point above` name the list it follows, so a copy of it
-# anywhere else in the file says nothing. Phrase membership is position-blind,
+# `This list` names the list it follows, so a copy of the paragraph anywhere
+# else in the file says nothing. Phrase membership is position-blind,
 # so the paragraph's opening is pinned to the last bullet of the list rather
 # than to the file.
 EMIT_POINT_LIST_CLOSE: tuple[str, str] = (
