@@ -282,6 +282,7 @@ class CorpusValidationTests(unittest.TestCase):
         # validator's own tuples is red.
         mutations = [
             "absent",
+            "unreadable",
             "malformed",
             "not-an-object",
             "no-declared-properties",
@@ -303,6 +304,11 @@ class CorpusValidationTests(unittest.TestCase):
                 self.assertEqual(validate_corpus(root).findings, ())
                 if mutation == "absent":
                     properties.unlink()
+                elif mutation == "unreadable":
+                    # A read failure that is not FileNotFoundError, so the
+                    # wider arm of the read's handler is exercised.
+                    properties.unlink()
+                    properties.mkdir()
                 elif mutation == "malformed":
                     properties.write_text("{", encoding="utf-8")
                 elif mutation == "not-an-object":
