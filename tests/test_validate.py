@@ -277,6 +277,66 @@ class CorpusValidationTests(unittest.TestCase):
         self.assertGreater(len(result.findings), 0)
         self.assertIn("schema.supported", {finding.rule_id for finding in result.findings})
 
+    def test_absent_or_malformed_tracker_properties_reject(self) -> None:
+        # Named here rather than read from the validator, so narrowing the
+        # validator's own tuples is red.
+        mutations = [
+            "absent",
+            "malformed",
+            "not-an-object",
+            "no-declared-properties",
+            "statuses-not-an-object",
+            *(
+                f"dropped-{name}"
+                for name in ("labels", "project", "statuses", "team", "template")
+            ),
+            *(
+                f"emptied-{operation}"
+                for operation in ("closeOrHandoff", "updateStatus")
+            ),
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                temporary, root = self.copied_corpus()
+                self.addCleanup(temporary.cleanup)
+                properties = root / ".agents" / "tracker-properties.json"
+                self.assertEqual(validate_corpus(root).findings, ())
+                if mutation == "absent":
+                    properties.unlink()
+                elif mutation == "malformed":
+                    properties.write_text("{", encoding="utf-8")
+                elif mutation == "not-an-object":
+                    write_json(properties, ["yaegars"])
+                else:
+                    declared = json.loads(properties.read_text(encoding="utf-8"))
+                    if mutation == "no-declared-properties":
+                        declared = {}
+                    elif mutation == "statuses-not-an-object":
+                        declared["statuses"] = ["Done"]
+                    elif mutation.startswith("dropped-"):
+                        declared.pop(mutation.removeprefix("dropped-"))
+                    else:
+                        declared["statuses"][mutation.removeprefix("emptied-")] = {}
+                    write_json(properties, declared)
+
+                findings = validate_corpus(root).findings
+                self.assertEqual(
+                    [finding.rule_id for finding in findings], ["tracker.contract"]
+                )
+                self.assertEqual(
+                    findings[0].artifact, ".agents/tracker-properties.json"
+                )
+
+    def test_release_corpus_without_repository_instructions_needs_no_properties(
+        self,
+    ) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        (root / ".agents" / "tracker-properties.json").unlink()
+        (root / "AGENTS.md").unlink()
+
+        self.assertEqual(validate_corpus(root).findings, ())
+
 
 if __name__ == "__main__":
     unittest.main()

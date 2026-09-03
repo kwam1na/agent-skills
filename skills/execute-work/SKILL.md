@@ -93,6 +93,21 @@ item is an open item for the finish line: record the typed blocker
 `partial`, and stop. Where no tracker is configured, those follow-up items are
 the actionable tracking handoff in the result rather than a blocker.
 
+## Name Blockers from a Typed Vocabulary
+
+A typed blocker is a stable token, not prose. These are the tokens this workflow
+raises:
+
+| Typed blocker | Raised when |
+| --- | --- |
+| `review.loop-bound-reached` | The bound is reached with dissent open, the latest round is blocked by a failed acquisition and no round is left, or the grace round does not align or is followed by a further required candidate change. |
+| `review.deferral-untracked` | The delivery would report done while a finding some lens recorded as a deferral has no tracked follow-up item, and a tracker is configured. |
+
+Coin a new token only for a condition none of these names. A new token takes a
+namespace the raising skill owns, is kebab-case in both its namespace and its
+name, and is recorded on the work item the first time it is used, with the
+condition that raises it.
+
 ## Keep the Delivery Loop Observable
 
 Before claiming `complete`, record the outcome of every kernel phase rather

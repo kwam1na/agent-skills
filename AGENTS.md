@@ -9,6 +9,11 @@ repository-specific overlays without a separately approved unit.
 Use outcome names in durable docs and metadata. Keep ticket and plan-unit
 identifiers in delivery records rather than standing source language.
 
+A `candidateRef` naming a review candidate resolves, in this repository, to the
+commit whose tree carries the reviewed text. The executor supplies that
+resolution beside the exact reference text, and a lens matches the pair by exact
+text rather than by parsing the reference.
+
 When a releasable skill changes, update its catalog entry, every selected
 profile, and the corresponding provenance output digest in the same change.
 Keep JSON serialized as two-space-indented UTF-8 with a final newline, then run:
