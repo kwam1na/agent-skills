@@ -144,10 +144,11 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         # so it is pinned whole: the skipped sensor the finish-line paragraph
         # sends to `decision.recorded` is a member of it, and a member dropped
         # from either passage leaves the two disagreeing.
-        "Named forks: the branch name, a review round obtained on an unchanged"
-        " candidate, a separate worktree for a lens that mutates, a skill read"
-        " rather than invoked, a sensor considered and deliberately not run,"
-        " and any value supplied by hand that should have been discoverable",
+        "Named forks: the branch name, the reason a review round was obtained"
+        " on an unchanged candidate, a separate worktree for a lens that"
+        " mutates, a skill read rather than invoked, a sensor considered and"
+        " deliberately not run, and any value supplied by hand that should have"
+        " been discoverable",
         "Reading the root instruction file for the run-event declaration is"
         " capability discovery, not the authority reading this point orders: it"
         " precedes `run.started`",

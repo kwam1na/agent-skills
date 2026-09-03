@@ -156,10 +156,10 @@ failed emission never changes a command's outcome or the delivery's result.
   have been read and the posture is chosen.
 - `decision.recorded` at every fork resolved by judgement rather than by a
   discovered rule, naming the fork and the choice. Named forks: the branch
-  name, a review round obtained on an unchanged candidate, a separate worktree
-  for a lens that mutates, a skill read rather than invoked, a sensor
-  considered and deliberately not run, and any value supplied by hand that
-  should have been discoverable.
+  name, the reason a review round was obtained on an unchanged candidate, a
+  separate worktree for a lens that mutates, a skill read rather than invoked,
+  a sensor considered and deliberately not run, and any value supplied by hand
+  that should have been discoverable.
 - `gate.reported` after a repository gate that is not a command of the
   installed delivery product, naming that gate's label, its outcome, and how
   long it ran.
