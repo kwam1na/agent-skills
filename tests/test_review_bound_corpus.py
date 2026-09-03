@@ -119,8 +119,11 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "not the reason the base moved, not the disjointness of the upstream"
         " commits, and not a lens's agreement that nothing changed",
         "the lens's retained entry for that round number is the replay's entry",
-        "the superseded entry stays in the delivery's history but is not"
-        " supplied as carry-forward",
+        "the superseded entry stays in the delivery's history but is supplied"
+        " neither as carry-forward nor as that round's entry to the reduction",
+        "the entries a later round carries stay one per round, the reduction"
+        " receives one entry per lens per round, and its delta runs from the"
+        " replayed candidate",
         "A result may also carry `lateFindings`, each naming one of that same"
         " result's own `findings` that the lens raised late; a lens carries none"
         " on its assessment round, and acquisition rejects the member outright in"
