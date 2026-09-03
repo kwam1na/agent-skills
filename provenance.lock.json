@@ -214,7 +214,7 @@
       "outputs": [
         {
           "path": "skills/execute-work/SKILL.md",
-          "sha256": "908db6b3b3a0ccee2731152fdaf7323f241ebb14f3b7e8fa926ad8dc4b18af60"
+          "sha256": "a6e2443de0ab79661aa1491ad86c120774cfc30307aefdf275aeb44093d4fa9b"
         }
       ],
       "owner": "agent-skills-corpus",
