@@ -98,10 +98,10 @@ no special kind, scope, or carry-forward.
 
 For a verification round the caller supplies each lens, as its `contextRefs`,
 that lens's own retained entry from every prior round of the delivery in which
-it was selected, contiguous over rounds 1 through N-1, binding tuple and result
-together where the state is `obtained` and binding tuple with its result-less
-state where the acquisition failed, so every prior report arrives bound to its
-round and its `candidateRef`; plus, for each of the two `candidateRef` values
+it was selected, contiguous over every round of the delivery before this one,
+binding tuple and result together where the state is `obtained` and binding
+tuple with its result-less state where the acquisition failed, so every prior
+report arrives bound to its round and its `candidateRef`; plus, for each of the two `candidateRef` values
 the delta spans, that reference's declared resolution as a pair of the exact
 `candidateRef` text (its `opaque` member) and the revision it resolves to; and
 nothing else, nothing narrower. The previous round's `candidateRef` is read from
@@ -190,6 +190,14 @@ reduction receives one entry per lens per round, and its delta runs from the
 replayed candidate.
 
 ## The round brief
+
+The brief is [the round brief template](references/round-brief-template.md)
+filled in, not composed. An executor realizing a lens fills the template's
+members rather than composing the brief's shape from this text, and its members
+are `Binding tuple`, `Round and bound`, `Fewest-rounds mandate`, `Carry-forward
+entries`, `Candidate reference resolutions`, `Charter`, and `Result shape`. This
+section states what those members must say; the template states where each one
+goes.
 
 Realize every lens with a brief that states where in the loop its round sits.
 The brief names the round number and the declared bound as round k of N, and

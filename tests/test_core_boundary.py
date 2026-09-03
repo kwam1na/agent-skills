@@ -24,6 +24,7 @@ CORE_SKILL_PATHS = (
     "skills/diagnose-work/SKILL.md",
     "skills/execute-work/SKILL.md",
     "skills/obtain-review/SKILL.md",
+    "skills/obtain-review/references/round-brief-template.md",
     "skills/plan-work/SKILL.md",
     "skills/review-work/SKILL.md",
 )
