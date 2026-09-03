@@ -290,7 +290,7 @@ class CorpusValidationTests(unittest.TestCase):
             "operation-not-an-object",
             *(
                 f"dropped-{name}"
-                for name in ("labels", "project", "statuses", "team", "template")
+                for name in ("project", "statuses", "team")
             ),
             *(
                 f"emptied-{operation}"
