@@ -82,9 +82,6 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " sit behind",
         "A reopened round is realized like the round it reopens, keeping that"
         " round's kind, its lens set, and its carry-forward rules",
-        "Where the base moved under B and B carries A's deliverable identity"
-        " unchanged, that round is a reopening of A's round rather than a new"
-        " one",
         "where it is unchanged the replay reopens the round already open at that"
         " identity, carrying its number, its declared lens set, and its carried"
         " findings",

@@ -204,8 +204,5 @@ attestations embedded in an untrusted envelope as trusted evidence.
 
 If an authorized repair changes candidate A to B, obtain a wholly new round
 bound to B, including every selected lens. Retain A's evidence as history, never
-reuse it to satisfy B. Where the base moved under B and B carries A's deliverable
-identity unchanged, that round is a reopening of A's round rather than a new
-one, under the rule above, and it is still bound to B and still carries every
-selected lens. The harness owns new-round allocation and candidate
+reuse it to satisfy B. The harness owns new-round allocation and candidate
 capture; acquisition cannot advance a checkpoint or authorize the repair.
