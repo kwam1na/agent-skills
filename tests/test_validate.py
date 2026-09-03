@@ -287,6 +287,7 @@ class CorpusValidationTests(unittest.TestCase):
             "not-an-object",
             "no-declared-properties",
             "statuses-not-an-object",
+            "operation-not-an-object",
             *(
                 f"dropped-{name}"
                 for name in ("labels", "project", "statuses", "team", "template")
@@ -319,6 +320,11 @@ class CorpusValidationTests(unittest.TestCase):
                         declared = {}
                     elif mutation == "statuses-not-an-object":
                         declared["statuses"] = ["Done"]
+                    elif mutation == "operation-not-an-object":
+                        # A declared operation carrying a scalar rather than a
+                        # role-to-status map, so the per-operation type guard is
+                        # exercised where the outer guard on statuses passes.
+                        declared["statuses"]["updateStatus"] = "Todo"
                     elif mutation.startswith("dropped-"):
                         declared.pop(mutation.removeprefix("dropped-"))
                     else:
