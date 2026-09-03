@@ -1,5 +1,4 @@
 {
-  "labels": [],
   "project": "agent delivery harness",
   "schemaVersion": "agent-skills-tracker-properties/1",
   "statuses": {
@@ -14,6 +13,5 @@
       "todo": "Todo"
     }
   },
-  "team": "yaegars",
-  "template": null
+  "team": "yaegars"
 }

@@ -290,7 +290,7 @@ class CorpusValidationTests(unittest.TestCase):
             "operation-not-an-object",
             *(
                 f"dropped-{name}"
-                for name in ("labels", "project", "statuses", "team", "template")
+                for name in ("project", "statuses", "team")
             ),
             *(
                 f"emptied-{operation}"
@@ -338,6 +338,17 @@ class CorpusValidationTests(unittest.TestCase):
                 self.assertEqual(
                     findings[0].artifact, ".agents/tracker-properties.json"
                 )
+
+    def test_declared_tracker_properties_are_exactly_the_consumed_ones(self) -> None:
+        # Named here rather than read from the document, so a key that no
+        # operation consumes cannot re-accumulate in it while the suite stays
+        # green.
+        declared = json.loads(
+            (ROOT / ".agents" / "tracker-properties.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            set(declared), {"project", "schemaVersion", "statuses", "team"}
+        )
 
     def test_release_corpus_without_repository_instructions_needs_no_properties(
         self,

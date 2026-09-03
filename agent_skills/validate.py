@@ -15,7 +15,7 @@ from .errors import Finding
 BASELINE_REVISION = "342850073464a2c9b6198d32d11475f5fa5cbe53"
 REPOSITORY_INSTRUCTIONS = "AGENTS.md"
 TRACKER_PROPERTIES = ".agents/tracker-properties.json"
-TRACKER_PROPERTY_NAMES = ("labels", "project", "statuses", "team", "template")
+TRACKER_PROPERTY_NAMES = ("project", "statuses", "team")
 TRACKER_STATUS_OPERATIONS = ("closeOrHandoff", "updateStatus")
 SCHEMA_VERSIONS = {
     "catalog.json": "agent-skills-catalog/1",
