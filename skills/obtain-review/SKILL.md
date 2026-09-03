@@ -141,12 +141,13 @@ that filed it. A lens is read-only and files nothing itself.
 
 ## Reopen a round the base moved under
 
-A round obtained only because the base moved does not count against the bound.
-Within that case the round counter advances only when the candidate's
+A round obtained only because the base moved, under an unchanged deliverable
+identity, does not count against the bound. Within that case the round counter advances only when the candidate's
 deliverable identity differs from the round before; where it is unchanged the
 replay reopens the round already open at that identity, carrying its number, its
 declared lens set, and its carried findings. A round obtained for any other
-reason counts against the bound even where the identity is unchanged, so a round
+reason, other than a repair that leaves the deliverable identity unchanged,
+counts against the bound even where the identity is unchanged, so a round
 obtained to dispute a finding, or to retry an acquisition that failed, on an
 unchanged candidate spends the bound like any other. The bound measures dissent,
 not the merge traffic a delivery happens to sit behind.

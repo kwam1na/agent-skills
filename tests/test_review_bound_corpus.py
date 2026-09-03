@@ -69,11 +69,12 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "the lens records in its evidence what that item must say: the outcome the"
         " item must reach, the deferral's identifier, and the lens that filed it",
         "A lens is read-only and files nothing itself",
-        "A round obtained only because the base moved does not count against the"
-        " bound",
+        "A round obtained only because the base moved, under an unchanged"
+        " deliverable identity, does not count against the bound",
         "Within that case the round counter advances only when the candidate's"
         " deliverable identity differs from the round before",
-        "A round obtained for any other reason counts against the bound even"
+        "A round obtained for any other reason, other than a repair that leaves"
+        " the deliverable identity unchanged, counts against the bound even"
         " where the identity is unchanged",
         "a round obtained to dispute a finding, or to retry an acquisition that"
         " failed, on an unchanged candidate spends the bound like any other",
