@@ -74,13 +74,13 @@ its follow-up; declined only where that lens withdrew the finding, with its
 stated reason; or open, named in the blocker when the bound is reached. The
 executor closes, defers, and declines nothing on its own judgement.
 
-Reaching the bound is terminal in both of its forms. With dissent open, record
-the typed blocker `review.loop-bound-reached` naming the open findings, report
-`partial`, and stop. With the latest round blocked by a failed acquisition and
-no round left, record the same blocker naming the failed lens, report `partial`,
-and stop. Before the bound a failed acquisition is not terminal: obtain the next
-round within the remaining bound, and that round is the latest the reducer
-judges.
+Reaching the bound with dissent open, or with a failed acquisition and no round
+left, is terminal. With dissent open, record the typed blocker
+`review.loop-bound-reached` naming the open findings, report `partial`, and
+stop. With the latest round blocked by a failed acquisition and no round left,
+record the same blocker naming the failed lens, report `partial`, and stop.
+Before the bound a failed acquisition is not terminal: obtain the next round
+within the remaining bound, and that round is the latest the reducer judges.
 
 When every lens is aligned at the bound and a required change would alter the
 candidate, the delivery obtains exactly one grace verification round for that
