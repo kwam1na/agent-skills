@@ -70,10 +70,18 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " the journal states",
         "A reopened round is emitted under the number it already carries, with a"
         " member naming why it reopened",
+        "Where the round belongs to a loop that declares no bound of its own, the"
+        " emission names the round and states that the loop is unbounded, which is"
+        " what naming no bound looks like where none may be invented",
         "The caller also supplies the round bound it declared for the delivery,"
         " the same bound `$review-work` reduces against; the bound is not part"
         " of the harness's comparison context and is never invented for an"
         " emission",
+    ),
+    "skills/review-work/SKILL.md": (
+        "naming the round, the candidate it bound, the reduced outcome, its"
+        " findings by severity, the count of late findings in that round, and"
+        " the round's self-reported cost",
     ),
     "skills/execute-work/SKILL.md": (
         "This list is not the whole journal",

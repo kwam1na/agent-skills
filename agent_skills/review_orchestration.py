@@ -105,14 +105,21 @@ def prepare_review(lenses: Sequence[str], context: Mapping[str, Any],
                   "expectedResultShape": RESULT_SHAPE} for lens in names)
 
 
-def _result(value: Any) -> dict[str, Any]:
-    _closed(value, {"outcome", "findings", "evidence"}, set(), "invalid-result")
+def _result(value: Any, round_number: int) -> dict[str, Any]:
+    _closed(value, {"outcome", "findings", "evidence"}, {"lateFindings"}, "invalid-result")
     outcome = _text(value["outcome"], "invalid-result")
     findings = _texts(value["findings"], "invalid-result")
     evidence = _texts(value["evidence"], "invalid-result")
     _require(outcome in {"aligned", "changes-requested"} and bool(evidence), "invalid-result")
     _require(bool(findings) == (outcome == "changes-requested"), "invalid-result")
-    return {"outcome": outcome, "findings": findings, "evidence": evidence}
+    normalized = {"outcome": outcome, "findings": findings, "evidence": evidence}
+    if "lateFindings" in value:
+        # A late finding is one of this result's own findings, and no round can be
+        # late against a round before the first one.
+        late = _texts(value["lateFindings"], "invalid-result")
+        _require(set(late) <= set(findings) and round_number > 1, "invalid-result")
+        normalized["lateFindings"] = late
+    return normalized
 
 
 def _attestations(values: Any, binding: dict) -> dict[str, dict]:
@@ -187,13 +194,14 @@ def obtain_review(envelope: dict[str, Any], lenses: Sequence[str], context: Mapp
         state = entry["state"]
         _require(isinstance(state, str) and state in {"obtained", "failed", "indeterminate", "missing"}, "invalid-entry")
         _require(("result" in entry) == (state == "obtained"), "invalid-entry")
-        normalized = _result(entry["result"]) if state == "obtained" else None
+        normalized = _result(entry["result"], binding["round"]) if state == "obtained" else None
         independence = _independence(entry, normalized, trusted, used)
         item = {**copy.deepcopy(binding), "lens": lens, "state": state, "independence": independence}
         if normalized is not None:
             item["result"] = normalized
             results.append(ReviewLensResult(lens, normalized["outcome"], tuple(normalized["findings"]),
-                                            tuple(normalized["evidence"])))
+                                            tuple(normalized["evidence"]),
+                                            late_findings=tuple(normalized.get("lateFindings", ()))))
         elif state in FAILURE_CODES:
             results.append(ReviewLensResult(lens, "failed", failure=FAILURE_CODES[state]))
         retained.append(item)

@@ -328,6 +328,55 @@ class ReviewAcquisitionTests(unittest.TestCase):
         self.assertEqual(fake.context["candidateRef"], next_context["candidateRef"])
         self.assertEqual(fake.review_history[0]["candidateRef"], self.ctx["candidateRef"])
 
+    def test_late_finding_marks_are_carried_and_malformed_marks_reject(self):
+        ctx = context("candidate-B", 2)
+        value = envelope(self.lenses, ctx, ["changes-requested", "aligned", "aligned"])
+        value["entries"][0]["result"]["findings"] = ["Correct the boundary check.",
+                                                     "Restore the dropped assertion."]
+        value["entries"][0]["result"]["lateFindings"] = [" Restore the dropped assertion. ",
+                                                         "Restore the dropped assertion."]
+        acquired = obtain_review(value, self.lenses, ctx)
+        self.assertEqual(acquired.results[0].findings,
+                         ("Correct the boundary check.", "Restore the dropped assertion."))
+        self.assertEqual(acquired.results[0].late_findings, ("Restore the dropped assertion.",))
+        self.assertEqual(acquired.envelope["entries"][0]["result"]["lateFindings"],
+                         ["Restore the dropped assertion."])
+        self.assertNotIn("lateFindings", acquired.envelope["entries"][1]["result"])
+        self.assertEqual(acquired.results[1].late_findings, ())
+        fake = FakeConsumer(ROOT, {**self.ctx, **ctx, "completedStages": {
+            "implement": {"status": "succeeded", "outputKind": "delivery-candidate",
+                          "evidenceRef": "A"}}})
+        fake.set_review_context(self.lenses, 2)
+        unmarked = envelope(self.lenses, ctx, ["changes-requested", "aligned", "aligned"])
+        self.assertEqual(fake.review_round(value), fake.review_round(unmarked))
+        self.assertEqual(fake.review_history[0]["entries"][0]["result"]["lateFindings"],
+                         value["entries"][0]["result"]["lateFindings"])
+        for mark in ("Correct the boundary check.", ["Unfiled finding."], [""], [None], {}, None):
+            bad = copy.deepcopy(value)
+            bad["entries"][0]["result"]["lateFindings"] = mark
+            with self.subTest(mark=mark), self.assertRaises(ReviewAcquisitionError) as raised:
+                obtain_review(bad, self.lenses, ctx)
+            self.assertEqual(raised.exception.code, "invalid-result")
+        first = envelope(self.lenses, self.ctx, ["changes-requested", "aligned", "aligned"])
+        first["entries"][0]["result"]["lateFindings"] = ["Correct the boundary check."]
+        self.reject(first, "invalid-result")
+
+    def test_late_findings_do_not_change_the_reduced_outcome(self):
+        first = obtain_review(envelope(self.lenses, self.ctx), self.lenses, self.ctx).results
+        ctx = context("candidate-B", 2)
+        marked = envelope(self.lenses, ctx, ["changes-requested", "aligned", "aligned"])
+        marked["entries"][0]["result"]["lateFindings"] = ["Correct the boundary check."]
+        unmarked = envelope(self.lenses, ctx, ["changes-requested", "aligned", "aligned"])
+        outcomes = [review_work(ReviewRequest(self.lenses, (first, obtain_review(
+            value, self.lenses, ctx).results), 3)) for value in (marked, unmarked)]
+        self.assertEqual(outcomes[0].status, outcomes[1].status)
+        self.assertEqual([item.findings for item in outcomes[0].dissent],
+                         [item.findings for item in outcomes[1].dissent])
+        self.assertEqual(outcomes[1].late_findings, ())
+        self.assertEqual([(item.lens, item.round_number, item.finding)
+                          for item in outcomes[0].late_findings],
+                         [("correctness", 2, "Correct the boundary check.")])
+
 
 if __name__ == "__main__":
     unittest.main()

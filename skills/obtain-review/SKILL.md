@@ -31,7 +31,10 @@ selection, and emit `review.round.opened` for each round before its realization,
 naming the round, the declared bound that round counts against, the candidate it
 binds, and the lenses it carries. Without the bound beside the round a reader
 cannot tell round 1 of 4 from round 1 of 1, and the `review.loop-bound-reached`
-blocker is legible only against a bound the journal states. A reopened round is
+blocker is legible only against a bound the journal states. Where the round
+belongs to a loop that declares no bound of its own, the emission names the
+round and states that the loop is unbounded, which is what naming no bound
+looks like where none may be invented. A reopened round is
 emitted under the number it already carries, with a member naming why it
 reopened. Emit both through the run-event command the repository's root
 instruction file declares, when it declares one; where the repository declares
@@ -43,9 +46,10 @@ selection and never decides it.
 
 Use `prepare_review` in `agent_skills.review_orchestration` to create ordered,
 in-process host inputs. Supply each selected lens's bounded `contextRefs` and
-the expected result shape `review-lens-result/1`: `outcome`, `findings`, and
-`evidence`. These refs identify caller-retained material; they are not inline
-transcripts, arbitrary execution payloads, or authority grants. Host realization
+the expected result shape `review-lens-result/1`: `outcome`, `findings`,
+`evidence`, and the optional `lateFindings`. These refs identify
+caller-retained material; they are not inline transcripts, arbitrary execution
+payloads, or authority grants. Host realization
 may be sequential. Launching, permissions, retries, and scheduling remain with
 the active host and harness.
 
@@ -58,8 +62,11 @@ the binding tuple and has `lens`, `state`, and optional `independence` metadata.
 Only an `obtained` entry carries `result`.
 
 - `obtained`: normalize an `aligned` or `changes-requested` result. Both need
-  evidence; only `changes-requested` has nonempty findings. Project it to the
-  existing `ReviewLensResult`.
+  evidence; only `changes-requested` has nonempty findings. A result may also
+  carry `lateFindings`, each naming one of that same result's own `findings`
+  that the lens raised late; a lens carries none on its assessment round, and
+  acquisition rejects the member outright in a first round, where no lens has a
+  round behind it. Project it to the existing `ReviewLensResult`.
 - `failed`: project a failed lens with code `review-acquisition-failed`.
 - `indeterminate`: project a failed lens with code
   `review-acquisition-indeterminate`.
@@ -170,6 +177,40 @@ the delivery will actually submit. When a round reopens, the lens's retained ent
 round number is the replay's entry: the superseded entry stays in the delivery's
 history but is not supplied as carry-forward, so the entries a later round
 carries stay one per round and its delta runs from the replayed candidate.
+
+## The round brief
+
+Realize every lens with a brief that states where in the loop its round sits.
+The brief names the round number and the declared bound as round k of N, and
+says whether this round is the grace round obtained at the bound. Where the
+round belongs to a loop that declares no bound of its own, the brief names the
+round number and says the loop is unbounded. The review of a plan, which
+`$plan-work` leaves boundless, is such a loop: its rounds are realized outside
+the bound-and-reduction machinery `$review-work` describes, count against no
+bound that workflow reduces against, and reach no `review.loop-bound-reached`.
+
+The brief carries the mandate: every reviewer, in plan review and delivery
+review alike, optimizes for the lowest number of rounds, and a finding the lens
+can raise now is raised now. Beside the round and the bound, the mandate asks
+the lens for a conscious effort to find everything it can within the
+allocation, not across it.
+
+The brief states the expectation that follows: every finding the lens can
+raise against lines unchanged since its own most recent result-carrying round
+was expected in that round. A finding the lens raises after its assessment
+round against lines unchanged since its own most recent result-carrying round
+is still a finding, judged on its merits like any other, and the lens marks it
+late in its own report. The mark is dissent about the lens, not about the
+candidate, and it never changes what the round reduces to. Such a finding
+falls outside that round's delta, so the out-of-delta rule above still decides
+where the lens puts it: `lateFindings` names only findings the result filed,
+and a late finding that rule keeps out of `findings` is marked late in the
+deferral it records instead.
+
+The last round is judged exactly as any other, and the brief says so. A lens
+neither aligns because no repair room remains nor blocks to force an
+escalation; the grace round and the deferral rule handle a real finding raised
+at the bound.
 
 ## Realize a lens by convention where the harness supplies none
 

@@ -56,13 +56,24 @@ itself.
 `review.loop-bound-reached` naming the open findings and does not run another
 round.
 
+A lens result may mark some of its own findings as late: findings that lens
+raised against lines unchanged since its own most recent result-carrying round
+before this one. A late finding is still a finding and is reduced exactly like
+any other, so the mark never changes the outcome of a round. The mark is
+visible dissent about the lens rather than about the candidate, and the
+returned value carries every marked finding with the lens and the round that
+filed it, so a lens's misses stay readable across the delivery. A late finding
+a lens recorded as a deferral rather than as a finding is marked late in that
+deferral, and neither the returned value nor the count below carries it.
+
 The caller emits `review.round.closed` once a round is reduced, through the
 run-event command the repository's root instruction file declares, when it
-declares one, naming the round, the candidate it bound, the reduced outcome, its
-findings by severity, and the round's self-reported cost; where the repository
-declares none, the caller proceeds silently, with no handoff and no blocker.
-That emission is observability, not review state, and this workflow neither
-performs it nor reads it back. The caller-selected lens list is unchanged by it.
+declares one, naming the round, the candidate it bound, the reduced outcome,
+its findings by severity, the count of late findings in that round, and the
+round's self-reported cost; where the repository declares none, the caller
+proceeds silently, with no handoff and no blocker. That emission is
+observability, not review state, and this workflow neither performs it nor
+reads it back. The caller-selected lens list is unchanged by it.
 
 Retain prior rounds, dissent, and typed reviewer failures in the returned value.
 A later complete round may establish alignment without deleting that history.
