@@ -229,13 +229,14 @@ executor composes nothing about the charter itself. A lens is read-only. No two
 lenses in a round share context. The evidence names the model class the lens ran
 under.
 
-Evidence obtained by this convention records independence as `host-convention`,
-naming this section, rather than leaving the realization described as
-unverified. The acquisition entry's typed `independence` is unchanged by the
-convention and stays `{"status": "unverified"}` until harness-supplied
-attestation evidence upgrades it, because a declared procedure is not a proof of
-distinct realization. This section declares that procedure only: it builds no
-realization runtime, and this workflow launches no subordinate runtime.
+Evidence obtained by this convention records its realization basis as
+`host-convention`, naming this section, rather than leaving the basis of the
+realization unrecorded. The acquisition entry's typed `independence` is
+unchanged by the convention and stays `{"status": "unverified"}` until
+harness-supplied attestation evidence upgrades it, because a declared procedure
+is not a proof of distinct realization. This section declares that procedure
+only: it builds no realization runtime, and this workflow launches no
+subordinate runtime.
 
 ## Independence and repair
 

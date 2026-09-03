@@ -61,7 +61,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " executor composes nothing about the charter itself",
         "A lens is read-only. No two lenses in a round share context",
         "The evidence names the model class the lens ran under",
-        "records independence as `host-convention`, naming this section",
+        "records its realization basis as `host-convention`, naming this section,"
+        " rather than leaving the basis of the realization unrecorded",
         "The acquisition entry's typed `independence` is unchanged by the"
         " convention and stays `{\"status\": \"unverified\"}`",
         "it builds no realization runtime, and this workflow launches no"
