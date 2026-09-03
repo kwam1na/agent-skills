@@ -28,6 +28,14 @@ python3 tests/test_registry.py
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
+A corpus pin asserts that its phrase is present in the whitespace-normalized
+file, not that the phrase sits under any particular heading. Relocating a pinned
+phrase under an unrelated heading therefore leaves its pin green, and that is the
+accepted contract: the pins guard shipped wording against deletion and silent
+rewording, while where a rule sits is a review judgement. Where a phrase reads
+off its own position, pin it together with its neighbouring text as one phrase,
+rather than anchoring every pin in the corpus to a heading.
+
 Proving a corpus pin red by mutating a file `provenance.lock.json` covers takes
 the digests with it. Tests build a release in `setUpClass`, in `setUp`, and in
 test bodies, and every such build validates the whole source corpus first, so
