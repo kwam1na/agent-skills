@@ -6,8 +6,8 @@
     "retainedEvidence": "named assertions and deterministic checkpoint summaries"
   },
   "release": {
-    "archiveSha256": "b8b02ae214fd7d7b7a3797caf92c26e84d0476502b39d75e32af46fb478e75be",
-    "metadataSha256": "e6e4fffb3aa29e8f2797ed0702d35e295a6947b479526c6c29f48805286d9d79",
+    "archiveSha256": "3287ce6258bc796e82f0cc855ca798e10d6d8d8c0eaea44b16d8e7520eec2b4a",
+    "metadataSha256": "dd47017069ab49153e50bfbb7f60874ba1c15ab48da6c3ed750420632bdc84d1",
     "profile": "core",
     "releaseId": "core-v1"
   },

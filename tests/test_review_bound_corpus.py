@@ -70,6 +70,12 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "skills/execute-work/SKILL.md": (
         "state the bound in effect for the delivery",
+        "The mandated lenses are the two the delivery product ships, correctness"
+        " and testing, under the names the adopting repository declares for them",
+        "Every other lens is the executor's own selection, chosen by the depth of"
+        " the delivery, and the declaration names the mandated pair, the full"
+        " selected set, and the reason for the selection",
+        "A repository cannot widen what counts as mandated",
         "Never declare a second bound for the same delivery",
         "The review is bound to the release installed when the delivery's first"
         " round is acquired: record a release installed mid-review, keep every"
