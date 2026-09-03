@@ -825,6 +825,19 @@ class LinearQualificationTests(unittest.TestCase):
                     BINDING,
                 )
 
+    def test_checked_artifacts_and_readme_name_the_current_release_id(self) -> None:
+        self.assertEqual(
+            sorted(path.name for path in (ROOT / "qualifications").glob("linear-*")),
+            [
+                "linear-v2.attestation.json",
+                "linear-v2.collector-binding.json",
+                "linear-v2.json",
+            ],
+        )
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("--release-id linear-v2", readme)
+        self.assertNotIn("linear-v1", readme)
+
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
         durable_paths = [ROOT / "README.md"]
         for root_name in (
