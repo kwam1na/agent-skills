@@ -21,6 +21,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " delivery reports done",
         "the deferral's evidence names what that item must say, and the lens files"
         " nothing itself",
+        "The review is bound to the release installed when the delivery's first"
+        " round is acquired: a release installed mid-review is recorded and does"
+        " not invalidate rounds already carried, and the delivery's closing record"
+        " names the bound release's `releaseId` and `archiveSha256`",
     ),
     "skills/obtain-review/SKILL.md": (
         "A lens's assessment round is its first result-carrying round for the"
@@ -67,6 +71,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "skills/execute-work/SKILL.md": (
         "state the bound in effect for the delivery",
         "Never declare a second bound for the same delivery",
+        "The review is bound to the release installed when the delivery's first"
+        " round is acquired: record a release installed mid-review, keep every"
+        " round already carried valid, and name the bound release's `releaseId`"
+        " and `archiveSha256` in the delivery's closing record",
         "The lens set is declared before the first round and held unchanged for the"
         " delivery",
         "no lens is added after the first round",
