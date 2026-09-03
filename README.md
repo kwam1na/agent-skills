@@ -43,7 +43,7 @@ Build the optional Linear profile with the same format and lifecycle:
 python3 scripts/build-release.py build \
   --archive /tmp/linear.zip \
   --metadata /tmp/linear.release.json \
-  --release-id linear-v1 \
+  --release-id linear-v2 \
   --profile linear
 python3 scripts/build-release.py verify \
   --archive /tmp/linear.zip \
@@ -129,7 +129,7 @@ Each reference is an object with `schemaVersion` and `opaque`. Use fresh redacte
 opaque identities, not ticket identifiers, paths, or host payloads. Serialize the
 collector input and attestation with sorted keys, two-space indentation, and a
 final newline. The checked input is
-`qualifications/linear-v1.collector-binding.json`; it is not part of either archive.
+`qualifications/linear-v2.collector-binding.json`; it is not part of either archive.
 Qualification also rebuilds the supplied Linear archive's core projection and
 requires its archive and metadata bytes to match the separately qualified core.
 
@@ -149,12 +149,12 @@ python3 scripts/qualify-linear.py \
   --core-record qualifications/core-v1.json \
   --linear-archive /tmp/linear.zip \
   --linear-metadata /tmp/linear.release.json \
-  --collector-binding qualifications/linear-v1.collector-binding.json \
-  --attestation qualifications/linear-v1.attestation.json \
+  --collector-binding qualifications/linear-v2.collector-binding.json \
+  --attestation qualifications/linear-v2.attestation.json \
   --record /tmp/linear.qualification.json
 ```
 
-The version-2 checked record at `qualifications/linear-v1.json` binds the passing core
+The version-2 checked record at `qualifications/linear-v2.json` binds the passing core
 qualification, both exact archive and metadata identities, canonical extracted
 source-tree digests, the frozen collector input and its digest, the exact retained
 attestation bytes, and its external receipt reference. Old unbound attestations,
