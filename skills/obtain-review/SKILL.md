@@ -184,10 +184,10 @@ Realize every lens with a brief that states where in the loop its round sits.
 The brief names the round number and the declared bound as round k of N, and
 says whether this round is the grace round obtained at the bound. Where the
 round belongs to a loop that declares no bound of its own, the brief names the
-round number and says the loop is unbounded. Review of a plan, which repeats
-until the plan is sound, is such a loop: its rounds are realized outside the
-bound-and-reduction machinery `$review-work` describes, count against no bound
-that workflow reduces against, and reach no `review.loop-bound-reached`.
+round number and says the loop is unbounded. The review of a plan, which
+`$plan-work` leaves boundless, is such a loop: its rounds are realized outside
+the bound-and-reduction machinery `$review-work` describes, count against no
+bound that workflow reduces against, and reach no `review.loop-bound-reached`.
 
 The brief carries the mandate: every reviewer, in plan review and delivery
 review alike, optimizes for the lowest number of rounds, and a finding the lens

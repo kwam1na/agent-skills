@@ -122,7 +122,7 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " and says whether this round is the grace round obtained at the bound",
         "Where the round belongs to a loop that declares no bound of its own, the"
         " brief names the round number and says the loop is unbounded",
-        "Review of a plan, which repeats until the plan is sound, is such a loop:"
+        "The review of a plan, which `$plan-work` leaves boundless, is such a loop:"
         " its rounds are realized outside the bound-and-reduction machinery"
         " `$review-work` describes, count against no bound that workflow reduces"
         " against, and reach no `review.loop-bound-reached`",
