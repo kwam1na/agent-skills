@@ -77,6 +77,12 @@ proceeds silently, with no handoff and no blocker. That emission is
 observability, not review state, and this workflow neither performs it nor
 reads it back. The caller-selected lens list is unchanged by it.
 
+When the host reports no cost, record `coverage: unreported`; do not invent zero.
+Name `reportedBy`. If only part is measured, preserve the reported unit and
+total with partial coverage rather than implying a complete cost. Use the
+installed product's supported cost shape; this accounting does not affect
+whether the review evidence is valid.
+
 Retain prior rounds, dissent, and typed reviewer failures in the returned value.
 A later complete round may establish alignment without deleting that history.
 

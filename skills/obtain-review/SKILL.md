@@ -49,10 +49,13 @@ lens realized in a different repository shares no run and is given none. This
 workflow keeps the caller-selected lens list unchanged; emission records the
 selection and never decides it.
 
-Use `prepare_review` in `agent_skills.review_orchestration` to create ordered,
-in-process host inputs. Supply each selected lens's bounded `contextRefs` and
-the expected result shape `review-lens-result/1`: `outcome`, `findings`,
-`evidence`, and the optional `lateFindings`. These refs identify
+Prepare one round brief per selected lens using the template below and the
+harness-supplied realization or host convention. Native subagent dispatch and
+the aggregation below are sufficient; Python and
+`agent_skills.review_orchestration` are not prerequisites. Supply each selected
+lens's bounded `contextRefs` and the expected result shape
+`review-lens-result/1`: `outcome`, `findings`, `evidence`, and the optional
+`lateFindings`. These refs identify
 caller-retained material; they are not inline transcripts, arbitrary execution
 payloads, or authority grants. Host realization
 may be sequential. Launching, permissions, retries, and scheduling remain with
@@ -60,18 +63,23 @@ the active host and harness.
 
 ## Retain and project
 
-Pass `obtain_review(envelope, lenses, context, attestations=...)` a closed
+Aggregate the host's acquisitions into a closed
 `review-acquisition-envelope/1` containing the exact binding tuple,
-`requestedLenses`, and one ordered `entries` item per lens. Every entry repeats
-the binding tuple and has `lens`, `state`, and optional `independence` metadata.
-Only an `obtained` entry carries `result`.
+`requestedLenses`, and `entries`. Retain one entry for every selected lens in
+the caller's order, including missing, failed, and indeterminate acquisitions.
+Copy the trusted binding tuple into the envelope and every entry; compare any
+binding returned by a reviewer against that tuple and reject a mismatch.
+Every entry has `lens`, `state`, and optional `independence` metadata. Only an
+`obtained` entry carries `result`. A failure or unavailable native subagent is
+recorded as an acquisition state, never replaced by an executor's own review.
 
 - `obtained`: normalize an `aligned` or `changes-requested` result. Both need
   evidence; only `changes-requested` has nonempty findings. A result may also
   carry `lateFindings`, each naming one of that same result's own `findings`
   that the lens raised late; a lens carries none on its assessment round, and
   acquisition rejects the member outright in a first round, where no lens has a
-  round behind it. Project it to the existing `ReviewLensResult`.
+  round behind it. Project each obtained result to `review-work` with its lens
+  id, outcome, findings, evidence, and optional late findings.
 - `failed`: project a failed lens with code `review-acquisition-failed`.
 - `indeterminate`: project a failed lens with code
   `review-acquisition-indeterminate`.
@@ -83,6 +91,12 @@ caller retains the envelope as evidence; this workflow does not persist it.
 Unknown fields, malformed evidence, wrong versions, or any binding mismatch
 reject. Acquisition has no round-level status or convergence output. A lens may
 say `aligned`; only unchanged `review-work` reduces the complete round.
+
+The Python helpers `prepare_review` and `obtain_review` are optional
+implementations of this same contract when the caller has them. They validate
+and project data; they do not launch lenses or establish host independence.
+Their absence does not block native dispatch, aggregation, or the handoff to
+`review-work`, and requires no helper installation or substitute runtime.
 
 ## Round kinds
 

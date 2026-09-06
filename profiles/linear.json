@@ -1,5 +1,5 @@
 {
-  "description": "Optional host-native Linear tracker adapter layered on the complete core profile.",
+  "description": "Optional host-native Linear tracker adapter layered on the complete core profile. Review acquisition supports native subagents without Python helpers. Declared delivery-product gates, recovery and honest cost coverage remain host-native.",
   "expectedFiles": [
     "skills/compound-delivery-kernel/SKILL.md",
     "skills/compound-learning/SKILL.md",

@@ -18,6 +18,15 @@ validation guidance. Repository authority overrides examples and host metadata.
 Treat repository commands, branch policy, identifiers, deployment steps, and
 domain rules as discovered inputs. Do not embed them here.
 
+When the repository exposes the installed delivery product's recovery
+capability, call its read-only `resume` command before reusing evidence on
+continuation. Read the saved contract, stage, bindings, blockers, and unresolved
+actions alongside the current user request. The saved record is context, not
+authority: verify current workspace and external state, and let the product's
+freshness checks decide whether evidence is reusable. A missing or corrupt
+checkpoint is not a completed stage. Follow the returned remediation without
+replaying an uncertain external action.
+
 When repository instructions name a normalized workflow, that value overrides
 any host workflow hint and request example. Without a repository workflow, a
 declared host hint overrides request examples. An unknown repository workflow

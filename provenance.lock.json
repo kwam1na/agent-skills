@@ -128,7 +128,7 @@
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "7492bec9ff4082f3314829c1d197ac3c83b5ef7d60e019f8658f95993ba91b31"
+          "sha256": "4150122b7e654767753774bdfcec1a1354f1ef06991391a611028b3bbef1318b"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",
@@ -214,7 +214,7 @@
       "outputs": [
         {
           "path": "skills/execute-work/SKILL.md",
-          "sha256": "59c71a2efa77a2b18eafe4fd6f60108d9f2cd7e55c0c041fd96ecec73132d4b7"
+          "sha256": "9cf8c021bd4c0300fb3011935ec382dbfa28653dbd9670c92d82f2ab481f37e8"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -268,7 +268,7 @@
       "outputs": [
         {
           "path": "skills/obtain-review/SKILL.md",
-          "sha256": "3895b6d521df263805d5c13b3dbc013748e675efc4829e75c3c48959e572ba16"
+          "sha256": "7ba09c7d0ae9f65d43bf7c49630912fd8e7bcad714f3acb2d5dc8ac0d851546b"
         },
         {
           "path": "skills/obtain-review/references/round-brief-template.md",
@@ -776,7 +776,7 @@
       "outputs": [
         {
           "path": "skills/review-work/SKILL.md",
-          "sha256": "987e4c3d64f254d26e47a4aed92ba617a0aef0c6682ec9d2fab79be76c344ae7"
+          "sha256": "e728ccdb8a3cdfdcacb51add08526b78c15d92066f2633ad542cabe69d363b97"
         }
       ],
       "owner": "agent-skills-corpus",
