@@ -34,6 +34,16 @@ def _load_runner():
 
 
 class QualificationTests(unittest.TestCase):
+    def test_checked_product_core_replays_exactly(self) -> None:
+        product = ROOT / "qualifications/product"
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            output = directory / "core.json"
+            result = self._run_qualification(product / "core-product-v1.zip",
+                                             product / "core-product-v1.release.json", output, directory)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(output.read_bytes(), (product / "core-product-v1.json").read_bytes())
+
     def test_record_output_cannot_alias_candidate_archive_or_metadata(self) -> None:
         for target in ("archive", "metadata", "symlink"):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
@@ -103,7 +113,7 @@ class QualificationTests(unittest.TestCase):
 
     def test_record_requires_current_graph_binding_and_exact_core_release_identity(self) -> None:
         runner = _load_runner()
-        release = {"releaseId": "core-v1", "profile": "core",
+        release = {"releaseId": "core-workflows-v2", "profile": "core",
                    "archiveSha256": "a" * 64, "metadataSha256": "b" * 64}
         scenarios = [runner._run(name, lambda checkpoint: checkpoint.check(True, "asserted"))
                      for name in runner.REQUIRED_SCENARIOS]
@@ -190,7 +200,7 @@ class QualificationTests(unittest.TestCase):
                     path.write_bytes(original)
             records = copied / "qualifications"
             records.mkdir()
-            (records / "core-v1.json").write_text("untrusted record", encoding="utf-8")
+            (records / "core-workflows-v2.json").write_text("untrusted record", encoding="utf-8")
             self.assertEqual(runner.qualification_driver_sha256(copied), before)
 
     def test_new_runtime_and_public_schema_tampering_fails_exact_candidate_scenarios(self) -> None:
@@ -267,7 +277,7 @@ class QualificationTests(unittest.TestCase):
             first_metadata = directory / "first.release.json"
             second_archive = directory / "second.zip"
             second_metadata = directory / "second.release.json"
-            release_id = "core-v1"
+            release_id = "core-workflows-v2"
             first = build_release(
                 ROOT,
                 first_archive,
@@ -326,7 +336,7 @@ class QualificationTests(unittest.TestCase):
             self.assertNotIn("linear", serialized.lower())
             self.assertEqual(
                 record_path.read_bytes(),
-                (ROOT / "qualifications" / "core-v1.json").read_bytes(),
+                (ROOT / "qualifications" / "core-workflows-v2.json").read_bytes(),
             )
 
             replay = self._run_qualification(
@@ -422,7 +432,7 @@ class QualificationTests(unittest.TestCase):
     def test_trusted_sensor_change_changes_the_driver_identity(self) -> None:
         runner = _load_runner()
         recorded = json.loads(
-            (ROOT / "qualifications" / "core-v1.json").read_text(encoding="utf-8")
+            (ROOT / "qualifications" / "core-workflows-v2.json").read_text(encoding="utf-8")
         )
         self.assertEqual(
             recorded["qualificationDriverSha256"],
@@ -662,7 +672,7 @@ class QualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="core-v1",
+                release_id="core-workflows-v2",
                 profile_id="core",
             )
             record_path = directory / "qualification.json"
@@ -693,7 +703,7 @@ class QualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="core-v1",
+                release_id="core-workflows-v2",
                 profile_id="core",
             )
             expected_record = directory / "expected.json"

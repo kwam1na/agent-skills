@@ -7,7 +7,8 @@ pointer or maintenance journal is introduced.
 
 Producer integration supplies `--runtime-directory` to `scripts/build-release.py
 build`. That directory contains `runtime.json`, the CLI/kernel/policy JavaScript
-bundles, loader/bootstrap, and license notices. The descriptor's
+bundles, matching kernel and CLI API declarations, loader/bootstrap, and license
+notices. The descriptor's
 `workflowContentSha256` must match the exact workflow-only release projection;
 its file list must match the runtime bytes. An incompatible workflow projection
 or altered bundle blocks the build and verifier. The complete archive digest
@@ -35,7 +36,9 @@ recompiles its existing snapshot after install, update, rollback, or recovery.
 If that fails, the lifecycle may already be current but `productReady` is false;
 product status and runtime entry reject that intermediate state. Correct the
 reported policy inputs and retry `--product recover`. The snapshot stays
-adopter-owned, with its existing provenance and comparison adjudications.
+adopter-owned. Product reconciliation updates an already-declared persona archive
+digest to the selected generation and validates current policy inputs and
+charters. Other provenance and comparison adjudications are preserved.
 Runtime commands share the existing lifecycle lock so maintenance cannot switch
 the selected generation while a command executes.
 

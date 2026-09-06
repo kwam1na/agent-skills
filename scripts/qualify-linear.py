@@ -17,7 +17,7 @@ DRIVER_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DRIVER_ROOT))
 
 from agent_skills.lifecycle import Lifecycle
-from agent_skills.release import VerifiedRelease, build_release, verify_release
+from agent_skills.release import RUNTIME_FILES, VerifiedRelease, build_release, verify_release
 
 
 CONTRACT_PATH = "skills/linear-tracker-adapter/references/adapter-contract.json"
@@ -835,12 +835,29 @@ def qualify(
             core_candidate,
             linear_candidate,
         )
+        # Product profiles share runtime bytes, while each verified descriptor
+        # binds its own workflow projection. Compare the full component closure
+        # before using the core descriptor for the exact core reconstruction.
+        core_runtime = core_candidate / "runtime"
+        linear_runtime = linear_candidate / "runtime"
+        if core_runtime.exists() != linear_runtime.exists():
+            raise ValueError("linear_qualification.core_binding: Linear contains different core bytes")
+        if core_runtime.exists():
+            descriptors = [_load_document(runtime / "runtime.json", "runtime") for runtime in (core_runtime, linear_runtime)]
+            for descriptor in descriptors:
+                descriptor.pop("workflowContentSha256")
+            if descriptors[0] != descriptors[1] or any(
+                (core_runtime / name).read_bytes() != (linear_runtime / name).read_bytes()
+                for name in RUNTIME_FILES - {"runtime.json"}
+            ):
+                raise ValueError("linear_qualification.core_binding: Linear contains different core bytes")
         projected_core = build_release(
             linear_candidate,
             candidate_root / "projected-core.zip",
             candidate_root / "projected-core.release.json",
             release_id=core.release_id,
             profile_id="core",
+            runtime_directory=core_runtime if core_runtime.exists() else None,
         )
         if projected_core != core:
             raise ValueError("linear_qualification.core_binding: Linear contains different core bytes")

@@ -256,7 +256,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
 
 
 RUNTIME_FILES = frozenset({
-    "runtime.json", "cli.mjs", "kernel.mjs", "policy.mjs", "bootstrap.mjs",
+    "runtime.json", "cli.mjs", "cli-api.mjs", "cli-api.d.mts", "kernel.mjs", "kernel.d.mts", "policy.mjs", "bootstrap.mjs",
     "loader.mjs", "LICENSE", "NOTICE",
 })
 

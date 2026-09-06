@@ -24,7 +24,7 @@ def reconcile_policy(lifecycle: Lifecycle, *, check: bool) -> None:
     policy = lifecycle.root / ".agents" / "policy"
     if not policy.exists():
         return
-    arguments = ["node", str(runtime / "policy.mjs")]
+    arguments = ["node", str(runtime / "policy.mjs"), "--product"]
     if check:
         arguments.append("--check")
     result = subprocess.run(arguments, cwd=lifecycle.root, capture_output=True, text=True, timeout=60)

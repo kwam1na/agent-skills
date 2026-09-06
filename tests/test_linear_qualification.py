@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -14,14 +15,15 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from agent_skills.release import build_release, verify_release
+from agent_skills.release import RUNTIME_FILES, _path_digest, _release_view, build_release, verify_release
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
-ATTESTATION = ROOT / "qualifications" / "linear-v2.attestation.json"
-RECORD = ROOT / "qualifications" / "linear-v2.json"
-BINDING = ROOT / "qualifications" / "linear-v2.collector-binding.json"
+PRODUCT = ROOT / "qualifications" / "product"
+ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
+RECORD = PRODUCT / "linear-product-v1.json"
+BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
 
 
 def _load_runner():
@@ -442,6 +444,44 @@ class LinearQualificationTests(unittest.TestCase):
         )
         return result, record_path, attestation_path
 
+    def test_product_projection_compares_runtime_bytes_and_profile_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            runtime = directory / "runtime"
+            runtime.mkdir()
+            for name in RUNTIME_FILES - {"runtime.json"}:
+                (runtime / name).write_text("// product projection fixture\n")
+
+            def build(profile: str):
+                entries = _release_view(ROOT, profile)
+                descriptor = {
+                    "schemaVersion": "delivery-runtime/1", "runtimeVersion": "fixture-1", "nodeMinimum": "22.6.0",
+                    "workflowContentSha256": _path_digest(sorted(entries), entries),
+                    "files": [{"path": name, "sha256": hashlib.sha256((runtime / name).read_bytes()).hexdigest()}
+                              for name in sorted(RUNTIME_FILES - {"runtime.json"})],
+                }
+                (runtime / "runtime.json").write_text(_canonical_json(descriptor))
+                archive, metadata = directory / f"{profile}.zip", directory / f"{profile}.json"
+                build_release(ROOT, archive, metadata, release_id=f"{profile}-product", profile_id=profile, runtime_directory=runtime)
+                return archive, metadata
+
+            core = build("core")
+            linear = build("linear")
+            with mock.patch.object(self, "_build_candidates", return_value=(*core, *linear)):
+                result, record, _ = self._run_qualification(directory, _host_attestation())
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(record.exists())
+
+            (runtime / "kernel.mjs").write_text("// different but honestly hashed implementation\n")
+            linear = build("linear")
+            with mock.patch.object(self, "_build_candidates", return_value=(*core, *linear)):
+                result, record, _ = self._run_qualification(directory, _host_attestation())
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertFalse(record.exists())
+            with self.assertRaisesRegex(ValueError, "different core bytes"):
+                _load_runner().qualify(*core, directory / "core-record.json", *linear,
+                                       directory / "attestation.json", directory / "collector-binding.json")
+
     def _binding_for_candidates(
         self, core_archive: Path, core_metadata: Path, linear_archive: Path, linear_metadata: Path,
     ) -> dict:
@@ -777,14 +817,14 @@ class LinearQualificationTests(unittest.TestCase):
         record = json.loads(RECORD.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as temporary:
             core_archive, core_metadata, linear_archive, linear_metadata = (
-                self._build_candidates(Path(temporary))
+                tuple(PRODUCT / name for name in ("core-product-v1.zip", "core-product-v1.release.json", "linear-product-v1.zip", "linear-product-v1.release.json"))
             )
 
             runner.validate_checked_record(
                 record,
                 core_archive,
                 core_metadata,
-                ROOT / "qualifications" / "core-v1.json",
+                PRODUCT / "core-product-v1.json",
                 linear_archive,
                 linear_metadata,
                 ATTESTATION,
@@ -797,7 +837,7 @@ class LinearQualificationTests(unittest.TestCase):
                     tampered,
                     core_archive,
                     core_metadata,
-                    ROOT / "qualifications" / "core-v1.json",
+                    PRODUCT / "core-product-v1.json",
                     linear_archive,
                     linear_metadata,
                     ATTESTATION,
@@ -818,25 +858,29 @@ class LinearQualificationTests(unittest.TestCase):
                     record,
                     core_archive,
                     core_metadata,
-                    ROOT / "qualifications" / "core-v1.json",
+                    PRODUCT / "core-product-v1.json",
                     linear_archive,
                     linear_metadata,
                     tampered_attestation,
                     BINDING,
                 )
 
-    def test_checked_artifacts_and_readme_name_the_current_release_id(self) -> None:
-        self.assertEqual(
-            sorted(path.name for path in (ROOT / "qualifications").glob("linear-*")),
-            [
-                "linear-v2.attestation.json",
-                "linear-v2.collector-binding.json",
-                "linear-v2.json",
-            ],
-        )
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("--release-id linear-v2", readme)
-        self.assertNotIn("linear-v1", readme)
+    def test_checked_product_workflow_projection_matches_current_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for profile in ("core", "linear"):
+                archive = PRODUCT / f"{profile}-product-v1.zip"
+                metadata = PRODUCT / f"{profile}-product-v1.release.json"
+                extracted = directory / profile
+                release = verify_release(archive, metadata, extract_to=extracted)
+                projected = build_release(extracted, directory / f"{profile}-projection.zip",
+                                          directory / f"{profile}-projection.json",
+                                          release_id=release.release_id, profile_id=profile)
+                current = build_release(ROOT, directory / f"{profile}-current.zip",
+                                        directory / f"{profile}-current.json",
+                                        release_id=release.release_id, profile_id=profile)
+                self.assertEqual(projected, current, "checked product workflows differ from current source")
+        self.assertIn("linear-product-v1", (ROOT / "README.md").read_text())
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
         durable_paths = [ROOT / "README.md"]
