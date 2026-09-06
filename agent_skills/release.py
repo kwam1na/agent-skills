@@ -164,6 +164,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
     selected_paths.extend(persona_paths)
 
     files: dict[str, bytes] = {
+        "__main__.py": b"import os, sys\nsys.path[0] = os.path.realpath(sys.path[0])\nfrom agent_skills.cli import main\nraise SystemExit(main())\n",
         "catalog.json": canonical_json(
             {"schemaVersion": catalog["schemaVersion"], "skills": selected_skills}
         ).encode(),
@@ -224,6 +225,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         "agent_skills/lifecycle.py",
         "agent_skills/locking.py",
         "agent_skills/provider.py",
+        "agent_skills/product.py",
         "agent_skills/receipt.py",
         "agent_skills/release.py",
         "agent_skills/router.py",
@@ -252,6 +254,33 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
     return files
 
 
+
+RUNTIME_FILES = frozenset({
+    "runtime.json", "cli.mjs", "kernel.mjs", "policy.mjs", "bootstrap.mjs",
+    "loader.mjs", "LICENSE", "NOTICE",
+})
+
+
+def _validate_runtime(files: dict[str, bytes]) -> None:
+    runtime = {path.removeprefix("runtime/"): contents for path, contents in files.items() if path.startswith("runtime/")}
+    if not runtime:
+        return
+    if set(runtime) != RUNTIME_FILES:
+        raise ReleaseError("product.runtime_closure: incomplete or unexpected runtime files")
+    descriptor = _document_bytes(runtime["runtime.json"], "runtime/runtime.json")
+    if (set(descriptor) != {"schemaVersion", "runtimeVersion", "nodeMinimum", "workflowContentSha256", "files"}
+            or descriptor["schemaVersion"] != "delivery-runtime/1"
+            or descriptor["nodeMinimum"] != "22.6.0"
+            or not isinstance(descriptor["runtimeVersion"], str) or not descriptor["runtimeVersion"]):
+        raise ReleaseError("product.runtime_contract: unsupported runtime descriptor")
+    expected = [{"path": path, "sha256": _digest(runtime[path])} for path in sorted(RUNTIME_FILES - {"runtime.json"})]
+    if descriptor["files"] != expected:
+        raise ReleaseError("product.runtime_checksum: runtime files disagree with descriptor")
+    workflows = {path: contents for path, contents in files.items() if not path.startswith("runtime/")}
+    if descriptor["workflowContentSha256"] != _path_digest(sorted(workflows), workflows):
+        raise ReleaseError("product.workflow_incompatible: runtime was not built for these workflow bytes")
+
+
 def _zip_write(path: Path, files: dict[str, bytes]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
@@ -270,6 +299,7 @@ def build_release(
     *,
     release_id: str,
     profile_id: str,
+    runtime_directory: Path | None = None,
 ) -> VerifiedRelease:
     root = root.resolve()
     release_id, profile_id = _release_identity(release_id, profile_id)
@@ -277,6 +307,11 @@ def build_release(
     if validation.findings:
         raise ReleaseError("release.source_validation: source corpus is invalid")
     files = _release_view(root, profile_id)
+    if runtime_directory is not None:
+        runtime_directory = runtime_directory.resolve()
+        for relative in RUNTIME_FILES:
+            files[f"runtime/{relative}"] = _packaged_bytes(runtime_directory, relative)
+        _validate_runtime(files)
     payload_paths = sorted(files)
     group = profile_id
     manifest = {
@@ -412,6 +447,7 @@ def verify_release(
         raise ReleaseError("release.group_checksum: profile group digest mismatch")
     if manifest_release_id != metadata_release_id or manifest_profile != metadata_profile:
         raise ReleaseError("release.identity: detached metadata mismatch")
+    _validate_runtime(payload)
     if extract_to is not None:
         if extract_to.exists() and any(extract_to.iterdir()):
             raise ReleaseError("release.destination: extraction target is not empty")
