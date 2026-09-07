@@ -66,6 +66,47 @@ closed. The provider writes only inside the consumer-supplied run root. The
 consumer remains responsible for validating and publishing the returned
 manifest through its existing evidence recorder.
 
+### One grace verification
+
+After every selected lens aligns at the declared bound, a required change that
+alters the candidate permits exactly one further verification with the same
+lenses. Keep all prior rounds and the original `maxRounds`; this is not permission
+to raise the bound or repeat review of an unchanged candidate. Dissent or failed
+acquisition at the bound cannot qualify. A non-aligned grace is terminal, and a
+second extra round is refused.
+
+The host's review document may include this optional, closed object alongside
+`requiredLenses`, `rounds`, `maxRounds`, and `findings`:
+
+```json
+{
+  "graceVerification": {
+    "previousCandidateRef": "4444444444444444444444444444444444444444",
+    "candidateRef": "5555555555555555555555555555555555555555",
+    "requiredChange": "Reference to the required candidate-changing correction"
+  }
+}
+```
+
+The provider requires these unequal references to match the actual adjacent
+`preparedTreeSha` bindings for the aligned bound round and the grace round. It
+does not establish whether a change was necessary: the host must retain that
+decision and its evidence before acquiring grace. With a bound of four, retain
+five rounds; the emitted manifest still names `pass-5`, keeps all five tree
+bindings, and reports `iterationCount: 5`. The declaration remains caller-owned
+input; raw change evidence is not copied into the redacted rail manifest.
+
+Direct Python callers pass
+`ReviewRequest(lenses, all_rounds, 4, GraceVerification(previous_ref, new_ref, required_change))`.
+The returned `ReviewResult.grace_verification` retains that declaration. This
+pure reducer cannot resolve opaque references, so its caller must bind them to
+the adjacent retained acquisition envelopes. `obtain_review` itself remains an
+ordinary candidate-bound acquisition with no new envelope keys. Omission of the
+declaration preserves ordinary bound handling. Neither API observes future
+candidate edits; a further required edit after grace remains the executor's
+documented terminal condition. Base-move reopening is a separate rule and is
+not implemented by this input.
+
 Cancellation is accepted only for an active deferred attempt. Loss of the host
 workflow before a terminal result becomes `indeterminate`; neither outcome can
 become success later. Repeating an identical request is idempotent within the

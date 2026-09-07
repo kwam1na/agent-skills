@@ -24,7 +24,7 @@ from .lifecycle import Lifecycle
 from .locking import RepositoryLock
 from .receipt import load_receipt
 from .validate import canonical_json
-from .workflows import ReviewLensResult, ReviewRequest, ReviewResult, review_work
+from .workflows import GraceVerification, ReviewLensResult, ReviewRequest, ReviewResult, review_work
 
 
 PROTOCOL_VERSION = "delivery-provider-rails/1"
@@ -606,11 +606,26 @@ class DeliveryRailsProvider:
                 "Provide a positive integer review round bound.",
             )
         try:
+            grace = None
+            if "graceVerification" in document:
+                declaration = _object(document["graceVerification"], "grace verification")
+                if set(declaration) != {"previousCandidateRef", "candidateRef", "requiredChange"}:
+                    raise ValueError("grace verification fields are malformed")
+                grace = GraceVerification(
+                    previous_candidate_ref=_string(declaration["previousCandidateRef"], "previous candidate"),
+                    candidate_ref=_string(declaration["candidateRef"], "grace candidate"),
+                    required_change=_string(declaration["requiredChange"], "required change"),
+                )
+                if len(round_trees) < 2 or (
+                    grace.previous_candidate_ref, grace.candidate_ref
+                ) != tuple(round_trees[-2:]):
+                    raise ValueError("grace verification does not match the adjacent review candidates")
             result = review_work(
                 ReviewRequest(
                     required_lenses=required,
                     rounds=tuple(rounds),
                     max_rounds=max_rounds,
+                    grace_verification=grace,
                 )
             )
         except ValueError as error:
