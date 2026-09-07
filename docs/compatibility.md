@@ -5,10 +5,18 @@ each current workflow body. Host metadata under `agents/` is cataloged as a
 file in the same provenance record as its skill body; it does not create a
 second workflow source.
 
-This v1 corpus qualifies structure offline and can build one authenticated,
-core-only release archive. It does not install skills, expose them to either
-host, negotiate host features, run a compatibility engine, or claim cross-host
-behavioral qualification.
+The registry's host declarations describe discovery support. The lifecycle
+installs profile-bound releases through the fixed [host projections](host-adapters.md),
+and [product generations](product-generation.md) may include the compatible
+harness runtime. Host metadata alone does not establish behavioral qualification
+for a release; that requires evidence bound to the actual installed bytes.
+
+The [run observation contract](../skills/execute-work/references/run-observation-contract.md)
+checks the runtime's declared reporting capabilities and selected run version.
+This is a bounded reporting check, not a general host compatibility engine.
+Legacy runs remain legacy, and unavailable native signals are not synthesized.
+A rollback can select a runtime that refuses newer run data; neither discovery
+metadata nor a lifecycle switch upgrades that data.
 
 ## Provenance migration
 

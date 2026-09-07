@@ -299,3 +299,14 @@ touching unrelated tracked or untracked bytes. Rollback uses the retained prior
 generation and never fetches its source.
 
 See `docs/host-adapters.md` for the projection contract and conflict behavior.
+
+## Delivery observations
+
+The portable execution and review workflows share a
+[run observation contract](skills/execute-work/references/run-observation-contract.md).
+It covers actual activity, known waits and selected structured report capture
+through a compatible harness runtime. Both hosts use the same contract and
+preserve caller-supplied review accounting. Missing capabilities, signals or
+output remain explicit; observations do not grant delivery authority. See
+[host projections](docs/host-adapters.md) and
+[product generations](docs/product-generation.md) for installed use.

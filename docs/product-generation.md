@@ -46,3 +46,21 @@ Workflow-only releases continue to support the original lifecycle commands.
 They intentionally fail product readiness. Final qualification must compare the
 selected profile, exact workflow content digest, runtime descriptor, and outer
 archive/metadata identities; rebuilding bytes requires fresh qualification.
+
+## Reporting compatibility
+
+Installed execution and review use the
+[shared observation contract](../skills/execute-work/references/run-observation-contract.md)
+through the generation's runtime. Both host exposures resolve the same workflow
+and runtime bytes. Before activity or report capture, the producer checks
+`runs capabilities --json` and separately checks the selected run version.
+Unsupported reporting stays explicit and does not change the command outcome
+or the run's version.
+
+Local run reports belong to the adopter's git common-directory store, not the
+immutable workflow generation or disposable reviewer scratch. Capture selected
+output before cleanup and export it when retention must survive loss of that
+store. Rolling back the product does not establish that the selected older
+runtime understands newer observations; keep a compatible reader for retained
+history. Release qualification must exercise these paths through the installed
+artifact on both hosts, with actual result and candidate bindings.
