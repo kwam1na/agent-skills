@@ -109,3 +109,15 @@ optional `lateFindings`.
   that records it instead.
 
 A lens is read-only, files no tracked item itself, and cannot return `failed`.
+
+## Observation binding and selected output
+
+Use the shared `$execute-work/references/run-observation-contract.md`.
+Supply actual run ID, candidate tree from prepared context, activity ID, attempt
+ID, roundId/round/lensId, stable event IDs, and selected bounded output paths.
+Name a superseded attempt only for an actual replacement. Record the host handle
+and any progress/permission signal limitation; do not parse transcripts.
+Capture actual review, dissent, clarification and available partial-output bytes
+before cleanup. Return stable artifact/report references or an explicit unavailable
+reason. Permission observations never grant authority; reviewer verdict and
+acquisition completion remain distinct.

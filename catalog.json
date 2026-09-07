@@ -203,9 +203,10 @@
     {
       "capabilities": [
         "execution-workflow",
+        "run-observability",
         "tracker-operations"
       ],
-      "degradedBehavior": "Optional tracking and sensors may be absent; declared product gates and recovery remain authoritative and cannot be replaced with executor-invented evidence.",
+      "degradedBehavior": "Optional tracking and sensors may be absent; declared product gates and recovery remain authoritative and cannot be replaced with executor-invented evidence. Unsupported v2 reporting remains explicit; retain selected output without changing delivery authority.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
@@ -257,9 +258,10 @@
     },
     {
       "capabilities": [
-        "review-acquisition"
+        "review-acquisition",
+        "run-observability"
       ],
-      "degradedBehavior": "Native subagent dispatch and aggregation remain available without Python helpers; unavailable lenses remain explicit acquisition states.",
+      "degradedBehavior": "Native subagent dispatch and aggregation remain available without Python helpers; unavailable lenses remain explicit acquisition states. Unsupported v2 reporting remains explicit; retain selected output without changing delivery authority.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
@@ -310,9 +312,10 @@
     },
     {
       "capabilities": [
-        "review-workflow"
+        "review-workflow",
+        "run-observability"
       ],
-      "degradedBehavior": "Unavailable reviewer evidence remains a failed acquisition; unavailable host cost is explicitly unreported.",
+      "degradedBehavior": "Unavailable reviewer evidence remains a failed acquisition; unavailable host cost is explicitly unreported. Unsupported v2 reporting remains explicit; retain selected output without changing delivery authority.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",

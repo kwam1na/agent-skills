@@ -105,3 +105,19 @@ as the declared review scope. Its sensors are the lifecycle status sensor —
 with any policy recompilation that consumer performs. Everything under the
 installed generation's directory is generated release payload, outside review
 scope by declaration.
+
+## Observed delivery progress
+
+Codex and Claude Code use the same
+[run observation contract](../skills/execute-work/references/run-observation-contract.md).
+A host supplies actual activity and attempt identities, native structured
+results, known waits and available output at the boundaries it observes. A
+missing permission signal remains unknown; a permission observation grants no
+permission. Separate host names alone do not prove independent execution.
+
+The workflow checks runtime capabilities and the selected run's writer version
+before reporting. It captures selected reviewer, reducer, clarification and
+available partial output before scratch cleanup, preserving actual round bounds,
+history and reported cost. Unsupported reporting or capture failure stays
+explicit without changing the work's underlying result. The shared contract
+owns these details; discovery projections introduce no additional workflow.

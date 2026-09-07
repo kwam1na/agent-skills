@@ -75,7 +75,9 @@ its findings by severity, the count of late findings in that round, and the
 round's self-reported cost; where the repository declares none, the caller
 proceeds silently, with no handoff and no blocker. That emission is
 observability, not review state, and this workflow neither performs it nor
-reads it back. The caller-selected lens list is unchanged by it.
+reads it back. The caller-selected lens list is unchanged by it. The shared observation
+contract below retains late-finding counts in captured reduction output when
+the runtime's closed event schema has no such member; it never invents a field.
 
 When the host reports no cost, record `coverage: unreported`; do not invent zero.
 Name `reportedBy`. If only part is measured, preserve the reported unit and
@@ -85,6 +87,17 @@ whether the review evidence is valid.
 
 Retain prior rounds, dissent, and typed reviewer failures in the returned value.
 A later complete round may establish alignment without deleting that history.
+
+## Retain the actual reduction for observation
+
+The caller follows the shared `$execute-work/references/run-observation-contract.md`:
+capture this reducer's actual structured return before cleanup, retain earlier
+dissent and available interrupted output, then emit the supported closed-round
+fields. Accounting outside that event schema remains in the captured reduction.
+Project finding dispositions only from supplied originating reviewer/reducer
+results, never infer closure from a later zero count. Retain reported units and
+coverage unchanged. Observation does not alter this reducer, its supplied round
+history, bound/grace interpretation or finding authority.
 
 ## Handoff
 

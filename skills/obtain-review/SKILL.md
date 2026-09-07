@@ -47,7 +47,10 @@ none, proceed silently, with no handoff and no blocker. Give the run's identifie
 another worktree of the same repository so its own emissions join this run; a
 lens realized in a different repository shares no run and is given none. This
 workflow keeps the caller-selected lens list unchanged; emission records the
-selection and never decides it.
+selection and never decides it. The shared observation contract below maps this
+accounting to the runtime's closed fields: unsupported explanatory members
+(such as an unbounded declaration or reopening reason) stay in captured source
+output, never in an invented event member.
 
 Prepare one round brief per selected lens using the template below and the
 harness-supplied realization or host convention. Native subagent dispatch and
@@ -60,6 +63,22 @@ caller-retained material; they are not inline transcripts, arbitrary execution
 payloads, or authority grants. Host realization
 may be sequential. Launching, permissions, retries, and scheduling remain with
 the active host and harness.
+
+## Observe each host realization
+
+Apply the shared `$execute-work/references/run-observation-contract.md`.
+The caller supplies the actual run, candidate tree, activity, attempt, round and
+lens IDs in the brief. Emit queued only when selected and running only when the
+host reports execution. Observe waits only from exposed native signals; do not
+parse transcripts or change launch permissions. Both Codex and Claude Code use
+the same fields, with missing signals explicitly unavailable.
+
+Before cleaning a returned selected report file, call the runtime's `runs capture`
+through that contract, preserving approvals, dissent, clarifications and available
+interrupted bytes. Keep report/artifact references with the acquisition. Capture
+failure remains unavailable and retains scratch output. Terminal acquisition
+state is distinct from its review verdict. Preserve caller-supplied round
+bound/grace/reopen accounting and all superseded attempts.
 
 ## Retain and project
 
@@ -209,7 +228,8 @@ The brief is [the round brief template](references/round-brief-template.md)
 filled in, not composed. An executor realizing a lens fills the template's
 members rather than composing the brief's shape from this text, and its members
 are `Binding tuple`, `Round and bound`, `Fewest-rounds mandate`, `Carry-forward
-entries`, `Candidate reference resolutions`, `Charter`, and `Result shape`. This
+entries`, `Candidate reference resolutions`, `Charter`, `Result shape`, and
+`Observation binding and selected output`. This
 section states what those members must say; the template states where each one
 goes.
 
