@@ -38,6 +38,7 @@ EMITTED_KINDS: dict[str, tuple[str, ...]] = {
 # skill that names kinds it does not own, and it names them only to point at
 # their owners, so its references are enumerated here instead of inferred.
 REFERENCED_KINDS: dict[str, tuple[str, ...]] = {
+    "skills/execute-work/references/run-observation-contract.md": ("`review.round.opened`", "`review.round.closed`"),
     "skills/execute-work/SKILL.md": (
         "`lens.selected`",
         "`review.round.opened`",

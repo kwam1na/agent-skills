@@ -180,6 +180,20 @@ A missing posture, review, or compounding outcome leaves the delivery `partial`.
 An unavailable review blocks completion only when repository authority, host
 policy, or the approved plan requires that review.
 
+## Observe current work and retained outputs
+
+Apply the [shared observation contract](references/run-observation-contract.md)
+before v2 emission. It is the same contract for Codex and Claude Code; discover
+runtime capabilities and the selected run version before writing. Keep legacy
+runs intact and report unsupported reporting explicitly without blocking delivery.
+At actual work boundaries emit `activity.observed`, `wait.started`,
+`wait.resolved`, and `finish.step.observed` with supplied identities. Keep
+executor tracking verification visible after reviewers complete. Permission and
+progress signals unavailable from the host remain explicitly unavailable.
+Capture the caller's actual reducer/acquisition files before scratch cleanup,
+including dissent and interrupted output; preserve failed captures for recovery.
+Do not replace automatic product command observations with duplicate activities.
+
 ## Emit the Run's Events
 
 Emit each event below through the run-event command the repository's root

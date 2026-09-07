@@ -215,6 +215,8 @@ def test_core_profile_is_exact_and_deterministic() -> None:
             "skills/deliver-work/references/capability-contract.md",
             "skills/diagnose-work/SKILL.md",
             "skills/execute-work/SKILL.md",
+            "skills/execute-work/references/run-observation-contract.md",
+            "skills/execute-work/scripts/report_observation.py",
             "skills/obtain-review/SKILL.md",
             "skills/obtain-review/references/round-brief-template.md",
             "skills/plan-work/SKILL.md",
