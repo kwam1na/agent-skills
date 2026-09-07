@@ -30,7 +30,9 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--product", action="store_true", help="require runtime and reconciled policy readiness")
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("status")
-    commands.add_parser("harness").add_argument("arguments", nargs=argparse.REMAINDER)
+    harness = commands.add_parser("harness", add_help=False)
+    harness.add_argument("--help", "-h", action="store_true", dest="runtime_help")
+    harness.add_argument("arguments", nargs=argparse.REMAINDER)
     commands.add_parser("recovery-plan")
     validate = commands.add_parser("validate")
     _release_arguments(validate)
@@ -73,7 +75,7 @@ def main(arguments: list[str] | None = None) -> int:
             return 0
         lifecycle = Lifecycle(args.root)
         if args.command == "harness":
-            return run_runtime(lifecycle, args.arguments)
+            return run_runtime(lifecycle, (["--help"] if args.runtime_help else []) + args.arguments)
         if args.product and args.command in {"install", "update"}:
             version = inspect_release(args.archive, args.metadata)
             if "runtime/runtime.json" not in {record["path"] for record in version["files"]}:

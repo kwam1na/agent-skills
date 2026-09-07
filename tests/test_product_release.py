@@ -42,6 +42,19 @@ class ProductReleaseTests(unittest.TestCase):
         build_release(ROOT, archive, metadata, release_id=f"fixture-{number}", profile_id="core", runtime_directory=self.runtime)
         return archive, metadata
 
+    def test_installed_launcher_forwards_help_to_native_command_inventory(self) -> None:
+        (self.runtime / "cli.mjs").write_text('if (!process.argv.includes("--help")) process.exit(7); console.log("prepare review-context gate record resume");')
+        self.descriptor["files"] = [{"path": name, "sha256": hashlib.sha256((self.runtime / name).read_bytes()).hexdigest()} for name in sorted(RUNTIME_FILES - {"runtime.json"})]
+        self.save_descriptor()
+        archive, metadata = self.build(1)
+        consumer = initialize_repository(self.base)
+        Lifecycle(consumer).install(archive, metadata, maintainer=True)
+        for flag in ("--help", "-h"):
+            with self.subTest(flag=flag):
+                result = subprocess.run([sys.executable, "-B", str(consumer / ".agent-skills/current"), "--root", str(consumer), "harness", flag], text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("prepare review-context gate record resume", result.stdout)
+
     def test_runtime_requires_exact_workflow_and_own_bytes(self) -> None:
         self.descriptor["workflowContentSha256"] = "0" * 64
         self.save_descriptor()
@@ -122,8 +135,8 @@ class ProductReleaseTests(unittest.TestCase):
         def run(*args, **kwargs):
             with self.assertRaisesRegex(LockError, "lock-busy"):
                 lifecycle.update(*second, maintainer=True)
-            return subprocess.CompletedProcess(args, 0)
-        with patch("agent_skills.product.subprocess.run", side_effect=run):
+            return 0
+        with patch("agent_skills.product._run_command", side_effect=run):
             self.assertEqual(run_runtime(lifecycle, ["gate"]), 0)
 
     def test_interrupted_update_recovers_one_generation_and_retained_rollback(self) -> None:
