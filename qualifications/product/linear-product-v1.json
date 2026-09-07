@@ -1,54 +1,54 @@
 {
-  "attestationSha256": "d526ad1b37bc4514c926cdd729f2da92617f5d713fa73303ad4241879dfbcd47",
+  "attestationSha256": "6dbade304b7c348049a192be6eed01477e0d26072eb1bfbba3cb4b999e485aaa",
   "candidate": {
     "core": {
-      "archiveSha256": "575c2da303a2560830e7c78585ca9332c2735ccf454894c7990d08f2b3d0e644",
-      "metadataSha256": "3815f2b0e13cacaedfe61f66fdb49942115322a99e5617062e5bb64553c9c698",
+      "archiveSha256": "02d277e4d9ea8155ed5df6901f88f967772cf2db7d2964431a050169cbdc3257",
+      "metadataSha256": "7c7b636b2e78835c0ffdf25a4a926cd3d2b2c00575c3403688be7b52214bca34",
       "profile": "core",
       "releaseId": "core-product-v1",
-      "sourceTreeSha256": "f7cf06a0a6ed23924e7bac7b85252a474efcce7c8ddb9bb2c5496acf2c7e30b0"
+      "sourceTreeSha256": "e965bfa975697d5ebcf439912f833e0980fe1b78368b97458a8d9692b0cb9817"
     },
     "linear": {
-      "archiveSha256": "21cccc879804e186330a6a2087248d685c47b37a1ea06e4f7dd5e799ccbdf064",
-      "metadataSha256": "c9a689dad54be737027290f9f03fceb69b4af42ccdf0992b3790bd23b1349801",
+      "archiveSha256": "e2a05d69f542ef286a84553bd8a2e9aea92a040a8fe280e3e94fa296c9ffb02a",
+      "metadataSha256": "ad8e8defe5e78e1f4346f87352e272042bfea717f0f895b850b2a82c8211f7c2",
       "profile": "linear",
       "releaseId": "linear-product-v1",
-      "sourceTreeSha256": "eff5e4451523444a740f9c09d216d22d7627bc46f264f1ce50d7a192bb63e29c"
+      "sourceTreeSha256": "452126e669f186bc68c8560af14d35f139293e07382be4bf94833f2ac3104646"
     }
   },
   "collectorBinding": {
     "candidateRef": {
-      "opaque": "qualification-candidate:d0806d797e324ae3b3f8bb5cd5f5f3ca",
+      "opaque": "24ee8228c3e5c90817c904d0e97b79f527adcdbf",
       "schemaVersion": "workflow-candidate-ref/1"
     },
     "graphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7",
     "releases": {
       "core": {
-        "archiveSha256": "575c2da303a2560830e7c78585ca9332c2735ccf454894c7990d08f2b3d0e644",
-        "metadataSha256": "3815f2b0e13cacaedfe61f66fdb49942115322a99e5617062e5bb64553c9c698",
+        "archiveSha256": "02d277e4d9ea8155ed5df6901f88f967772cf2db7d2964431a050169cbdc3257",
+        "metadataSha256": "7c7b636b2e78835c0ffdf25a4a926cd3d2b2c00575c3403688be7b52214bca34",
         "profile": "core",
         "releaseId": "core-product-v1"
       },
       "linear": {
-        "archiveSha256": "21cccc879804e186330a6a2087248d685c47b37a1ea06e4f7dd5e799ccbdf064",
-        "metadataSha256": "c9a689dad54be737027290f9f03fceb69b4af42ccdf0992b3790bd23b1349801",
+        "archiveSha256": "e2a05d69f542ef286a84553bd8a2e9aea92a040a8fe280e3e94fa296c9ffb02a",
+        "metadataSha256": "ad8e8defe5e78e1f4346f87352e272042bfea717f0f895b850b2a82c8211f7c2",
         "profile": "linear",
         "releaseId": "linear-product-v1"
       }
     },
     "schemaVersion": "agent-skills-linear-collector-binding/1",
     "subjectRef": {
-      "opaque": "qualification-subject:aeb8b76bdfd84bdbac0a1e7c4f5510f3",
+      "opaque": "workflow-subject:observability-products",
       "schemaVersion": "workflow-subject-ref/1"
     }
   },
-  "collectorBindingSha256": "29255f185e046569e50241469c282f637664aca90e0c6ee39c27919340b75d04",
-  "coreQualificationSha256": "9188ead3abad951d2f20786aeebb6848a1fc2fc30115ccb88ec0cfbbbb835c37",
+  "collectorBindingSha256": "6d281b296df04817d1524ea44ca8935772d608a9e63c3f614d91edecc7d06cb7",
+  "coreQualificationSha256": "5a7ebf84faaaf78a5edb9b670c9576b525ea00e28a97adb1c3100a8a842209be",
   "proofBoundary": {
     "live": "external MCP provenance is owned by the protected host-native run",
     "offline": "binds the retained attestation bytes to the retained receipt reference and independently frozen release, graph, subject, and candidate input; it does not independently prove external calls or collector authorization"
   },
-  "receiptReference": "linear-receipt:1b69332e34ca44eab3b91431276db1f4",
+  "receiptReference": "linear-receipt:eb4b2dd81da84854ab940b087c7853bf",
   "redaction": {
     "environmentCaptured": false,
     "hostPayloadsCaptured": false,
