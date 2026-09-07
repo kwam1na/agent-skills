@@ -1,54 +1,54 @@
 {
-  "attestationSha256": "df2a98c0e60c5ba284256b53d2316ee07ebda2de828bbfad835db5ddd611b215",
+  "attestationSha256": "de32cbd7c5f6db9350243cac5331481970cf0879dd73b757bf7c9609eea17772",
   "candidate": {
     "core": {
-      "archiveSha256": "77832c006b66859db17bb9a81e3491f7c51b7278302b6b9e2d6ee01691bdbf40",
-      "metadataSha256": "beac6b7f4a437e321545a72669570675ff6bd67c92968c07e6491797e4edda25",
+      "archiveSha256": "774c582d94a08068a07cabac09aacf4c771553d171a5f6f1df5b597ad5f87e2e",
+      "metadataSha256": "f99047a9a53df5f2f5921cffc1c03de99b623a4e32b984b8256378a7fe137e02",
       "profile": "core",
       "releaseId": "core-product-v1",
-      "sourceTreeSha256": "5eeef842e51b3560de1448862aefaa002be0b6fe76feecc28e09568b4a3027ab"
+      "sourceTreeSha256": "e7004ad26a17e6a8338d0ac8d8cc48655979fc90256195fad85d3290339c5ce2"
     },
     "linear": {
-      "archiveSha256": "4385e54a7fefda85a936b3e4be1719b062887d864b388e8e42ae91d14b000f6c",
-      "metadataSha256": "5f664b52b5318cbc18452b3a9d2e4d2faff8d9d4c095f58bc60c018a4c26a0df",
+      "archiveSha256": "50efa2e70f4e04dfe3c3331242f9387f86e3de978242e290c36478ad8d13097e",
+      "metadataSha256": "376827432590e334aaeea9a542daedc5d86cfb992b1107288141014e9c0a6e54",
       "profile": "linear",
       "releaseId": "linear-product-v1",
-      "sourceTreeSha256": "8a422eacb7dfa60c38ef1e70fcb82581bb5c7234de0f21c1d10eb328e2e34066"
+      "sourceTreeSha256": "7c7462d0544f35e48604a960917fddb52bc31b1ea30818237efbf739ecd5d729"
     }
   },
   "collectorBinding": {
     "candidateRef": {
-      "opaque": "qualification-candidate:95eebbcfb74f433e9469229439f11057",
+      "opaque": "qualification-candidate:13882a845205451d92c4c9bab386b75e",
       "schemaVersion": "workflow-candidate-ref/1"
     },
     "graphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7",
     "releases": {
       "core": {
-        "archiveSha256": "77832c006b66859db17bb9a81e3491f7c51b7278302b6b9e2d6ee01691bdbf40",
-        "metadataSha256": "beac6b7f4a437e321545a72669570675ff6bd67c92968c07e6491797e4edda25",
+        "archiveSha256": "774c582d94a08068a07cabac09aacf4c771553d171a5f6f1df5b597ad5f87e2e",
+        "metadataSha256": "f99047a9a53df5f2f5921cffc1c03de99b623a4e32b984b8256378a7fe137e02",
         "profile": "core",
         "releaseId": "core-product-v1"
       },
       "linear": {
-        "archiveSha256": "4385e54a7fefda85a936b3e4be1719b062887d864b388e8e42ae91d14b000f6c",
-        "metadataSha256": "5f664b52b5318cbc18452b3a9d2e4d2faff8d9d4c095f58bc60c018a4c26a0df",
+        "archiveSha256": "50efa2e70f4e04dfe3c3331242f9387f86e3de978242e290c36478ad8d13097e",
+        "metadataSha256": "376827432590e334aaeea9a542daedc5d86cfb992b1107288141014e9c0a6e54",
         "profile": "linear",
         "releaseId": "linear-product-v1"
       }
     },
     "schemaVersion": "agent-skills-linear-collector-binding/1",
     "subjectRef": {
-      "opaque": "qualification-subject:314b4f2631284e7e9b6027fd6b2f9ca3",
+      "opaque": "qualification-subject:5f6c22541d4d4de38bbc9040a0c68818",
       "schemaVersion": "workflow-subject-ref/1"
     }
   },
-  "collectorBindingSha256": "6fa4fc38c56e476eb05852d062e97214a1c0b73b0012e9a78f98f548c59a5ea1",
-  "coreQualificationSha256": "33b8143490421517dd808e692918289dab0be2d0610d4ae5e5d81843c7df6f24",
+  "collectorBindingSha256": "3edf0db3205c814261c6da526ccc142350a4b68a0d60d7488752c48cf48b3d9a",
+  "coreQualificationSha256": "046ac8490edd8f11622b42b6c05f8ad4c2842573abc27067396bf3d6b28416f6",
   "proofBoundary": {
     "live": "external MCP provenance is owned by the protected host-native run",
     "offline": "binds the retained attestation bytes to the retained receipt reference and independently frozen release, graph, subject, and candidate input; it does not independently prove external calls or collector authorization"
   },
-  "receiptReference": "linear-receipt:f637459b37b74faab484e408ca57d8bc",
+  "receiptReference": "linear-receipt:8ff1c99aba404cd48057c4eed4d976b7",
   "redaction": {
     "environmentCaptured": false,
     "hostPayloadsCaptured": false,
