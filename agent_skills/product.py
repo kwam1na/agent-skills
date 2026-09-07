@@ -64,7 +64,10 @@ def _run_command(arguments: list[str], root: Path) -> int:
             except ProcessLookupError:
                 pass
 
-    previous = {sig: signal.signal(sig, interrupt) for sig in (signal.SIGINT, signal.SIGTERM)}
+    signals = (signal.SIGINT, signal.SIGTERM)
+    if not windows and hasattr(signal, "SIGHUP"):
+        signals += (signal.SIGHUP,)
+    previous = {sig: signal.signal(sig, interrupt) for sig in signals}
     try:
         if windows:
             # Isolate console Ctrl+C from descendants so the launcher can stop

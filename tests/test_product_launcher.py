@@ -15,6 +15,7 @@ from agent_skills.cli import main
 from agent_skills.product import _run_command
 
 ROOT = Path(__file__).resolve().parents[1]
+POSIX_SIGNALS = (signal.SIGINT, signal.SIGTERM) + ((signal.SIGHUP,) if hasattr(signal, "SIGHUP") else ())
 
 
 class ProductLauncherTests(unittest.TestCase):
@@ -79,7 +80,7 @@ class ProductLauncherTests(unittest.TestCase):
                     self.assertEqual(handlers, {signal.SIGINT: signal.SIG_DFL, signal.SIGTERM: signal.SIG_DFL})
 
     def test_signal_during_spawn_is_forwarded_after_child_assignment(self) -> None:
-        for signum in (signal.SIGINT, signal.SIGTERM):
+        for signum in POSIX_SIGNALS:
             with self.subTest(signum=signum):
                 handlers = {}
                 child = Mock(pid=12345)
@@ -100,7 +101,7 @@ class ProductLauncherTests(unittest.TestCase):
                         self.assertEqual(_run_command(["worker"], ROOT), 128 + signum)
                 forwarded = [call.args for call in killpg.call_args_list if call.args[1] != 0]
                 self.assertEqual(forwarded, [(child.pid, signum)])
-                self.assertEqual(handlers, {signal.SIGINT: signal.SIG_DFL, signal.SIGTERM: signal.SIG_DFL})
+                self.assertEqual(handlers, {sig: signal.SIG_DFL for sig in POSIX_SIGNALS})
 
     @unittest.skipUnless(os.name == "nt", "Requires real Windows taskkill and process handles")
     def test_windows_cancellation_stops_real_descendants(self) -> None:
@@ -151,21 +152,22 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
 
     @unittest.skipUnless(os.name == "posix", "POSIX process-group signal and ps liveness proof")
     def test_cancellation_stops_descendants_and_escalates(self) -> None:
-        for signum in (signal.SIGINT, signal.SIGTERM):
+        deliveries = [(sig, False) for sig in POSIX_SIGNALS] + [(signal.SIGHUP, True)]
+        for signum, terminal_group in deliveries:
             for resistant in (False, True):
-                with self.subTest(signum=signum, resistant=resistant), tempfile.TemporaryDirectory() as directory:
+                with self.subTest(signum=signum, resistant=resistant, terminal_group=terminal_group), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     worker = root / "worker.py"
                     worker.write_text("import os, signal, time\nfrom pathlib import Path\n"
-                                      + ("signal.signal(signal.SIGINT, signal.SIG_IGN)\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n" if resistant else
-                                         "def received(signum, _frame):\n    Path('worker.sig').write_text(str(signum))\n    os._exit(0)\nsignal.signal(signal.SIGINT, received)\nsignal.signal(signal.SIGTERM, received)\n")
+                                      + ("signal.signal(signal.SIGINT, signal.SIG_IGN)\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nsignal.signal(signal.SIGHUP, signal.SIG_IGN)\n" if resistant else
+                                         "def received(signum, _frame):\n    Path('worker.sig').write_text(str(signum))\n    os._exit(0)\nsignal.signal(signal.SIGINT, received)\nsignal.signal(signal.SIGTERM, received)\nsignal.signal(signal.SIGHUP, received)\n")
                                       + "Path('worker.pid').write_text(str(os.getpid()))\nwhile True: time.sleep(1)\n")
                     parent = root / "parent.py"
                     parent.write_text("import subprocess, sys\nsubprocess.run([sys.executable, 'worker.py'])\n")
                     launcher = subprocess.Popen([sys.executable, "-c",
                         "from pathlib import Path; from agent_skills.product import _run_command; import sys; "
                         "raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))", str(root)],
-                        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
                     worker_pid = None
                     try:
                         deadline = time.monotonic() + 5
@@ -173,7 +175,10 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                             time.sleep(0.02)
                         self.assertTrue((root / "worker.pid").exists())
                         worker_pid = int((root / "worker.pid").read_text())
-                        launcher.send_signal(signum)
+                        if terminal_group:
+                            os.killpg(launcher.pid, signum)
+                        else:
+                            launcher.send_signal(signum)
                         self.assertEqual(launcher.wait(timeout=7), 128 + signum)
                         if not resistant:
                             self.assertTrue((root / "worker.sig").is_file(), "worker never received the forwarded signal")
