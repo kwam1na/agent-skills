@@ -373,10 +373,24 @@ class ReviewLateFinding:
 
 
 @dataclass(frozen=True)
+class GraceVerification:
+    """Caller-bound evidence of a required candidate change after alignment.
+
+    The pure reducer cannot resolve candidate references or prove necessity.
+    The caller must bind these exact references to the adjacent acquisitions.
+    """
+
+    previous_candidate_ref: str
+    candidate_ref: str
+    required_change: str
+
+
+@dataclass(frozen=True)
 class ReviewRequest:
     required_lenses: tuple[str, ...]
     rounds: tuple[tuple[ReviewLensResult, ...], ...]
     max_rounds: int
+    grace_verification: GraceVerification | None = None
 
 
 @dataclass(frozen=True)
@@ -388,6 +402,7 @@ class ReviewResult:
     blockers: tuple[str, ...]
     action: str
     late_findings: tuple[ReviewLateFinding, ...] = ()
+    grace_verification: GraceVerification | None = None
 
 
 def _normalized_lens_result(result: ReviewLensResult) -> ReviewLensResult:
@@ -468,6 +483,20 @@ def review_work(request: ReviewRequest) -> ReviewResult:
     if request.max_rounds < 1:
         raise ValueError("review max rounds must be positive")
 
+    grace = request.grace_verification
+    if grace is not None:
+        if not isinstance(grace, GraceVerification) or any(
+            not isinstance(value, str) or not value.strip()
+            for value in (
+                grace.previous_candidate_ref, grace.candidate_ref, grace.required_change
+            )
+        ):
+            raise ValueError("grace verification requires candidate references and required-change evidence")
+        if grace.previous_candidate_ref == grace.candidate_ref:
+            raise ValueError("grace verification requires a changed candidate")
+        if len(request.rounds) != request.max_rounds + 1:
+            raise ValueError("grace verification requires exactly one round beyond the original bound")
+
     rounds = tuple(
         tuple(_normalized_lens_result(result) for result in results)
         for results in request.rounds
@@ -506,7 +535,12 @@ def review_work(request: ReviewRequest) -> ReviewResult:
 
     latest = rounds[-1]
     blockers = list(_round_blockers(latest, required_lenses, len(rounds)))
-    if len(rounds) > request.max_rounds:
+    if grace is not None:
+        bound_round = rounds[request.max_rounds - 1]
+        blockers.extend(_round_blockers(bound_round, required_lenses, request.max_rounds))
+        if any(result.outcome != "aligned" for result in bound_round):
+            blockers.append("grace verification requires unanimous alignment at the original bound")
+    elif len(rounds) > request.max_rounds:
         blockers.append(f"review loop exceeded {request.max_rounds} rounds")
 
     active_dissent = tuple(
@@ -535,6 +569,7 @@ def review_work(request: ReviewRequest) -> ReviewResult:
         blockers=_unique(tuple(blockers)),
         action=action,
         late_findings=late_findings,
+        grace_verification=grace,
     )
 
 

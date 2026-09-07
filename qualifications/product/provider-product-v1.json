@@ -1,5 +1,5 @@
 {
-  "installedProviderSha256": "3f68ac3d677384c6229a3a8215c969bd211c477afbdea1712e564d634e82504f",
+  "installedProviderSha256": "50666b6d8ff58860b8b814cd994d40584cb4c134381dbda5ee605ff71f3cfa4a",
   "proofBoundary": {
     "external": "Host and connector provenance remains owned by the protected external run that supplies host events.",
     "offline": "This record proves exact installed provider execution, retained evidence behavior, and deterministic replay; controlled host events do not independently prove external calls."
@@ -12,8 +12,8 @@
     "rawPayloadsCaptured": false
   },
   "release": {
-    "archiveSha256": "774c582d94a08068a07cabac09aacf4c771553d171a5f6f1df5b597ad5f87e2e",
-    "metadataSha256": "f99047a9a53df5f2f5921cffc1c03de99b623a4e32b984b8256378a7fe137e02",
+    "archiveSha256": "575c2da303a2560830e7c78585ca9332c2735ccf454894c7990d08f2b3d0e644",
+    "metadataSha256": "3815f2b0e13cacaedfe61f66fdb49942115322a99e5617062e5bb64553c9c698",
     "profile": "core",
     "releaseId": "core-product-v1"
   },
