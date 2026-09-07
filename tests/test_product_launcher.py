@@ -52,6 +52,56 @@ class ProductLauncherTests(unittest.TestCase):
                 posix_kill.assert_not_called()
                 self.assertEqual(handlers, {signal.SIGINT: signal.SIG_DFL, signal.SIGTERM: signal.SIG_DFL})
 
+    def test_windows_cleanup_failure_propagates_and_restores_signal_handlers(self) -> None:
+        failures = (subprocess.CalledProcessError(128, "taskkill"), subprocess.TimeoutExpired("taskkill", 2))
+        for failure in failures:
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                with self.subTest(failure=type(failure).__name__, signum=signum):
+                    handlers = {}
+                    child = Mock(pid=12345)
+                    def register(sig, handler):
+                        handlers[sig] = handler
+                        return signal.SIG_DFL
+                    def wait(*, timeout):
+                        if timeout == 0.1:
+                            handlers[signum](signum, None)
+                            raise subprocess.TimeoutExpired("worker", timeout)
+                        return 1
+                    child.wait.side_effect = wait
+                    with patch("agent_skills.product.os.name", "nt"), \
+                         patch("agent_skills.product.signal.signal", side_effect=register), \
+                         patch("agent_skills.product.subprocess.CREATE_NEW_PROCESS_GROUP", 512, create=True), \
+                         patch("agent_skills.product.subprocess.Popen", return_value=child), \
+                         patch("agent_skills.product.subprocess.run", side_effect=failure):
+                        with self.assertRaises(type(failure)) as raised:
+                            _run_command(["worker"], ROOT)
+                    self.assertIs(raised.exception, failure)
+                    self.assertEqual(handlers, {signal.SIGINT: signal.SIG_DFL, signal.SIGTERM: signal.SIG_DFL})
+
+    def test_signal_during_spawn_is_forwarded_after_child_assignment(self) -> None:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signum=signum):
+                handlers = {}
+                child = Mock(pid=12345)
+                def register(sig, handler):
+                    handlers[sig] = handler
+                    return signal.SIG_DFL
+                def kill_group(pid, forwarded):
+                    if forwarded == 0:
+                        raise ProcessLookupError
+                with patch("agent_skills.product.os.name", "posix"), \
+                     patch("agent_skills.product.signal.signal", side_effect=register), \
+                     patch("agent_skills.product.os.killpg", side_effect=kill_group, create=True) as killpg:
+                    def spawn(*args, **kwargs):
+                        handlers[signum](signum, None)
+                        killpg.assert_not_called()
+                        return child
+                    with patch("agent_skills.product.subprocess.Popen", side_effect=spawn):
+                        self.assertEqual(_run_command(["worker"], ROOT), 128 + signum)
+                forwarded = [call.args for call in killpg.call_args_list if call.args[1] != 0]
+                self.assertEqual(forwarded, [(child.pid, signum)])
+                self.assertEqual(handlers, {signal.SIGINT: signal.SIG_DFL, signal.SIGTERM: signal.SIG_DFL})
+
     @unittest.skipUnless(os.name == "nt", "Requires real Windows taskkill and process handles")
     def test_windows_cancellation_stops_real_descendants(self) -> None:
         import ctypes
@@ -107,7 +157,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                     root = Path(directory)
                     worker = root / "worker.py"
                     worker.write_text("import os, signal, time\nfrom pathlib import Path\n"
-                                      + ("signal.signal(signal.SIGINT, signal.SIG_IGN)\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n" if resistant else "")
+                                      + ("signal.signal(signal.SIGINT, signal.SIG_IGN)\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n" if resistant else
+                                         "def received(signum, _frame):\n    Path('worker.sig').write_text(str(signum))\n    os._exit(0)\nsignal.signal(signal.SIGINT, received)\nsignal.signal(signal.SIGTERM, received)\n")
                                       + "Path('worker.pid').write_text(str(os.getpid()))\nwhile True: time.sleep(1)\n")
                     parent = root / "parent.py"
                     parent.write_text("import subprocess, sys\nsubprocess.run([sys.executable, 'worker.py'])\n")
@@ -124,6 +175,9 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                         worker_pid = int((root / "worker.pid").read_text())
                         launcher.send_signal(signum)
                         self.assertEqual(launcher.wait(timeout=7), 128 + signum)
+                        if not resistant:
+                            self.assertTrue((root / "worker.sig").is_file(), "worker never received the forwarded signal")
+                            self.assertEqual((root / "worker.sig").read_text(), str(signum))
                         deadline = time.monotonic() + 2
                         while time.monotonic() < deadline:
                             state = subprocess.run(["ps", "-o", "stat=", "-p", str(worker_pid)], capture_output=True, text=True).stdout.strip()
