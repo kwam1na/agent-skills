@@ -22,6 +22,7 @@ def main() -> int:
     build.add_argument("--metadata", type=Path, required=True)
     build.add_argument("--release-id", required=True)
     build.add_argument("--profile", default="core")
+    build.add_argument("--runtime-directory", type=Path)
     verify = subparsers.add_parser("verify")
     verify.add_argument("--archive", type=Path, required=True)
     verify.add_argument("--metadata", type=Path, required=True)
@@ -35,6 +36,7 @@ def main() -> int:
                 args.metadata,
                 release_id=args.release_id,
                 profile_id=args.profile,
+                runtime_directory=args.runtime_directory,
             )
         else:
             result = verify_release(args.archive, args.metadata, extract_to=args.extract_to)

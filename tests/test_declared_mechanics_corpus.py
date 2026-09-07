@@ -13,6 +13,12 @@ ROOT = Path(__file__).resolve().parents[1]
 # release cadence, how a red proof of a pin on a provenance-covered file must
 # move the digests, and what a corpus pin asserts about a phrase it matches.
 REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
+    "skills/deliver-work/SKILL.md": (
+        "call its read-only `resume` command before reusing evidence on continuation",
+    ),
+    "skills/review-work/SKILL.md": (
+        "When the host reports no cost, record `coverage: unreported`; do not invent zero",
+    ),
     "AGENTS.md": (
         "resolves, in this repository, to the commit whose tree carries the"
         " reviewed text",
@@ -57,6 +63,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " release payload, outside review scope by declaration",
     ),
     "skills/execute-work/SKILL.md": (
+        "Retain the original `review-context --json` document before dispatching reviewers",
+        "Never reconstruct a receipt, invent a passed check, or infer evidence reuse from journal events",
+        "Record `action.intent` before an authorized external action",
         "| Typed blocker | Raised when |",
         "`review.loop-bound-reached` | The bound is reached with dissent open",
         "`review.deferral-untracked` | The delivery would report done while a"
@@ -66,6 +75,17 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " first time it is used",
     ),
     "skills/obtain-review/SKILL.md": (
+        "Native subagent dispatch and the aggregation below are sufficient;"
+        " Python and `agent_skills.review_orchestration` are not prerequisites",
+        "The Python helpers `prepare_review` and `obtain_review` are optional"
+        " implementations of this same contract when the caller has them",
+        "Retain one entry for every selected lens in the caller's order,"
+        " including missing, failed, and indeterminate acquisitions",
+        "Copy the trusted binding tuple into the envelope and every entry;"
+        " compare any binding returned by a reviewer against that tuple and"
+        " reject a mismatch",
+        "Project each obtained result to `review-work` with its lens id,"
+        " outcome, findings, evidence, and optional late findings",
         "One subagent per lens",
         "The charter is supplied to it verbatim beside the round brief, and the"
         " executor composes nothing about the charter itself",

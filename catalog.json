@@ -89,7 +89,7 @@
         "tracker-operations",
         "workflow-routing"
       ],
-      "degradedBehavior": "Optional tracking routes remain unavailable until an adopter selects a conforming tracker profile.",
+      "degradedBehavior": "Optional tracking remains optional; declared product recovery must reconcile saved context and unresolved actions before evidence reuse.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
@@ -205,7 +205,7 @@
         "execution-workflow",
         "tracker-operations"
       ],
-      "degradedBehavior": "Core execution remains complete when optional tracking or optional sensors are unavailable, and reports the omitted operation honestly.",
+      "degradedBehavior": "Optional tracking and sensors may be absent; declared product gates and recovery remain authoritative and cannot be replaced with executor-invented evidence.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
@@ -259,6 +259,7 @@
       "capabilities": [
         "review-acquisition"
       ],
+      "degradedBehavior": "Native subagent dispatch and aggregation remain available without Python helpers; unavailable lenses remain explicit acquisition states.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
@@ -311,6 +312,7 @@
       "capabilities": [
         "review-workflow"
       ],
+      "degradedBehavior": "Unavailable reviewer evidence remains a failed acquisition; unavailable host cost is explicitly unreported.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",

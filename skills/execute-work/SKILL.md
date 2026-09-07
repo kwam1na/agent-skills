@@ -44,6 +44,49 @@ solely to satisfy an accidental formatting or extraction constraint.
 When work becomes blocked, retain completed work and evidence, name the blocker,
 and provide the approval or decision handoff needed to continue.
 
+## Use the Installed Product's Gate
+
+When the repository declares the delivery product, invoke its installed command
+through the repository's named entry point. The product owns preparation,
+candidate identity, evidence validation, reuse, and accounting. Repository
+commands remain sensors and policy inputs. Never reconstruct a receipt, invent
+a passed check, or infer evidence reuse from journal events.
+
+Run `prepare` before independent review so configured mechanical checks finish
+before a review context is published. Retain the original
+`review-context --json` document before dispatching reviewers. Give each lens
+that exact context and its declared charter. After reducing actual independent
+results, pass the concluded `review-outcome/1` document and its `contextDigest`
+to `emit-review-evidence --context <retained-context>`, then use the returned
+manifest with `submit-evidence`. Preserve every round, finding disposition,
+acquisition failure, and coverage gap. A missing or failed reviewer cannot be
+converted into approval by the executor.
+
+Continue through `gate`, `record`, and `verify` with the repository's selected
+validation and artifact obligations. The product's freshness result determines
+whether another review or check is required; do not run an unconditional second
+review on already-current evidence. Never waive malformed or mismatched
+evidence. A human exception remains visibly waived, with its author, reason,
+scope and candidate; an agent cannot grant one. Retain the final portable record
+for the same verifier used in CI. Follow the repository's permitted finish line
+after admission; the default is merge-ready, and merge or deploy requires the
+authority the user or repository already supplied.
+
+## Save Continuation Context
+
+When the installed product provides recovery, use `save-context --json` at
+meaningful stage boundaries with the bounded `contract` (`objective`,
+`acceptanceCriteria`, `finishLine`) and current `stage`. Keep this in the
+existing run; do not create a parallel session ledger. On continuation, use
+`resume` and reconcile its unresolved actions before continuing dependent work.
+
+Record `action.intent` before an authorized external action, naming its
+`actionId`, `operation`, and reconciliation `reference`. After observing the
+external state, record `action.observed` for the same ID and reference with
+`succeeded`, `failed`, `not-performed`, or `unknown`. An intent does not authorize
+the action, and an interruption does not establish its outcome. The native host
+owns tools and authentication; resume never automatically repeats the action.
+
 ## Bound the Review Loop
 
 Before the first review round, state the bound in effect for the delivery,

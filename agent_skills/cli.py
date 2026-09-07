@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 from pathlib import Path
 
 from .generations import inspect_release
 from .lifecycle import Lifecycle, require_mutation_authority
 from .locking import RepositoryLock
+from .product import product_status, reconcile_policy, run_runtime
 from .validate import canonical_json
 
 
@@ -25,8 +27,12 @@ def _maintenance(parser: argparse.ArgumentParser) -> None:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="agent-skills")
     root.add_argument("--root", type=Path, default=Path.cwd())
+    root.add_argument("--product", action="store_true", help="require runtime and reconciled policy readiness")
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("status")
+    harness = commands.add_parser("harness", add_help=False)
+    harness.add_argument("--help", "-h", action="store_true", dest="runtime_help")
+    harness.add_argument("arguments", nargs=argparse.REMAINDER)
     commands.add_parser("recovery-plan")
     validate = commands.add_parser("validate")
     _release_arguments(validate)
@@ -68,8 +74,18 @@ def main(arguments: list[str] | None = None) -> int:
             print(canonical_json(output), end="")
             return 0
         lifecycle = Lifecycle(args.root)
+        if args.command == "harness":
+            return run_runtime(lifecycle, (["--help"] if args.runtime_help else []) + args.arguments)
+        if args.product and args.command in {"install", "update"}:
+            version = inspect_release(args.archive, args.metadata)
+            if "runtime/runtime.json" not in {record["path"] for record in version["files"]}:
+                raise ValueError("product.runtime_missing: supplied release has no delivery runtime")
         if args.command == "status":
-            output = lifecycle.status().as_dict()
+            if args.product:
+                with RepositoryLock(lifecycle.lock_path, shared=True):
+                    output = product_status(lifecycle)
+            else:
+                output = lifecycle.status().as_dict()
         elif args.command == "recovery-plan":
             status = lifecycle.status().as_dict()
             output = {
@@ -115,7 +131,13 @@ def main(arguments: list[str] | None = None) -> int:
                 "action": "break-stale-lock",
                 "schemaVersion": "agent-skills-operation/1",
             }
-    except (OSError, ValueError) as error:
+        if args.product and args.command in {"install", "update", "rollback", "recover"}:
+            with RepositoryLock(lifecycle.lock_path):
+                reconcile_policy(lifecycle, check=False)
+                output["status"] = product_status(lifecycle)
+            if not output["status"]["productReady"]:
+                raise ValueError("product.policy_unready: lifecycle changed; retry recover to reconcile policy")
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
         message = str(error)
         code = message.split(":", 1)[0] if ":" in message else "lifecycle-error"
         print(
@@ -130,7 +152,7 @@ def main(arguments: list[str] | None = None) -> int:
         )
         return 1
     print(canonical_json(output), end="")
-    return 0
+    return 1 if args.product and args.command == "status" and not output.get("productReady") else 0
 
 
 if __name__ == "__main__":
