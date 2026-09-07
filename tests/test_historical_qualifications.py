@@ -15,4 +15,3 @@ class HistoricalQualificationTests(unittest.TestCase):
                                          "linear-v2.attestation.json", "linear-v2.collector-binding.json"})
         for name, digest in checksums.items():
             self.assertEqual(hashlib.sha256((history / name).read_bytes()).hexdigest(), digest)
-
