@@ -228,7 +228,8 @@ The brief is [the round brief template](references/round-brief-template.md)
 filled in, not composed. An executor realizing a lens fills the template's
 members rather than composing the brief's shape from this text, and its members
 are `Binding tuple`, `Round and bound`, `Fewest-rounds mandate`, `Carry-forward
-entries`, `Candidate reference resolutions`, `Charter`, and `Result shape`. This
+entries`, `Candidate reference resolutions`, `Charter`, `Result shape`, and
+`Observation binding and selected output`. This
 section states what those members must say; the template states where each one
 goes.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,6 +49,62 @@ class WorkflowObservationTests(unittest.TestCase):
                 calls.append(invoke.call_args_list[-1].args[0])
                 self.assertEqual(json.loads(calls[-1][-1]), request["payload"])
         self.assertEqual(calls[0], calls[1])
+
+    def test_emit_targets_the_supplied_run_event_and_kind(self):
+        request = {**self.request(), "runId": "run-intended-72", "eventId": "event-specific-23"}
+        with patch.object(reporter, "invoke", side_effect=[
+            (0, self.capabilities()),
+            (0, {"spec": "delivery-run-export/2", "runId": request["runId"]}),
+            (0, {}),
+        ]) as invoke:
+            self.assertEqual(reporter.report(request)["status"], "reported")
+            self.assertEqual(invoke.call_args_list[1].args[0],
+                             [*request["runtime"], "runs", "show", request["runId"], "--json"])
+            emitted = invoke.call_args_list[2].args[0]
+            self.assertEqual(emitted[:-1], [*request["runtime"], "emit", request["kind"],
+                             "--run", request["runId"], "--event-id", request["eventId"], "--json"])
+            self.assertEqual(json.loads(emitted[-1]), request["payload"])
+            self.assertEqual(invoke.call_args_list[2].args[1], request["cwd"])
+
+    def test_real_process_capture_status_survives_json_and_text_responses(self):
+        # Keep invoke and subprocess.run real. Only the external runtime is a
+        # small executable fixture with explicit capability/read/capture paths.
+        runtime_source = """import json
+import pathlib
+import sys
+exit_code, response_format = int(sys.argv[1]), sys.argv[2]
+args = sys.argv[3:]
+with pathlib.Path("calls.jsonl").open("a") as log:
+    log.write(json.dumps(args) + "\\n")
+if args == ["runs", "capabilities", "--json"]:
+    print(json.dumps({"spec": "run-capabilities/1", "writerVersions": ["run-event/2"], "artifactCapture": True}))
+elif args == ["runs", "show", "run-selected", "--json"]:
+    print(json.dumps({"spec": "delivery-run-export/2", "runId": "run-selected"}))
+elif args[:4] == ["runs", "capture", "run-selected", "--json"] and len(args) == 5:
+    if response_format == "json":
+        print(json.dumps({"ok": exit_code == 0}))
+    else:
+        print("capture accepted" if exit_code == 0 else "capture refused")
+    sys.exit(exit_code)
+else:
+    sys.exit(22)
+"""
+        for exit_code in (0, 9):
+            for response_format in ("json", "text"):
+                with self.subTest(exit_code=exit_code, format=response_format), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    runtime_file = root / "runtime.py"
+                    runtime_file.write_text(runtime_source)
+                    request = {**self.request(), "runtime": [sys.executable, "-B", str(runtime_file), str(exit_code), response_format],
+                               "cwd": str(root), "runId": "run-selected", "operation": "capture", "request": {
+                                   "sourceRoot": str(root), "sourcePath": "dissent.json", "eventId": "capture-selected",
+                                   "artifact": {"artifactId": "selected-artifact"}, "report": {"reportId": "selected-report", "role": "review"}}}
+                    result = reporter.report(request)
+                    self.assertEqual(result["status"], "reported" if exit_code == 0 else "unavailable")
+                    calls = [json.loads(line) for line in (root / "calls.jsonl").read_text().splitlines()]
+                    self.assertEqual(len(calls), 3)
+                    self.assertEqual(calls[-1][:-1], ["runs", "capture", "run-selected", "--json"])
+                    self.assertEqual(json.loads(calls[-1][-1]), request["request"])
 
     def test_capture_uses_selected_request_and_failure_is_explicit(self):
         request = self.request()
