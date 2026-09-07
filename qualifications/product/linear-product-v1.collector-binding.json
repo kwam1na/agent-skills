@@ -1,19 +1,19 @@
 {
   "candidateRef": {
-    "opaque": "24ee8228c3e5c90817c904d0e97b79f527adcdbf",
+    "opaque": "17498a94c83ab6844d0d460bee9fb75f4c833073",
     "schemaVersion": "workflow-candidate-ref/1"
   },
   "graphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7",
   "releases": {
     "core": {
-      "archiveSha256": "02d277e4d9ea8155ed5df6901f88f967772cf2db7d2964431a050169cbdc3257",
-      "metadataSha256": "7c7b636b2e78835c0ffdf25a4a926cd3d2b2c00575c3403688be7b52214bca34",
+      "archiveSha256": "ab5697d42e13273fdf061be90429c9d8b2ae742ed234d11f7f178b0c44f9a5c5",
+      "metadataSha256": "f4a1c4af455f013e7147edea8554f3bd2fd8dd09ef39c50530ffe3c9cb583536",
       "profile": "core",
       "releaseId": "core-product-v1"
     },
     "linear": {
-      "archiveSha256": "e2a05d69f542ef286a84553bd8a2e9aea92a040a8fe280e3e94fa296c9ffb02a",
-      "metadataSha256": "ad8e8defe5e78e1f4346f87352e272042bfea717f0f895b850b2a82c8211f7c2",
+      "archiveSha256": "ea74c8d00028343b4b6b2d2cf4b1f24d19723e27b596d3d2d73ef1e3317b8551",
+      "metadataSha256": "e0decf70cd95d292cc35d3c04f14e4fbd6be4da2b9b95d1a2c1d193a2089308e",
       "profile": "linear",
       "releaseId": "linear-product-v1"
     }
