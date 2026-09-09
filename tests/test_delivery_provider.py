@@ -311,7 +311,7 @@ class DeliveryProviderTests(unittest.TestCase):
                 {
                     "actionable": True,
                     "blocking": False,
-                    "deferredIssueId": "V26-9999",
+                    "deferredIssueId": "FOLLOWUP-9999",
                     "disposition": "deferred",
                     "id": "finding-one",
                     "scope": deferred_scope,
@@ -321,7 +321,7 @@ class DeliveryProviderTests(unittest.TestCase):
                 {
                     "actionable": True,
                     "blocking": False,
-                    "deferredIssueId": "V26-9999",
+                    "deferredIssueId": "FOLLOWUP-9999",
                     "disposition": "deferred",
                     "id": "finding-two",
                     "scope": deferred_scope,

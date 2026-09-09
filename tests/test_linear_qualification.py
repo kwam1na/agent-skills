@@ -24,6 +24,17 @@ PRODUCT = ROOT / "qualifications" / "product"
 ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
 RECORD = PRODUCT / "linear-product-v1.json"
 BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
+HISTORICAL_PRODUCT_SHA256 = {
+    "core-product-v1.json": "0073ba85859497b6aaa601f87796ad636282ec19694df9c1663cd8bc49d6941e",
+    "core-product-v1.release.json": "f4a1c4af455f013e7147edea8554f3bd2fd8dd09ef39c50530ffe3c9cb583536",
+    "core-product-v1.zip": "ab5697d42e13273fdf061be90429c9d8b2ae742ed234d11f7f178b0c44f9a5c5",
+    "linear-product-v1.attestation.json": "184fd4c9693ca880de446cf7d0d8f0e20c1b3c8637a20bd1fb48451e18e6e25e",
+    "linear-product-v1.collector-binding.json": "be0683edeed89f552a45b571282a4c831ce9c3b6c487de662f094c1b1a012540",
+    "linear-product-v1.json": "9873b333ef330c34b76a5ef5371d32bc97d7c28838e8b4b6ca41634751b23a72",
+    "linear-product-v1.release.json": "e0decf70cd95d292cc35d3c04f14e4fbd6be4da2b9b95d1a2c1d193a2089308e",
+    "linear-product-v1.zip": "ea74c8d00028343b4b6b2d2cf4b1f24d19723e27b596d3d2d73ef1e3317b8551",
+    "provider-product-v1.json": "591aff86b3a23a4d15b29fb11794624f3b06d08c24bcaa348c4391d8d71beb35",
+}
 
 
 def _load_runner():
@@ -314,6 +325,13 @@ class LinearQualificationTests(unittest.TestCase):
             wrong["scenarios"][0]["evidence"].append("invented evidence")
             with self.assertRaisesRegex(ValueError, "exact record mismatch"):
                 runner.validate_checked_record(wrong, *paths)
+            tampered_attestation = directory / "tampered-attestation.json"
+            attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
+            attestation["sessionReference"] = "linear-session:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            tampered_attestation.write_text(_canonical_json(attestation), encoding="utf-8")
+            tampered_paths = (*paths[:5], tampered_attestation, paths[6])
+            with self.assertRaisesRegex(ValueError, "attestation mismatch"):
+                runner.validate_checked_record(record, *tampered_paths)
             failed_core = json.loads(paths[2].read_text(encoding="utf-8"))
             failed_core["summary"]["result"] = "failed"
             paths[2].write_text(_canonical_json(failed_core), encoding="utf-8")
@@ -810,69 +828,60 @@ class LinearQualificationTests(unittest.TestCase):
                             contract,
                         )
 
-    def test_checked_record_matches_current_driver_attestation_and_release_identities(
+    def test_historical_protected_record_remains_bound_to_its_original_release_identities(
         self,
     ) -> None:
         runner = _load_runner()
         record = json.loads(RECORD.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
             core_archive, core_metadata, linear_archive, linear_metadata = (
                 tuple(PRODUCT / name for name in ("core-product-v1.zip", "core-product-v1.release.json", "linear-product-v1.zip", "linear-product-v1.release.json"))
             )
+            core_candidate, linear_candidate = directory / "core", directory / "linear"
+            core = verify_release(core_archive, core_metadata, extract_to=core_candidate)
+            linear = verify_release(linear_archive, linear_metadata, extract_to=linear_candidate)
+            binding = runner.load_collector_binding(BINDING)
+            attested = runner.load_attestation(ATTESTATION, binding)
+            runner.validate_candidate_binding(
+                binding, core, linear, core_candidate, linear_candidate
+            )
+            self.assertEqual(
+                record["candidate"],
+                {
+                    "core": runner._release_view(core, runner.source_tree_sha256(core_candidate)),
+                    "linear": runner._release_view(linear, runner.source_tree_sha256(linear_candidate)),
+                },
+            )
+            self.assertEqual(record["collectorBinding"], binding)
+            self.assertEqual(record["collectorBindingSha256"], hashlib.sha256(BINDING.read_bytes()).hexdigest())
+            self.assertEqual(record["attestationSha256"], hashlib.sha256(ATTESTATION.read_bytes()).hexdigest())
+            self.assertEqual(
+                record["coreQualificationSha256"],
+                hashlib.sha256((PRODUCT / "core-product-v1.json").read_bytes()).hexdigest(),
+            )
+            self.assertEqual(record["receiptReference"], attested["receiptReference"])
+            self.assertEqual(record["summary"]["result"], "passed")
 
-            runner.validate_checked_record(
-                record,
-                core_archive,
-                core_metadata,
-                PRODUCT / "core-product-v1.json",
-                linear_archive,
-                linear_metadata,
-                ATTESTATION,
-                BINDING,
-            )
-            tampered = copy.deepcopy(record)
-            tampered["scenarios"][0]["evidence"].append("unbound evidence")
-            with self.assertRaisesRegex(ValueError, "exact record mismatch"):
-                runner.validate_checked_record(
-                    tampered,
-                    core_archive,
-                    core_metadata,
-                    PRODUCT / "core-product-v1.json",
-                    linear_archive,
-                    linear_metadata,
-                    ATTESTATION,
-                    BINDING,
-                )
-
-            tampered_attestation = Path(temporary) / "tampered-attestation.json"
-            attestation = json.loads(ATTESTATION.read_text(encoding="utf-8"))
-            attestation["sessionReference"] = (
-                "linear-session:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-            )
-            tampered_attestation.write_text(
-                _canonical_json(attestation),
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(ValueError, "attestation mismatch"):
-                runner.validate_checked_record(
-                    record,
-                    core_archive,
-                    core_metadata,
-                    PRODUCT / "core-product-v1.json",
-                    linear_archive,
-                    linear_metadata,
-                    tampered_attestation,
-                    BINDING,
-                )
+    def test_historical_product_qualification_bytes_remain_immutable(self) -> None:
+        for name, expected in HISTORICAL_PRODUCT_SHA256.items():
+            with self.subTest(name=name):
+                self.assertEqual(hashlib.sha256((PRODUCT / name).read_bytes()).hexdigest(), expected)
 
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
+        current_products = {
+            "core": ("core-product-contract-alignment-v1", "ac1559ee9b26ef2fc19a8c125deb615a3b7852b9e8aec6089361196ac8ee40cf"),
+            "linear": ("linear-product-contract-alignment-v1", "91a0330f3679a49afcbe29e8bf346cc6c613758e500e582484c63b570e6d9c9e"),
+        }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             for profile in ("core", "linear"):
-                archive = PRODUCT / f"{profile}-product-v1.zip"
-                metadata = PRODUCT / f"{profile}-product-v1.release.json"
+                product, expected_archive_sha256 = current_products[profile]
+                archive = PRODUCT / f"{product}.zip"
+                metadata = PRODUCT / f"{product}.release.json"
                 extracted = directory / profile
                 release = verify_release(archive, metadata, extract_to=extracted)
+                self.assertEqual(release.archive_sha256, expected_archive_sha256)
                 projected = build_release(extracted, directory / f"{profile}-projection.zip",
                                           directory / f"{profile}-projection.json",
                                           release_id=release.release_id, profile_id=profile)
