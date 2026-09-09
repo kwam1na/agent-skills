@@ -1,5 +1,5 @@
 {
-  "installedProviderSha256": "97d9a6ad726b38d92fee65dc66036f5b6dd9748d0fd69206e526cd30b52c7998",
+  "installedProviderSha256": "67b03a26fbf4e8d3ccc4003b839d3b79bf240f3ef9c2d67aab1d25b0fd044021",
   "proofBoundary": {
     "external": "Host and connector provenance remains owned by the protected external run that supplies host events.",
     "offline": "This record proves exact installed provider execution, retained evidence behavior, and deterministic replay; controlled host events do not independently prove external calls."
@@ -12,8 +12,8 @@
     "rawPayloadsCaptured": false
   },
   "release": {
-    "archiveSha256": "254f0055f24d6a0359699efc942b2baecff57307e4430b1da5d1c1eca00ee530",
-    "metadataSha256": "a2c85ff395aa4699b7538ab4963d2a1c23cb444edac36d8039c65cea9b6c90c8",
+    "archiveSha256": "501e75b3829fbb7bc9262b61b5a9469391060fb98a28da8747459b4cd2c15475",
+    "metadataSha256": "7631642dcd9f6c1b8b0c1f9bb796eaf898ed99093500770505fea78042b98d31",
     "profile": "core",
     "releaseId": "core-workflows-v2"
   },
@@ -44,7 +44,7 @@
         "evidence binds the requested candidate tree",
         "evidence contains the declared non-empty claim",
         "evidence names every completed required lens",
-        "evidence contains one approval per required lens",
+        "evidence contains one approval per required lens and one review audit",
         "all retained approval bytes match their digests",
         "raw host references are absent from retained provider evidence"
       ],
@@ -137,13 +137,31 @@
       "result": "passed"
     },
     {
-      "assertionCount": 11,
+      "assertionCount": 29,
       "evidence": [
         "installed provider reopens at the original bound",
         "replay evidence keeps the exact final candidate and base",
         "replay preserves every obtained pass",
         "iteration telemetry counts retained passes without charging the reopening to the bound",
         "installed provider selects explicitly accepted v2",
+        "retained review history bytes match the manifest digest",
+        "retained review request keeps the original bound and required lenses",
+        "retained history keeps superseded dissent and replay identity",
+        "retained reduction keeps counted rounds and every obtained pass",
+        "superseded dissent remains historical rather than active reduction input",
+        "retained audit keeps the executed comparison reference and exact diff bytes",
+        "installed provider reopens at the original bound",
+        "replay evidence keeps the exact final candidate and base",
+        "replay preserves every obtained pass",
+        "iteration telemetry counts retained passes without charging the reopening to the bound",
+        "installed provider selects explicitly accepted v2",
+        "retained review history bytes match the manifest digest",
+        "retained review request keeps the original bound and required lenses",
+        "retained history keeps superseded dissent and replay identity",
+        "retained reduction keeps counted rounds and every obtained pass",
+        "superseded dissent remains historical rather than active reduction input",
+        "retained audit keeps the executed comparison reference and exact diff bytes",
+        "changing only retained historical evidence changes verifiable audit bytes",
         "changed-diff cannot claim a base-move exclusion",
         "changed-diff produces no approval manifest",
         "unchanged-base cannot claim a base-move exclusion",
@@ -157,7 +175,7 @@
   ],
   "schemaVersion": "agent-skills-provider-qualification/1",
   "summary": {
-    "assertionCount": 58,
+    "assertionCount": 76,
     "failedScenarioCount": 0,
     "passedScenarioCount": 11,
     "requiredScenarioCount": 11,
