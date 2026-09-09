@@ -193,8 +193,8 @@ class ProviderBaseReopeningTests(unittest.TestCase):
             "workspaceId": binding.workspace_id,
         }
 
-    def document(self) -> dict[str, object]:
-        supplied = request()
+    def document(self, supplied: workflows.ReviewRequest | None = None) -> dict[str, object]:
+        supplied = supplied or request()
         rounds = []
         for item in supplied.round_history:
             value = {
@@ -248,6 +248,51 @@ class ProviderBaseReopeningTests(unittest.TestCase):
         self.assertEqual(len(result.round_history), 3)
         self.assertEqual(trees, ("1" * 40, "2" * 40, "3" * 40))
         self.assertEqual(findings, ())
+
+    def test_provider_binds_replayed_grace_to_active_logical_rounds(self):
+        original = request()
+        first, grace, replay = original.round_history
+        bound = workflows.ReviewRoundPass("pass-2", 2, candidate("4"), aligned("bound"))
+        history = (
+            first,
+            bound,
+            replace(grace, pass_id="pass-3", round_number=3),
+            replace(replay, pass_id="pass-4", round_number=3, supersedes_pass_id="pass-3"),
+        )
+        supplied = replace(
+            original,
+            rounds=(first.results, bound.results, replay.results),
+            round_history=history,
+            base_move_reopenings=(replace(
+                original.base_move_reopenings[0], previous_pass_id="pass-3", pass_id="pass-4",
+            ),),
+        )
+        document = self.document(supplied)
+        document["graceVerification"] = {
+            "previousCandidateRef": bound.candidate.candidate_ref,
+            "candidateRef": replay.candidate.candidate_ref,
+            "requiredChange": "Required candidate correction after bound-round alignment.",
+        }
+        result, trees, findings = DeliveryRailsProvider._review(document)
+        self.assertEqual(result.status, "aligned")
+        self.assertEqual(result.counted_rounds, 2)
+        self.assertEqual([item.pass_id for item in result.round_history],
+                         ["pass-1", "pass-2", "pass-3", "pass-4"])
+        self.assertEqual(trees, tuple(item.candidate.candidate_ref for item in history))
+        self.assertEqual(findings, ())
+
+        mutations = [
+            {**document, "graceVerification": {
+                **document["graceVerification"],
+                "previousCandidateRef": grace.candidate.candidate_ref,
+            }},
+            {**document, "rounds": document["rounds"][:2] + document["rounds"][3:]},
+            {**document, "baseMoveReopenings": []},
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), self.assertRaises(ProviderInputError) as raised:
+                DeliveryRailsProvider._review(mutation)
+            self.assertEqual(raised.exception.blocker_id, "review-malformed")
 
     def test_provider_rejects_unknown_malformed_and_digest_only_declarations(self):
         document = self.document()

@@ -728,10 +728,10 @@ class DeliveryRailsProvider:
         try:
             reopenings: list[BaseMoveReopening] = []
             if enhanced:
-                active: dict[int, tuple[ReviewLensResult, ...]] = {}
+                active: dict[int, ReviewRoundPass] = {}
                 for item in history:
-                    active[item.round_number] = item.results
-                rounds = [active[number] for number in sorted(active)]
+                    active[item.round_number] = item
+                rounds = [active[number].results for number in sorted(active)]
                 for raw in _list(document.get("baseMoveReopenings", []), "base-move reopenings"):
                     declaration = _object(raw, "base-move reopening")
                     if set(declaration) != {"comparison", "passId", "previousPassId"}:
@@ -775,10 +775,10 @@ class DeliveryRailsProvider:
                     required_change=_string(declaration["requiredChange"], "required change"),
                 )
                 grace_trees = tuple(
-                    item.candidate.candidate_ref
-                    for item in history
-                    if item.round_number in {max_rounds, max_rounds + 1}
-                )[-2:] if enhanced else tuple(round_trees[-2:])
+                    active[number].candidate.candidate_ref
+                    for number in (max_rounds, max_rounds + 1)
+                    if number in active
+                ) if enhanced else tuple(round_trees[-2:])
                 if len(grace_trees) < 2 or (
                     grace.previous_candidate_ref, grace.candidate_ref
                 ) != grace_trees:
