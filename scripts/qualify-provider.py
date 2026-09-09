@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import hashlib
 import json
 import os
@@ -33,6 +34,7 @@ SCENARIOS = (
     "release-mismatch",
     "unsupported-version",
     "evidence-completeness",
+    "base-move-reopening",
 )
 TREE = "b" * 40
 DIGEST = "a" * 64
@@ -599,6 +601,74 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
             finally:
                 provider.close()
 
+        def base_move_reopening(checkpoint: Checkpoint) -> None:
+            # These inputs are independent of the source reducer. Every case is
+            # sent to the provider freshly installed from the supplied archive.
+            for variant in ("valid", "changed-diff", "unchanged-base", "missing-lens"):
+                run_root = root / f"base-reopening-{variant}"
+                run_root.mkdir()
+                request = provider_request(release, run_root, f"base-reopening-{variant}")
+                current = request["payload"]["candidate"]
+                previous = deepcopy(current)
+                previous["treeSha"] = "f" * 40
+                previous["headSha"] = "f" * 40
+                previous["base"]["tipSha"] = "1" * 40
+                previous["base"]["mergeBaseSha"] = "2" * 40
+                first = deepcopy(previous)
+                first["treeSha"] = "9" * 40
+                first["headSha"] = "9" * 40
+                results = aligned_review()["rounds"][0]["results"]
+                content = "diff --git a/feature.txt b/feature.txt\n+same delivered bytes\n"
+                entry = {"path": "feature.txt", "content": content,
+                         "sha256": hashlib.sha256(content.encode()).hexdigest()}
+                comparison = {
+                    "spec": "delivered-diff-comparison/1",
+                    "previousCandidateRef": previous["treeSha"], "candidateRef": current["treeSha"],
+                    "previousBaseRef": previous["base"]["ref"], "baseRef": current["base"]["ref"],
+                    "previousBaseTipSha": previous["base"]["tipSha"], "baseTipSha": current["base"]["tipSha"],
+                    "previousMergeBaseSha": previous["base"]["mergeBaseSha"], "mergeBaseSha": current["base"]["mergeBaseSha"],
+                    "previousDiff": [deepcopy(entry)], "diff": [deepcopy(entry)],
+                    "evidenceRef": "artifact:executed-diff-comparison",
+                }
+                rounds = [
+                    {"candidate": first, "passId": "pass-1", "round": 1, "results": deepcopy(results)},
+                    {"candidate": previous, "passId": "pass-2", "round": 2, "results": deepcopy(results)},
+                    {"candidate": deepcopy(current), "passId": "pass-3", "round": 2,
+                     "supersedesPassId": "pass-2", "results": deepcopy(results)},
+                ]
+                review = {"findings": [], "maxRounds": 2, "requiredLenses": ["correctness", "testing"],
+                          "rounds": rounds, "baseMoveReopenings": [{"previousPassId": "pass-2",
+                          "passId": "pass-3", "comparison": comparison}]}
+                if variant == "changed-diff":
+                    comparison["diff"][0]["content"] = "changed delivered bytes"
+                    comparison["diff"][0]["sha256"] = hashlib.sha256(b"changed delivered bytes").hexdigest()
+                elif variant == "unchanged-base":
+                    previous["base"] = deepcopy(current["base"])
+                    comparison["previousBaseTipSha"] = current["base"]["tipSha"]
+                    comparison["previousMergeBaseSha"] = current["base"]["mergeBaseSha"]
+                elif variant == "missing-lens":
+                    rounds[-1]["results"].pop()
+                request["payload"]["agentSkills"]["review"] = review
+                request["payload"]["acceptedPayloadSpecs"] = ["review.green/2", "review.green/1"]
+                provider = session()
+                try:
+                    negotiate(provider, PROTOCOL_VERSION)
+                    observed = terminal(provider.exchange(request))
+                    if variant == "valid":
+                        checkpoint.check(observed.get("outcome") == "success", "installed provider reopens at the original bound")
+                        manifest = json.loads(Path(observed["result"]["manifestPath"]).read_text())
+                        checkpoint.check(manifest["candidate"] == current, "replay evidence keeps the exact final candidate and base")
+                        checkpoint.check([item["evaluatedInPassId"] for item in manifest["runHistory"]]
+                                         == ["pass-1", "pass-2", "pass-3"], "replay preserves every obtained pass")
+                        checkpoint.check(manifest["claims"][0]["payload"]["telemetry"]["iterationCount"] == 3,
+                                         "iteration telemetry counts retained passes without charging the reopening to the bound")
+                        checkpoint.check(manifest["claims"][0]["payloadSpec"] == "review.green/2", "installed provider selects explicitly accepted v2")
+                    else:
+                        checkpoint.check(observed.get("outcome") in {"blocked", "failed"}, f"{variant} cannot claim a base-move exclusion")
+                        checkpoint.check(not (run_root / "manifest.json").exists(), f"{variant} produces no approval manifest")
+                finally:
+                    provider.close()
+
         operations = {
             "fresh-install-and-startup": fresh,
             "success-and-native-operations": success,
@@ -610,6 +680,7 @@ def qualify(archive: Path, metadata: Path) -> dict[str, object]:
             "release-mismatch": release_mismatch,
             "unsupported-version": unsupported,
             "evidence-completeness": evidence,
+            "base-move-reopening": base_move_reopening,
         }
         if len(SCENARIOS) != len(operations) or set(SCENARIOS) != set(operations):
             raise QualificationFailure("required provider scenarios are missing or duplicated")

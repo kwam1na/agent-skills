@@ -259,6 +259,7 @@
     {
       "capabilities": [
         "review-acquisition",
+        "review-base-reopening",
         "run-observability"
       ],
       "degradedBehavior": "Native subagent dispatch and aggregation remain available without Python helpers; unavailable lenses remain explicit acquisition states. Unsupported v2 reporting remains explicit; retain selected output without changing delivery authority.",
@@ -312,6 +313,7 @@
     },
     {
       "capabilities": [
+        "review-base-reopening",
         "review-workflow",
         "run-observability"
       ],

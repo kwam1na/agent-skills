@@ -222,6 +222,30 @@ the reduction, so the entries a later round carries stay one per round, the
 reduction receives one entry per lens per round, and its delta runs from the
 replayed candidate.
 
+The portable Python reducer receives every obtained pass in `round_history`.
+Each `ReviewRoundPass` retains its unique `pass_id`, logical `round_number`, full
+`ReviewCandidateBinding`, complete lens results, and, for a replay, the adjacent
+`supersedes_pass_id`. The active `rounds` input contains the last pass for each
+logical round; it never replaces or relabels the retained history. A
+`BaseMoveReopening` names the exact adjacent previous and replay pass IDs and
+carries a `DeliveredDiffComparison`. That comparison binds both candidate trees,
+base refs, base tips and merge bases, and retains the executed comparison output
+as sorted `previous_diff` and `diff` entries. Each entry contains the path, the
+actual delivered-diff content for that path, and the SHA-256 of that content,
+plus the comparison's evidence reference. The reducer verifies every content
+digest and requires the two entry lists to be byte-identical. Equal caller
+summary digests, an unchanged deliverable token alone, or a missing comparison
+cannot reopen a round.
+
+The provider exposes the same closed history with `passId`, `round`, `candidate`,
+`results`, optional `supersedesPassId`, and top-level `baseMoveReopenings`.
+Comparison members use the corresponding camel-case names and each diff entry
+is exactly `{path, content, sha256}`. The provider rejects mixed legacy and
+history shapes, unknown members, incomplete history, stale comparison bindings,
+and an outer candidate that is not the exact final active candidate. Its
+manifest keeps every obtained pass in `runHistory`; the reopened pass does not
+spend the original declared bound.
+
 ## The round brief
 
 The brief is [the round brief template](references/round-brief-template.md)

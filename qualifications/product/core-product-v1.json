@@ -1,13 +1,13 @@
 {
-  "qualificationDriverSha256": "d109f840c5db773c5e215aa6c9b7e8a9f64ce5490228f9e400672bad8217546f",
+  "qualificationDriverSha256": "bcae01d5164d80b5b955c5e37f6c670e7ced59e43e02d69263d6e1c086c87af5",
   "redaction": {
     "environmentCaptured": false,
     "pathsCaptured": false,
     "retainedEvidence": "named assertions and deterministic checkpoint summaries"
   },
   "release": {
-    "archiveSha256": "ab5697d42e13273fdf061be90429c9d8b2ae742ed234d11f7f178b0c44f9a5c5",
-    "metadataSha256": "f4a1c4af455f013e7147edea8554f3bd2fd8dd09ef39c50530ffe3c9cb583536",
+    "archiveSha256": "ac1559ee9b26ef2fc19a8c125deb615a3b7852b9e8aec6089361196ac8ee40cf",
+    "metadataSha256": "20aaf944289d2a8f05ce92663619a03dec0bf0d35aebd5e3e2d4cce7f5fb461d",
     "profile": "core",
     "releaseId": "core-product-v1"
   },
@@ -105,11 +105,21 @@
       "result": "passed"
     },
     {
-      "assertionCount": 2,
-      "checkpointSha256": "1c4eaeec9dbd87e799e36f98cdcbea9ac946d992cf02d6d383917943a71b6e45",
+      "assertionCount": 12,
+      "checkpointSha256": "a197eee9e9f24008412ab6976c26d19f100aef57d279acfdd4ec5dca4ef9f8e3",
       "evidence": [
+        "packaged evidence matches trusted bytes: tests/test_review_base_reopening.py",
+        "packaged evidence matches trusted bytes: tests/test_review_and_compounding.py",
+        "packaged evidence matches trusted bytes: tests/scenarios/core/review.json",
+        "sensor and public-artifact reads use the extracted candidate: test_review_and_compounding",
+        "sensor and public-artifact reads use the extracted candidate: test_review_base_reopening",
         "sensor passed: test_review_and_compounding.ReviewWorkflowTests.test_unresolved_findings_at_loop_bound_block_honestly",
-        "sensor passed: test_review_and_compounding.ReviewWorkflowTests.test_reviewer_failure_is_a_typed_blocked_outcome"
+        "sensor passed: test_review_and_compounding.ReviewWorkflowTests.test_reviewer_failure_is_a_typed_blocked_outcome",
+        "sensor passed: test_review_base_reopening.ReviewBaseReopeningTests.test_valid_replay_keeps_original_bound_active_rounds_and_full_history",
+        "sensor passed: test_review_base_reopening.ReviewBaseReopeningTests.test_equal_deliverable_digest_without_executed_comparison_cannot_reopen",
+        "sensor passed: test_review_base_reopening.ReviewBaseReopeningTests.test_changed_delivered_bytes_or_paths_cannot_claim_reopening",
+        "sensor passed: test_review_base_reopening.ReviewBaseReopeningTests.test_replay_keeps_required_lenses_and_dissent_visible",
+        "runtime imports use the extracted candidate"
       ],
       "id": "bounded-review-failure",
       "result": "passed"
@@ -203,7 +213,7 @@
   ],
   "schemaVersion": "agent-skills-qualification/1",
   "summary": {
-    "assertionCount": 91,
+    "assertionCount": 101,
     "failedScenarioCount": 0,
     "passedScenarioCount": 12,
     "requiredScenarioCount": 12,

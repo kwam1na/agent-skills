@@ -123,6 +123,10 @@ SCENARIO_SENSORS = {
     "bounded-review-failure": (
         "test_review_and_compounding.ReviewWorkflowTests.test_unresolved_findings_at_loop_bound_block_honestly",
         "test_review_and_compounding.ReviewWorkflowTests.test_reviewer_failure_is_a_typed_blocked_outcome",
+        "test_review_base_reopening.ReviewBaseReopeningTests.test_valid_replay_keeps_original_bound_active_rounds_and_full_history",
+        "test_review_base_reopening.ReviewBaseReopeningTests.test_equal_deliverable_digest_without_executed_comparison_cannot_reopen",
+        "test_review_base_reopening.ReviewBaseReopeningTests.test_changed_delivered_bytes_or_paths_cannot_claim_reopening",
+        "test_review_base_reopening.ReviewBaseReopeningTests.test_replay_keeps_required_lenses_and_dissent_visible",
     ),
 }
 TRUSTED_EVIDENCE_PATHS = (
@@ -150,6 +154,7 @@ TRUSTED_EVIDENCE_PATHS = (
     "tests/test_delivery_provider_rails_contract.py",
     "tests/test_diagnosis.py",
     "tests/test_review_and_compounding.py",
+    "tests/test_review_base_reopening.py",
     "tests/test_review_orchestration.py",
     "tests/test_router.py",
     "tests/test_tracker_contract.py",
@@ -173,6 +178,11 @@ REQUIRED_SCENARIOS = (
 )
 DELIVERY_RAILS_SENSOR = "tests/test_delivery_provider_rails_contract.py"
 PACKAGED_EVIDENCE_PATHS = {
+    "bounded-review-failure": (
+        "tests/test_review_base_reopening.py",
+        "tests/test_review_and_compounding.py",
+        "tests/scenarios/core/review.json",
+    ),
     "delivery-provider-rails-conformance": (DELIVERY_RAILS_SENSOR,),
     "workflow-graph-conformance": (
         "tests/test_workflow_graph_contract.py",

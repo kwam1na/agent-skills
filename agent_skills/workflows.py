@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
+import re
 from typing import Mapping
 
 from agent_skills.capabilities import (
@@ -386,11 +388,72 @@ class GraceVerification:
 
 
 @dataclass(frozen=True)
+class ReviewCandidateBinding:
+    """Exact candidate and base material retained for one review pass."""
+
+    candidate_ref: str
+    head_ref: str | None
+    deliverable_identity: str
+    deliverable_digest: str
+    base_ref: str
+    base_tip_ref: str
+    merge_base_ref: str
+    workspace_id: str
+
+
+@dataclass(frozen=True)
+class DeliveredDiffEntry:
+    """One path's retained delivered-diff bytes, encoded without interpretation."""
+
+    path: str
+    content: str
+    sha256: str
+
+
+@dataclass(frozen=True)
+class DeliveredDiffComparison:
+    """Retained output of the caller's executed delivered-diff comparison."""
+
+    spec: str
+    previous_candidate_ref: str
+    candidate_ref: str
+    previous_base_ref: str
+    base_ref: str
+    previous_base_tip_ref: str
+    base_tip_ref: str
+    previous_merge_base_ref: str
+    merge_base_ref: str
+    previous_diff: tuple[DeliveredDiffEntry, ...]
+    diff: tuple[DeliveredDiffEntry, ...]
+    evidence_ref: str
+
+
+@dataclass(frozen=True)
+class ReviewRoundPass:
+    """One obtained pass; a replay may supersede an earlier pass of its round."""
+
+    pass_id: str
+    round_number: int
+    candidate: ReviewCandidateBinding
+    results: tuple[ReviewLensResult, ...]
+    supersedes_pass_id: str | None = None
+
+
+@dataclass(frozen=True)
+class BaseMoveReopening:
+    previous_pass_id: str
+    pass_id: str
+    comparison: DeliveredDiffComparison
+
+
+@dataclass(frozen=True)
 class ReviewRequest:
     required_lenses: tuple[str, ...]
     rounds: tuple[tuple[ReviewLensResult, ...], ...]
     max_rounds: int
     grace_verification: GraceVerification | None = None
+    round_history: tuple[ReviewRoundPass, ...] = ()
+    base_move_reopenings: tuple[BaseMoveReopening, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -403,6 +466,9 @@ class ReviewResult:
     action: str
     late_findings: tuple[ReviewLateFinding, ...] = ()
     grace_verification: GraceVerification | None = None
+    round_history: tuple[ReviewRoundPass, ...] = ()
+    base_move_reopenings: tuple[BaseMoveReopening, ...] = ()
+    counted_rounds: int = 0
 
 
 def _normalized_lens_result(result: ReviewLensResult) -> ReviewLensResult:
@@ -474,6 +540,183 @@ def _round_blockers(
     return _unique(tuple(blockers))
 
 
+def _sha256(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None
+
+
+def _candidate_binding_valid(candidate: object) -> bool:
+    if not isinstance(candidate, ReviewCandidateBinding):
+        return False
+    text = (
+        candidate.candidate_ref,
+        candidate.deliverable_identity,
+        candidate.base_ref,
+        candidate.base_tip_ref,
+        candidate.merge_base_ref,
+        candidate.workspace_id,
+    )
+    return (
+        all(isinstance(value, str) and value.strip() for value in text)
+        and (candidate.head_ref is None or isinstance(candidate.head_ref, str) and bool(candidate.head_ref.strip()))
+        and _sha256(candidate.deliverable_digest)
+    )
+
+
+def _comparison_binding(
+    comparison: DeliveredDiffComparison,
+) -> tuple[str, ...]:
+    return (
+        comparison.previous_candidate_ref,
+        comparison.candidate_ref,
+        comparison.previous_base_ref,
+        comparison.base_ref,
+        comparison.previous_base_tip_ref,
+        comparison.base_tip_ref,
+        comparison.previous_merge_base_ref,
+        comparison.merge_base_ref,
+    )
+
+
+def _validate_reopening(
+    reopening: BaseMoveReopening,
+    previous: ReviewRoundPass,
+    current: ReviewRoundPass,
+) -> None:
+    if not isinstance(reopening, BaseMoveReopening) or not isinstance(
+        reopening.comparison, DeliveredDiffComparison
+    ):
+        raise ValueError("base-move reopening comparison is malformed")
+    comparison = reopening.comparison
+    if reopening.previous_pass_id != previous.pass_id or reopening.pass_id != current.pass_id:
+        raise ValueError("base-move reopening does not match adjacent review passes")
+    if current.supersedes_pass_id != previous.pass_id:
+        raise ValueError("base-move reopening must supersede the adjacent prior pass")
+    before, after = previous.candidate, current.candidate
+    if before.workspace_id != after.workspace_id or before.base_ref != after.base_ref:
+        raise ValueError("base-move reopening must retain its workspace and base ref")
+    if (
+        before.base_tip_ref == after.base_tip_ref
+        and before.merge_base_ref == after.merge_base_ref
+    ):
+        raise ValueError("base-move reopening requires actual base movement")
+    if (
+        before.deliverable_identity,
+        before.deliverable_digest,
+    ) != (
+        after.deliverable_identity,
+        after.deliverable_digest,
+    ):
+        raise ValueError("base-move reopening requires unchanged deliverable identity")
+    expected_binding = (
+        before.candidate_ref,
+        after.candidate_ref,
+        before.base_ref,
+        after.base_ref,
+        before.base_tip_ref,
+        after.base_tip_ref,
+        before.merge_base_ref,
+        after.merge_base_ref,
+    )
+    if _comparison_binding(comparison) != expected_binding:
+        raise ValueError("base-move reopening comparison has stale candidate or base bindings")
+    if comparison.spec != "delivered-diff-comparison/1" or not (
+        isinstance(comparison.evidence_ref, str) and comparison.evidence_ref.strip()
+    ):
+        raise ValueError("base-move reopening requires retained executed comparison evidence")
+    for delivered_diff in (comparison.previous_diff, comparison.diff):
+        if not isinstance(delivered_diff, tuple) or any(
+            not isinstance(entry, DeliveredDiffEntry)
+            or not isinstance(entry.path, str)
+            or not entry.path
+            or not isinstance(entry.content, str)
+            or not _sha256(entry.sha256)
+            or hashlib.sha256(entry.content.encode()).hexdigest() != entry.sha256
+            for entry in delivered_diff
+        ):
+            raise ValueError("base-move reopening requires retained executed comparison evidence")
+        paths = tuple(entry.path for entry in delivered_diff)
+        if paths != tuple(sorted(paths)) or len(paths) != len(set(paths)):
+            raise ValueError("base-move reopening comparison paths are malformed")
+    if comparison.previous_diff != comparison.diff:
+        raise ValueError("base-move reopening comparison is not byte-identical over the same paths")
+
+
+def _normalized_history(
+    request: ReviewRequest,
+    rounds: tuple[tuple[ReviewLensResult, ...], ...],
+) -> tuple[tuple[ReviewRoundPass, ...], tuple[BaseMoveReopening, ...]]:
+    if not request.round_history:
+        if request.base_move_reopenings:
+            raise ValueError("base-move reopening requires complete review pass history")
+        return (), ()
+    if any(not isinstance(item, ReviewRoundPass) for item in request.round_history):
+        raise ValueError("review pass history is malformed")
+    history = tuple(
+        ReviewRoundPass(
+            item.pass_id,
+            item.round_number,
+            item.candidate,
+            tuple(_normalized_lens_result(result) for result in item.results),
+            item.supersedes_pass_id,
+        )
+        for item in request.round_history
+    )
+    if any(
+        not isinstance(item.pass_id, str)
+        or not item.pass_id.strip()
+        or type(item.round_number) is not int
+        or item.round_number < 1
+        or not _candidate_binding_valid(item.candidate)
+        or (
+            item.supersedes_pass_id is not None
+            and (
+                not isinstance(item.supersedes_pass_id, str)
+                or not item.supersedes_pass_id.strip()
+            )
+        )
+        for item in history
+    ):
+        raise ValueError("review pass history is malformed")
+    pass_ids = tuple(item.pass_id for item in history)
+    if len(set(pass_ids)) != len(pass_ids):
+        raise ValueError("review pass history has duplicate pass identity")
+    reopenings = request.base_move_reopenings
+    reopening_by_pass: dict[str, BaseMoveReopening] = {}
+    for reopening in reopenings:
+        if (
+            not isinstance(reopening, BaseMoveReopening)
+            or reopening.pass_id in reopening_by_pass
+        ):
+            raise ValueError("base-move reopening declarations are malformed or duplicated")
+        reopening_by_pass[reopening.pass_id] = reopening
+    if history[0].round_number != 1 or history[0].supersedes_pass_id is not None:
+        raise ValueError("review pass history must start with ordinary round one")
+    used_reopenings: set[str] = set()
+    for previous, current in zip(history, history[1:]):
+        if current.round_number == previous.round_number:
+            reopening = reopening_by_pass.get(current.pass_id)
+            if reopening is None:
+                raise ValueError("replayed review pass requires a base-move comparison")
+            _validate_reopening(reopening, previous, current)
+            used_reopenings.add(current.pass_id)
+        elif (
+            current.round_number != previous.round_number + 1
+            or current.supersedes_pass_id is not None
+        ):
+            raise ValueError("review pass history has a gap, relabel, or invalid supersession")
+    if used_reopenings != set(reopening_by_pass):
+        raise ValueError("base-move reopening does not name a replayed review pass")
+    active: dict[int, ReviewRoundPass] = {}
+    for item in history:
+        active[item.round_number] = item
+    expected_numbers = set(range(1, len(rounds) + 1))
+    if set(active) != expected_numbers or tuple(
+        active[number].results for number in range(1, len(rounds) + 1)
+    ) != rounds:
+        raise ValueError("review pass history does not match the active reduction rounds")
+    return history, reopenings
+
+
 def review_work(request: ReviewRequest) -> ReviewResult:
     required_lenses = _unique(request.required_lenses)
     if not required_lenses:
@@ -501,6 +744,19 @@ def review_work(request: ReviewRequest) -> ReviewResult:
         tuple(_normalized_lens_result(result) for result in results)
         for results in request.rounds
     )
+    history, reopenings = _normalized_history(request, rounds)
+    if grace is not None and history:
+        active_candidates: dict[int, ReviewCandidateBinding] = {}
+        for item in history:
+            active_candidates[item.round_number] = item.candidate
+        if (
+            grace.previous_candidate_ref,
+            grace.candidate_ref,
+        ) != (
+            active_candidates[request.max_rounds].candidate_ref,
+            active_candidates[request.max_rounds + 1].candidate_ref,
+        ):
+            raise ValueError("grace verification does not match active review candidates")
     dissent = tuple(
         result
         for results in rounds
@@ -531,10 +787,18 @@ def review_work(request: ReviewRequest) -> ReviewResult:
             blockers=(),
             action="Run the required review lenses.",
             late_findings=(),
+            round_history=history,
+            base_move_reopenings=reopenings,
+            counted_rounds=0,
         )
 
     latest = rounds[-1]
     blockers = list(_round_blockers(latest, required_lenses, len(rounds)))
+    for reopening in reopenings:
+        replay = next(item for item in history if item.pass_id == reopening.pass_id)
+        blockers.extend(
+            _round_blockers(replay.results, required_lenses, replay.round_number)
+        )
     if grace is not None:
         bound_round = rounds[request.max_rounds - 1]
         blockers.extend(_round_blockers(bound_round, required_lenses, request.max_rounds))
@@ -570,6 +834,9 @@ def review_work(request: ReviewRequest) -> ReviewResult:
         action=action,
         late_findings=late_findings,
         grace_verification=grace,
+        round_history=history,
+        base_move_reopenings=reopenings,
+        counted_rounds=len(rounds) - (1 if grace is not None else 0),
     )
 
 

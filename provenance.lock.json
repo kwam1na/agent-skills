@@ -208,7 +208,7 @@
       "id": "execute-work",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The baseline execution slice is narrowed to incremental work, repository sensor evidence, explicit blockers, approval handoffs, and honest completion states. Shared host-neutral v2 observations and durable selected-output capture preserve existing review authority.",
+        "reason": "The baseline execution slice is narrowed to incremental work, repository sensor evidence, explicit blockers, approval handoffs, and honest completion states. Shared host-neutral v2 observations, immutable replacement attempts, and durable selected-output capture preserve existing review authority.",
         "status": "modified-derivative"
       },
       "outputs": [
@@ -218,7 +218,7 @@
         },
         {
           "path": "skills/execute-work/references/run-observation-contract.md",
-          "sha256": "fc6f8406fc4569f603f6d2946817fd06c70388701517161fe6199549e60bbdb0"
+          "sha256": "a009b0f88c599df6a7c56210f06c1e7d48b1283e395f52f27bf0bf9ef41b5068"
         },
         {
           "path": "skills/execute-work/scripts/report_observation.py",
@@ -270,13 +270,13 @@
       "id": "obtain-review",
       "license": "NOASSERTION",
       "modification": {
-        "reason": "Independently authored portable acquisition and projection contract; no repository-source derivation or new license grant is asserted. Shared host-neutral v2 observations and durable selected-output capture preserve existing review authority.",
+        "reason": "Independently authored portable acquisition and projection contract; no repository-source derivation or new license grant is asserted. Exact base-move reopening, shared host-neutral v2 observations, and durable selected-output capture preserve existing review authority.",
         "status": "independently-authored"
       },
       "outputs": [
         {
           "path": "skills/obtain-review/SKILL.md",
-          "sha256": "2c44c40a2dda85f88f0f5fa5d524bf0def188e1d8a6cebd859b8086eff323b38"
+          "sha256": "6b76f44234d5d3336225ffe1ad62f06a8a5a33885d9c933f5351af19c3817900"
         },
         {
           "path": "skills/obtain-review/references/round-brief-template.md",
@@ -778,13 +778,13 @@
       "id": "review-work",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The review source is narrowed to caller-selected lenses, evidence-bearing convergence, visible dissent, typed failure, and bounded outcomes; repository reviewer policy remains an overlay. Shared host-neutral v2 observations and durable selected-output capture preserve existing review authority.",
+        "reason": "The review source is narrowed to caller-selected lenses, evidence-bearing convergence, visible dissent, typed failure, bounded outcomes, and exact base-move reopening; repository reviewer policy remains an overlay. Versioned deferral scope and shared host-neutral v2 observations preserve existing review authority.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/review-work/SKILL.md",
-          "sha256": "c02d563022cfbb08115edd94ee85b30e7fbaab756a6e31fae70f357c81880ec1"
+          "sha256": "9d4ef2b89a926445916f71da4105e8368447950916bc1d14083cb082c9f1559e"
         }
       ],
       "owner": "agent-skills-corpus",

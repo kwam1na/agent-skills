@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,45 @@ SPEC.loader.exec_module(reporter)
 
 
 class WorkflowObservationTests(unittest.TestCase):
+    def test_documented_multi_round_attempt_example_is_complete_and_immutable(self):
+        contract = (ROOT / "skills/execute-work/references/run-observation-contract.md").read_text()
+        blocks = re.findall(r"```json\n(.*?)\n```", contract, re.DOTALL)
+        self.assertEqual(len(blocks), 1)
+        events = json.loads(blocks[0])
+        self.assertEqual(
+            [(event["kind"], event["eventId"]) for event in events],
+            [
+                ("review.round.opened", "round-1-opened"),
+                ("activity.observed", "attempt-1-running"),
+                ("activity.observed", "attempt-1-completed"),
+                ("review.round.closed", "round-1-closed"),
+                ("review.round.opened", "round-2-opened"),
+                ("activity.observed", "attempt-2-running"),
+                ("activity.observed", "attempt-2-completed"),
+                ("review.round.closed", "round-2-closed"),
+            ],
+        )
+        replacements = [
+            event["payload"]
+            for event in events
+            if event["payload"].get("attemptId") == "attempt-2"
+        ]
+        self.assertEqual(
+            {payload.get("supersedesAttemptId") for payload in replacements},
+            {"attempt-1"},
+        )
+        for event in events:
+            self.assertEqual(set(event), {"eventId", "kind", "payload"})
+            if event["kind"] == "review.round.opened":
+                self.assertIn("lenses", event["payload"])
+                self.assertNotIn("reviewers", event["payload"])
+            if event["kind"] == "review.round.closed":
+                self.assertNotIn("lateFindings", event["payload"])
+        self.assertIn(
+            "the replacement predecessor remains on the activity lifecycle and is not an artifact request member",
+            " ".join(contract.split()),
+        )
+
     def test_unsupported_runtime_and_legacy_run_write_nothing(self):
         for responses in [
             [(2, {})],

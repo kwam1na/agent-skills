@@ -1,5 +1,5 @@
 {
-  "installedProviderSha256": "50666b6d8ff58860b8b814cd994d40584cb4c134381dbda5ee605ff71f3cfa4a",
+  "installedProviderSha256": "5f4ddfe4bd2f49085bb84a7b98c9f9365a918bb97b6fef0323cd85ead78a2c76",
   "proofBoundary": {
     "external": "Host and connector provenance remains owned by the protected external run that supplies host events.",
     "offline": "This record proves exact installed provider execution, retained evidence behavior, and deterministic replay; controlled host events do not independently prove external calls."
@@ -12,8 +12,8 @@
     "rawPayloadsCaptured": false
   },
   "release": {
-    "archiveSha256": "ab5697d42e13273fdf061be90429c9d8b2ae742ed234d11f7f178b0c44f9a5c5",
-    "metadataSha256": "f4a1c4af455f013e7147edea8554f3bd2fd8dd09ef39c50530ffe3c9cb583536",
+    "archiveSha256": "ac1559ee9b26ef2fc19a8c125deb615a3b7852b9e8aec6089361196ac8ee40cf",
+    "metadataSha256": "20aaf944289d2a8f05ce92663619a03dec0bf0d35aebd5e3e2d4cce7f5fb461d",
     "profile": "core",
     "releaseId": "core-product-v1"
   },
@@ -135,14 +135,32 @@
       ],
       "id": "evidence-completeness",
       "result": "passed"
+    },
+    {
+      "assertionCount": 11,
+      "evidence": [
+        "installed provider reopens at the original bound",
+        "replay evidence keeps the exact final candidate and base",
+        "replay preserves every obtained pass",
+        "iteration telemetry counts retained passes without charging the reopening to the bound",
+        "installed provider selects explicitly accepted v2",
+        "changed-diff cannot claim a base-move exclusion",
+        "changed-diff produces no approval manifest",
+        "unchanged-base cannot claim a base-move exclusion",
+        "unchanged-base produces no approval manifest",
+        "missing-lens cannot claim a base-move exclusion",
+        "missing-lens produces no approval manifest"
+      ],
+      "id": "base-move-reopening",
+      "result": "passed"
     }
   ],
   "schemaVersion": "agent-skills-provider-qualification/1",
   "summary": {
-    "assertionCount": 47,
+    "assertionCount": 58,
     "failedScenarioCount": 0,
-    "passedScenarioCount": 10,
-    "requiredScenarioCount": 10,
+    "passedScenarioCount": 11,
+    "requiredScenarioCount": 11,
     "result": "passed"
   },
   "workflowGraphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7"

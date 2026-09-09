@@ -1,5 +1,5 @@
 {
-  "description": "Minimal tracker-neutral delivery posture. Review acquisition supports native subagents without Python helpers. Declared delivery-product gates, recovery and honest cost coverage remain host-native. Shared v2 run observations retain selected structured output through compatible runtime capture.",
+  "description": "Minimal tracker-neutral delivery posture. Review acquisition supports native subagents without Python helpers and exact base-move reopening. Declared delivery-product gates, recovery and honest cost coverage remain host-native. Shared v2 run observations retain selected structured output through compatible runtime capture.",
   "expectedFiles": [
     "skills/compound-delivery-kernel/SKILL.md",
     "skills/compound-learning/SKILL.md",

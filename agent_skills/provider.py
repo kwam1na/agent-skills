@@ -24,7 +24,18 @@ from .lifecycle import Lifecycle
 from .locking import RepositoryLock
 from .receipt import load_receipt
 from .validate import canonical_json
-from .workflows import GraceVerification, ReviewLensResult, ReviewRequest, ReviewResult, review_work
+from .workflows import (
+    BaseMoveReopening,
+    DeliveredDiffComparison,
+    DeliveredDiffEntry,
+    GraceVerification,
+    ReviewCandidateBinding,
+    ReviewLensResult,
+    ReviewRequest,
+    ReviewResult,
+    ReviewRoundPass,
+    review_work,
+)
 
 
 PROTOCOL_VERSION = "delivery-provider-rails/1"
@@ -387,8 +398,9 @@ class DeliveryRailsProvider:
                 "The installed workflow does not emit retained review evidence.",
                 "Select review-work for a review evidence request.",
             )
+        payload_spec = self._review_payload_spec(payload)
         review_document = _object(provider.get("review"), "review")
-        result, round_trees, findings = self._review(review_document)
+        result, round_trees, findings = self._review(review_document, payload_spec)
         if result.status != "aligned":
             failure = bool(result.failures)
             error = ProviderInputError(
@@ -417,6 +429,7 @@ class DeliveryRailsProvider:
                 round_trees,
                 findings,
                 recorded_at,
+                payload_spec,
             )
         except OSError as error:
             raise ProviderInputError(
@@ -435,7 +448,7 @@ class DeliveryRailsProvider:
                 evidenceId=f"review-{hashlib.sha256(request_id.encode()).hexdigest()[:24]}",
                 details={
                     "evidenceReference": manifest_reference,
-                    "payloadSpec": "review.green/1",
+                    "payloadSpec": payload_spec,
                     "release": binding,
                 },
             )
@@ -553,8 +566,100 @@ class DeliveryRailsProvider:
         )
 
     @staticmethod
+    def _review_payload_spec(payload: dict[str, object]) -> str:
+        if "acceptedPayloadSpecs" not in payload:
+            return "review.green/1"
+        accepted = _list(payload["acceptedPayloadSpecs"], "accepted payload specs")
+        if (
+            len(accepted) > 16
+            or len(accepted) != len(set(item for item in accepted if isinstance(item, str)))
+            or any(not isinstance(item, str) or not item for item in accepted)
+        ):
+            raise ProviderInputError(
+                "failed", "payload-spec-malformed", "Accepted payload specs are malformed.",
+                "Provide a unique list of accepted payload spec identifiers.",
+            )
+        for supported in ("review.green/2", "review.green/1"):
+            if supported in accepted:
+                return supported
+        raise ProviderInputError(
+            "blocked", "payload-spec-unsupported", "No accepted review payload spec is supported.",
+            "Accept review.green/1 or review.green/2 before requesting review evidence.",
+        )
+
+    @staticmethod
+    def _review_results(value: object) -> tuple[ReviewLensResult, ...]:
+        results = []
+        for raw_result in _list(value, "review results"):
+            result = _object(raw_result, "review result")
+            allowed = {"lens", "outcome", "findings", "evidence", "failure", "lateFindings"}
+            if not set(result) <= allowed:
+                raise ValueError("review result fields are malformed")
+            results.append(
+                ReviewLensResult(
+                    lens=_string(result.get("lens"), "review lens"),
+                    outcome=_string(result.get("outcome"), "review outcome"),
+                    findings=tuple(
+                        _string(item, "review finding")
+                        for item in _list(result.get("findings"), "review findings")
+                    ),
+                    evidence=tuple(
+                        _string(item, "review evidence")
+                        for item in _list(result.get("evidence"), "review evidence")
+                    ),
+                    failure=(
+                        _string(result["failure"], "review failure")
+                        if result.get("failure") is not None
+                        else None
+                    ),
+                    late_findings=tuple(
+                        _string(item, "late review finding")
+                        for item in _list(result.get("lateFindings", []), "late review findings")
+                    ),
+                )
+            )
+        return tuple(results)
+
+    @staticmethod
+    def _review_candidate(value: object) -> ReviewCandidateBinding:
+        candidate = DeliveryRailsProvider._candidate({"candidate": value})
+        base = _object(candidate["base"], "candidate base")
+        deliverable = _object(candidate["deliverable"], "candidate deliverable")
+        return ReviewCandidateBinding(
+            candidate_ref=_string(candidate["treeSha"], "candidate tree"),
+            head_ref=(
+                _string(candidate["headSha"], "candidate head")
+                if candidate.get("headSha") is not None
+                else None
+            ),
+            deliverable_identity=_string(deliverable["identity"], "deliverable identity"),
+            deliverable_digest=_string(deliverable["digest"], "deliverable digest"),
+            base_ref=_string(base["ref"], "candidate base ref"),
+            base_tip_ref=_string(base["tipSha"], "candidate base tip"),
+            merge_base_ref=_string(base["mergeBaseSha"], "candidate merge base"),
+            workspace_id=_string(candidate["workspaceId"], "candidate workspace"),
+        )
+
+    @staticmethod
+    def _delivered_diff(value: object, name: str) -> tuple[DeliveredDiffEntry, ...]:
+        entries = []
+        for raw in _list(value, name):
+            entry = _object(raw, "delivered diff entry")
+            if set(entry) != {"content", "path", "sha256"}:
+                raise ValueError("delivered diff entry fields are malformed")
+            entries.append(
+                DeliveredDiffEntry(
+                    path=_string(entry["path"], "delivered diff path"),
+                    content=_string(entry["content"], "delivered diff content"),
+                    sha256=_string(entry["sha256"], "delivered diff digest"),
+                )
+            )
+        return tuple(entries)
+
+    @staticmethod
     def _review(
         document: dict[str, object],
+        payload_spec: str = "review.green/1",
     ) -> tuple[ReviewResult, tuple[str, ...], tuple[dict[str, object], ...]]:
         required = tuple(
             _string(item, "review lens")
@@ -563,40 +668,55 @@ class DeliveryRailsProvider:
         raw_rounds = _list(document.get("rounds"), "review rounds")
         round_trees: list[str] = []
         rounds: list[tuple[ReviewLensResult, ...]] = []
-        for raw_round in raw_rounds:
+        history: list[ReviewRoundPass] = []
+        enhanced = bool(document.get("baseMoveReopenings")) or any(
+            isinstance(raw_round, dict)
+            and bool({"candidate", "passId", "round", "supersedesPassId"} & set(raw_round))
+            for raw_round in raw_rounds
+        )
+        for index, raw_round in enumerate(raw_rounds, start=1):
             round_document = _object(raw_round, "review round")
-            tree = _string(round_document.get("preparedTreeSha"), "prepared tree")
-            if re.fullmatch(r"[a-f0-9]{40}", tree) is None:
-                raise ProviderInputError(
-                    "failed",
-                    "review-malformed",
-                    "A review round has an invalid prepared tree.",
-                    "Bind every review round to a Git tree identity.",
-                )
-            round_trees.append(tree)
-            results = []
-            for raw_result in _list(round_document.get("results"), "review results"):
-                result = _object(raw_result, "review result")
-                results.append(
-                    ReviewLensResult(
-                        lens=_string(result.get("lens"), "review lens"),
-                        outcome=_string(result.get("outcome"), "review outcome"),
-                        findings=tuple(
-                            _string(item, "review finding")
-                            for item in _list(result.get("findings"), "review findings")
-                        ),
-                        evidence=tuple(
-                            _string(item, "review evidence")
-                            for item in _list(result.get("evidence"), "review evidence")
-                        ),
-                        failure=(
-                            _string(result["failure"], "review failure")
-                            if result.get("failure") is not None
+            if enhanced:
+                allowed = {"candidate", "passId", "results", "round", "supersedesPassId"}
+                required_round = {"candidate", "passId", "results", "round"}
+                if not required_round <= set(round_document) or not set(round_document) <= allowed:
+                    raise ProviderInputError(
+                        "failed", "review-malformed", "A review round has malformed history fields.",
+                        "Provide the complete closed review-pass history.",
+                    )
+                candidate = DeliveryRailsProvider._review_candidate(round_document["candidate"])
+                number = round_document["round"]
+                if type(number) is not int:
+                    raise ValueError("review round number is malformed")
+                results = DeliveryRailsProvider._review_results(round_document["results"])
+                history.append(
+                    ReviewRoundPass(
+                        pass_id=_string(round_document["passId"], "review pass"),
+                        round_number=number,
+                        candidate=candidate,
+                        results=results,
+                        supersedes_pass_id=(
+                            _string(round_document["supersedesPassId"], "superseded review pass")
+                            if round_document.get("supersedesPassId") is not None
                             else None
                         ),
                     )
                 )
-            rounds.append(tuple(results))
+                round_trees.append(candidate.candidate_ref)
+            else:
+                if set(round_document) != {"preparedTreeSha", "results"}:
+                    raise ProviderInputError(
+                        "failed", "review-malformed", "A review round has malformed fields.",
+                        "Provide the closed legacy review-round shape.",
+                    )
+                tree = _string(round_document.get("preparedTreeSha"), "prepared tree")
+                if not _git_oid(tree):
+                    raise ProviderInputError(
+                        "failed", "review-malformed", "A review round has an invalid prepared tree.",
+                        "Bind every review round to a Git tree identity.",
+                    )
+                round_trees.append(tree)
+                rounds.append(DeliveryRailsProvider._review_results(round_document["results"]))
         max_rounds = document.get("maxRounds")
         if type(max_rounds) is not int:
             raise ProviderInputError(
@@ -606,6 +726,44 @@ class DeliveryRailsProvider:
                 "Provide a positive integer review round bound.",
             )
         try:
+            reopenings: list[BaseMoveReopening] = []
+            if enhanced:
+                active: dict[int, tuple[ReviewLensResult, ...]] = {}
+                for item in history:
+                    active[item.round_number] = item.results
+                rounds = [active[number] for number in sorted(active)]
+                for raw in _list(document.get("baseMoveReopenings", []), "base-move reopenings"):
+                    declaration = _object(raw, "base-move reopening")
+                    if set(declaration) != {"comparison", "passId", "previousPassId"}:
+                        raise ValueError("base-move reopening fields are malformed")
+                    comparison = _object(declaration["comparison"], "delivered-diff comparison")
+                    expected = {
+                        "baseRef", "baseTipSha", "candidateRef", "diff", "evidenceRef",
+                        "mergeBaseSha", "previousBaseRef", "previousBaseTipSha",
+                        "previousCandidateRef", "previousDiff", "previousMergeBaseSha", "spec",
+                    }
+                    if set(comparison) != expected:
+                        raise ValueError("delivered-diff comparison fields are malformed")
+                    reopenings.append(
+                        BaseMoveReopening(
+                            previous_pass_id=_string(declaration["previousPassId"], "previous review pass"),
+                            pass_id=_string(declaration["passId"], "review pass"),
+                            comparison=DeliveredDiffComparison(
+                                spec=_string(comparison["spec"], "comparison spec"),
+                                previous_candidate_ref=_string(comparison["previousCandidateRef"], "previous candidate"),
+                                candidate_ref=_string(comparison["candidateRef"], "candidate"),
+                                previous_base_ref=_string(comparison["previousBaseRef"], "previous base ref"),
+                                base_ref=_string(comparison["baseRef"], "base ref"),
+                                previous_base_tip_ref=_string(comparison["previousBaseTipSha"], "previous base tip"),
+                                base_tip_ref=_string(comparison["baseTipSha"], "base tip"),
+                                previous_merge_base_ref=_string(comparison["previousMergeBaseSha"], "previous merge base"),
+                                merge_base_ref=_string(comparison["mergeBaseSha"], "merge base"),
+                                previous_diff=DeliveryRailsProvider._delivered_diff(comparison["previousDiff"], "previous delivered diff"),
+                                diff=DeliveryRailsProvider._delivered_diff(comparison["diff"], "delivered diff"),
+                                evidence_ref=_string(comparison["evidenceRef"], "comparison evidence"),
+                            ),
+                        )
+                    )
             grace = None
             if "graceVerification" in document:
                 declaration = _object(document["graceVerification"], "grace verification")
@@ -616,9 +774,14 @@ class DeliveryRailsProvider:
                     candidate_ref=_string(declaration["candidateRef"], "grace candidate"),
                     required_change=_string(declaration["requiredChange"], "required change"),
                 )
-                if len(round_trees) < 2 or (
+                grace_trees = tuple(
+                    item.candidate.candidate_ref
+                    for item in history
+                    if item.round_number in {max_rounds, max_rounds + 1}
+                )[-2:] if enhanced else tuple(round_trees[-2:])
+                if len(grace_trees) < 2 or (
                     grace.previous_candidate_ref, grace.candidate_ref
-                ) != tuple(round_trees[-2:]):
+                ) != grace_trees:
                     raise ValueError("grace verification does not match the adjacent review candidates")
             result = review_work(
                 ReviewRequest(
@@ -626,6 +789,8 @@ class DeliveryRailsProvider:
                     rounds=tuple(rounds),
                     max_rounds=max_rounds,
                     grace_verification=grace,
+                    round_history=tuple(history),
+                    base_move_reopenings=tuple(reopenings),
                 )
             )
         except ValueError as error:
@@ -636,7 +801,7 @@ class DeliveryRailsProvider:
                 "Correct the host review output, then retry with a new attempt.",
             ) from error
         findings = DeliveryRailsProvider._findings(
-            _list(document.get("findings"), "typed findings"), result
+            _list(document.get("findings"), "typed findings"), result, payload_spec
         )
         return result, tuple(round_trees), findings
 
@@ -644,6 +809,7 @@ class DeliveryRailsProvider:
     def _findings(
         raw_findings: list[object],
         result: ReviewResult,
+        payload_spec: str = "review.green/1",
     ) -> tuple[dict[str, object], ...]:
         findings: list[dict[str, object]] = []
         sources: list[str] = []
@@ -684,11 +850,16 @@ class DeliveryRailsProvider:
                     "Resolve or validly defer every actionable finding.",
                 )
             if disposition == "deferred":
+                allowed_scopes = (
+                    {"in_contract", "expansion"}
+                    if payload_spec == "review.green/2"
+                    else {"expansion"}
+                )
                 if not (
                     actionable
                     and not blocking
                     and severity in {"P2", "P3"}
-                    and scope == "expansion"
+                    and scope in allowed_scopes
                     and isinstance(deferred, str)
                     and re.fullmatch(r"[A-Z][A-Z0-9]*-[0-9]+", deferred)
                 ):
@@ -696,7 +867,7 @@ class DeliveryRailsProvider:
                         "failed",
                         "finding-malformed",
                         "A deferred review finding is malformed.",
-                        "Use the declared low-severity expansion deferral shape.",
+                        "Use the deferral shape supported by the selected review payload spec.",
                     )
             elif deferred is not None:
                 raise ProviderInputError(
@@ -776,6 +947,7 @@ class DeliveryRailsProvider:
         round_trees: tuple[str, ...],
         findings: tuple[dict[str, object], ...],
         recorded_at: str,
+        payload_spec: str = "review.green/1",
     ) -> Path:
         provider_id = _string(payload.get("providerId"), "provider id")
         run_id = _string(payload.get("runId"), "run id")
@@ -795,7 +967,13 @@ class DeliveryRailsProvider:
                 "Invoke a provider that covers the requested obligations.",
             )
         candidate = self._candidate(payload)
-        if not round_trees or round_trees[-1] != candidate["treeSha"]:
+        final_binding = result.round_history[-1].candidate if result.round_history else None
+        if not round_trees or (
+            final_binding is None and round_trees[-1] != candidate["treeSha"]
+        ) or (
+            final_binding is not None
+            and final_binding != self._review_candidate(candidate)
+        ):
             raise ProviderInputError(
                 "blocked",
                 "candidate-mismatch",
@@ -810,7 +988,11 @@ class DeliveryRailsProvider:
                 "The consumer-allocated run root is unavailable.",
                 "Provide an existing non-symlink run root.",
             )
-        final_pass_id = f"pass-{len(result.rounds)}"
+        final_pass_id = (
+            result.round_history[-1].pass_id
+            if result.round_history
+            else f"pass-{len(result.rounds)}"
+        )
         provider = {
             "finalPassId": final_pass_id,
             "id": provider_id,
@@ -879,7 +1061,7 @@ class DeliveryRailsProvider:
                 "deferredExpansionCount": deferred_count,
                 "deferredIssueIds": deferred_ids,
                 "findingCounts": finding_counts,
-                "iterationCount": len(result.rounds),
+                "iterationCount": len(round_trees),
             },
             "verdict": "green",
         }
@@ -891,14 +1073,21 @@ class DeliveryRailsProvider:
                 {
                     "obligation": "review.green",
                     "payload": review_payload,
-                    "payloadSpec": "review.green/1",
+                    "payloadSpec": payload_spec,
                 }
             ],
             "provider": provider,
             "recordedAt": recorded_at,
             "repository": None,
             "runHistory": [
-                {"evaluatedInPassId": f"pass-{index}", "preparedTreeSha": tree}
+                {
+                    "evaluatedInPassId": (
+                        result.round_history[index - 1].pass_id
+                        if result.round_history
+                        else f"pass-{index}"
+                    ),
+                    "preparedTreeSha": tree,
+                }
                 for index, tree in enumerate(round_trees, start=1)
             ],
             "spec": "delivery-evidence/1",

@@ -109,8 +109,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "skills/review-work/SKILL.md": (
         "naming the round, the candidate it bound, the reduced outcome, its"
-        " findings by severity, the count of late findings in that round, and"
-        " the round's self-reported cost",
+        " findings by severity, and the round's self-reported cost",
+        "retains late-finding counts in captured reduction output when the"
+        " runtime's closed event schema has no such member",
     ),
     "skills/execute-work/SKILL.md": (
         "`$obtain-review` emits `lens.selected` and `review.round.opened`,"

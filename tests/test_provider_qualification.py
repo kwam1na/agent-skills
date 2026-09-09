@@ -169,6 +169,7 @@ class ProviderQualificationTests(unittest.TestCase):
                     "release-mismatch",
                     "unsupported-version",
                     "evidence-completeness",
+                    "base-move-reopening",
                 },
             )
             self.assertTrue(all(scenario["result"] == "passed" for scenario in record["scenarios"]))
@@ -364,9 +365,13 @@ class ProviderQualificationTests(unittest.TestCase):
             "cache",
             "daemon",
             "registry",
-            "telemetry",
         ):
             self.assertNotIn(forbidden, lowered)
+        # Evidence's own telemetry is part of the installed provider contract;
+        # it is not a dependency on an adopter's telemetry subsystem.
+        self.assertIn('["payload"]["telemetry"]["iterationCount"]', source)
+        self.assertNotIn("import telemetry", lowered)
+        self.assertNotIn("delivery_run_telemetry", lowered)
 
 
 if __name__ == "__main__":

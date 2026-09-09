@@ -38,6 +38,7 @@ class ReviewGraceTests(unittest.TestCase):
         self.assertEqual(result.rounds, rounds)
         self.assertEqual(result.dissent, (rounds[0][1],))
         self.assertEqual(result.late_findings[0].round_number, 1)
+        self.assertEqual(result.counted_rounds, 4)
         self.assertEqual(asdict(result)["grace_verification"], asdict(declaration()))
 
     def test_fifth_round_without_declaration_still_exceeds_bound(self):
