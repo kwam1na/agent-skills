@@ -31,14 +31,15 @@ def _load_runner():
 class ProviderQualificationTests(unittest.TestCase):
     def test_checked_product_provider_replays_exactly(self) -> None:
         product = ROOT / "qualifications/product"
+        current = "core-product-contract-alignment-v1"
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "provider.json"
             result = subprocess.run([sys.executable, "-B", str(SCRIPT),
-                                     "--archive", str(product / "core-product-v1.zip"),
-                                     "--metadata", str(product / "core-product-v1.release.json"),
+                                     "--archive", str(product / f"{current}.zip"),
+                                     "--metadata", str(product / f"{current}.release.json"),
                                      "--record", str(output)], cwd=temporary, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(output.read_bytes(), (product / "provider-product-v1.json").read_bytes())
+            self.assertEqual(output.read_bytes(), (product / "provider-product-contract-alignment-v1.json").read_bytes())
 
     def test_record_cannot_overwrite_a_qualification_input(self) -> None:
         runner = _load_runner()
@@ -169,6 +170,7 @@ class ProviderQualificationTests(unittest.TestCase):
                     "release-mismatch",
                     "unsupported-version",
                     "evidence-completeness",
+                    "base-move-reopening",
                 },
             )
             self.assertTrue(all(scenario["result"] == "passed" for scenario in record["scenarios"]))
@@ -364,9 +366,13 @@ class ProviderQualificationTests(unittest.TestCase):
             "cache",
             "daemon",
             "registry",
-            "telemetry",
         ):
             self.assertNotIn(forbidden, lowered)
+        # Evidence's own telemetry is part of the installed provider contract;
+        # it is not a dependency on an adopter's telemetry subsystem.
+        self.assertIn('["payload"]["telemetry"]["iterationCount"]', source)
+        self.assertNotIn("import telemetry", lowered)
+        self.assertNotIn("delivery_run_telemetry", lowered)
 
 
 if __name__ == "__main__":

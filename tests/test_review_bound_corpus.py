@@ -43,6 +43,12 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "A late finding a lens recorded as a deferral rather than as a finding is"
         " marked late in that deferral, and neither the returned value nor the"
         " count below carries it",
+        "P0 and P1 findings are blocking and are never deferred",
+        "Under `review.green/1` that exception is limited to `expansion` scope",
+        "An `in_contract` P2 or P3 deferral requires the consumer to declare"
+        " `review.green/2` in the review obligation's accepted payload specs",
+        "That version admits `in_contract` and `expansion` deferrals under the"
+        " same rule, never `adjacent` findings",
     ),
     "skills/obtain-review/SKILL.md": (
         "A lens's assessment round is its first result-carrying round for the"
@@ -102,6 +108,15 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " sit behind",
         "A reopened round is realized like the round it reopens, keeping that"
         " round's kind, its lens set, and its carry-forward rules",
+        "The portable Python reducer receives every obtained pass in"
+        " `round_history`",
+        "The reducer verifies every content digest and requires the two entry"
+        " lists to be byte-identical",
+        "Equal caller summary digests, an unchanged deliverable token alone, or"
+        " a missing comparison cannot reopen a round",
+        "The provider rejects mixed legacy and history shapes, unknown members,"
+        " incomplete history, stale comparison bindings, and an outer candidate"
+        " that is not the exact final active candidate",
         "where it is unchanged the replay reopens the round the previous"
         " candidate was reviewed under, whether that round is still open or"
         " already closed, carrying its number, its declared lens set, and its"

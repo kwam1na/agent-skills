@@ -37,7 +37,132 @@ retained for each emission. Never parse an opaque candidate reference into a
 SHA. A review attempt also supplies actual `roundId`, positive `round`, and
 `lensId` from its brief. Retry the same observed event with the same event ID;
 new transitions have new IDs. New attempts name `supersedesAttemptId` only when
-they actually supersede one; concurrent activities remain separate.
+they actually supersede one; every lifecycle state for that replacement attempt
+repeats the same predecessor binding, while concurrent activities remain
+separate.
+
+This complete two-round example uses one activity with a replacement attempt.
+Every array member is one emitter request: `eventId` is the stable retry key,
+`kind` is the event kind, and `payload` is passed unchanged. Both round entries
+remain history. A new independent activity would use a new `activityId` and omit
+`supersedesAttemptId`.
+
+```json
+[
+  {
+    "eventId": "round-1-opened",
+    "kind": "review.round.opened",
+    "payload": {
+      "round": 1,
+      "roundId": "round-1",
+      "bound": 2,
+      "candidateTreeSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "lenses": ["lens.outcome-correctness", "lens.adversarial-testing"]
+    }
+  },
+  {
+    "eventId": "attempt-1-running",
+    "kind": "activity.observed",
+    "payload": {
+      "activityId": "review-lens-outcome",
+      "attemptId": "attempt-1",
+      "candidateTreeSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "roundId": "round-1",
+      "round": 1,
+      "lensId": "lens.outcome-correctness",
+      "state": "running",
+      "owner": "reviewer",
+      "phase": "review",
+      "nextStep": "Complete the selected lens."
+    }
+  },
+  {
+    "eventId": "attempt-1-completed",
+    "kind": "activity.observed",
+    "payload": {
+      "activityId": "review-lens-outcome",
+      "attemptId": "attempt-1",
+      "candidateTreeSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "roundId": "round-1",
+      "round": 1,
+      "lensId": "lens.outcome-correctness",
+      "state": "completed",
+      "owner": "reviewer",
+      "phase": "review",
+      "verdict": "approved"
+    }
+  },
+  {
+    "eventId": "round-1-closed",
+    "kind": "review.round.closed",
+    "payload": {
+      "round": 1,
+      "roundId": "round-1",
+      "candidateTreeSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "outcome": "aligned",
+      "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0},
+      "cost": {"coverage": "unreported", "reportedBy": "host"}
+    }
+  },
+  {
+    "eventId": "round-2-opened",
+    "kind": "review.round.opened",
+    "payload": {
+      "round": 2,
+      "roundId": "round-2",
+      "bound": 2,
+      "candidateTreeSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "lenses": ["lens.outcome-correctness", "lens.adversarial-testing"]
+    }
+  },
+  {
+    "eventId": "attempt-2-running",
+    "kind": "activity.observed",
+    "payload": {
+      "activityId": "review-lens-outcome",
+      "attemptId": "attempt-2",
+      "supersedesAttemptId": "attempt-1",
+      "candidateTreeSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "roundId": "round-2",
+      "round": 2,
+      "lensId": "lens.outcome-correctness",
+      "state": "running",
+      "owner": "reviewer",
+      "phase": "review",
+      "nextStep": "Complete the selected lens for round two."
+    }
+  },
+  {
+    "eventId": "attempt-2-completed",
+    "kind": "activity.observed",
+    "payload": {
+      "activityId": "review-lens-outcome",
+      "attemptId": "attempt-2",
+      "supersedesAttemptId": "attempt-1",
+      "candidateTreeSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "roundId": "round-2",
+      "round": 2,
+      "lensId": "lens.outcome-correctness",
+      "state": "completed",
+      "owner": "reviewer",
+      "phase": "review",
+      "verdict": "approved"
+    }
+  },
+  {
+    "eventId": "round-2-closed",
+    "kind": "review.round.closed",
+    "payload": {
+      "round": 2,
+      "roundId": "round-2",
+      "candidateTreeSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "outcome": "aligned",
+      "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0},
+      "cost": {"coverage": "unreported", "reportedBy": "host"}
+    }
+  }
+]
+```
 
 The caller retains these IDs beside the actual host handle and bounded result
 paths. No separate status database or polling supervisor is needed. The host
@@ -82,6 +207,9 @@ Call `runs capture <run-id> --json <request>` where request contains:
 
 Artifact/report IDs are supplied by the caller; the runtime derives only the
 emission event IDs by appending `-artifact` and `-report` to eventId. Capture
+uses the same activity, attempt, candidate, round, and lens binding; the
+replacement predecessor remains on the activity lifecycle and is not an
+artifact request member. Capture
 persists exact bytes before references. Keep the successful stable reference
 with the acquisition and carry it across rounds. Only after successful capture
 may this workflow clean the original selected output; required evidence paths

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -13,10 +14,55 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills/execute-work/scripts/report_observation.py"
 SPEC = importlib.util.spec_from_file_location("report_observation", SCRIPT)
 reporter = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(reporter)
+# The skill tree is content-hashed; loading its script must not add cache files.
+previous_bytecode_setting = sys.dont_write_bytecode
+try:
+    sys.dont_write_bytecode = True
+    SPEC.loader.exec_module(reporter)
+finally:
+    sys.dont_write_bytecode = previous_bytecode_setting
 
 
 class WorkflowObservationTests(unittest.TestCase):
+    def test_documented_multi_round_attempt_example_is_complete_and_immutable(self):
+        contract = (ROOT / "skills/execute-work/references/run-observation-contract.md").read_text()
+        blocks = re.findall(r"```json\n(.*?)\n```", contract, re.DOTALL)
+        self.assertEqual(len(blocks), 1)
+        events = json.loads(blocks[0])
+        self.assertEqual(
+            [(event["kind"], event["eventId"]) for event in events],
+            [
+                ("review.round.opened", "round-1-opened"),
+                ("activity.observed", "attempt-1-running"),
+                ("activity.observed", "attempt-1-completed"),
+                ("review.round.closed", "round-1-closed"),
+                ("review.round.opened", "round-2-opened"),
+                ("activity.observed", "attempt-2-running"),
+                ("activity.observed", "attempt-2-completed"),
+                ("review.round.closed", "round-2-closed"),
+            ],
+        )
+        replacements = [
+            event["payload"]
+            for event in events
+            if event["payload"].get("attemptId") == "attempt-2"
+        ]
+        self.assertEqual(
+            {payload.get("supersedesAttemptId") for payload in replacements},
+            {"attempt-1"},
+        )
+        for event in events:
+            self.assertEqual(set(event), {"eventId", "kind", "payload"})
+            if event["kind"] == "review.round.opened":
+                self.assertIn("lenses", event["payload"])
+                self.assertNotIn("reviewers", event["payload"])
+            if event["kind"] == "review.round.closed":
+                self.assertNotIn("lateFindings", event["payload"])
+        self.assertIn(
+            "the replacement predecessor remains on the activity lifecycle and is not an artifact request member",
+            " ".join(contract.split()),
+        )
+
     def test_unsupported_runtime_and_legacy_run_write_nothing(self):
         for responses in [
             [(2, {})],

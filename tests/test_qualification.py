@@ -36,13 +36,14 @@ def _load_runner():
 class QualificationTests(unittest.TestCase):
     def test_checked_product_core_replays_exactly(self) -> None:
         product = ROOT / "qualifications/product"
+        current = "core-product-contract-alignment-v1"
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             output = directory / "core.json"
-            result = self._run_qualification(product / "core-product-v1.zip",
-                                             product / "core-product-v1.release.json", output, directory)
+            result = self._run_qualification(product / f"{current}.zip",
+                                             product / f"{current}.release.json", output, directory)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(output.read_bytes(), (product / "core-product-v1.json").read_bytes())
+            self.assertEqual(output.read_bytes(), (product / f"{current}.json").read_bytes())
 
     def test_record_output_cannot_alias_candidate_archive_or_metadata(self) -> None:
         for target in ("archive", "metadata", "symlink"):

@@ -54,8 +54,14 @@ provider neither retries mutations nor performs reconciliation itself.
 
 ## Review evidence
 
-An aligned `review-work` result bound to the requested final tree produces one
-deterministic `delivery-evidence/1` manifest with a `review.green/1` claim. Each
+An aligned `review-work` result bound to the requested final candidate produces
+one deterministic `delivery-evidence/1` manifest. With no payload capability
+declaration the provider preserves `review.green/1`. When the consumer supplies
+`acceptedPayloadSpecs`, the provider selects the first supported spec in
+`review.green/2`, `review.green/1` preference order. Version 1 permits only
+tracked actionable nonblocking P2/P3 `expansion` deferrals. Version 2 also
+permits that shape at `in_contract` scope; neither permits adjacent or P0/P1
+deferrals. Each
 selected final-pass lens gets one reviewer-approval artifact. Finding counts,
 deferred work references, run history, and approval digests are derived from
 the supplied review history rather than accepted as summary claims.
@@ -104,8 +110,28 @@ the adjacent retained acquisition envelopes. `obtain_review` itself remains an
 ordinary candidate-bound acquisition with no new envelope keys. Omission of the
 declaration preserves ordinary bound handling. Neither API observes future
 candidate edits; a further required edit after grace remains the executor's
-documented terminal condition. Base-move reopening is a separate rule and is
-not implemented by this input.
+documented terminal condition.
+
+### Reopen a round after base movement
+
+The enhanced review input retains every obtained pass as a closed round object
+with `passId`, logical `round`, full `candidate`, complete `results`, and optional
+`supersedesPassId`. It also supplies `baseMoveReopenings`, each naming the exact
+adjacent previous and replay pass plus an executed `delivered-diff-comparison/1`.
+The comparison binds both candidates, base refs, base tips and merge bases. Its
+`previousDiff` and `diff` arrays contain sorted `{path, content, sha256}` entries;
+the provider verifies every content digest and requires exact entry equality.
+The comparison has its own retained `evidenceRef`. An equal summary digest,
+unchanged candidate label, or unexecuted comparison does not qualify.
+
+The reducer keeps the superseded pass in history while using the replay as the
+active result for that logical round. The replay does not spend the original
+declared bound. Actual base movement, unchanged deliverable identity and digest,
+complete required lenses, exact supersession, and an outer candidate equal to
+the final active binding are all required. The emitted `runHistory` retains all
+obtained pass IDs and tree bindings; `iterationCount` reports actual passes, so
+obtained history and bound accounting remain distinct. This rule remains
+separate from the single constrained grace verification.
 
 Cancellation is accepted only for an active deferred attempt. Loss of the host
 workflow before a terminal result becomes `indeterminate`; neither outcome can

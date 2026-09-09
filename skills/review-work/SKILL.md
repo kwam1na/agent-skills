@@ -37,9 +37,15 @@ policy.
 
 ## Convergence
 
-An actionable finding is one a lens filed at P0 or P1 inside the round's scope.
-A deferral recorded in evidence is not a finding. A deferral's follow-up is a
-tracked item the executor records before the delivery reports done; the
+P0 and P1 findings are blocking and are never deferred. A P2 or P3 finding may
+be deferred only when it is actionable, nonblocking, and names its tracked
+follow-up item. Under `review.green/1` that exception is limited to `expansion`
+scope. An `in_contract` P2 or P3 deferral requires the consumer to declare
+`review.green/2` in the review obligation's accepted payload specs; its evidence
+producer must then select `review.green/2`. That version admits `in_contract`
+and `expansion` deferrals under the same rule, never `adjacent` findings. A
+deferral recorded in evidence is not an open finding. A deferral's follow-up is
+a tracked item the executor records before the delivery reports done; the
 deferral's evidence names what that item must say, and the lens files nothing
 itself. One tracked item may carry several deferrals, one item per shippable
 outcome. Where no tracker is configured, those follow-up items are the
@@ -71,8 +77,8 @@ deferral, and neither the returned value nor the count below carries it.
 The caller emits `review.round.closed` once a round is reduced, through the
 run-event command the repository's root instruction file declares, when it
 declares one, naming the round, the candidate it bound, the reduced outcome,
-its findings by severity, the count of late findings in that round, and the
-round's self-reported cost; where the repository declares none, the caller
+its findings by severity, and the round's self-reported cost; where the
+repository declares none, the caller
 proceeds silently, with no handoff and no blocker. That emission is
 observability, not review state, and this workflow neither performs it nor
 reads it back. The caller-selected lens list is unchanged by it. The shared observation

@@ -38,6 +38,7 @@ class ReviewGraceTests(unittest.TestCase):
         self.assertEqual(result.rounds, rounds)
         self.assertEqual(result.dissent, (rounds[0][1],))
         self.assertEqual(result.late_findings[0].round_number, 1)
+        self.assertEqual(result.counted_rounds, 4)
         self.assertEqual(asdict(result)["grace_verification"], asdict(declaration()))
 
     def test_fifth_round_without_declaration_still_exceeds_bound(self):
@@ -194,7 +195,7 @@ class ProviderGraceTests(unittest.TestCase):
             }
             # Manifest rendering does not access installation state or acquire reviews.
             provider = object.__new__(DeliveryRailsProvider)
-            path = provider._write_manifest(payload, "request-1", {"releaseId": "release-1", "archiveSha256": "a" * 64}, result, trees, findings, "2026-09-07T00:00:00Z")
+            path = provider._write_manifest(payload, "request-1", {"releaseId": "release-1", "archiveSha256": "a" * 64}, document, result, trees, findings, "2026-09-07T00:00:00Z")
             manifest = json.loads(path.read_text())
             self.assertEqual(manifest["provider"]["finalPassId"], "pass-5")
             self.assertEqual(manifest["claims"][0]["payload"]["telemetry"]["iterationCount"], 5)
