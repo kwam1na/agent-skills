@@ -870,8 +870,8 @@ class LinearQualificationTests(unittest.TestCase):
 
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
         current_products = {
-            "core": ("core-product-contract-alignment-v1", "ac1559ee9b26ef2fc19a8c125deb615a3b7852b9e8aec6089361196ac8ee40cf"),
-            "linear": ("linear-product-contract-alignment-v1", "91a0330f3679a49afcbe29e8bf346cc6c613758e500e582484c63b570e6d9c9e"),
+            "core": ("core-product-contract-alignment-v1", "ad6a985d207c67b796782d324360bcdb1e2992da777740a6e36c50ce16d15708"),
+            "linear": ("linear-product-contract-alignment-v1", "4a21ef3114195bfd0294a9e44e3dc3b8b094456760919aa7ec8cb3d9b17492ad"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
