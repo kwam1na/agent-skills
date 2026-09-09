@@ -296,11 +296,11 @@ class DeliveryProviderTests(unittest.TestCase):
         old_merge = "2" * 40
         rounds = [
             {"candidate": bound_candidate("9" * 40, old_tip, old_merge), "passId": "pass-1", "results": first_results, "round": 1},
-            {"candidate": bound_candidate(old_tree, old_tip, old_merge), "passId": "pass-2", "results": aligned_results, "round": 2},
+            {"candidate": bound_candidate(old_tree, old_tip, old_merge), "passId": "pass-2", "results": [dict(result) for result in aligned_results], "round": 2},
             {
                 "candidate": bound_candidate(TREE, "d" * 40, "c" * 40, head="e" * 40),
                 "passId": "pass-3",
-                "results": aligned_results,
+                "results": [dict(result) for result in aligned_results],
                 "round": 2,
                 "supersedesPassId": "pass-2",
             },
@@ -418,7 +418,12 @@ class DeliveryProviderTests(unittest.TestCase):
         payload = manifest["claims"][0]["payload"]
         self.assertEqual(payload["reviewers"]["completed"], ["correctness", "testing"])
         self.assertEqual(payload["telemetry"]["iterationCount"], 1)
-        self.assertEqual(len(manifest["artifacts"]), 2)
+        approvals = [
+            artifact
+            for artifact in manifest["artifacts"]
+            if artifact["role"] == "reviewer-approval"
+        ]
+        self.assertEqual(len(approvals), 2)
         for artifact in manifest["artifacts"]:
             contents = (self.run_root / artifact["path"]).read_bytes()
             self.assertEqual(hashlib.sha256(contents).hexdigest(), artifact["sha256"])
@@ -435,9 +440,14 @@ class DeliveryProviderTests(unittest.TestCase):
 
     def test_reopened_round_preserves_every_pass_and_selects_explicit_v2(self) -> None:
         self.negotiate(VERSION)
+        review = self.reopened_review()
+        superseded = review["rounds"][1]["results"][0]
+        superseded["evidence"] = ["superseded dissent evidence"]
+        superseded["findings"] = ["superseded finding"]
+        superseded["outcome"] = "changes-requested"
         events = self.provider.handle(
             self.request(
-                review=self.reopened_review(deferred_scope="in_contract"),
+                review=review,
                 accepted_payload_specs=["review.green/2", "review.green/1"],
             )
         )
@@ -450,6 +460,50 @@ class DeliveryProviderTests(unittest.TestCase):
             ["pass-1", "pass-2", "pass-3"],
         )
         self.assertEqual(manifest["claims"][0]["payload"]["telemetry"]["iterationCount"], 3)
+        history_entry = next(
+            artifact
+            for artifact in manifest["artifacts"]
+            if artifact["role"] == "review-history"
+        )
+        history_path = self.run_root / history_entry["path"]
+        history_bytes = history_path.read_bytes()
+        self.assertEqual(hashlib.sha256(history_bytes).hexdigest(), history_entry["sha256"])
+        history = json.loads(history_bytes)
+        self.assertEqual(history["request"]["maxRounds"], 2)
+        self.assertEqual(history["request"]["requiredLenses"], ["correctness", "testing"])
+        self.assertEqual(
+            [item["passId"] for item in history["request"]["rounds"]],
+            ["pass-1", "pass-2", "pass-3"],
+        )
+        self.assertEqual(
+            history["request"]["rounds"][2]["supersedesPassId"], "pass-2"
+        )
+        self.assertEqual(
+            history["request"]["rounds"][1]["results"][0]["findings"],
+            ["superseded finding"],
+        )
+        comparison = history["request"]["baseMoveReopenings"][0]["comparison"]
+        self.assertEqual(
+            comparison["evidenceRef"], "artifact:executed-delivered-diff-comparison"
+        )
+        self.assertEqual(comparison["previousDiff"], comparison["diff"])
+        self.assertEqual(history["result"]["counted_rounds"], 2)
+        self.assertEqual(
+            [item["pass_id"] for item in history["result"]["round_history"]],
+            ["pass-1", "pass-2", "pass-3"],
+        )
+        self.assertEqual(
+            history["result"]["round_history"][2]["supersedes_pass_id"], "pass-2"
+        )
+        self.assertEqual(
+            history["result"]["round_history"][1]["results"][0]["findings"],
+            ["superseded finding"],
+        )
+        self.assertEqual(history["result"]["rounds"][1][0]["findings"], [])
+        self.assertEqual(
+            history["result"]["base_move_reopenings"][0]["comparison"]["evidence_ref"],
+            "artifact:executed-delivered-diff-comparison",
+        )
 
     def test_v1_cannot_emit_an_in_contract_deferral(self) -> None:
         self.negotiate(VERSION)
@@ -703,6 +757,41 @@ class DeliveryProviderTests(unittest.TestCase):
             self.provider.handle(request)
 
         self.assertEqual(first[-1]["outcome"], "success")
+
+    def test_cached_success_rejects_unsafe_review_history(self) -> None:
+        for index, mutation in enumerate(("tampered", "missing", "symlinked"), start=1):
+            with self.subTest(mutation=mutation):
+                if index > 1:
+                    self.restart_provider()
+                    self.run_root = self.directory / f"run-{mutation}"
+                    self.run_root.mkdir()
+                self.negotiate(VERSION)
+                request = self.request(
+                    request_id=f"request-{index}",
+                    idempotency_key=f"attempt-{index}",
+                    review=self.reopened_review(),
+                )
+                self.provider.handle(request)
+                manifest = json.loads(
+                    (self.run_root / "manifest.json").read_text(encoding="utf-8")
+                )
+                history_entry = next(
+                    artifact
+                    for artifact in manifest["artifacts"]
+                    if artifact["role"] == "review-history"
+                )
+                history_path = self.run_root / history_entry["path"]
+                if mutation == "tampered":
+                    history_path.write_bytes(history_path.read_bytes() + b" ")
+                elif mutation == "missing":
+                    history_path.unlink()
+                else:
+                    target = self.run_root / "unreferenced-review-history.json"
+                    history_path.replace(target)
+                    history_path.symlink_to(target.name)
+
+                with self.assertRaisesRegex(ValueError, "evidence"):
+                    self.provider.handle(request)
 
     def test_cached_success_revalidates_manifest_digest_before_replay(self) -> None:
         self.negotiate(VERSION)

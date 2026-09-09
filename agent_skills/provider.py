@@ -15,7 +15,7 @@ import json
 import re
 import secrets
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from . import workflows as workflow_runtime
@@ -425,6 +425,7 @@ class DeliveryRailsProvider:
                 payload,
                 request_id,
                 binding,
+                review_document,
                 result,
                 round_trees,
                 findings,
@@ -943,6 +944,7 @@ class DeliveryRailsProvider:
         payload: dict[str, object],
         request_id: str,
         binding: dict[str, str],
+        review_document: dict[str, object],
         result: ReviewResult,
         round_trees: tuple[str, ...],
         findings: tuple[dict[str, object], ...],
@@ -1000,6 +1002,30 @@ class DeliveryRailsProvider:
             "version": f"{binding['releaseId']}+sha256.{binding['archiveSha256']}",
         }
         artifacts: list[dict[str, str]] = []
+        retained_request = {
+            name: review_document[name]
+            for name in (
+                "baseMoveReopenings",
+                "findings",
+                "graceVerification",
+                "maxRounds",
+                "requiredLenses",
+                "rounds",
+            )
+            if name in review_document
+        }
+        history_contents = canonical_json(
+            {"request": retained_request, "result": asdict(result)}
+        ).encode()
+        history_path = "review-history.json"
+        atomic_write(run_root / history_path, history_contents)
+        artifacts.append(
+            {
+                "path": history_path,
+                "role": "review-history",
+                "sha256": hashlib.sha256(history_contents).hexdigest(),
+            }
+        )
         reviewers_root = run_root / "reviewers"
         reviewers_root.mkdir(exist_ok=True)
         if reviewers_root.is_symlink() or not reviewers_root.is_dir():

@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+import hashlib
+import json
 from pathlib import Path
+import tempfile
 import unittest
 
 from agent_skills import workflows
@@ -249,6 +252,58 @@ class ProviderBaseReopeningTests(unittest.TestCase):
         self.assertEqual(trees, ("1" * 40, "2" * 40, "3" * 40))
         self.assertEqual(findings, ())
 
+    def test_provider_manifest_retains_bound_history_and_reopening_audit(self):
+        document = self.document()
+        result, trees, findings = DeliveryRailsProvider._review(document)
+        with tempfile.TemporaryDirectory() as directory:
+            payload = {
+                "providerId": "agent-skills.review",
+                "runId": "request-one",
+                "runRoot": directory,
+                "obligationIds": ["review.green"],
+                "candidate": self.raw_candidate(request().round_history[-1].candidate),
+            }
+            provider = object.__new__(DeliveryRailsProvider)
+            manifest_path = provider._write_manifest(
+                payload,
+                "request-one",
+                {"releaseId": "release-one", "archiveSha256": "a" * 64},
+                document,
+                result,
+                trees,
+                findings,
+                "2026-09-09T00:00:00Z",
+            )
+            manifest = json.loads(manifest_path.read_text())
+            retained = next(
+                artifact
+                for artifact in manifest["artifacts"]
+                if artifact["role"] == "review-history"
+            )
+            history_path = Path(directory) / retained["path"]
+            history_bytes = history_path.read_bytes()
+            history = json.loads(history_bytes)
+
+            self.assertEqual(
+                hashlib.sha256(history_bytes).hexdigest(), retained["sha256"]
+            )
+            self.assertEqual(history["request"]["maxRounds"], 2)
+            self.assertEqual(history["request"]["requiredLenses"], list(LENSES))
+            self.assertEqual(
+                [item["passId"] for item in history["request"]["rounds"]],
+                ["pass-1", "pass-2", "pass-3"],
+            )
+            self.assertEqual(
+                history["request"]["rounds"][-1]["supersedesPassId"], "pass-2"
+            )
+            self.assertEqual(history["result"]["counted_rounds"], 2)
+            self.assertEqual(
+                history["result"]["base_move_reopenings"][0]["comparison"][
+                    "evidence_ref"
+                ],
+                "artifact:delivered-diff-comparison-round-2",
+            )
+
     def test_provider_binds_replayed_grace_to_active_logical_rounds(self):
         original = request()
         first, grace, replay = original.round_history
@@ -326,7 +381,7 @@ class ProviderBaseReopeningTests(unittest.TestCase):
         with self.assertRaises(ProviderInputError) as raised:
             provider._write_manifest(payload, "request-one", {
                 "releaseId": "release-one", "archiveSha256": "a" * 64,
-            }, result, trees, findings, "2026-09-09T00:00:00Z")
+            }, document, result, trees, findings, "2026-09-09T00:00:00Z")
         self.assertEqual(raised.exception.blocker_id, "candidate-mismatch")
 
 
