@@ -53,7 +53,7 @@ class ReceiptContractTests(LifecycleFixture, unittest.TestCase):
             canonical_json(
                 {
                     **valid,
-                    "release": {**valid["release"], "profile": "bootstrap"},
+                    "release": {**valid["release"], "profile": "unsupported"},
                 }
             ).encode(),
             canonical_json({**valid, "exposures": list(reversed(valid["exposures"]))}).encode(),

@@ -6,10 +6,10 @@ attestation collected for that release pair. Their recorded identities and
 bindings remain independently verifiable together. They do not claim current
 source equivalence or qualify a later product.
 
-The `*-product-contract-alignment-v1` files are the current local product set.
+The `*-adoption-v1` files are the current qualified product set. The bootstrap
+archive qualifies the minimal first-install profile and full product lifecycle.
 The core archive carries its exact current core and provider qualification
-records. The Linear archive is locally release-verified and checked against the
-current source projection, but has no newly collected protected host
-attestation. A fresh protected collection must bind that exact core and Linear
-release pair before the current Linear product can claim external MCP
-qualification. The historical attestation is never rebound or relabeled.
+records. The Linear qualification binds that exact core and Linear pair to a
+new independently frozen collector input and protected host-native attestation.
+The historical artifacts above remain unchanged and their attestations are
+never rebound or relabeled.

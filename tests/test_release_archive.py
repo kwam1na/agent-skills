@@ -149,7 +149,7 @@ class ReleaseArchiveTests(unittest.TestCase):
         metadata_mutations = (
             ("releaseId", None),
             ("profile", None),
-            ("profile", "bootstrap"),
+            ("profile", "unsupported"),
         )
         for key, value in metadata_mutations:
             with self.subTest(source="metadata", key=key, value=value), tempfile.TemporaryDirectory() as temporary:
@@ -160,7 +160,7 @@ class ReleaseArchiveTests(unittest.TestCase):
                 with self.assertRaisesRegex(ReleaseError, "release.identity"):
                     verify_release(archive, metadata)
 
-        manifest_mutations = (("releaseId", None), ("profile", None), ("profile", "bootstrap"))
+        manifest_mutations = (("releaseId", None), ("profile", None), ("profile", "unsupported"))
         for key, value in manifest_mutations:
             with self.subTest(source="manifest", key=key, value=value), tempfile.TemporaryDirectory() as temporary:
                 directory = Path(temporary)

@@ -83,6 +83,122 @@ class ProductReleaseTests(unittest.TestCase):
         (consumer / ".agent-skills/current/runtime/cli.mjs").write_text("tampered")
         self.assertIn("local-divergence", lifecycle.status().as_dict()["blockers"])
 
+    def test_product_apply_selects_install_update_and_no_op_without_checkout_state(self) -> None:
+        first, second = self.build(1), self.build(2)
+        consumer = initialize_repository(self.base)
+        environment = {
+            **os.environ,
+            "AGENT_SKILLS_CHECKOUT": "",
+            "AGENT_SKILLS_EXECUTION_CONTEXT": "",
+            "GITHUB_EVENT_NAME": "",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": "",
+        }
+
+        def apply(artifacts: tuple[Path, Path]) -> dict[str, object]:
+            archive, metadata = artifacts
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(archive),
+                    "--root",
+                    str(consumer),
+                    "--product",
+                    "apply",
+                    "--archive",
+                    str(archive),
+                    "--metadata",
+                    str(metadata),
+                    "--maintenance",
+                ],
+                cwd=self.base,
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return json.loads(result.stdout)
+
+        self.assertEqual(apply(first)["action"], "install")
+        self.assertEqual(apply(second)["action"], "update")
+        self.assertEqual(apply(second)["action"], "no-op")
+        self.assertEqual(Lifecycle(consumer).status().as_dict()["active"]["releaseId"], "fixture-2")
+
+    def test_product_apply_forwards_explicit_first_policy_bootstrap(self) -> None:
+        (self.runtime / "policy.mjs").write_text(
+            """import {existsSync,writeFileSync} from 'node:fs';
+const snapshot='.agents/policy/compiled-snapshot.json';
+if(process.argv.includes('--bootstrap')) {
+  if(existsSync(snapshot)) process.exit(7);
+  writeFileSync(snapshot, JSON.stringify({bootstrapped:true})+'\\n', {flag:'wx'});
+}
+process.exit(existsSync(snapshot) ? 0 : 8);
+"""
+        )
+        self.descriptor["files"] = [
+            {"path": name, "sha256": hashlib.sha256((self.runtime / name).read_bytes()).hexdigest()}
+            for name in sorted(RUNTIME_FILES - {"runtime.json"})
+        ]
+        self.save_descriptor()
+        archive, metadata = self.build(1)
+        consumer = initialize_repository(self.base)
+        policy = consumer / ".agents/policy"
+        policy.mkdir(parents=True)
+        (policy / "repository-policy.json").write_text("{}\n")
+        (policy / "adapters.json").write_text("[]\n")
+        (policy / "bootstrap-inputs.json").write_text(
+            '{"productTrustRevocationEpoch":0,"repositoryAuthorityRevocationEpoch":0}\n'
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(archive),
+                "--root",
+                str(consumer),
+                "--product",
+                "apply",
+                "--archive",
+                str(archive),
+                "--metadata",
+                str(metadata),
+                "--bootstrap-policy",
+                "--maintenance",
+            ],
+            cwd=self.base,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads((policy / "compiled-snapshot.json").read_text()), {"bootstrapped": True})
+        self.assertTrue(json.loads(result.stdout)["status"]["productReady"])
+
+    def test_policy_bootstrap_flag_requires_product_mode(self) -> None:
+        archive, metadata = self.build(1)
+        consumer = initialize_repository(self.base)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(archive),
+                "--root",
+                str(consumer),
+                "apply",
+                "--archive",
+                str(archive),
+                "--metadata",
+                str(metadata),
+                "--bootstrap-policy",
+                "--maintenance",
+            ],
+            cwd=self.base,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(json.loads(result.stdout)["error"]["code"], "product.bootstrap_requires_product")
+
     def test_policy_failure_retains_generation_but_blocks_readiness_and_runtime_until_recovery(self) -> None:
         policy = self.runtime / "policy.mjs"
         policy.write_text('import {existsSync} from "node:fs"; process.exit(existsSync(".agents/policy/allow") ? 0 : 1);')

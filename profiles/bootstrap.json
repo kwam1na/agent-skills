@@ -1,5 +1,5 @@
 {
-  "description": "Optional guidance for creating an agent-ready repository.",
+  "description": "Qualified guidance for creating an agent-ready repository and wiring the distributed delivery product.",
   "expectedFiles": [
     "skills/bootstrap-agent-harness/SKILL.md",
     "skills/bootstrap-agent-harness/agents/openai.yaml"

@@ -1,6 +1,6 @@
 {
   "expectedLifecycleScenarioCount": 30,
-  "expectedScenarioCount": 9,
+  "expectedScenarioCount": 10,
   "lifecycleScenarios": [
     {
       "id": "activation-boundary-fault-recovery",
@@ -414,6 +414,15 @@
     }
   ],
   "scenarios": [
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "bootstrap-profile-selects-bootstrap-agent-harness",
+      "profile": "bootstrap",
+      "skill": "bootstrap-agent-harness"
+    },
     {
       "hosts": [
         "claude-code",
