@@ -1,13 +1,13 @@
 {
-  "qualificationDriverSha256": "bcae01d5164d80b5b955c5e37f6c670e7ced59e43e02d69263d6e1c086c87af5",
+  "qualificationDriverSha256": "3bdc1bc35a7b259c82b475d2dcf126dfb6cb0e14164e8765b4fedebb92125900",
   "redaction": {
     "environmentCaptured": false,
     "pathsCaptured": false,
     "retainedEvidence": "named assertions and deterministic checkpoint summaries"
   },
   "release": {
-    "archiveSha256": "63fadcb19d7d10854eb37d97a6d42aa7405ebe9ef361e989af37ce32f9bce162",
-    "metadataSha256": "07b56bee929912d5b4c6f4eb2077cd4fe93b5c685d3e65ee249841705aae134b",
+    "archiveSha256": "254f0055f24d6a0359699efc942b2baecff57307e4430b1da5d1c1eca00ee530",
+    "metadataSha256": "a2c85ff395aa4699b7538ab4963d2a1c23cb444edac36d8039c65cea9b6c90c8",
     "profile": "core",
     "releaseId": "core-workflows-v2"
   },
@@ -105,8 +105,8 @@
       "result": "passed"
     },
     {
-      "assertionCount": 12,
-      "checkpointSha256": "a197eee9e9f24008412ab6976c26d19f100aef57d279acfdd4ec5dca4ef9f8e3",
+      "assertionCount": 13,
+      "checkpointSha256": "17696be7c6feeddd90217a500ab6ac3a69825516213ae617e3b8cfea0b68f0ed",
       "evidence": [
         "packaged evidence matches trusted bytes: tests/test_review_base_reopening.py",
         "packaged evidence matches trusted bytes: tests/test_review_and_compounding.py",
@@ -119,6 +119,7 @@
         "sensor passed: test_review_base_reopening.ReviewBaseReopeningTests.test_equal_deliverable_digest_without_executed_comparison_cannot_reopen",
         "sensor passed: test_review_base_reopening.ReviewBaseReopeningTests.test_changed_delivered_bytes_or_paths_cannot_claim_reopening",
         "sensor passed: test_review_base_reopening.ReviewBaseReopeningTests.test_replay_keeps_required_lenses_and_dissent_visible",
+        "sensor passed: test_review_base_reopening.ProviderBaseReopeningTests.test_provider_binds_replayed_grace_to_active_logical_rounds",
         "runtime imports use the extracted candidate"
       ],
       "id": "bounded-review-failure",
@@ -213,7 +214,7 @@
   ],
   "schemaVersion": "agent-skills-qualification/1",
   "summary": {
-    "assertionCount": 101,
+    "assertionCount": 102,
     "failedScenarioCount": 0,
     "passedScenarioCount": 12,
     "requiredScenarioCount": 12,

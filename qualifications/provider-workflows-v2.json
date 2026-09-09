@@ -1,5 +1,5 @@
 {
-  "installedProviderSha256": "5f4ddfe4bd2f49085bb84a7b98c9f9365a918bb97b6fef0323cd85ead78a2c76",
+  "installedProviderSha256": "97d9a6ad726b38d92fee65dc66036f5b6dd9748d0fd69206e526cd30b52c7998",
   "proofBoundary": {
     "external": "Host and connector provenance remains owned by the protected external run that supplies host events.",
     "offline": "This record proves exact installed provider execution, retained evidence behavior, and deterministic replay; controlled host events do not independently prove external calls."
@@ -12,8 +12,8 @@
     "rawPayloadsCaptured": false
   },
   "release": {
-    "archiveSha256": "63fadcb19d7d10854eb37d97a6d42aa7405ebe9ef361e989af37ce32f9bce162",
-    "metadataSha256": "07b56bee929912d5b4c6f4eb2077cd4fe93b5c685d3e65ee249841705aae134b",
+    "archiveSha256": "254f0055f24d6a0359699efc942b2baecff57307e4430b1da5d1c1eca00ee530",
+    "metadataSha256": "a2c85ff395aa4699b7538ab4963d2a1c23cb444edac36d8039c65cea9b6c90c8",
     "profile": "core",
     "releaseId": "core-workflows-v2"
   },
