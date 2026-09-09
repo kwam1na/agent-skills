@@ -14,7 +14,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills/execute-work/scripts/report_observation.py"
 SPEC = importlib.util.spec_from_file_location("report_observation", SCRIPT)
 reporter = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(reporter)
+# The skill tree is content-hashed; loading its script must not add cache files.
+previous_bytecode_setting = sys.dont_write_bytecode
+try:
+    sys.dont_write_bytecode = True
+    SPEC.loader.exec_module(reporter)
+finally:
+    sys.dont_write_bytecode = previous_bytecode_setting
 
 
 class WorkflowObservationTests(unittest.TestCase):
