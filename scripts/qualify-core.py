@@ -127,6 +127,7 @@ SCENARIO_SENSORS = {
         "test_review_base_reopening.ReviewBaseReopeningTests.test_equal_deliverable_digest_without_executed_comparison_cannot_reopen",
         "test_review_base_reopening.ReviewBaseReopeningTests.test_changed_delivered_bytes_or_paths_cannot_claim_reopening",
         "test_review_base_reopening.ReviewBaseReopeningTests.test_replay_keeps_required_lenses_and_dissent_visible",
+        "test_review_base_reopening.ProviderBaseReopeningTests.test_provider_binds_replayed_grace_to_active_logical_rounds",
     ),
 }
 TRUSTED_EVIDENCE_PATHS = (
