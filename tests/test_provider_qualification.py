@@ -17,7 +17,7 @@ from agent_skills.release import VerifiedRelease, build_release
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-provider.py"
-RECORD = ROOT / "qualifications" / "provider-workflows-adoption-v1.json"
+RECORD = ROOT / "qualifications" / "provider-workflows-bytecode-v1.json"
 
 
 def _load_runner():
@@ -31,7 +31,7 @@ def _load_runner():
 class ProviderQualificationTests(unittest.TestCase):
     def test_checked_product_provider_replays_exactly(self) -> None:
         product = ROOT / "qualifications/product"
-        current = "core-adoption-v1"
+        current = "core-bytecode-v1"
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "provider.json"
             result = subprocess.run([sys.executable, "-B", str(SCRIPT),
@@ -39,7 +39,7 @@ class ProviderQualificationTests(unittest.TestCase):
                                      "--metadata", str(product / f"{current}.release.json"),
                                      "--record", str(output)], cwd=temporary, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(output.read_bytes(), (product / "provider-adoption-v1.json").read_bytes())
+            self.assertEqual(output.read_bytes(), (product / "provider-bytecode-v1.json").read_bytes())
 
     def test_record_cannot_overwrite_a_qualification_input(self) -> None:
         runner = _load_runner()
@@ -105,7 +105,7 @@ class ProviderQualificationTests(unittest.TestCase):
             ROOT,
             archive,
             metadata,
-            release_id="core-workflows-adoption-v1",
+            release_id="core-workflows-bytecode-v1",
             profile_id="core",
         )
         output = record or directory / "provider.qualification.json"
@@ -148,7 +148,7 @@ class ProviderQualificationTests(unittest.TestCase):
             self.assertEqual(record["schemaVersion"], "agent-skills-provider-qualification/1")
             self.assertEqual(record["protocolVersion"], "delivery-provider-rails/1")
             self.assertEqual(record["release"]["profile"], "core")
-            self.assertEqual(record["release"]["releaseId"], "core-workflows-adoption-v1")
+            self.assertEqual(record["release"]["releaseId"], "core-workflows-bytecode-v1")
             self.assertRegex(record["release"]["archiveSha256"], r"^[a-f0-9]{64}$")
             self.assertRegex(record["release"]["metadataSha256"], r"^[a-f0-9]{64}$")
             self.assertRegex(record["installedProviderSha256"], r"^[a-f0-9]{64}$")

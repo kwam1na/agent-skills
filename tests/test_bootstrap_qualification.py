@@ -28,9 +28,17 @@ class BootstrapQualificationTests(unittest.TestCase):
             directory = Path(temporary)
             archive = directory / "bootstrap.zip"
             metadata = directory / "bootstrap.release.json"
-            build_release(ROOT, archive, metadata, release_id="bootstrap-v1", profile_id="bootstrap")
+            build_release(
+                ROOT,
+                archive,
+                metadata,
+                release_id="bootstrap-workflows-bytecode-v1",
+                profile_id="bootstrap",
+            )
             replay = runner.qualify(archive, metadata)
-        checked = json.loads((ROOT / "qualifications/bootstrap-v1.json").read_text())
+        checked = json.loads(
+            (ROOT / "qualifications/bootstrap-workflows-bytecode-v1.json").read_text()
+        )
         self.assertEqual(replay, checked)
 
     def test_bootstrap_profile_is_releasable_installable_and_qualified(self) -> None:
@@ -43,7 +51,7 @@ class BootstrapQualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="bootstrap-v1",
+                release_id="bootstrap-workflows-bytecode-v1",
                 profile_id="bootstrap",
             )
             record = runner.qualify(archive, metadata)
