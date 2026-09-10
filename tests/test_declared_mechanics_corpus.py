@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import re
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
+
+from agent_skills.release import ReleaseError, build_release
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +65,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " pin in the corpus to a heading",
         "qualification records re-earned against the candidate's release, not"
         " restamped",
+    ),
+    "README.md": (
+        "`auditReferences` uses the same order as `entities`: primary first,"
+        " then dependency",
     ),
     "docs/host-adapters.md": (
         "An adopting repository's overlay names what that repository adds: its"
@@ -144,6 +153,13 @@ def missing_phrases(texts: dict[str, str]) -> set[tuple[str, str]]:
     }
 
 
+def markdown_section(text: str, heading: str) -> str:
+    marker = f"## {heading}"
+    start = text.index(marker) + len(marker)
+    end = text.find("\n## ", start)
+    return text[start:] if end == -1 else text[start:end]
+
+
 class DeclaredMechanicsCorpusTests(unittest.TestCase):
     """Pin the declared mechanics in the repository's durable text."""
 
@@ -157,6 +173,49 @@ class DeclaredMechanicsCorpusTests(unittest.TestCase):
         moved = dict(texts)
         moved[relative] = texts[relative].replace(phrase, "", 1) + " ## Unrelated " + phrase
         self.assertEqual(missing_phrases(moved), missing_phrases(texts))
+
+    def test_host_convention_is_not_named_as_independence(self) -> None:
+        text = (ROOT / "skills/obtain-review/SKILL.md").read_text(encoding="utf-8")
+        section = " ".join(markdown_section(text, "Realize a lens by convention").split())
+        sentences = re.split(r"(?<=[.!?])\s+", section)
+        ambiguous = [
+            sentence
+            for sentence in sentences
+            if "host-convention" in sentence and "independence" in sentence.casefold()
+        ]
+        self.assertEqual(ambiguous, [])
+
+    def test_documented_source_validation_token_is_raised(self) -> None:
+        instructions = " ".join(
+            (ROOT / "AGENTS.md").read_text(encoding="utf-8").split()
+        )
+        match = re.search(
+            r"`(release\.source_validation: source corpus is invalid)`",
+            instructions,
+        )
+        self.assertIsNotNone(match)
+        documented = match.group(1)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            copied = Path(temporary) / "corpus"
+            shutil.copytree(
+                ROOT,
+                copied,
+                ignore=shutil.ignore_patterns(".git", "__pycache__"),
+            )
+            skill = copied / "skills/execute-work/SKILL.md"
+            skill.write_text(
+                skill.read_text(encoding="utf-8") + "\nInvalidates provenance.\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ReleaseError, f"^{re.escape(documented)}$"):
+                build_release(
+                    copied,
+                    copied / "invalid.zip",
+                    copied / "invalid.release.json",
+                    release_id="invalid-source-v1",
+                    profile_id="core",
+                )
 
     def test_each_declaration_is_red_for_exactly_itself(self) -> None:
         texts = corpus_texts(ROOT)

@@ -270,13 +270,13 @@
       "id": "obtain-review",
       "license": "NOASSERTION",
       "modification": {
-        "reason": "Independently authored portable acquisition and projection contract; no repository-source derivation or new license grant is asserted. Exact base-move reopening, shared host-neutral v2 observations, and durable selected-output capture preserve existing review authority. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
+        "reason": "Independently authored portable acquisition and projection contract; no repository-source derivation or new license grant is asserted. Exact content-based base-move reopening, shared host-neutral v2 observations, and durable selected-output capture preserve existing review authority. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
         "status": "independently-authored"
       },
       "outputs": [
         {
           "path": "skills/obtain-review/SKILL.md",
-          "sha256": "db24ae94d3f0d19e6389034120c8bca492479997f612b8a3b7be24a8e45df4e5"
+          "sha256": "d719e8dee9a959b5f941268d8a809dd4bf611277f42a2b97f7054ae5fe97fe6e"
         },
         {
           "path": "skills/obtain-review/references/round-brief-template.md",

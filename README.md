@@ -171,7 +171,8 @@ retains the redacted live event sequence, and cancels both disposable entities
 after create, read, update, search, relation, and reconciliation checks. The
 `agent-skills-linear-host-attestation/2` document includes `collectorBinding`
 equal to the frozen input, plus the existing collector, audit, entity, event,
-session, and receipt fields. Post its digest and random receipt reference through
+session, and receipt fields. `auditReferences` uses the same order as `entities`:
+primary first, then dependency. Post its digest and random receipt reference through
 the same host-native Linear MCP boundary. Then pass the retained attestation and
 the independently frozen input to the offline driver:
 

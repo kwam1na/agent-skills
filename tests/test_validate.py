@@ -339,6 +339,29 @@ class CorpusValidationTests(unittest.TestCase):
                     findings[0].artifact, ".agents/tracker-properties.json"
                 )
 
+    def test_permission_denied_tracker_properties_rejects(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        properties = root / ".agents" / "tracker-properties.json"
+        properties.chmod(0)
+        try:
+            try:
+                properties.read_text(encoding="utf-8")
+            except PermissionError:
+                pass
+            else:
+                self.skipTest("this user can read a mode-000 file")
+
+            findings = validate_corpus(root).findings
+            self.assertEqual(
+                [finding.rule_id for finding in findings], ["tracker.contract"]
+            )
+            self.assertEqual(
+                findings[0].artifact, ".agents/tracker-properties.json"
+            )
+        finally:
+            properties.chmod(0o600)
+
     def test_tracker_properties_separate_format_identity_from_consumed_values(self) -> None:
         # schemaVersion identifies the document, not a tracker operation input.
         # The remaining keys are operational properties; do not accumulate

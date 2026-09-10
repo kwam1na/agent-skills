@@ -263,7 +263,7 @@
         "review-base-reopening",
         "run-observability"
       ],
-      "degradedBehavior": "Native subagent dispatch and aggregation remain available without Python helpers; unavailable lenses remain explicit acquisition states. Unsupported v2 reporting remains explicit; retain selected output without changing delivery authority. Every host-convention lens uses a separate verified candidate checkout; unavailable isolation remains explicit.",
+      "degradedBehavior": "Native subagent dispatch and aggregation remain available without Python helpers; unavailable lenses remain explicit acquisition states. Unsupported v2 reporting remains explicit; retain selected output without changing delivery authority. Every host-convention lens uses a separate verified candidate checkout; unavailable isolation remains explicit. Base-move replay identity compares delivered path and line bytes, independent of shifted hunk positions or context.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",

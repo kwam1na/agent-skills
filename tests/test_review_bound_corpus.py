@@ -136,6 +136,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " its base is byte-identical to the diff of the previous candidate"
         " against its base, over the same set of paths, with no path added,"
         " removed, or renamed",
+        "For this comparison, a diff consists of each path and its added and"
+        " removed line bytes; hunk position headers and unchanged context lines"
+        " do not participate",
         "The executor computes that comparison and retains its output as"
         " evidence; a comparison that was not run, or that reports any"
         " difference at all, is a differing identity",

@@ -161,9 +161,13 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " a skill read rather than invoked, a sensor considered and deliberately"
         " not run, and any value supplied by hand that should have been"
         " discoverable",
-        "Reading the root instruction file for the run-event declaration is"
-        " capability discovery, not the authority reading this point orders: it"
-        " precedes `run.started`",
+        "`run.started` before reading repository authority, naming the host and"
+        " the installed workflow release the delivery runs under. Reading the"
+        " root instruction file for the run-event declaration is capability"
+        " discovery, not the authority reading this point orders: it precedes"
+        " `run.started`, because nothing can be emitted until the delivery knows"
+        " whether a command exists to emit through. Everything else that file"
+        " governs is read after",
     ),
 }
 
