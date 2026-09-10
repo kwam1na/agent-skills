@@ -18,14 +18,11 @@ def environment_python(environment: Path) -> Path:
     return environment / "bin" / "python"
 
 
-def create_environment(root: Path, *, without_pip: bool = False) -> Path:
+def create_environment(root: Path) -> Path:
     root = root.resolve(strict=True)
     environment = root / ".venv"
-    command = [sys.executable, "-m", "venv"]
-    if without_pip:
-        command.append("--without-pip")
     subprocess.run(
-        [*command, str(environment)],
+        [sys.executable, "-m", "venv", str(environment)],
         cwd=root,
         check=True,
     )

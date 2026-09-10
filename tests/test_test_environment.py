@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "bootstrap-test-environment.py"
@@ -18,45 +21,92 @@ def _load_bootstrap():
     return module
 
 
+def _write_dependency_wheel(path: Path, identity: str) -> None:
+    dist_info = "fixture_dependency-1.0.dist-info"
+    files = {
+        "fixture_dependency.py": f"IDENTITY = {identity!r}\n",
+        f"{dist_info}/METADATA": "Metadata-Version: 2.1\nName: fixture-dependency\nVersion: 1.0\n",
+        f"{dist_info}/WHEEL": (
+            "Wheel-Version: 1.0\nGenerator: isolation-test\n"
+            "Root-Is-Purelib: true\nTag: py3-none-any\n"
+        ),
+    }
+    files[f"{dist_info}/RECORD"] = "".join(f"{name},,\n" for name in (*files, f"{dist_info}/RECORD"))
+    with zipfile.ZipFile(path, "w") as wheel:
+        for name, contents in files.items():
+            wheel.writestr(name, contents)
+
+
+def _write_checkout(root: Path, identity: str) -> None:
+    root.mkdir()
+    (root / "checkout_marker.py").write_text(f"IDENTITY = {identity!r}\n", encoding="utf-8")
+    dependency = root / "fixture_dependency-1.0-py3-none-any.whl"
+    _write_dependency_wheel(dependency, identity)
+    (root / "pyproject.toml").write_text(
+        "[build-system]\nrequires = []\nbuild-backend = \"fixture_backend\"\n"
+        "backend-path = [\".\"]\n",
+        encoding="utf-8",
+    )
+    (root / "fixture_backend.py").write_text(
+        "from pathlib import Path\n"
+        "import zipfile\n\n"
+        "ROOT = Path(__file__).resolve().parent\n"
+        "DIST_INFO = 'fixture_checkout-1.0.dist-info'\n"
+        "WHEEL = 'fixture_checkout-1.0-py3-none-any.whl'\n\n"
+        "def build_editable(wheel_directory, config_settings=None, metadata_directory=None):\n"
+        "    files = {\n"
+        "        'fixture_checkout.pth': f'{ROOT}\\n',\n"
+        "        f'{DIST_INFO}/METADATA': (\n"
+        "            'Metadata-Version: 2.1\\nName: fixture-checkout\\nVersion: 1.0\\n'\n"
+        "            'Provides-Extra: test\\n'\n"
+        f"            'Requires-Dist: fixture-dependency @ {dependency.as_uri()} ; extra == \\\"test\\\"\\n'\n"
+        "        ),\n"
+        "        f'{DIST_INFO}/WHEEL': (\n"
+        "            'Wheel-Version: 1.0\\nGenerator: isolation-test\\n'\n"
+        "            'Root-Is-Purelib: true\\nTag: py3-none-any\\n'\n"
+        "        ),\n"
+        "    }\n"
+        "    files[f'{DIST_INFO}/RECORD'] = ''.join(\n"
+        "        f'{name},,\\n' for name in (*files, f'{DIST_INFO}/RECORD')\n"
+        "    )\n"
+        "    with zipfile.ZipFile(Path(wheel_directory) / WHEEL, 'w') as wheel:\n"
+        "        for name, contents in files.items():\n"
+        "            wheel.writestr(name, contents)\n"
+        "    return WHEEL\n",
+        encoding="utf-8",
+    )
+
+
 class TestEnvironmentTests(unittest.TestCase):
-    def test_each_worktree_owns_its_editable_install(self) -> None:
+    def test_each_worktree_bootstrap_installs_its_own_source_and_test_dependency(self) -> None:
         bootstrap = _load_bootstrap()
         with tempfile.TemporaryDirectory() as temporary:
-            base = Path(temporary)
-            worktrees = (base / "worktree-a", base / "worktree-b")
-            for worktree in worktrees:
-                worktree.mkdir()
+            worktrees = [Path(temporary) / f"worktree-{index}" for index in range(2)]
+            for index, worktree in enumerate(worktrees):
+                _write_checkout(worktree, f"worktree-{index}")
 
-            resolved = [worktree.resolve() for worktree in worktrees]
-            interpreters = [
-                bootstrap.create_environment(worktree, without_pip=True)
-                for worktree in worktrees
-            ]
-            expected = [bootstrap.environment_python(worktree / ".venv") for worktree in resolved]
-            self.assertEqual(interpreters, expected)
+            environment = {
+                "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+                "PIP_NO_INDEX": "1",
+                "PIP_QUIET": "1",
+            }
+            with mock.patch.dict(os.environ, environment):
+                interpreters = [bootstrap.bootstrap(worktree) for worktree in worktrees]
+
             self.assertNotEqual(*interpreters)
-
-            for index, interpreter in enumerate(interpreters):
-                purelib = Path(
-                    subprocess.run(
-                        [str(interpreter), "-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                    ).stdout.strip()
-                )
-                (purelib / "checkout_marker.py").write_text(
-                    f"IDENTITY = 'worktree-{index}'\n",
-                    encoding="utf-8",
-                )
-
             observations = [
                 subprocess.run(
                     [
                         str(interpreter),
                         "-I",
                         "-c",
-                        "import checkout_marker; print(checkout_marker.IDENTITY); print(checkout_marker.__file__)",
+                        (
+                            "import checkout_marker, fixture_dependency; "
+                            "print(checkout_marker.IDENTITY); "
+                            "print(fixture_dependency.IDENTITY); "
+                            "print(checkout_marker.__file__); "
+                            "print(fixture_dependency.__file__)"
+                        ),
                     ],
                     check=True,
                     capture_output=True,
@@ -64,9 +114,11 @@ class TestEnvironmentTests(unittest.TestCase):
                 ).stdout.splitlines()
                 for interpreter in interpreters
             ]
-            self.assertEqual([lines[0] for lines in observations], ["worktree-0", "worktree-1"])
-            for index, lines in enumerate(observations):
-                self.assertTrue(Path(lines[1]).is_relative_to(resolved[index] / ".venv"))
+            for index, (worktree, lines) in enumerate(zip(worktrees, observations, strict=True)):
+                self.assertEqual(lines[:2], [f"worktree-{index}", f"worktree-{index}"])
+                resolved = worktree.resolve()
+                self.assertTrue(Path(lines[2]).is_relative_to(resolved))
+                self.assertTrue(Path(lines[3]).is_relative_to(resolved / ".venv"))
 
 
 if __name__ == "__main__":
