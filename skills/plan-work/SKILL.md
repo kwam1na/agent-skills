@@ -44,21 +44,20 @@ or command choreography.
 
 ## Review the Plan Without a Round Bound
 
-Plan review carries no round bound. Planning is the most important point in
-delivery, and a plan is cheap to revise and expensive to get wrong, so the plan
-review loop is left boundless: it runs until its lenses align, and no round
-count ends it. This loop is the review of the plan, and it is not the delivery
-review that `$review-work` bounds; the absence of a count here changes nothing
-about that review. This is a recorded decision rather than an omission, so a
-later plan review does not re-derive the question.
+Plan review carries no round bound: it runs until its lenses align unless the
+operator ends it by decision, and no round count ends it. Plan review is
+separate from the delivery review that `$review-work` bounds; the absence of a
+count for plan review changes nothing about delivery review. Leaving plan
+review unbounded is a recorded decision rather than an omission, so a later
+plan review does not re-derive the question.
 
-A plan review that is not converging ends by decision rather than by count. The
-operator ends it on that judgement, and one sufficient signal is a round after
+A plan review that is not converging may end by operator decision rather than
+by count; termination is not guaranteed. One sufficient signal is a round after
 the first that raises a finding not raised before while leaving the number of
-open findings no lower than the round before it. Where that signal reaches the
-operator is the caller's responsibility and outside this section's scope: a
-plan-review round is realized by subagents, and this workflow neither carries a
-channel to the operator nor assumes one. The caller running the loop is what
+open findings no lower than the round before it. Surfacing that signal to the
+operator is the caller's responsibility; supplying the channel is outside this
+workflow's scope: a plan-review round is realized outside this workflow, which
+neither carries a channel to the operator nor assumes one. The caller running the loop is what
 puts each round in front of the operator who may end it, and where the caller
 surfaces nothing the loop still runs to alignment with no one positioned to end
 it early.
@@ -70,11 +69,25 @@ finding it could already state spends a round the plan did not need. Each
 plan-review lens carries this mandate in its own round brief, so a lens holding
 only its brief can act on it.
 
-The mandate answers what two plans landed on the same day cost. One reached
-alignment only at review round fourteen, with one lens filing a new finding in
-each of rounds one through thirteen and closing it in the round after. The other
-ran forty-one six-lens rounds. Neither loop was long because its plan was
-unusually hard; both were long because findings arrived one round at a time.
+## Plan Extension Pins and Shared Resources
+
+For each unit that extends a registry, enum, or counted collection, search the
+existing tests for literal identifiers, arrays, and counts that will become
+stale. Assign those test-pin updates to the unit or derive them beforehand;
+include the affected assertions in its test disposition inventory.
+
+Distinguish a production-logic boundary from a test-pin boundary. For example,
+"no production logic change under the worker directory; related test pins may
+be re-derived" permits the expected assertion update without widening the
+feature. Preserve any stricter boundary the caller explicitly imposed.
+
+For parallel units and review lenses, list shared ports, browser sessions,
+databases, and caches alongside file ownership. Allocate separate resources or
+name the repository or host mechanism that serializes their use, including its
+owner and release point. Serialize only the sensor that needs the resource.
+Record sensors whose assertions compare to the merge base, and require a fresh
+base check before their final validation; upstream movement invalidates the
+earlier result according to that sensor's contract.
 
 ## Resolve Optional Operations
 

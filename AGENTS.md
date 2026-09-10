@@ -19,14 +19,20 @@ accumulate as merged text on the default branch, and one release carries
 them.
 
 When a releasable skill changes, update its catalog entry, every selected
-profile, and the corresponding provenance output digest in the same change.
+profile, and the corresponding provenance output digest in the same change,
+with qualification records re-earned against the candidate's release, not
+restamped. Retained historical qualification records keep their original bytes.
 Keep JSON serialized as two-space-indented UTF-8 with a final newline, then run:
 
 ```bash
+python3 -m pip install -e ".[test]"
 python3 scripts/validate-registry.py
 python3 tests/test_registry.py
-python3 -m unittest discover -s tests -p 'test_*.py'
+python3 -m unittest discover -s tests -t . -p 'test_*.py'
 ```
+
+The `-t .` option enters the test package's dependency guard. Without the test
+extra, that guard reports one installation failure before importing the suite.
 
 A corpus pin asserts that its phrase is present in the whitespace-normalized
 file, not that the phrase sits under any particular heading. Relocating a pinned
@@ -34,8 +40,9 @@ phrase under an unrelated heading therefore leaves its pin green, and that is th
 accepted contract: the pins guard the repository's durable wording against
 deletion and silent rewording, while where a rule sits is a review judgement.
 Where a phrase reads off its own position, pin what it depends on, its
-neighbouring text carried with it as one phrase or the heading it reads against,
-rather than anchoring every pin in the corpus to a heading.
+neighbouring text carried with it as one phrase or both the expected heading and
+the forbidden deeper heading, rather than anchoring every pin in the corpus to
+a heading.
 
 Proving a corpus pin red by mutating a file `provenance.lock.json` covers takes
 the digests with it. Tests build a release in `setUpClass`, in `setUp`, and in

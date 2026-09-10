@@ -339,16 +339,17 @@ class CorpusValidationTests(unittest.TestCase):
                     findings[0].artifact, ".agents/tracker-properties.json"
                 )
 
-    def test_declared_tracker_properties_are_exactly_the_consumed_ones(self) -> None:
-        # Named here rather than read from the document, so a key that no
-        # operation consumes cannot re-accumulate in it while the suite stays
-        # green.
+    def test_tracker_properties_separate_format_identity_from_consumed_values(self) -> None:
+        # schemaVersion identifies the document, not a tracker operation input.
+        # The remaining keys are operational properties; do not accumulate
+        # unused defaults in the properties document.
         declared = json.loads(
             (ROOT / ".agents" / "tracker-properties.json").read_text(encoding="utf-8")
         )
         self.assertEqual(
             set(declared), {"project", "schemaVersion", "statuses", "team"}
         )
+        self.assertEqual(declared["schemaVersion"], "agent-skills-tracker-properties/1")
 
     def test_release_corpus_without_repository_instructions_needs_no_properties(
         self,

@@ -12,10 +12,15 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         # Pinned by operator decision on the item reconciling these pins.
         "a repository instruction file may declare a smaller bound; a larger"
         " bound is an operator decision recorded before the first round",
-        "every round obtained for the delivery counts against it, across every loop"
-        ", except one grace verification round obtained at the bound and a round"
-        " reopened because the base moved under an unchanged deliverable"
-        " identity",
+        "This workflow bounds delivery review; plan review remains outside this"
+        " reduction and may be unbounded",
+        "The last counted delivery-review round is round N",
+        "the single grace verification round is round N+1 with declared bound N"
+        " and remains outside the count",
+        "A reopened pass preserves the logical round's number and kind and does"
+        " not create another counted round",
+        "every obtained pass, including a grace or reopened pass, remains in the"
+        " supplied history",
         "typed blocker `review.loop-bound-reached` naming the open findings and does"
         " not run another round",
         "by that lens's closure report, by that lens's withdrawal with its reason,"
@@ -27,7 +32,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "One tracked item may carry several deferrals, one item per shippable"
         " outcome",
         "Where no tracker is configured, those follow-up items are the actionable"
-        " tracking handoff in the result rather than a blocker",
+        " tracking handoff in the executor's delivery result rather than a"
+        " blocker",
         "The review is bound to the release installed when the delivery's first"
         " round is acquired: a release installed mid-review is recorded and does"
         " not invalidate rounds already carried, and the delivery's closing record"
@@ -52,25 +58,28 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "skills/obtain-review/SKILL.md": (
         "A lens's assessment round is its first result-carrying round for the"
-        " delivery",
+        " loop, and it reviews the whole review subject",
+        "The delivery's selected lens set is fixed before its first round and"
+        " remains fixed for every later round",
         "its delta runs from the candidate of that lens's most recent"
         " result-carrying entry",
         "A grace round obtained at the bound is such a verification round, like"
         " any other, with no special kind, scope, or carry-forward",
-        "that lens's own retained entry from every prior round of the delivery in"
-        " which it was selected",
+        "one active retained entry from every prior round in which that lens was"
+        " selected",
         "binding tuple with its result-less state where the acquisition failed",
+        "A round in which the lens was not selected requires no nonexistent entry",
         "and nothing else, nothing narrower",
-        "The previous round's `candidateRef` is read from the lens's most recent"
-        " entry",
+        "The previous candidate's `candidateRef` is read from the lens's most"
+        " recent result-carrying entry",
         "An assessment round spans no delta and needs no resolution pair",
         "a pair of the exact `candidateRef` text (its `opaque` member) and the"
         " revision it resolves to",
         "matches each pair's `candidateRef` text by equality, never by parsing",
         "The lens re-derives its carried set from those entries",
         "returns `changes-requested` with a P0 finding naming the defect",
-        "when a round is accounted for by neither an obtained entry nor a"
-        " result-less one",
+        "when a prior round in which the lens was selected is accounted for by"
+        " neither an obtained entry nor a result-less one",
         "when a resolution is missing, unpaired, or paired with a reference that is"
         " neither of the two the delta spans",
         "or when any narrower scope is supplied",
@@ -94,7 +103,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "One tracked item may carry several deferrals, one item per shippable"
         " outcome",
         "Where no tracker is configured, those follow-up items are the actionable"
-        " tracking handoff in the result rather than a blocker",
+        " tracking handoff in the executor's delivery result rather than a"
+        " blocker",
         "A round obtained only because the base moved, under an unchanged"
         " deliverable identity, does not count against the bound",
         "Within that case the round counter advances only when the candidate's"
@@ -102,8 +112,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "A round obtained for any other reason counts against the bound even"
         " where the identity is unchanged",
         "a round obtained to dispute a finding, to carry an authorized repair,"
-        " or to retry an acquisition that failed, on an unchanged candidate"
-        " spends the bound like any other",
+        " or to retry an acquisition that failed under unchanged deliverable"
+        " identity spends the bound like any other",
         "The bound measures dissent, not the merge traffic a delivery happens to"
         " sit behind",
         "A reopened round is realized like the round it reopens, keeping that"
@@ -117,10 +127,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "The provider rejects mixed legacy and history shapes, unknown members,"
         " incomplete history, stale comparison bindings, and an outer candidate"
         " that is not the exact final active candidate",
-        "where it is unchanged the replay reopens the round the previous"
-        " candidate was reviewed under, whether that round is still open or"
-        " already closed, carrying its number, its declared lens set, and its"
-        " carried findings",
+        "where it is unchanged the replay reopens the round bound to the previous"
+        " candidate, whether that round is still open or already closed, carrying"
+        " its number, its kind, its declared lens set, and its carried findings",
         "Every later result-carrying round of that lens that advances the round"
         " counter is a verification round",
         "identity is unchanged only when the diff of the new candidate against"
@@ -137,8 +146,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "the lens's retained entry for that round number is the replay's entry",
         "the superseded entry stays in the delivery's history but is supplied"
         " neither as carry-forward nor as that round's entry to the reduction",
-        "the entries a later round carries stay one per round, the reduction"
-        " receives one entry per lens per round, and its delta runs from the"
+        "the entries a later round carries include no more than one active entry"
+        " per lens per logical round, and that later round's delta runs from the"
         " replayed candidate",
         "A result may also carry `lateFindings`, each naming one of that same"
         " result's own `findings` that the lens raised late; a lens carries none"
@@ -146,35 +155,48 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " a first round, where no lens has a round behind it",
         "Realize every lens with a brief that states where in the loop its round"
         " sits",
-        "The brief names the round number and the declared bound as round k of N,"
-        " and says whether this round is the grace round obtained at the bound",
-        "Where the round belongs to a loop that declares no bound of its own, the"
-        " brief names the round number and says the loop is unbounded",
-        "The review of a plan, which `$plan-work` leaves boundless, is such a loop:"
-        " its rounds are realized outside the bound-and-reduction machinery"
+        "The template is the shape of every lens brief, whether the realization"
+        " is harness-supplied or follows the host convention",
+        "The brief uses exactly one of these round statements",
+        "`ordinary counted`: round k of N",
+        "`grace`: round N+1 with declared bound N",
+        "`reopened`: reopened round k",
+        "`unbounded`: unbounded round k",
+        "Plan review is the `unbounded` case because `$plan-work` leaves it"
+        " boundless: its rounds are realized outside the bound-and-reduction machinery"
         " `$review-work` describes, count against no bound that workflow reduces"
         " against, and reach no `review.loop-bound-reached`",
         "every reviewer, in plan review and delivery review alike, optimizes for"
         " the lowest number of rounds, and a finding the lens can raise now is"
         " raised now",
-        "asks the lens for a conscious effort to find everything it can within"
-        " the allocation, not across it",
+        "asks the lens for a conscious effort to find everything it can in this"
+        " round",
         "every finding the lens can raise against lines unchanged since its own"
         " most recent result-carrying round was expected in that round",
         "A finding the lens raises after its assessment round against lines"
         " unchanged since its own most recent result-carrying round is still a"
         " finding, judged on its merits like any other, and the lens marks it late"
         " in its own report",
-        "Such a finding falls outside that round's delta, so the out-of-delta rule"
-        " above still decides where the lens puts it: `lateFindings` names only"
+        "Such a finding falls outside that round's delta and remains subject to"
+        " the out-of-delta rule: `lateFindings` names only"
         " findings the result filed, and a late finding that rule keeps out of"
         " `findings` is marked late in the deferral it records instead",
         "The mark is dissent about the lens, not about the candidate, and it"
         " never changes what the round reduces to",
-        "The last round is judged exactly as any other, and the brief says so",
+        "Round N, the last counted round, is judged exactly as any other, and the"
+        " brief says so",
         "A lens neither aligns because no repair room remains nor blocks to force"
         " an escalation; the grace round and the deferral rule handle a real"
         " finding raised at the bound",
+        "Every selected lens runs in its own clean checkout of the prepared"
+        " candidate tree, separate from the executor and every other lens",
+        "verify that the checkout's tree SHA equals the prepared candidate tree"
+        " and that its status is clean immediately before the lens reads it",
+        "Repeat both checks after the lens finishes",
+        "Temporary probes are permitted only in that lens's private checkout and"
+        " must be removed before the ending identity and clean-status checks",
+        "The lens names the reviewed tree SHA and both successful identity checks"
+        " in its evidence",
     ),
     "skills/execute-work/SKILL.md": (
         "state the bound in effect for the delivery",
@@ -220,57 +242,52 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "record the typed blocker `review.deferral-untracked` naming the deferrals"
         " that lack one, report `partial`, and stop",
         "Where no tracker is configured, those follow-up items are the actionable"
-        " tracking handoff in the result rather than a blocker",
+        " tracking handoff in the executor's delivery result rather than a blocker",
         "against it, and record a disposition for every finding, each citing the"
         " lens; - name the release the review is bound to by its `releaseId` and"
-        " `archiveSha256`, and any release installed mid-review; this list is the"
-        " delivery's closing record for that identity;",
-        "Report the result category, execution posture, completed scope and"
+        " `archiveSha256`, and any release installed mid-review; these release"
+        " identifiers form the delivery's closing record for its review-bound"
+        " identity;",        "Report the result category, execution posture, completed scope and"
         " finish-line items, sensor results, retained evidence, review provenance"
         " and outcome, the bound review release's `releaseId` and `archiveSha256`,"
         " any release installed mid-review, compounding outcome",
     ),
     "skills/plan-work/SKILL.md": (
         "Plan review carries no round bound",
-        "Planning is the most important point in delivery, and a plan is cheap to"
-        " revise and expensive to get wrong",
-        "This loop is the review of the plan, and it is not the delivery review"
-        " that `$review-work` bounds",
-        "A plan review that is not converging ends by decision rather than by"
-        " count",
-        "Each plan-review lens carries this mandate in its own round brief",
-        "the plan review loop is left boundless: it runs until its lenses align,"
+        "it runs until its lenses align unless the operator ends it by decision,"
         " and no round count ends it",
-        "This is a recorded decision rather than an omission, so a later plan"
-        " review does not re-derive the question",
+        "Plan review is separate from the delivery review that `$review-work`"
+        " bounds",
+        "A plan review that is not converging may end by operator decision rather"
+        " than by count; termination is not guaranteed",
+        "Each plan-review lens carries this mandate in its own round brief",
+        "Leaving plan review unbounded is a recorded decision rather than an"
+        " omission, so a later plan review does not re-derive the question",
         "every lens reviewing a plan optimizes for the lowest number of rounds",
         "every finding a lens can raise against the plan as it stands is raised in"
         " the current round, not held for a later one",
-        "The operator ends it on that judgement, and one sufficient signal is a"
-        " round after the first that raises a finding not raised before while"
+        "One sufficient signal is a round after the first that raises a finding"
+        " not raised before while"
         " leaving the number of open findings no lower than the round before it",
-        # The ruling reads off the signal it qualifies: "that signal" names the
-        # sentence before it, so the pin carries that sentence's tail with it.
-        "no lower than the round before it. Where that signal reaches the"
-        " operator is the caller's responsibility and outside this section's"
-        " scope",
-        "a plan-review round is realized by subagents, and this workflow neither"
+        "Surfacing that signal to the operator is the caller's responsibility;"
+        " supplying the channel is outside this workflow's scope",
+        "a plan-review round is realized outside this workflow, which neither"
         " carries a channel to the operator nor assumes one",
         "The caller running the loop is what puts each round in front of the"
         " operator who may end it, and where the caller surfaces nothing the loop"
         " still runs to alignment with no one positioned to end it early",
-        "The mandate answers what two plans landed on the same day cost. One"
-        " reached alignment only at review round fourteen, with one lens filing a"
-        " new finding in each of rounds one through thirteen and closing it in the"
-        " round after. The other ran forty-one six-lens rounds. Neither loop was"
-        " long because its plan was unusually hard; both were long because findings"
-        " arrived one round at a time",
+        "For each unit that extends a registry, enum, or counted collection, search"
+        " the existing tests for literal identifiers, arrays, and counts that will"
+        " become stale",
+        "Allocate separate resources or name the repository or host mechanism that"
+        " serializes their use, including its owner and release point",
     ),
     "skills/compound-delivery-kernel/SKILL.md": (
-        "Declare the round bound before the first round; every round of the delivery"
-        " counts, except one grace round obtained at the bound and a round"
-        " reopened because the base moved under an unchanged deliverable"
-        " identity; the default is four rounds",
+        "Declare the delivery-review round bound before its first round; every"
+        " round of delivery review counts, except one grace round obtained at the"
+        " bound and a round reopened because the base moved under an unchanged"
+        " deliverable identity; the default is four rounds",
+        "Unbounded plan-review rounds count against no delivery-review bound",
         "Later rounds verify closure and review the delta",
         "only P0 and P1 findings block",
         "the lens, not the executor, closes or defers a finding",
@@ -279,7 +296,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "One tracked item may carry several deferrals, one item per shippable"
         " outcome",
         "Where no tracker is configured, those follow-up items are the actionable"
-        " tracking handoff in the result rather than a blocker",
+        " tracking handoff in the executor's delivery result rather than a"
+        " blocker",
     ),
 }
 

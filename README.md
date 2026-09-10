@@ -24,7 +24,7 @@ interpreter, not available only through a user-site or search-path override:
 python3 -m pip install -e ".[test]"
 python3 scripts/validate-registry.py
 python3 tests/test_registry.py
-python3 -m unittest discover -s tests -p 'test_*.py'
+python3 -m unittest discover -s tests -t . -p 'test_*.py'
 ```
 
 Build and verify the core profile:

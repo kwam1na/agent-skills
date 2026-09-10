@@ -13,6 +13,18 @@ ROOT = Path(__file__).resolve().parents[1]
 # release cadence, how a red proof of a pin on a provenance-covered file must
 # move the digests, and what a corpus pin asserts about a phrase it matches.
 REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
+    "skills/plan-work/SKILL.md": (
+        "search the existing tests for literal identifiers, arrays, and counts"
+        " that will become stale",
+        "Preserve any stricter boundary the caller explicitly imposed",
+        "For parallel units and review lenses, list shared ports, browser"
+        " sessions, databases, and caches alongside file ownership",
+        "Record sensors whose assertions compare to the merge base",
+    ),
+    "skills/linear-tracker-adapter/SKILL.md": (
+        "Apart from `schemaVersion`, which identifies the document format, it"
+        " declares only properties an operation consumes",
+    ),
     "skills/deliver-work/SKILL.md": (
         "call its read-only `resume` command before reusing evidence on continuation",
     ),
@@ -43,8 +55,11 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Relocating a pinned phrase under an unrelated heading therefore leaves"
         " its pin green, and that is the accepted contract",
         "Where a phrase reads off its own position, pin what it depends on, its"
-        " neighbouring text carried with it as one phrase or the heading it reads"
-        " against, rather than anchoring every pin in the corpus to a heading",
+        " neighbouring text carried with it as one phrase or both the expected"
+        " heading and the forbidden deeper heading, rather than anchoring every"
+        " pin in the corpus to a heading",
+        "qualification records re-earned against the candidate's release, not"
+        " restamped",
     ),
     "docs/host-adapters.md": (
         "An adopting repository's overlay names what that repository adds: its"
@@ -63,6 +78,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " release payload, outside review scope by declaration",
     ),
     "skills/execute-work/SKILL.md": (
+        "If related test-pin updates are allowed, make the smallest correction"
+        " and record the scoped exception with its proving sensor",
+        "A stricter explicit caller boundary still governs",
+        "Worktree isolation alone does not isolate those resources",
         "Retain the original `review-context --json` document before dispatching reviewers",
         "Never reconstruct a receipt, invent a passed check, or infer evidence reuse from journal events",
         "Record `action.intent` before an authorized external action",
@@ -87,9 +106,17 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Project each obtained result to `review-work` with its lens id,"
         " outcome, findings, evidence, and optional late findings",
         "One subagent per lens",
-        "The charter is supplied to it verbatim beside the round brief, and the"
-        " executor composes nothing about the charter itself",
-        "A lens is read-only. No two lenses in a round share context",
+        "The template is the shape of every lens brief, whether the realization"
+        " is harness-supplied or follows the host convention",
+        "Its `Charter` member contains the selected charter verbatim inside the"
+        " brief",
+        "Every selected lens runs in its own clean checkout of the prepared"
+        " candidate tree, separate from the executor and every other lens",
+        "verify that the checkout's tree SHA equals the prepared candidate tree"
+        " and that its status is clean immediately before the lens reads it",
+        "Repeat both checks after the lens finishes",
+        "The lens names the reviewed tree SHA and both successful identity checks"
+        " in its evidence",
         "The evidence names the model class the lens ran under",
         "records its realization basis as `host-convention`, naming this section,"
         " rather than leaving the basis of the realization unrecorded",
@@ -122,6 +149,14 @@ class DeclaredMechanicsCorpusTests(unittest.TestCase):
 
     def test_declared_mechanics_are_present(self) -> None:
         self.assertEqual(missing_phrases(corpus_texts(ROOT)), set())
+
+    def test_relocating_a_phrase_within_its_file_preserves_membership(self) -> None:
+        texts = corpus_texts(ROOT)
+        relative = "AGENTS.md"
+        phrase = REQUIRED_PHRASES[relative][0]
+        moved = dict(texts)
+        moved[relative] = texts[relative].replace(phrase, "", 1) + " ## Unrelated " + phrase
+        self.assertEqual(missing_phrases(moved), missing_phrases(texts))
 
     def test_each_declaration_is_red_for_exactly_itself(self) -> None:
         texts = corpus_texts(ROOT)
