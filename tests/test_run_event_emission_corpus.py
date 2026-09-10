@@ -112,10 +112,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "looks like where none may be invented. A grace verification round"
         " obtained at the bound names that same declared bound and states that"
         " it is the grace round obtained outside the count",
-        "The caller also supplies the round bound it declared for the delivery,"
-        " the same bound `$review-work` reduces against; the bound is not part"
-        " of the harness's comparison context and is never invented for an"
-        " emission",
+        "The caller also supplies the delivery-review round bound it declared,"
+        " the same bound `$review-work` reduces against. A plan-review loop"
+        " declares no bound, so none is supplied or invented for it. Bound"
+        " accounting is not part of the harness's comparison context",
     ),
     "skills/review-work/SKILL.md": (
         "naming the round, the candidate it bound, the reduced outcome, its"
