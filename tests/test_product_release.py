@@ -174,6 +174,106 @@ process.exit(existsSync(snapshot) ? 0 : 8);
         self.assertEqual(json.loads((policy / "compiled-snapshot.json").read_text()), {"bootstrapped": True})
         self.assertTrue(json.loads(result.stdout)["status"]["productReady"])
 
+    def test_real_product_entrypoints_refuse_bootstrap_without_explicit_policy_inputs(self) -> None:
+        checked = ROOT / "qualifications" / "product"
+        extracted = self.base / "checked-linear-product"
+        verify_release(
+            checked / "linear-adoption-v1.zip",
+            checked / "linear-adoption-v1.release.json",
+            extract_to=extracted,
+        )
+        descriptor_path = extracted / "runtime/runtime.json"
+        descriptor = json.loads(descriptor_path.read_text())
+        release_view = _release_view(ROOT, "linear")
+        descriptor["workflowContentSha256"] = _path_digest(
+            sorted(release_view), release_view
+        )
+        descriptor_path.write_text(json.dumps(descriptor))
+        artifacts = {}
+        for release_id in ("prior-linear-product", "current-linear-product"):
+            archive = self.base / f"{release_id}.zip"
+            metadata = self.base / f"{release_id}.release.json"
+            build_release(
+                ROOT,
+                archive,
+                metadata,
+                release_id=release_id,
+                profile_id="linear",
+                runtime_directory=extracted / "runtime",
+            )
+            artifacts[release_id] = (archive, metadata)
+
+        def install(
+            consumer: Path,
+            command: str,
+            release_id: str,
+            *,
+            bootstrap: bool,
+        ) -> subprocess.CompletedProcess[str]:
+            archive, metadata = artifacts[release_id]
+            return subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(archive),
+                    "--root",
+                    str(consumer),
+                    "--product",
+                    command,
+                    "--archive",
+                    str(archive),
+                    "--metadata",
+                    str(metadata),
+                    *(["--bootstrap-policy"] if bootstrap else []),
+                    "--maintenance",
+                ],
+                cwd=self.base,
+                text=True,
+                capture_output=True,
+            )
+
+        for command in ("apply", "install", "update"):
+            with self.subTest(command=command):
+                ordinary = initialize_repository(self.base / f"ordinary-{command}")
+                missing_inputs = initialize_repository(self.base / f"bootstrap-{command}")
+                if command == "update":
+                    for consumer in (ordinary, missing_inputs):
+                        prior = install(
+                            consumer,
+                            "install",
+                            "prior-linear-product",
+                            bootstrap=False,
+                        )
+                        self.assertEqual(prior.returncode, 0, prior.stdout + prior.stderr)
+
+                installed = install(
+                    ordinary,
+                    command,
+                    "current-linear-product",
+                    bootstrap=False,
+                )
+                self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+                self.assertTrue(json.loads(installed.stdout)["status"]["productReady"])
+
+                refused = install(
+                    missing_inputs,
+                    command,
+                    "current-linear-product",
+                    bootstrap=True,
+                )
+                self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+                self.assertEqual(
+                    json.loads(refused.stdout)["error"]["code"],
+                    "product.policy_unready",
+                )
+                self.assertFalse(
+                    (missing_inputs / ".agents/policy/compiled-snapshot.json").exists()
+                )
+                self.assertEqual(
+                    Lifecycle(missing_inputs).status().as_dict()["lifecycle"],
+                    "current",
+                )
+
     def test_policy_bootstrap_flag_requires_product_mode(self) -> None:
         archive, metadata = self.build(1)
         consumer = initialize_repository(self.base)

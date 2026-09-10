@@ -12,8 +12,8 @@
     "rawPayloadsCaptured": false
   },
   "release": {
-    "archiveSha256": "2d972b95ed7aad17ef9ebeec0447c0623ff022b06622ebf57ed1546ac241c46a",
-    "metadataSha256": "e2a9f61fb08c1d85c0fca5c596d1bddeb380ea668f018a340a5ee3103326988f",
+    "archiveSha256": "cf58ddacfa1f0ea726525fbce03593012728b7dc01a21976a7720c432b7b4184",
+    "metadataSha256": "f8973141664f8693f5c99aac98d87e1b9615e5a33f99e6fb512ed048c1d1a2e6",
     "profile": "core",
     "releaseId": "core-workflows-adoption-v1"
   },

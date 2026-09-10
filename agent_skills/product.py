@@ -25,7 +25,7 @@ def runtime_root(lifecycle: Lifecycle) -> Path:
 def reconcile_policy(lifecycle: Lifecycle, *, check: bool, bootstrap: bool = False) -> None:
     runtime = runtime_root(lifecycle)
     policy = lifecycle.root / ".agents" / "policy"
-    if not policy.exists():
+    if not policy.exists() and not bootstrap:
         return
     arguments = ["node", str(runtime / "policy.mjs"), "--product"]
     if bootstrap:

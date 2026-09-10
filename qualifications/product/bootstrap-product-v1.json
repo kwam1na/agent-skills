@@ -5,8 +5,8 @@
   },
   "qualificationDriverSha256": "beb137d2c07b536bb7a85432190348ca9435b49f3b912708b7870fdc361e24b3",
   "release": {
-    "archiveSha256": "ac1c79bdcb3b07111c4766fe3f58554f3bddcb45bd695bef97ca6f0d6e7f129b",
-    "metadataSha256": "838fa08dc0e6abe75214ef211e5f35bca866feb966f62485e75659b769f10f3d",
+    "archiveSha256": "e70fdab67712cab62fd011c57f3b35f3f760ab0eadbbeb164031f8a5def1e508",
+    "metadataSha256": "bca83f3140382b0bfc2084fcc949b88c61a6b59bd39a7269c6f1511527867143",
     "profile": "bootstrap",
     "releaseId": "bootstrap-product-v1"
   },
