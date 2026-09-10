@@ -17,7 +17,7 @@ from agent_skills.release import VerifiedRelease, build_release
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-provider.py"
-RECORD = ROOT / "qualifications" / "provider-workflows-text-coherence-v1.json"
+RECORD = ROOT / "qualifications" / "provider-workflows-concurrent-delivery-v1.json"
 
 
 def _load_runner():
@@ -105,7 +105,7 @@ class ProviderQualificationTests(unittest.TestCase):
             ROOT,
             archive,
             metadata,
-            release_id="core-workflows-text-coherence-v1",
+            release_id="core-workflows-concurrent-delivery-v1",
             profile_id="core",
         )
         output = record or directory / "provider.qualification.json"
@@ -148,7 +148,7 @@ class ProviderQualificationTests(unittest.TestCase):
             self.assertEqual(record["schemaVersion"], "agent-skills-provider-qualification/1")
             self.assertEqual(record["protocolVersion"], "delivery-provider-rails/1")
             self.assertEqual(record["release"]["profile"], "core")
-            self.assertEqual(record["release"]["releaseId"], "core-workflows-text-coherence-v1")
+            self.assertEqual(record["release"]["releaseId"], "core-workflows-concurrent-delivery-v1")
             self.assertRegex(record["release"]["archiveSha256"], r"^[a-f0-9]{64}$")
             self.assertRegex(record["release"]["metadataSha256"], r"^[a-f0-9]{64}$")
             self.assertRegex(record["installedProviderSha256"], r"^[a-f0-9]{64}$")

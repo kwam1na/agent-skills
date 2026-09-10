@@ -34,7 +34,7 @@ On Windows, use `.venv\Scripts\python.exe` for the three sensor commands.
 Build and verify the core profile:
 
 ```bash
-python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-text-coherence-v1
+python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-concurrent-delivery-v1
 python3 scripts/build-release.py verify \
   --archive /tmp/core.zip \
   --metadata /tmp/core.release.json \
@@ -64,7 +64,7 @@ source artifacts, and rolls back through installed bytes:
 python3 scripts/build-release.py build \
   --archive /tmp/bootstrap.zip \
   --metadata /tmp/bootstrap.release.json \
-  --release-id bootstrap-workflows-diagnostics-v1 \
+  --release-id bootstrap-workflows-concurrent-delivery-v1 \
   --profile bootstrap
 python3 scripts/qualify-bootstrap.py \
   --archive /tmp/bootstrap.zip \
@@ -73,7 +73,7 @@ python3 scripts/qualify-bootstrap.py \
 ```
 
 The current checked qualification record is
-`qualifications/bootstrap-workflows-diagnostics-v1.json`.
+`qualifications/bootstrap-workflows-concurrent-delivery-v1.json`.
 
 The detached release metadata authenticates the ZIP before it is parsed. The
 manifest then authenticates the complete payload and its single profile group.
@@ -132,7 +132,7 @@ named in the record remains the single release under qualification. That prior
 fixture is built only from the verified candidate extraction, never from the
 runner checkout corpus.
 The current workflow-only record is checked in at
-`qualifications/core-workflows-text-coherence-v1.json`.
+`qualifications/core-workflows-concurrent-delivery-v1.json`.
 Historical records retain their original bytes under `qualifications/history/`.
 Historical product records such as `linear-product-v1` also remain immutable
 under `qualifications/product/`.
@@ -230,7 +230,7 @@ written manifest and reviewer artifacts. Its deterministic record covers
 success, blocked, failed, cancelled, interrupted, duplicate, unsupported
 version, reconciliation, anti-vacuity, completeness, and redaction behavior
 while retaining no local paths or opaque host references. The checked record is
-`qualifications/provider-workflows-text-coherence-v1.json`.
+`qualifications/provider-workflows-concurrent-delivery-v1.json`.
 Its `workflowGraphSha256` names the actual installed graph, and the installation
 scenario compares that graph and both new skill bodies with the verified
 candidate. A failed qualifier cannot leave an earlier success record at the

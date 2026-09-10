@@ -56,12 +56,12 @@ class BootstrapQualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="bootstrap-workflows-diagnostics-v1",
+                release_id="bootstrap-workflows-concurrent-delivery-v1",
                 profile_id="bootstrap",
             )
             replay = runner.qualify(archive, metadata)
         checked = json.loads(
-            (ROOT / "qualifications/bootstrap-workflows-diagnostics-v1.json").read_text()
+            (ROOT / "qualifications/bootstrap-workflows-concurrent-delivery-v1.json").read_text()
         )
         self.assertEqual(replay, checked)
 
@@ -75,7 +75,7 @@ class BootstrapQualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="bootstrap-workflows-diagnostics-v1",
+                release_id="bootstrap-workflows-concurrent-delivery-v1",
                 profile_id="bootstrap",
             )
             record = runner.qualify(archive, metadata)
