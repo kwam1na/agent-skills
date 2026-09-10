@@ -15,7 +15,11 @@ import unittest
 from unittest.mock import Mock, patch
 
 from agent_skills.cli import main
-from agent_skills.product import CancellationIncompleteError, _run_command
+from agent_skills.product import (
+    CancellationIncompleteError,
+    _observed_child_liveness,
+    _run_command,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 POSIX_SIGNALS = (signal.SIGINT, signal.SIGTERM) + tuple(
@@ -29,6 +33,16 @@ class ProductLauncherTests(unittest.TestCase):
             with self.subTest(arguments=arguments), patch("agent_skills.cli.run_runtime", return_value=17) as runtime:
                 self.assertEqual(main(["harness", *arguments]), 17)
                 self.assertEqual(runtime.call_args.args[1], ["--help"] if arguments == ["-h"] else arguments)
+
+    def test_child_poll_failure_does_not_invent_liveness(self) -> None:
+        for failure in (OSError("poll failed"), subprocess.SubprocessError("poll failed")):
+            with self.subTest(failure=type(failure).__name__):
+                child = Mock(pid=12345)
+                child.poll.side_effect = failure
+                self.assertEqual(
+                    _observed_child_liveness(child),
+                    ("unknown", "unknown", ()),
+                )
 
     def test_windows_cancellation_uses_native_tree_termination_and_reaps_child(self) -> None:
         for signum in (signal.SIGINT, signal.SIGTERM):
@@ -85,6 +99,10 @@ class ProductLauncherTests(unittest.TestCase):
                          patch("agent_skills.product.subprocess.run", side_effect=failure):
                         with self.assertRaises(CancellationIncompleteError) as raised:
                             _run_command(["worker"], ROOT)
+                    self.assertEqual(raised.exception.cleanup, "taskkill-failed")
+                    self.assertEqual(raised.exception.signal_number, signum)
+                    self.assertEqual(raised.exception.platform, "windows")
+                    self.assertEqual(raised.exception.target_pid, 12345)
                     self.assertEqual(raised.exception.liveness, expected_state)
                     self.assertEqual(raised.exception.surviving_pids, expected_pids)
                     self.assertEqual(raised.exception.target_state, "running" if child_status is None else "exited")
@@ -113,6 +131,10 @@ class ProductLauncherTests(unittest.TestCase):
                      patch("agent_skills.product.subprocess.run"):
                     with self.assertRaises(CancellationIncompleteError) as raised:
                         _run_command(["worker"], ROOT)
+                self.assertEqual(raised.exception.cleanup, "child-wait-failed")
+                self.assertEqual(raised.exception.signal_number, signal.SIGINT)
+                self.assertEqual(raised.exception.platform, "windows")
+                self.assertEqual(raised.exception.target_pid, 12345)
                 self.assertEqual(raised.exception.liveness, "confirmed")
                 self.assertEqual(raised.exception.surviving_pids, (12345,))
                 self.assertEqual(raised.exception.target_state, "running")
@@ -129,12 +151,24 @@ class ProductLauncherTests(unittest.TestCase):
             liveness="confirmed",
             surviving_pids=(12345,),
         )
+        self.assertEqual(failure.signal_number, signal.SIGTERM)
+        self.assertEqual(failure.platform, "posix")
+        self.assertEqual(failure.cleanup, "post-escalation-timeout")
+        self.assertEqual(failure.target_pid, 12345)
+        self.assertEqual(failure.target_state, "running")
+        self.assertEqual(failure.liveness, "confirmed")
+        self.assertEqual(failure.surviving_pids, (12345,))
         output = io.StringIO()
         with patch("agent_skills.cli.run_runtime", side_effect=failure), redirect_stdout(output):
             self.assertEqual(main(["harness", "gate"]), 1)
         rendered = json.loads(output.getvalue())
         self.assertEqual(rendered["error"]["code"], "product.cancellation_incomplete")
-        self.assertIn("survivingPids=12345", rendered["error"]["message"])
+        self.assertEqual(
+            rendered["error"]["message"],
+            "product.cancellation_incomplete: signal=SIGTERM; platform=posix;"
+            "cleanup=post-escalation-timeout;targetPid=12345;targetState=running;"
+            "liveness=confirmed;survivingPids=12345",
+        )
 
     def test_signal_during_spawn_is_forwarded_after_child_assignment(self) -> None:
         for signum in POSIX_SIGNALS:
@@ -159,6 +193,102 @@ class ProductLauncherTests(unittest.TestCase):
                 forwarded = [call.args for call in killpg.call_args_list if call.args[1] != 0]
                 self.assertEqual(forwarded, [(child.pid, signum)])
                 self.assertEqual(handlers, {sig: signal.SIG_DFL for sig in POSIX_SIGNALS})
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_posix_pre_escalation_observation_failure_refuses_clean_cancellation(self) -> None:
+        handlers = {}
+        child = Mock(pid=12345)
+        observation_failure = OSError("group observation unavailable")
+
+        def register(sig, handler):
+            handlers[sig] = handler
+            return signal.SIG_DFL
+
+        def wait(*, timeout):
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+            raise subprocess.TimeoutExpired("worker", timeout)
+
+        child.wait.side_effect = wait
+        child.poll.return_value = None
+        with patch("agent_skills.product.signal.signal", side_effect=register), \
+             patch("agent_skills.product.subprocess.Popen", return_value=child), \
+             patch("agent_skills.product.os.killpg"), \
+             patch(
+                 "agent_skills.product._wait_for_posix_group",
+                 side_effect=observation_failure,
+             ):
+            with self.assertRaises(CancellationIncompleteError) as raised:
+                _run_command(["worker"], ROOT)
+        self.assertEqual(raised.exception.cleanup, "pre-escalation-wait-failed")
+        self.assertEqual(raised.exception.signal_number, signal.SIGTERM)
+        self.assertEqual(raised.exception.platform, "posix")
+        self.assertEqual(raised.exception.target_pid, 12345)
+        self.assertEqual(raised.exception.target_state, "running")
+        self.assertEqual(raised.exception.liveness, "confirmed")
+        self.assertEqual(raised.exception.surviving_pids, (12345,))
+        self.assertIs(raised.exception.__cause__, observation_failure)
+        self.assertEqual(handlers, {sig: signal.SIG_DFL for sig in POSIX_SIGNALS})
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_posix_sigkill_failure_refuses_clean_cancellation(self) -> None:
+        handlers = {}
+        child = Mock(pid=12345)
+        kill_failure = OSError("SIGKILL unavailable")
+
+        def register(sig, handler):
+            handlers[sig] = handler
+            return signal.SIG_DFL
+
+        def wait(*, timeout):
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+            raise subprocess.TimeoutExpired("worker", timeout)
+
+        def kill_group(pid, forwarded):
+            if forwarded == signal.SIGKILL:
+                raise kill_failure
+
+        child.wait.side_effect = wait
+        child.poll.return_value = None
+        with patch("agent_skills.product.signal.signal", side_effect=register), \
+             patch("agent_skills.product.subprocess.Popen", return_value=child), \
+             patch("agent_skills.product.os.killpg", side_effect=kill_group), \
+             patch("agent_skills.product._wait_for_posix_group", return_value=False):
+            with self.assertRaises(CancellationIncompleteError) as raised:
+                _run_command(["worker"], ROOT)
+        self.assertEqual(raised.exception.cleanup, "sigkill-failed")
+        self.assertEqual(raised.exception.signal_number, signal.SIGTERM)
+        self.assertEqual(raised.exception.platform, "posix")
+        self.assertEqual(raised.exception.target_pid, 12345)
+        self.assertEqual(raised.exception.target_state, "running")
+        self.assertEqual(raised.exception.liveness, "confirmed")
+        self.assertEqual(raised.exception.surviving_pids, (12345,))
+        self.assertIs(raised.exception.__cause__, kill_failure)
+        self.assertEqual(handlers, {sig: signal.SIG_DFL for sig in POSIX_SIGNALS})
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_posix_sigkill_process_lookup_confirms_clean_cancellation(self) -> None:
+        handlers = {}
+        child = Mock(pid=12345)
+
+        def register(sig, handler):
+            handlers[sig] = handler
+            return signal.SIG_DFL
+
+        def wait(*, timeout):
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+            raise subprocess.TimeoutExpired("worker", timeout)
+
+        def kill_group(pid, forwarded):
+            if forwarded == signal.SIGKILL:
+                raise ProcessLookupError
+
+        child.wait.side_effect = wait
+        with patch("agent_skills.product.signal.signal", side_effect=register), \
+             patch("agent_skills.product.subprocess.Popen", return_value=child), \
+             patch("agent_skills.product.os.killpg", side_effect=kill_group), \
+             patch("agent_skills.product._wait_for_posix_group", return_value=False):
+            self.assertEqual(_run_command(["worker"], ROOT), 128 + signal.SIGTERM)
+        self.assertEqual(handlers, {sig: signal.SIG_DFL for sig in POSIX_SIGNALS})
 
     @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_posix_post_escalation_timeout_reports_observed_child_only(self) -> None:

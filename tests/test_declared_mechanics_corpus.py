@@ -181,7 +181,11 @@ class DeclaredMechanicsCorpusTests(unittest.TestCase):
         ambiguous = [
             sentence
             for sentence in sentences
-            if "host-convention" in sentence and "independence" in sentence.casefold()
+            if "independence" in sentence.casefold()
+            and (
+                "host-convention" in sentence
+                or "evidence-side" in sentence.casefold()
+            )
         ]
         self.assertEqual(ambiguous, [])
 
