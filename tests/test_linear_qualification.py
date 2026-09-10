@@ -21,9 +21,9 @@ from agent_skills.release import RUNTIME_FILES, _path_digest, _release_view, bui
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
 PRODUCT = ROOT / "qualifications" / "product"
-ATTESTATION = PRODUCT / "linear-text-coherence-v1.attestation.json"
-RECORD = PRODUCT / "linear-text-coherence-v1.json"
-BINDING = PRODUCT / "linear-text-coherence-v1.collector-binding.json"
+ATTESTATION = PRODUCT / "linear-concurrent-delivery-v1.attestation.json"
+RECORD = PRODUCT / "linear-concurrent-delivery-v1.json"
+BINDING = PRODUCT / "linear-concurrent-delivery-v1.collector-binding.json"
 HISTORICAL_ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
 HISTORICAL_RECORD = PRODUCT / "linear-product-v1.json"
 HISTORICAL_BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
@@ -70,6 +70,18 @@ HISTORICAL_PRODUCT_SHA256 = {
     "linear-diagnostics-v1.json": "999feca56c46b6d1dbe28389b2200a9867f63c4c88d533aee4a188d717a104a5",
     "linear-diagnostics-v1.release.json": "7fcd9437964dbc40cdba9fb6f87889f6e85a7932679bc2066f68cd2f358e19a8",
     "linear-diagnostics-v1.zip": "8b80244acaffb4be1ad982c635ccd3ac20988d8dc0a33d76d90c424d0fe75525",
+    "bootstrap-diagnostics-v1.json": "d6801d9509e435607a60d5f94c9b9225ae055b56f05060c2f9e9b76cd02e9fa3",
+    "bootstrap-diagnostics-v1.release.json": "e63bf7cfe20d925b8369f223e99875d2a5020aaae632256d830eacf952fbd443",
+    "bootstrap-diagnostics-v1.zip": "c2ad5490843687bf11b0eaef770d257b8e365e263ebaab213f8853cbda27eba3",
+    "core-text-coherence-v1.json": "71bba756b13b617d63b43fd293399d2d482824e036e3bc083bed4ddd40d86d92",
+    "core-text-coherence-v1.release.json": "f4406b1b07ae98c885c9b6d1e411a78115e4dc0b3325b2d65aff1dcc968a798a",
+    "core-text-coherence-v1.zip": "3a2fd8038177316388139b130821e1f57526e749d91ab581233750e6b226b938",
+    "provider-text-coherence-v1.json": "781ebd7d5ececbe6f3b4204c82d07558e64e44b177cef9fc46f75b2de2341037",
+    "linear-text-coherence-v1.attestation.json": "ead95a3469c42f86085c68ceb09a009c5325581193d9101df4d669a85af6ae28",
+    "linear-text-coherence-v1.collector-binding.json": "fac79d408dd9474a93a15255149ff55ea18cb4d0e6b41a62e01ef258df78f7b2",
+    "linear-text-coherence-v1.json": "c311bb57dd18fc68bcacbe2efb4488b2e7a46184d91d7db9f82125beb09e2e1f",
+    "linear-text-coherence-v1.release.json": "b45988a3e214fa573b96e5592f28364b1d2d60c9626a26e9e54494bd9cf9a050",
+    "linear-text-coherence-v1.zip": "945fd9a246433c64f37fc3da5218203b64fa1275e3cc8e1a299cb9724062f679",
 }
 
 
@@ -910,10 +922,23 @@ class LinearQualificationTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(hashlib.sha256((PRODUCT / name).read_bytes()).hexdigest(), expected)
 
+    def test_checked_product_linear_record_replays_exactly(self) -> None:
+        replay = _load_runner().qualify(
+            PRODUCT / "core-concurrent-delivery-v1.zip",
+            PRODUCT / "core-concurrent-delivery-v1.release.json",
+            PRODUCT / "core-concurrent-delivery-v1.json",
+            PRODUCT / "linear-concurrent-delivery-v1.zip",
+            PRODUCT / "linear-concurrent-delivery-v1.release.json",
+            ATTESTATION,
+            BINDING,
+        )
+        checked = json.loads(RECORD.read_text(encoding="utf-8"))
+        self.assertEqual(replay, checked)
+
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
         current_products = {
-            "core": ("core-text-coherence-v1", "3a2fd8038177316388139b130821e1f57526e749d91ab581233750e6b226b938"),
-            "linear": ("linear-text-coherence-v1", "945fd9a246433c64f37fc3da5218203b64fa1275e3cc8e1a299cb9724062f679"),
+            "core": ("core-concurrent-delivery-v1", "6b0e7ee069858b69ded91647d6ce3bd53d49af1ff2bac5b6ac495948720c3943"),
+            "linear": ("linear-concurrent-delivery-v1", "e63b1f2bb5516d55445aa7050f2a9366b05abdb9d8584bdeed4119abb5440578"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -931,7 +956,7 @@ class LinearQualificationTests(unittest.TestCase):
                                         directory / f"{profile}-current.json",
                                         release_id=release.release_id, profile_id=profile)
                 self.assertEqual(projected, current, "checked product workflows differ from current source")
-        self.assertIn("linear-text-coherence-v1", (ROOT / "README.md").read_text())
+        self.assertIn("linear-concurrent-delivery-v1", (ROOT / "README.md").read_text())
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
         durable_paths = [ROOT / "README.md"]

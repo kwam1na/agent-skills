@@ -36,7 +36,7 @@ def _load_runner():
 class QualificationTests(unittest.TestCase):
     def test_checked_product_core_replays_exactly(self) -> None:
         product = ROOT / "qualifications/product"
-        current = "core-text-coherence-v1"
+        current = "core-concurrent-delivery-v1"
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             output = directory / "core.json"

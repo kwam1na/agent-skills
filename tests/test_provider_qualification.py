@@ -31,7 +31,7 @@ def _load_runner():
 class ProviderQualificationTests(unittest.TestCase):
     def test_checked_product_provider_replays_exactly(self) -> None:
         product = ROOT / "qualifications/product"
-        current = "core-text-coherence-v1"
+        current = "core-concurrent-delivery-v1"
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "provider.json"
             result = subprocess.run([sys.executable, "-B", str(SCRIPT),
@@ -39,7 +39,7 @@ class ProviderQualificationTests(unittest.TestCase):
                                      "--metadata", str(product / f"{current}.release.json"),
                                      "--record", str(output)], cwd=temporary, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(output.read_bytes(), (product / "provider-text-coherence-v1.json").read_bytes())
+            self.assertEqual(output.read_bytes(), (product / "provider-concurrent-delivery-v1.json").read_bytes())
 
     def test_record_cannot_overwrite_a_qualification_input(self) -> None:
         runner = _load_runner()
