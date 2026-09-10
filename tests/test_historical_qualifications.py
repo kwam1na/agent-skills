@@ -15,6 +15,10 @@ PR64_QUALIFICATION_SHA256 = {
     "qualifications/core-workflows-bytecode-v1.json": "456772ac2668aa8f3d1dd7129b25e5fc3e11c30c21eca9a2611a36bf9845887d",
     "qualifications/provider-workflows-bytecode-v1.json": "fcb4856655777d079c58fad466d525e459fee477849f920c3fa2013253b621b9",
 }
+PR65_QUALIFICATION_SHA256 = {
+    "qualifications/core-workflows-diagnostics-v1.json": "4296aca98c30317fe9adc982949b1556a64099d7cb78305a58ca0db339caf01f",
+    "qualifications/provider-workflows-diagnostics-v1.json": "f6741eaabbfb4e2805f0827e88e18997723e2b0f6537dc855332d1bc65fba796",
+}
 
 
 class HistoricalQualificationTests(unittest.TestCase):
@@ -22,6 +26,7 @@ class HistoricalQualificationTests(unittest.TestCase):
         for relative, digest in {
             **PR63_QUALIFICATION_SHA256,
             **PR64_QUALIFICATION_SHA256,
+            **PR65_QUALIFICATION_SHA256,
         }.items():
             with self.subTest(relative=relative):
                 self.assertEqual(
