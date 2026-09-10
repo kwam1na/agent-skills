@@ -569,6 +569,67 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "^local-divergence:"):
             lifecycle.update(*self.v2, maintainer=True)
 
+    def test_python_bytecode_classification_requires_only_valid_cache_paths(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        receipt = json.loads(
+            (self.repository / ".agent-skills" / "active.json").read_text(encoding="utf-8")
+        )
+        generation = (
+            self.repository
+            / ".agent-skills"
+            / "generations"
+            / receipt["generation"]
+        )
+        scenarios = (
+            (
+                "alternate valid cache path",
+                ("agent_skills/__pycache__/provider.cpython-314.opt-1.pyc",),
+                "local-bytecode-divergence",
+                "remove-python-bytecode",
+            ),
+            (
+                "bytecode mixed with ordinary extra",
+                (
+                    "agent_skills/__pycache__/provider.cpython-314.pyc",
+                    "unexpected.txt",
+                ),
+                "local-divergence",
+                "review-managed-diff",
+            ),
+            (
+                "pyc outside cache directory",
+                ("agent_skills/provider.pyc",),
+                "local-divergence",
+                "review-managed-diff",
+            ),
+            (
+                "non-pyc inside cache directory",
+                ("agent_skills/__pycache__/provider.txt",),
+                "local-divergence",
+                "review-managed-diff",
+            ),
+        )
+
+        for name, relative_paths, blocker, recovery in scenarios:
+            with self.subTest(name=name):
+                planted = [generation / relative for relative in relative_paths]
+                for path in planted:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"planted divergence")
+                try:
+                    status = lifecycle.status().as_dict()
+                    self.assertEqual(status["blockers"], [blocker])
+                    self.assertEqual(status["recoveryPlan"], [recovery])
+                    with self.assertRaisesRegex(ValueError, f"^{blocker}:"):
+                        lifecycle.update(*self.v2, maintainer=True)
+                finally:
+                    for path in planted:
+                        path.unlink()
+                    cache = generation / "agent_skills" / "__pycache__"
+                    if cache.exists():
+                        cache.rmdir()
+
     def test_mutation_requires_explicit_maintenance_authority(self) -> None:
         lifecycle = Lifecycle(self.repository)
         with self.assertRaisesRegex(ValueError, "maintainer"):
