@@ -36,7 +36,7 @@ def _load_runner():
 class QualificationTests(unittest.TestCase):
     def test_checked_product_core_replays_exactly(self) -> None:
         product = ROOT / "qualifications/product"
-        current = "core-bytecode-v1"
+        current = "core-diagnostics-v1"
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             output = directory / "core.json"
@@ -278,7 +278,7 @@ class QualificationTests(unittest.TestCase):
             first_metadata = directory / "first.release.json"
             second_archive = directory / "second.zip"
             second_metadata = directory / "second.release.json"
-            release_id = "core-workflows-bytecode-v1"
+            release_id = "core-workflows-diagnostics-v1"
             first = build_release(
                 ROOT,
                 first_archive,
@@ -337,7 +337,7 @@ class QualificationTests(unittest.TestCase):
             self.assertNotIn("linear", serialized.lower())
             self.assertEqual(
                 record_path.read_bytes(),
-                (ROOT / "qualifications" / "core-workflows-bytecode-v1.json").read_bytes(),
+                (ROOT / "qualifications" / "core-workflows-diagnostics-v1.json").read_bytes(),
             )
 
             replay = self._run_qualification(
@@ -433,7 +433,7 @@ class QualificationTests(unittest.TestCase):
     def test_trusted_sensor_change_changes_the_driver_identity(self) -> None:
         runner = _load_runner()
         recorded = json.loads(
-            (ROOT / "qualifications" / "core-workflows-bytecode-v1.json").read_text(encoding="utf-8")
+            (ROOT / "qualifications" / "core-workflows-diagnostics-v1.json").read_text(encoding="utf-8")
         )
         self.assertEqual(
             recorded["qualificationDriverSha256"],

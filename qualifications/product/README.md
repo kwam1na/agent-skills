@@ -10,7 +10,11 @@ The `*-adoption-v1` files retain the previously qualified adoption release set,
 including its independently bound protected Linear attestation. Their bytes and
 identities remain immutable.
 
-The `*-bytecode-v1` files are the current qualified product set. The bootstrap
+The `*-bytecode-v1` files retain the previously qualified bytecode-recovery
+release set, including its independently bound protected Linear attestation.
+Their bytes and identities remain immutable.
+
+The `*-diagnostics-v1` files are the current qualified product set. The bootstrap
 archive qualifies the minimal first-install profile and full product lifecycle.
 The core archive carries its exact current core and provider qualification
 records. The Linear qualification binds that exact core and Linear pair to a

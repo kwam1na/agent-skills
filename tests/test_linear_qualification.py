@@ -21,9 +21,9 @@ from agent_skills.release import RUNTIME_FILES, _path_digest, _release_view, bui
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
 PRODUCT = ROOT / "qualifications" / "product"
-ATTESTATION = PRODUCT / "linear-bytecode-v1.attestation.json"
-RECORD = PRODUCT / "linear-bytecode-v1.json"
-BINDING = PRODUCT / "linear-bytecode-v1.collector-binding.json"
+ATTESTATION = PRODUCT / "linear-diagnostics-v1.attestation.json"
+RECORD = PRODUCT / "linear-diagnostics-v1.json"
+BINDING = PRODUCT / "linear-diagnostics-v1.collector-binding.json"
 HISTORICAL_ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
 HISTORICAL_RECORD = PRODUCT / "linear-product-v1.json"
 HISTORICAL_BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
@@ -49,6 +49,18 @@ HISTORICAL_PRODUCT_SHA256 = {
     "linear-adoption-v1.zip": "8e24c88d459de54bca99230aa23acd76416b003e31693bb5c98db3d4a8cec257",
     "provider-adoption-v1.json": "b5edd0629799e63e00ee50c59866c90036787a510e8d2694ca5f8d829910262c",
     "provider-product-v1.json": "591aff86b3a23a4d15b29fb11794624f3b06d08c24bcaa348c4391d8d71beb35",
+    "bootstrap-bytecode-v1.json": "9f6b8688c7e0080d848141886eceda31080d6ae28d39605d88fc2face3b287f6",
+    "bootstrap-bytecode-v1.release.json": "ef248e783477b28234e02a54d54cea67a28996fd142e9792012f74db9caf56bf",
+    "bootstrap-bytecode-v1.zip": "6b8ad773385fd621f850f2a44624b59135a2b3b80fd80da64fa3e5549688aac9",
+    "core-bytecode-v1.json": "c2e27a1eef98f629e4973d2ec6957efe0cb035705dcd5e622165a45240f0bf30",
+    "core-bytecode-v1.release.json": "8b6c22689e124c8baf5c4bee448532a0917a72a4e8fdd9d19028f488e05399e8",
+    "core-bytecode-v1.zip": "52a9ec8a45d75c29fbfff18cca7a6a1e9658dbfd9c944feb76fb4144f3832d1e",
+    "linear-bytecode-v1.attestation.json": "037bf751cfc47df57a55bf82cac05febc8469aabc972d286cbffb5c746c0941f",
+    "linear-bytecode-v1.collector-binding.json": "5c9cc3b1f900e192ac9ad8f72d2b33d22ecf2c056dc24a2321ec36008ea58b3a",
+    "linear-bytecode-v1.json": "06815879c834dddadb61d90ef952862cf7a992b9f8ccedb464d0d35e9ecbd34a",
+    "linear-bytecode-v1.release.json": "3d5f3ed25ed8c2445f5a6b95ef8e508a423539ab74307fcdfb380640618ac5f8",
+    "linear-bytecode-v1.zip": "f611b5340c911fefb882a4cf4d7b6f9e5dcf2d05da46d3891070d6c4ae8e91d8",
+    "provider-bytecode-v1.json": "df59428d2c50dd5f289776acb0b957db76aa9d46200b0debb44842890afb5d26",
 }
 
 
@@ -891,8 +903,8 @@ class LinearQualificationTests(unittest.TestCase):
 
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
         current_products = {
-            "core": ("core-bytecode-v1", "52a9ec8a45d75c29fbfff18cca7a6a1e9658dbfd9c944feb76fb4144f3832d1e"),
-            "linear": ("linear-bytecode-v1", "f611b5340c911fefb882a4cf4d7b6f9e5dcf2d05da46d3891070d6c4ae8e91d8"),
+            "core": ("core-diagnostics-v1", "f02c5f2f53d721e38574ed7b232484e41d0ac3cfa86329f3f41d3e115df3624f"),
+            "linear": ("linear-diagnostics-v1", "8b80244acaffb4be1ad982c635ccd3ac20988d8dc0a33d76d90c424d0fe75525"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -910,7 +922,7 @@ class LinearQualificationTests(unittest.TestCase):
                                         directory / f"{profile}-current.json",
                                         release_id=release.release_id, profile_id=profile)
                 self.assertEqual(projected, current, "checked product workflows differ from current source")
-        self.assertIn("linear-bytecode-v1", (ROOT / "README.md").read_text())
+        self.assertIn("linear-diagnostics-v1", (ROOT / "README.md").read_text())
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
         durable_paths = [ROOT / "README.md"]
