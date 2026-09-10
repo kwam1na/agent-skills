@@ -31,10 +31,11 @@ Plan -> Work -> Review -> Compound.
 ## Review
 
 - Review against acceptance criteria, repository authority, and sensor evidence.
-- Declare the round bound before the first round; every round of the delivery
-  counts, except one grace round obtained at the bound and a round reopened
+- Declare the delivery-review round bound before its first round; every round
+  of delivery review counts, except one grace round obtained at the bound and a round reopened
   because the base moved under an unchanged deliverable identity; the default is
-  four rounds.
+  four rounds. Unbounded plan-review rounds count against no delivery-review
+  bound.
 - Later rounds verify closure and review the delta; only P0 and P1 findings
   block; the lens, not the executor, closes or defers a finding.
 - Use specialized review only when the change's risk warrants it.
@@ -49,7 +50,8 @@ durable learning emerged. Do not create documentation for obvious one-off work.
 Name the tracked follow-up item recorded for every deferral any lens filed as
 part of the delivery's record. One tracked item may carry several deferrals,
 one item per shippable outcome. Where no tracker is configured, those follow-up
-items are the actionable tracking handoff in the result rather than a blocker.
+items are the actionable tracking handoff in the executor's delivery result
+rather than a blocker.
 
 ## Handoff
 

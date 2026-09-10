@@ -21,9 +21,9 @@ from agent_skills.release import RUNTIME_FILES, _path_digest, _release_view, bui
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
 PRODUCT = ROOT / "qualifications" / "product"
-ATTESTATION = PRODUCT / "linear-diagnostics-v1.attestation.json"
-RECORD = PRODUCT / "linear-diagnostics-v1.json"
-BINDING = PRODUCT / "linear-diagnostics-v1.collector-binding.json"
+ATTESTATION = PRODUCT / "linear-text-coherence-v1.attestation.json"
+RECORD = PRODUCT / "linear-text-coherence-v1.json"
+BINDING = PRODUCT / "linear-text-coherence-v1.collector-binding.json"
 HISTORICAL_ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
 HISTORICAL_RECORD = PRODUCT / "linear-product-v1.json"
 HISTORICAL_BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
@@ -61,6 +61,15 @@ HISTORICAL_PRODUCT_SHA256 = {
     "linear-bytecode-v1.release.json": "3d5f3ed25ed8c2445f5a6b95ef8e508a423539ab74307fcdfb380640618ac5f8",
     "linear-bytecode-v1.zip": "f611b5340c911fefb882a4cf4d7b6f9e5dcf2d05da46d3891070d6c4ae8e91d8",
     "provider-bytecode-v1.json": "df59428d2c50dd5f289776acb0b957db76aa9d46200b0debb44842890afb5d26",
+    "core-diagnostics-v1.json": "19cba9d9ba44e0d4d1da627cc00d06e8f2da1e474386e3464ebe132a9d3b4ad4",
+    "core-diagnostics-v1.release.json": "e9f6c569add672fe573aea16d8ca192f0969c01be74109175b4a413632345360",
+    "core-diagnostics-v1.zip": "f02c5f2f53d721e38574ed7b232484e41d0ac3cfa86329f3f41d3e115df3624f",
+    "provider-diagnostics-v1.json": "3caee03a765ce66f29969e2943196c02ad2d4fc10c7f02a629dc53e657254480",
+    "linear-diagnostics-v1.attestation.json": "808b8051c2a309a8bbe8fcdb32a24975319fa5ac4078a1ce7125c547d6fac6e9",
+    "linear-diagnostics-v1.collector-binding.json": "267d578106dd001ed0d859b380f47950b7f114482c00c9e7d876658dce73c1f5",
+    "linear-diagnostics-v1.json": "999feca56c46b6d1dbe28389b2200a9867f63c4c88d533aee4a188d717a104a5",
+    "linear-diagnostics-v1.release.json": "7fcd9437964dbc40cdba9fb6f87889f6e85a7932679bc2066f68cd2f358e19a8",
+    "linear-diagnostics-v1.zip": "8b80244acaffb4be1ad982c635ccd3ac20988d8dc0a33d76d90c424d0fe75525",
 }
 
 
@@ -903,8 +912,8 @@ class LinearQualificationTests(unittest.TestCase):
 
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
         current_products = {
-            "core": ("core-diagnostics-v1", "f02c5f2f53d721e38574ed7b232484e41d0ac3cfa86329f3f41d3e115df3624f"),
-            "linear": ("linear-diagnostics-v1", "8b80244acaffb4be1ad982c635ccd3ac20988d8dc0a33d76d90c424d0fe75525"),
+            "core": ("core-text-coherence-v1", "3a2fd8038177316388139b130821e1f57526e749d91ab581233750e6b226b938"),
+            "linear": ("linear-text-coherence-v1", "945fd9a246433c64f37fc3da5218203b64fa1275e3cc8e1a299cb9724062f679"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -922,7 +931,7 @@ class LinearQualificationTests(unittest.TestCase):
                                         directory / f"{profile}-current.json",
                                         release_id=release.release_id, profile_id=profile)
                 self.assertEqual(projected, current, "checked product workflows differ from current source")
-        self.assertIn("linear-diagnostics-v1", (ROOT / "README.md").read_text())
+        self.assertIn("linear-text-coherence-v1", (ROOT / "README.md").read_text())
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
         durable_paths = [ROOT / "README.md"]

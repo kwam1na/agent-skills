@@ -21,8 +21,9 @@ The adopting repository declares its tracker properties in one fixed
 repository-relative document at `.agents/tracker-properties.json`: the team,
 the project, and the status names this adapter maps `update-status` and
 `close-or-handoff` onto. That document is the seam a different tracking skill
-would replace, so read it as declared data and never write to it. It declares
-only properties an operation consumes; anything else an item carries, labels
+would replace, so read it as declared data and never write to it. Apart from
+`schemaVersion`, which identifies the document format, it declares only
+properties an operation consumes; anything else an item carries, labels
 among them, is decided per item rather than declared once for the repository.
 
 Resolve context in this order and stop at the first source that resolves:

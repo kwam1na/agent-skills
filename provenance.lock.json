@@ -35,13 +35,13 @@
       "id": "compound-delivery-kernel",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The portable delivery posture is narrowed to repository authority, bounded execution, review, and compounding outcomes.",
+        "reason": "The portable delivery posture is narrowed to repository authority, bounded execution, review, and compounding outcomes. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/compound-delivery-kernel/SKILL.md",
-          "sha256": "79b93fee3ff5c0f235779beb4e608c2b2efde4cd45a9286e312cc50aee29dc40"
+          "sha256": "857c8dc6d1af9aa0a447acdf1d9fdb98dc3ee21e15ee9054c5c3e005850d3899"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -208,13 +208,13 @@
       "id": "execute-work",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The baseline execution slice is narrowed to incremental work, repository sensor evidence, explicit blockers, approval handoffs, and honest completion states. Shared host-neutral v2 observations, immutable replacement attempts, and durable selected-output capture preserve existing review authority.",
+        "reason": "The baseline execution slice is narrowed to incremental work, repository sensor evidence, explicit blockers, approval handoffs, and honest completion states. Shared host-neutral v2 observations, immutable replacement attempts, and durable selected-output capture preserve existing review authority. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/execute-work/SKILL.md",
-          "sha256": "9d21cf63e926194ccdc9e96b6b43085b77631fe2463f9f70b46699a37f041ef8"
+          "sha256": "09eb0b0737b3f0ad408c6b04ee772651bddf76651c63a54accd261151a6a3377"
         },
         {
           "path": "skills/execute-work/references/run-observation-contract.md",
@@ -241,13 +241,13 @@
       "id": "linear-tracker-adapter",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The provider-specific planning and execution source is narrowed to a host-native adapter for the neutral tracker contract.",
+        "reason": "The provider-specific planning and execution source is narrowed to a host-native adapter for the neutral tracker contract. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/linear-tracker-adapter/SKILL.md",
-          "sha256": "d2fa7a6a2d56e0ebc4023d9facfca9cf0e02ae1c9642b618181d59a553fc00e3"
+          "sha256": "e002c9a4a55f495e39ba0e1b7cb21c1efb821326bc1b060907c569baa5012d6a"
         },
         {
           "path": "skills/linear-tracker-adapter/references/adapter-contract.json",
@@ -270,17 +270,17 @@
       "id": "obtain-review",
       "license": "NOASSERTION",
       "modification": {
-        "reason": "Independently authored portable acquisition and projection contract; no repository-source derivation or new license grant is asserted. Exact base-move reopening, shared host-neutral v2 observations, and durable selected-output capture preserve existing review authority.",
+        "reason": "Independently authored portable acquisition and projection contract; no repository-source derivation or new license grant is asserted. Exact base-move reopening, shared host-neutral v2 observations, and durable selected-output capture preserve existing review authority. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
         "status": "independently-authored"
       },
       "outputs": [
         {
           "path": "skills/obtain-review/SKILL.md",
-          "sha256": "6b76f44234d5d3336225ffe1ad62f06a8a5a33885d9c933f5351af19c3817900"
+          "sha256": "db24ae94d3f0d19e6389034120c8bca492479997f612b8a3b7be24a8e45df4e5"
         },
         {
           "path": "skills/obtain-review/references/round-brief-template.md",
-          "sha256": "613022afe7e9e86fbc96e1fb681f810e94b03a677f4f280df6aad368b98c3118"
+          "sha256": "5323b73e9f7173ab20d005beddcb29a33d99d2c2a9288b196afaa17ef93488eb"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -753,13 +753,13 @@
       "id": "plan-work",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The baseline planning slice is narrowed to scope, finish-line, dependency, posture, sensor, and approval-handoff decisions without implementation behavior.",
+        "reason": "The baseline planning slice is narrowed to scope, finish-line, dependency, posture, sensor, and approval-handoff decisions without implementation behavior. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "ada7ee7a5ebba02bb421cc02dc75980fd16fd9c8387b3a370f22974b494d7b43"
+          "sha256": "101838d8b559f8cfb530784b4deecd8b5e870b1f93ac1cc99b819bc5325b7f67"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -778,13 +778,13 @@
       "id": "review-work",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The review source is narrowed to caller-selected lenses, evidence-bearing convergence, visible dissent, typed failure, bounded outcomes, and exact base-move reopening; repository reviewer policy remains an overlay. Versioned deferral scope and shared host-neutral v2 observations preserve existing review authority.",
+        "reason": "The review source is narrowed to caller-selected lenses, evidence-bearing convergence, visible dissent, typed failure, bounded outcomes, and exact base-move reopening; repository reviewer policy remains an overlay. Versioned deferral scope and shared host-neutral v2 observations preserve existing review authority. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/review-work/SKILL.md",
-          "sha256": "9d4ef2b89a926445916f71da4105e8368447950916bc1d14083cb082c9f1559e"
+          "sha256": "ee5e3f1c542893dcc00cf026c2b7f3af4fbf31d6fe1cd6092fe0e8575d609320"
         }
       ],
       "owner": "agent-skills-corpus",

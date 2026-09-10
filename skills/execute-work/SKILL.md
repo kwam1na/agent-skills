@@ -41,6 +41,20 @@ product already satisfies the intended behavior, correct the smallest sensor
 defect without weakening that behavior. Do not reshape valid product behavior
 solely to satisfy an accidental formatting or extraction constraint.
 
+When an extension makes a literal test pin stale, check the plan's test
+disposition and scope rule. If related test-pin updates are allowed, make the
+smallest correction and record the scoped exception with its proving sensor.
+A stricter explicit caller boundary still governs; report the needed exception
+without silently changing forbidden files or treating all test-pin drift as a
+product blocker.
+
+Before parallel sensors run, honor the plan's allocation or serialization of
+shared ports, browser sessions, databases, and caches. Use the declared
+repository or host mechanism and release the resource when its sensor ends.
+Check the current base before final validation of a base-relative sensor;
+reconcile upstream movement and rerun the affected sensor before claiming its
+result is current. Worktree isolation alone does not isolate those resources.
+
 When work becomes blocked, retain completed work and evidence, name the blocker,
 and provide the approval or decision handoff needed to continue.
 
@@ -136,13 +150,15 @@ grace round is not available with dissent open or where the latest round was
 blocked by a failed acquisition.
 
 Before the delivery reports done, every finding any lens recorded as a deferral
-has a tracked follow-up item recorded through the tracker's `create-work`, one
-item per shippable outcome, each deferral cited by its identifier and the lens
-that filed it, related to the delivering work item. A deferral with no tracked
+has a tracked follow-up item recorded through the tracker's `create-work`.
+One tracked item may carry several deferrals, one item per shippable outcome,
+each deferral cited by its identifier and the lens that filed it, related to the
+delivering work item. A deferral with no tracked
 item is an open item for the finish line: record the typed blocker
 `review.deferral-untracked` naming the deferrals that lack one, report
 `partial`, and stop. Where no tracker is configured, those follow-up items are
-the actionable tracking handoff in the result rather than a blocker.
+the actionable tracking handoff in the executor's delivery result rather than a
+blocker.
 
 ## Name Blockers from a Typed Vocabulary
 
@@ -168,8 +184,8 @@ than collapsing the delivery into implementation plus tests:
 - name the review round bound in effect for the delivery and the rounds obtained
   against it, and record a disposition for every finding, each citing the lens;
 - name the release the review is bound to by its `releaseId` and
-  `archiveSha256`, and any release installed mid-review; this list is the
-  delivery's closing record for that identity;
+  `archiveSha256`, and any release installed mid-review; these release
+  identifiers form the delivery's closing record for its review-bound identity;
 - record the review outcome, who or what produced it, and the evidence reviewed;
   when no repository- or host-selected independent review is available, say so
   and retain the bounded acceptance-criteria review instead of implying
@@ -213,8 +229,8 @@ failed emission never changes a command's outcome or the delivery's result.
   have been read and the posture is chosen.
 - `decision.recorded` at every fork resolved by judgement rather than by a
   discovered rule, naming the fork and the choice. Named forks: the branch
-  name, the reason a review round was obtained on an unchanged candidate, a
-  separate worktree for a lens that mutates, a skill read rather than invoked,
+  name, whether to obtain a review round under unchanged deliverable identity,
+  the checkout allocated to each lens, a skill read rather than invoked,
   a sensor considered and deliberately not run, and any value supplied by hand
   that should have been discoverable.
 - `gate.reported` after a repository gate that is not a command of the

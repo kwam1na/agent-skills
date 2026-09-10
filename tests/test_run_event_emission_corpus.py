@@ -5,14 +5,15 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from agent_skills.release import build_release
+from agent_skills.release import SUPPORTED_PROFILES, build_release
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# The event kinds each shipped workflow is responsible for emitting. A skill
-# that names the capability without naming its own kinds tells an executor
-# nothing about where to emit.
+# The event kinds each shipped workflow is responsible for emitting. This
+# explicit vocabulary is the corpus boundary: other dotted tokens are not
+# guessed to be event kinds. A skill that names the capability without naming
+# its own kinds tells an executor nothing about where to emit.
 EMITTED_KINDS: dict[str, tuple[str, ...]] = {
     "skills/execute-work/SKILL.md": (
         "`run.started`",
@@ -23,26 +24,29 @@ EMITTED_KINDS: dict[str, tuple[str, ...]] = {
         "`pr.opened`",
         "`blocker.recorded`",
         "`run.ended`",
+        "`review.round.closed`",
     ),
     "skills/obtain-review/SKILL.md": (
         "`lens.selected`",
         "`review.round.opened`",
     ),
-    "skills/review-work/SKILL.md": ("`review.round.closed`",),
     "skills/compound-learning/SKILL.md": ("`compounding.recorded`",),
 }
 
-# Ownership above is single, so naming a kind is also denied where the skill
-# does not own it: an executor reading any shipped skill learns each kind's one
-# emit point rather than a second, competing one. `execute-work` is the sole
-# skill that names kinds it does not own, and it names them only to point at
-# their owners, so its references are enumerated here instead of inferred.
+# Ownership above stays single because a duplicate silently widens the kinds
+# the deny permits for both owners. Naming a kind is denied where the skill does
+# not own or explicitly reference it. Reference permission is deliberately
+# name-level: whether allowed prose makes a competing emit claim remains review
+# work rather than a semantic-text sensor.
 REFERENCED_KINDS: dict[str, tuple[str, ...]] = {
-    "skills/execute-work/references/run-observation-contract.md": ("`review.round.opened`", "`review.round.closed`"),
+    "skills/execute-work/references/run-observation-contract.md": (
+        "`review.round.opened`",
+        "`review.round.closed`",
+    ),
+    "skills/review-work/SKILL.md": ("`review.round.closed`",),
     "skills/execute-work/SKILL.md": (
         "`lens.selected`",
         "`review.round.opened`",
-        "`review.round.closed`",
         "`compounding.recorded`",
     ),
 }
@@ -55,6 +59,7 @@ OWNED_KINDS: frozenset[str] = frozenset(
 # command writes this one, so a shipped skill naming it sends an executor to an
 # emit point no skill has.
 UNOWNED_KINDS: tuple[str, ...] = ("`command.completed`",)
+KNOWN_EVENT_KINDS: frozenset[str] = OWNED_KINDS | frozenset(UNOWNED_KINDS)
 
 # The capability is optional and repository-declared, and an absent one is
 # silent rather than a handoff or a blocker.
@@ -87,7 +92,9 @@ CAPABILITY_PHRASES: dict[str, tuple[str, ...]] = {
 # the emit-point list never learns about the entries other skills own. Each
 # entry pins the clause carrying the rule an executor acts on rather than the
 # prose justifying it, so rewording a justification does not redden the corpus
-# and a reworded rule does.
+# and a reworded rule does. These whole-file phrase pins guard deletion and
+# rewording, not arbitrary contradiction or displacement. Add a local
+# structural pin only where the phrase reads off its position.
 REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "skills/obtain-review/SKILL.md": (
         "naming the round, the declared bound that round counts against, the"
@@ -98,14 +105,17 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " emission names the round and states that the loop is unbounded",
         # Anchored to the tail of the emission rule it qualifies: "that same
         # declared bound" reads off its position, so the same sentence pasted
-        # anywhere else in the file names no bound at all.
+        # anywhere else in the file names no bound at all. This pins the
+        # actionable emission rule independently of review-work's exception;
+        # cross-file semantic agreement and explanatory rationale stay review
+        # responsibilities.
         "looks like where none may be invented. A grace verification round"
         " obtained at the bound names that same declared bound and states that"
         " it is the grace round obtained outside the count",
-        "The caller also supplies the round bound it declared for the delivery,"
-        " the same bound `$review-work` reduces against; the bound is not part"
-        " of the harness's comparison context and is never invented for an"
-        " emission",
+        "The caller also supplies the delivery-review round bound it declared,"
+        " the same bound `$review-work` reduces against. A plan-review loop"
+        " declares no bound, so none is supplied or invented for it. Bound"
+        " accounting is not part of the harness's comparison context",
     ),
     "skills/review-work/SKILL.md": (
         "naming the round, the candidate it bound, the reduced outcome, its"
@@ -146,11 +156,11 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         # so it is pinned whole: the skipped sensor the finish-line paragraph
         # sends to `decision.recorded` is a member of it, and a member dropped
         # from either passage leaves the two disagreeing.
-        "Named forks: the branch name, the reason a review round was obtained"
-        " on an unchanged candidate, a separate worktree for a lens that"
-        " mutates, a skill read rather than invoked, a sensor considered and"
-        " deliberately not run, and any value supplied by hand that should have"
-        " been discoverable",
+        "Named forks: the branch name, whether to obtain a review round under"
+        " unchanged deliverable identity, the checkout allocated to each lens,"
+        " a skill read rather than invoked, a sensor considered and deliberately"
+        " not run, and any value supplied by hand that should have been"
+        " discoverable",
         "Reading the root instruction file for the run-event declaration is"
         " capability discovery, not the authority reading this point orders: it"
         " precedes `run.started`",
@@ -159,14 +169,18 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
 
 
 # The paragraph that qualifies the emit-point list reads off its own position:
-# `This list` names the list it follows, so a copy of the paragraph anywhere
-# else in the file says nothing. Phrase membership is position-blind,
-# so the paragraph's opening is pinned to the last bullet of the list rather
-# than to the file.
+# `This list`, `those`, and `above` name the list they follow, so the complete
+# paragraph is pinned to the last bullet rather than to the file.
 EMIT_POINT_LIST_CLOSE: tuple[str, str] = (
     "skills/execute-work/SKILL.md",
     "the same cost the handoff reports."
-    " This list is not the whole journal.",
+    " This list is not the whole journal. `$obtain-review` emits `lens.selected`"
+    " and `review.round.opened`, `$compound-learning` emits"
+    " `compounding.recorded`, and this workflow, as `$review-work`'s caller,"
+    " emits `review.round.closed` once that reducer has closed a round. The two"
+    " `$obtain-review` and `$compound-learning` entries are owned by the skill"
+    " named beside them, and this workflow neither restates their rules nor"
+    " emits them in that skill's place.",
 )
 
 
@@ -191,9 +205,9 @@ class RunEventEmissionCorpusTests(unittest.TestCase):
         archived: dict[str, str] = {}
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            # Every profile, because a skill only one of them ships names its
-            # emit points for that profile's adopters and nobody else's.
-            for profile_id in ("core", "linear"):
+            # Every releasable profile, because a skill only one of them ships
+            # names its emit points for that profile's adopters and nobody else.
+            for profile_id in sorted(SUPPORTED_PROFILES):
                 archive = directory / f"{profile_id}.zip"
                 build_release(
                     ROOT,
@@ -206,6 +220,9 @@ class RunEventEmissionCorpusTests(unittest.TestCase):
                     for relative in release.namelist():
                         if not relative.startswith("skills/"):
                             continue
+                        # This is a prose sensor over shipped skill Markdown.
+                        # Agent metadata and executable or supporting formats
+                        # remain outside its remit.
                         if not relative.endswith(".md"):
                             continue
                         if relative in archived:
@@ -234,10 +251,15 @@ class RunEventEmissionCorpusTests(unittest.TestCase):
             allowed = set(EMITTED_KINDS.get(relative, ())) | set(
                 REFERENCED_KINDS.get(relative, ())
             )
-            denied = sorted(OWNED_KINDS - allowed) + list(UNOWNED_KINDS)
+            denied = sorted(KNOWN_EVENT_KINDS - allowed)
             for kind in denied:
                 with self.subTest(path=relative, kind=kind):
                     self.assertNotIn(kind, text)
+
+    def test_unrelated_dotted_vocabulary_is_not_an_event_kind(self) -> None:
+        unrelated = {"`review.acquire`", "`pyproject.toml`"}
+
+        self.assertTrue(unrelated.isdisjoint(KNOWN_EVENT_KINDS))
 
     def test_each_skill_states_the_optional_capability_rule(self) -> None:
         for relative, phrases in CAPABILITY_PHRASES.items():

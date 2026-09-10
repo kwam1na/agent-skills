@@ -14,15 +14,19 @@ repository's review authority.
 
 ## Inputs
 
-Provide the required lens names, a positive round bound, and the completed lens
-results for each round. The round bound is declared by the caller before the
-first round and belongs to the delivery: every round obtained for the delivery
-counts against it, across every loop, except one grace verification round
-obtained at the bound and a round reopened because the base moved under an
-unchanged deliverable identity, and every round already obtained is supplied to
-each reduction. The workflow default is four rounds, and a repository instruction
-file may declare a smaller bound; a larger bound is an operator decision
-recorded before the first round. The review is bound to the release installed
+Provide the required lens names, a positive delivery-review round bound, and the
+completed lens results for each round. This workflow bounds delivery review;
+plan review remains outside this reduction and may be unbounded. The bound is
+declared by the caller before the first delivery-review round and belongs to the
+delivery. Every counted delivery-review round obtained is supplied to each
+reduction, and every obtained pass, including a grace or reopened pass, remains
+in the supplied history. The last counted delivery-review round is round N. When the workflow
+permits it, the single grace verification round is round N+1 with declared bound
+N and remains outside the count. A reopened pass preserves the logical round's
+number and kind and does not create another counted round. The workflow default
+is four rounds, and a repository instruction file may declare a smaller bound;
+a larger bound is an operator decision recorded before the first round. The
+review is bound to the release installed
 when the delivery's first round is acquired: a release installed mid-review is
 recorded and does not invalidate rounds already carried, and the delivery's
 closing record names the bound release's `releaseId` and `archiveSha256`.
@@ -49,7 +53,8 @@ a tracked item the executor records before the delivery reports done; the
 deferral's evidence names what that item must say, and the lens files nothing
 itself. One tracked item may carry several deferrals, one item per shippable
 outcome. Where no tracker is configured, those follow-up items are the
-actionable tracking handoff in the result rather than a blocker.
+actionable tracking handoff in the executor's delivery result rather than a
+blocker.
 
 - `aligned` means every required lens in the latest round has evidence and no
   actionable findings, each lens having discharged every carried finding of its
