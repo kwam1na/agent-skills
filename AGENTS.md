@@ -22,17 +22,21 @@ When a releasable skill changes, update its catalog entry, every selected
 profile, and the corresponding provenance output digest in the same change,
 with qualification records re-earned against the candidate's release, not
 restamped. Retained historical qualification records keep their original bytes.
-Keep JSON serialized as two-space-indented UTF-8 with a final newline, then run:
+Keep JSON serialized as two-space-indented UTF-8 with a final newline. Bootstrap
+the worktree-private test environment before running the sensors; a shared
+editable install stores one checkout path in site-packages, so concurrent
+worktrees would otherwise replace each other's imported source:
 
 ```bash
-python3 -m pip install -e ".[test]"
-python3 scripts/validate-registry.py
-python3 tests/test_registry.py
-python3 -m unittest discover -s tests -t . -p 'test_*.py'
+python3 scripts/bootstrap-test-environment.py
+.venv/bin/python scripts/validate-registry.py
+.venv/bin/python tests/test_registry.py
+.venv/bin/python -m unittest discover -s tests -t . -p 'test_*.py'
 ```
 
 The `-t .` option enters the test package's dependency guard. Without the test
 extra, that guard reports one installation failure before importing the suite.
+On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
 
 A corpus pin asserts that its phrase is present in the whitespace-normalized
 file, not that the phrase sits under any particular heading. Relocating a pinned

@@ -15,17 +15,21 @@ status, modification status, and SHA-256 digest. Historical source baselines are
 not silently advanced when a new skill is added.
 
 Validate the checked-in registry and hostile fixture suite with Python 3.11 or
-newer. Inside your chosen virtual environment, install the optional test extra
-once; production remains standard-library-only. Qualification uses isolated
-Python processes, so the pinned schema engine must be installed in that same
+newer. Bootstrap the worktree-private `.venv` before running the sensors;
+production remains standard-library-only. A shared editable install records one
+source checkout in the interpreter's site-packages and lets concurrent worktrees
+replace each other's source path. Qualification also uses isolated Python
+processes, so the pinned schema engine must be installed in the same private
 interpreter, not available only through a user-site or search-path override:
 
 ```bash
-python3 -m pip install -e ".[test]"
-python3 scripts/validate-registry.py
-python3 tests/test_registry.py
-python3 -m unittest discover -s tests -t . -p 'test_*.py'
+python3 scripts/bootstrap-test-environment.py
+.venv/bin/python scripts/validate-registry.py
+.venv/bin/python tests/test_registry.py
+.venv/bin/python -m unittest discover -s tests -t . -p 'test_*.py'
 ```
+
+On Windows, use `.venv\Scripts\python.exe` for the three sensor commands.
 
 Build and verify the core profile:
 
