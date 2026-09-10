@@ -30,7 +30,7 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 Build and verify the core profile:
 
 ```bash
-python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-v2
+python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-adoption-v1
 python3 scripts/build-release.py verify \
   --archive /tmp/core.zip \
   --metadata /tmp/core.release.json \
@@ -50,6 +50,25 @@ python3 scripts/build-release.py verify \
   --metadata /tmp/linear.release.json \
   --extract-to /tmp/linear-standalone
 ```
+
+Build and qualify the bootstrap profile independently. Its qualifier installs
+the exact archive in a fresh Git repository, verifies both host exposures and
+standalone corpus validation, updates through the same command, removes its
+source artifacts, and rolls back through installed bytes:
+
+```bash
+python3 scripts/build-release.py build \
+  --archive /tmp/bootstrap.zip \
+  --metadata /tmp/bootstrap.release.json \
+  --release-id bootstrap-v1 \
+  --profile bootstrap
+python3 scripts/qualify-bootstrap.py \
+  --archive /tmp/bootstrap.zip \
+  --metadata /tmp/bootstrap.release.json \
+  --record /tmp/bootstrap.qualification.json
+```
+
+The checked qualification record is `qualifications/bootstrap-v1.json`.
 
 The detached release metadata authenticates the ZIP before it is parsed. The
 manifest then authenticates the complete payload and its single profile group.
@@ -107,8 +126,11 @@ rollback checkpoint derives a disposable prior fixture; the candidate archive
 named in the record remains the single release under qualification. That prior
 fixture is built only from the verified candidate extraction, never from the
 runner checkout corpus.
-The current workflow-only record is checked in at `qualifications/core-workflows-v2.json`.
+The current workflow-only record is checked in at
+`qualifications/core-workflows-adoption-v1.json`.
 Historical records retain their original bytes under `qualifications/history/`.
+Historical product records such as `linear-product-v1` also remain immutable
+under `qualifications/product/`.
 The exact runnable product pair and its new qualifications live under
 `qualifications/product/`; see [product generations](docs/product-generation.md).
 
@@ -131,8 +153,9 @@ The collector input is `agent-skills-linear-collector-binding/1`:
 Each reference is an object with `schemaVersion` and `opaque`. Use fresh redacted
 opaque identities, not ticket identifiers, paths, or host payloads. Serialize the
 collector input and attestation with sorted keys, two-space indentation, and a
-final newline. The checked input is
-`qualifications/product/linear-product-v1.collector-binding.json`; it is not part of either archive.
+final newline. The current checked input is
+`qualifications/product/linear-adoption-v1.collector-binding.json`; it is not
+part of either archive.
 Qualification also rebuilds the supplied Linear archive's core projection and
 requires its archive and metadata bytes to match the separately qualified core.
 For product archives, every runtime component must be byte-identical across
@@ -149,17 +172,17 @@ the independently frozen input to the offline driver:
 
 ```bash
 python3 scripts/qualify-linear.py \
-  --core-archive qualifications/product/core-product-v1.zip \
-  --core-metadata qualifications/product/core-product-v1.release.json \
-  --core-record qualifications/product/core-product-v1.json \
-  --linear-archive qualifications/product/linear-product-v1.zip \
-  --linear-metadata qualifications/product/linear-product-v1.release.json \
-  --collector-binding qualifications/product/linear-product-v1.collector-binding.json \
-  --attestation qualifications/product/linear-product-v1.attestation.json \
+  --core-archive qualifications/product/core-adoption-v1.zip \
+  --core-metadata qualifications/product/core-adoption-v1.release.json \
+  --core-record qualifications/product/core-adoption-v1.json \
+  --linear-archive qualifications/product/linear-adoption-v1.zip \
+  --linear-metadata qualifications/product/linear-adoption-v1.release.json \
+  --collector-binding qualifications/product/linear-adoption-v1.collector-binding.json \
+  --attestation qualifications/product/linear-adoption-v1.attestation.json \
   --record /tmp/linear.qualification.json
 ```
 
-The version-2 checked record at `qualifications/product/linear-product-v1.json` binds the passing core
+The version-2 checked record at `qualifications/product/linear-adoption-v1.json` binds the passing core
 qualification, both exact archive and metadata identities, canonical extracted
 source-tree digests, the frozen collector input and its digest, the exact retained
 attestation bytes, and its external receipt reference. Old unbound attestations,
@@ -201,7 +224,7 @@ written manifest and reviewer artifacts. Its deterministic record covers
 success, blocked, failed, cancelled, interrupted, duplicate, unsupported
 version, reconciliation, anti-vacuity, completeness, and redaction behavior
 while retaining no local paths or opaque host references. The checked record is
-`qualifications/provider-workflows-v2.json`.
+`qualifications/provider-workflows-adoption-v1.json`.
 Its `workflowGraphSha256` names the actual installed graph, and the installation
 scenario compares that graph and both new skill bodies with the verified
 candidate. A failed qualifier cannot leave an earlier success record at the
@@ -225,14 +248,20 @@ python -m agent_skills.cli --root /path/to/repository plan \
   --metadata /path/to/core.release.json
 ```
 
-Mutation is an explicit repository-maintenance action:
+Mutation is an explicit repository-maintenance action. `apply` is the product
+installer entry point: it installs into an absent repository, updates a current
+generation, and returns a no-op for the same exact generation without requiring
+`AGENT_SKILLS_CHECKOUT` or another producer checkout:
 
 ```bash
-python -m agent_skills.cli --root /path/to/repository install \
+python3 -B /path/to/product.zip --root /path/to/repository --product apply \
   --archive /path/to/core.zip \
   --metadata /path/to/core.release.json \
   --maintenance
 ```
+
+`install` and `update` remain compatible explicit lifecycle operations. New
+adopter wiring should delegate to `apply` instead of selecting between them.
 
 After installation or adoption completes, start a fresh agent session so Codex
 or Claude Code discovers the new repository-relative skill links. An already

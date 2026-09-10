@@ -22,12 +22,14 @@ def runtime_root(lifecycle: Lifecycle) -> Path:
     return root
 
 
-def reconcile_policy(lifecycle: Lifecycle, *, check: bool) -> None:
+def reconcile_policy(lifecycle: Lifecycle, *, check: bool, bootstrap: bool = False) -> None:
     runtime = runtime_root(lifecycle)
     policy = lifecycle.root / ".agents" / "policy"
-    if not policy.exists():
+    if not policy.exists() and not bootstrap:
         return
     arguments = ["node", str(runtime / "policy.mjs"), "--product"]
+    if bootstrap:
+        arguments.append("--bootstrap")
     if check:
         arguments.append("--check")
     result = subprocess.run(arguments, cwd=lifecycle.root, capture_output=True, text=True, timeout=60)

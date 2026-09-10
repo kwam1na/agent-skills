@@ -364,6 +364,45 @@ Create tests that verify:
 
 The harness must be self-policing. If it cannot detect its own drift, it will rot.
 
+### 11. Wire the Delivery Product
+
+Follow the delivery harness's canonical
+[getting-started guide](https://github.com/kwam1na/agent-delivery-harness/blob/main/docs/getting-started.md)
+and its
+[artifact installation guide](https://github.com/kwam1na/agent-delivery-harness/blob/main/docs/product-artifacts.md).
+Treat the qualified product ZIP and detached release metadata as the installation
+inputs. The archive owns lifecycle selection, integrity checks, host exposure,
+runtime selection, and policy reconciliation; do not copy its installer into the
+adopter.
+
+For a first policy compile, author these inputs before installing:
+
+- `.agents/policy/repository-policy.json`, containing the adopter's declared authority
+- `.agents/policy/adapters.json`, containing explicit typed leaf adapters
+- `.agents/policy/bootstrap-inputs.json`, containing exactly the non-negative
+  `productTrustRevocationEpoch` and `repositoryAuthorityRevocationEpoch`
+
+Then run the product's archive-native `apply` command with
+`--bootstrap-policy`. It compiles only those adopter inputs against the installed
+reviewer charters. It does not derive adapters, add grants, create comparison
+adjudications, or overwrite an existing snapshot or comparison report. Subsequent
+installs use the same `apply` command without the bootstrap flag. Rollback runs
+from `.agent-skills/current`, so it remains available after release artifacts and
+the producer checkout are gone.
+
+Complete the adopter wiring described by the harness guide:
+
+- `harness.config.ts` names the real preparation commands, wiring paths, and sensors
+- `.agents/policy/repository-policy.json` declares finish lines, authority, lenses,
+  obligations, and required capabilities
+- `.agents/tracker-properties.json` declares the tracker mapping or explicit absence
+- `.github/workflows/gate.yml` runs the installed product against the pull request candidate
+- `.agents/skills` and `.claude/skills` are the committed relative exposures through
+  `.agent-skills/current/skills`
+
+Exercise the install, product status, harness check, and rollback from a fresh Git
+repository. A source checkout beside the adopter is not installation evidence.
+
 ## Archetype Rules
 
 ### Webapp
@@ -423,6 +462,11 @@ Bootstrap is complete only when:
 - documented harness commands execute real logic rather than stubs
 - the supported bootstrap flow in `README.md` matches the real CI or `validate:pr` gate, except where manual-only steps are explicitly labeled
 - a fresh checkout or fresh worktree run proves the bootstrap path and PR-equivalent validation path work without author-local leftovers
+- `harness.config.ts` is present and exercises real product commands
+- `.agents/policy/repository-policy.json` and explicit adapter/bootstrap inputs are present
+- `.agents/tracker-properties.json` records the adopter's tracker mapping or absence posture
+- `.github/workflows/gate.yml` runs the installed product rather than a sibling checkout
+- both tracked skills exposures resolve through `.agent-skills/current/skills`
 
 ## Deliverables
 

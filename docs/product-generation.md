@@ -18,14 +18,15 @@ Release ZIPs are executable Python archives. After authenticating distributed
 bytes through the release channel, an ordinary adopter can invoke:
 
 ```sh
-python3 -B product.zip --root /repo --product install --archive product.zip --metadata product.json --maintenance
+python3 -B product.zip --root /repo --product apply --archive product.zip --metadata product.json --maintenance
 python3 -B /repo/.agent-skills/current --root /repo harness check
 python3 -B /repo/.agent-skills/current --root /repo --product status
 python3 -B /repo/.agent-skills/current --root /repo --product rollback --maintenance
 python3 -B /repo/.agent-skills/current --root /repo --product recover --maintenance
 ```
 
-Use `update` with the next archive to advance a generation. Both host skill
+Use the same `apply` command with the next archive to advance a generation; it
+selects install, update, or no-op from verified lifecycle state. Both host skill
 exposures and the runtime resolve through the existing current generation.
 The Node runtime can load erasable TypeScript consumer configuration without
 consumer npm dependencies, including imports of the bundled kernel.
@@ -41,6 +42,26 @@ digest to the selected generation and validates current policy inputs and
 charters. Other provenance and comparison adjudications are preserved.
 Runtime commands share the existing lifecycle lock so maintenance cannot switch
 the selected generation while a command executes.
+
+For the first compile, the adopter supplies
+`.agents/policy/repository-policy.json`, `.agents/policy/adapters.json`, and
+`.agents/policy/bootstrap-inputs.json`. The bootstrap-inputs document contains
+exactly two non-negative safe integers, `productTrustRevocationEpoch` and
+`repositoryAuthorityRevocationEpoch`. Then run:
+
+```sh
+python3 -B product.zip --root /repo --product apply \
+  --archive product.zip --metadata product.json \
+  --bootstrap-policy --maintenance
+```
+
+The runtime compiles the explicit document and adapters against the installed
+charters and creates only the absent compiled snapshot. It refuses an existing
+snapshot or comparison report, malformed or extra bootstrap inputs, and every
+compiler rejection before writing. It never derives adapter capabilities,
+grants authority, or creates comparison adjudications. A repository-specific
+comparison report remains an adopter-owned follow-up sensor artifact; ordinary
+product reconciliation accepts its absence and never rewrites one that exists.
 
 Workflow-only releases continue to support the original lifecycle commands.
 They intentionally fail product readiness. Final qualification must compare the

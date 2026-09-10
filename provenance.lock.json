@@ -6,13 +6,13 @@
       "id": "bootstrap-agent-harness",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The existing copied bundle matches the baseline workflow body; host metadata is retained as a host adapter.",
-        "status": "source-derived"
+        "reason": "The source guidance is extended with the qualified delivery-product wiring and first-policy bootstrap contract; host metadata remains a host adapter.",
+        "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/bootstrap-agent-harness/SKILL.md",
-          "sha256": "dfe7127bbf5b6c8be54af255202782fefe639157e5ed5dedf89a305101bb5aa5"
+          "sha256": "61f8ce380b25f726bb8324f5788eb8b0ef3763e96a1bb41c4d7678fa6a75d64a"
         },
         {
           "path": "skills/bootstrap-agent-harness/agents/openai.yaml",

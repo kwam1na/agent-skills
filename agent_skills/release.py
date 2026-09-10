@@ -23,7 +23,7 @@ MAX_PATH_DEPTH = 8
 MAX_COMPRESSION_RATIO = 100
 MAX_VERIFY_SECONDS = 5
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
-SUPPORTED_PROFILES = frozenset({"core", "linear"})
+SUPPORTED_PROFILES = frozenset({"bootstrap", "core", "linear"})
 
 
 class ReleaseError(ValueError):
@@ -113,7 +113,11 @@ def _release_identity(release_id: object, profile_id: object) -> tuple[str, str]
 def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
     catalog = _packaged_document(root, "catalog.json")
     provenance = _packaged_document(root, "provenance.lock.json")
-    profile_paths = ["profiles/core.json"]
+    profile_paths = (
+        ["profiles/bootstrap.json"]
+        if profile_id == "bootstrap"
+        else ["profiles/core.json"]
+    )
     if profile_id == "linear":
         profile_paths.append("profiles/linear.json")
     profile_documents = {}
@@ -163,6 +167,13 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         selected_entries.append(metadata_entry)
     selected_paths.extend(persona_paths)
 
+    inventory = _packaged_document(root, "validation-inventory.json")
+    inventory["scenarios"] = [
+        scenario
+        for scenario in inventory["scenarios"]
+        if scenario.get("profile") in profile_documents
+    ]
+    inventory["expectedScenarioCount"] = len(inventory["scenarios"])
     files: dict[str, bytes] = {
         "__main__.py": b"import os, sys\nsys.path[0] = os.path.realpath(sys.path[0])\nfrom agent_skills.cli import main\nraise SystemExit(main())\n",
         "catalog.json": canonical_json(
@@ -175,7 +186,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
                 "sourceBaseline": provenance["sourceBaseline"],
             }
         ).encode(),
-        "validation-inventory.json": _packaged_bytes(root, "validation-inventory.json"),
+        "validation-inventory.json": canonical_json(inventory).encode(),
     }
     for selected_profile, document in profile_documents.items():
         files[f"profiles/{selected_profile}.json"] = canonical_json(document).encode()

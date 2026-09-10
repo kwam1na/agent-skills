@@ -43,7 +43,20 @@ def parser() -> argparse.ArgumentParser:
     for name in ("install", "update"):
         command = commands.add_parser(name)
         _release_arguments(command)
+        command.add_argument(
+            "--bootstrap-policy",
+            action="store_true",
+            help="compile a missing first policy from explicit adopter bootstrap inputs",
+        )
         _maintenance(command)
+    apply = commands.add_parser("apply")
+    _release_arguments(apply)
+    apply.add_argument(
+        "--bootstrap-policy",
+        action="store_true",
+        help="compile a missing first policy from explicit adopter bootstrap inputs",
+    )
+    _maintenance(apply)
     adopt = commands.add_parser("adopt")
     _release_arguments(adopt)
     adopt.add_argument("--skill", required=True)
@@ -69,6 +82,10 @@ def _validated_release(archive: Path, metadata: Path) -> dict[str, object]:
 def main(arguments: list[str] | None = None) -> int:
     args = parser().parse_args(arguments)
     try:
+        if getattr(args, "bootstrap_policy", False) and not args.product:
+            raise ValueError(
+                "product.bootstrap_requires_product: --bootstrap-policy requires --product"
+            )
         if args.command == "validate":
             output = _validated_release(args.archive, args.metadata)
             print(canonical_json(output), end="")
@@ -76,7 +93,7 @@ def main(arguments: list[str] | None = None) -> int:
         lifecycle = Lifecycle(args.root)
         if args.command == "harness":
             return run_runtime(lifecycle, (["--help"] if args.runtime_help else []) + args.arguments)
-        if args.product and args.command in {"install", "update"}:
+        if args.product and args.command in {"apply", "install", "update"}:
             version = inspect_release(args.archive, args.metadata)
             if "runtime/runtime.json" not in {record["path"] for record in version["files"]}:
                 raise ValueError("product.runtime_missing: supplied release has no delivery runtime")
@@ -99,6 +116,12 @@ def main(arguments: list[str] | None = None) -> int:
         elif args.command == "diff":
             output = lifecycle.diff(args.archive, args.metadata)
         elif args.command == "install":
+            output = lifecycle.install(
+                args.archive,
+                args.metadata,
+                maintainer=args.maintenance,
+            )
+        elif args.command == "apply":
             output = lifecycle.install(
                 args.archive,
                 args.metadata,
@@ -131,9 +154,14 @@ def main(arguments: list[str] | None = None) -> int:
                 "action": "break-stale-lock",
                 "schemaVersion": "agent-skills-operation/1",
             }
-        if args.product and args.command in {"install", "update", "rollback", "recover"}:
+        if args.product and args.command in {"apply", "install", "update", "rollback", "recover"}:
             with RepositoryLock(lifecycle.lock_path):
-                reconcile_policy(lifecycle, check=False)
+                reconcile_policy(
+                    lifecycle,
+                    check=False,
+                    bootstrap=args.command in {"apply", "install", "update"}
+                    and args.bootstrap_policy,
+                )
                 output["status"] = product_status(lifecycle)
             if not output["status"]["productReady"]:
                 raise ValueError("product.policy_unready: lifecycle changed; retry recover to reconcile policy")
