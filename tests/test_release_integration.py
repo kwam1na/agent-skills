@@ -85,8 +85,20 @@ class ReleaseIntegrationTests(unittest.TestCase):
             "skills/linear-tracker-adapter/SKILL.md",
             "skills/linear-tracker-adapter/references/adapter-contract.json",
         })
-        for path in set(core) - {"catalog.json", "provenance.lock.json"}:
+        for path in set(core) - {"catalog.json", "provenance.lock.json", "validation-inventory.json"}:
             self.assertEqual(core[path], linear[path], path)
+        inventories = [json.loads(payload["validation-inventory.json"]) for payload in (core, linear)]
+        core_scenarios, linear_scenarios = [inventory.pop("scenarios") for inventory in inventories]
+        for inventory, scenarios in zip(inventories, (core_scenarios, linear_scenarios)):
+            self.assertEqual(inventory.pop("expectedScenarioCount"), len(scenarios))
+        self.assertEqual(inventories[0], inventories[1])
+        self.assertEqual(core_scenarios, [row for row in linear_scenarios if row["profile"] == "core"])
+        self.assertEqual({row["profile"] for row in core_scenarios}, {"core"})
+        self.assertEqual({row["profile"] for row in linear_scenarios}, {"core", "linear"})
+        self.assertEqual(
+            {row["skill"] for row in linear_scenarios if row["profile"] == "linear"},
+            set(resolve_profile("linear", profiles)) - set(core_members),
+        )
         for path in NEW_PAYLOAD:
             self.assertEqual(core[path], (ROOT / path).read_bytes(), path)
         self.assertFalse(any(path.startswith(("qualifications/", "docs/delivery/")) for path in linear))
