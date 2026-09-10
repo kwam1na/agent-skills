@@ -34,7 +34,7 @@ On Windows, use `.venv\Scripts\python.exe` for the three sensor commands.
 Build and verify the core profile:
 
 ```bash
-python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-text-coherence-v1
+python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-concurrent-delivery-v1
 python3 scripts/build-release.py verify \
   --archive /tmp/core.zip \
   --metadata /tmp/core.release.json \
@@ -64,7 +64,7 @@ source artifacts, and rolls back through installed bytes:
 python3 scripts/build-release.py build \
   --archive /tmp/bootstrap.zip \
   --metadata /tmp/bootstrap.release.json \
-  --release-id bootstrap-workflows-diagnostics-v1 \
+  --release-id bootstrap-workflows-concurrent-delivery-v1 \
   --profile bootstrap
 python3 scripts/qualify-bootstrap.py \
   --archive /tmp/bootstrap.zip \
@@ -73,7 +73,7 @@ python3 scripts/qualify-bootstrap.py \
 ```
 
 The current checked qualification record is
-`qualifications/bootstrap-workflows-diagnostics-v1.json`.
+`qualifications/bootstrap-workflows-concurrent-delivery-v1.json`.
 
 The detached release metadata authenticates the ZIP before it is parsed. The
 manifest then authenticates the complete payload and its single profile group.
@@ -132,7 +132,7 @@ named in the record remains the single release under qualification. That prior
 fixture is built only from the verified candidate extraction, never from the
 runner checkout corpus.
 The current workflow-only record is checked in at
-`qualifications/core-workflows-text-coherence-v1.json`.
+`qualifications/core-workflows-concurrent-delivery-v1.json`.
 Historical records retain their original bytes under `qualifications/history/`.
 Historical product records such as `linear-product-v1` also remain immutable
 under `qualifications/product/`.
@@ -159,7 +159,7 @@ Each reference is an object with `schemaVersion` and `opaque`. Use fresh redacte
 opaque identities, not ticket identifiers, paths, or host payloads. Serialize the
 collector input and attestation with sorted keys, two-space indentation, and a
 final newline. The current checked input is
-`qualifications/product/linear-text-coherence-v1.collector-binding.json`; it is not
+`qualifications/product/linear-concurrent-delivery-v1.collector-binding.json`; it is not
 part of either archive.
 Qualification also rebuilds the supplied Linear archive's core projection and
 requires its archive and metadata bytes to match the separately qualified core.
@@ -171,23 +171,24 @@ retains the redacted live event sequence, and cancels both disposable entities
 after create, read, update, search, relation, and reconciliation checks. The
 `agent-skills-linear-host-attestation/2` document includes `collectorBinding`
 equal to the frozen input, plus the existing collector, audit, entity, event,
-session, and receipt fields. Post its digest and random receipt reference through
+session, and receipt fields. `auditReferences` uses the same order as `entities`:
+primary first, then dependency. Post its digest and random receipt reference through
 the same host-native Linear MCP boundary. Then pass the retained attestation and
 the independently frozen input to the offline driver:
 
 ```bash
 python3 scripts/qualify-linear.py \
-  --core-archive qualifications/product/core-text-coherence-v1.zip \
-  --core-metadata qualifications/product/core-text-coherence-v1.release.json \
-  --core-record qualifications/product/core-text-coherence-v1.json \
-  --linear-archive qualifications/product/linear-text-coherence-v1.zip \
-  --linear-metadata qualifications/product/linear-text-coherence-v1.release.json \
-  --collector-binding qualifications/product/linear-text-coherence-v1.collector-binding.json \
-  --attestation qualifications/product/linear-text-coherence-v1.attestation.json \
+  --core-archive qualifications/product/core-concurrent-delivery-v1.zip \
+  --core-metadata qualifications/product/core-concurrent-delivery-v1.release.json \
+  --core-record qualifications/product/core-concurrent-delivery-v1.json \
+  --linear-archive qualifications/product/linear-concurrent-delivery-v1.zip \
+  --linear-metadata qualifications/product/linear-concurrent-delivery-v1.release.json \
+  --collector-binding qualifications/product/linear-concurrent-delivery-v1.collector-binding.json \
+  --attestation qualifications/product/linear-concurrent-delivery-v1.attestation.json \
   --record /tmp/linear.qualification.json
 ```
 
-The version-2 checked record at `qualifications/product/linear-text-coherence-v1.json` binds the passing core
+The version-2 checked record at `qualifications/product/linear-concurrent-delivery-v1.json` binds the passing core
 qualification, both exact archive and metadata identities, canonical extracted
 source-tree digests, the frozen collector input and its digest, the exact retained
 attestation bytes, and its external receipt reference. Old unbound attestations,
@@ -229,7 +230,7 @@ written manifest and reviewer artifacts. Its deterministic record covers
 success, blocked, failed, cancelled, interrupted, duplicate, unsupported
 version, reconciliation, anti-vacuity, completeness, and redaction behavior
 while retaining no local paths or opaque host references. The checked record is
-`qualifications/provider-workflows-text-coherence-v1.json`.
+`qualifications/provider-workflows-concurrent-delivery-v1.json`.
 Its `workflowGraphSha256` names the actual installed graph, and the installation
 scenario compares that graph and both new skill bodies with the verified
 candidate. A failed qualifier cannot leave an earlier success record at the
@@ -252,6 +253,25 @@ python -m agent_skills.cli --root /path/to/repository plan \
   --archive /path/to/core.zip \
   --metadata /path/to/core.release.json
 ```
+
+The installed launcher owns bounded descendant cleanup for catchable terminal
+signals. Its exit status remains `128 + signal` after the launched process group
+drains:
+
+| Signal | POSIX launcher behavior |
+| --- | --- |
+| `SIGINT` | Forward to the process group, escalate to `SIGKILL` after the bounded drain, and return 130. |
+| `SIGTERM` | Forward to the process group, escalate to `SIGKILL` after the bounded drain, and return 143. |
+| `SIGHUP` | Forward and return 129 when normally inherited. Preserve an inherited `SIG_IGN` disposition for deliberate `nohup` execution. |
+| `SIGQUIT` | Forward to the process group, escalate when needed, and return 131. |
+| `SIGKILL` | Uncatchable; the launcher cannot run cleanup when the launcher itself receives it. |
+
+Windows keeps its native `taskkill /T /F` tree cleanup for `SIGINT` and
+`SIGTERM`. If bounded POSIX or Windows cleanup cannot establish that the tree
+drained, the CLI returns `product.cancellation_incomplete`. Its diagnostic lists
+only PIDs still running through the direct child handle; when tree liveness
+cannot be observed, it reports `unknown` rather than inferring survivors from a
+cleanup exception.
 
 Mutation is an explicit repository-maintenance action. `apply` is the product
 installer entry point: it installs into an absent repository, updates a current

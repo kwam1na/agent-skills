@@ -19,6 +19,11 @@ PR65_QUALIFICATION_SHA256 = {
     "qualifications/core-workflows-diagnostics-v1.json": "4296aca98c30317fe9adc982949b1556a64099d7cb78305a58ca0db339caf01f",
     "qualifications/provider-workflows-diagnostics-v1.json": "f6741eaabbfb4e2805f0827e88e18997723e2b0f6537dc855332d1bc65fba796",
 }
+PR66_QUALIFICATION_SHA256 = {
+    "qualifications/bootstrap-workflows-diagnostics-v1.json": "d4b900ddd568e93f0f6660f36bd6d6101dd7973d1348e3ee8d425e9e61129231",
+    "qualifications/core-workflows-text-coherence-v1.json": "8546d4e4c98372609d8f63cbd198add23c54cb2b5d1ea0b9ef5473044d73db02",
+    "qualifications/provider-workflows-text-coherence-v1.json": "24fde39459310504ee20259e0d6b0dfdd95401a923a9db2d72eab6ce2a259098",
+}
 
 
 class HistoricalQualificationTests(unittest.TestCase):
@@ -27,6 +32,7 @@ class HistoricalQualificationTests(unittest.TestCase):
             **PR63_QUALIFICATION_SHA256,
             **PR64_QUALIFICATION_SHA256,
             **PR65_QUALIFICATION_SHA256,
+            **PR66_QUALIFICATION_SHA256,
         }.items():
             with self.subTest(relative=relative):
                 self.assertEqual(

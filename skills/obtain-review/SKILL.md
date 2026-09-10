@@ -230,10 +230,12 @@ The candidate's deliverable identity is the delivered change itself, not the
 commit that carries it: identity is unchanged only when the diff of the new
 candidate against its base is byte-identical to the diff of the previous
 candidate against its base, over the same set of paths, with no path added,
-removed, or renamed. The executor computes that comparison and retains its
-output as evidence; a comparison that was not run, or that reports any
-difference at all, is a differing identity, so a rebase whose conflict
-resolution altered one delivered byte spends a round like any other change.
+removed, or renamed. For this comparison, a diff consists of each path and its
+added and removed line bytes; hunk position headers and unchanged context lines
+do not participate. The executor computes that comparison and retains its output
+as evidence; a comparison that was not run, or that reports any difference at
+all, is a differing identity, so a rebase whose conflict resolution altered one
+delivered byte spends a round like any other change.
 Nothing else may stand in for the comparison — not the reason the base moved,
 not the disjointness of the upstream commits, and not a lens's agreement that
 nothing changed.
