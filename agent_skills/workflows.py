@@ -738,7 +738,9 @@ def review_work(request: ReviewRequest) -> ReviewResult:
         if grace.previous_candidate_ref == grace.candidate_ref:
             raise ValueError("grace verification requires a changed candidate")
         if len(request.rounds) != request.max_rounds + 1:
-            raise ValueError("grace verification requires exactly one round beyond the original bound")
+            raise ValueError(
+                "grace verification requires exactly one round beyond the supplied max_rounds bound"
+            )
 
     rounds = tuple(
         tuple(_normalized_lens_result(result) for result in results)
@@ -803,7 +805,9 @@ def review_work(request: ReviewRequest) -> ReviewResult:
         bound_round = rounds[request.max_rounds - 1]
         blockers.extend(_round_blockers(bound_round, required_lenses, request.max_rounds))
         if any(result.outcome != "aligned" for result in bound_round):
-            blockers.append("grace verification requires unanimous alignment at the original bound")
+            blockers.append(
+                "grace verification requires unanimous alignment at the supplied max_rounds bound"
+            )
     elif len(rounds) > request.max_rounds:
         blockers.append(f"review loop exceeded {request.max_rounds} rounds")
 

@@ -225,6 +225,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " lens; - name the release the review is bound to by its `releaseId` and"
         " `archiveSha256`, and any release installed mid-review; this list is the"
         " delivery's closing record for that identity;",
+        "Report the result category, execution posture, completed scope and"
+        " finish-line items, sensor results, retained evidence, review provenance"
+        " and outcome, the bound review release's `releaseId` and `archiveSha256`,"
+        " any release installed mid-review, compounding outcome",
     ),
     "skills/plan-work/SKILL.md": (
         "Plan review carries no round bound",

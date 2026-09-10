@@ -206,7 +206,7 @@
         "run-observability",
         "tracker-operations"
       ],
-      "degradedBehavior": "Optional tracking and sensors may be absent; declared product gates and recovery remain authoritative and cannot be replaced with executor-invented evidence. Unsupported v2 reporting remains explicit; retain selected output without changing delivery authority.",
+      "degradedBehavior": "Optional tracking and sensors may be absent; declared product gates and recovery remain authoritative and cannot be replaced with executor-invented evidence. Unsupported v2 reporting remains explicit; retain selected output without changing delivery authority. Terminal handoffs retain the bound review release identity and any release installed mid-review.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
