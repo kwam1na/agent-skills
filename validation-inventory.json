@@ -1,6 +1,6 @@
 {
   "expectedLifecycleScenarioCount": 30,
-  "expectedScenarioCount": 10,
+  "expectedScenarioCount": 13,
   "lifecycleScenarios": [
     {
       "id": "activation-boundary-fault-recovery",
@@ -503,6 +503,33 @@
       "id": "core-profile-selects-review-acquisition-workflow",
       "profile": "core",
       "skill": "obtain-review"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "linear-profile-selects-create-linear-ticket",
+      "profile": "linear",
+      "skill": "create-linear-ticket"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "linear-profile-selects-execute-linear-ticket",
+      "profile": "linear",
+      "skill": "execute-linear-ticket"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "linear-profile-selects-linear-tracker-adapter",
+      "profile": "linear",
+      "skill": "linear-tracker-adapter"
     }
   ],
   "schemaVersion": "agent-skills-validation-inventory/1"
