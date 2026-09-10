@@ -254,6 +254,25 @@ python -m agent_skills.cli --root /path/to/repository plan \
   --metadata /path/to/core.release.json
 ```
 
+The installed launcher owns bounded descendant cleanup for catchable terminal
+signals. Its exit status remains `128 + signal` after the launched process group
+drains:
+
+| Signal | POSIX launcher behavior |
+| --- | --- |
+| `SIGINT` | Forward to the process group, escalate to `SIGKILL` after the bounded drain, and return 130. |
+| `SIGTERM` | Forward to the process group, escalate to `SIGKILL` after the bounded drain, and return 143. |
+| `SIGHUP` | Forward and return 129 when normally inherited. Preserve an inherited `SIG_IGN` disposition for deliberate `nohup` execution. |
+| `SIGQUIT` | Forward to the process group, escalate when needed, and return 131. |
+| `SIGKILL` | Uncatchable; the launcher cannot run cleanup when the launcher itself receives it. |
+
+Windows keeps its native `taskkill /T /F` tree cleanup for `SIGINT` and
+`SIGTERM`. If bounded POSIX or Windows cleanup cannot establish that the tree
+drained, the CLI returns `product.cancellation_incomplete`. Its diagnostic lists
+only PIDs still running through the direct child handle; when tree liveness
+cannot be observed, it reports `unknown` rather than inferring survivors from a
+cleanup exception.
+
 Mutation is an explicit repository-maintenance action. `apply` is the product
 installer entry point: it installs into an absent repository, updates a current
 generation, and returns a no-op for the same exact generation without requiring

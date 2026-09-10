@@ -12,6 +12,84 @@ from .lifecycle import Lifecycle
 from .locking import RepositoryLock
 
 
+class CancellationIncompleteError(subprocess.SubprocessError):
+    """Cancellation ended without evidence that the launched tree drained."""
+
+    def __init__(
+        self,
+        *,
+        signal_number: int,
+        platform: str,
+        cleanup: str,
+        target_pid: int,
+        target_state: str,
+        liveness: str,
+        surviving_pids: tuple[int, ...],
+    ) -> None:
+        self.signal_number = signal_number
+        self.platform = platform
+        self.cleanup = cleanup
+        self.target_pid = target_pid
+        self.target_state = target_state
+        self.liveness = liveness
+        self.surviving_pids = surviving_pids
+        try:
+            signal_name = signal.Signals(signal_number).name
+        except ValueError:
+            signal_name = str(signal_number)
+        survivors = ",".join(str(pid) for pid in surviving_pids) if surviving_pids else "unknown"
+        super().__init__(
+            "product.cancellation_incomplete: "
+            f"signal={signal_name}; platform={platform};cleanup={cleanup};"
+            f"targetPid={target_pid};targetState={target_state};"
+            f"liveness={liveness};survivingPids={survivors}"
+        )
+
+
+def _observed_child_liveness(child: subprocess.Popen) -> tuple[str, str, tuple[int, ...]]:
+    """Return only liveness directly observed through the child handle."""
+    try:
+        status = child.poll()
+    except (OSError, subprocess.SubprocessError):
+        return "unknown", "unknown", ()
+    if status is None:
+        return "running", "confirmed", (child.pid,)
+    return "exited", "unknown", ()
+
+
+def _incomplete_cancellation(
+    child: subprocess.Popen,
+    *,
+    interrupted: int,
+    platform: str,
+    cleanup: str,
+) -> CancellationIncompleteError:
+    target_state, liveness, surviving_pids = _observed_child_liveness(child)
+    return CancellationIncompleteError(
+        signal_number=interrupted,
+        platform=platform,
+        cleanup=cleanup,
+        target_pid=child.pid,
+        target_state=target_state,
+        liveness=liveness,
+        surviving_pids=surviving_pids,
+    )
+
+
+def _wait_for_posix_group(child: subprocess.Popen, timeout: float) -> bool:
+    """Poll the isolated process group until it drains or the bound expires."""
+    deadline = time.monotonic() + timeout
+    while True:
+        child.poll()
+        try:
+            os.killpg(child.pid, 0)
+        except ProcessLookupError:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
 def runtime_root(lifecycle: Lifecycle) -> Path:
     status = lifecycle.status().as_dict()
     if status["lifecycle"] != "current" or status["blockers"]:
@@ -67,8 +145,11 @@ def _run_command(arguments: list[str], root: Path) -> int:
                 pass
 
     signals = (signal.SIGINT, signal.SIGTERM)
-    if not windows and hasattr(signal, "SIGHUP"):
-        signals += (signal.SIGHUP,)
+    if not windows:
+        if hasattr(signal, "SIGHUP") and signal.getsignal(signal.SIGHUP) is not signal.SIG_IGN:
+            signals += (signal.SIGHUP,)
+        if hasattr(signal, "SIGQUIT"):
+            signals += (signal.SIGQUIT,)
     previous = {sig: signal.signal(sig, interrupt) for sig in signals}
     try:
         if windows:
@@ -89,25 +170,65 @@ def _run_command(arguments: list[str], root: Path) -> int:
         if windows:
             # Windows has no POSIX group signals. Its native tree termination
             # command stops descendants together, without a new supervisor.
-            subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
-                           capture_output=True, timeout=2, check=True)
-            child.wait(timeout=2)
+            try:
+                subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                               capture_output=True, timeout=2, check=True)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                raise _incomplete_cancellation(
+                    child,
+                    interrupted=interrupted,
+                    platform="windows",
+                    cleanup="taskkill-failed",
+                ) from error
+            try:
+                child.wait(timeout=2)
+            except (OSError, subprocess.SubprocessError) as error:
+                raise _incomplete_cancellation(
+                    child,
+                    interrupted=interrupted,
+                    platform="windows",
+                    cleanup="child-wait-failed",
+                ) from error
             return 128 + interrupted
         # Wait for the whole group, including workers whose parent exited first.
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            child.poll()
-            try:
-                os.killpg(child.pid, 0)
-            except ProcessLookupError:
-                break
-            time.sleep(0.05)
-        else:
-            try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        child.wait(timeout=2)
+        try:
+            drained = _wait_for_posix_group(child, 2)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise _incomplete_cancellation(
+                child,
+                interrupted=interrupted,
+                platform="posix",
+                cleanup="pre-escalation-wait-failed",
+            ) from error
+        if drained:
+            return 128 + interrupted
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return 128 + interrupted
+        except OSError as error:
+            raise _incomplete_cancellation(
+                child,
+                interrupted=interrupted,
+                platform="posix",
+                cleanup="sigkill-failed",
+            ) from error
+        try:
+            child.wait(timeout=2)
+        except subprocess.TimeoutExpired as error:
+            raise _incomplete_cancellation(
+                child,
+                interrupted=interrupted,
+                platform="posix",
+                cleanup="post-escalation-timeout",
+            ) from error
+        except (OSError, subprocess.SubprocessError) as error:
+            raise _incomplete_cancellation(
+                child,
+                interrupted=interrupted,
+                platform="posix",
+                cleanup="post-escalation-wait-failed",
+            ) from error
         return 128 + interrupted
     finally:
         for sig, handler in previous.items():
