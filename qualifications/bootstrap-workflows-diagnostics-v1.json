@@ -1,0 +1,57 @@
+{
+  "product": {
+    "installedReady": false,
+    "runtimeIncluded": false
+  },
+  "qualificationDriverSha256": "8237ba14d2009a5a5237f31570a5b90198926f1721ea51d4b6b7cc2b01765a91",
+  "release": {
+    "archiveSha256": "1ef9cd341a94ed6b6d95de0e57b8e69a8d415f84ec78d96b1392659b2cae11c9",
+    "metadataSha256": "95b1db701b963d85ca70a55a04bd0dc1a2630683501dbacf5fd632beafd97f90",
+    "profile": "bootstrap",
+    "releaseId": "bootstrap-workflows-diagnostics-v1"
+  },
+  "replay": "python3 scripts/qualify-bootstrap.py --archive <archive> --metadata <metadata> --record <record>",
+  "scenarios": [
+    {
+      "assertionCount": 4,
+      "checkpointSha256": "f157b61c681f494dc6dc1c439fefd3911f775d07f859132e19d8616704b22e2b",
+      "evidence": [
+        "archive-native apply installs without producer checkout state",
+        "fresh lifecycle reports current with no blockers",
+        "Codex exposure carries the exact bootstrap skill",
+        "Claude Code exposure carries the exact bootstrap skill"
+      ],
+      "id": "fresh-install",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 2,
+      "checkpointSha256": "08b863121af0c77015d418daa97c17644c37ef29d862a4f4cdc12dbeae7f3431",
+      "evidence": [
+        "extracted candidate passes standalone corpus validation",
+        "profile selects exactly bootstrap-agent-harness"
+      ],
+      "id": "profile-validation",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 3,
+      "checkpointSha256": "3afe7a5a45b87f08779e8e1acc5a9e26245503f51eb6cd13e4278bcba2fe1605",
+      "evidence": [
+        "the same apply command updates a current bootstrap generation",
+        "installed bytes roll back without checkout, archive, or metadata",
+        "rollback restores the retained prior generation"
+      ],
+      "id": "rollback",
+      "result": "passed"
+    }
+  ],
+  "schemaVersion": "agent-skills-bootstrap-qualification/1",
+  "summary": {
+    "assertionCount": 9,
+    "failedScenarioCount": 0,
+    "passedScenarioCount": 3,
+    "requiredScenarioCount": 3,
+    "result": "passed"
+  }
+}

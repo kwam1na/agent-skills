@@ -98,10 +98,36 @@ class ReviewGraceTests(unittest.TestCase):
 
     def test_declaration_before_bound_or_second_extra_round_refuses(self):
         for count in (0, 3, 4, 6):
-            with self.subTest(count=count), self.assertRaises(ValueError):
+            with self.subTest(count=count), self.assertRaisesRegex(
+                ValueError,
+                "grace verification requires exactly one round beyond the supplied max_rounds bound",
+            ):
                 workflows.review_work(workflows.ReviewRequest(LENSES, (aligned(),) * count, 4, declaration()))
         result = workflows.review_work(workflows.ReviewRequest(LENSES, (aligned(),) * 6, 4))
         self.assertEqual(result.status, "blocked")
+
+    def test_dissent_at_supplied_bound_names_the_checked_bound(self):
+        good = aligned()
+        dissent = (
+            good[0],
+            workflows.ReviewLensResult(
+                "testing", "changes-requested", ("repair",), ("proof",)
+            ),
+        )
+        result = workflows.review_work(
+            workflows.ReviewRequest(
+                LENSES,
+                (good, dissent, good),
+                2,
+                workflows.GraceVerification(
+                    "candidate-two", "candidate-three", "Required correction: ref-1"
+                ),
+            )
+        )
+        self.assertIn(
+            "grace verification requires unanimous alignment at the supplied max_rounds bound",
+            result.blockers,
+        )
 
     def test_ordinary_candidate_bound_acquisition_feeds_grace_without_schema_extension(self):
         acquired = []

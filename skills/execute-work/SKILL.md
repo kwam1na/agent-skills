@@ -277,8 +277,9 @@ result.
 ## Handoff
 
 Report the result category, execution posture, completed scope and finish-line
-items, sensor results, retained evidence, review provenance and outcome,
-compounding outcome, the delivery's self-reported cost, unresolved blockers,
-pending approvals, and any optional operation that was not performed. Never
-claim completion from progress alone or from a passing sensor set that does not
-cover the declared finish line.
+items, sensor results, retained evidence, review provenance and outcome, the
+bound review release's `releaseId` and `archiveSha256`, any release installed
+mid-review, compounding outcome, the delivery's self-reported cost, unresolved
+blockers, pending approvals, and any optional operation that was not performed.
+Never claim completion from progress alone or from a passing sensor set that
+does not cover the declared finish line.
