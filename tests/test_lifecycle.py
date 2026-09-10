@@ -517,6 +517,38 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         self.assertEqual(lifecycle.status().as_dict()["lifecycle"], "current")
         self.assertEqual(lifecycle.update(*self.v2, maintainer=True)["action"], "update")
 
+    def test_python_bytecode_during_interrupted_update_keeps_named_blocker(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+
+        def interrupt(phase: str) -> None:
+            if phase == "marker-committed":
+                raise RuntimeError("stop before update cleanup")
+
+        with self.assertRaisesRegex(RuntimeError, "stop before update cleanup"):
+            lifecycle.update(*self.v2, maintainer=True, fault=interrupt)
+        receipt = json.loads(
+            (self.repository / ".agent-skills" / "active.json").read_text(encoding="utf-8")
+        )
+        bytecode = (
+            self.repository
+            / ".agent-skills"
+            / "generations"
+            / receipt["generation"]
+            / "agent_skills"
+            / "__pycache__"
+            / "lifecycle.cpython-311.pyc"
+        )
+        bytecode.parent.mkdir()
+        bytecode.write_bytes(b"planted bytecode")
+
+        status = lifecycle.status().as_dict()
+        self.assertEqual(status["journalPhase"], "marker-committed")
+        self.assertEqual(status["blockers"], ["local-bytecode-divergence"])
+        self.assertEqual(status["recoveryPlan"], ["remove-python-bytecode"])
+        with self.assertRaisesRegex(ValueError, "^local-bytecode-divergence:"):
+            lifecycle.update(*self.v2, maintainer=True)
+
     def test_non_bytecode_extra_remains_generic_local_divergence(self) -> None:
         lifecycle = Lifecycle(self.repository)
         lifecycle.install(*self.v1, maintainer=True)

@@ -531,7 +531,12 @@ class Lifecycle:
             return {"action": "no-op", "schemaVersion": "agent-skills-operation/1"}
         try:
             active = self._active()
-        except (ReceiptError, GenerationError) as error:
+        except GenerationError as error:
+            blocker, _ = _generation_blocker(error)
+            if blocker == "local-bytecode-divergence":
+                raise LifecycleError(str(error)) from error
+            raise LifecycleError("local-divergence: active state changed during recovery") from error
+        except ReceiptError as error:
             raise LifecycleError("local-divergence: active state changed during recovery") from error
         target = journal["target"]
         prior = journal["prior"]
