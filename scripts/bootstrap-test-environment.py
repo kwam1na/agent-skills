@@ -18,15 +18,23 @@ def environment_python(environment: Path) -> Path:
     return environment / "bin" / "python"
 
 
-def bootstrap(root: Path = ROOT) -> Path:
+def create_environment(root: Path, *, without_pip: bool = False) -> Path:
     root = root.resolve(strict=True)
     environment = root / ".venv"
+    command = [sys.executable, "-m", "venv"]
+    if without_pip:
+        command.append("--without-pip")
     subprocess.run(
-        [sys.executable, "-m", "venv", str(environment)],
+        [*command, str(environment)],
         cwd=root,
         check=True,
     )
-    interpreter = environment_python(environment)
+    return environment_python(environment)
+
+
+def bootstrap(root: Path = ROOT) -> Path:
+    root = root.resolve(strict=True)
+    interpreter = create_environment(root)
     subprocess.run(
         [str(interpreter), "-m", "pip", "install", "-e", ".[test]"],
         cwd=root,

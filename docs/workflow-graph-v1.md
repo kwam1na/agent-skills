@@ -163,11 +163,11 @@ current context.
 
 ## Independent interoperability sensor
 
-Install the exact test engine into the worktree-private interpreter:
+Install the exact test engine into the active interpreter:
 
 ```bash
-python scripts/bootstrap-test-environment.py
-.venv/bin/python tests/test_workflow_graph_contract.py
+python -m pip install -e ".[test]"
+python tests/test_workflow_graph_contract.py
 ```
 
 The optional extra pins `jsonschema==4.23.0`; production has no runtime
@@ -175,9 +175,7 @@ dependency. CI installs it for every supported operating system. Use that same
 virtual-environment interpreter for isolated (`-I`) qualification subprocesses;
 user-site packages are not visible there. Explicit setuptools discovery selects
 only `agent_skills*` from the flat repository. Editable installation supports
-development tests; keeping its site-packages under each worktree prevents one
-checkout from replacing another checkout's editable source path. Deterministic
-repository archives remain the release surface.
+development tests; deterministic repository archives remain the release surface.
 
 `tests/consumers/workflow_consumer.py` imports no production module. It uses the
 independent Draft 2020-12 engine on the public schemas plus its own checkpoint

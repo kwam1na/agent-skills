@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "bootstrap-test-environment.py"
@@ -27,26 +27,46 @@ class TestEnvironmentTests(unittest.TestCase):
             for worktree in worktrees:
                 worktree.mkdir()
 
-            with mock.patch.object(bootstrap.subprocess, "run") as run:
-                interpreters = [bootstrap.bootstrap(worktree) for worktree in worktrees]
-
             resolved = [worktree.resolve() for worktree in worktrees]
+            interpreters = [
+                bootstrap.create_environment(worktree, without_pip=True)
+                for worktree in worktrees
+            ]
             expected = [bootstrap.environment_python(worktree / ".venv") for worktree in resolved]
             self.assertEqual(interpreters, expected)
             self.assertNotEqual(*interpreters)
-            self.assertEqual(
-                [call.args[0] for call in run.call_args_list],
-                [
-                    [bootstrap.sys.executable, "-m", "venv", str(resolved[0] / ".venv")],
-                    [str(expected[0]), "-m", "pip", "install", "-e", ".[test]"],
-                    [bootstrap.sys.executable, "-m", "venv", str(resolved[1] / ".venv")],
-                    [str(expected[1]), "-m", "pip", "install", "-e", ".[test]"],
-                ],
-            )
-            self.assertEqual(
-                [call.kwargs["cwd"] for call in run.call_args_list],
-                [resolved[0], resolved[0], resolved[1], resolved[1]],
-            )
+
+            for index, interpreter in enumerate(interpreters):
+                purelib = Path(
+                    subprocess.run(
+                        [str(interpreter), "-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    ).stdout.strip()
+                )
+                (purelib / "checkout_marker.py").write_text(
+                    f"IDENTITY = 'worktree-{index}'\n",
+                    encoding="utf-8",
+                )
+
+            observations = [
+                subprocess.run(
+                    [
+                        str(interpreter),
+                        "-I",
+                        "-c",
+                        "import checkout_marker; print(checkout_marker.IDENTITY); print(checkout_marker.__file__)",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.splitlines()
+                for interpreter in interpreters
+            ]
+            self.assertEqual([lines[0] for lines in observations], ["worktree-0", "worktree-1"])
+            for index, lines in enumerate(observations):
+                self.assertTrue(Path(lines[1]).is_relative_to(resolved[index] / ".venv"))
 
 
 if __name__ == "__main__":
