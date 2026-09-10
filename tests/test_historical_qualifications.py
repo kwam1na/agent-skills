@@ -5,9 +5,22 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+PR63_QUALIFICATION_SHA256 = {
+    "qualifications/bootstrap-v1.json": "877e6388d834b78bc3f96a8ed64c823f2df112273139bffb4b45037bed495729",
+    "qualifications/core-workflows-adoption-v1.json": "8507eecc55f9257c8d9a11bea93f4dfcd406b2e37df8e407af9cab87d6006e1c",
+    "qualifications/provider-workflows-adoption-v1.json": "b1e487934376692f55abb5022eeeafb934af9dac0db20bd646c8509f46b2c599",
+}
 
 
 class HistoricalQualificationTests(unittest.TestCase):
+    def test_prior_current_records_remain_byte_identical(self) -> None:
+        for relative, digest in PR63_QUALIFICATION_SHA256.items():
+            with self.subTest(relative=relative):
+                self.assertEqual(
+                    hashlib.sha256((ROOT / relative).read_bytes()).hexdigest(),
+                    digest,
+                )
+
     def test_historical_records_remain_byte_identical(self) -> None:
         history = ROOT / "qualifications/history"
         checksums = json.loads((history / "checksums.json").read_text())

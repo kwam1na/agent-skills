@@ -1,0 +1,26 @@
+{
+  "candidateRef": {
+    "opaque": "6738304e9252d0115d5d492a7376f9372a349cdc",
+    "schemaVersion": "workflow-candidate-ref/1"
+  },
+  "graphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7",
+  "releases": {
+    "core": {
+      "archiveSha256": "52a9ec8a45d75c29fbfff18cca7a6a1e9658dbfd9c944feb76fb4144f3832d1e",
+      "metadataSha256": "8b6c22689e124c8baf5c4bee448532a0917a72a4e8fdd9d19028f488e05399e8",
+      "profile": "core",
+      "releaseId": "core-bytecode-v1"
+    },
+    "linear": {
+      "archiveSha256": "f611b5340c911fefb882a4cf4d7b6f9e5dcf2d05da46d3891070d6c4ae8e91d8",
+      "metadataSha256": "3d5f3ed25ed8c2445f5a6b95ef8e508a423539ab74307fcdfb380640618ac5f8",
+      "profile": "linear",
+      "releaseId": "linear-bytecode-v1"
+    }
+  },
+  "schemaVersion": "agent-skills-linear-collector-binding/1",
+  "subjectRef": {
+    "opaque": "workflow-subject:bytecode-divergence-recovery-v1",
+    "schemaVersion": "workflow-subject-ref/1"
+  }
+}

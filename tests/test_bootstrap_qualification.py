@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_skills.release import build_release
+from agent_skills.release import build_release, verify_release
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,15 +22,47 @@ def load_runner():
 
 
 class BootstrapQualificationTests(unittest.TestCase):
+    def test_current_bootstrap_product_replays_and_matches_source(self) -> None:
+        product = ROOT / "qualifications/product/bootstrap-bytecode-v1"
+        archive = product.with_suffix(".zip")
+        metadata = product.with_suffix(".release.json")
+        checked = json.loads(product.with_suffix(".json").read_text())
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            extracted = directory / "installed"
+            release = verify_release(archive, metadata, extract_to=extracted)
+            self.assertEqual(
+                release.archive_sha256,
+                "6b8ad773385fd621f850f2a44624b59135a2b3b80fd80da64fa3e5549688aac9",
+            )
+            self.assertEqual(load_runner().qualify(archive, metadata), checked)
+            projected = build_release(
+                extracted, directory / "projected.zip", directory / "projected.json",
+                release_id=release.release_id, profile_id="bootstrap",
+            )
+            current = build_release(
+                ROOT, directory / "current.zip", directory / "current.json",
+                release_id=release.release_id, profile_id="bootstrap",
+            )
+            self.assertEqual(projected, current)
+
     def test_checked_bootstrap_qualification_replays_exactly(self) -> None:
         runner = load_runner()
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             archive = directory / "bootstrap.zip"
             metadata = directory / "bootstrap.release.json"
-            build_release(ROOT, archive, metadata, release_id="bootstrap-v1", profile_id="bootstrap")
+            build_release(
+                ROOT,
+                archive,
+                metadata,
+                release_id="bootstrap-workflows-bytecode-v1",
+                profile_id="bootstrap",
+            )
             replay = runner.qualify(archive, metadata)
-        checked = json.loads((ROOT / "qualifications/bootstrap-v1.json").read_text())
+        checked = json.loads(
+            (ROOT / "qualifications/bootstrap-workflows-bytecode-v1.json").read_text()
+        )
         self.assertEqual(replay, checked)
 
     def test_bootstrap_profile_is_releasable_installable_and_qualified(self) -> None:
@@ -43,7 +75,7 @@ class BootstrapQualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="bootstrap-v1",
+                release_id="bootstrap-workflows-bytecode-v1",
                 profile_id="bootstrap",
             )
             record = runner.qualify(archive, metadata)

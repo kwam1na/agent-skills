@@ -21,10 +21,19 @@ from agent_skills.release import RUNTIME_FILES, _path_digest, _release_view, bui
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
 PRODUCT = ROOT / "qualifications" / "product"
-ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
-RECORD = PRODUCT / "linear-product-v1.json"
-BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
+ATTESTATION = PRODUCT / "linear-bytecode-v1.attestation.json"
+RECORD = PRODUCT / "linear-bytecode-v1.json"
+BINDING = PRODUCT / "linear-bytecode-v1.collector-binding.json"
+HISTORICAL_ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
+HISTORICAL_RECORD = PRODUCT / "linear-product-v1.json"
+HISTORICAL_BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
 HISTORICAL_PRODUCT_SHA256 = {
+    "bootstrap-product-v1.json": "5a5129d50ea22b205a31c80fff640c5c3887f7055235ac959fb3cc8afa8b07f2",
+    "bootstrap-product-v1.release.json": "bca83f3140382b0bfc2084fcc949b88c61a6b59bd39a7269c6f1511527867143",
+    "bootstrap-product-v1.zip": "e70fdab67712cab62fd011c57f3b35f3f760ab0eadbbeb164031f8a5def1e508",
+    "core-adoption-v1.json": "c279d3d43ab3674105947ca1cf3bd280a006757e31e54ec1ec28dcd3304edabe",
+    "core-adoption-v1.release.json": "40be2cb0dec75976b244dbeb7f23a4936be07465f37807356f5b6892cd94063c",
+    "core-adoption-v1.zip": "2d781b20ef9bbfa9aba9a5aee3846591ca8806e92f866f5af7a1876ba911f574",
     "core-product-v1.json": "0073ba85859497b6aaa601f87796ad636282ec19694df9c1663cd8bc49d6941e",
     "core-product-v1.release.json": "f4a1c4af455f013e7147edea8554f3bd2fd8dd09ef39c50530ffe3c9cb583536",
     "core-product-v1.zip": "ab5697d42e13273fdf061be90429c9d8b2ae742ed234d11f7f178b0c44f9a5c5",
@@ -33,6 +42,12 @@ HISTORICAL_PRODUCT_SHA256 = {
     "linear-product-v1.json": "9873b333ef330c34b76a5ef5371d32bc97d7c28838e8b4b6ca41634751b23a72",
     "linear-product-v1.release.json": "e0decf70cd95d292cc35d3c04f14e4fbd6be4da2b9b95d1a2c1d193a2089308e",
     "linear-product-v1.zip": "ea74c8d00028343b4b6b2d2cf4b1f24d19723e27b596d3d2d73ef1e3317b8551",
+    "linear-adoption-v1.attestation.json": "2a66e09b7e3f8015e1dc1f6a4be8a1730126214d8c57c0e40c969298fe3fbf15",
+    "linear-adoption-v1.collector-binding.json": "c028b8ade43aeb52c7f174f6df2d4e9f37b5407a1983516ce0ada84d5e4421c3",
+    "linear-adoption-v1.json": "4375046ce949508c15d1f501b66e16f5f96c9ca705a2735d5bcbf55fcab04e4b",
+    "linear-adoption-v1.release.json": "869d6b559b7628f4aac9ede466b6ab48f59209778c25f9b4a78b4fe941188b6c",
+    "linear-adoption-v1.zip": "8e24c88d459de54bca99230aa23acd76416b003e31693bb5c98db3d4a8cec257",
+    "provider-adoption-v1.json": "b5edd0629799e63e00ee50c59866c90036787a510e8d2694ca5f8d829910262c",
     "provider-product-v1.json": "591aff86b3a23a4d15b29fb11794624f3b06d08c24bcaa348c4391d8d71beb35",
 }
 
@@ -832,7 +847,7 @@ class LinearQualificationTests(unittest.TestCase):
         self,
     ) -> None:
         runner = _load_runner()
-        record = json.loads(RECORD.read_text(encoding="utf-8"))
+        record = json.loads(HISTORICAL_RECORD.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             core_archive, core_metadata, linear_archive, linear_metadata = (
@@ -841,8 +856,8 @@ class LinearQualificationTests(unittest.TestCase):
             core_candidate, linear_candidate = directory / "core", directory / "linear"
             core = verify_release(core_archive, core_metadata, extract_to=core_candidate)
             linear = verify_release(linear_archive, linear_metadata, extract_to=linear_candidate)
-            binding = runner.load_collector_binding(BINDING)
-            attested = runner.load_attestation(ATTESTATION, binding)
+            binding = runner.load_collector_binding(HISTORICAL_BINDING)
+            attested = runner.load_attestation(HISTORICAL_ATTESTATION, binding)
             runner.validate_candidate_binding(
                 binding, core, linear, core_candidate, linear_candidate
             )
@@ -854,8 +869,14 @@ class LinearQualificationTests(unittest.TestCase):
                 },
             )
             self.assertEqual(record["collectorBinding"], binding)
-            self.assertEqual(record["collectorBindingSha256"], hashlib.sha256(BINDING.read_bytes()).hexdigest())
-            self.assertEqual(record["attestationSha256"], hashlib.sha256(ATTESTATION.read_bytes()).hexdigest())
+            self.assertEqual(
+                record["collectorBindingSha256"],
+                hashlib.sha256(HISTORICAL_BINDING.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(
+                record["attestationSha256"],
+                hashlib.sha256(HISTORICAL_ATTESTATION.read_bytes()).hexdigest(),
+            )
             self.assertEqual(
                 record["coreQualificationSha256"],
                 hashlib.sha256((PRODUCT / "core-product-v1.json").read_bytes()).hexdigest(),
@@ -870,8 +891,8 @@ class LinearQualificationTests(unittest.TestCase):
 
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
         current_products = {
-            "core": ("core-adoption-v1", "2d781b20ef9bbfa9aba9a5aee3846591ca8806e92f866f5af7a1876ba911f574"),
-            "linear": ("linear-adoption-v1", "8e24c88d459de54bca99230aa23acd76416b003e31693bb5c98db3d4a8cec257"),
+            "core": ("core-bytecode-v1", "52a9ec8a45d75c29fbfff18cca7a6a1e9658dbfd9c944feb76fb4144f3832d1e"),
+            "linear": ("linear-bytecode-v1", "f611b5340c911fefb882a4cf4d7b6f9e5dcf2d05da46d3891070d6c4ae8e91d8"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -889,7 +910,7 @@ class LinearQualificationTests(unittest.TestCase):
                                         directory / f"{profile}-current.json",
                                         release_id=release.release_id, profile_id=profile)
                 self.assertEqual(projected, current, "checked product workflows differ from current source")
-        self.assertIn("linear-product-v1", (ROOT / "README.md").read_text())
+        self.assertIn("linear-bytecode-v1", (ROOT / "README.md").read_text())
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
         durable_paths = [ROOT / "README.md"]
