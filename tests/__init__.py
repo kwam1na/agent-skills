@@ -21,11 +21,12 @@ else:
 
 class TestExtraDependency(unittest.TestCase):
     def test_test_extra_is_installed(self) -> None:
-        if TEST_EXTRA_MISSING:
-            self.fail(
-                "The repository test extra is missing; run "
-                "python3 -m pip install -e '.[test]' before running the suite."
-            )
+        # This is a failure sentinel. Successful discovery replaces it with
+        # the full suite, so dispatching only this test can never report green.
+        self.fail(
+            "The full test suite was not discovered; run "
+            "python3 -m pip install -e '.[test]' to install its test dependencies."
+        )
 
 
 def load_tests(

@@ -268,10 +268,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " the current round, not held for a later one",
         "One sufficient signal is a round after the first that raises a finding"
         " not raised before while"
-        " leaving the number of open findings no lower than the round before it",
-        "Surfacing that signal to the operator is the caller's responsibility;"
-        " supplying the channel is outside this workflow's scope",
-        "a plan-review round is realized outside this workflow, which neither"
+        " leaving the number of open findings no lower than the round before it."
+        " Surfacing that signal to the operator is the caller's responsibility;"
+        " supplying the channel is outside this workflow's scope:"
+        " a plan-review round is realized outside this workflow, which neither"
         " carries a channel to the operator nor assumes one",
         "The caller running the loop is what puts each round in front of the"
         " operator who may end it, and where the caller surfaces nothing the loop"
