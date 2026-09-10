@@ -119,6 +119,13 @@ def _same_receipt(left: dict | None, right: dict | None) -> bool:
     return left == right
 
 
+def _generation_blocker(error: GenerationError) -> tuple[str, tuple[str, ...]]:
+    code = str(error).split(":", 1)[0]
+    if code == "local-bytecode-divergence":
+        return code, ("remove-python-bytecode",)
+    return "local-divergence", ("review-managed-diff",)
+
+
 class Lifecycle:
     def __init__(self, root: Path) -> None:
         self.root, self.git_path = repository_paths(root)
@@ -265,18 +272,19 @@ class Lifecycle:
                 "externally-transitioned",
                 ("review-receipt",),
             )
-        except GenerationError:
+        except GenerationError as error:
             try:
                 summary = _active_summary(self._active(verify=False))
             except (ReceiptError, GenerationError):
                 summary = None
+            blocker, recovery_plan = _generation_blocker(error)
             return Status(
                 summary,
-                ("local-divergence",),
+                (blocker,),
                 (),
                 journal["phase"] if journal else None,
                 "externally-transitioned",
-                ("review-managed-diff",),
+                recovery_plan,
             )
 
         if journal is not None:
@@ -595,6 +603,10 @@ class Lifecycle:
             self._recover_locked()
             state = self.status()
             if state.lifecycle not in {"absent", "current"} or state.blockers:
+                if "local-bytecode-divergence" in state.blockers:
+                    raise LifecycleError(
+                        "local-bytecode-divergence: remove Python bytecode from the installed generation before retrying"
+                    )
                 raise LifecycleError("local-divergence: installation is not safe to mutate")
             prior = self._active()
             if require_current and prior is None:

@@ -24,6 +24,11 @@ class GenerationError(ValueError):
     pass
 
 
+def _is_python_bytecode(path: str) -> bool:
+    parts = Path(path).parts
+    return "__pycache__" in parts and path.endswith(".pyc")
+
+
 def _records(files: dict[str, str]) -> list[dict[str, str]]:
     return [{"path": path, "sha256": digest} for path, digest in sorted(files.items())]
 
@@ -207,6 +212,18 @@ class GenerationStore:
             raise GenerationError("local-divergence: generation ownership marker disagrees")
         expected = {record["path"]: record["sha256"] for record in version["files"]}
         expected[GENERATION_MARKER] = files.get(GENERATION_MARKER, "")
+        unexpected = set(files) - set(expected)
+        digest_set_matches = set(files) - unexpected == set(expected) and all(
+            files[path] == digest for path, digest in expected.items()
+        )
+        if (
+            unexpected
+            and all(_is_python_bytecode(path) for path in unexpected)
+            and digest_set_matches
+        ):
+            raise GenerationError(
+                "local-bytecode-divergence: remove Python bytecode from the installed generation"
+            )
         if set(files) != set(expected) or any(files[path] != digest for path, digest in expected.items()):
             raise GenerationError("local-divergence: generation digest set disagrees")
 

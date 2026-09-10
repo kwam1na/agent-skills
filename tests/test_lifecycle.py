@@ -479,6 +479,64 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "local-divergence"):
             lifecycle.remove(maintainer=True)
 
+    def test_python_bytecode_divergence_names_remediation_and_blocks_update(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        receipt = json.loads(
+            (self.repository / ".agent-skills" / "active.json").read_text(encoding="utf-8")
+        )
+        bytecode = (
+            self.repository
+            / ".agent-skills"
+            / "generations"
+            / receipt["generation"]
+            / "agent_skills"
+            / "__pycache__"
+            / "lifecycle.cpython-311.pyc"
+        )
+        bytecode.parent.mkdir()
+        bytecode.write_bytes(b"planted bytecode")
+
+        status = lifecycle.status().as_dict()
+        self.assertEqual(status["lifecycle"], "externally-transitioned")
+        self.assertEqual(status["blockers"], ["local-bytecode-divergence"])
+        self.assertEqual(status["recoveryPlan"], ["remove-python-bytecode"])
+        with self.assertRaisesRegex(ValueError, "^local-bytecode-divergence:"):
+            lifecycle.update(*self.v2, maintainer=True)
+
+        managed_source = bytecode.parents[1] / "lifecycle.py"
+        original_source = managed_source.read_bytes()
+        managed_source.write_bytes(original_source + b"\n# mixed divergence\n")
+        mixed_status = lifecycle.status().as_dict()
+        self.assertEqual(mixed_status["blockers"], ["local-divergence"])
+        self.assertEqual(mixed_status["recoveryPlan"], ["review-managed-diff"])
+        managed_source.write_bytes(original_source)
+
+        bytecode.unlink()
+        bytecode.parent.rmdir()
+        self.assertEqual(lifecycle.status().as_dict()["lifecycle"], "current")
+        self.assertEqual(lifecycle.update(*self.v2, maintainer=True)["action"], "update")
+
+    def test_non_bytecode_extra_remains_generic_local_divergence(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        receipt = json.loads(
+            (self.repository / ".agent-skills" / "active.json").read_text(encoding="utf-8")
+        )
+        generation = (
+            self.repository
+            / ".agent-skills"
+            / "generations"
+            / receipt["generation"]
+        )
+        (generation / "unexpected.txt").write_text("extra\n", encoding="utf-8")
+
+        status = lifecycle.status().as_dict()
+        self.assertEqual(status["blockers"], ["local-divergence"])
+        self.assertEqual(status["recoveryPlan"], ["review-managed-diff"])
+        with self.assertRaisesRegex(ValueError, "^local-divergence:"):
+            lifecycle.update(*self.v2, maintainer=True)
+
     def test_mutation_requires_explicit_maintenance_authority(self) -> None:
         lifecycle = Lifecycle(self.repository)
         with self.assertRaisesRegex(ValueError, "maintainer"):

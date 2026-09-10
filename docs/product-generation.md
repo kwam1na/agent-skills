@@ -31,6 +31,15 @@ exposures and the runtime resolve through the existing current generation.
 The Node runtime can load erasable TypeScript consumer configuration without
 consumer npm dependencies, including imports of the bundled kernel.
 
+An installed generation must continue to match its receipt exactly. Run the
+installed Python entry point with `-B`, as above, so Python does not write cache
+files into that immutable tree. If stray `__pycache__/*.pyc` files appear,
+`status` reports the remediable `local-bytecode-divergence` blocker with the
+`remove-python-bytecode` recovery step, and lifecycle updates refuse with the
+same blocker until an operator removes those bytecode files. Other unexpected
+files and modifications to receipt-tracked files remain `local-divergence` and
+require review of the managed diff.
+
 `--product` requires a runtime and checks policy reconciliation as well as the
 underlying lifecycle. When an adopter has `.agents/policy`, the selected runtime
 recompiles its existing snapshot after install, update, rollback, or recovery.
