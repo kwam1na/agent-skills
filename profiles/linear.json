@@ -20,6 +20,11 @@
     "skills/linear-tracker-adapter/references/adapter-contract.json",
     "skills/obtain-review/SKILL.md",
     "skills/obtain-review/references/round-brief-template.md",
+    "skills/orchestrate-work/SKILL.md",
+    "skills/orchestrate-work/references/schemas/delivery-journal.json",
+    "skills/orchestrate-work/references/schemas/delivery-state.json",
+    "skills/orchestrate-work/scripts/_schema.py",
+    "skills/orchestrate-work/scripts/delivery_state.py",
     "skills/plan-work/SKILL.md",
     "skills/review-work/SKILL.md"
   ],

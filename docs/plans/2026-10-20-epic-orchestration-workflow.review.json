@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "plan": "docs/plans/2026-10-20-epic-orchestration-workflow.md",
+  "planSha256": "45deb934e4dab015369cc3cf485d1efbc0fefbb1c4a5b34f4db587f36cbe2615",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": ["outcome-correctness", "adversarial"],
+  "reviews": [
+    {"lens": "outcome-correctness", "agent": "plan-review-outcome-correctness-r4", "findings": []},
+    {"lens": "adversarial", "agent": "plan-review-adversarial-r4", "findings": []}
+  ],
+  "residualRisks": [
+    "Linear qualification needs a live host attestation collected by the lead; without it the release cannot be cut and that stays a visible blocker.",
+    "The first adopter's git snapshot reader is characterized against native capture only where native capture is available locally.",
+    "Coordination remains host behaviour performed by the lead; there is no session-messaging abstraction, so delivery limits of a host are handled by protocol, not code.",
+    "A check whose argv names no paths is classified as base-broken by the base re-run alone."
+  ]
+}

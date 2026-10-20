@@ -294,6 +294,47 @@
       }
     },
     {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "orchestrate-work",
+      "license": "NOASSERTION",
+      "modification": {
+        "reason": "Independently authored portable orchestration contract: a lead session coordinating lane sessions through a lead-owned merge queue and a versioned delivery state document and journal, with standard-library tools and their schemas shipped inside the skill.",
+        "status": "independently-authored"
+      },
+      "outputs": [
+        {
+          "path": "skills/orchestrate-work/SKILL.md",
+          "sha256": "6a5b0c35a96f9b56993433f15517da5a75317694f5e0551275ae541b6ece4ae5"
+        },
+        {
+          "path": "skills/orchestrate-work/references/schemas/delivery-journal.json",
+          "sha256": "72273e0b5c919d80699768d5c1d9131628286432c26962402cb7497d1829a2a4"
+        },
+        {
+          "path": "skills/orchestrate-work/references/schemas/delivery-state.json",
+          "sha256": "08e1e53e5b63b5409f9752e398056ca464f46b27dbea70a713546861cc72f929"
+        },
+        {
+          "path": "skills/orchestrate-work/scripts/_schema.py",
+          "sha256": "38a58f890ce879a1a67347200e36bac4de852a4e7bfd21eb39f49f6a6b455f13"
+        },
+        {
+          "path": "skills/orchestrate-work/scripts/delivery_state.py",
+          "sha256": "4a2b53e42fec6848f1322a9cf264791c91a27bab596cca33e67bcb9593421e53"
+        }
+      ],
+      "owner": "delivery-agent/user-delegated",
+      "source": {
+        "kind": "independent-origin",
+        "ownerApproval": {
+          "owner": "delivery-agent/user-delegated",
+          "reference": "plan-review:docs/plans/2026-10-20-epic-orchestration-workflow.review.json"
+        },
+        "rationale": "Authored from the approved portable epic orchestration plan, not derived from adopter source; the workflow it encodes was practised by the lead before it was written down."
+      }
+    },
+    {
       "classification": "reviewer-persona",
       "distribution": "releasable",
       "id": "persona-adversarial",

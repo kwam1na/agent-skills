@@ -1,6 +1,6 @@
 {
   "expectedLifecycleScenarioCount": 30,
-  "expectedScenarioCount": 13,
+  "expectedScenarioCount": 14,
   "lifecycleScenarios": [
     {
       "id": "activation-boundary-fault-recovery",
@@ -503,6 +503,15 @@
       "id": "core-profile-selects-review-acquisition-workflow",
       "profile": "core",
       "skill": "obtain-review"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "core-profile-selects-orchestration-workflow",
+      "profile": "core",
+      "skill": "orchestrate-work"
     },
     {
       "hosts": [
