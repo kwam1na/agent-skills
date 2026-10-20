@@ -68,7 +68,7 @@ def _check_schema(node: object, where: str, root: dict | None = None) -> None:
 
 def load_schema(name: str) -> dict:
     """Load and check one schema from the skill's references/schemas folder."""
-    schema = json.loads((SCHEMA_DIRECTORY / f"{name}.json").read_text(encoding="utf-8"))
+    schema = json.loads((SCHEMA_DIRECTORY / f"{name}.json").read_bytes().decode("utf-8"))
     _check_schema(schema, name)
     return schema
 

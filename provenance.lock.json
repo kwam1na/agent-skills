@@ -305,7 +305,7 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "69d855847d252ed33cdd46af9d831f8f47098941ee761c8e8c17884e751a2b8e"
+          "sha256": "fd442e969280d80cdda36fb9fad9a30dc57a35a73cc1a61bb27e06d05c494983"
         },
         {
           "path": "skills/orchestrate-work/references/schemas/delivery-journal.json",
@@ -317,11 +317,11 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/_schema.py",
-          "sha256": "3dd760ffdb813a8303ec77e533c61f5878c892f12c73c756288ebf8fa5534dfe"
+          "sha256": "606fc61ed417a9f69c0a80196e60c7fa89b4b7fdce27bc805e1e8b43a389902d"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "3e6d1074cb256f4103ef94fc53fbf6377480f75f7e9005de7755f19a8a0185a6"
+          "sha256": "6383fab785f5ed4ab4e22b80fdc537c583ded62190f9023cdfbc9b2c603f17fe"
         }
       ],
       "owner": "delivery-agent/user-delegated",

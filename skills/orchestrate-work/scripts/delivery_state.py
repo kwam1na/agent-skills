@@ -9,6 +9,10 @@ short lock and are never refused for concurrency.
 
 The state lock is separate from the merge-queue runner's long-held queue lock,
 so a runner holding the queue never blocks the lead from writing state.
+
+All input and output is byte-exact and independent of the platform: files are
+UTF-8 with "\n" line ends, stdin is read as UTF-8, and stdout is ASCII JSON, so
+any console encoding can carry it.
 """
 
 from __future__ import annotations
@@ -83,6 +87,14 @@ def dumps(value: object) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
 
 
+def emit(value: object) -> None:
+    """Write ``value`` to stdout as ASCII JSON, whatever the console encoding."""
+    text = json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True) + "\n"
+    sys.stdout.flush()
+    sys.stdout.buffer.write(text.encode("ascii"))
+    sys.stdout.buffer.flush()
+
+
 @contextlib.contextmanager
 def file_lock(path: Path, timeout: float | None = None) -> Iterator[None]:
     """Hold an OS-released exclusive lock on ``path`` for the block."""
@@ -119,8 +131,8 @@ def file_lock(path: Path, timeout: float | None = None) -> Iterator[None]:
 def _write_atomically(path: Path, text: str) -> None:
     handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
-        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(text)
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(text.encode("utf-8"))
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -159,9 +171,11 @@ def journal_errors(entries: list[object]) -> list[str]:
 def read_state(directory: Path) -> dict:
     path = directory / STATE_FILE
     try:
-        state = json.loads(path.read_text(encoding="utf-8"))
+        state = json.loads(path.read_bytes().decode("utf-8"))
     except FileNotFoundError:
         raise StateError("state_missing", f"no state at {path}; run init first") from None
+    except UnicodeDecodeError:
+        raise StateError("state_invalid", "state is not UTF-8") from None
     except json.JSONDecodeError as error:
         raise StateError("state_invalid", f"state is not JSON: {error}") from None
     errors = state_errors(state)
@@ -428,7 +442,13 @@ def show(directory: Path) -> dict:
 def _json_argument(value: str | None, name: str) -> object:
     if value is None:
         return None
-    text = sys.stdin.read() if value == "-" else value
+    if value == "-":
+        try:
+            text = sys.stdin.buffer.read().decode("utf-8")
+        except UnicodeDecodeError:
+            raise StateError("patch_invalid", f"{name} on stdin is not UTF-8") from None
+    else:
+        text = value
     try:
         return json.loads(text)
     except json.JSONDecodeError as error:
@@ -490,9 +510,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             result = show(args.dir)
     except StateError as error:
-        sys.stdout.write(dumps({"ok": False, "code": error.code, "error": str(error)}))
+        emit({"ok": False, "code": error.code, "error": str(error)})
         return 1
-    sys.stdout.write(dumps(result))
+    emit(result)
     return 0
 
 

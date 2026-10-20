@@ -49,5 +49,8 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind <kin
 - Journal appends are never refused for concurrency; the tool allocates the
   next id.
 - `show` prints the validated `{state, journal}` pair that renderers read.
+- Output is ASCII JSON on every platform and console; a patch read from
+  stdin is UTF-8. The state is UTF-8 and the journal ASCII, both with `\n`
+  line ends, so their bytes are the same everywhere.
 - `extensions` holds a repository's own fields. It is validated as an object
   only.
