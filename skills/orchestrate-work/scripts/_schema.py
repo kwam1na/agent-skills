@@ -27,7 +27,7 @@ class SchemaError(ValueError):
     """The schema itself uses something this validator does not support."""
 
 
-def _check_schema(node: object, where: str) -> None:
+def _check_schema(node: object, where: str, root: dict | None = None) -> None:
     if isinstance(node, bool):
         return
     if not isinstance(node, dict):
@@ -40,16 +40,26 @@ def _check_schema(node: object, where: str) -> None:
         names = declared if isinstance(declared, list) else [declared]
         if not names or any(name not in TYPES for name in names):
             raise SchemaError(f"{where}: unsupported type {declared!r}")
-    if "$ref" in node and not str(node["$ref"]).startswith("#/$defs/"):
-        raise SchemaError(f"{where}: only local #/$defs references are supported")
+    root = node if root is None else root
+    if "$ref" in node:
+        reference = node["$ref"]
+        name = reference[len("#/$defs/"):] if isinstance(reference, str) else ""
+        # Plain names only: no pointer escapes, no nesting, and the target exists.
+        if (
+            not isinstance(reference, str)
+            or not reference.startswith("#/$defs/")
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", name)
+            or name not in root.get("$defs", {})
+        ):
+            raise SchemaError(f"{where}: $ref must name an existing #/$defs entry: {reference!r}")
     for key in ("properties", "$defs"):
         for name, child in node.get(key, {}).items():
-            _check_schema(child, f"{where}/{key}/{name}")
+            _check_schema(child, f"{where}/{key}/{name}", root)
     for key in ("items", "additionalProperties"):
         if key in node:
-            _check_schema(node[key], f"{where}/{key}")
+            _check_schema(node[key], f"{where}/{key}", root)
     for index, child in enumerate(node.get("anyOf", [])):
-        _check_schema(child, f"{where}/anyOf/{index}")
+        _check_schema(child, f"{where}/anyOf/{index}", root)
 
 
 def load_schema(name: str) -> dict:
@@ -90,6 +100,15 @@ def _equal(left: object, right: object) -> bool:
     )
 
 
+def _ecma_anchors(pattern: str) -> str:
+    # In ECMA-262, which the schema dialect specifies, "$" matches only at the
+    # very end; Python's "$" also matches before a final newline. These schemas
+    # anchor only at the end of the pattern.
+    if pattern.endswith("$") and not pattern.endswith("\\$"):
+        return pattern[:-1] + r"\Z"
+    return pattern
+
+
 def _pointer(path: tuple[object, ...]) -> str:
     return "/" + "/".join(str(part) for part in path) if path else "/"
 
@@ -101,10 +120,7 @@ def _errors(value: object, node: object, root: dict, path: tuple[object, ...]) -
         return [f"{_pointer(path)}: no value is allowed here"]
     assert isinstance(node, dict)
     if "$ref" in node:
-        target: object = root
-        for part in node["$ref"][2:].split("/"):
-            target = target[part]  # type: ignore[index]
-        found = _errors(value, target, root, path)
+        found = _errors(value, root["$defs"][node["$ref"][len("#/$defs/"):]], root, path)
         if found:
             return found
     errors: list[str] = []
@@ -124,7 +140,7 @@ def _errors(value: object, node: object, root: dict, path: tuple[object, ...]) -
     if isinstance(value, str):
         if "minLength" in node and len(value) < node["minLength"]:
             errors.append(f"{where}: shorter than {node['minLength']}")
-        if "pattern" in node and re.search(node["pattern"], value) is None:
+        if "pattern" in node and re.search(_ecma_anchors(node["pattern"]), value) is None:
             errors.append(f"{where}: does not match the required pattern")
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if "minimum" in node and value < node["minimum"]:

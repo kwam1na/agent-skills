@@ -29,9 +29,14 @@ python3 -B scripts/delivery_state.py --dir <state directory> init --headline "<h
 python3 -B scripts/delivery_state.py --dir <state directory> show
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --patch '<json merge patch>'
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --element 'queue[subject=<subject>]' --patch '<json merge patch>'
+python3 -B scripts/delivery_state.py --dir <state directory> patch --writer runner --version <n> --set '{"/meta/checking/now": null}'
 python3 -B scripts/delivery_state.py --dir <state directory> journal --kind <kind> --summary "<what happened>"
 ```
 
+- A merge patch removes any field it sets to null. To set a nullable field to
+  null, use `--set`, which assigns exact values by JSON Pointer (relative to
+  the selected element when `--element` is given). `--patch` and `--set` may
+  be combined; the merge patch applies first.
 - A patch is pinned to the state version it was written against. A stale
   version is refused and nothing is written; read the state again and rewrite
   the patch.

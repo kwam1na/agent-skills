@@ -115,15 +115,20 @@ class QualificationPendingGateTests(unittest.TestCase):
             self.assertFalse(archive.exists())
             self.assertFalse(metadata.exists())
 
-    def test_release_cli_builds_once_the_marker_is_gone(self) -> None:
+    def test_release_cli_builds_once_the_marker_is_gone_and_verifies_either_way(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             copy = corpus_copy(Path(temporary))
             (copy / qualification_pending.MARKER).unlink()
             archive = Path(temporary) / "release.zip"
+            metadata = Path(temporary) / "release.json"
             built = run("build-release.py", "build", "--root", str(copy), "--archive", str(archive),
-                        "--metadata", str(Path(temporary) / "release.json"), "--release-id", "no-marker")
+                        "--metadata", str(metadata), "--release-id", "no-marker")
             self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
             self.assertTrue(archive.is_file())
+            # Verifying an existing release is unaffected by the marker this checkout carries.
+            self.assertTrue(MARKER.is_file())
+            verified = run("build-release.py", "verify", "--archive", str(archive), "--metadata", str(metadata))
+            self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
 
     def test_registry_validation_refuses_the_marker_only_for_the_default_branch(self) -> None:
         self.assertEqual(run("validate-registry.py").returncode, 0)
@@ -134,6 +139,10 @@ class QualificationPendingGateTests(unittest.TestCase):
                 self.assertIn("qualificationPending", json.loads(refused.stdout))
         refused = run("validate-registry.py", "--target-base=main")
         self.assertEqual(refused.returncode, 1, refused.stdout)
+        # An abbreviation is not taken for --target-base.
+        abbreviated = run("validate-registry.py", "--target", "main")
+        self.assertNotEqual(abbreviated.returncode, 0)
+        self.assertNotIn("qualificationPending", abbreviated.stdout)
         integration = run("validate-registry.py", "--target-base", "orchestration-workflow-integration")
         self.assertEqual(integration.returncode, 0, integration.stdout)
         self.assertEqual(integration.stdout, run("validate-registry.py").stdout)
@@ -150,13 +159,14 @@ class QualificationPendingGateTests(unittest.TestCase):
 
     def test_ci_passes_the_target_base_for_default_branch_events(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertRegex(workflow, r"(?m)^  pull_request:\s*$")
+        # Retargeting a pull request to the default branch is an edit, and must rerun the gate.
+        self.assertRegex(workflow, r"(?m)^  pull_request:\n(?:    #.*\n)*    types: \[opened, synchronize, reopened, edited\]$")
         self.assertRegex(workflow, r"(?m)^  push:\n    branches: \[main\]$")
         self.assertIn(
             "TARGET_BASE: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}",
             workflow,
         )
-        validations = re.findall(r"(?m)^\s*(?:run: |)python scripts/validate-registry\.py.*$", workflow)
+        validations = re.findall(r"(?m)^.*scripts/validate-registry\.py.*$", workflow)
         self.assertEqual(len(validations), 1, validations)
         self.assertIn('--target-base "$TARGET_BASE"', validations[0])
 

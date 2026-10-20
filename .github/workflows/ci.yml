@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    # Retargeting a pull request is an edit; its base decides the marker gate.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 

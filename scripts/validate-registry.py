@@ -23,7 +23,7 @@ from qualification_pending import MarkerError, is_default_branch, load_marker
 
 
 def run() -> int:
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--target-base")
     parser.add_argument("--root", type=Path, default=Path.cwd())
     known, _ = parser.parse_known_args()

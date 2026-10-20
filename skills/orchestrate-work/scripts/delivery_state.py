@@ -170,12 +170,23 @@ def read_state(directory: Path) -> dict:
     return state
 
 
-def read_journal(directory: Path) -> list[dict]:
-    path = directory / JOURNAL_FILE
+def _journal_text(directory: Path) -> tuple[str, int]:
+    """The journal's complete lines, and the byte length they occupy.
+
+    Lines end only at "\n": a summary may carry other line separators. A
+    final segment without its newline is an append that never finished; it is
+    left out, and the next append replaces it.
+    """
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        text = (directory / JOURNAL_FILE).read_text(encoding="utf-8")
     except FileNotFoundError:
-        return []
+        return "", 0
+    complete = text[: text.rfind("\n") + 1]
+    return complete, len(complete.encode("utf-8"))
+
+
+def read_journal(directory: Path) -> list[dict]:
+    lines = _journal_text(directory)[0].split("\n")[:-1]
     entries = []
     for number, line in enumerate(lines, start=1):
         try:
@@ -245,16 +256,49 @@ def _select(state: dict, selector: str) -> tuple[str, str, int]:
     return array, key, found[0]
 
 
-def apply_patch(state: dict, patch: object, selector: str | None) -> dict:
+def _assign(target: dict, pointer: str, value: object) -> None:
+    """Set the field a JSON Pointer names, keeping null as a value."""
+    if not pointer.startswith("/") or pointer == "/":
+        raise StateError("patch_invalid", f"a set pointer must name a field: {pointer!r}")
+    parts = [part.replace("~1", "/").replace("~0", "~") for part in pointer[1:].split("/")]
+    parent: object = target
+    for part in parts[:-1]:
+        if not isinstance(parent, dict) or part not in parent:
+            raise StateError("patch_invalid", f"a set pointer must name an existing object: {pointer}")
+        parent = parent[part]
+    if not isinstance(parent, dict):
+        raise StateError("patch_invalid", f"a set pointer must name a field of an object: {pointer}")
+    parent[parts[-1]] = copy.deepcopy(value)
+
+
+def apply_patch(
+    state: dict, patch: object, selector: str | None, assignments: object = None
+) -> dict:
+    """Apply a merge patch, then exact assignments, to the root or one element.
+
+    A merge patch removes a field it sets to null; ``assignments`` maps JSON
+    Pointers to values and sets them exactly, which is how a nullable field is
+    set back to null.
+    """
+    patch = {} if patch is None else patch
+    assignments = {} if assignments is None else assignments
     if not isinstance(patch, dict):
         raise StateError("patch_invalid", "a patch must be a JSON object")
-    if selector is None:
-        return merge_patch(state, patch)  # type: ignore[return-value]
-    array, key, index = _select(state, selector)
-    if key in patch:
-        raise StateError("patch_invalid", f"a selected element's {key} cannot change")
+    if not isinstance(assignments, dict):
+        raise StateError("patch_invalid", "assignments must be a JSON object of pointers and values")
     updated = copy.deepcopy(state)
-    updated[array][index] = merge_patch(state[array][index], patch)
+    if selector is None:
+        target = merge_patch(updated, patch)
+        for pointer, value in assignments.items():
+            _assign(target, pointer, value)  # type: ignore[arg-type]
+        return target  # type: ignore[return-value]
+    array, key, index = _select(state, selector)
+    if key in patch or any(pointer.split("/")[1:2] == [key] for pointer in assignments):
+        raise StateError("patch_invalid", f"a selected element's {key} cannot change")
+    element = merge_patch(state[array][index], patch)
+    for pointer, value in assignments.items():
+        _assign(element, pointer, value)  # type: ignore[arg-type]
+    updated[array][index] = element
     return updated
 
 
@@ -303,8 +347,9 @@ def patch(
     *,
     writer: str,
     version: int,
-    changes: object,
+    changes: object = None,
     selector: str | None = None,
+    assignments: object = None,
     between_read_and_write: Callable[[], None] | None = None,
 ) -> dict:
     """Apply ``changes`` as ``writer``, pinned to ``version``.
@@ -318,7 +363,7 @@ def patch(
     state = read_state(directory)
     if state["version"] != version:
         raise StateError("version_stale", f"patch is pinned to version {version}; state is at {state['version']}")
-    updated = apply_patch(state, changes, selector)
+    updated = apply_patch(state, changes, selector, assignments)
     if between_read_and_write is not None:
         between_read_and_write()
     with file_lock(directory / STATE_LOCK):
@@ -360,9 +405,12 @@ def append_journal(
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
-        line = json.dumps(entry, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
-        with open(directory / JOURNAL_FILE, "a", encoding="utf-8", newline="\n") as stream:
-            stream.write(line)
+        line = json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
+        complete = _journal_text(directory)[1]
+        with open(directory / JOURNAL_FILE, "ab") as stream:
+            # Drop the remains of an append that never finished.
+            stream.truncate(complete)
+            stream.write(line.encode("utf-8"))
             stream.flush()
             os.fsync(stream.fileno())
     return entry
@@ -373,12 +421,14 @@ def show(directory: Path) -> dict:
     return {"state": read_state(directory), "journal": read_journal(directory)}
 
 
-def _changes(args: argparse.Namespace) -> object:
-    text = sys.stdin.read() if args.patch == "-" else args.patch
+def _json_argument(value: str | None, name: str) -> object:
+    if value is None:
+        return None
+    text = sys.stdin.read() if value == "-" else value
     try:
         return json.loads(text)
     except json.JSONDecodeError as error:
-        raise StateError("patch_invalid", f"patch is not JSON: {error}") from None
+        raise StateError("patch_invalid", f"{name} is not JSON: {error}") from None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -392,7 +442,11 @@ def main(argv: list[str] | None = None) -> int:
     change.add_argument("--writer", choices=WRITERS, required=True)
     change.add_argument("--version", type=int, required=True, help="the state version the patch was written against")
     change.add_argument("--element", help="apply the patch to one element, such as queue[subject=...]")
-    change.add_argument("--patch", required=True, help="the patch as JSON, or - to read it from stdin")
+    change.add_argument("--patch", help="a JSON merge patch, or - to read it from stdin")
+    change.add_argument(
+        "--set", dest="assignments",
+        help='exact values by JSON Pointer, such as {"/meta/checking/now": null}; - reads stdin',
+    )
     entry = commands.add_parser("journal", help="append one journal entry")
     entry.add_argument("--kind", required=True)
     entry.add_argument("--summary", required=True)
@@ -407,14 +461,19 @@ def main(argv: list[str] | None = None) -> int:
             show(args.dir)
             result = {"ok": True}
         elif args.command == "patch":
+            if args.patch is None and args.assignments is None:
+                raise StateError("patch_invalid", "give --patch, --set or both")
+            if args.patch == "-" and args.assignments == "-":
+                raise StateError("patch_invalid", "only one of --patch and --set can read stdin")
             result = {
                 "ok": True,
                 "state": patch(
                     args.dir,
                     writer=args.writer,
                     version=args.version,
-                    changes=_changes(args),
+                    changes=_json_argument(args.patch, "patch"),
                     selector=args.element,
+                    assignments=_json_argument(args.assignments, "set"),
                 ),
             }
         elif args.command == "journal":

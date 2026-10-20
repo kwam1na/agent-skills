@@ -8,10 +8,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import ast
 import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from jsonschema import Draft202012Validator
 
@@ -189,6 +191,73 @@ class StateToolTests(unittest.TestCase):
             state_tool.append_journal(self.directory, kind="decision.recorded", summary="")
         self.assertEqual(empty.exception.code, "entry_invalid")
 
+    def test_journal_summaries_may_carry_any_line_separator(self) -> None:
+        summaries = ["two\u2028lines", "two\u2029paragraphs", "next\u0085line", "carriage\rreturn", "new\nline"]
+        for summary in summaries:
+            code, appended = run_tool(self.directory, "journal", "--kind", "decision.recorded", "--summary", summary)
+            self.assertEqual(code, 0, appended)
+        code, shown = run_tool(self.directory, "show")
+        self.assertEqual(code, 0, shown)
+        self.assertEqual([entry["summary"] for entry in shown["journal"]], summaries)
+        self.assertEqual([entry["id"] for entry in shown["journal"]], [1, 2, 3, 4, 5])
+
+    def test_an_unfinished_append_is_ignored_and_then_replaced(self) -> None:
+        state_tool.append_journal(self.directory, kind="decision.recorded", summary="Whole")
+        journal = self.directory / state_tool.JOURNAL_FILE
+        with open(journal, "ab") as stream:
+            stream.write(b'{"id":2,"at":"2026-10-20T10:00:00Z","kind":"decis')
+        self.assertEqual([entry["id"] for entry in state_tool.show(self.directory)["journal"]], [1])
+        entry = state_tool.append_journal(self.directory, kind="decision.recorded", summary="After the crash")
+        self.assertEqual(entry["id"], 2)
+        self.assertEqual(len(journal.read_text(encoding="utf-8").split("\n")), 3)
+        self.assertEqual([item["summary"] for item in state_tool.show(self.directory)["journal"]],
+                         ["Whole", "After the crash"])
+
+    def test_set_writes_null_into_a_nullable_field(self) -> None:
+        now = {"subject": "pr-1", "title": "Candidate", "startedAt": "2026-10-20T10:00:00Z", "steps": []}
+        state_tool.patch(self.directory, writer="runner", version=1, changes={"meta": {"checking": {"now": now}}})
+        code, cleared = run_tool(
+            self.directory, "patch", "--writer", "runner", "--version", "2",
+            "--set", json.dumps({"/meta/checking/now": None}),
+        )
+        self.assertEqual(code, 0, cleared)
+        self.assertIsNone(cleared["state"]["meta"]["checking"]["now"])
+        lane = {"id": "lane-1", "title": "Renderer", "focus": "views", "state": "blocked", "waitingOn": "lead",
+                "since": "2026-10-20T10:00:00Z"}
+        self.lead(3, {"lanes": [lane], "queue": [queue_item("pr-1", runId="run-1")]})
+        code, patched = run_tool(
+            self.directory, "patch", "--writer", "lead", "--version", "4", "--element", "lanes[id=lane-1]",
+            "--patch", json.dumps({"state": "working"}), "--set", json.dumps({"/waitingOn": None}),
+        )
+        self.assertEqual(code, 0, patched)
+        self.assertEqual(patched["state"]["lanes"][0], {**lane, "state": "working", "waitingOn": None})
+        patched = state_tool.patch(self.directory, writer="lead", version=5, selector="queue[subject=pr-1]",
+                                   assignments={"/runId": None, "/lane": None, "/reportedRounds": None})
+        self.assertEqual(patched["queue"][0], queue_item("pr-1", lane=None, reportedRounds=None))
+
+    def test_set_is_held_to_the_same_rules_as_a_patch(self) -> None:
+        self.lead(1, {"queue": [queue_item("pr-1")]})
+        before = self.state_bytes()
+        cases = {
+            "runner on a lead field": ("runner", {"/meta/headline": "Runner says"}, None, "field_not_owned"),
+            "lead on a runner field": ("lead", {"/stage": "merged"}, "queue[subject=pr-1]", "field_not_owned"),
+            "the selected element's key": ("lead", {"/subject": "pr-2"}, "queue[subject=pr-1]", "patch_invalid"),
+            "a required field set to null": ("lead", {"/meta/headline": None}, None, "patch_invalid"),
+            "a missing parent": ("lead", {"/meta/nowhere/field": 1}, None, "patch_invalid"),
+            "the whole document": ("lead", {"": {}}, None, "patch_invalid"),
+            "not a pointer": ("lead", {"meta": {}}, None, "patch_invalid"),
+            "not an object": ("lead", [["/meta/headline", "x"]], None, "patch_invalid"),
+        }
+        for name, (writer, assignments, selector, code) in cases.items():
+            with self.subTest(name):
+                with self.assertRaises(state_tool.StateError) as refused:
+                    state_tool.patch(self.directory, writer=writer, version=2, selector=selector,
+                                     assignments=assignments)
+                self.assertEqual(refused.exception.code, code, str(refused.exception))
+                self.assertEqual(self.state_bytes(), before)
+        code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--version", "2")
+        self.assertEqual((code, refused["code"]), (1, "patch_invalid"))
+
     def test_a_journal_that_breaks_sequence_is_invalid(self) -> None:
         state_tool.append_journal(self.directory, kind="decision.recorded", summary="One")
         journal = self.directory / state_tool.JOURNAL_FILE
@@ -338,6 +407,62 @@ class StateToolTests(unittest.TestCase):
             release.set()
         self.assertEqual(refused.exception.code, "lock_timeout")
 
+    def test_concurrent_journal_appends_get_every_id_once(self) -> None:
+        count = 12
+        processes = [
+            subprocess.Popen(
+                [sys.executable, "-B", str(TOOL), "--dir", str(self.directory), "journal",
+                 "--kind", "decision.recorded", "--summary", f"Racer {number}"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            for number in range(count)
+        ]
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=60)
+            self.assertEqual(process.returncode, 0, stdout + stderr)
+        journal = state_tool.show(self.directory)["journal"]
+        self.assertEqual([entry["id"] for entry in journal], list(range(1, count + 1)))
+        self.assertEqual(sorted(entry["summary"] for entry in journal),
+                         sorted(f"Racer {number}" for number in range(count)))
+
+    def test_a_long_held_queue_lock_does_not_block_a_journal_append(self) -> None:
+        held = threading.Event()
+        release = threading.Event()
+
+        def hold() -> None:
+            with state_tool.file_lock(self.directory / state_tool.QUEUE_LOCK):
+                held.set()
+                release.wait(10)
+
+        runner = threading.Thread(target=hold)
+        runner.start()
+        self.addCleanup(runner.join)
+        self.addCleanup(release.set)
+        self.assertTrue(held.wait(5))
+        original = state_tool.LOCK_TIMEOUT_SECONDS
+        state_tool.LOCK_TIMEOUT_SECONDS = 0.5
+        try:
+            entry = state_tool.append_journal(self.directory, kind="decision.recorded", summary="Not blocked")
+        finally:
+            state_tool.LOCK_TIMEOUT_SECONDS = original
+        self.assertEqual(entry["id"], 1)
+
+    def test_every_write_advances_updated_at(self) -> None:
+        seen = [state_tool.show(self.directory)["state"]["meta"]["updatedAt"]]
+        for version in (1, 2, 3):
+            seen.append(self.lead(version, {"meta": {"headline": f"Step {version}"}})["meta"]["updatedAt"])
+        self.assertEqual(seen, sorted(set(seen)))
+        self.assertEqual(state_tool.show(self.directory)["state"]["meta"]["updatedAt"], seen[-1])
+
+    def test_a_failed_replace_leaves_the_state_and_no_temporary_file(self) -> None:
+        before = self.state_bytes()
+        with mock.patch.object(state_tool.os, "replace", side_effect=OSError("disk gone")):
+            with self.assertRaises(OSError):
+                self.lead(1, {"meta": {"headline": "Never lands"}})
+        self.assertEqual(self.state_bytes(), before)
+        self.assertEqual(sorted(path.name for path in self.directory.iterdir()),
+                         sorted([state_tool.STATE_FILE, state_tool.JOURNAL_FILE, state_tool.STATE_LOCK]))
+
     def test_tools_write_no_bytecode_beside_the_scripts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             copy_root = Path(temporary) / "orchestrate-work"
@@ -359,6 +484,30 @@ class StateToolTests(unittest.TestCase):
             self.assertEqual(sorted(path.name for path in copy_root.rglob("*.pyc")), [])
             self.assertEqual(sorted(path.name for path in copy_root.rglob("__pycache__")), [])
         self.assertEqual(list(SCRIPTS.rglob("__pycache__")), [])
+
+
+GUARDED_SETS = {
+    "tests/test_qualification.py": {"core"},
+    "tests/test_provider_qualification.py": {"provider"},
+    "tests/test_linear_qualification.py": {"core", "linear"},
+    "tests/test_bootstrap_qualification.py": {"bootstrap"},
+}
+
+
+class SkipGuardTests(unittest.TestCase):
+    def test_each_skip_guard_names_its_own_qualification_set(self) -> None:
+        for relative, expected in GUARDED_SETS.items():
+            tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+            named: set[str] = set()
+            calls = 0
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and getattr(node.func, "id", None) in {"pending", "skip_if_pending"}:
+                    calls += 1
+                    named.update(arg.value for arg in node.args if isinstance(arg, ast.Constant)
+                                 and isinstance(arg.value, str))
+            with self.subTest(path=relative):
+                self.assertGreater(calls, 0)
+                self.assertEqual(named, expected)
 
 
 def valid_state() -> dict:
@@ -395,6 +544,17 @@ def with_change(document: dict, path: tuple, value: object) -> dict:
 
 VALID_ENTRY = {"id": 1, "at": "2026-10-20T10:00:00Z", "kind": "candidate.merged", "lane": None,
                "subject": "pr-1", "summary": "Merged"}
+
+
+VALID_FIXTURES = {
+    "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
+}
+JOURNAL_KINDS = [
+    "lane.assigned", "candidate.handed", "check.started", "check.finished",
+    "candidate.merged", "candidate.stopped", "base.broken", "base.repaired",
+    "lease.granted", "lease.released", "release.started", "release.finished",
+    "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed",
+]
 
 
 class SchemaAgreementTests(unittest.TestCase):
@@ -445,6 +605,25 @@ class SchemaAgreementTests(unittest.TestCase):
             ],
         }
 
+    def test_a_trailing_newline_never_satisfies_an_anchored_pattern(self) -> None:
+        # The schema dialect uses ECMA-262 patterns, where "$" matches only at
+        # the very end. The reference validator uses Python's "$", which also
+        # matches before a final newline, so these cases are asserted directly.
+        state = valid_state()
+        cases = {
+            "delivery-state": [
+                with_change(state, ("meta", "baseHead"), HEAD_A + "\n"),
+                with_change(state, ("queue", 0, "head"), HEAD_A + "\n"),
+                with_change(state, ("meta", "updatedAt"), "2026-10-20T10:00:00Z\n"),
+            ],
+            "delivery-journal": [{**VALID_ENTRY, "at": "2026-10-20T10:00:00Z\n"}],
+        }
+        for name, documents in cases.items():
+            schema = schema_module.load_schema(name)
+            for document in documents:
+                with self.subTest(schema=name):
+                    self.assertNotEqual(schema_module.validate(document, schema), [])
+
     def test_bundled_validator_agrees_with_the_reference_validator(self) -> None:
         for name, cases in self.fixtures().items():
             schema = schema_module.load_schema(name)
@@ -452,12 +631,29 @@ class SchemaAgreementTests(unittest.TestCase):
             Draft202012Validator.check_schema(schema)
             outcomes = set()
             for label, document in cases:
+                expected = label in VALID_FIXTURES
                 with self.subTest(schema=name, fixture=label):
-                    bundled_valid = not schema_module.validate(document, schema)
-                    reference_valid = reference.is_valid(document)
-                    self.assertEqual(bundled_valid, reference_valid)
-                    outcomes.add(bundled_valid)
+                    self.assertEqual(not schema_module.validate(document, schema), expected)
+                    self.assertEqual(reference.is_valid(document), expected)
+                    outcomes.add(expected)
             self.assertEqual(outcomes, {True, False}, f"{name} fixtures must include valid and invalid documents")
+
+    def test_closed_value_lists_are_exact(self) -> None:
+        state = schema_module.load_schema("delivery-state")
+        journal = schema_module.load_schema("delivery-journal")
+        self.assertEqual(journal["properties"]["kind"]["enum"], JOURNAL_KINDS)
+        queue = state["properties"]["queue"]["items"]["properties"]
+        self.assertEqual(queue["stage"]["enum"],
+                         ["queued", "syncing", "synced", "checking", "checked", "merging", "merged", "stopped"])
+        self.assertEqual(state["properties"]["lanes"]["items"]["properties"]["state"]["enum"],
+                         ["idle", "assigned", "working", "reviewing", "handed", "blocked", "done"])
+        self.assertEqual(state["$defs"]["stepState"]["enum"],
+                         ["pending", "running", "passed", "failed", "skipped", "timed_out"])
+        self.assertEqual(journal["properties"]["id"]["minimum"], 1)
+        self.assertEqual(state["properties"]["version"]["minimum"], 1)
+        for kind in JOURNAL_KINDS:
+            with self.subTest(kind=kind):
+                self.assertEqual(schema_module.validate({**VALID_ENTRY, "kind": kind}, journal), [])
 
     def test_schemas_use_urn_ids_and_declare_no_dialect(self) -> None:
         for path in sorted(SCHEMAS.glob("*.json")):
@@ -470,7 +666,9 @@ class SchemaAgreementTests(unittest.TestCase):
 
     def test_validator_refuses_a_keyword_it_does_not_implement(self) -> None:
         for schema in ({"type": "object", "oneOf": [{}]}, {"type": "date"}, {"$ref": "other.json#/x"},
-                       {"properties": {"x": {"format": "date-time"}}}):
+                       {"properties": {"x": {"format": "date-time"}}}, {"$ref": "#/$defs/missing"},
+                       {"$ref": "#/$defs/a~1b", "$defs": {"a/b": {}}}, {"$ref": "#/$defs/a/b", "$defs": {"a": {}}},
+                       {"$ref": "#/$defs/a%20b", "$defs": {"a b": {}}}):
             with self.subTest(schema=schema):
                 with self.assertRaises(schema_module.SchemaError):
                     schema_module._check_schema(schema, "fixture")
