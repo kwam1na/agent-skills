@@ -235,7 +235,9 @@ in this order:
    ```
 
    - A tracker child the record lacks is added: `backlog` as a follow-up,
-     `started` as planned work (the state's `planned` list).
+     `started` as planned work (the state's `planned` list). Planned work is
+     only what the approved plan covers, so write a started child outside it
+     as `backlog` in the snapshot: it then becomes a follow-up.
    - A change request is linked to its queue or planned item, and an open one
      moves planned work to review.
    - A merge the runner never recorded is written as the runner's, with a
@@ -245,7 +247,8 @@ in this order:
      reported and left for the lead.
    - A snapshot older than `--max-age` seconds (900 by default) is refused
      with `snapshot_stale`, and one dated ahead of this machine's clock with
-     `snapshot_invalid`; nothing is written: list the work again.
+     `snapshot_invalid`; nothing is written: list the work again. A listing
+     that fails is noted, and the loop carries on to render and publish.
    - Tracker snapshots apply before forge snapshots, whatever their order, so
      one pass settles both.
    - A merge is never recovered while the runner holds the queue: it is
