@@ -62,12 +62,15 @@ RENDER_TIMEOUT_SECONDS = 120
 # user's global or system config cannot change what the runner commits, sees
 # or merges. They are pinned rather than isolated: dropping global and system
 # config would also drop the sign-in helpers, url rewrites and ssh settings
-# that fetch and push need. Repository config and .gitattributes still apply,
-# and argv the binding declares keeps the user's full config.
+# that fetch and push need. A pin overrides every config level, the
+# repository's own included; settings outside this set, and .gitattributes,
+# still apply, and argv the binding declares keeps the user's full config.
 PINNED_GIT_CONFIG = (
-    # Commits are never signed, so they never fail or wait on a signing prompt.
+    # Nothing is signed or required to be signed, so no step fails or waits on a signing prompt.
     "commit.gpgsign=false",
     "tag.gpgsign=false",
+    "push.gpgSign=false",
+    "merge.verifySignatures=false",
     # Bytes are committed as tools wrote them, unless .gitattributes says otherwise.
     "core.autocrlf=false",
     "core.safecrlf=false",
@@ -79,9 +82,10 @@ PINNED_GIT_CONFIG = (
     # Status reads the files, not a monitor's cache of them.
     "core.fsmonitor=false",
     "core.untrackedCache=false",
-    # The merge commit is always made, and made without an editor.
-    "merge.ff=true",
+    # Commits and merges never open an editor.
     "core.editor=true",
+    # Checkouts and merges never reach into submodules on the user's say-so.
+    "submodule.recurse=false",
 )
 # Folders git keeps in its own directory; workRoot never sits in one of them.
 GIT_OWN_DIRECTORIES = frozenset({"objects", "refs", "worktrees", "hooks", "info", "logs", "modules", "lfs", "rr-cache"})

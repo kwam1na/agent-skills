@@ -555,17 +555,20 @@ The runner's own git commands pin the settings its work depends on, so a
 user's global or system configuration cannot change what it commits, sees or
 merges:
 
-- commits are never signed (`commit.gpgsign`, `tag.gpgsign`);
+- nothing is signed or required to be signed (`commit.gpgsign`,
+  `tag.gpgsign`, `push.gpgSign`, `merge.verifySignatures`);
 - bytes are committed as the tools wrote them (`core.autocrlf`, `core.safecrlf`);
 - no global excludes file hides an undeclared change (`core.excludesFile`);
 - no recorded resolution resolves a conflict for it (`rerere`);
 - status reads the files themselves (`core.fsmonitor`, `core.untrackedCache`);
-- merges and commits never open an editor.
+- merges and commits never open an editor;
+- nothing reaches into submodules (`submodule.recurse`).
 
 These are pinned, not isolated: dropping global and system configuration would
 also drop the sign-in helpers, address rewrites and transport settings that
-the runner's fetch and push rely on. The repository's own configuration and
-`.gitattributes` still apply, and the argv the binding declares runs with the
+the runner's fetch and push rely on. A pin overrides every configuration
+level, the repository's own included. Settings outside this set, and
+`.gitattributes`, still apply, and the argv the binding declares runs with the
 user's full configuration apart from the hooks setting above.
 
 ### The affected-checks provider

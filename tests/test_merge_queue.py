@@ -202,7 +202,8 @@ if os.environ.get("MQ_MERGE") == "unverified":
     tree = git("rev-parse", base + "^{tree}")
 parents = ["-p", expected, "-p", base] if os.environ.get("MQ_MERGE") == "swapped" else ["-p", base, "-p", expected]
 commit = git("commit-tree", tree, *parents, "-m", "Merge " + branch)
-git("push", "--quiet", "--force-with-lease=refs/heads/main:" + base, remote, commit + ":refs/heads/main")
+# The forge is the adopter's own tool: it, not the runner, owns its push settings.
+git("-c", "push.gpgSign=false", "push", "--quiet", "--force-with-lease=refs/heads/main:" + base, remote, commit + ":refs/heads/main")
 """,
     "lease.py": """
 import os, pathlib, sys
@@ -1164,6 +1165,8 @@ class HostileConfigTests(MergeQueueTestCase):
             "[core]", "\tautocrlf = true", "\tsafecrlf = true", f"\texcludesFile = {excludes.as_posix()}",
             "[commit]", "\tgpgsign = true",
             "[tag]", "\tgpgsign = true",
+            "[push]", "\tgpgSign = true",
+            "[merge]", "\tverifySignatures = true",
             "[gpg]", f"\tprogram = {Path(PY).as_posix()} {signer.as_posix()}",
             "[rerere]", "\tenabled = true",
         ]
@@ -1195,15 +1198,27 @@ class HostileConfigTests(MergeQueueTestCase):
 
     def test_the_repositorys_own_attributes_still_apply(self) -> None:
         adopter = self.adopter()
-        # The repository asks for CRLF in generated files; the runner must not override that.
-        attributes = {".gitattributes": "gen/generated.txt text eol=crlf\n", "src/app.txt": "app two\n"}
-        self.candidate(adopter, attributes)
+        # The repository marks the generated file as text, so the runner's
+        # regenerate commit normalises its CRLF lines to LF. Without the
+        # attribute the same bytes are committed as written (the first test).
+        self.candidate(adopter, {".gitattributes": "gen/generated.txt text\n", "src/app.txt": "app two\r\n"})
         with self.hostile():
             results = self.run_queue(adopter, "feature")
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
-        self.assertEqual(adopter.show("origin/main", ".gitattributes"), "gen/generated.txt text eol=crlf")
-        # The committed blob stays normalised to LF, as the attribute asks.
-        self.assertEqual(adopter.show("origin/main", "gen/generated.txt"), "app two\nlib one")
+        adopter.show("origin/main", ".gitattributes")
+        generated = subprocess.run(
+            ["git", "show", "origin/main:gen/generated.txt"], cwd=adopter.lane, capture_output=True, check=True,
+        ).stdout
+        self.assertEqual(generated, b"app two\nlib one\n")
+
+    def test_a_push_and_merge_survive_signature_requirements(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        # A base merge is needed, so the runner merges unsigned base commits under verifySignatures.
+        adopter.advance_base({"src/other.txt": "other\n"})
+        with self.hostile():
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
 
 
 class RenderingTests(MergeQueueTestCase):
