@@ -1,7 +1,9 @@
 """Recording fake for the forge's merge.
 
-It merges only the expected head: the result has the candidate's tree on top
-of the checked base, and is pushed only if the base has not moved.
+It records each call, then lands the candidate the way a squash-style forge
+merge would: the expected head's tree on top of the checked base. Like a real
+forge it refuses a head that is not the branch tip and pushes with a lease;
+the runner's own tests own those guards, which nothing here exercises.
 """
 
 import os

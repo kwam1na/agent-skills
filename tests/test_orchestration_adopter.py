@@ -34,6 +34,9 @@ GIT_IDENTITY = {
     "GIT_AUTHOR_NAME": "Fixture Lane", "GIT_AUTHOR_EMAIL": "lane@fixture.invalid",
     "GIT_COMMITTER_NAME": "Fixture Lane", "GIT_COMMITTER_EMAIL": "lane@fixture.invalid",
 }
+# Variables that would carry the machine's own git settings into the fixture.
+INHERITED_GIT = ("GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_DIR", "GIT_WORK_TREE",
+                 "GIT_INDEX_FILE")
 
 
 def _load_wrapper():
@@ -72,6 +75,16 @@ class FixtureAdopter:
         self.log = root / "fake log.txt"
         self.snapshots = root / "view snapshots"
         self.log.write_text("", encoding="utf-8")
+        # The machine's global and system git settings (signing, ignore rules,
+        # line-ending conversion) never reach the fixture or the tools it runs.
+        self.gitconfig = root / "fixture gitconfig"
+        self.gitconfig.write_text("", encoding="utf-8")
+        self.environment = {
+            **{key: value for key, value in os.environ.items()
+               if key not in INHERITED_GIT and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))},
+            "GIT_CONFIG_GLOBAL": str(self.gitconfig),
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
         self.git("init", "--quiet", "--bare", f"--initial-branch={BASE}", str(self.remote), cwd=root)
         seed = root / "seed checkout"
         self.git("clone", "--quiet", "--origin", REMOTE, str(self.remote), str(seed), cwd=root)
@@ -106,14 +119,14 @@ class FixtureAdopter:
     def git(self, *args: str, cwd: Path) -> str:
         completed = subprocess.run(
             ["git", "-c", f"core.hooksPath={self.root / 'no hooks'}", *args], cwd=cwd, capture_output=True,
-            text=True, encoding="utf-8", env={**os.environ, **GIT_IDENTITY}, check=False,
+            text=True, encoding="utf-8", env={**self.environment, **GIT_IDENTITY}, check=False,
         )
         if completed.returncode != 0:
             raise AssertionError(f"git {' '.join(args)}: {completed.stderr}")
         return completed.stdout.strip()
 
     def commit(self, checkout: Path, message: str) -> str:
-        subprocess.run([sys.executable, "-B", "tools/regenerate.py"], cwd=checkout, check=True)
+        subprocess.run([sys.executable, "-B", "tools/regenerate.py"], cwd=checkout, check=True, env=self.environment)
         self.git("add", "--all", cwd=checkout)
         self.git("commit", "--quiet", "-m", message, cwd=checkout)
         return self.git("rev-parse", "HEAD", cwd=checkout)
@@ -154,6 +167,7 @@ class FixtureAdopter:
     def tool(self, script: Path, *args: str, expect: int | None = 0) -> object:
         completed = subprocess.run(
             [sys.executable, "-B", str(script), *args], capture_output=True, cwd=self.root, check=False,
+            env=self.environment,
         )
         if expect is not None and completed.returncode != expect:
             raise AssertionError(
@@ -225,7 +239,7 @@ class FixtureAdopterTests(unittest.TestCase):
         # Each lane hands its candidate over; the lead records the reviewed head.
         heads = {
             "alpha-copy": adopter.lane_change("alpha-copy", {"src/alpha.txt": "alpha two\n"}),
-            # Changes the same generated line as the clean candidate does after it merges.
+            # Changes the catalog line next to the clean candidate's: a generated-only conflict once it merges.
             "beta-copy": adopter.lane_change("beta-copy", {"src/beta.txt": "beta two\n"}),
             # Changes the same source line as the clean candidate: a source conflict once it merges.
             "alpha-rewrite": adopter.lane_change("alpha-rewrite", {"src/alpha.txt": "alpha rewritten\n"}),
@@ -241,8 +255,14 @@ class FixtureAdopterTests(unittest.TestCase):
         view = adopter.view() if (adopter.state / "delivery.md").exists() else None
         self.assertIsNone(view, "nothing renders until the runner first writes")
 
-        # 3. Run all three: two merge, the third stops on a source conflict.
+        # 3. Run all three: two merge, the third stops on a source conflict. While
+        # this run goes, the provider is down for any change to src/beta.txt, so
+        # the second candidate is checked through the fallback.
+        adopter.work_root.mkdir(exist_ok=True)
+        (adopter.work_root / "provider-down").write_text("src/beta.txt\n", encoding="utf-8")
         results = adopter.queue("run", *SUBJECTS, expect=1)
+        (adopter.work_root / "provider-down").unlink()
+        merged_runs = [(results[2], results[1]), (results[5], results[4])]
         outcomes = [(result["subcommand"], result["candidate"], result["outcome"]) for result in results]
         self.assertEqual(outcomes, [
             ("sync", "alpha-copy", "synced"), ("check", "alpha-copy", "checked"), ("merge", "alpha-copy", "merged"),
@@ -252,14 +272,43 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual(results[-1]["stop"]["reason"], "source_conflict")
         self.assertEqual(results[-1]["stop"]["paths"], ["src/alpha.txt"])
         self.assertTrue(all(result["hooksBypassed"] for result in results))
-        # The generated-only conflict was taken from the base and regenerated.
+        # The second candidate really conflicted with the base, on the generated file only.
         beta_sync = results[3]
-        self.assertNotEqual(beta_sync["syncedHead"], heads["beta-copy"])
+        adopter.git("fetch", "--quiet", REMOTE, cwd=adopter.lane)
+        conflict = subprocess.run(
+            ["git", "merge-tree", "--write-tree", "--name-only", heads["beta-copy"], beta_sync["baseHead"]],
+            cwd=adopter.lane, capture_output=True, text=True, env=adopter.environment, check=False,
+        )
+        self.assertEqual((conflict.returncode, conflict.stderr), (1, ""), conflict.stdout)
+        self.assertEqual(conflict.stdout.split("\n\n")[0].split("\n")[1:], ["generated/catalog.txt"])
+        # The runner took the base side in its merge commit, then regenerated in a commit of its own.
+        merge_commit = f"{beta_sync['syncedHead']}^"
+        self.assertEqual(adopter.git("log", "-1", "--format=%s", merge_commit, cwd=adopter.lane),
+                         f"Merge {BASE} into lane/beta-copy")
+        self.assertEqual(adopter.read(merge_commit, "generated/catalog.txt"),
+                         adopter.read(beta_sync["baseHead"], "generated/catalog.txt"))
         catalog = adopter.read(adopter.tip(BASE), "generated/catalog.txt")
         self.assertEqual(catalog, "alpha.txt: alpha two\nbeta.txt: beta two\ngamma.txt: gamma one")
-        # The provider selected lint for each source change.
-        self.assertEqual(results[1]["selection"]["checks"], ["lint"])
+        # The provider selected the checks for the first candidate's source change.
+        self.assertEqual(results[1]["selection"]["checks"], ["format", "lint"])
         self.assertEqual(results[1]["selection"]["fallbackReasons"], [])
+        self.assertFalse(results[1]["selection"]["widened"])
+        # S2: the provider was down for the second candidate; the runner fell back and says why.
+        selection = results[4]["selection"]
+        self.assertEqual(selection["providers"][0]["outcome"], "failed")
+        self.assertEqual(selection["fallbackReasons"], ["provider_failed"])
+        self.assertTrue(selection["widened"])
+        self.assertEqual(selection["checks"], ["full"])
+        self.assertEqual([(check["id"], check["state"]) for check in results[4]["checks"]], [("full", "passed")])
+        # While the fallback ran, the view named the candidate being checked and the fallback check.
+        snapshots = sorted(adopter.snapshots.iterdir())
+        self.assertEqual(len(snapshots), 1)
+        during = snapshots[0].read_text(encoding="utf-8")
+        self.assertIn(f"- Now: {text('beta-copy')}", during)
+        rows = during.split(f"2. {text('beta-copy')}: ", 1)[1].split("\n", 2)
+        self.assertIn(", checking · lane", rows[0])
+        # The runner records a check's state as each one finishes, so the fallback reads as pending.
+        self.assertEqual(rows[1], f"   - {text('full')}: pending")
         view = adopter.view()
         self.assertQueueRow(view, "alpha-copy", "merged")
         self.assertQueueRow(view, "beta-copy", "merged")
@@ -296,28 +345,19 @@ class FixtureAdopterTests(unittest.TestCase):
         adopter.journal("base.repaired", "Fixed the base forward")
         adopter.journal("decision.recorded", "lint runs on every candidate")
 
-        # 6. A provider outage on the re-run: the runner falls back and says why.
-        adopter.work_root.mkdir(exist_ok=True)
-        (adopter.work_root / "provider-down").write_text("down\n", encoding="utf-8")
+        # 6. The re-run, with the provider up: it defers lint to alwaysRun, so the
+        # check the base broke without runs from the binding, with no fallback.
         results = adopter.queue("run", "alpha-rewrite", expect=0)
-        (adopter.work_root / "provider-down").unlink()
         self.assertEqual([result["outcome"] for result in results], ["synced", "checked", "merged"])
+        merged_runs.append((results[2], results[1]))
         selection = results[1]["selection"]
-        self.assertEqual(selection["providers"][0]["outcome"], "failed")
-        self.assertEqual(selection["fallbackReasons"], ["provider_failed"])
-        self.assertTrue(selection["widened"])
-        # The check the base broke without now runs on every candidate, beside the fallback.
-        self.assertEqual(selection["checks"], ["lint", "full"])
+        self.assertEqual(selection["providers"], [{"source": "base", "outcome": "selected", "detail": "1 checks"}])
+        self.assertEqual(selection["fallbackReasons"], [])
+        self.assertFalse(selection["widened"])
+        self.assertEqual(selection["checks"], ["format", "lint"])
         self.assertEqual([(check["id"], check["state"]) for check in results[1]["checks"]],
-                         [("lint", "passed"), ("full", "passed")])
-        # While the fallback ran, the view named the candidate being checked and the fallback check.
-        snapshots = sorted(adopter.snapshots.iterdir())
-        self.assertEqual(len(snapshots), 1)
-        during = snapshots[0].read_text(encoding="utf-8")
-        self.assertIn(f"- Now: {text('alpha-rewrite')}", during)
-        rows = during.split(f"3. {text('alpha-rewrite')}: ", 1)[1].split("\n\n", 1)[0]
-        # The runner records a check's state as each one finishes, so the fallback reads as pending.
-        self.assertIn(f"   - {text('lint')}: passed\n   - {text('full')}: pending", rows)
+                         [("format", "passed"), ("lint", "passed")])
+        self.assertEqual(len(list(adopter.snapshots.iterdir())), 1, "the fallback ran only during the outage")
         after = adopter.view()
         for subject in SUBJECTS:
             self.assertQueueRow(after, subject, "merged")
@@ -367,8 +407,9 @@ class FixtureAdopterTests(unittest.TestCase):
             "delivery.closed",
         ])
         # The forge fakes saw exactly the checked heads, each merged onto the base it was checked against.
-        merges = [line.split() for line in adopter.log_lines() if line.startswith("merge ")]
-        self.assertEqual([words[1] for words in merges], [f"lane/{subject}" for subject in SUBJECTS])
+        merges = [line.split()[1:] for line in adopter.log_lines() if line.startswith("merge ")]
+        self.assertEqual(merges, [[f"lane/{result['candidate']}", result["syncedHead"], checked["baseHead"]]
+                                  for result, checked in merged_runs])
         self.assertEqual(sum(line.startswith("ready ") for line in adopter.log_lines()), 3)
         self.assertEqual([line for line in adopter.log_lines() if line.startswith("release ")],
                          [f"release package {released_head}", f"release publish {released_head}"])
@@ -382,22 +423,24 @@ ADOPTER_DEFAULTS = (
     ("remote name", re.compile(r"""(["'])origin\1""")),
     ("branch name", re.compile(r"""(["'])(?:main|master)\1""")),
     ("branch ref", re.compile(r"refs/heads/(?:main|master)\b")),
+    ("remote-tracking ref", re.compile(r"""["'](?:origin|upstream)/(?:main|master)\b""")),
+    ("short hook skip", re.compile(r"""(["'])commit\1,\s*(["'])-n\2|\bgit commit\b[^"'\n]*\s-n\b""")),
     ("package runner", re.compile(r"""(["'])(?:npm|npx|pnpm|yarn|bun|bunx|uv|uvx|pipx)\1""")),
     ("hook skip", re.compile(r"--no-verify\b")),
-    ("forge command line", re.compile(r"""(["'])(?:gh|glab|hub)\1""")),
+    ("forge command line", re.compile(r"""(["'])(?:gh|glab|hub)\1|["'](?:gh|glab|hub)\s""")),
 )
 
 
 class AdopterNeutralityTests(unittest.TestCase):
     def tool_sources(self) -> list[Path]:
-        return sorted(SCRIPTS.glob("*.py"))
+        return [*sorted(SCRIPTS.glob("*.py")), ROOT / "skills/orchestrate-work/references/schemas.json"]
 
     def fixture_files(self) -> list[Path]:
         return sorted(path for path in FIXTURE.rglob("*") if path.is_file())
 
     def test_the_tools_assume_no_adopter_default(self) -> None:
         self.assertEqual([path.name for path in self.tool_sources()],
-                         ["delivery_state.py", "merge_queue.py", "render_state.py"])
+                         ["delivery_state.py", "merge_queue.py", "render_state.py", "schemas.json"])
         for path in self.tool_sources():
             contents = path.read_text(encoding="utf-8")
             for name, pattern in ADOPTER_DEFAULTS:
@@ -406,11 +449,12 @@ class AdopterNeutralityTests(unittest.TestCase):
 
     def test_the_scan_finds_each_default_it_looks_for(self) -> None:
         for planted in ('remote = "origin"', "branch = 'main'", "refs/heads/main", '["npx", "x"]',
-                        "git push --no-verify", 'run(["gh", "pr"])'):
+                        "git push --no-verify", 'run(["gh", "pr"])', 'base = "origin/main"',
+                        '["git", "commit", "-n", "-m", "x"]', "git commit -q -n -m x", 'command = "gh pr merge"'):
             with self.subTest(planted=planted):
                 self.assertTrue(any(pattern.search(planted) for _, pattern in ADOPTER_DEFAULTS))
         for innocent in ('if __name__ == "__main__":', "the main checkout", "origin_url = remote",
-                         "core.hooksPath", "highlight"):
+                         "core.hooksPath", "highlight", '"-n"', 'git log -n 1', '"ghost"'):
             with self.subTest(innocent=innocent):
                 self.assertFalse(any(pattern.search(innocent) for _, pattern in ADOPTER_DEFAULTS))
 
