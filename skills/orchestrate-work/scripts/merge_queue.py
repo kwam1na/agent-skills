@@ -30,7 +30,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Callable, Iterable, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -94,7 +94,22 @@ PINNED_GIT_CONFIG = (
     "submodule.recurse=false",
 )
 # Folders git keeps in its own directory; workRoot never sits in one of them.
-GIT_OWN_DIRECTORIES = frozenset({"objects", "refs", "worktrees", "hooks", "info", "logs", "modules", "lfs", "rr-cache"})
+GIT_OWN_DIRECTORIES = frozenset({
+    "objects", "refs", "reftable", "worktrees", "hooks", "info", "logs", "modules", "lfs", "rr-cache",
+    "branches", "remotes",
+})
+# Written into the private git directory of every checkout the runner adds,
+# so a later run tells its own leftovers from a worktree someone else owns.
+CHECKOUT_MARKER = "merge-queue-checkout"
+
+
+def folded(path: Path) -> PurePath:
+    """The path without case: a case-insensitive filesystem names one folder by every case variant."""
+    return PurePath(str(path).casefold())
+
+
+def within(path: Path, parent: Path) -> bool:
+    return folded(path).is_relative_to(folded(parent))
 # How long a killed process's output is drained before the runner stops waiting.
 DRAIN_SECONDS = 5
 # Inherited variables that would point git somewhere other than the runner's checkouts.
@@ -531,6 +546,8 @@ class Runner:
         path = self.work_root / "checkouts" / f"{self._counter:02d}-{label}"
         self.git("worktree", "add", "--detach", "--quiet", str(path), commit)
         self.checkouts.append(path)
+        private = Path(self.git("rev-parse", "--absolute-git-dir", cwd=path).stdout.strip())
+        (private / CHECKOUT_MARKER).write_bytes(b"")
         if prepare:
             context = (context or Context()).with_values(treeSha=self.tree("HEAD", cwd=path))
             for argv in self.binding["prepare"]:
@@ -646,6 +663,12 @@ class Runner:
 
     def load(self) -> str:
         """Fetch the base, read the binding from it, and set up workRoot."""
+        # A relative workRoot resolves against --repo, so --repo must be the
+        # top level git reports; from a subdirectory, "../tools" would name a
+        # tracked folder the checks below never examined.
+        top = self.git("rev-parse", "--show-toplevel", check=False)
+        if top.returncode != 0 or folded(Path(top.stdout.strip()).resolve()) != folded(self.repository):
+            raise Stop("binding_invalid", f"--repo must be the top level of a checkout, not {self.repository}")
         if not self.valid_branch(self.base):
             raise Stop("ref_invalid", f"not a valid branch name: {self.base}")
         base_head = self.fetch(self.base, "base")
@@ -664,25 +687,7 @@ class Runner:
         self.binding = binding
         root = Path(binding["workRoot"])
         self.work_root = (root if root.is_absolute() else self.repository / root).resolve()
-        if self.work_root == self.repository or self.repository.is_relative_to(self.work_root):
-            raise Stop("binding_invalid", "workRoot must not contain the repository's checkout")
-        git_directory = Path(self.git("rev-parse", "--absolute-git-dir").stdout.strip()).resolve()
-        if self.work_root.is_relative_to(git_directory):
-            # Beside git's own data, never in it.
-            parts = self.work_root.relative_to(git_directory).parts
-            if not parts or parts[0] in GIT_OWN_DIRECTORIES:
-                raise Stop("binding_invalid", "workRoot must not be the git directory or one of git's own folders")
-        elif self.work_root.is_relative_to(self.repository):
-            # The runner deletes what it finds under workRoot, so inside the
-            # working tree it must hold no tracked file and be a path the
-            # repository ignores. The operator's checkout supplies the ignore
-            # rules that apply to it. The path is checked as a directory, so a
-            # "name/" ignore rule matches before it exists.
-            relative = self.work_root.relative_to(self.repository).as_posix() + "/"
-            if self.git("ls-files", "--", relative, check=False).stdout.strip():
-                raise Stop("binding_invalid", "workRoot must not hold tracked files")
-            if self.git("check-ignore", "-q", "--no-index", "--", relative, check=False).returncode != 0:
-                raise Stop("binding_invalid", "a workRoot inside the working tree must be ignored")
+        self.guard_work_root()
         self.hooks_bypassed = binding["hooks"] == "bypass"
         if self.hooks_bypassed:
             self.hooks_directory = self.work_root / "empty-hooks"
@@ -695,6 +700,69 @@ class Runner:
         else:
             self.hooks_directory = None
         return base_head
+
+    def worktrees(self) -> list[tuple[Path, bool]]:
+        """Every checkout git lists for this repository, the current one included, and whether it is bare."""
+        listed: list[tuple[Path, bool]] = []
+        for block in self.git("worktree", "list", "--porcelain").stdout.split("\n\n"):
+            lines = block.splitlines()
+            if lines and lines[0].startswith("worktree "):
+                listed.append((Path(lines[0][len("worktree "):]).resolve(), "bare" in lines))
+        return listed
+
+    def own_checkout(self, path: Path) -> bool:
+        """Whether ``path`` is a checkout an earlier run of the runner added under workRoot/checkouts."""
+        if not within(path, self.work_root / "checkouts"):
+            return False
+        if not path.exists():
+            return True
+        private = self.git("rev-parse", "--absolute-git-dir", cwd=path, check=False)
+        return private.returncode == 0 and (Path(private.stdout.strip()) / CHECKOUT_MARKER).exists()
+
+    def guard_work_root(self) -> None:
+        """Refuse a workRoot that reaches what git, or any checkout of the repository, owns.
+
+        The runner deletes what it finds under workRoot, so it is checked
+        against git's own view of the repository: the git directory, the
+        common git directory a linked worktree shares, and every listed
+        checkout. Paths are compared without case.
+        """
+        work = self.work_root
+        git_directories = []
+        for flag in ("--absolute-git-dir", "--git-common-dir"):
+            reported = Path(self.git("rev-parse", flag).stdout.strip())
+            git_directories.append((reported if reported.is_absolute() else self.repository / reported).resolve())
+        checkouts = self.worktrees()
+        if not any(folded(path) == folded(self.repository) for path, _ in checkouts):
+            checkouts.append((self.repository, False))
+        for path, _ in checkouts:
+            if within(path, work) and not self.own_checkout(path):
+                raise Stop("binding_invalid", f"workRoot must not contain a checkout of the repository: {path}")
+        for directory in git_directories:
+            if within(directory, work) and folded(directory) != folded(work):
+                raise Stop("binding_invalid", "workRoot must not contain the git directory")
+        inside_git = False
+        for directory in git_directories:
+            if within(work, directory):
+                # Beside git's own data, never in it.
+                parts = folded(work).relative_to(folded(directory)).parts
+                if not parts or parts[0] in GIT_OWN_DIRECTORIES:
+                    raise Stop("binding_invalid", "workRoot must not be the git directory or one of git's own folders")
+                inside_git = True
+        if inside_git:
+            return
+        for path, bare in checkouts:
+            if bare or not within(work, path):
+                continue
+            # Inside a checkout it must hold no tracked file and be a path that
+            # checkout ignores, under its own ignore rules. The path is checked
+            # as a directory, so a "name/" rule matches before it exists, and
+            # the tracked-file match ignores case.
+            relative = "/".join(work.parts[len(path.parts):]) + "/"
+            if self.git("ls-files", "--", f":(icase){relative}", cwd=path, check=False).stdout.strip():
+                raise Stop("binding_invalid", f"workRoot must not hold tracked files of the checkout at {path}")
+            if self.git("check-ignore", "-q", "--no-index", "--", relative, cwd=path, check=False).returncode != 0:
+                raise Stop("binding_invalid", f"a workRoot inside the checkout at {path} must be ignored there")
 
     def context(self, subject: str | None, base_head: str) -> Context:
         values = {"base": self.base, "baseHead": base_head, "workRoot": str(self.work_root)}

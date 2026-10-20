@@ -1151,6 +1151,133 @@ class HardeningTests(MergeQueueTestCase):
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
 
 
+def case_insensitive_filesystem(directory: Path) -> bool:
+    probe = directory / "case-probe"
+    probe.write_text("")
+    try:
+        return (directory / "CASE-PROBE").exists()
+    finally:
+        probe.unlink()
+
+
+class WorkRootSafetyTests(MergeQueueTestCase):
+    """workRoot is checked against git's own view of the repository, never against where the runner started."""
+
+    def precious(self, checkout: Path) -> Path:
+        path = checkout / "tools" / "checkouts" / "precious.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("operator's own file\n")
+        return path
+
+    def exclude(self, adopter: Adopter, *patterns: str) -> None:
+        exclude = adopter.operator / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        exclude.write_text("".join(f"{pattern}\n" for pattern in patterns))
+
+    def linked(self, adopter: Adopter, path: Path) -> Path:
+        run("worktree", "add", "--quiet", "--detach", str(path), cwd=adopter.operator)
+        return path
+
+    def run_from(self, adopter: Adopter, repository: Path, *subjects: str) -> list:
+        runner = queue.Runner(repository, adopter.state, remote="origin", base="main")
+        return runner.run_command("run", list(subjects))
+
+    def assertRefused(self, results: list, rule: str) -> None:
+        document = self.assertStopped(results, "binding_invalid")
+        self.assertEqual(document["outcome"], "refused")
+        self.assertIn(rule, document["stop"]["detail"])
+
+    def test_a_start_below_the_top_level_is_refused_so_a_relative_work_root_cannot_escape_the_checks(self) -> None:
+        # Started in src/, ../tools named the tracked tools/ folder and skipped the tracked-file check.
+        adopter = self.adopter({"workRoot": "../tools"})
+        precious = self.precious(adopter.operator)
+        self.candidate(adopter)
+        self.assertRefused(self.run_from(adopter, adopter.operator / "src", "feature"), "top level")
+        self.assertTrue(precious.exists())
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+
+    def test_from_a_linked_worktree_the_main_checkout_and_the_common_git_directory_are_protected(self) -> None:
+        for name, work_root, rule in (
+            ("a tracked folder of the main checkout", "operator/tools", "tracked"),
+            ("the main checkout itself", "operator", "contain a checkout"),
+            ("git's own folder in the common directory", "operator/.git/objects/q", "git's own folders"),
+            # It also holds the linked worktree's private git directory, whichever rule speaks first.
+            ("the common git directory itself", "operator/.git", "the git directory"),
+        ):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.adopter({"workRoot": str(self.directory / work_root)})
+                linked = self.linked(adopter, self.directory / "linked")
+                precious = self.precious(adopter.operator)
+                self.candidate(adopter)
+                self.assertRefused(self.run_from(adopter, linked, "feature"), rule)
+                self.assertTrue(precious.exists())
+
+    def test_a_work_root_holding_another_worktree_is_refused(self) -> None:
+        # The runner clears workRoot/checkouts, which here holds a lane's own worktree.
+        adopter = self.adopter({"workRoot": ".worktrees"})
+        self.exclude(adopter, ".worktrees/")
+        lane = self.linked(adopter, adopter.operator / ".worktrees" / "checkouts" / "lane")
+        self.candidate(adopter)
+        self.assertRefused(self.run_from(adopter, adopter.operator, "feature"), "contain a checkout")
+        self.assertTrue((lane / "src" / "app.txt").exists())
+
+    def test_from_a_linked_worktree_an_ignored_work_root_is_accepted(self) -> None:
+        adopter = self.adopter({"workRoot": ".merge-queue"})
+        self.exclude(adopter, ".worktrees/", ".merge-queue/")
+        linked = self.linked(adopter, adopter.operator / ".worktrees" / "lane")
+        self.candidate(adopter)
+        results = self.run_from(adopter, linked, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertTrue((linked / ".merge-queue" / "checkouts").is_dir())
+
+    def test_a_work_root_inside_another_worktree_must_be_ignored_there(self) -> None:
+        # From the main checkout, a folder inside a linked worktree is checked against that worktree.
+        adopter = self.adopter({"workRoot": str(self.directory / "linked" / "tools")})
+        linked = self.linked(adopter, self.directory / "linked")
+        precious = self.precious(linked)
+        self.candidate(adopter)
+        self.assertRefused(self.run_from(adopter, adopter.operator, "feature"), "tracked")
+        self.assertTrue(precious.exists())
+
+    def test_the_runners_own_leftover_checkouts_do_not_block_the_next_run(self) -> None:
+        adopter = self.adopter({"workRoot": ".merge-queue"})
+        self.exclude(adopter, ".merge-queue/")
+        self.candidate(adopter)
+        # A killed run leaves its registered checkout behind under workRoot/checkouts.
+        runner = adopter.runner()
+        base_head = runner.load()
+        runner.start()
+        leftover = runner.checkout(base_head, "base", prepare=False)
+        self.assertTrue(leftover.exists())
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertFalse(leftover.exists())
+
+    def test_git_own_folders_are_protected_without_case_and_include_reftable_branches_and_remotes(self) -> None:
+        for work_root in (".git/Objects/q", ".git/REFS/q", ".git/reftable/q", ".git/branches/q", ".git/remotes/q"):
+            with self.subTest(work_root):
+                self.fresh()
+                adopter = self.adopter({"workRoot": work_root})
+                self.candidate(adopter)
+                self.assertRefused(self.run_queue(adopter, "feature"), "git's own folders")
+
+    def test_a_case_variant_of_a_tracked_folder_is_refused(self) -> None:
+        if not case_insensitive_filesystem(self.directory):
+            self.skipTest("the filesystem distinguishes case")
+        adopter = self.adopter({"workRoot": "TOOLS"})
+        (adopter.operator / ".gitignore").write_text("TOOLS/\ntools/\n")
+        precious = self.precious(adopter.operator)
+        self.candidate(adopter)
+        self.assertRefused(self.run_queue(adopter, "feature"), "tracked")
+        self.assertTrue(precious.exists())
+
+    def test_the_schema_states_every_work_root_rule(self) -> None:
+        description = schema("orchestration-binding")["properties"]["workRoot"]["description"]
+        for phrase in ("top level", "any checkout of the repository", "git's own folders", "tracked", "ignored"):
+            self.assertIn(phrase, description)
+
+
 class HostileConfigTests(MergeQueueTestCase):
     """The runner's own git commands keep working under a user's global config."""
 
