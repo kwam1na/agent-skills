@@ -51,6 +51,8 @@ OUTBOX_DIRECTORY = "outbox"
 OUTBOX_FILE = "outbox.json"
 # A snapshot older than this is refused, so a skipped listing fails loudly.
 SNAPSHOT_MAX_AGE_SECONDS = 900.0
+# How far ahead of this machine a snapshot's clock may run before it is refused.
+SNAPSHOT_CLOCK_SKEW_SECONDS = 60.0
 RECONCILE_ATTEMPTS = 5
 STATE_VERSION = "delivery-state/1"
 WRITERS = ("lead", "runner")
@@ -673,6 +675,8 @@ def read_snapshot(path: Path, max_age: float) -> dict:
     if errors:
         raise StateError("snapshot_invalid", f"{Path(path).name}: " + "; ".join(errors))
     age = (datetime.datetime.now(datetime.timezone.utc) - _parse_time(snapshot["takenAt"])).total_seconds()
+    if age < -SNAPSHOT_CLOCK_SKEW_SECONDS:
+        raise StateError("snapshot_invalid", f"{Path(path).name} was taken {int(-age)}s in the future: check its clock")
     if age > max_age:
         raise StateError(
             "snapshot_stale",
@@ -704,7 +708,9 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
     def report(subject: str, text: str) -> None:
         reports.append({"subject": subject, "note": text})
 
-    for snapshot in snapshots:
+    # The tracker first, whatever the order given: work it adds is then there
+    # for the forge to link, so one pass reaches the fixed point.
+    for snapshot in sorted(snapshots, key=lambda snapshot: snapshot["source"] != "tracker"):
         for item in snapshot["items"]:
             subject, word = item["subject"], item["state"]
             title = item.get("title") or subject
@@ -730,7 +736,7 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
             entry = queued(subject) or planned(subject)
             if entry is None:
                 if word in ("open", "draft", "merged"):
-                    report(subject, f"a {word} change request for work the record does not hold")
+                    report(subject, f"{'an' if word == 'open' else 'a'} {word} change request for work the record does not hold")
                 continue
             if reference and entry.get("changeRequest") != reference:
                 entry["changeRequest"] = reference
@@ -800,25 +806,75 @@ def reconcile(
                 continue
             raise
         break
-    for recovery in recoveries:
-        for _ in range(RECONCILE_ATTEMPTS):
-            version = read_state(directory)["version"]
-            try:
-                patch(directory, writer="runner", version=version, selector=f"queue[subject={recovery['subject']}]",
-                      changes={"stage": "merged", "syncedHead": recovery["head"]})
-                break
-            except StateError as error:
-                if error.code != "version_stale":
-                    raise
-        else:
-            raise StateError("version_stale", "the record kept changing while a merge was recovered")
-        where = f" as change request {recovery['changeRequest']}" if recovery["changeRequest"] else ""
-        append_journal(
-            directory, kind="candidate.merged", subject=recovery["subject"], lane=recovery["lane"],
-            summary=f"Recorded from a forge snapshot: merged{where} at {recovery['head']}, not recorded by the runner",
-        )
+    if recoveries:
+        _recover(directory, recoveries, changes, reports)
+    if not changes:
+        return {"ok": True, "drift": False, "changes": [], "reports": reports, "summary": "no drift"}
     return {"ok": True, "drift": True, "changes": changes, "reports": reports,
             "summary": f"{len(changes)} change{'s' if len(changes) != 1 else ''}"}
+
+
+def _recover(directory: Path, recoveries: list[dict], changes: list[dict], reports: list[dict]) -> None:
+    """Record merges the runner missed, as the runner, only while no runner is running.
+
+    A runner holding the queue lock may have merged and not yet recorded it;
+    recording for it would race its own write and journal a false claim. So
+    the queue lock is tried, not waited for, and each item is read again under
+    it: a merge the runner recorded meanwhile is left alone.
+    """
+    def withdraw(subject: str) -> None:
+        changes[:] = [change for change in changes if not (change["subject"] == subject and change["recovery"])]
+
+    with contextlib.ExitStack() as held:
+        try:
+            held.enter_context(file_lock(directory / QUEUE_LOCK, timeout=0))
+        except StateError as error:
+            if error.code != "lock_timeout":
+                raise
+            for recovery in recoveries:
+                withdraw(recovery["subject"])
+                reports.append({"subject": recovery["subject"],
+                                "note": "merged on the forge while the runner is running: reconcile again once it stops"})
+            return
+        for recovery in recoveries:
+            selector = f"queue[subject={recovery['subject']}]"
+            for _ in range(RECONCILE_ATTEMPTS):
+                state = read_state(directory)
+                item = next((item for item in state["queue"] if item["subject"] == recovery["subject"]), None)
+                if item is None or item["stage"] == "merged":
+                    withdraw(recovery["subject"])
+                    break
+                try:
+                    patch(directory, writer="runner", version=state["version"], selector=selector,
+                          changes={"stage": "merged", "syncedHead": recovery["head"]})
+                except StateError as error:
+                    if error.code != "version_stale":
+                        raise
+                    continue
+                where = f" as change request {recovery['changeRequest']}" if recovery["changeRequest"] else ""
+                append_journal(
+                    directory, kind="candidate.merged", subject=recovery["subject"], lane=recovery["lane"],
+                    summary=f"Recorded from a forge snapshot: merged{where} at {recovery['head']}, "
+                            "not recorded by the runner",
+                )
+                break
+            else:
+                raise StateError("version_stale", "the record kept changing while a merge was recovered")
+
+
+def read_outbox(directory: Path) -> dict | None:
+    """The outbox a host publisher last wrote, or None."""
+    try:
+        outbox = json.loads((directory / OUTBOX_DIRECTORY / OUTBOX_FILE).read_bytes().decode("utf-8"))
+    except FileNotFoundError:
+        return None
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise StateError("state_invalid", f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE} is not JSON") from None
+    if (not isinstance(outbox, dict)
+            or not all(isinstance(outbox.get(key), int) and not isinstance(outbox.get(key), bool)
+                       for key in ("version", "journalThrough"))):
+        raise StateError("state_invalid", f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE} is malformed")
+    return outbox
 
 
 # ---------------------------------------------------------------------------
@@ -859,6 +915,11 @@ def ack(directory: Path, *, version: int, through: int) -> dict:
             problems.append(f"journal entry {through} does not exist; the last is {last}")
         if through < previous["journalThrough"]:
             problems.append(f"journal entry {through} is before the published {previous['journalThrough']}")
+        outbox = read_outbox(directory)
+        if outbox is not None and (version > outbox["version"] or through > outbox["journalThrough"]):
+            problems.append(
+                f"the outbox holds version {outbox['version']} through entry {outbox['journalThrough']}: "
+                "acknowledge only what was published")
         if problems:
             raise StateError("ack_invalid", "; ".join(problems))
         published = {"version": version, "journalThrough": through, "at": now()}
@@ -871,18 +932,18 @@ def publication(directory: Path, shown: dict) -> dict:
     published = read_published(directory)
     through = published["journalThrough"] if published else 0
     unpublished = sum(1 for entry in shown["journal"] if entry["id"] > through)
-    outbox_version = None
     try:
-        outbox_version = json.loads((directory / OUTBOX_DIRECTORY / OUTBOX_FILE).read_bytes().decode("utf-8"))["version"]
-    except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
-        pass
+        outbox = read_outbox(directory)
+    except StateError:
+        outbox = None
+    last = shown["journal"][-1]["id"] if shown["journal"] else 0
     version = shown["state"]["version"]
     return {
         "publishedVersion": published["version"] if published else None,
         "journalThrough": through,
         "unpublishedEntries": unpublished,
-        "outboxVersion": outbox_version,
-        "outboxLags": outbox_version is not None and outbox_version < version,
+        "outboxVersion": outbox["version"] if outbox else None,
+        "outboxLags": outbox is not None and (outbox["version"] < version or outbox["journalThrough"] < last),
         "lags": published is None or published["version"] < version or unpublished > 0,
     }
 

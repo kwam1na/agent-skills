@@ -792,6 +792,13 @@ class ReconcileTests(unittest.TestCase):
                 self.assertEqual(self.bytes(), before)
         code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(self.root / "missing.json"))
         self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"))
+        ahead = self.snapshot("tracker", [{"subject": "z", "title": "Z", "state": "started"}], age=-120)
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", ahead)
+        self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"), "a snapshot from the future is refused")
+        self.assertEqual(self.bytes(), before)
+        skewed = self.snapshot("tracker", [{"subject": "z", "title": "Z", "state": "started"}], age=-30)
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", skewed)
+        self.assertEqual(code, 0, "a clock a little ahead is tolerated")
 
     def test_an_open_change_request_links_planned_work_and_moves_it_to_review(self) -> None:
         self.lead({"planned": [
@@ -817,6 +824,66 @@ class ReconcileTests(unittest.TestCase):
         again = self.snapshot("forge", json.loads(Path(forge).read_text())["items"])
         code, result = run_tool(self.directory, "reconcile", "--snapshot", again)
         self.assertEqual((code, result["drift"]), (0, False))
+
+    def test_one_pass_reaches_the_fixed_point_whatever_order_the_snapshots_come_in(self) -> None:
+        tracker = [{"subject": "work-new", "title": "New", "state": "started"}]
+        forge = [{"subject": "work-new", "state": "open", "changeRequest": "change 31"}]
+        for order in (("forge", "tracker"), ("tracker", "forge")):
+            with self.subTest(order=order):
+                directory = self.root / f"state {'-'.join(order)}"
+                state_tool.init(directory, "Epic underway")
+                items = {"tracker": tracker, "forge": forge}
+                paths = [self.snapshot(source, items[source]) for source in order]
+                arguments = [argument for path in paths for argument in ("--snapshot", path)]
+                code, result = run_tool(directory, "reconcile", *arguments)
+                self.assertEqual((code, result["reports"]), (0, []), result)
+                self.assertEqual(state_tool.show(directory)["state"]["planned"], [
+                    {"subject": "work-new", "title": "New", "lane": None, "stage": "review",
+                     "changeRequest": "change 31"}])
+                code, result = run_tool(directory, "reconcile", *arguments)
+                self.assertEqual((code, result["drift"]), (0, False))
+
+    def test_no_merge_is_recovered_while_the_runner_holds_the_queue(self) -> None:
+        self.lead({"queue": [queue_item("work-m", changeRequest="change 41")]})
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-m]",
+                         changes={"stage": "merging"})
+        forge = self.snapshot("forge", [{"subject": "work-m", "state": "merged", "changeRequest": "change 41",
+                                         "head": HEAD_B}])
+        before = self.bytes()
+        # The runner has merged on the forge and not yet recorded it.
+        with state_tool.file_lock(self.directory / state_tool.QUEUE_LOCK):
+            code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["drift"], result["changes"]), (0, False, []), result)
+        self.assertEqual([(report["subject"], "runner is running" in report["note"]) for report in result["reports"]],
+                         [("work-m", True)])
+        self.assertEqual(self.bytes(), before)
+        # Once the runner has gone without recording it, the next pass recovers it.
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, [change["recovery"] for change in result["changes"]]), (0, [True]), result)
+        self.assertEqual(state_tool.show(self.directory)["state"]["queue"][0]["stage"], "merged")
+
+    def test_a_merge_the_runner_records_after_the_plan_is_left_as_the_runner_wrote_it(self) -> None:
+        self.lead({"queue": [queue_item("work-r", changeRequest="change 51")]})
+        forge = self.snapshot("forge", [{"subject": "work-r", "state": "merged", "changeRequest": "change 51",
+                                         "head": HEAD_B}])
+        planning = state_tool._plan
+
+        def runner_records_its_merge(*args: object) -> tuple:
+            planned = planning(*args)
+            version = state_tool.show(self.directory)["state"]["version"]
+            state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-r]",
+                             changes={"stage": "merged", "syncedHead": HEAD_A})
+            state_tool.append_journal(self.directory, kind="candidate.merged", subject="work-r", summary="Merged")
+            return planned
+
+        with mock.patch.object(state_tool, "_plan", runner_records_its_merge):
+            result = state_tool.reconcile(self.directory, [Path(forge)])
+        self.assertEqual((result["drift"], result["changes"]), (False, []))
+        shown = state_tool.show(self.directory)
+        self.assertEqual(shown["state"]["queue"][0]["syncedHead"], HEAD_A)
+        self.assertEqual([entry["summary"] for entry in shown["journal"] if entry["kind"] == "candidate.merged"],
+                         ["Merged"])
 
     def test_a_merge_the_runner_did_not_record_is_recorded_through_the_recovery_path(self) -> None:
         self.lead({
@@ -919,6 +986,17 @@ class PublicationTests(unittest.TestCase):
         code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
         self.assertEqual((code, acked["published"]["journalThrough"]), (0, 3))
 
+    def test_ack_never_claims_more_than_the_outbox_held(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        outbox = self.directory / "outbox" / "outbox.json"
+        outbox.parent.mkdir()
+        outbox.write_text(json.dumps({"version": version, "journalThrough": 2, "state": {}, "journal": []}))
+        code, refused = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
+        self.assertEqual((code, refused["code"]), (1, "ack_invalid"), "entry 3 was never in the outbox")
+        self.assertIn("outbox", refused["error"])
+        code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "2")
+        self.assertEqual((code, acked["published"]["journalThrough"]), (0, 2))
+
     def test_show_flags_a_publication_that_lags_the_record(self) -> None:
         code, shown = run_tool(self.directory, "show")
         self.assertEqual(shown["publication"], {"publishedVersion": None, "journalThrough": 0, "unpublishedEntries": 3,
@@ -931,6 +1009,16 @@ class PublicationTests(unittest.TestCase):
         code, shown = run_tool(self.directory, "show")
         self.assertTrue(shown["publication"]["lags"])
         self.assertEqual(shown["publication"]["publishedVersion"], version)
+        # An outbox is behind when the record or the journal has moved past it.
+        version = shown["state"]["version"]
+        outbox = self.directory / "outbox" / "outbox.json"
+        outbox.parent.mkdir()
+        outbox.write_text(json.dumps({"version": version, "journalThrough": 3, "state": {}, "journal": []}))
+        code, shown = run_tool(self.directory, "show")
+        self.assertEqual((shown["publication"]["outboxVersion"], shown["publication"]["outboxLags"]), (version, False))
+        state_tool.append_journal(self.directory, kind="decision.recorded", summary="Decision 4")
+        code, shown = run_tool(self.directory, "show")
+        self.assertTrue(shown["publication"]["outboxLags"], "a journal entry the outbox lacks is a lag")
         # The function renderers read is unchanged: exactly the state and the journal.
         self.assertEqual(sorted(state_tool.show(self.directory)), ["journal", "state"])
 

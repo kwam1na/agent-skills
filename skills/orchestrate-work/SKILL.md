@@ -243,21 +243,31 @@ in this order:
    - Anything it cannot settle, such as a completed child still planned, is
      reported and left for the lead.
    - A snapshot older than `--max-age` seconds (900 by default) is refused
-     with `snapshot_stale` and nothing is written: list the work again.
+     with `snapshot_stale`, and one dated ahead of this machine's clock with
+     `snapshot_invalid`; nothing is written: list the work again.
+   - Tracker snapshots apply before forge snapshots, whatever their order, so
+     one pass settles both.
+   - A merge is never recovered while the runner holds the queue: it is
+     reported, and the next pass after the runner stops records it if the
+     runner did not.
    - It is idempotent and prints its changes as JSON, or `no drift`.
 3. **Render**, with the wrapper as above. Command publishers run as part of
    it. A `host` publisher, `{"id": "<id>", "kind": "host"}`, runs nothing: it
    writes `outbox/outbox.json` in the state directory, holding the record
-   version, the state and every journal entry not yet acknowledged.
+   `version`, the `journalThrough` id it reaches, the state and every journal
+   entry not yet acknowledged. Readers ignore fields they do not know, so
+   later projections can join these.
 4. **Publish** the outbox with the host's own tool, for a view whose store
    only the host can write.
 5. **Acknowledge** what went out:
 
    ```bash
-   python3 -B scripts/delivery_state.py --dir <state directory> ack --version <published version> --through <last journal id published>
+   python3 -B scripts/delivery_state.py --dir <state directory> ack --version <outbox version> --through <outbox journalThrough>
    ```
 
-   The next outbox then carries only later entries. `show` reports a
+   Acknowledge the outbox's own `version` and `journalThrough`, never the
+   record's: an acknowledgement beyond what the outbox held is refused with
+   `ack_invalid`. The next outbox then carries only later entries. `show` reports a
    publication or an outbox that lags the record, so an unpublished view is
    always visible.
 

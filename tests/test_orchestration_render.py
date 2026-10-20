@@ -487,7 +487,8 @@ class HostPublisherTests(DeliveryStateFixture):
         shown = state_tool(self.state_dir, "show")
         self.assertEqual(result["publishers"], [{"id": "live", "kind": "host", "ok": True,
                                                  "outbox": "outbox/outbox.json", "entries": len(shown["journal"]),
-                                                 "version": shown["state"]["version"]}])
+                                                 "version": shown["state"]["version"],
+                                                 "journalThrough": shown["journal"][-1]["id"]}])
         outbox = self.outbox()
         self.assertEqual(outbox["version"], shown["state"]["version"])
         self.assertEqual(outbox["state"], shown["state"])
@@ -495,7 +496,7 @@ class HostPublisherTests(DeliveryStateFixture):
         last = shown["journal"][-1]["id"]
         state_tool(self.state_dir, "ack", "--version", str(outbox["version"]), "--through", str(last))
         wrapper(self.state_dir, "--state-config", self.config([], host))
-        self.assertEqual(self.outbox()["journal"], [])
+        self.assertEqual((self.outbox()["journal"], self.outbox()["journalThrough"]), ([], last))
         state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "After the ack")
         wrapper(self.state_dir, "--state-config", self.config([], host))
         self.assertEqual([entry["summary"] for entry in self.outbox()["journal"]], ["After the ack"])
@@ -508,6 +509,10 @@ class HostPublisherTests(DeliveryStateFixture):
                    "--patch", json.dumps({"meta": {"headline": "Moved on"}}))
         publication = state_tool(self.state_dir, "show")["publication"]
         self.assertEqual((publication["outboxVersion"], publication["outboxLags"]), (version, True))
+        # A journal entry alone moves no version, and still leaves the outbox behind.
+        wrapper(self.state_dir, "--state-config", self.config([], [{"id": "live", "kind": "host"}]))
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Journal only")
+        self.assertTrue(state_tool(self.state_dir, "show")["publication"]["outboxLags"])
 
     def test_a_host_publisher_takes_no_argv_and_no_view_may_claim_its_names(self) -> None:
         for publisher in ({"id": "live", "kind": "host", "argv": ["x"]}, {"id": "live", "kind": "shell"},

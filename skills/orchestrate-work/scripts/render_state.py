@@ -735,13 +735,16 @@ def _write_outbox(directory: Path, publisher_id: str, shown: dict) -> dict:
         return {**entry, "ok": False, "error": str(error)}
     through = published["journalThrough"] if published else 0
     journal = [item for item in shown["journal"] if item["id"] > through]
-    outbox = {"version": shown["state"]["version"], "state": shown["state"], "journal": journal}
+    # Readers ignore fields they do not know, so later projections can join these.
+    outbox = {"version": shown["state"]["version"], "journalThrough": journal[-1]["id"] if journal else through,
+              "state": shown["state"], "journal": journal}
     relative = f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE}"
     try:
         _write_atomically(directory / OUTBOX_DIRECTORY / OUTBOX_FILE, dumps(outbox).encode("utf-8"))
     except OSError as failure:
         return {**entry, "ok": False, "error": f"could not write the outbox: {failure.strerror or failure}"}
-    return {**entry, "ok": True, "outbox": relative, "entries": len(journal), "version": outbox["version"]}
+    return {**entry, "ok": True, "outbox": relative, "entries": len(journal), "version": outbox["version"],
+            "journalThrough": outbox["journalThrough"]}
 
 
 def render(directory: Path, config: object) -> tuple[int, dict]:
