@@ -159,6 +159,11 @@ def _markdown_text(value: object) -> str:
     return _markdown_escape(flat) or "none"
 
 
+def _markdown_number(value: object) -> str:
+    """A record's own number, written so no renderer renumbers it as a list."""
+    return f"{_markdown_text(value)}\\."
+
+
 def _markdown_section(title: str, rows: list[str], empty: str) -> list[str]:
     return [f"## {title}", "", *(rows or [empty]), ""]
 
@@ -186,11 +191,12 @@ def render_markdown(document: dict) -> str:
 
     rows = []
     for item in sorted(state["queue"], key=lambda entry: (entry["order"], entry["subject"])):
+        # A bullet, not an ordered list: the order is the record's, not Markdown's.
         rows.append(
-            f"{_markdown_text(item['order'])}. {_markdown_text(item['subject'])}: {_markdown_text(item['title'])}, {_markdown_text(item['stage'])}"
+            f"- {_markdown_number(item['order'])} {_markdown_text(item['subject'])}: {_markdown_text(item['title'])}, {_markdown_text(item['stage'])}"
             f" · lane {_markdown_text(item['lane'])} · head {_markdown_text(item['head'])}"
         )
-        rows.extend(f"   - {_markdown_text(check['id'])}: {_markdown_text(check['state'])}" for check in item["checks"])
+        rows.extend(f"  - {_markdown_text(check['id'])}: {_markdown_text(check['state'])}" for check in item["checks"])
     lines += _markdown_section("Queue", rows, "The queue is empty.")
 
     rows = [
@@ -210,7 +216,7 @@ def render_markdown(document: dict) -> str:
     lines += _markdown_section("Leases", rows, "No leases held.")
 
     rows = [
-        f"- {_markdown_text(entry['id'])}. {_markdown_text(entry['at'])} {_markdown_text(entry['kind'])}"
+        f"- {_markdown_number(entry['id'])} {_markdown_text(entry['at'])} {_markdown_text(entry['kind'])}"
         f" · lane {_markdown_text(entry['lane'])} · subject {_markdown_text(entry['subject'])}: {_markdown_text(entry['summary'])}"
         for entry in reversed(document["journal"])
     ]

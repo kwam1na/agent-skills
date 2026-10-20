@@ -443,11 +443,11 @@ EMPTY_STATE = {
     "extensions": {},
 }
 PINNED_EMPTY_VIEWS = {
-    "delivery.md": "c5e26d237571bf6fa306a93914db9a563cdcacade807bf59b9f2a55f109f337b",
+    "delivery.md": "1c0c8f7680eb5a0bff91b9dd347d5d7fd01337e53b65aeed46c4a2328880edb3",
     "delivery.html": "34387ce01e8c9e0e1dccf9ef9ca67a61ce60419839ba2a8f375975736d305927",
 }
 PINNED_VIEWS = {
-    "delivery.md": "1e3672499c653c1a703eb569d8a6ff2d55d1ba77039df962b408683ad54bde87",
+    "delivery.md": "8c719ca1d3c0a48d4baebec90cb6b3ae3b7ab647d053060484e814759a2aabeb",
     "delivery.html": "52db5a1e5fbd8d95a3943f76010f60d29fe0ad9c722cfb2d209995eaa39c4d60",
 }
 
@@ -732,6 +732,32 @@ class MarkdownRendererTests(DeliveryStateFixture):
         view = render_state.render_markdown(json.loads(json.dumps(self.document, ensure_ascii=False)))
         self.assertTrue(view)
         return view
+
+    def test_the_record_numbers_survive_markdown_list_semantics(self) -> None:
+        # Markdown renumbers an ordered list from its first marker and nests
+        # one inside a bullet, so the view must never lean on its numbering.
+        state = json.loads(json.dumps(FIXED_STATE))
+        item = state["queue"][0]
+        state["queue"] = [
+            {**item, "order": order, "subject": f"change-{order}",
+             "checks": [{"id": "unit", "state": "passed"}] if order == 7 else []}
+            for order in (12, 3, 7)
+        ]
+        journal = [{**FIXED_JOURNAL[1], "id": entry_id} for entry_id in (1, 2, 10)]
+        view = render_state.render_markdown({"state": state, "journal": journal})
+        lines = view.splitlines()
+        for line in lines:
+            with self.subTest(line=line):
+                # No line, nested or not, opens an ordered list.
+                self.assertNotRegex(line, r"^\s*(?:[-*+]\s+)*\d{1,9}[.)](?:\s|$)")
+        queue = lines[lines.index("## Queue") + 2 : lines.index("## Lanes") - 1]
+        self.assertEqual(
+            [line.split(":")[0] for line in queue],
+            ["- 3\\. change-3", "- 7\\. change-7", "  - unit", "- 12\\. change-12"],
+        )
+        rows = lines[lines.index("## Journal") + 2 :]
+        # Newest first, each with the id the journal holds.
+        self.assertEqual([row.split(" ")[1] for row in rows], ["10\\.", "2\\.", "1\\."])
 
     def test_state_text_renders_inert(self) -> None:
         view = self.render()
