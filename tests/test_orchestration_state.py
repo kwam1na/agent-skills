@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -895,6 +896,102 @@ class SchemaAgreementTests(unittest.TestCase):
             for class_id, pattern in LEAKAGE_PATTERNS:
                 with self.subTest(path=path.name, pattern=class_id):
                     self.assertIsNone(pattern.search(text))
+
+
+GUIDE = SKILL / "references/orchestration-guide.md"
+ESCALATION_LEAD_IN = "The operator is brought in only for:"
+# The closed list of cases that bring the operator into the loop. A change
+# here changes when every lead stops to ask; make it deliberately.
+OPERATOR_ESCALATIONS = [
+    "a release or production approval the binding requires;",
+    "a change to the approved scope or finish line;",
+    "an irreversible or outward-facing action not already authorized;",
+    "a permission or access grant the lead does not hold;",
+    "owner intent that is genuinely ambiguous, where neither the plan nor standing direction settles it.",
+]
+
+
+def section(text: str, heading: str) -> str:
+    """The body of one Markdown section, up to the next heading of any level."""
+    lines = text.splitlines()
+    start = lines.index(heading) + 1
+    end = next((i for i in range(start, len(lines)) if lines[i].startswith("#")), len(lines))
+    return "\n".join(lines[start:end])
+
+
+LIST_ITEM = re.compile(r"^(?:[-*+]|\d+[.)])\s+(.*)$")
+
+
+def bullets_after(text: str, lead_in: str) -> list[str]:
+    """The whole list that follows a lead-in line, as Markdown renders it.
+
+    Any list marker starts an item, an indented line continues it, and a blank
+    line does not end the list when another item follows, so an item added
+    after a gap or with another marker is still counted.
+    """
+    lines = text.splitlines()
+    index = lines.index(lead_in) + 1
+    items: list[str] = []
+    while index < len(lines):
+        line = lines[index]
+        item = LIST_ITEM.match(line)
+        if item:
+            items.append(item.group(1).strip())
+        elif line.startswith((" ", "\t")) and line.strip() and items:
+            items[-1] += " " + line.strip()
+        elif line.strip():
+            break
+        index += 1
+    return items
+
+
+class SkillTextTests(unittest.TestCase):
+    def test_every_journal_kind_has_exactly_one_tracker_update_instruction(self) -> None:
+        kinds = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))["delivery-journal/1"]["properties"]["kind"]["enum"]
+        table = section(GUIDE.read_text(encoding="utf-8"), "### Tracker updates")
+        rows = [line for line in table.splitlines() if line.startswith("| `")]
+        mapped = [row.split("`")[1] for row in rows]
+        # A journal kind added to the schema without an update instruction,
+        # or an instruction for a kind that does not exist, fails here.
+        self.assertEqual(sorted(mapped), sorted(kinds))
+        self.assertEqual(len(mapped), len(set(mapped)))
+        for row in rows:
+            with self.subTest(row=row):
+                instruction = row.split("|")[2].strip()
+                self.assertTrue(instruction.startswith(("On the ", "None: ")), instruction)
+                # An update is never a gate: no instruction waits on, blocks or
+                # orders anything after itself.
+                self.assertIsNone(re.search(r"\b(?:wait(?:s|ing|ed)?|block(?:s|ing)?|until|till|before|after|gate[sd]?|hold(?:s|ing)?)\b", instruction), instruction)
+
+    def test_the_operator_escalation_list_is_closed_and_pinned(self) -> None:
+        for path in (SKILL / "SKILL.md", GUIDE):
+            with self.subTest(path=path.name):
+                text = path.read_text(encoding="utf-8")
+                self.assertEqual(text.count(ESCALATION_LEAD_IN), 1)
+                self.assertEqual(bullets_after(text, ESCALATION_LEAD_IN), OPERATOR_ESCALATIONS)
+                normalized = " ".join(text.split())
+                # No second list of operator cases under other wording.
+                self.assertEqual(len(re.findall(r"operator is (?:\w+ )?brought in", normalized)), 1)
+                # The only place that asks the operator anything is the
+                # release approval, the list's first case.
+                asks = re.findall(r"\bask(?:s|ing)? the operator\b[^.]*", normalized, re.IGNORECASE)
+                self.assertTrue(all("approve" in ask for ask in asks), asks)
+
+    def test_the_lead_authority_rules_are_stated(self) -> None:
+        for path in (SKILL / "SKILL.md", GUIDE):
+            text = " ".join(path.read_text(encoding="utf-8").split())
+            for rule in ("does not ask", "Never hold approved work.", "Never leave a lane idle.",
+                         "Reconcile at every event.", "Lanes escalate to the lead, never to the operator",
+                         "the epic's child items", "before the views are published", "disagrees with the record",
+                         "never delays acting or publishing", "except a change the operator made", "never reverting" if path == GUIDE else "never reverted"):
+                with self.subTest(path=path.name, rule=rule):
+                    self.assertIn(rule, text)
+        brief = " ".join(section(GUIDE.read_text(encoding="utf-8"), "## Lane brief template").split())
+        # The brief's own sections are bold lines, so the whole template is one section.
+        for point in ("at start;", "at each decision you make", "at each review round", "pass to the lead to defer",
+                      "at hand-off", "Escalate only to the lead, never to the operator"):
+            with self.subTest(point=point):
+                self.assertIn(point, brief)
 
 
 if __name__ == "__main__":

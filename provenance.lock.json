@@ -305,11 +305,11 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "b65b8cdbcab3fd31fe27494a04edf8c19a282385d5ddad3449f7dab109c8c9f4"
+          "sha256": "54452008ebbc710923c8abc02a819eb3bdafa068bf2a06f620dab509d17dca25"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "b7e195e6692601bc2cae74f5fbcf0485dabe795905bf3b3714cc8e46fc9ebb35"
+          "sha256": "8e8ef6953298cfbb071d0928c87c296c4b3cfc1ddec6c44616a75aa397d0f1c4"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",

@@ -22,8 +22,10 @@ bounded change, use `$execute-work` instead.
 - `$review-work` runs each lane's review rounds within its bound.
 - `$compound-learning` preserves what the epic taught, at close-out.
 - The tracker capability, when configured, holds the epic, its tickets and
-  their states. Without it the delivery state and journal are the record, and
-  the lead reports which tracker operations were not performed.
+  their states, and receives an update at every milestone so it carries the
+  decisions made. Agents post with their host's own tracker tools. Without
+  it the delivery state and journal are the record, and the lead reports
+  which tracker operations were not performed.
 
 This workflow never calls the entry point that routed to it, and names no
 tracker, host or forge.
@@ -42,6 +44,48 @@ tracker, host or forge.
   `queue[i].syncedHead`, `meta.checking`, `meta.baseHead` and
   `meta.releasedHead`. Every write goes through the state tool, which checks
   the declared writer against this ownership.
+
+## Lead authority
+
+The lead owns the judgement calls within the approved plan and the operator's
+standing direction. It decides, records the decision in the journal and the
+tracker, and informs; it does not ask. That covers finding triage and
+deferrals, review-churn scope calls, fixing forward on a broken base, lane
+assignment and rebalancing, lease arbitration, merge order, and plan-text
+corrections that keep the approved finish line.
+
+The operator is brought in only for:
+
+- a release or production approval the binding requires;
+- a change to the approved scope or finish line;
+- an irreversible or outward-facing action not already authorized;
+- a permission or access grant the lead does not hold;
+- owner intent that is genuinely ambiguous, where neither the plan nor
+  standing direction settles it.
+
+Each escalation is one consolidated question with a recommendation; while it
+waits, the lead keeps every unblocked lane working, giving a lane blocked on
+it other unblocked work. Lanes escalate to the lead, never to the operator; a
+question only the operator can answer reaches the operator through the lead.
+
+- **Never hold approved work.** An approved, handed-off candidate enters the
+  queue at once, not batched behind unrelated work or held for a convenient
+  moment.
+- **Never leave a lane idle.** When a lane hands off, the lead assigns it the
+  next unblocked ticket or follow-up in the same step. An idle lane while
+  unblocked work exists is a lead defect, and the lead records it.
+- **Reconcile at every event.** At every event the lead reconciles the
+  delivery record with the forge, the tracker and the lanes, so the operator
+  never has to prompt a status check. For the tracker, the lead lists the
+  epic's child items with its host's tracker tools and compares them with the
+  record. An item the record lacks, such as a follow-up filed but never
+  recorded, is added before the views are published: to the follow-ups, or to
+  planned work only when the approved plan covers it. When a state disagrees
+  with the record, the record wins for states the lead or runner owns, except
+  a change the operator made, which is recorded as a decision and never
+  reverted. Like the
+  updates, this is one attempt; a failed listing is noted and never delays
+  acting or publishing.
 
 ## The focused lane profile
 
@@ -175,10 +219,16 @@ Work through [the lead checklist](references/orchestration-guide.md#lead-checkli
 decompose, assign, run the queue, publish, check the finish lines live,
 release with the operator's approval, and close out.
 
-## Telemetry
+## Telemetry and tracker updates
 
 Telemetry is best-effort. Each existing run emission is attempted at most
 once. A failure is skipped and never delays, gates or reorders the delivery.
+
+Tracker updates follow the same rule: one attempt, never a gate. The lead
+posts one at each journal milestone, as
+[the tracker updates table](references/orchestration-guide.md#tracker-updates)
+maps them, and each lane posts on its own ticket at the points its brief
+names. With no tracker tools, delivery proceeds and the gap is noted.
 
 ## Delivery state
 
