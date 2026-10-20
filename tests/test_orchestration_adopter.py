@@ -226,7 +226,9 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertIn(" ", str(self.root))
 
     def assertQueueRow(self, view: str, subject: str, stage: str) -> None:
-        row = re.search(rf"^\d+\. {re.escape(text(subject))}: .*$", view, re.M)
+        # A bullet whose order keeps its escaped marker, so Markdown never
+        # renumbers it.
+        row = re.search(rf"^- \d+\\\. {re.escape(text(subject))}: .*$", view, re.M)
         self.assertIsNotNone(row, f"{subject} is not in the view")
         self.assertIn(f", {text(stage)} · lane", row.group(0))
 
@@ -353,12 +355,12 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual(len(snapshots), 1)
         during = snapshots[0].read_text(encoding="utf-8")
         self.assertIn(f"- Now: {text('beta-copy')}", during)
-        rows = during.split(f"2. {text('beta-copy')}: ", 1)[1].split("\n", 2)
+        rows = during.split(f"- 2\\. {text('beta-copy')}: ", 1)[1].split("\n", 2)
         self.assertIn(", checking · lane", rows[0])
         # The runner records a check's state only when it finishes, so the running fallback
         # reads as pending. A tracked follow-up has the runner mark a check running as it
         # starts; when it lands, this expects running.
-        self.assertEqual(rows[1], f"   - {text('full')}: pending")
+        self.assertEqual(rows[1], f"  - {text('full')}: pending")
         view = adopter.view()
         self.assertQueueRow(view, "alpha-copy", "merged")
         self.assertQueueRow(view, "beta-copy", "merged")
