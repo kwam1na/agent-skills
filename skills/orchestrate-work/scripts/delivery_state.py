@@ -885,7 +885,7 @@ def read_outbox(directory: Path) -> dict | None:
         raise StateError("state_invalid", f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE} is not JSON") from None
     if (not isinstance(outbox, dict)
             or not all(isinstance(outbox.get(key), int) and not isinstance(outbox.get(key), bool)
-                       for key in ("version", "journalThrough"))):
+                       and outbox[key] >= 0 for key in ("version", "journalThrough"))):
         raise StateError("state_invalid", f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE} is malformed")
     return outbox
 

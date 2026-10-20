@@ -836,6 +836,27 @@ class ReconcileTests(unittest.TestCase):
         code, result = run_tool(self.directory, "reconcile", "--snapshot", again)
         self.assertEqual((code, result["drift"]), (0, False))
 
+    def test_a_snapshot_exactly_the_maximum_age_old_is_fresh_and_one_second_more_is_stale(self) -> None:
+        moment = datetime.datetime(2026, 10, 20, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        path = self.root / "boundary.json"
+        path.write_text(json.dumps({"takenAt": "2026-10-20T12:00:00Z", "source": "tracker", "items": []}),
+                        encoding="utf-8")
+        for elapsed, fresh in ((state_tool.SNAPSHOT_MAX_AGE_SECONDS, True), (state_tool.SNAPSHOT_MAX_AGE_SECONDS + 1, False)):
+            later = moment + datetime.timedelta(seconds=elapsed)
+
+            class Frozen(datetime.datetime):
+                @classmethod
+                def now(cls, tz=None):  # noqa: ANN001, ANN206 - the clock the tool reads
+                    return later
+
+            with self.subTest(elapsed=elapsed), mock.patch.object(state_tool.datetime, "datetime", Frozen):
+                if fresh:
+                    self.assertEqual(state_tool.read_snapshot(path, state_tool.SNAPSHOT_MAX_AGE_SECONDS)["items"], [])
+                else:
+                    with self.assertRaises(state_tool.StateError) as refused:
+                        state_tool.read_snapshot(path, state_tool.SNAPSHOT_MAX_AGE_SECONDS)
+                    self.assertEqual(refused.exception.code, "snapshot_stale")
+
     def test_one_pass_reaches_the_fixed_point_whatever_order_the_snapshots_come_in(self) -> None:
         tracker = [{"subject": "work-new", "title": "New", "state": "started"}]
         forge = [{"subject": "work-new", "state": "open", "changeRequest": "change 31"}]
@@ -1018,6 +1039,7 @@ class PublicationTests(unittest.TestCase):
         version = state_tool.show(self.directory)["state"]["version"]
         published = self.directory / state_tool.PUBLISHED_FILE
         for contents in ("not json", json.dumps({"version": version, "journalThrough": -5, "at": "x"}),
+                         json.dumps({"version": version, "journalThrough": 1, "at": "x", "extra": True}),
                          json.dumps({"version": version, "journalThrough": 1, "at": 3})):
             with self.subTest(contents=contents):
                 published.write_text(contents, encoding="utf-8")
@@ -1040,7 +1062,8 @@ class PublicationTests(unittest.TestCase):
     def test_an_unreadable_outbox_is_reported_as_a_lag(self) -> None:
         outbox = self.directory / "outbox" / "outbox.json"
         outbox.parent.mkdir()
-        for contents in ("garbage", json.dumps({"version": "one", "journalThrough": 1})):
+        for contents in ("garbage", json.dumps({"version": "one", "journalThrough": 1}),
+                         json.dumps({"version": -3, "journalThrough": -1})):
             with self.subTest(contents=contents):
                 outbox.write_text(contents, encoding="utf-8")
                 code, shown = run_tool(self.directory, "show")
@@ -1056,6 +1079,9 @@ class PublicationTests(unittest.TestCase):
         outbox.write_text(json.dumps({"version": version, "journalThrough": 2, "state": {}, "journal": []}))
         code, refused = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
         self.assertEqual((code, refused["code"]), (1, "ack_invalid"), "entry 3 was never in the outbox")
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"meta": {"headline": "Later"}})
+        code, refused = run_tool(self.directory, "ack", "--version", str(version + 1), "--through", "2")
+        self.assertEqual((code, refused["code"]), (1, "ack_invalid"), "the record's version, not the outbox's")
         self.assertIn("outbox", refused["error"])
         code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "2")
         self.assertEqual((code, acked["published"]["journalThrough"]), (0, 2))
