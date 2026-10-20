@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -382,6 +383,72 @@ class BoundedCommandTests(DeliveryStateFixture):
         self.assertTrue(result.stdout.isascii(), result.stdout)
         document = json.loads(result.stdout.decode("ascii"))
         self.assertEqual((result.returncode, document["renderers"][0]["output"]), (0, "caf\u00e9.md"), document)
+
+
+# A fixed state and journal, written directly so every timestamp is fixed:
+# the built-in views of it are pinned byte for byte.
+FIXED_STATE = {
+    "schemaVersion": "delivery-state/1",
+    "version": 7,
+    "meta": {
+        "headline": "Pinned delivery " + HOSTILE,
+        "updatedAt": "2026-10-20T12:00:00Z",
+        "baseHead": HEAD_A,
+        "releasedHead": None,
+        "checking": {
+            "now": {"subject": "change-1", "title": "Change one", "startedAt": "2026-10-20T11:59:00Z",
+                    "steps": [{"label": "sync", "state": "passed"}, {"label": "unit", "state": "running"}]},
+            "next": ["change-2"],
+        },
+    },
+    "lanes": [
+        {"id": "lane-1", "title": HOSTILE, "focus": "views", "state": "working", "waitingOn": None,
+         "since": "2026-10-20T10:00:00Z"},
+        {"id": "lane-2", "title": "Runner", "focus": "queue", "state": "blocked", "waitingOn": "lead",
+         "since": "2026-10-20T10:30:00Z"},
+    ],
+    "queue": [
+        {"order": 1, "subject": "change-1", "title": "Change one", "lane": "lane-1", "stage": "checking",
+         "head": HEAD_A, "syncedHead": "b" * 40, "leadInputs": ["codegen"], "reportedRounds": 2,
+         "runId": "run-1", "checks": [{"id": "unit", "state": "running", "detail": "3 of 9"}]},
+        {"order": 2, "subject": "change-2", "title": HOSTILE, "lane": None, "stage": "queued",
+         "head": "c" * 40, "syncedHead": None, "leadInputs": [], "reportedRounds": None, "runId": None,
+         "checks": []},
+    ],
+    "finish": [{"id": "finish-1", "text": "A release ships", "met": False},
+               {"id": "finish-2", "text": HOSTILE, "met": True}],
+    "followups": [{"id": "follow-1", "title": "Later <i>work</i>", "reference": "ticket-9"}],
+    "leases": [{"id": "dev-backend", "holder": "lead", "since": "2026-10-20T09:00:00Z"}],
+    "extensions": {"adopter": {"note": HOSTILE, "nested": [1, {"a": None}]}},
+}
+FIXED_JOURNAL = [
+    {"id": 1, "at": "2026-10-20T10:00:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": None,
+     "summary": "Assigned " + HOSTILE},
+    {"id": 2, "at": "2026-10-20T11:00:00Z", "kind": "candidate.handed", "lane": "lane-1", "subject": "change-1",
+     "summary": "Handed over"},
+]
+# sha256 of each built-in view of the fixed state. A change here is a change
+# to what every adopter's page shows; make it deliberately.
+PINNED_VIEWS = {
+    "delivery.md": "a02cad22aad1a5862b63cdf3beb5dd21b823ce35d6b94bb6758833612db3062e",
+    "delivery.html": "52db5a1e5fbd8d95a3943f76010f60d29fe0ad9c722cfb2d209995eaa39c4d60",
+}
+
+
+class PinnedViewTests(unittest.TestCase):
+    def test_the_built_in_views_of_a_fixed_state_are_byte_for_byte_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "state"
+            directory.mkdir()
+            (directory / "state.json").write_bytes(
+                (json.dumps(FIXED_STATE, indent=2, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8"))
+            (directory / "journal.jsonl").write_bytes(b"".join(
+                json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
+                for entry in FIXED_JOURNAL))
+            code, result = wrapper(directory)
+            self.assertEqual(code, 0, result)
+            digests = {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in PINNED_VIEWS}
+            self.assertEqual(digests, PINNED_VIEWS)
 
 
 class WrapperTests(DeliveryStateFixture):
