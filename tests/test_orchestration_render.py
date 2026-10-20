@@ -35,6 +35,8 @@ def run(argv: list[str], stdin: str | None = None) -> subprocess.CompletedProces
 
 def state_tool(directory: Path, *args: str, stdin: str | None = None) -> dict:
     result = run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(directory), *args], stdin)
+    # An encoding failure on stdout surfaces as empty output, not as JSON.
+    assert result.stdout, f"state tool printed nothing: {result.stderr}"
     document = json.loads(result.stdout)
     if result.returncode != 0:
         raise AssertionError(f"state tool refused {args}: {document}")
@@ -43,7 +45,16 @@ def state_tool(directory: Path, *args: str, stdin: str | None = None) -> dict:
 
 def wrapper(directory: Path, *args: str, stdin: str | None = None) -> tuple[int, dict]:
     result = run([sys.executable, "-B", str(WRAPPER), "--dir", str(directory), *args], stdin)
+    assert result.stdout, f"the wrapper printed nothing: {result.stderr}"
     return result.returncode, json.loads(result.stdout)
+
+
+def link(test: unittest.TestCase, path: Path, target: Path) -> None:
+    """Create a link, or skip where the platform does not let this user."""
+    try:
+        path.symlink_to(target, target_is_directory=target.is_dir())
+    except (OSError, NotImplementedError) as error:
+        test.skipTest(f"links are not available here: {error}")
 
 
 def python_argv(source: str, folder: Path, name: str) -> list[str]:
@@ -90,7 +101,7 @@ class DeliveryStateFixture(unittest.TestCase):
                 }
             ],
             "finish": [{"id": "finish-1", "text": HOSTILE, "met": False}],
-            "followups": [{"id": "follow-1", "title": "Later <i>work</i>", "reference": "ticket-9"}],
+            "followups": [{"id": "follow-1", "title": "Later <i>work</i> for the caf\u00e9 \u2713", "reference": "ticket-9"}],
             "extensions": {"adopter": {"note": HOSTILE, "nested": [1, {"a": None}]}},
         }
         state_tool(self.state_dir, "patch", "--writer", "lead", "--version", str(version), "--patch", json.dumps(changes))
@@ -104,7 +115,7 @@ class DeliveryStateFixture(unittest.TestCase):
         """An adopter renderer that echoes its stdin as its view."""
         return {
             "id": name,
-            "argv": python_argv("import sys\nsys.stdout.write(sys.stdin.read())\n", self.tools, name),
+            "argv": python_argv("import sys\nsys.stdout.buffer.write(sys.stdin.buffer.read())\n", self.tools, name),
             "output": f"{name}.json",
         }
 
@@ -132,7 +143,7 @@ class WrapperTests(DeliveryStateFixture):
         publisher = {"id": "store", "argv": renderer["argv"]}
         state = json.loads((self.state_dir / "state.json").read_text(encoding="utf-8"))
         state["queue"][0]["stage"] = "teleported"
-        (self.state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (self.state_dir / "state.json").write_bytes(json.dumps(state).encode("utf-8"))
 
         code, result = wrapper(self.state_dir, "--state-config", self.config([renderer], [publisher]))
 
@@ -143,8 +154,8 @@ class WrapperTests(DeliveryStateFixture):
         self.assertFalse((self.state_dir / "witness.txt").exists())
 
     def test_an_invalid_journal_is_refused_before_any_renderer_runs(self) -> None:
-        with (self.state_dir / "journal.jsonl").open("a", encoding="utf-8") as stream:
-            stream.write('{"id": 9}\n')
+        with (self.state_dir / "journal.jsonl").open("ab") as stream:
+            stream.write(b'{"id": 9}\n')
         code, result = wrapper(self.state_dir, "--state-config", self.config([self.capture_renderer("echo")]))
         self.assertEqual(code, 2)
         self.assertEqual(result["code"], "journal_invalid")
@@ -153,13 +164,13 @@ class WrapperTests(DeliveryStateFixture):
     def test_an_adopter_renderer_receives_exactly_the_validated_state(self) -> None:
         code, result = wrapper(self.state_dir, "--state-config", self.config([self.capture_renderer("echo")]))
         self.assertEqual(code, 0, result)
-        received = json.loads((self.state_dir / "echo.json").read_text(encoding="utf-8"))
+        received = json.loads((self.state_dir / "echo.json").read_bytes().decode("utf-8"))
         self.assertEqual(received, self.document)
         self.assertEqual(set(received), {"state", "journal"})
 
     def test_extensions_reach_renderers_unchanged(self) -> None:
         wrapper(self.state_dir, "--state-config", self.config([self.capture_renderer("echo")]))
-        received = json.loads((self.state_dir / "echo.json").read_text(encoding="utf-8"))
+        received = json.loads((self.state_dir / "echo.json").read_bytes().decode("utf-8"))
         self.assertEqual(received["state"]["extensions"], {"adopter": {"note": HOSTILE, "nested": [1, {"a": None}]}})
 
     def test_publishers_receive_the_same_validated_state(self) -> None:
@@ -167,14 +178,14 @@ class WrapperTests(DeliveryStateFixture):
         publisher = {
             "id": "store",
             "argv": python_argv(
-                f"import sys\nopen({str(sink)!r}, 'w', encoding='utf-8').write(sys.stdin.read())\n",
+                f"import sys\nopen({str(sink)!r}, 'wb').write(sys.stdin.buffer.read())\n",
                 self.tools,
                 "store",
             ),
         }
         code, result = wrapper(self.state_dir, "--state-config", self.config(publishers=[publisher]))
         self.assertEqual(code, 0, result)
-        self.assertEqual(json.loads(sink.read_text(encoding="utf-8")), self.document)
+        self.assertEqual(json.loads(sink.read_bytes().decode("utf-8")), self.document)
         self.assertEqual(result["publishers"], [{"exitCode": 0, "id": "store", "ok": True}])
 
     def test_a_failing_publisher_is_recorded_and_does_not_fail_the_wrapper(self) -> None:
@@ -202,7 +213,7 @@ class WrapperTests(DeliveryStateFixture):
         self.assertIsNone(by_id["gone"]["exitCode"])
 
     def test_a_failing_renderer_keeps_its_previous_view_and_the_others_still_render(self) -> None:
-        (self.state_dir / "broken.txt").write_text("previous view\n", encoding="utf-8")
+        (self.state_dir / "broken.txt").write_bytes(b"previous view\n")
         broken = {
             "id": "broken",
             "argv": python_argv("import sys\nsys.stdout.write('half')\nsys.exit(1)\n", self.tools, "broken"),
@@ -212,7 +223,7 @@ class WrapperTests(DeliveryStateFixture):
         code, result = wrapper(self.state_dir, "--state-config", self.config(renderers))
         self.assertEqual(code, 1)
         self.assertEqual(result["ok"], False)
-        self.assertEqual((self.state_dir / "broken.txt").read_text(encoding="utf-8"), "previous view\n")
+        self.assertEqual((self.state_dir / "broken.txt").read_bytes(), b"previous view\n")
         self.assertTrue((self.state_dir / "delivery.md").exists())
         self.assertEqual([entry["ok"] for entry in result["renderers"]], [False, True])
 
@@ -258,8 +269,8 @@ class WrapperTests(DeliveryStateFixture):
     def test_a_view_is_never_written_through_a_link(self) -> None:
         outside = self.root / "outside"
         outside.mkdir()
-        (self.state_dir / "views").symlink_to(outside, target_is_directory=True)
-        (self.state_dir / "alias.md").symlink_to(self.state_dir / "state.json")
+        link(self, self.state_dir / "views", outside)
+        link(self, self.state_dir / "alias.md", self.state_dir / "state.json")
         before = (self.state_dir / "state.json").read_bytes()
         renderers = [
             {"id": "escape", "builtin": "markdown", "output": "views/escaped.md"},
@@ -273,7 +284,7 @@ class WrapperTests(DeliveryStateFixture):
         self.assertEqual((self.state_dir / "state.json").read_bytes(), before)
 
     def test_a_link_back_to_the_state_directory_cannot_create_a_reserved_file(self) -> None:
-        (self.state_dir / "self").symlink_to(self.state_dir, target_is_directory=True)
+        link(self, self.state_dir / "self", self.state_dir)
         renderers = [
             {"id": "lock", "builtin": "markdown", "output": "self/Queue.lock"},
             {"id": "state", "builtin": "markdown", "output": "self/STATE.json"},
@@ -285,6 +296,50 @@ class WrapperTests(DeliveryStateFixture):
         self.assertNotIn("queue.lock", {path.name.lower() for path in self.state_dir.iterdir()})
         state_tool(self.state_dir, "validate")
 
+    def test_the_result_is_ascii_and_a_configuration_on_stdin_may_carry_a_byte_order_mark(self) -> None:
+        config = self.config([self.capture_renderer("echo")]).encode("utf-8")
+        result = subprocess.run(
+            [sys.executable, "-B", str(WRAPPER), "--dir", str(self.state_dir), "--state-config", "-"],
+            input=b"\xef\xbb\xbf" + config,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result.stdout.decode("ascii")
+        self.assertTrue(json.loads(result.stdout)["ok"])
+        # The renderer received the document as UTF-8, its non-ASCII text intact.
+        received = json.loads((self.state_dir / "echo.json").read_bytes().decode("utf-8"))
+        self.assertEqual(received, self.document)
+
+    def test_a_result_with_non_ascii_text_reaches_any_console(self) -> None:
+        publisher = {
+            "id": "magasin-caf\u00e9",
+            "argv": python_argv(
+                "import sys\nsys.stderr.buffer.write('store\\u2028down \\u2713'.encode('utf-8'))\nsys.exit(4)\n",
+                self.tools,
+                "nonascii",
+            ),
+        }
+        result = subprocess.run(
+            [sys.executable, "-B", str(WRAPPER), "--dir", str(self.state_dir), "--state-config", self.config(publishers=[publisher])],
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads(result.stdout.decode("ascii"))
+        self.assertEqual(document["publishers"][0]["id"], "magasin-caf\u00e9")
+        self.assertIn("store\u2028down \u2713", document["publishers"][0]["error"])
+
+    def test_a_configuration_that_is_not_utf8_is_refused(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-B", str(WRAPPER), "--dir", str(self.state_dir), "--state-config", "-"],
+            input=b'{"renderers": [], "id": "\xff"}',
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(json.loads(result.stdout)["code"], "config_invalid")
+
     def test_the_wrapper_never_writes_the_state(self) -> None:
         before = {name: (self.state_dir / name).read_bytes() for name in ("state.json", "journal.jsonl")}
         wrapper(self.state_dir, "--state-config", self.config([self.capture_renderer("echo")]))
@@ -294,8 +349,9 @@ class WrapperTests(DeliveryStateFixture):
 
 class MarkdownRendererTests(DeliveryStateFixture):
     def render(self) -> str:
-        result = run([sys.executable, "-B", str(MARKDOWN)], json.dumps(self.document))
+        result = run([sys.executable, "-B", str(MARKDOWN)], json.dumps(self.document, ensure_ascii=False))
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout)
         return result.stdout
 
     def test_state_text_renders_inert(self) -> None:
@@ -325,14 +381,17 @@ class MarkdownRendererTests(DeliveryStateFixture):
         for heading in ("## Checking", "## Queue", "## Lanes", "## Finish line", "## Follow-ups", "## Leases", "## Journal"):
             self.assertIn(heading, view)
         self.assertIn("change\\-1", view)
+        # Non-ASCII state text arrives exactly, whatever the console encoding.
+        self.assertIn("caf\u00e9 \u2713", view)
         self.assertIn("queued", view)
         self.assertIn("decision\\.recorded", view)
 
 
 class StaticPageTests(DeliveryStateFixture):
     def render(self, document: dict | None = None) -> str:
-        result = run([sys.executable, "-B", str(STATIC_PAGE)], json.dumps(document or self.document))
+        result = run([sys.executable, "-B", str(STATIC_PAGE)], json.dumps(document or self.document, ensure_ascii=False))
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout)
         return result.stdout
 
     def embedded(self, page: str) -> str:
@@ -442,7 +501,7 @@ setTimeout(async () => {
     def run_page(self, scenario: dict, document: dict | None = None) -> dict:
         page = self.root / "page.html"
         page.write_text(
-            run([sys.executable, "-B", str(STATIC_PAGE)], json.dumps(document or self.document)).stdout,
+            run([sys.executable, "-B", str(STATIC_PAGE)], json.dumps(document or self.document, ensure_ascii=False)).stdout,
             encoding="utf-8",
         )
         shim = self.root / "shim.cjs"

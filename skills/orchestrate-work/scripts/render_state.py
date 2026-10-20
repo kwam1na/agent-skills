@@ -11,6 +11,11 @@ functions of it, so one can be replaced without touching the state.
 Exit codes: 0 when every renderer succeeded, 1 when a renderer failed, 2 when
 the state, the journal or the configuration was refused. A failing publisher
 is recorded in the result and never changes the exit code.
+
+All input and output is byte-exact and independent of the platform: the
+document reaches renderers and publishers as UTF-8, views are written as the
+bytes a renderer produced, configuration is read as UTF-8, and the result on
+stdout is ASCII JSON, so any console encoding can carry it.
 """
 
 from __future__ import annotations
@@ -234,17 +239,36 @@ def render(directory: Path, config: object) -> tuple[int, dict]:
     return (0 if ok else 1), {"ok": ok, "publishers": published, "renderers": rendered}
 
 
+def emit(value: object) -> None:
+    """Write ``value`` to stdout as ASCII JSON, whatever the console encoding."""
+    text = json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True) + "\n"
+    sys.stdout.flush()
+    sys.stdout.buffer.write(text.encode("ascii"))
+    sys.stdout.buffer.flush()
+
+
+def _utf8(data: bytes, what: str) -> str:
+    # A leading byte-order mark, as some Windows writers add, is accepted.
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise ConfigError(f"{what} is not UTF-8") from None
+
+
 def _load_config(args: argparse.Namespace) -> object:
     if args.binding is not None:
         try:
-            binding = json.loads(args.binding.read_text(encoding="utf-8"))
+            binding = json.loads(_utf8(args.binding.read_bytes(), "the binding"))
         except (OSError, json.JSONDecodeError) as error:
             raise ConfigError(f"could not read the binding: {error}") from None
         if not isinstance(binding, dict) or "state" not in binding:
             raise ConfigError("the binding declares no state member")
         return binding["state"]
     if args.state_config is not None:
-        text = sys.stdin.read() if args.state_config == "-" else args.state_config
+        if args.state_config == "-":
+            text = _utf8(sys.stdin.buffer.read(), "the state configuration on stdin")
+        else:
+            text = args.state_config
         try:
             return json.loads(text)
         except json.JSONDecodeError as error:
@@ -262,10 +286,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = _load_config(args)
     except ConfigError as error:
-        sys.stdout.write(dumps({"ok": False, "code": "config_invalid", "error": str(error)}))
+        emit({"ok": False, "code": "config_invalid", "error": str(error)})
         return 2
     code, result = render(args.dir, config)
-    sys.stdout.write(dumps(result))
+    emit(result)
     return code
 
 

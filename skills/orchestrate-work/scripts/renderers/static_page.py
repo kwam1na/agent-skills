@@ -236,7 +236,8 @@ def render(document: dict) -> str:
 
 
 def main() -> int:
-    document = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+    # A leading byte-order mark, as some Windows writers add, is accepted.
+    document = json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))
     sys.stdout.buffer.write(render(document).encode("utf-8"))
     return 0
 
