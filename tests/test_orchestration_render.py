@@ -272,6 +272,19 @@ class WrapperTests(DeliveryStateFixture):
         self.assertEqual(list(outside.iterdir()), [])
         self.assertEqual((self.state_dir / "state.json").read_bytes(), before)
 
+    def test_a_link_back_to_the_state_directory_cannot_create_a_reserved_file(self) -> None:
+        (self.state_dir / "self").symlink_to(self.state_dir, target_is_directory=True)
+        renderers = [
+            {"id": "lock", "builtin": "markdown", "output": "self/Queue.lock"},
+            {"id": "state", "builtin": "markdown", "output": "self/STATE.json"},
+            {"id": "fine", "builtin": "markdown", "output": "self/delivery.md"},
+        ]
+        code, result = wrapper(self.state_dir, "--state-config", self.config(renderers))
+        self.assertEqual(code, 1, result)
+        self.assertEqual([entry["ok"] for entry in result["renderers"]], [False, False, True])
+        self.assertNotIn("queue.lock", {path.name.lower() for path in self.state_dir.iterdir()})
+        state_tool(self.state_dir, "validate")
+
     def test_the_wrapper_never_writes_the_state(self) -> None:
         before = {name: (self.state_dir / name).read_bytes() for name in ("state.json", "journal.jsonl")}
         wrapper(self.state_dir, "--state-config", self.config([self.capture_renderer("echo")]))
@@ -411,7 +424,9 @@ if (scenario.adapter) {
       if (adapter.readRejects) { throw new Error("store down"); }
       return answer();
     },
-    subscribe: adapter.subscribe ? (cb) => { globalThis.__push = cb; return () => {}; } : undefined,
+    subscribe: adapter.subscribeThrows
+      ? () => { throw new Error("cannot subscribe"); }
+      : adapter.subscribe ? (cb) => { globalThis.__push = cb; return () => {}; } : undefined,
   };
 }
 new Function(program)();
@@ -514,6 +529,11 @@ setTimeout(async () => {
             }
         )
         self.assertIn("Newer push", shown["text"])
+        self.assertEqual(shown["source"], "live")
+
+    def test_a_store_that_cannot_subscribe_is_still_read(self) -> None:
+        shown = self.run_page({"adapter": {"document": self.live_document("Live headline"), "subscribeThrows": True}})
+        self.assertIn("Live headline", shown["text"])
         self.assertEqual(shown["source"], "live")
 
     def test_a_pushed_update_with_a_different_schema_version_is_ignored(self) -> None:

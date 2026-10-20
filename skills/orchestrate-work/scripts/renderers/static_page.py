@@ -186,11 +186,6 @@ PROGRAM = """
     /* A pushed update is newer than whatever read() returns, so once one is
        shown the read's answer is ignored. */
     var pushed = false;
-    if (typeof store.subscribe === "function") {
-      store.subscribe(function (doc) {
-        if (drawLive(doc) === "shown") { pushed = true; }
-      });
-    }
     Promise.resolve().then(function () { return store.read(); }).then(function (doc) {
       if (pushed) { return; }
       var result = drawLive(doc);
@@ -198,6 +193,16 @@ PROGRAM = """
     }, function () {
       if (!pushed) { fallBack("unread"); }
     });
+    /* A store that cannot subscribe still serves the read above. */
+    try {
+      if (typeof store.subscribe === "function") {
+        store.subscribe(function (doc) {
+          if (drawLive(doc) === "shown") { pushed = true; }
+        });
+      }
+    } catch (error) {
+      pushed = false;
+    }
   }
 })();
 """.strip()

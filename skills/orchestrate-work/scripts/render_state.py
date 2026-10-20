@@ -91,6 +91,10 @@ def _view_target(directory: Path, output: str) -> Path:
     parent = target.parent.resolve()
     if parent != root and root not in parent.parents:
         raise OSError(f"{output} is outside the state directory")
+    # A link back to the state directory must not create a reserved file
+    # that does not exist yet, such as the runner's queue lock.
+    if parent == root and _fold(target.name) in RESERVED_FOLDED:
+        raise OSError(f"{output} is a name the state tool owns")
     if target.exists():
         for name in RESERVED:
             reserved = directory / name
