@@ -541,7 +541,8 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertFalse(adopter.show()["publication"]["outboxLags"])
 
         # The lead publishes the outbox with its host's own tool, then acknowledges what it published.
-        last = outbox["journal"][-1]["id"]
+        last = outbox["journalThrough"]
+        self.assertEqual(last, outbox["journal"][-1]["id"])
         adopter.state_tool("ack", "--version", str(outbox["version"]), "--through", str(last))
         published = adopter.show()["publication"]
         self.assertEqual((published["publishedVersion"], published["journalThrough"], published["unpublishedEntries"],

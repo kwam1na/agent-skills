@@ -202,7 +202,8 @@ python3 -B scripts/render_state.py --dir <state directory>
   `publishers`. A renderer is any argv, or a built-in (`markdown` or
   `static-page`), that reads the validated `{state, journal}` on stdin and
   writes one view on stdout to its `output` inside the state directory. A
-  publisher is any argv that puts the same document somewhere a view reads.
+  publisher is any argv that puts the same document somewhere a view reads,
+  or a `host` publisher that leaves an outbox for the lead (see below).
 - With no configuration it renders both built-ins, `delivery.md` and
   `delivery.html`.
 - It exits 0 when every renderer succeeded and 1 when one failed. A failing

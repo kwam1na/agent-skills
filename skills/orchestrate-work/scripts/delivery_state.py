@@ -946,28 +946,33 @@ def ack(directory: Path, *, version: int, through: int) -> dict:
 
 
 def publication(directory: Path, shown: dict) -> dict:
-    """Whether what was published, and the outbox, lag the record."""
+    """Whether what was published, and the outbox, lag the record.
+
+    The record is fine when only an acknowledgement or an outbox is unreadable:
+    each is reported as an error and counted as a lag, never as a failure.
+    """
+    last = shown["journal"][-1]["id"] if shown["journal"] else 0
+    version = shown["state"]["version"]
+    errors = {}
     try:
         published = read_published(directory)
     except StateError as error:
-        # The record is fine; only the acknowledgement is not. Say so, as a lag.
-        return {"publishedVersion": None, "journalThrough": 0, "unpublishedEntries": len(shown["journal"]),
-                "outboxVersion": None, "outboxLags": False, "lags": True, "error": str(error)}
-    through = published["journalThrough"] if published else 0
-    unpublished = sum(1 for entry in shown["journal"] if entry["id"] > through)
+        published, errors["error"] = None, str(error)
     try:
         outbox = read_outbox(directory)
-    except StateError:
-        outbox = None
-    last = shown["journal"][-1]["id"] if shown["journal"] else 0
-    version = shown["state"]["version"]
+    except StateError as error:
+        outbox, errors["outboxError"] = None, str(error)
+    through = published["journalThrough"] if published else 0
+    unpublished = sum(1 for entry in shown["journal"] if entry["id"] > through)
     return {
         "publishedVersion": published["version"] if published else None,
         "journalThrough": through,
         "unpublishedEntries": unpublished,
         "outboxVersion": outbox["version"] if outbox else None,
-        "outboxLags": outbox is not None and (outbox["version"] < version or outbox["journalThrough"] < last),
+        "outboxLags": "outboxError" in errors or (
+            outbox is not None and (outbox["version"] < version or outbox["journalThrough"] < last)),
         "lags": published is None or published["version"] < version or unpublished > 0,
+        **errors,
     }
 
 

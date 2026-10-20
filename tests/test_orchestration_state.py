@@ -1025,10 +1025,29 @@ class PublicationTests(unittest.TestCase):
                 self.assertEqual(code, 0, "the record is still shown")
                 self.assertTrue(shown["publication"]["lags"])
                 self.assertIn("published.json", shown["publication"]["error"])
+        outbox = self.directory / "outbox" / "outbox.json"
+        outbox.parent.mkdir()
+        outbox.write_text(json.dumps({"version": version - 1, "journalThrough": 3, "state": {}, "journal": []}))
+        code, shown = run_tool(self.directory, "show")
+        self.assertEqual((shown["publication"]["outboxVersion"], shown["publication"]["outboxLags"]),
+                         (version - 1, True), "a bad acknowledgement hides nothing about the outbox")
+        outbox.write_text(json.dumps({"version": version, "journalThrough": 3, "state": {}, "journal": []}))
         code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
         self.assertEqual(code, 0, acked)
         code, shown = run_tool(self.directory, "show")
         self.assertEqual((shown["publication"]["lags"], "error" in shown["publication"]), (False, False))
+
+    def test_an_unreadable_outbox_is_reported_as_a_lag(self) -> None:
+        outbox = self.directory / "outbox" / "outbox.json"
+        outbox.parent.mkdir()
+        for contents in ("garbage", json.dumps({"version": "one", "journalThrough": 1})):
+            with self.subTest(contents=contents):
+                outbox.write_text(contents, encoding="utf-8")
+                code, shown = run_tool(self.directory, "show")
+                self.assertEqual(code, 0)
+                self.assertEqual((shown["publication"]["outboxVersion"], shown["publication"]["outboxLags"]),
+                                 (None, True))
+                self.assertIn("outbox", shown["publication"]["outboxError"])
 
     def test_ack_never_claims_more_than_the_outbox_held(self) -> None:
         version = state_tool.show(self.directory)["state"]["version"]
