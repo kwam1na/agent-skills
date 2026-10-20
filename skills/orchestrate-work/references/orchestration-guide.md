@@ -561,8 +561,9 @@ merges:
   `.gitattributes` says otherwise (`core.autocrlf`, `core.safecrlf`, and no
   global `core.attributesFile`);
 - no global excludes file hides an undeclared change (`core.excludesFile`);
-- renames are always followed, so a rename never looks like a conflict
-  (`diff.renames`, `merge.renames`);
+- renames are always followed, so a rename never looks like a conflict, and a
+  renamed directory never silently moves a file the candidate added there
+  (`merge.renames`, `merge.directoryRenames`, `diff.renames`);
 - no recorded resolution resolves a conflict for it (`rerere`);
 - status reads the files themselves (`core.fsmonitor`, `core.untrackedCache`);
 - merges and commits never open an editor;

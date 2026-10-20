@@ -77,15 +77,17 @@ PINNED_GIT_CONFIG = (
     f"core.attributesFile={os.devnull}",
     # A global excludes file never hides an undeclared change from status.
     f"core.excludesFile={os.devnull}",
-    # Renames are always followed, so a rename never looks like a conflict.
-    "diff.renames=true",
+    # Renames are always followed, so a rename never looks like a conflict;
+    # a renamed directory never silently moves a file the candidate added there.
     "merge.renames=true",
-    # Defence in depth, for settings no fixture can make bite: a recorded
-    # resolution never resolves a conflict for the runner, status reads the
-    # files rather than a cache, nothing opens an editor, and nothing reaches
-    # into submodules.
+    "merge.directoryRenames=conflict",
+    # A resolution recorded in the repository never resolves a conflict for the runner.
     "rerere.enabled=false",
     "rerere.autoUpdate=false",
+    # Defence in depth, for settings no fixture can make bite: diffs follow
+    # renames, status reads the files rather than a cache, nothing opens an
+    # editor, and nothing reaches into submodules.
+    "diff.renames=true",
     "core.fsmonitor=false",
     "core.untrackedCache=false",
     "core.editor=true",
