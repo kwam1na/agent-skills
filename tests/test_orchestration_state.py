@@ -960,12 +960,13 @@ class SkillTextTests(unittest.TestCase):
         for path in (SKILL / "SKILL.md", GUIDE):
             text = " ".join(path.read_text(encoding="utf-8").split())
             for rule in ("does not ask", "Never hold approved work.", "Never leave a lane idle.",
-                         "Reconcile at every event.", "Lanes escalate to the lead, never to the operator"):
+                         "Reconcile at every event.", "Lanes escalate to the lead, never to the operator",
+                         "the epic's child items", "before the views are published", "disagrees with the record"):
                 with self.subTest(path=path.name, rule=rule):
                     self.assertIn(rule, text)
         brief = " ".join(section(GUIDE.read_text(encoding="utf-8"), "## Lane brief template").split())
         # The brief's own sections are bold lines, so the whole template is one section.
-        for point in ("at start;", "at each decision you make", "at each review round", "at each deferral",
+        for point in ("at start;", "at each decision you make", "at each review round", "pass to the lead to defer",
                       "at hand-off", "Escalate only to the lead, never to the operator"):
             with self.subTest(point=point):
                 self.assertIn(point, brief)

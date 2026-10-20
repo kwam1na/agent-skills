@@ -68,7 +68,7 @@ proceeds and the lead notes the gap in its close-out.
 | Journal kind | Tracker update |
 | --- | --- |
 | `lane.assigned` | On the ticket: it moves to started, naming the lane and what it delivers. |
-| `candidate.handed` | On the ticket: the change request, its reviewed head and its review rounds. |
+| `candidate.handed` | On the ticket: the hand-off checked as a claim and queued, with its change request, reviewed head and review rounds. |
 | `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. |
 | `check.finished` | None: its outcome posts with `candidate.merged` or `candidate.stopped`. |
 | `candidate.merged` | On the ticket: the merge commit, the checks run, and any check reported but not awaited; the ticket moves to its review or completed state. |
@@ -127,8 +127,10 @@ posts assignments, merges and cross-lane decisions.
   it. Never hold approved work: an approved candidate enters the queue at
   once, not batched behind unrelated work or held for a convenient moment.
 - Add the candidate to `queue[]` with its `head`, `leadInputs`,
-  `reportedRounds` and `runId`, set its lane to `handed`, and journal
-  `candidate.handed`.
+  `reportedRounds` and `runId`, and journal `candidate.handed`. The queue
+  element now carries the candidate. In the same step, reassign the lane
+  (step 3): its `lanes[]` element moves to `assigned` with its new focus. Set
+  it to `handed` only when no unblocked work exists for it, and record that.
 - Before the run, make sure the lead holds every lease a named lead input
   needs: its holder in `leases[]` must equal the name passed as `--lead`. Get
   it through the lease sequence in the coordination protocol (request,
@@ -139,6 +141,8 @@ posts assignments, merges and cross-lane decisions.
   candidate again to re-queue it. A re-queued candidate runs again, still
   pinned to its reviewed `head` or the runner's last `syncedHead`; write a new
   reviewed `head` into its queue element first when the lane hands off again.
+  A candidate returned to its lane takes priority over the lane's current
+  assignment; say so in the message that returns it.
 
   | Code | What the lead does |
   | --- | --- |
@@ -163,8 +167,10 @@ posts assignments, merges and cross-lane decisions.
   | `queue_locked` | Another runner holds the queue. Wait for it, or raise `--wait`. |
   | `runner_error` | Read the result document and the runner's output; investigate before retrying. |
 
-- Mark the lane `done` or reassign it when its candidate merges, and move its
-  ticket to its review or completed state through the tracker capability.
+- When a candidate merges, move its ticket to its review or completed state
+  through the tracker capability. Mark its lane `done` only when the lane was
+  left `handed`, with nothing assigned at hand-off; a reassigned lane is
+  already working its next ticket.
 
 ### 5. Publish
 
@@ -301,7 +307,8 @@ Post on your own ticket, with your host's tracker tools:
 - at start;
 - at each decision you make: what and why;
 - at each review round: the lenses' verdicts, the findings and the fixes;
-- at each deferral, linking the follow-up;
+- at each finding you pass to the lead to defer, naming it; the lead's
+  decision post links the follow-up;
 - at hand-off: the change request, the head, the rounds and the validation.
 
 One attempt each, never a gate. With no tracker tools, carry on and say so
@@ -359,7 +366,15 @@ operator.
 - **Reconcile at every event.** At every event, whether a hand-off, a runner
   result, a lane message or an operator message, the lead reconciles the
   delivery record with the forge, the tracker and the lanes before acting, so
-  the operator never has to prompt a status check.
+  the operator never has to prompt a status check. Tracker reconciliation
+  mirrors the forge's, so no item depends on the lead remembering to record
+  it:
+  - List the epic's child items with the host's tracker tools and compare
+    them with the record.
+  - Add any item the record lacks, such as a follow-up or deferral filed but
+    never recorded, as planned work or to `followups[]`, before the views are
+    published.
+  - Correct any item whose tracker state disagrees with the record.
 
 ## Coordination protocol
 
@@ -369,7 +384,9 @@ These rules hold whatever the host offers for sessions and messages.
 
 - Send one consolidated message per lane per milestone: an assignment, a
   decision, a hand-off, a merge. Do not stream progress; a lane's own task
-  list and its final report carry that.
+  list and its final report carry that. This rule covers session messages,
+  not the tracker updates the lane brief and the tracker updates table
+  require.
 - Retitle a lane in the same step as its assignment, so its title always
   names the ticket it is working on.
 - When the host holds or refuses a message, keep the undelivered text in the

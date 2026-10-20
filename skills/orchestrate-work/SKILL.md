@@ -75,7 +75,11 @@ answer reaches the operator through the lead.
   unblocked work exists is a lead defect, and the lead records it.
 - **Reconcile at every event.** At every event the lead reconciles the
   delivery record with the forge, the tracker and the lanes, so the operator
-  never has to prompt a status check.
+  never has to prompt a status check. For the tracker, the lead lists the
+  epic's child items with its host's tracker tools and compares them with the
+  record: an item the record lacks, such as a follow-up filed but never
+  recorded, is added as planned work or a follow-up before the views are
+  published, and an item whose state disagrees with the record is corrected.
 
 ## The focused lane profile
 
