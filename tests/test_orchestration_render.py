@@ -779,6 +779,10 @@ class MarkdownRendererTests(DeliveryStateFixture):
                              ("a|b", "a\\|b")):
             with self.subTest(raw=raw):
                 self.assertEqual(text(raw), escaped)
+        # A trailing "#" run after a space would close the headline's heading.
+        for raw, escaped in (("Fix issue #", "Fix issue \\#"), ("Fix ##", "Fix \\##"), ("C# and F#", "C# and F#")):
+            with self.subTest(raw=raw):
+                self.assertEqual(text(raw), escaped)
         # Bare autolinks: a scheme's "://", "www." and e-mail addresses.
         for raw, escaped in (("https://x.test/p", "https\\://x.test/p"), ("see WWW.x.test", "see WWW\\.x.test"),
                              ("a@b.co", "a\\@b.co"), ("mailto:a@b.co", "mailto:a\\@b.co")):
@@ -787,7 +791,10 @@ class MarkdownRendererTests(DeliveryStateFixture):
         # At the start of a value, which can start a line or list-item content:
         # headings, list markers, quotes, tables and ordered-list markers.
         for raw, escaped in (("# h", "\\# h"), ("- l", "\\- l"), ("+ l", "\\+ l"), ("> q", "\\> q"), ("| t", "\\| t"),
-                             ("12. o", "12\\. o"), ("3) o", "3\\) o"), ("  # h", "\\# h"), ("12 o", "12 o")):
+                             ("12. o", "12\\. o"), ("3) o", "3\\) o"), ("  # h", "\\# h"), ("12 o", "12 o"),
+                             ("#", "\\#"), ("-", "\\-"), ("7.", "7\\."),
+                             # Not a block marker without a following space.
+                             ("#tag", "#tag"), ("-x", "-x"), ("+1", "+1"), ("1.5", "1.5")):
             with self.subTest(raw=raw):
                 self.assertEqual(text(raw), escaped)
 

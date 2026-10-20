@@ -88,8 +88,10 @@ CHUNK_BYTES = 64 * 1024
 # entities and tables.
 _MARKDOWN_INLINE = frozenset("\\`*_~[]<>&|")
 # At the start of a value, which may start a line or a list item's content:
-# headings, list markers, block quotes and tables.
-_MARKDOWN_LINE_START = frozenset("#-+>|")
+# block quotes and tables at once; headings and list markers only when a space
+# follows or the value ends there, since only then do they open a block.
+_MARKDOWN_LINE_START = frozenset(">|")
+_MARKDOWN_MARKER_START = frozenset("#-+")
 
 
 def _markdown_escape(text: str) -> str:
@@ -99,6 +101,7 @@ def _markdown_escape(text: str) -> str:
         if (
             character in _MARKDOWN_INLINE
             or (index == 0 and character in _MARKDOWN_LINE_START)
+            or (index == 0 and character in _MARKDOWN_MARKER_START and _opens_block(text, 1))
             # An image opener; its bracket is escaped too.
             or (character == "!" and after == "[")
             # GitHub's bare autolinks: a scheme's "://", "www." and e-mail.
@@ -112,9 +115,18 @@ def _markdown_escape(text: str) -> str:
     escaped = "".join(out)
     # An ordered-list marker: digits and "." or ")" at the start.
     digits = len(text) - len(text.lstrip("0123456789"))
-    if 0 < digits and text[digits : digits + 1] in {".", ")"}:
+    if 0 < digits and text[digits : digits + 1] in {".", ")"} and _opens_block(text, digits + 1):
         escaped = text[:digits] + "\\" + escaped[digits:]
+    # A trailing run of "#" after a space would close a heading and vanish.
+    run = len(escaped) - len(escaped.rstrip("#"))
+    if run and (run == len(escaped) or escaped[-run - 1] in " \t"):
+        escaped = escaped[:-run] + "\\" + escaped[-run:]
     return escaped
+
+
+def _opens_block(text: str, index: int) -> bool:
+    """A block marker ending before ``index`` is followed by space or nothing."""
+    return index >= len(text) or text[index] in " \t"
 
 
 def _markdown_text(value: object) -> str:

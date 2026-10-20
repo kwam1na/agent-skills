@@ -321,7 +321,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "1fa09292c4f55ddc707c7dab184deda23467aa410585e4ea9b37a51c87cf94ce"
+          "sha256": "5052d2b6565ec2ceb98a9d84cbbd797113501ab11266afc437b084074ff440ee"
         }
       ],
       "owner": "delivery-agent/user-delegated",
