@@ -58,6 +58,41 @@ STATE_PATCH_ATTEMPTS = 5
 # The skill's renderer wrapper, called after every state write.
 RENDER_WRAPPER = Path(__file__).resolve().parent / "render_state.py"
 RENDER_TIMEOUT_SECONDS = 120
+# Settings the runner's own git commands depend on, pinned on every call so a
+# user's global or system config cannot change what the runner commits, sees
+# or merges. They are pinned rather than isolated: dropping global and system
+# config would also drop the sign-in helpers, url rewrites and ssh settings
+# that fetch and push need. A pin overrides every config level, the
+# repository's own included; settings outside this set, and .gitattributes,
+# still apply, and argv the binding declares keeps the user's full config.
+PINNED_GIT_CONFIG = (
+    # Nothing is signed or required to be signed, so no step fails or waits on a signing prompt.
+    "commit.gpgsign=false",
+    "push.gpgSign=false",
+    "merge.verifySignatures=false",
+    # Bytes are committed as tools wrote them, unless the repository's own
+    # .gitattributes says otherwise; a global attributes file never applies.
+    "core.autocrlf=false",
+    "core.safecrlf=false",
+    f"core.attributesFile={os.devnull}",
+    # A global excludes file never hides an undeclared change from status.
+    f"core.excludesFile={os.devnull}",
+    # Renames are always followed, so a rename never looks like a conflict;
+    # a renamed directory never silently moves a file the candidate added there.
+    "merge.renames=true",
+    "merge.directoryRenames=conflict",
+    # A resolution recorded in the repository never resolves a conflict for the runner.
+    "rerere.enabled=false",
+    "rerere.autoUpdate=false",
+    # Defence in depth, for settings no fixture can make bite: diffs follow
+    # renames, status reads the files rather than a cache, nothing opens an
+    # editor, and nothing reaches into submodules.
+    "diff.renames=true",
+    "core.fsmonitor=false",
+    "core.untrackedCache=false",
+    "core.editor=true",
+    "submodule.recurse=false",
+)
 # Folders git keeps in its own directory; workRoot never sits in one of them.
 GIT_OWN_DIRECTORIES = frozenset({"objects", "refs", "worktrees", "hooks", "info", "logs", "modules", "lfs", "rr-cache"})
 # How long a killed process's output is drained before the runner stops waiting.
@@ -448,6 +483,8 @@ class Runner:
 
     def git(self, *args: str, cwd: Path | None = None, check: bool = True, stdin: str | None = None) -> Completed:
         prefix = ["git"]
+        for setting in PINNED_GIT_CONFIG:
+            prefix += ["-c", setting]
         if self.hooks_directory is not None:
             prefix += ["-c", f"core.hooksPath={self.hooks_directory}"]
         result = run_process([*prefix, *args], cwd=cwd or self.repository, env=self.environment(), stdin=stdin)
