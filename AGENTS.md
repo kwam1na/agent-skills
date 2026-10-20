@@ -34,6 +34,20 @@ python3 scripts/bootstrap-test-environment.py
 .venv/bin/python -m unittest discover -s tests -t . -p 'test_*.py'
 ```
 
+Refresh output digests with the provenance writer rather than by hand. It
+recomputes the sha256 of every output `provenance.lock.json` lists, changes
+nothing else, and leaves a current lock byte for byte; `--skill <id>` limits it
+to that catalog skill's entry, and `--check` lists stale outputs and exits 1
+without writing. A listed output that is missing is refused, so adding or
+removing an output stays a deliberate edit to the lock:
+
+```bash
+.venv/bin/python scripts/update-provenance.py
+```
+
+When a rebase or merge conflicts only in `provenance.lock.json`, take either
+side of the lock, run the writer, then validate the registry before continuing.
+
 The `-t .` option enters the test package's dependency guard. Without the test
 extra, that guard reports one installation failure before importing the suite.
 On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
