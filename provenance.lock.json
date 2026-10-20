@@ -322,6 +322,18 @@
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
           "sha256": "80948859c2370c3e89579e3a0ec933518f430e8dc1381a9033d0495bc3e1e14e"
+        },
+        {
+          "path": "skills/orchestrate-work/scripts/render_state.py",
+          "sha256": "16be218034d4321ca7fd7176602e567b9a513c1512d524d151b93b9b3d6da3e8"
+        },
+        {
+          "path": "skills/orchestrate-work/scripts/renderers/markdown.py",
+          "sha256": "d2312905eacf312321fd241efdf7e541dde8ce013c55b5fde081da8511f6cc86"
+        },
+        {
+          "path": "skills/orchestrate-work/scripts/renderers/static_page.py",
+          "sha256": "cd3515349be1e57d465c36d04c1806cda645e85e237009b67d2099afe097cdef"
         }
       ],
       "owner": "delivery-agent/user-delegated",
