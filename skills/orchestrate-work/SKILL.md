@@ -63,9 +63,10 @@ The operator is brought in only for:
 - owner intent that is genuinely ambiguous, where neither the plan nor
   standing direction settles it.
 
-Each escalation is one consolidated question with a recommendation. Lanes
-escalate to the lead, never to the operator; a question only the operator can
-answer reaches the operator through the lead.
+Each escalation is one consolidated question with a recommendation; while it
+waits, the lead keeps every unblocked lane working, giving a lane blocked on
+it other unblocked work. Lanes escalate to the lead, never to the operator; a
+question only the operator can answer reaches the operator through the lead.
 
 - **Never hold approved work.** An approved, handed-off candidate enters the
   queue at once, not batched behind unrelated work or held for a convenient
@@ -77,9 +78,13 @@ answer reaches the operator through the lead.
   delivery record with the forge, the tracker and the lanes, so the operator
   never has to prompt a status check. For the tracker, the lead lists the
   epic's child items with its host's tracker tools and compares them with the
-  record: an item the record lacks, such as a follow-up filed but never
-  recorded, is added as planned work or a follow-up before the views are
-  published, and an item whose state disagrees with the record is corrected.
+  record. An item the record lacks, such as a follow-up filed but never
+  recorded, is added before the views are published: to the follow-ups, or to
+  planned work only when the approved plan covers it. When a state disagrees
+  with the record, the record wins for states the lead or runner owns, and a
+  change the operator made is recorded as a decision, not reverted. Like the
+  updates, this is one attempt; a failed listing is noted and never delays
+  acting or publishing.
 
 ## The focused lane profile
 

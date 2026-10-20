@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -918,18 +919,28 @@ def section(text: str, heading: str) -> str:
     return "\n".join(lines[start:end])
 
 
+LIST_ITEM = re.compile(r"^(?:[-*+]|\d+[.)])\s+(.*)$")
+
+
 def bullets_after(text: str, lead_in: str) -> list[str]:
-    """The bullet list that directly follows a lead-in line, one item per bullet."""
+    """The whole list that follows a lead-in line, as Markdown renders it.
+
+    Any list marker starts an item, an indented line continues it, and a blank
+    line does not end the list when another item follows, so an item added
+    after a gap or with another marker is still counted.
+    """
     lines = text.splitlines()
     index = lines.index(lead_in) + 1
-    while not lines[index].strip():
-        index += 1
     items: list[str] = []
-    while index < len(lines) and (lines[index].startswith("- ") or lines[index].startswith("  ")):
-        if lines[index].startswith("- "):
-            items.append(lines[index][2:].strip())
-        else:
-            items[-1] += " " + lines[index].strip()
+    while index < len(lines):
+        line = lines[index]
+        item = LIST_ITEM.match(line)
+        if item:
+            items.append(item.group(1).strip())
+        elif line.startswith((" ", "\t")) and line.strip() and items:
+            items[-1] += " " + line.strip()
+        elif line.strip():
+            break
         index += 1
     return items
 
@@ -948,6 +959,9 @@ class SkillTextTests(unittest.TestCase):
             with self.subTest(row=row):
                 instruction = row.split("|")[2].strip()
                 self.assertTrue(instruction.startswith(("On the ", "None: ")), instruction)
+                # An update is never a gate: no instruction waits on, blocks or
+                # orders anything after itself.
+                self.assertIsNone(re.search(r"\b(?:wait|waits|block|blocks|until|before|gate)\b", instruction), instruction)
 
     def test_the_operator_escalation_list_is_closed_and_pinned(self) -> None:
         for path in (SKILL / "SKILL.md", GUIDE):
@@ -955,6 +969,13 @@ class SkillTextTests(unittest.TestCase):
                 text = path.read_text(encoding="utf-8")
                 self.assertEqual(text.count(ESCALATION_LEAD_IN), 1)
                 self.assertEqual(bullets_after(text, ESCALATION_LEAD_IN), OPERATOR_ESCALATIONS)
+                normalized = " ".join(text.split())
+                # No second list of operator cases under other wording.
+                self.assertEqual(len(re.findall(r"operator is (?:\w+ )?brought in", normalized)), 1)
+                # The only place that asks the operator anything is the
+                # release approval, the list's first case.
+                asks = re.findall(r"\bask(?:s|ing)? the operator\b[^.]*", normalized, re.IGNORECASE)
+                self.assertTrue(all("approve" in ask for ask in asks), asks)
 
     def test_the_lead_authority_rules_are_stated(self) -> None:
         for path in (SKILL / "SKILL.md", GUIDE):

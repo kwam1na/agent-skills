@@ -81,11 +81,11 @@ proceeds and the lead notes the gap in its close-out.
 | `release.finished` | On the epic: the release shipped, its commit and targets, and who approved it. |
 | `finish.met` | On the epic: the finish line and the evidence that met it. |
 | `decision.recorded` | On the ticket the decision concerns, or the epic: what, why, and who decided, the operator or the lead. A deferred finding links its follow-up item. |
-| `blocker.recorded` | On the blocked ticket: the blocker and who it waits on. |
+| `blocker.recorded` | On the blocked ticket: the blocker, and whose answer or work unblocks it. |
 | `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. |
 
-Lanes post on their own tickets at the points the lane brief names. The lead
-posts assignments, merges and cross-lane decisions.
+The lead posts the updates in this table, including every cross-lane
+decision. Lanes post on their own tickets at the points the lane brief names.
 
 ### 1. Plan
 
@@ -142,13 +142,14 @@ posts assignments, merges and cross-lane decisions.
   pinned to its reviewed `head` or the runner's last `syncedHead`; write a new
   reviewed `head` into its queue element first when the lane hands off again.
   A candidate returned to its lane takes priority over the lane's current
-  assignment; say so in the message that returns it.
+  assignment: set the lane's `focus` to the returned candidate, and say so in
+  the message that returns it.
 
   | Code | What the lead does |
   | --- | --- |
   | `candidate_moved` | The lane pushed after hand-off. Check the new head as a fresh hand-off, write it as `head`, and re-queue. |
   | `candidate_unknown`, `candidate_unresolved` | Add the candidate to `queue[]`, or fix its reference, and re-queue. |
-  | `already_merged` | Nothing to do; mark the lane done. |
+  | `already_merged` | Nothing to do; mark the lane `done` only if it was left `handed` (see the merge rule below). |
   | `source_conflict` | Return the candidate to its lane to resolve the listed paths. |
   | `lease_required` | Obtain the named lease through the lease sequence, record the lead (the `--lead` name) as holder, and re-queue. |
   | `lease_withdraw_failed` | Withdraw the lease material by hand, then re-queue. Nothing was pushed. |
@@ -372,9 +373,17 @@ operator.
   - List the epic's child items with the host's tracker tools and compare
     them with the record.
   - Add any item the record lacks, such as a follow-up or deferral filed but
-    never recorded, as planned work or to `followups[]`, before the views are
-    published.
-  - Correct any item whose tracker state disagrees with the record.
+    never recorded, before the views are published. It goes to `followups[]`;
+    it becomes planned work only when the approved plan already covers it,
+    and otherwise it is a scope change for the operator.
+  - When an item's tracker state disagrees with the record, the record wins
+    for states the lead or the runner owns, and the tracker item is
+    corrected. A tracker change the operator made is standing direction: the
+    lead updates the record and journals `decision.recorded`, never reverting
+    it.
+  - Reconciliation is best-effort, like the updates: one attempt. With no
+    tracker tools, or a listing that fails, the lead notes the gap; it never
+    delays acting or publishing.
 
 ## Coordination protocol
 
@@ -390,10 +399,11 @@ These rules hold whatever the host offers for sessions and messages.
 - Retitle a lane in the same step as its assignment, so its title always
   names the ticket it is working on.
 - When the host holds or refuses a message, keep the undelivered text in the
-  lead's notes, alert the operator once, and send it when delivery resumes.
+  lead's notes, inform the operator once (a notice, not a question), and send
+  it when delivery resumes.
   Never repeat a message to force it through.
 - A lane that is blocked on a decision it cannot make sends the lead one
-  short question and stops. Lanes never ask the operator directly; the lead
+  short question and stops. Lanes never go to the operator directly; the lead
   answers, or escalates under the lead authority rules. Progress and results
   arrive with the hand-off.
 
