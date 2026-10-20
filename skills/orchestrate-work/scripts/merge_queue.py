@@ -58,6 +58,31 @@ STATE_PATCH_ATTEMPTS = 5
 # The skill's renderer wrapper, called after every state write.
 RENDER_WRAPPER = Path(__file__).resolve().parent / "render_state.py"
 RENDER_TIMEOUT_SECONDS = 120
+# Settings the runner's own git commands depend on, pinned on every call so a
+# user's global or system config cannot change what the runner commits, sees
+# or merges. They are pinned rather than isolated: dropping global and system
+# config would also drop the sign-in helpers, url rewrites and ssh settings
+# that fetch and push need. Repository config and .gitattributes still apply,
+# and argv the binding declares keeps the user's full config.
+PINNED_GIT_CONFIG = (
+    # Commits are never signed, so they never fail or wait on a signing prompt.
+    "commit.gpgsign=false",
+    "tag.gpgsign=false",
+    # Bytes are committed as tools wrote them, unless .gitattributes says otherwise.
+    "core.autocrlf=false",
+    "core.safecrlf=false",
+    # A global excludes file never hides an undeclared change from status.
+    f"core.excludesFile={os.devnull}",
+    # A recorded resolution never resolves a conflict on the runner's behalf.
+    "rerere.enabled=false",
+    "rerere.autoUpdate=false",
+    # Status reads the files, not a monitor's cache of them.
+    "core.fsmonitor=false",
+    "core.untrackedCache=false",
+    # The merge commit is always made, and made without an editor.
+    "merge.ff=true",
+    "core.editor=true",
+)
 # Folders git keeps in its own directory; workRoot never sits in one of them.
 GIT_OWN_DIRECTORIES = frozenset({"objects", "refs", "worktrees", "hooks", "info", "logs", "modules", "lfs", "rr-cache"})
 # How long a killed process's output is drained before the runner stops waiting.
@@ -448,6 +473,8 @@ class Runner:
 
     def git(self, *args: str, cwd: Path | None = None, check: bool = True, stdin: str | None = None) -> Completed:
         prefix = ["git"]
+        for setting in PINNED_GIT_CONFIG:
+            prefix += ["-c", setting]
         if self.hooks_directory is not None:
             prefix += ["-c", f"core.hooksPath={self.hooks_directory}"]
         result = run_process([*prefix, *args], cwd=cwd or self.repository, env=self.environment(), stdin=stdin)

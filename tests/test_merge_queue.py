@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import importlib.util
 import json
@@ -11,6 +12,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from jsonschema import Draft202012Validator
 
@@ -62,11 +64,12 @@ print(json.dumps({"branch": branch, "head": listed[0]}))
     "regen.py": """
 import os, pathlib, time
 root = pathlib.Path(".")
-text = "".join(path.read_text() for path in sorted((root / "src").glob("*.txt")))
+# Bytes in, bytes out, so line endings pass through unchanged.
+text = b"".join(path.read_bytes() for path in sorted((root / "src").glob("*.txt")))
 if os.environ.get("MQ_REGEN") == "unstable":
-    text += str(time.time_ns()) + "\\n"
+    text += str(time.time_ns()).encode() + b"\\n"
 (root / "gen").mkdir(exist_ok=True)
-(root / "gen" / "generated.txt").write_text(text)
+(root / "gen" / "generated.txt").write_bytes(text)
 if os.environ.get("MQ_REGEN") == "twice":
     # Settles only on a third pass.
     count = root / "gen" / "count.txt"
@@ -1145,6 +1148,62 @@ class HardeningTests(MergeQueueTestCase):
                 else:
                     os.environ[key] = value
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+
+
+class HostileConfigTests(MergeQueueTestCase):
+    """The runner's own git commands keep working under a user's global config."""
+
+    def hostile(self) -> contextlib.AbstractContextManager:
+        """A global config that signs commits, rewrites line endings and ignores files."""
+        signer = self.directory / "refuse-to-sign.py"
+        signer.write_text("import sys\nsys.exit(1)\n")
+        excludes = self.directory / "global-excludes"
+        excludes.write_text("stray.txt\nnotes/\n")
+        config = self.directory / "hostile.gitconfig"
+        lines = [
+            "[core]", "\tautocrlf = true", "\tsafecrlf = true", f"\texcludesFile = {excludes.as_posix()}",
+            "[commit]", "\tgpgsign = true",
+            "[tag]", "\tgpgsign = true",
+            "[gpg]", f"\tprogram = {Path(PY).as_posix()} {signer.as_posix()}",
+            "[rerere]", "\tenabled = true",
+        ]
+        config.write_text("\n".join(lines) + "\n")
+        return mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(config)})
+
+    def test_a_run_with_a_regenerate_and_a_merge_commit_completes(self) -> None:
+        adopter = self.adopter()
+        # A stale generated file forces a regenerate commit; a moved base forces a merge commit.
+        self.candidate(adopter, {"src/app.txt": "app two\r\nwith a windows line\r\n"})
+        adopter.advance_base({"src/other.txt": "other\n"})
+        with self.hostile():
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        adopter.show("origin/main", "src/other.txt")
+        generated = subprocess.run(
+            ["git", "show", "origin/main:gen/generated.txt"], cwd=adopter.lane, capture_output=True, check=True,
+        ).stdout
+        # The windows line endings the lane committed reach the generated file untouched.
+        self.assertEqual(generated, b"app two\r\nwith a windows line\r\nlib one\nother\n")
+
+    def test_a_globally_ignored_file_is_still_an_undeclared_change(self) -> None:
+        adopter = self.adopter({"postSync": [{"argv": [PY, "tools/fingerprint.py", "{baseHead}", "stray.txt"], "paths": ["notes/fingerprint.txt"]}]})
+        head = self.candidate(adopter)
+        with self.hostile():
+            document = self.assertStopped(self.run_queue(adopter, "feature"), "undeclared_change")
+        self.assertEqual(document["stop"]["paths"], ["stray.txt"])
+        self.assertEqual(adopter.tip("feature"), head)
+
+    def test_the_repositorys_own_attributes_still_apply(self) -> None:
+        adopter = self.adopter()
+        # The repository asks for CRLF in generated files; the runner must not override that.
+        attributes = {".gitattributes": "gen/generated.txt text eol=crlf\n", "src/app.txt": "app two\n"}
+        self.candidate(adopter, attributes)
+        with self.hostile():
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(adopter.show("origin/main", ".gitattributes"), "gen/generated.txt text eol=crlf")
+        # The committed blob stays normalised to LF, as the attribute asks.
+        self.assertEqual(adopter.show("origin/main", "gen/generated.txt"), "app two\nlib one")
 
 
 class RenderingTests(MergeQueueTestCase):
