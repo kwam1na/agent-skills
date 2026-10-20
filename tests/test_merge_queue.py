@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import importlib.util
 import json
@@ -11,6 +12,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from jsonschema import Draft202012Validator
 
@@ -62,11 +64,12 @@ print(json.dumps({"branch": branch, "head": listed[0]}))
     "regen.py": """
 import os, pathlib, time
 root = pathlib.Path(".")
-text = "".join(path.read_text() for path in sorted((root / "src").glob("*.txt")))
+# Bytes in, bytes out, so line endings pass through unchanged.
+text = b"".join(path.read_bytes() for path in sorted((root / "src").glob("*.txt")))
 if os.environ.get("MQ_REGEN") == "unstable":
-    text += str(time.time_ns()) + "\\n"
+    text += str(time.time_ns()).encode() + b"\\n"
 (root / "gen").mkdir(exist_ok=True)
-(root / "gen" / "generated.txt").write_text(text)
+(root / "gen" / "generated.txt").write_bytes(text)
 if os.environ.get("MQ_REGEN") == "twice":
     # Settles only on a third pass.
     count = root / "gen" / "count.txt"
@@ -199,7 +202,8 @@ if os.environ.get("MQ_MERGE") == "unverified":
     tree = git("rev-parse", base + "^{tree}")
 parents = ["-p", expected, "-p", base] if os.environ.get("MQ_MERGE") == "swapped" else ["-p", base, "-p", expected]
 commit = git("commit-tree", tree, *parents, "-m", "Merge " + branch)
-git("push", "--quiet", "--force-with-lease=refs/heads/main:" + base, remote, commit + ":refs/heads/main")
+# The forge is the adopter's own tool: it, not the runner, owns its push settings.
+git("-c", "push.gpgSign=false", "push", "--quiet", "--force-with-lease=refs/heads/main:" + base, remote, commit + ":refs/heads/main")
 """,
     "lease.py": """
 import os, pathlib, sys
@@ -1144,6 +1148,146 @@ class HardeningTests(MergeQueueTestCase):
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+
+
+class HostileConfigTests(MergeQueueTestCase):
+    """The runner's own git commands keep working under a user's global config."""
+
+    def hostile(self) -> contextlib.AbstractContextManager:
+        """A system config that rewrites line endings, and a global one that signs and ignores files."""
+        signer = self.directory / "refuse-to-sign.py"
+        signer.write_text("import sys\nsys.exit(1)\n")
+        excludes = self.directory / "global-excludes"
+        excludes.write_text("stray.txt\nnotes/\n")
+        # Git for Windows sets autocrlf in its system config by default.
+        system = self.directory / "system.gitconfig"
+        system.write_text("[core]\n\tautocrlf = true\n")
+        attributes = self.directory / "global-attributes"
+        attributes.write_text("* text eol=crlf\n")
+        config = self.directory / "hostile.gitconfig"
+        lines = [
+            "[core]", "\tsafecrlf = true", f"\texcludesFile = {excludes.as_posix()}",
+            f"\tattributesFile = {attributes.as_posix()}",
+            "[diff]", "\trenames = false",
+            "[commit]", "\tgpgsign = true",
+            "[tag]", "\tgpgsign = true",
+            "[push]", "\tgpgSign = true",
+            "[merge]", "\tverifySignatures = true", "\trenames = false", "\tdirectoryRenames = true",
+            "[gpg]", f"\tprogram = {Path(PY).as_posix()} {signer.as_posix()}",
+            "[rerere]", "\tenabled = true", "\tautoUpdate = true",
+        ]
+        config.write_text("\n".join(lines) + "\n")
+        return mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(config), "GIT_CONFIG_SYSTEM": str(system)})
+
+    def test_a_run_with_a_regenerate_and_a_merge_commit_completes(self) -> None:
+        adopter = self.adopter()
+        # A stale generated file forces a regenerate commit; a moved base forces a merge commit.
+        self.candidate(adopter, {"src/app.txt": "app two\r\nwith a windows line\r\n"})
+        adopter.advance_base({"src/other.txt": "other\n"})
+        with self.hostile():
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        adopter.show("origin/main", "src/other.txt")
+        generated = subprocess.run(
+            ["git", "show", "origin/main:gen/generated.txt"], cwd=adopter.lane, capture_output=True, check=True,
+        ).stdout
+        # The windows line endings the lane committed reach the generated file untouched.
+        self.assertEqual(generated, b"app two\r\nwith a windows line\r\nlib one\nother\n")
+
+    def test_a_globally_ignored_file_is_still_an_undeclared_change(self) -> None:
+        adopter = self.adopter({"postSync": [{"argv": [PY, "tools/fingerprint.py", "{baseHead}", "stray.txt"], "paths": ["notes/fingerprint.txt"]}]})
+        head = self.candidate(adopter)
+        with self.hostile():
+            document = self.assertStopped(self.run_queue(adopter, "feature"), "undeclared_change")
+        self.assertEqual(document["stop"]["paths"], ["stray.txt"])
+        self.assertEqual(adopter.tip("feature"), head)
+
+    def test_the_repositorys_own_attributes_still_apply(self) -> None:
+        adopter = self.adopter()
+        # The repository marks the generated file as text, so the runner's
+        # regenerate commit normalises its CRLF lines to LF. Without the
+        # attribute the same bytes are committed as written (the first test).
+        self.candidate(adopter, {".gitattributes": "gen/generated.txt text\n", "src/app.txt": "app two\r\n"})
+        with self.hostile():
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        adopter.show("origin/main", ".gitattributes")
+        generated = subprocess.run(
+            ["git", "show", "origin/main:gen/generated.txt"], cwd=adopter.lane, capture_output=True, check=True,
+        ).stdout
+        self.assertEqual(generated, b"app two\nlib one\n")
+
+    def test_a_rename_against_a_base_edit_still_merges(self) -> None:
+        adopter = self.adopter()
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        run("checkout", "--quiet", "-b", "feature", "origin/main", cwd=adopter.lane)
+        run("mv", "src/lib.txt", "src/library.txt", cwd=adopter.lane)
+        run("commit", "--quiet", "-m", "rename", cwd=adopter.lane)
+        run("push", "--quiet", "origin", "feature:feature", cwd=adopter.lane)
+        adopter.enqueue("feature", run("rev-parse", "HEAD", cwd=adopter.lane))
+        adopter.advance_base({"src/lib.txt": "lib edited on the base\n"})
+        with self.hostile():
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(adopter.show("origin/main", "src/library.txt"), "lib edited on the base")
+
+    def test_a_renamed_directory_never_silently_moves_a_reviewed_file(self) -> None:
+        adopter = self.adopter()
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        run("checkout", "--quiet", "-B", "base-work", "origin/main", cwd=adopter.lane)
+        Adopter.write(adopter.lane, "lib/a.txt", "".join(f"a line {i}\n" for i in range(30)))
+        Adopter.write(adopter.lane, "lib/b.txt", "".join(f"b line {i}\n" for i in range(30)))
+        run("add", "--all", cwd=adopter.lane)
+        run("commit", "--quiet", "-m", "lib", cwd=adopter.lane)
+        run("push", "--quiet", "origin", "base-work:main", cwd=adopter.lane)
+        # The candidate adds a file in lib/; the base then renames lib/ to library/.
+        run("checkout", "--quiet", "-b", "feature", "base-work", cwd=adopter.lane)
+        Adopter.write(adopter.lane, "lib/extra.txt", "extra\n")
+        Adopter.write(adopter.lane, "src/app.txt", "app two\n")
+        run("add", "--all", cwd=adopter.lane)
+        run("commit", "--quiet", "-m", "lane", cwd=adopter.lane)
+        run("push", "--quiet", "origin", "feature:feature", cwd=adopter.lane)
+        head = run("rev-parse", "HEAD", cwd=adopter.lane)
+        adopter.enqueue("feature", head)
+        run("checkout", "--quiet", "base-work", cwd=adopter.lane)
+        run("mv", "lib", "library", cwd=adopter.lane)
+        run("commit", "--quiet", "-m", "rename dir", cwd=adopter.lane)
+        run("push", "--quiet", "origin", "base-work:main", cwd=adopter.lane)
+        with self.hostile():
+            document = self.assertStopped(self.run_queue(adopter, "feature"), "source_conflict")
+        # Git names the conflict where the rename would have put the file.
+        self.assertEqual(document["stop"]["paths"], ["library/extra.txt"])
+        self.assertEqual(adopter.tip("feature"), head)
+
+    def test_a_recorded_resolution_never_resolves_a_conflict_for_the_runner(self) -> None:
+        adopter = self.adopter()
+        head = adopter.lane_commit("feature", {"src/lib.txt": "lane lib\n"})
+        adopter.enqueue("feature", head)
+        adopter.advance_base({"src/lib.txt": "base lib\n"})
+        # The operator's repository holds a resolution recorded for exactly this conflict.
+        operator = adopter.operator
+        run("config", "rerere.enabled", "true", cwd=operator)
+        run("fetch", "--quiet", "origin", cwd=operator)
+        run("checkout", "--quiet", "-B", "record", "origin/feature", cwd=operator)
+        run("merge", "--no-edit", "origin/main", cwd=operator, check=False)
+        Adopter.write(operator, "src/lib.txt", "resolved by an old recording\n")
+        run("add", "src/lib.txt", cwd=operator)
+        run("commit", "--quiet", "--no-edit", cwd=operator)
+        run("checkout", "--quiet", "main", cwd=operator)
+        run("config", "--unset", "rerere.enabled", cwd=operator)
+        with self.hostile():
+            document = self.assertStopped(self.run_queue(adopter, "feature"), "source_conflict")
+        self.assertEqual(document["stop"]["paths"], ["src/lib.txt"])
+        self.assertEqual(adopter.tip("feature"), head)
+
+    def test_a_push_and_merge_survive_signature_requirements(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        # A base merge is needed, so the runner merges unsigned base commits under verifySignatures.
+        adopter.advance_base({"src/other.txt": "other\n"})
+        with self.hostile():
+            results = self.run_queue(adopter, "feature")
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
 
 

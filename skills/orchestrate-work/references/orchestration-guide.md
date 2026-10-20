@@ -549,6 +549,34 @@ substitutes inside a longer string:
   records that it bypassed them.
 - With `hooks: "run"`, hooks run as the repository installed them.
 
+### Git configuration
+
+The runner's own git commands pin the settings its work depends on, so a
+user's global or system configuration cannot change what it commits, sees or
+merges:
+
+- nothing is signed or required to be signed (`commit.gpgsign`,
+  `push.gpgSign`, `merge.verifySignatures`);
+- bytes are committed as the tools wrote them, unless the repository's own
+  `.gitattributes` says otherwise (`core.autocrlf`, `core.safecrlf`, and no
+  global `core.attributesFile`);
+- no global excludes file hides an undeclared change (`core.excludesFile`);
+- renames are always followed, so a rename never looks like a conflict, and a
+  renamed directory never silently moves a file the candidate added there
+  (`merge.renames`, `merge.directoryRenames`, `diff.renames`);
+- no recorded resolution resolves a conflict for it (`rerere`);
+- status reads the files themselves (`core.fsmonitor`, `core.untrackedCache`);
+- merges and commits never open an editor;
+- nothing reaches into submodules (`submodule.recurse`).
+
+These are pinned, not isolated: dropping global and system configuration would
+also drop the sign-in helpers, address rewrites and transport settings that
+the runner's fetch and push rely on. A pin overrides every configuration
+level, the repository's own included. Settings outside this set, and
+`.gitattributes`, still apply, and the argv the binding declares runs with the
+user's full configuration apart from the hooks setting above. Under
+`hooks: "run"`, a global `core.hooksPath` still chooses which hooks run.
+
 ### The affected-checks provider
 
 The provider is the repository's own answer to "which checks does this change
