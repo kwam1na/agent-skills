@@ -31,6 +31,7 @@ CORE_SKILL_PATHS = (
     "skills/orchestrate-work/references/orchestration-guide.md",
     "skills/orchestrate-work/references/schemas.json",
     "skills/orchestrate-work/scripts/delivery_state.py",
+    "skills/orchestrate-work/scripts/merge_queue.py",
     "skills/orchestrate-work/scripts/render_state.py",
     "skills/plan-work/SKILL.md",
     "skills/review-work/SKILL.md",

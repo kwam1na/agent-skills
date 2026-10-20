@@ -456,5 +456,1003 @@
         "minLength": 1
       }
     }
+  },
+  "affected-checks/1": {
+    "$id": "urn:agent-skills:orchestrate-work:affected-checks:1",
+    "title": "affected-checks/1",
+    "description": "A provider's answer to which checks a candidate's diff requires. The provider reads the request (#/$defs/request) on stdin and writes this document on stdout. Beyond this shape, the runner refuses an answer whose check ids repeat, whose prerequisites name an unselected check or form a cycle, whose cwd leaves the checkout, or whose timeout exceeds the binding's ceiling.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "checks",
+      "widened",
+      "uncovered"
+    ],
+    "properties": {
+      "checks": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/check"
+        }
+      },
+      "widened": {
+        "description": "True when the provider selected more than the diff's known impact, for example because some impact was unknown.",
+        "type": "boolean"
+      },
+      "uncovered": {
+        "description": "Changed paths the provider could not map to any check. A non-empty list adds the binding's fallback checks.",
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/path"
+        }
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "$defs": {
+      "path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "commit": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+      },
+      "check": {
+        "description": "One check to run. argv must be a non-empty list. cwd is relative to the checkout root. environmentProfile names a binding profile; the runner refuses an unknown one.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "argv",
+          "cwd",
+          "reasons",
+          "prerequisites"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/name"
+          },
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prerequisites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            }
+          },
+          "environmentProfile": {
+            "$ref": "#/$defs/name"
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "change": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "status"
+        ],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "status": {
+            "description": "The git name-status letter: added, copied, deleted, modified, renamed or type-changed.",
+            "enum": [
+              "A",
+              "C",
+              "D",
+              "M",
+              "R",
+              "T"
+            ]
+          },
+          "oldPath": {
+            "$ref": "#/$defs/path"
+          }
+        }
+      },
+      "request": {
+        "description": "What the runner passes on stdin. changes are computed between baseHead and head with rename detection; oldPath is present for renames and copies.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "base",
+          "baseHead",
+          "head",
+          "changes"
+        ],
+        "properties": {
+          "base": {
+            "$ref": "#/$defs/name"
+          },
+          "baseHead": {
+            "$ref": "#/$defs/commit"
+          },
+          "head": {
+            "$ref": "#/$defs/commit"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/change"
+            }
+          }
+        }
+      }
+    }
+  },
+  "merge-queue-result/1": {
+    "$id": "urn:agent-skills:orchestrate-work:merge-queue-result:1",
+    "title": "merge-queue-result/1",
+    "description": "What one merge-queue runner subcommand did. A stopped result names one reason; queueStopped is true when the reason stops the whole queue rather than only the candidate.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "subcommand",
+      "candidate",
+      "outcome",
+      "stop",
+      "startedAt",
+      "finishedAt",
+      "base",
+      "baseHead",
+      "head",
+      "syncedHead",
+      "mergedHead",
+      "hooksBypassed",
+      "selection",
+      "checks",
+      "release",
+      "notes"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "merge-queue-result/1"
+      },
+      "subcommand": {
+        "enum": [
+          "sync",
+          "check",
+          "merge",
+          "run",
+          "release"
+        ]
+      },
+      "candidate": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/name"
+          }
+        ]
+      },
+      "outcome": {
+        "enum": [
+          "synced",
+          "checked",
+          "merged",
+          "released",
+          "stopped",
+          "refused"
+        ]
+      },
+      "stop": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "reason",
+              "detail",
+              "paths",
+              "queueStopped"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/$defs/reason"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/name"
+                }
+              },
+              "queueStopped": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      },
+      "startedAt": {
+        "$ref": "#/$defs/timestamp"
+      },
+      "finishedAt": {
+        "$ref": "#/$defs/timestamp"
+      },
+      "base": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/name"
+          }
+        ]
+      },
+      "baseHead": {
+        "$ref": "#/$defs/optionalCommit"
+      },
+      "head": {
+        "$ref": "#/$defs/optionalCommit"
+      },
+      "syncedHead": {
+        "$ref": "#/$defs/optionalCommit"
+      },
+      "mergedHead": {
+        "$ref": "#/$defs/optionalCommit"
+      },
+      "hooksBypassed": {
+        "type": "boolean"
+      },
+      "selection": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "providers",
+              "fallbackReasons",
+              "widened",
+              "uncovered",
+              "checks"
+            ],
+            "properties": {
+              "providers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "source",
+                    "outcome",
+                    "detail"
+                  ],
+                  "properties": {
+                    "source": {
+                      "enum": [
+                        "base",
+                        "candidate"
+                      ]
+                    },
+                    "outcome": {
+                      "enum": [
+                        "selected",
+                        "missing",
+                        "failed",
+                        "timed_out",
+                        "malformed"
+                      ]
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "fallbackReasons": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "provider_missing",
+                    "provider_failed",
+                    "provider_timed_out",
+                    "provider_malformed",
+                    "uncovered",
+                    "empty_selection"
+                  ]
+                }
+              },
+              "widened": {
+                "type": "boolean"
+              },
+              "uncovered": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/name"
+                }
+              },
+              "checks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/name"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "checks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "state",
+            "exitCode",
+            "seconds"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "state": {
+              "enum": [
+                "passed",
+                "failed",
+                "skipped",
+                "timed_out"
+              ]
+            },
+            "exitCode": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "seconds": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "release": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ref",
+              "commit",
+              "targets"
+            ],
+            "properties": {
+              "ref": {
+                "$ref": "#/$defs/name"
+              },
+              "commit": {
+                "$ref": "#/$defs/optionalCommit"
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "state",
+                    "exitCode",
+                    "approvedBy"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/name"
+                    },
+                    "state": {
+                      "enum": [
+                        "passed",
+                        "failed",
+                        "skipped",
+                        "timed_out"
+                      ]
+                    },
+                    "exitCode": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "integer"
+                        }
+                      ]
+                    },
+                    "approvedBy": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "$defs": {
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      },
+      "commit": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+      },
+      "optionalCommit": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/commit"
+          }
+        ]
+      },
+      "reason": {
+        "enum": [
+          "candidate_moved",
+          "source_conflict",
+          "lease_required",
+          "lease_withdraw_failed",
+          "sync_step_failed",
+          "prepare_failed",
+          "runner_error",
+          "unstable_regeneration",
+          "undeclared_change",
+          "unreviewed_change",
+          "push_refused",
+          "not_synced",
+          "dirty_checkout",
+          "no_checks",
+          "profile_unknown",
+          "check_failed",
+          "base_broken",
+          "base_moved",
+          "ready_refused",
+          "merge_refused",
+          "merged_unverified",
+          "binding_invalid",
+          "candidate_unknown",
+          "candidate_unresolved",
+          "already_merged",
+          "queue_locked",
+          "ref_invalid",
+          "ref_not_on_base",
+          "approval_required",
+          "release_failed"
+        ]
+      }
+    }
+  },
+  "orchestration-binding/1": {
+    "$id": "urn:agent-skills:orchestrate-work:orchestration-binding:1",
+    "title": "orchestration-binding/1",
+    "description": "How the merge-queue runner works in one repository, read from .agents/orchestration.json in the base checkout. Every command is an argv list run without a shell. A placeholder ({candidate}, {branch}, {head}, {expectedHead}, {base}, {baseHead}, {treeSha}, {ref}, {workRoot}) replaces a whole argv element or a whole environment value, never part of a longer string. Paths and patterns are relative to the checkout root; in a pattern, * matches within one path segment and ** matches any number of segments. Beyond this shape, the runner refuses a binding whose merge argv lacks a whole {expectedHead} element, or whose checks name an unknown environment profile or exceed checkTimeoutCeiling.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "base",
+      "workRoot",
+      "candidate",
+      "prepare",
+      "hooks",
+      "regenerable",
+      "postSync",
+      "leadInputs",
+      "profiles",
+      "provider",
+      "alwaysRun",
+      "fallback",
+      "checkTimeoutSeconds",
+      "checkTimeoutCeiling",
+      "environment",
+      "ready",
+      "merge",
+      "release",
+      "fullHealth",
+      "leases",
+      "state"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "orchestration-binding/1"
+      },
+      "base": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "remote",
+          "ref"
+        ],
+        "properties": {
+          "remote": {
+            "$ref": "#/$defs/name"
+          },
+          "ref": {
+            "description": "The base branch name, without refs/heads/.",
+            "$ref": "#/$defs/name"
+          }
+        }
+      },
+      "workRoot": {
+        "description": "The directory for the runner's temporary checkouts, relative to the repository root unless absolute. It must not contain the repository's own checkout.",
+        "$ref": "#/$defs/name"
+      },
+      "candidate": {
+        "description": "Resolves {candidate} to a JSON object {branch, head} on stdout.",
+        "$ref": "#/$defs/argv"
+      },
+      "prepare": {
+        "description": "Run, in order, in every fresh checkout before anything else uses it.",
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/argv"
+        }
+      },
+      "hooks": {
+        "description": "bypass runs every git command, and every argv, with core.hooksPath set to an empty directory under workRoot.",
+        "enum": [
+          "bypass",
+          "run"
+        ]
+      },
+      "regenerable": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "paths",
+          "regenerators"
+        ],
+        "properties": {
+          "paths": {
+            "description": "Generated-only files or patterns. A merge conflict confined to these takes the base side and is regenerated.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/path"
+            }
+          },
+          "regenerators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/argv"
+            }
+          }
+        }
+      },
+      "postSync": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/step"
+        }
+      },
+      "leadInputs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "argv",
+            "paths"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "argv": {
+              "$ref": "#/$defs/argv"
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            },
+            "lease": {
+              "description": "The lease the lead must hold before this input runs.",
+              "$ref": "#/$defs/name"
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      },
+      "profiles": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "environment"
+          ],
+          "properties": {
+            "environment": {
+              "$ref": "#/$defs/environment"
+            }
+          }
+        }
+      },
+      "provider": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "argv",
+              "cwd",
+              "timeoutSeconds",
+              "providerInputs"
+            ],
+            "properties": {
+              "argv": {
+                "$ref": "#/$defs/argv"
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "providerInputs": {
+                "description": "Paths whose change makes the candidate checkout's provider run too; its selection is added to the base checkout's.",
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/path"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "alwaysRun": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/check"
+        }
+      },
+      "fallback": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/check"
+        }
+      },
+      "checkTimeoutSeconds": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "checkTimeoutCeiling": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "environment": {
+        "$ref": "#/$defs/environment"
+      },
+      "ready": {
+        "$ref": "#/$defs/argv"
+      },
+      "merge": {
+        "description": "Merges the candidate at exactly {expectedHead}, which must appear as a whole element.",
+        "$ref": "#/$defs/argv"
+      },
+      "release": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "argv",
+            "stopsOnFailure",
+            "requiresApproval"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "argv": {
+              "$ref": "#/$defs/argv"
+            },
+            "stopsOnFailure": {
+              "type": "boolean"
+            },
+            "requiresApproval": {
+              "type": "boolean"
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      },
+      "fullHealth": {
+        "$ref": "#/$defs/argv"
+      },
+      "leases": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "description",
+            "defaultHolder"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "description": {
+              "type": "string"
+            },
+            "defaultHolder": {
+              "$ref": "#/$defs/name"
+            },
+            "materialize": {
+              "$ref": "#/$defs/argv"
+            },
+            "withdraw": {
+              "$ref": "#/$defs/argv"
+            }
+          }
+        }
+      },
+      "state": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "directory",
+          "renderers",
+          "publishers"
+        ],
+        "properties": {
+          "directory": {
+            "description": "The delivery state directory, relative to the repository root unless absolute.",
+            "$ref": "#/$defs/name"
+          },
+          "renderers": {
+            "description": "Each renderer is a built-in or an argv, never both. output is a relative path under the state directory.",
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "builtin",
+                    "output"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/name"
+                    },
+                    "builtin": {
+                      "enum": [
+                        "markdown",
+                        "static-page"
+                      ]
+                    },
+                    "output": {
+                      "$ref": "#/$defs/output"
+                    },
+                    "timeoutSeconds": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "argv",
+                    "output"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/name"
+                    },
+                    "argv": {
+                      "$ref": "#/$defs/argv"
+                    },
+                    "output": {
+                      "$ref": "#/$defs/output"
+                    },
+                    "timeoutSeconds": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "publishers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "argv"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/name"
+                },
+                "argv": {
+                  "$ref": "#/$defs/argv"
+                },
+                "timeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "output": {
+        "description": "A relative path under the state directory: not absolute, and no .. segment.",
+        "type": "string",
+        "pattern": "^(?![A-Za-z]:)(?:[^/\\\\.]|\\.[^/\\\\.]|\\.\\.[^/\\\\])[^/\\\\]*(?:[/\\\\](?:[^/\\\\.]|\\.[^/\\\\.]|\\.\\.[^/\\\\])[^/\\\\]*)*$"
+      },
+      "argv": {
+        "description": "A non-empty list of strings, run without a shell.",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "environment": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "step": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "argv",
+          "paths"
+        ],
+        "properties": {
+          "argv": {
+            "$ref": "#/$defs/argv"
+          },
+          "paths": {
+            "description": "The only paths this step may change.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/path"
+            }
+          }
+        }
+      },
+      "check": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "argv",
+          "cwd",
+          "reasons",
+          "prerequisites"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/name"
+          },
+          "argv": {
+            "$ref": "#/$defs/argv"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prerequisites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            }
+          },
+          "environmentProfile": {
+            "$ref": "#/$defs/name"
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
   }
 }
