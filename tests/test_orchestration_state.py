@@ -371,6 +371,27 @@ class StateToolTests(unittest.TestCase):
         self.assertEqual(after["state"]["version"], 2)
         self.assertEqual([entry["summary"] for entry in after["journal"]], ["First", "Second"])
 
+    def test_show_of_a_missing_or_empty_directory_is_state_missing(self) -> None:
+        missing = self.directory.parent / "never-created"
+        empty = self.directory.parent / "empty"
+        empty.mkdir()
+        for directory in (missing, empty):
+            with self.subTest(directory=directory.name):
+                for command in ("show", "validate"):
+                    code, refused = run_tool(directory, command)
+                    self.assertEqual((code, refused["code"]), (1, "state_missing"))
+        self.assertFalse(missing.exists())
+        self.assertEqual(list(empty.iterdir()), [])
+
+    @unittest.skipIf(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                     "POSIX permissions; root ignores them")
+    def test_a_read_only_state_directory_is_refused_as_json(self) -> None:
+        (self.directory / state_tool.STATE_LOCK).unlink(missing_ok=True)
+        os.chmod(self.directory, 0o555)
+        self.addCleanup(os.chmod, self.directory, 0o755)
+        code, refused = run_tool(self.directory, "show")
+        self.assertEqual((code, refused["code"]), (1, "lock_unavailable"))
+
     def test_show_waits_for_a_write_in_progress(self) -> None:
         held = threading.Event()
         release = threading.Event()

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import importlib.util
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -131,6 +133,7 @@ def _load_wrapper():
     try:
         spec = importlib.util.spec_from_file_location("render_state_under_test", WRAPPER)
         module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
         spec.loader.exec_module(module)
         return module
     finally:
@@ -140,16 +143,34 @@ def _load_wrapper():
 
 render_state = _load_wrapper()
 
-# A command that starts a child holding its stdout and stderr open, then exits
-# straight away. The child outlives it by far more than any test waits.
-LINGERING = """import subprocess, sys
-subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"],
-                 stdout=sys.stdout, stderr=sys.stderr, stdin=subprocess.DEVNULL)
+# A command that starts a child holding its {held} open, then exits straight
+# away. The child outlives it by far more than any test waits, and records its
+# pid so the test can stop it.
+LINGERING = """import os, subprocess, sys
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"],
+                         stdout={stdout}, stderr={stderr}, stdin=subprocess.DEVNULL)
+open({pids!r}, "a").write(f"{{child.pid}}\\n")
 {after}
 """
 
 
+def _stop_recorded(pids: Path) -> None:
+    if not pids.exists():
+        return
+    for line in pids.read_text().split():
+        with contextlib.suppress(OSError, ValueError):
+            os.kill(int(line), signal.SIGTERM)
+
+
 class BoundedCommandTests(DeliveryStateFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        self.pids = self.root / "children.pids"
+        self.addCleanup(_stop_recorded, self.pids)
+
+    def lingering(self, after: str, *, stdout: str = "sys.stdout", stderr: str = "sys.stderr") -> str:
+        return LINGERING.format(after=after, stdout=stdout, stderr=stderr, pids=str(self.pids), held="output")
+
     def test_an_oversized_view_is_truncated_recorded_and_never_written(self) -> None:
         limit = render_state.VIEW_LIMIT_BYTES
         flood = {
@@ -181,16 +202,21 @@ class BoundedCommandTests(DeliveryStateFixture):
 
     def test_capture_never_holds_more_than_its_limit(self) -> None:
         argv = python_argv(
-            "import sys\nfor _ in range(64):\n    sys.stdout.buffer.write(b'z' * 65536)\n"
-            "    sys.stderr.buffer.write(b'e' * 65536)\n",
+            "import sys\nsys.stdout.buffer.write(b'head')\nsys.stderr.buffer.write(b'first')\n"
+            "for _ in range(64):\n    sys.stdout.buffer.write(b'z' * 65536)\n"
+            "    sys.stderr.buffer.write(b'e' * 65536)\n"
+            "sys.stdout.buffer.write(b'tail')\nsys.stderr.buffer.write(b'last')\n",
             self.tools, "torrent",
         )
         with mock.patch.object(render_state, "VIEW_LIMIT_BYTES", 1000):
             outcome = render_state._execute(argv, b"{}", 30)
         self.assertEqual(outcome.exit_code, 0)
         self.assertTrue(outcome.truncated)
+        # Stdout keeps its first bytes; stderr keeps its last.
         self.assertEqual(len(outcome.stdout), 1000)
-        self.assertLessEqual(len(outcome.stderr), render_state.ERROR_LIMIT)
+        self.assertTrue(outcome.stdout.startswith(b"head"))
+        self.assertLessEqual(len(outcome.stderr), render_state.ERROR_BYTES)
+        self.assertTrue(outcome.stderr.endswith(b"last"))
 
     def test_a_failing_command_keeps_only_the_tail_of_its_stderr(self) -> None:
         noisy = {
@@ -210,7 +236,7 @@ class BoundedCommandTests(DeliveryStateFixture):
     def test_a_publisher_whose_child_keeps_its_output_open_is_ok_when_it_exits_cleanly(self) -> None:
         lingering = {
             "id": "lingering",
-            "argv": python_argv(LINGERING.format(after="sys.stdin.buffer.read()"), self.tools, "lingering"),
+            "argv": python_argv(self.lingering("sys.stdin.buffer.read()"), self.tools, "lingering"),
             "timeoutSeconds": 10,
         }
         started = time.monotonic()
@@ -223,7 +249,7 @@ class BoundedCommandTests(DeliveryStateFixture):
         lingering = {
             "id": "lingering",
             "argv": python_argv(
-                LINGERING.format(after="sys.stdin.buffer.read()\nsys.stdout.write('partial')\nsys.stdout.flush()"),
+                self.lingering("sys.stdin.buffer.read()\nsys.stdout.write('partial')\nsys.stdout.flush()"),
                 self.tools, "lingering",
             ),
             "output": "lingering.txt",
@@ -237,6 +263,62 @@ class BoundedCommandTests(DeliveryStateFixture):
         self.assertEqual(entry["ok"], False)
         self.assertIn("still open", entry["error"])
         self.assertFalse((self.state_dir / "lingering.txt").exists())
+
+    def test_a_renderer_whose_child_holds_only_stderr_still_writes_its_view(self) -> None:
+        logger = {
+            "id": "logger",
+            "argv": python_argv(
+                self.lingering("sys.stdin.buffer.read()\nsys.stdout.write('complete view')",
+                               stdout="subprocess.DEVNULL"),
+                self.tools, "logger",
+            ),
+            "output": "logger.txt",
+            "timeoutSeconds": 10,
+        }
+        code, result = wrapper(self.state_dir, "--state-config", self.config([logger]))
+        self.assertEqual(code, 0, result)
+        self.assertEqual((self.state_dir / "logger.txt").read_text(encoding="utf-8"), "complete view")
+
+    def test_a_command_that_never_reads_its_input_or_exits_still_times_out(self) -> None:
+        stuck = python_argv("import time\ntime.sleep(30)\n", self.tools, "stuck")
+        started = time.monotonic()
+        # Larger than any pipe buffer: a blocking write would never reach the timeout.
+        outcome = render_state._execute(stuck, b"x" * 4_000_000, 1)
+        self.assertLess(time.monotonic() - started, 1 + render_state.DRAIN_SECONDS + 3)
+        self.assertEqual((outcome.exit_code, outcome.error), (None, "timed out after 1s"))
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_interrupting_the_wrapper_stops_its_running_commands(self) -> None:
+        for number in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=number.name):
+                started = self.root / f"started-{number.name}"
+                finished = self.root / f"finished-{number.name}"
+                slow = {
+                    "id": "slow",
+                    "argv": python_argv(
+                        "import pathlib, sys, time\n"
+                        f"pathlib.Path({str(started)!r}).write_text('x')\n"
+                        "time.sleep(4)\n"
+                        f"pathlib.Path({str(finished)!r}).write_text('x')\n",
+                        self.tools, f"slow-{number.name}",
+                    ),
+                    "output": "slow.txt",
+                    "timeoutSeconds": 30,
+                }
+                process = subprocess.Popen(
+                    [sys.executable, "-B", str(WRAPPER), "--dir", str(self.state_dir),
+                     "--state-config", self.config([slow])],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                deadline = time.monotonic() + 10
+                while not started.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(started.exists())
+                process.send_signal(number)
+                process.wait(10)
+                self.assertNotEqual(process.returncode, 0)
+                time.sleep(5)
+                self.assertFalse(finished.exists(), "the renderer kept running after the wrapper stopped")
 
     def test_a_command_that_never_reads_its_input_still_completes(self) -> None:
         deaf = {
@@ -255,13 +337,16 @@ class BoundedCommandTests(DeliveryStateFixture):
 
     def test_a_timeout_stops_the_command_and_its_children(self) -> None:
         marker = self.root / "child-survived"
+        child = python_argv(
+            f"import pathlib, time\ntime.sleep(3)\npathlib.Path({str(marker)!r}).write_text('x')\n",
+            self.tools, "child",
+        )
         spawner = {
             "id": "spawner",
             "argv": python_argv(
                 "import subprocess, sys, time\n"
-                "subprocess.Popen([sys.executable, '-c', "
-                f"'import time, pathlib; time.sleep(3); pathlib.Path({str(marker)!r}).write_text(\"x\")'],"
-                " stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)\n"
+                f"subprocess.Popen({child!r}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,"
+                " stdin=subprocess.DEVNULL)\n"
                 "time.sleep(30)\n",
                 self.tools, "spawner",
             ),
