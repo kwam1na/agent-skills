@@ -28,6 +28,7 @@ CORE_SKILL_PATHS = (
     "skills/obtain-review/SKILL.md",
     "skills/obtain-review/references/round-brief-template.md",
     "skills/orchestrate-work/SKILL.md",
+    "skills/orchestrate-work/references/orchestration-guide.md",
     "skills/orchestrate-work/references/schemas.json",
     "skills/orchestrate-work/scripts/delivery_state.py",
     "skills/orchestrate-work/scripts/render_state.py",
@@ -114,6 +115,23 @@ class CoreBoundaryTests(unittest.TestCase):
                     forbidden.search((ROOT / relative).read_text(encoding="utf-8"))
                 )
 
+
+    def test_orchestration_text_names_no_host_forge_tracker_or_plan_unit(self) -> None:
+        # Names in any case or spelling; identifiers exactly as they are written.
+        names = re.compile(
+            r"\b(?:Athena|Linear|Jira|GitHub|GitLab|Gitea|Bitbucket|Claude|Codex|Cursor|"
+            r"Slack|MCP|gh|pull requests?|merge requests?|PRs?)\b",
+            re.IGNORECASE,
+        )
+        identifiers = re.compile(r"\b(?:V26-\d+|U\d+|A\d+|C\d+)\b")
+        for relative in (
+            "skills/orchestrate-work/SKILL.md",
+            "skills/orchestrate-work/references/orchestration-guide.md",
+        ):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            with self.subTest(path=relative):
+                self.assertIsNone(names.search(text))
+                self.assertIsNone(identifiers.search(text))
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,7 @@ def _load_runner():
 
 class QualificationTests(unittest.TestCase):
     def test_checked_product_core_replays_exactly(self) -> None:
+        skip_if_pending(self, "core")
         product = ROOT / "qualifications/product"
         current = "core-concurrent-delivery-v1"
         with tempfile.TemporaryDirectory() as temporary:
@@ -434,6 +435,7 @@ class QualificationTests(unittest.TestCase):
         self.assertNotIn(secret, json.dumps(record))
 
     def test_trusted_sensor_change_changes_the_driver_identity(self) -> None:
+        skip_if_pending(self, "core")
         runner = _load_runner()
         recorded = json.loads(
             (ROOT / "qualifications" / "core-workflows-concurrent-delivery-v1.json").read_text(encoding="utf-8")

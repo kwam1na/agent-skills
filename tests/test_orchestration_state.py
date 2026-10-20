@@ -676,7 +676,9 @@ class StateToolTests(unittest.TestCase):
 
 # Every guard call site, in source order, with the arguments after the test case.
 GUARD_CALLS = {
-    "tests/test_qualification.py": [("pending", ["core"]), ("skip_if_pending", ["core"])],
+    "tests/test_qualification.py": [
+        ("skip_if_pending", ["core"]), ("pending", ["core"]), ("skip_if_pending", ["core"]), ("skip_if_pending", ["core"]),
+    ],
     "tests/test_provider_qualification.py": [("skip_if_pending", ["provider"])],
     "tests/test_linear_qualification.py": [("pending", ["profile"]), ("skip_if_pending", ["core", "linear"])],
     "tests/test_bootstrap_qualification.py": [

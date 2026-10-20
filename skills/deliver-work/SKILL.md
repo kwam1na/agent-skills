@@ -1,6 +1,6 @@
 ---
 name: deliver-work
-description: Use when an agent should clarify, plan, diagnose, implement, review, or compound software work through one portable entry point.
+description: Use when an agent should clarify, plan, diagnose, implement, orchestrate, review, or compound software work through one portable entry point.
 ---
 
 # Deliver Work
@@ -39,6 +39,8 @@ Choose exactly one workflow:
 - `clarify` when the outcome or boundary is unresolved.
 - `implement` for bounded build, fix, modification, refactor, or shipping work.
 - `diagnose` when the cause is unknown and implementation is not yet authorized.
+- `orchestrate` when the outcome is an epic: several planned tickets delivered
+  in parallel by lanes under one lead, sharing a base and a finish line.
 - `plan` when the requested outcome is a plan rather than a code change.
 - `review` when the request is read-only evaluation.
 - `compound` when the request is to preserve a reusable delivery learning.
@@ -46,7 +48,10 @@ Choose exactly one workflow:
 Route `plan` through `$plan-work`. Route an approved `implement` request through
 `$execute-work`, `review` through `$review-work`, and `compound` through
 `$compound-learning`. Route `diagnose` through `$diagnose-work` to retain causal
-evidence without authorizing a fix. When caller-selected review lenses need
+evidence without authorizing a fix. Route `orchestrate` through
+`$orchestrate-work`, which runs each lane's ticket through `$execute-work`; it
+is matched after `diagnose` and before `plan`, so delivering an epic from its
+plan orchestrates rather than replans. When caller-selected review lenses need
 realization, `$obtain-review` acquires the exact round for unchanged `$review-work`.
 
 Specific user intent wins over keyword examples. The same normalized request

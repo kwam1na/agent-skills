@@ -16,6 +16,7 @@ class WorkflowKind(str, Enum):
     CLARIFY = "clarify"
     IMPLEMENT = "implement"
     DIAGNOSE = "diagnose"
+    ORCHESTRATE = "orchestrate"
     PLAN = "plan"
     REVIEW = "review"
     COMPOUND = "compound"
@@ -52,6 +53,7 @@ class RouteDecision:
         return {
             WorkflowKind.IMPLEMENT: "execute-work",
             WorkflowKind.DIAGNOSE: "diagnose-work",
+            WorkflowKind.ORCHESTRATE: "orchestrate-work",
             WorkflowKind.PLAN: "plan-work",
             WorkflowKind.REVIEW: "review-work",
             WorkflowKind.COMPOUND: "compound-learning",
@@ -62,6 +64,10 @@ ROUTES = (
     (WorkflowKind.COMPOUND, re.compile(r"\b(?:compound|reusable learning)\b")),
     (WorkflowKind.REVIEW, re.compile(r"\b(?:review|audit)\b")),
     (WorkflowKind.DIAGNOSE, re.compile(r"\b(?:diagnose|investigate|root cause)\b")),
+    # After diagnosis so a causal question about an epic stays diagnostic, and
+    # before planning so "deliver the epic from the plan" is not read as a plan.
+    # A single lane is not an epic: "implement lane 3" is that lane's own work.
+    (WorkflowKind.ORCHESTRATE, re.compile(r"\b(?:epics?|orchestrat(?:e|es|ed|ing|ion)|lanes)\b")),
     (WorkflowKind.PLAN, re.compile(r"\b(?:plan|design)\b")),
     (WorkflowKind.IMPLEMENT, re.compile(r"\b(?:build|fix|implement|modify|refactor|ship)\b")),
 )
