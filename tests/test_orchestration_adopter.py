@@ -357,10 +357,8 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertIn(f"- Now: {text('beta-copy')}", during)
         rows = during.split(f"- 2\\. {text('beta-copy')}: ", 1)[1].split("\n", 2)
         self.assertIn(", checking · lane", rows[0])
-        # The runner records a check's state only when it finishes, so the running fallback
-        # reads as pending. A tracked follow-up has the runner mark a check running as it
-        # starts; when it lands, this expects running.
-        self.assertEqual(rows[1], f"  - {text('full')}: pending")
+        # The runner marks a check running as it starts, so the fallback reads as running.
+        self.assertEqual(rows[1], f"  - {text('full')}: running")
         view = adopter.view()
         self.assertQueueRow(view, "alpha-copy", "merged")
         self.assertQueueRow(view, "beta-copy", "merged")
