@@ -901,6 +901,8 @@ class IsolationTests(MergeQueueTestCase):
         self.candidate(adopter)
         stale = adopter.work / "checkouts" / "99-stale"
         run("worktree", "add", "--detach", "--quiet", str(stale), "origin/main", cwd=adopter.operator)
+        # Marked as the runner marks its own checkouts; an unmarked worktree there is refused.
+        (Path(run("rev-parse", "--absolute-git-dir", cwd=stale)) / queue.CHECKOUT_MARKER).write_bytes(b"")
         self.assertIn(str(stale), run("worktree", "list", cwd=adopter.operator))
         self.run_queue(adopter, "feature")
         self.assertFalse(stale.exists())
