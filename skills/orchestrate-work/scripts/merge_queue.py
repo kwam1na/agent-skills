@@ -633,6 +633,24 @@ class Runner:
 
         self.write(build=build)
 
+    def finish_checking(self, subject: str) -> None:
+        """Clear the checking panel; a check left running, by a stop mid-check, reads pending again.
+
+        One write, so the panel and the queue row still agree after a stop.
+        """
+
+        def build(current: dict) -> tuple[dict, dict]:
+            queue = [dict(item) for item in current["queue"]]
+            for item in queue:
+                if item["subject"] == subject:
+                    item["checks"] = [
+                        {**check, "state": "pending"} if check["state"] == "running" else check
+                        for check in item["checks"]
+                    ]
+            return {"queue": queue}, {"/meta/checking/now": None}
+
+        self.write(build=build)
+
     def set_item(self, subject: str, **fields: object) -> None:
         self.write(selector=f"queue[subject={subject}]", assignments={f"/{key}": value for key, value in fields.items()})
 
@@ -1271,7 +1289,7 @@ class Runner:
             self.remove_checkouts()
             with contextlib.suppress(Exception):
                 if subject is not None and result.outcome != "refused":
-                    self.checking(None)
+                    self.finish_checking(subject)
             result.notes.extend(note for note in self.notes if note not in result.notes)
         return result
 

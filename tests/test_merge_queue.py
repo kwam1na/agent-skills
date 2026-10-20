@@ -1356,6 +1356,95 @@ class LiveCheckStateTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("other")["title"], "Renamed by the lead")
         self.assertEqual(adopter.item("feature")["checks"], self.as_checks({"after": "passed", "lead-writes": "passed"}))
 
+    def recording(self, subject: str = "feature"):
+        """Wrap the state tool: after every runner write, record the panel's steps and the queue row."""
+        real = state_tool.patch
+        seen: list[tuple] = []
+
+        def wrapper(directory, **kwargs):
+            written = real(directory, **kwargs)
+            if kwargs.get("writer") == "runner":
+                now = written["meta"]["checking"]["now"]
+                item = next(element for element in written["queue"] if element["subject"] == subject)
+                steps = None if now is None else [(step["label"], step["state"]) for step in now["steps"]]
+                seen.append((steps, [(check["id"], check["state"]) for check in item["checks"]], item["stage"]))
+            return written
+
+        return mock.patch.object(queue.delivery_state, "patch", wrapper), seen
+
+    def live(self, seen: list[tuple]) -> list[tuple]:
+        """The writes made while checks were running, each asserted to show the same states in both views."""
+        writes = [
+            (steps, checks) for steps, checks, stage in seen
+            if stage == "checking" and steps is not None and steps != [("selecting checks", "running")]
+        ]
+        self.assertTrue(writes, seen)
+        for steps, checks in writes:
+            self.assertEqual(steps, checks, seen)
+        return writes
+
+    def test_both_views_agree_after_every_runner_write(self) -> None:
+        adopter = self.snapshot_adopter("trio", {"alwaysRun": []})
+        self.candidate(adopter)
+        patched, seen = self.recording()
+        with patched:
+            self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        writes = self.live(seen)
+        # Pending, then each check running and then finished, with d skipped.
+        self.assertEqual(len(writes), 8)
+
+    @unittest.skipIf(os.name == "nt", "process groups and ps are POSIX")
+    def test_a_timed_out_check_reads_timed_out_in_both_views(self) -> None:
+        adopter = self.adopter(mode="slow-child")
+        self.candidate(adopter)
+        patched, seen = self.recording()
+        with patched:
+            self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        states = [steps[0] for steps, _ in self.live(seen)]
+        self.assertIn(("slow", "running"), states)
+        self.assertIn(("slow", "timed_out"), states)
+        self.assertEqual(adopter.item("feature")["checks"][0], {"id": "slow", "state": "timed_out"})
+
+    def test_a_retry_rebuilds_from_fresh_state_and_keeps_the_leads_write(self) -> None:
+        adopter = self.snapshot_adopter("trio", {"alwaysRun": []})
+        self.candidate(adopter)
+        adopter.enqueue("other", adopter.tip("main"))
+        real = state_tool.patch
+        fired: list[int] = []
+
+        def lead_writes_first(directory, **kwargs):
+            # The lead writes between the runner's read and its write, so the runner must retry.
+            steps = (kwargs.get("assignments") or {}).get("/meta/checking/now/steps")
+            if kwargs.get("writer") == "runner" and steps and any(step["state"] == "running" for step in steps) and not fired:
+                fired.append(1)
+                return real(directory, between_read_and_write=lambda: adopter.lead_set("other", title="Renamed mid-write"), **kwargs)
+            return real(directory, **kwargs)
+
+        with mock.patch.object(queue.delivery_state, "patch", lead_writes_first):
+            self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        self.assertTrue(fired)
+        self.assertEqual(adopter.item("other")["title"], "Renamed mid-write")
+        self.assertEqual([check["state"] for check in adopter.item("feature")["checks"]], ["passed", "failed", "passed", "skipped"])
+
+    def test_a_stop_mid_check_leaves_no_check_reading_running(self) -> None:
+        adopter = self.snapshot_adopter("trio", {"alwaysRun": []})
+        self.candidate(adopter)
+        real = queue.Runner.run_one
+
+        def crash_on_b(runner, check, checkout, context):
+            if check["id"] == "b":
+                raise RuntimeError("simulated crash mid-check")
+            return real(runner, check, checkout, context)
+
+        with mock.patch.object(queue.Runner, "run_one", crash_on_b):
+            self.assertStopped(self.run_queue(adopter, "feature"), "runner_error")
+        state = state_tool.read_state(adopter.state)
+        self.assertIsNone(state["meta"]["checking"]["now"])
+        self.assertEqual(adopter.item("feature")["stage"], "stopped")
+        self.assertEqual(
+            adopter.item("feature")["checks"], self.as_checks({"a": "passed", "b": "pending", "c": "pending", "d": "pending"}),
+        )
+
     def test_steps_advance_in_order_and_a_failure_is_recorded_in_both_views(self) -> None:
         adopter = self.snapshot_adopter("trio", {"alwaysRun": []})
         self.candidate(adopter)
