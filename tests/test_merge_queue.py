@@ -94,6 +94,24 @@ if args[:1] == ["--sleep-child"]:
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     pathlib.Path(os.environ["MQ_LOG"] + ".child").write_text(str(child.pid))
     time.sleep(60)
+if args[:1] == ["--lead-writes"]:
+    # The lead edits another queue item while this check runs.
+    sys.path.insert(0, os.environ["MQ_SCRIPTS"])
+    import delivery_state
+    directory = pathlib.Path(os.environ["MQ_STATE"])
+    current = delivery_state.read_state(directory)
+    delivery_state.patch(directory, writer="lead", version=current["version"],
+                         selector="queue[subject=other]", changes={"title": "Renamed by the lead"})
+    sys.exit(0)
+if args[:1] == ["--snapshot"]:
+    # What the views show while this check runs.
+    import json
+    state = json.loads((pathlib.Path(os.environ["MQ_STATE"]) / "state.json").read_text(encoding="utf-8"))
+    now = state["meta"]["checking"]["now"]
+    with open(os.environ["MQ_LOG"] + ".snap", "a") as snap:
+        snap.write(json.dumps({"check": name, "steps": now["steps"] if now else None,
+                               "queue": state["queue"][0]["checks"]}) + "\\n")
+    sys.exit(1 if args[1:2] == ["fail"] else 0)
 if args[:1] == ["--no-material"]:
     sys.exit(5 if pathlib.Path(".lease-material").exists() else 0)
 if args[:1] == ["--always-fail"]:
@@ -161,6 +179,9 @@ if mode == "new-cwd":
     tool = str(pathlib.Path("tools/check.py").resolve())
     checks = [{"id": "in-new-dir", "argv": [py, tool, "in-new-dir", "--always-fail"], "cwd": "newdir",
                "reasons": ["changed"], "prerequisites": []}]
+if mode == "trio":
+    checks = [check("a", "--snapshot"), check("b", "--snapshot", "fail", "src/app.txt"), check("c", "--snapshot"),
+              check("d", "--snapshot", prerequisites=["b"])]
 if mode == "implicit":
     checks = [check("implicit", "--implicit")]
 if mode == "shadow":
@@ -1289,6 +1310,71 @@ class HostileConfigTests(MergeQueueTestCase):
         with self.hostile():
             results = self.run_queue(adopter, "feature")
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+
+
+class LiveCheckStateTests(MergeQueueTestCase):
+    """While checks run, the checking panel and the queue row name them, live, and agree."""
+
+    def snapshot_adopter(self, mode: str, binding_changes: dict) -> Adopter:
+        environment = {
+            "MQ_REMOTE": str(self.directory / "remote.git"), "MQ_LOG": str(self.directory / "log.txt"),
+            "MQ_STATE": str(self.directory / "state"),
+        }
+        return Adopter(self.directory, {"environment": environment, **binding_changes}, mode)
+
+    def snapshots(self, adopter: Adopter) -> list[dict]:
+        path = Path(str(adopter.log) + ".snap")
+        return [json.loads(line) for line in path.read_text().splitlines()]
+
+    @staticmethod
+    def as_steps(states: dict[str, str]) -> list[dict]:
+        return [{"label": name, "state": state} for name, state in states.items()]
+
+    @staticmethod
+    def as_checks(states: dict[str, str]) -> list[dict]:
+        return [{"id": name, "state": state} for name, state in states.items()]
+
+    def test_a_fallback_check_reads_running_in_both_views_while_it_runs(self) -> None:
+        snapshot_fallback = check_entry("full", "--snapshot")
+        adopter = self.snapshot_adopter("fail", {"fallback": [snapshot_fallback], "alwaysRun": []})
+        self.candidate(adopter)
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(results[1].document()["selection"]["fallbackReasons"], ["provider_failed"])
+        [seen] = self.snapshots(adopter)
+        self.assertEqual(seen["steps"], self.as_steps({"full": "running"}))
+        self.assertEqual(seen["queue"], self.as_checks({"full": "running"}))
+
+    def test_a_lead_write_to_another_item_during_a_check_is_kept(self) -> None:
+        lead_writes = check_entry("lead-writes", "--lead-writes")
+        adopter = self.snapshot_adopter("fail", {"fallback": [lead_writes], "alwaysRun": [check_entry("after")]})
+        self.candidate(adopter)
+        adopter.enqueue("other", adopter.tip("main"))
+        with mock.patch.dict(os.environ, {"MQ_SCRIPTS": str(SCRIPTS)}):
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(adopter.item("other")["title"], "Renamed by the lead")
+        self.assertEqual(adopter.item("feature")["checks"], self.as_checks({"after": "passed", "lead-writes": "passed"}))
+
+    def test_steps_advance_in_order_and_a_failure_is_recorded_in_both_views(self) -> None:
+        adopter = self.snapshot_adopter("trio", {"alwaysRun": []})
+        self.candidate(adopter)
+        results = self.run_queue(adopter, "feature")
+        self.assertStopped(results, "check_failed")
+        seen = {snapshot["check"]: snapshot for snapshot in self.snapshots(adopter)}
+        expected = {
+            "a": {"a": "running", "b": "pending", "c": "pending", "d": "pending"},
+            "b": {"a": "passed", "b": "running", "c": "pending", "d": "pending"},
+            "c": {"a": "passed", "b": "failed", "c": "running", "d": "pending"},
+        }
+        self.assertEqual(sorted(seen), ["a", "b", "c"])
+        for name, states in expected.items():
+            with self.subTest(check=name):
+                self.assertEqual(seen[name]["steps"], self.as_steps(states))
+                self.assertEqual(seen[name]["queue"], self.as_checks(states))
+        # After the run the queue keeps every check's final state; d never ran because b failed.
+        final = {"a": "passed", "b": "failed", "c": "passed", "d": "skipped"}
+        self.assertEqual(adopter.item("feature")["checks"], self.as_checks(final))
 
 
 class RenderingTests(MergeQueueTestCase):

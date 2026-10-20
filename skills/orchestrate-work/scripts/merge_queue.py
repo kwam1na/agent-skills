@@ -581,10 +581,24 @@ class Runner:
                 return element
         raise Stop("candidate_unknown", f"{subject} is not in the queue")
 
-    def write(self, *, changes: dict | None = None, selector: str | None = None, assignments: dict | None = None) -> None:
-        """Write runner-owned fields, retrying when the lead wrote first."""
+    def write(
+        self,
+        *,
+        changes: dict | None = None,
+        selector: str | None = None,
+        assignments: dict | None = None,
+        build: Callable[[dict], tuple[dict, dict]] | None = None,
+    ) -> None:
+        """Write runner-owned fields, retrying when the lead wrote first.
+
+        ``build`` derives the changes and assignments from the state read for
+        each attempt, for a patch that must carry the rest of a list as it is now.
+        """
         for _ in range(STATE_PATCH_ATTEMPTS):
-            version = self.state()["version"]
+            current = self.state()
+            version = current["version"]
+            if build is not None:
+                changes, assignments = build(current)
             try:
                 delivery_state.patch(
                     self.state_directory,
@@ -601,6 +615,23 @@ class Runner:
         else:
             raise delivery_state.StateError("version_stale", "the state kept changing under the runner")
         self.render()
+
+    def write_progress(self, subject: str, states: list[tuple[str, str]]) -> None:
+        """Show the checks' live states in the checking panel and the queue row, in one write.
+
+        Written before a check starts and after it ends, so both views name the
+        check that is running and never disagree.
+        """
+
+        def build(current: dict) -> tuple[dict, dict]:
+            queue = [dict(item) for item in current["queue"]]
+            for item in queue:
+                if item["subject"] == subject:
+                    item["checks"] = [{"id": name, "state": state} for name, state in states]
+            steps = [{"label": name, "state": state} for name, state in states]
+            return {"queue": queue}, {"/meta/checking/now/steps": steps}
+
+        self.write(build=build)
 
     def set_item(self, subject: str, **fields: object) -> None:
         self.write(selector=f"queue[subject={subject}]", assignments={f"/{key}": value for key, value in fields.items()})
@@ -900,7 +931,7 @@ class Runner:
             raise Stop("base_moved", f"{self.base} moved since {subject} was synced")
         context = context.with_values(branch=branch, head=synced, expectedHead=synced)
         self.set_item(subject, stage="checking", checks=[])
-        self.checking(subject, item["title"], [{"label": "check", "state": "running"}])
+        self.checking(subject, item["title"], [{"label": "selecting checks", "state": "running"}])
         self.journal("check.started", f"Checking {item['title']}", subject)
         checkout = self.checkout(synced, "check", context=context.with_values(treeSha=self.tree(synced)))
         self.assert_clean(checkout, "a fresh checkout of the synced head")
@@ -911,7 +942,7 @@ class Runner:
             if changes:
                 raise Stop("no_checks", "nothing would check this candidate's changes")
             result.notes.append("the candidate changes nothing, so no check was selected")
-        self.set_item(subject, checks=[{"id": check["id"], "state": "pending"} for check in checks])
+        self.write_progress(subject, [(check["id"], "pending") for check in checks])
         outcomes = self.run_checks(subject, checks, checkout, context.with_values(treeSha=self.tree(synced)), result)
         self.assert_clean(checkout, "the checkout after the checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
@@ -1053,11 +1084,22 @@ class Runner:
 
     def run_checks(self, subject: str, checks: list[dict], checkout: Path, context: Context, result: Result) -> dict[str, str]:
         outcomes: dict[str, str] = {}
+
+        def show(running: str | None = None) -> None:
+            states = [
+                (item["id"], "running" if item["id"] == running else outcomes.get(item["id"], "pending"))
+                for item in checks
+            ]
+            self.write_progress(subject, states)
+
         for check in checks:
             if any(outcomes.get(name) != "passed" for name in check["prerequisites"]):
                 outcomes[check["id"]] = "skipped"
                 result.checks.append({"id": check["id"], "state": "skipped", "exitCode": None, "seconds": 0})
+                show()
                 continue
+            # Live state is written before the work starts, not after it.
+            show(running=check["id"])
             completed = self.run_one(check, checkout, context)
             assert completed is not None
             state = "timed_out" if completed.timed_out else "passed" if completed.returncode == 0 else "failed"
@@ -1066,9 +1108,7 @@ class Runner:
                 "id": check["id"], "state": state, "exitCode": completed.returncode,
                 "seconds": round(completed.seconds, 3),
             })
-            self.set_item(subject, checks=[
-                {"id": item["id"], "state": outcomes.get(item["id"], "pending")} for item in checks
-            ])
+            show()
         return outcomes
 
     def classify(self, failed: list[dict], selected: list[dict], checkout: Path, base_head: str, changes: list[dict], context: Context, result: Result) -> None:
