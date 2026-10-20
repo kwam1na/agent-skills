@@ -242,6 +242,6 @@ def run_runtime(lifecycle: Lifecycle, arguments: list[str]) -> int:
         runtime = runtime_root(lifecycle)
         reconcile_policy(lifecycle, check=True)
         return _run_command([
-            "node", "--experimental-strip-types", "--import", str(runtime / "bootstrap.mjs"),
+            "node", "--experimental-strip-types", "--import", (runtime / "bootstrap.mjs").resolve().as_uri(),
             str(runtime / "cli.mjs"), *arguments,
         ], lifecycle.root)
