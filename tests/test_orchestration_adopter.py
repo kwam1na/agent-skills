@@ -82,11 +82,17 @@ class FixtureAdopter:
         # turned into a hostile configuration, to show the runner is immune.
         self.gitconfig = root / "fixture gitconfig"
         self.gitconfig.write_text("", encoding="utf-8")
+        # Git also reads a user's default ignore and attributes files from the
+        # home directory, so the fixture gets a home of its own.
+        home = root / "fixture home"
+        home.mkdir()
         self.environment = {
             **{key: value for key, value in os.environ.items()
                if key not in INHERITED_GIT and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))},
             "GIT_CONFIG_GLOBAL": str(self.gitconfig),
             "GIT_CONFIG_NOSYSTEM": "1",
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(home / "config"),
         }
         self.git("init", "--quiet", "--bare", f"--initial-branch={BASE}", str(self.remote), cwd=root)
         seed = root / "seed checkout"
