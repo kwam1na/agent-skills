@@ -47,6 +47,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import signal
 import subprocess
 import tempfile
@@ -92,6 +93,7 @@ _MARKDOWN_INLINE = frozenset("\\`*_~[]<>&|$")
 # headings and list markers, only when a space follows or the value ends there,
 # since only then do they open a block.
 _MARKDOWN_MARKER_START = frozenset("#-+")
+_THEMATIC_DASHES = re.compile(r"-(?:[ \t]*-){2,}[ \t]*")
 
 
 def _markdown_escape(text: str) -> str:
@@ -101,6 +103,8 @@ def _markdown_escape(text: str) -> str:
         if (
             character in _MARKDOWN_INLINE
             or (index == 0 and character in _MARKDOWN_MARKER_START and _opens_block(text, _run(text, character)))
+            # A value of dashes alone would be a thematic break on its own line.
+            or (index == 0 and character == "-" and _THEMATIC_DASHES.fullmatch(text) is not None)
             # An image opener; its bracket is escaped too.
             or (character == "!" and after == "[")
             # GitHub's bare autolinks: a scheme's "://", "www." and e-mail.
