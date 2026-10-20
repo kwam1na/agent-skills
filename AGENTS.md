@@ -47,6 +47,9 @@ removing an output stays a deliberate edit to the lock:
 
 When a rebase or merge conflicts only in `provenance.lock.json`, take either
 side of the lock, run the writer, then validate the registry before continuing.
+The writer never adds or removes an output, so when one side added or removed a
+listed output, take that side; validating the registry reports any output the
+lock no longer lists.
 
 The `-t .` option enters the test package's dependency guard. Without the test
 extra, that guard reports one installation failure before importing the suite.

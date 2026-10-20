@@ -76,6 +76,8 @@ class UpdateProvenanceTests(unittest.TestCase):
         self.assertEqual(changed, {(key[0], edited) for key in before if key[1] == edited})
         self.assertEqual(after[next(iter(changed))], digest(self.root / edited))
         self.assertEqual(self.digest_findings(), [])
+        # The whole registry validates with no other edit.
+        self.assertEqual(list(validate_corpus(self.root).findings), [])
         self.assertEqual(self.write().returncode, 0)
         self.assertEqual(outputs(self.root), after)
 
@@ -90,6 +92,56 @@ class UpdateProvenanceTests(unittest.TestCase):
         self.assertEqual(self.write().returncode, 0)
         self.assertEqual(self.digest_findings(), [])
         self.assertEqual((self.root / LOCK).read_bytes(), (self.pristine / "corpus" / LOCK).read_bytes())
+
+    def test_a_real_lock_only_rebase_conflict_is_resolved_from_either_side(self) -> None:
+        # Two branches edit the same output in places that merge cleanly; only
+        # its digest line in the lock conflicts, as in a merge-queue sync.
+        guide = "skills/orchestrate-work/references/orchestration-guide.md"
+
+        def git(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", *args],
+                cwd=self.root, capture_output=True, text=True, encoding="utf-8", check=False,
+            )
+
+        def commit_side(branch: str, start: str, edit) -> None:
+            self.assertEqual(git("checkout", "-q", "-b", branch, start).returncode, 0)
+            edit(self.root / guide)
+            self.assertEqual(self.write().returncode, 0)
+            self.assertEqual(git("commit", "-q", "-am", branch).returncode, 0)
+
+        self.assertEqual(git("init", "-q", "--initial-branch=base").returncode, 0)
+        git("add", "-A")
+        self.assertEqual(git("commit", "-q", "-m", "base").returncode, 0)
+        lines = (self.root / guide).read_text(encoding="utf-8").split("\n")
+        commit_side("upstream", "base", lambda path: path.write_text(
+            "\n".join(lines[:2] + ["An upstream note.", ""] + lines[2:]), encoding="utf-8"))
+        commit_side("lane", "base", lambda path: path.write_text(
+            "\n".join(lines) + "\nA lane note.\n", encoding="utf-8"))
+        rebased = git("rebase", "upstream")
+        self.assertNotEqual(rebased.returncode, 0)
+        conflicted = git("diff", "--name-only", "--diff-filter=U").stdout.split()
+        self.assertEqual(conflicted, [LOCK])
+        locks = []
+        for side in ("--ours", "--theirs"):
+            self.assertEqual(git("checkout", side, "--", LOCK).returncode, 0)
+            completed = self.write()
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(list(validate_corpus(self.root).findings), [])
+            locks.append((self.root / LOCK).read_bytes())
+        self.assertEqual(locks[0], locks[1])
+        git("add", LOCK)
+        finished = subprocess.run(
+            ["git", "-c", "core.editor=true", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+             "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "rebase", "--continue"],
+            cwd=self.root, capture_output=True, text=True, encoding="utf-8", check=False,
+        )
+        self.assertEqual(finished.returncode, 0, finished.stderr)
+        text = (self.root / guide).read_text(encoding="utf-8")
+        self.assertIn("An upstream note.", text)
+        self.assertIn("A lane note.", text)
+        self.assertEqual(self.write("--check").returncode, 0)
 
     def test_check_reports_stale_digests_and_writes_nothing(self) -> None:
         self.append("skills/plan-work/SKILL.md", "\nStale now.\n")
