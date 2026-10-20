@@ -24,12 +24,12 @@ always = {check["id"] for check in binding["alwaysRun"]}
 checks, uncovered = [], []
 
 
-def select(check_id: str, tool: str, reason: str) -> None:
+def select(check_id: str, tool: str, reason: str, *extra: str) -> None:
     if check_id in always or any(check["id"] == check_id for check in checks):
         return
     checks.append({
         "id": check_id,
-        "argv": [sys.executable, "-B", tool, "src"],
+        "argv": [sys.executable, "-B", tool, "src", *extra],
         "cwd": ".",
         "reasons": [reason],
         "prerequisites": [],
@@ -39,7 +39,7 @@ def select(check_id: str, tool: str, reason: str) -> None:
 for change in request["changes"]:
     path = change["path"]
     if path.startswith("src/"):
-        select("format", "tools/format.py", "a source file changed")
+        select("format", "tools/format.py", "a source file changed", sys.argv[1])
         select("lint", "tools/lint.py", "a source file changed")
     elif not path.startswith(("generated/", "tools/", ".agents/")):
         uncovered.append(path)

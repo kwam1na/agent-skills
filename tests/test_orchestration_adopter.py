@@ -252,31 +252,74 @@ class FixtureAdopterTests(unittest.TestCase):
         adopter.lead_patch({"queue": queue})
         for item in queue:
             adopter.journal("candidate.handed", f"Handed {item['subject']}", lane=item["lane"], subject=item["subject"])
-        view = adopter.view() if (adopter.state / "delivery.md").exists() else None
-        self.assertIsNone(view, "nothing renders until the runner first writes")
+        self.assertFalse((adopter.state / "delivery.md").exists(), "nothing renders until the runner first writes")
 
-        # 3. Run all three: two merge, the third stops on a source conflict. While
-        # this run goes, the provider is down for any change to src/beta.txt, so
-        # the second candidate is checked through the fallback.
+        # S5: the second lane pushes again after its head was reviewed and recorded.
+        unreviewed = adopter.lane_change("beta-copy", {"src/beta.txt": "beta three\n"}, fresh=True)
+        # S3: while the first candidate is checked, another merge lands on the base.
         adopter.work_root.mkdir(exist_ok=True)
-        (adopter.work_root / "provider-down").write_text("src/beta.txt\n", encoding="utf-8")
+        (adopter.work_root / "move-base").write_text("once\n", encoding="utf-8")
+
+        # 3. Run all three.
         results = adopter.queue("run", *SUBJECTS, expect=1)
-        (adopter.work_root / "provider-down").unlink()
-        merged_runs = [(results[2], results[1]), (results[5], results[4])]
+        self.assertFalse((adopter.work_root / "move-base").exists(), "the base moved during the first check")
         outcomes = [(result["subcommand"], result["candidate"], result["outcome"]) for result in results]
         self.assertEqual(outcomes, [
+            ("sync", "alpha-copy", "synced"), ("check", "alpha-copy", "checked"), ("merge", "alpha-copy", "stopped"),
             ("sync", "alpha-copy", "synced"), ("check", "alpha-copy", "checked"), ("merge", "alpha-copy", "merged"),
+            ("sync", "beta-copy", "stopped"),
+        ])
+        self.assertTrue(all(result["hooksBypassed"] for result in results))
+        # S3: the merge refused a base its checked head does not contain; the runner re-synced,
+        # re-checked and merged at the new base, onto exactly the base it was checked against.
+        moved = results[2]
+        self.assertEqual(moved["stop"]["reason"], "base_moved")
+        self.assertFalse(moved["stop"]["queueStopped"])
+        self.assertNotEqual(results[3]["baseHead"], results[0]["baseHead"])
+        self.assertEqual(results[3]["baseHead"], moved["baseHead"])
+        self.assertEqual(results[5]["mergedHead"], adopter.tip(BASE))
+        self.assertEqual(adopter.read(adopter.tip(BASE), "src/gamma.txt"), "gamma two")
+        # The provider selected the checks for the first candidate's source change.
+        self.assertEqual(results[4]["selection"]["checks"], ["format", "lint"])
+        self.assertEqual(results[4]["selection"]["fallbackReasons"], [])
+        self.assertFalse(results[4]["selection"]["widened"])
+        merged_runs = [(results[5], results[4])]
+        # S5: the second candidate moved after review, so nothing of it was synced or merged.
+        stopped = results[6]
+        self.assertEqual(stopped["stop"]["reason"], "candidate_moved")
+        self.assertEqual(stopped["head"], unreviewed)
+        self.assertIsNone(stopped["syncedHead"])
+        self.assertEqual(adopter.tip("lane/beta-copy"), unreviewed, "the runner pushed nothing to the moved branch")
+        view = adopter.view()
+        self.assertQueueRow(view, "alpha-copy", "merged")
+        self.assertQueueRow(view, "beta-copy", "stopped")
+        self.assertQueueRow(view, "alpha-rewrite", "queued")
+        self.assertIn(f"candidate{text('_')}moved", view)
+        self.assertIn(f"base{text('_')}moved", view)
+
+        # The lead reviews the new head and re-queues the second candidate on it.
+        adopter.lead_patch({"head": unreviewed}, "queue[subject=beta-copy]")
+        adopter.journal("candidate.handed", "Handed beta-copy at its reviewed new head", lane="lane-2",
+                        subject="beta-copy")
+
+        # S2: while this run goes, the provider is down for any change to src/beta.txt,
+        # so the second candidate is checked through the fallback.
+        (adopter.work_root / "provider-down").write_text("src/beta.txt\n", encoding="utf-8")
+        results = adopter.queue("run", "beta-copy", "alpha-rewrite", expect=1)
+        (adopter.work_root / "provider-down").unlink()
+        outcomes = [(result["subcommand"], result["candidate"], result["outcome"]) for result in results]
+        self.assertEqual(outcomes, [
             ("sync", "beta-copy", "synced"), ("check", "beta-copy", "checked"), ("merge", "beta-copy", "merged"),
             ("sync", "alpha-rewrite", "stopped"),
         ])
+        merged_runs.append((results[2], results[1]))
         self.assertEqual(results[-1]["stop"]["reason"], "source_conflict")
         self.assertEqual(results[-1]["stop"]["paths"], ["src/alpha.txt"])
-        self.assertTrue(all(result["hooksBypassed"] for result in results))
         # The second candidate really conflicted with the base, on the generated file only.
-        beta_sync = results[3]
+        beta_sync = results[0]
         adopter.git("fetch", "--quiet", REMOTE, cwd=adopter.lane)
         conflict = subprocess.run(
-            ["git", "merge-tree", "--write-tree", "--name-only", heads["beta-copy"], beta_sync["baseHead"]],
+            ["git", "merge-tree", "--write-tree", "--name-only", unreviewed, beta_sync["baseHead"]],
             cwd=adopter.lane, capture_output=True, text=True, env=adopter.environment, check=False,
         )
         self.assertEqual((conflict.returncode, conflict.stderr), (1, ""), conflict.stdout)
@@ -288,18 +331,14 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual(adopter.read(merge_commit, "generated/catalog.txt"),
                          adopter.read(beta_sync["baseHead"], "generated/catalog.txt"))
         catalog = adopter.read(adopter.tip(BASE), "generated/catalog.txt")
-        self.assertEqual(catalog, "alpha.txt: alpha two\nbeta.txt: beta two\ngamma.txt: gamma one")
-        # The provider selected the checks for the first candidate's source change.
-        self.assertEqual(results[1]["selection"]["checks"], ["format", "lint"])
-        self.assertEqual(results[1]["selection"]["fallbackReasons"], [])
-        self.assertFalse(results[1]["selection"]["widened"])
+        self.assertEqual(catalog, "alpha.txt: alpha two\nbeta.txt: beta three\ngamma.txt: gamma two")
         # S2: the provider was down for the second candidate; the runner fell back and says why.
-        selection = results[4]["selection"]
+        selection = results[1]["selection"]
         self.assertEqual(selection["providers"][0]["outcome"], "failed")
         self.assertEqual(selection["fallbackReasons"], ["provider_failed"])
         self.assertTrue(selection["widened"])
         self.assertEqual(selection["checks"], ["full"])
-        self.assertEqual([(check["id"], check["state"]) for check in results[4]["checks"]], [("full", "passed")])
+        self.assertEqual([(check["id"], check["state"]) for check in results[1]["checks"]], [("full", "passed")])
         # While the fallback ran, the view named the candidate being checked and the fallback check.
         snapshots = sorted(adopter.snapshots.iterdir())
         self.assertEqual(len(snapshots), 1)
@@ -307,7 +346,8 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertIn(f"- Now: {text('beta-copy')}", during)
         rows = during.split(f"2. {text('beta-copy')}: ", 1)[1].split("\n", 2)
         self.assertIn(", checking · lane", rows[0])
-        # The runner records a check's state as each one finishes, so the fallback reads as pending.
+        # The runner records a check's state only when it finishes, so the running fallback
+        # reads as pending; V26-2757 tightens this to running.
         self.assertEqual(rows[1], f"   - {text('full')}: pending")
         view = adopter.view()
         self.assertQueueRow(view, "alpha-copy", "merged")
@@ -325,7 +365,7 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertIn(text(fixed), render_state.render_markdown(adopter.show()))
 
         # 5. A broken-base episode: a commit outside the queue breaks lint on the base.
-        broken_base = adopter.push_to_base({"src/beta.txt": "beta two BROKEN\n"}, "A change that breaks lint")
+        broken_base = adopter.push_to_base({"src/beta.txt": "beta three BROKEN\n"}, "A change that breaks lint")
         results = adopter.queue("run", "alpha-rewrite", expect=1)
         last = results[-1]
         self.assertEqual((last["subcommand"], last["outcome"]), ("check", "stopped"))
@@ -341,7 +381,7 @@ class FixtureAdopterTests(unittest.TestCase):
         lint = {"id": "lint", "argv": [sys.executable, "-B", "tools/lint.py", "src"], "cwd": ".",
                 "reasons": ["the base broke without it"], "prerequisites": []}
         binding["alwaysRun"] = [lint]
-        adopter.push_to_base({"src/beta.txt": "beta two\n"}, "Fix the base forward", binding)
+        adopter.push_to_base({"src/beta.txt": "beta three\n"}, "Fix the base forward", binding)
         adopter.journal("base.repaired", "Fixed the base forward")
         adopter.journal("decision.recorded", "lint runs on every candidate")
 
@@ -396,7 +436,11 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual([entry["kind"] for entry in final["journal"]], [
             "lane.assigned", "lane.assigned", "lane.assigned",
             "candidate.handed", "candidate.handed", "candidate.handed",
+            # S3: checked, stopped at merge by the moved base, then re-checked and merged.
+            "check.started", "check.finished", "candidate.stopped",
             "check.started", "check.finished", "candidate.merged",
+            # S5: moved after review, stopped, and re-queued on its reviewed new head.
+            "candidate.stopped", "candidate.handed",
             "check.started", "check.finished", "candidate.merged",
             "candidate.stopped",
             "candidate.handed",
