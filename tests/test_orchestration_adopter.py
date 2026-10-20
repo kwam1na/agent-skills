@@ -77,6 +77,9 @@ class FixtureAdopter:
         self.log.write_text("", encoding="utf-8")
         # The machine's global and system git settings (signing, ignore rules,
         # line-ending conversion) never reach the fixture or the tools it runs.
+        # The runner itself does not yet pin its own commits against them; a
+        # tracked follow-up does, and then this isolation can be dropped, or
+        # turned into a hostile configuration, to show the runner is immune.
         self.gitconfig = root / "fixture gitconfig"
         self.gitconfig.write_text("", encoding="utf-8")
         self.environment = {
@@ -347,7 +350,8 @@ class FixtureAdopterTests(unittest.TestCase):
         rows = during.split(f"2. {text('beta-copy')}: ", 1)[1].split("\n", 2)
         self.assertIn(", checking · lane", rows[0])
         # The runner records a check's state only when it finishes, so the running fallback
-        # reads as pending; V26-2757 tightens this to running.
+        # reads as pending. A tracked follow-up has the runner mark a check running as it
+        # starts; when it lands, this expects running.
         self.assertEqual(rows[1], f"   - {text('full')}: pending")
         view = adopter.view()
         self.assertQueueRow(view, "alpha-copy", "merged")
