@@ -32,6 +32,9 @@ CORE_SKILL_PATHS = (
     "skills/orchestrate-work/references/schemas/delivery-state.json",
     "skills/orchestrate-work/scripts/_schema.py",
     "skills/orchestrate-work/scripts/delivery_state.py",
+    "skills/orchestrate-work/scripts/render_state.py",
+    "skills/orchestrate-work/scripts/renderers/markdown.py",
+    "skills/orchestrate-work/scripts/renderers/static_page.py",
     "skills/plan-work/SKILL.md",
     "skills/review-work/SKILL.md",
 )
