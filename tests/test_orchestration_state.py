@@ -863,7 +863,9 @@ class SchemaAgreementTests(unittest.TestCase):
         text = SCHEMA_FILE.read_text(encoding="utf-8")
         schemas = json.loads(text)
         self.assertEqual(text, json.dumps(schemas, indent=2, ensure_ascii=False) + "\n")
-        self.assertEqual(sorted(schemas), ["delivery-journal/1", "delivery-state/1"])
+        self.assertEqual(sorted(schemas), [
+            "affected-checks/1", "delivery-journal/1", "delivery-state/1", "merge-queue-result/1", "orchestration-binding/1",
+        ])
         for name, schema in schemas.items():
             with self.subTest(name=name):
                 self.assertEqual(schema["title"], name)

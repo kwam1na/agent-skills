@@ -223,6 +223,7 @@ def test_core_profile_is_exact_and_deterministic() -> None:
             "skills/orchestrate-work/references/orchestration-guide.md",
             "skills/orchestrate-work/references/schemas.json",
             "skills/orchestrate-work/scripts/delivery_state.py",
+            "skills/orchestrate-work/scripts/merge_queue.py",
             "skills/orchestrate-work/scripts/render_state.py",
             "skills/plan-work/SKILL.md",
             "skills/review-work/SKILL.md",
