@@ -961,7 +961,7 @@ class SkillTextTests(unittest.TestCase):
                 self.assertTrue(instruction.startswith(("On the ", "None: ")), instruction)
                 # An update is never a gate: no instruction waits on, blocks or
                 # orders anything after itself.
-                self.assertIsNone(re.search(r"\b(?:wait|waits|block|blocks|until|before|gate)\b", instruction), instruction)
+                self.assertIsNone(re.search(r"\b(?:wait(?:s|ing|ed)?|block(?:s|ing)?|until|till|before|after|gate[sd]?|hold(?:s|ing)?)\b", instruction), instruction)
 
     def test_the_operator_escalation_list_is_closed_and_pinned(self) -> None:
         for path in (SKILL / "SKILL.md", GUIDE):
@@ -982,7 +982,8 @@ class SkillTextTests(unittest.TestCase):
             text = " ".join(path.read_text(encoding="utf-8").split())
             for rule in ("does not ask", "Never hold approved work.", "Never leave a lane idle.",
                          "Reconcile at every event.", "Lanes escalate to the lead, never to the operator",
-                         "the epic's child items", "before the views are published", "disagrees with the record"):
+                         "the epic's child items", "before the views are published", "disagrees with the record",
+                         "never delays acting or publishing", "except a change the operator made", "never reverting" if path == GUIDE else "never reverted"):
                 with self.subTest(path=path.name, rule=rule):
                     self.assertIn(rule, text)
         brief = " ".join(section(GUIDE.read_text(encoding="utf-8"), "## Lane brief template").split())

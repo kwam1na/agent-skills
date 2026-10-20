@@ -72,7 +72,7 @@ proceeds and the lead notes the gap in its close-out.
 | `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. |
 | `check.finished` | None: its outcome posts with `candidate.merged` or `candidate.stopped`. |
 | `candidate.merged` | On the ticket: the merge commit, the checks run, and any check reported but not awaited; the ticket moves to its review or completed state. |
-| `candidate.stopped` | On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or waiting on a decision. |
+| `candidate.stopped` | On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or pending a decision. |
 | `base.broken` | On the epic: the failing check, and that the queue is stopped. |
 | `base.repaired` | On the epic: the fix that landed and the gap it closed. |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. |
@@ -373,14 +373,15 @@ operator.
   - List the epic's child items with the host's tracker tools and compare
     them with the record.
   - Add any item the record lacks, such as a follow-up or deferral filed but
-    never recorded, before the views are published. It goes to `followups[]`;
-    it becomes planned work only when the approved plan already covers it,
-    and otherwise it is a scope change for the operator.
+    never recorded, before the views are published. It goes to `followups[]`,
+    which needs no escalation. It becomes planned work only when the approved
+    plan already covers it; promoting it otherwise is a scope change for the
+    operator.
   - When an item's tracker state disagrees with the record, the record wins
     for states the lead or the runner owns, and the tracker item is
-    corrected. A tracker change the operator made is standing direction: the
-    lead updates the record and journals `decision.recorded`, never reverting
-    it.
+    corrected, except a change the operator made. That is standing direction:
+    the lead updates the record and journals `decision.recorded`, never
+    reverting it.
   - Reconciliation is best-effort, like the updates: one attempt. With no
     tracker tools, or a listing that fails, the lead notes the gap; it never
     delays acting or publishing.
