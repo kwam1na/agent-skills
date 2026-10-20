@@ -161,32 +161,43 @@ PROGRAM = """
     app.replaceChildren.apply(app, build(doc, note));
     app.setAttribute("data-source", source);
   }
+  /* The answer to one live document: "shown", "unusable" (a different state
+     version or shape), or "failed" (it passed the checks but could not be
+     drawn). Every failure leaves the embedded state on screen. */
   function drawLive(doc) {
-    if (!usable(doc)) {
-      return false;
-    }
     try {
+      if (!usable(doc)) { return "unusable"; }
       draw(doc, "live");
-      return true;
+      return "shown";
     } catch (error) {
-      draw(embedded, "embedded", "Showing the saved state: the live store's answer could not be shown.");
-      return false;
+      return "failed";
     }
   }
+  var notes = {
+    unusable: "Showing the saved state: the live store did not match this page's state version.",
+    failed: "Showing the saved state: the live store's answer could not be shown.",
+    unread: "Showing the saved state: the live store could not be read."
+  };
+  function fallBack(reason) { draw(embedded, "embedded", notes[reason]); }
 
   draw(embedded, "embedded");
   var store = globalThis.deliveryStateStore;
   if (isObject(store) && typeof store.read === "function") {
-    Promise.resolve().then(function () { return store.read(); }).then(function (doc) {
-      if (!drawLive(doc)) {
-        draw(embedded, "embedded", "Showing the saved state: the live store did not match this page's state version.");
-      }
-    }, function () {
-      draw(embedded, "embedded", "Showing the saved state: the live store could not be read.");
-    });
+    /* A pushed update is newer than whatever read() returns, so once one is
+       shown the read's answer is ignored. */
+    var pushed = false;
     if (typeof store.subscribe === "function") {
-      store.subscribe(function (doc) { drawLive(doc); });
+      store.subscribe(function (doc) {
+        if (drawLive(doc) === "shown") { pushed = true; }
+      });
     }
+    Promise.resolve().then(function () { return store.read(); }).then(function (doc) {
+      if (pushed) { return; }
+      var result = drawLive(doc);
+      if (result !== "shown") { fallBack(result); }
+    }, function () {
+      if (!pushed) { fallBack("unread"); }
+    });
   }
 })();
 """.strip()

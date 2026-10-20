@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -22,7 +23,10 @@ MARKDOWN = RENDERERS / "markdown.py"
 STATIC_PAGE = RENDERERS / "static_page.py"
 HEAD_A = "a" * 40
 
-HOSTILE = "</script><img src=x onerror=alert(1)> [click](javascript:alert(1)) <b>bold</b>\u2028next\u2029line https://example.test"
+HOSTILE = (
+    "</script><img src=x onerror=alert(1)> [click](javascript:alert(1)) <b>bold</b>\u2028next\u2029line"
+    " https://example.test & <!-- *em* _u_ `code` # ! | ~\n    indented"
+)
 
 
 def run(argv: list[str], stdin: str | None = None) -> subprocess.CompletedProcess:
@@ -233,6 +237,9 @@ class WrapperTests(DeliveryStateFixture):
             "absolute output": [{"id": "x", "builtin": "markdown", "output": str(self.root / "x.md")}],
             "state file": [{"id": "x", "builtin": "markdown", "output": "state.json"}],
             "journal file": [{"id": "x", "builtin": "markdown", "output": "journal.jsonl"}],
+            "state file in another case": [{"id": "x", "builtin": "markdown", "output": "STATE.json"}],
+            "journal file in another case": [{"id": "x", "builtin": "markdown", "output": "Journal.jsonl"}],
+            "lock file in another case": [{"id": "x", "builtin": "markdown", "output": "Queue.LOCK"}],
             "unknown builtin": [{"id": "x", "builtin": "slides", "output": "x"}],
             "both kinds": [{"id": "x", "builtin": "markdown", "argv": ["true"], "output": "x"}],
             "shell string": [{"id": "x", "argv": "cat state.json", "output": "x"}],
@@ -247,6 +254,23 @@ class WrapperTests(DeliveryStateFixture):
                 self.assertEqual(code, 2, result)
                 self.assertEqual(result["code"], "config_invalid")
         self.assertEqual(sorted(path.name for path in self.state_dir.iterdir() if not path.name.endswith(".lock")), ["journal.jsonl", "state.json"])
+
+    def test_a_view_is_never_written_through_a_link(self) -> None:
+        outside = self.root / "outside"
+        outside.mkdir()
+        (self.state_dir / "views").symlink_to(outside, target_is_directory=True)
+        (self.state_dir / "alias.md").symlink_to(self.state_dir / "state.json")
+        before = (self.state_dir / "state.json").read_bytes()
+        renderers = [
+            {"id": "escape", "builtin": "markdown", "output": "views/escaped.md"},
+            {"id": "alias", "builtin": "markdown", "output": "alias.md"},
+            {"id": "plain", "builtin": "markdown", "output": "plain/delivery.md"},
+        ]
+        code, result = wrapper(self.state_dir, "--state-config", self.config(renderers))
+        self.assertEqual(code, 1, result)
+        self.assertEqual([entry["ok"] for entry in result["renderers"]], [False, False, True])
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertEqual((self.state_dir / "state.json").read_bytes(), before)
 
     def test_the_wrapper_never_writes_the_state(self) -> None:
         before = {name: (self.state_dir / name).read_bytes() for name in ("state.json", "journal.jsonl")}
@@ -275,6 +299,12 @@ class MarkdownRendererTests(DeliveryStateFixture):
         for separator in ("\u2028", "\u2029", "\r"):
             self.assertNotIn(separator, view)
         self.assertIn("next", view)
+        # Emphasis, code, headings, tables and strike markers are escaped too,
+        # and a newline in state text cannot open an indented code block.
+        for escaped in ("\\*em\\*", "\\_u\\_", "\\`code\\`", "\\#", "\\!", "\\|", "\\~", "\\&", "\\<\\!\\-\\-"):
+            self.assertIn(escaped, view)
+        self.assertNotIn("\n    indented", view)
+        self.assertIn("indented", view)
 
     def test_it_shows_the_delivery(self) -> None:
         view = self.render()
@@ -335,7 +365,8 @@ class StaticPageTests(DeliveryStateFixture):
         return json.loads(json.dumps(document).replace("https://example.test", "example").replace(HOSTILE, "plain"))
 
 
-@unittest.skipUnless(shutil.which("node"), "the page's script runs under a JavaScript runtime")
+# Continuous integration must run the page's script; elsewhere it needs a runtime.
+@unittest.skipUnless(shutil.which("node") or os.environ.get("CI"), "the page's script runs under a JavaScript runtime")
 class StaticPageScriptTests(DeliveryStateFixture):
     """Run the page's own script against a minimal document object."""
 
@@ -364,16 +395,29 @@ globalThis.document = {
   createElement: node,
   createTextNode: (t) => ({ textContent: String(t) }),
 };
+process.on("unhandledRejection", (error) => { process.stderr.write("unhandled " + error); process.exit(3); });
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 if (scenario.adapter) {
+  const adapter = scenario.adapter;
+  const answer = () => {
+    if (adapter.throwingGetter) {
+      return { journal: [], get state() { throw new Error("hostile getter"); } };
+    }
+    return adapter.document;
+  };
   globalThis.deliveryStateStore = {
-    read: async () => scenario.adapter.document,
-    subscribe: scenario.adapter.subscribe ? (cb) => { globalThis.__push = cb; return () => {}; } : undefined,
+    read: async () => {
+      await wait(adapter.readDelayMs || 0);
+      if (adapter.readRejects) { throw new Error("store down"); }
+      return answer();
+    },
+    subscribe: adapter.subscribe ? (cb) => { globalThis.__push = cb; return () => {}; } : undefined,
   };
 }
 new Function(program)();
 setTimeout(async () => {
   if (scenario.push && globalThis.__push) { globalThis.__push(scenario.push); }
-  await new Promise((r) => setTimeout(r, 10));
+  await wait(10 + ((scenario.adapter && scenario.adapter.readDelayMs) || 0));
   const tags = [...new Set(created.map((e) => e.tagName))].sort();
   process.stdout.write(JSON.stringify({ text: byId.app.textContent, tags,
     source: byId.app.attributes["data-source"] || null }));
@@ -430,6 +474,47 @@ setTimeout(async () => {
                 shown = self.run_page({"adapter": {"document": answer}})
                 self.assertIn(HOSTILE, shown["text"])
                 self.assertEqual(shown["source"], "embedded")
+
+    def test_the_fallback_says_why(self) -> None:
+        mismatch = self.run_page({"adapter": {"document": self.live_document("Future", "delivery-state/2")}})
+        self.assertIn("did not match this page's state version", mismatch["text"])
+        unread = self.run_page({"adapter": {"document": None, "readRejects": True}})
+        self.assertIn("could not be read", unread["text"])
+        self.assertEqual(unread["source"], "embedded")
+
+    def test_a_live_answer_that_cannot_be_drawn_falls_back_to_the_embedded_state(self) -> None:
+        broken = self.live_document("Broken headline")
+        del broken["state"]["queue"][0]["checks"]
+        shown = self.run_page({"adapter": {"document": broken}})
+        self.assertEqual(shown["source"], "embedded")
+        self.assertIn("could not be shown", shown["text"])
+        self.assertNotIn("Broken headline", shown["text"])
+
+    def test_a_hostile_live_answer_falls_back_without_an_unhandled_error(self) -> None:
+        shown = self.run_page({"adapter": {"throwingGetter": True}})
+        self.assertEqual(shown["source"], "embedded")
+        self.assertIn(HOSTILE, shown["text"])
+
+    def test_a_pushed_update_wins_over_a_slower_read(self) -> None:
+        shown = self.run_page(
+            {
+                "adapter": {"document": self.live_document("Older read"), "subscribe": True, "readDelayMs": 30},
+                "push": self.live_document("Newer push"),
+            }
+        )
+        self.assertIn("Newer push", shown["text"])
+        self.assertNotIn("Older read", shown["text"])
+        self.assertEqual(shown["source"], "live")
+
+    def test_a_failed_read_after_a_push_keeps_the_pushed_state(self) -> None:
+        shown = self.run_page(
+            {
+                "adapter": {"document": None, "subscribe": True, "readDelayMs": 30, "readRejects": True},
+                "push": self.live_document("Newer push"),
+            }
+        )
+        self.assertIn("Newer push", shown["text"])
+        self.assertEqual(shown["source"], "live")
 
     def test_a_pushed_update_with_a_different_schema_version_is_ignored(self) -> None:
         shown = self.run_page(

@@ -325,7 +325,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "52569c2bd868312017544421d1a6a5fd764f5415de8d28e83c4b8eb0960231b3"
+          "sha256": "2e0533acd7eb4cead93668143d48d82b6efb8c6588cb3737d76aa73dcb24c855"
         },
         {
           "path": "skills/orchestrate-work/scripts/renderers/markdown.py",
@@ -333,7 +333,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/renderers/static_page.py",
-          "sha256": "15d1e02f274744058399dc18b8d85dcadfd3c98c80629398af66b20059d90103"
+          "sha256": "82aa39b0adff6e0cf3de03a4e9246e4b7c6ea9546a7ce1ae11c68e1e7b67c621"
         }
       ],
       "owner": "delivery-agent/user-delegated",

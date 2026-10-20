@@ -25,6 +25,7 @@ import json
 import os
 import subprocess
 import tempfile
+import unicodedata
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -42,7 +43,7 @@ DEFAULT_RENDERERS = (
     {"id": "static-page", "builtin": "static-page", "output": "delivery.html"},
 )
 # The files the state tool and the runner own; no view may replace them.
-RESERVED = frozenset({STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK})
+RESERVED = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK)
 DEFAULT_TIMEOUT_SECONDS = 60
 MAX_TIMEOUT_SECONDS = 600
 # How much of a failing command's stderr the result keeps.
@@ -51,6 +52,15 @@ ERROR_LIMIT = 500
 
 class ConfigError(Exception):
     pass
+
+
+def _fold(name: str) -> str:
+    # Filesystems may ignore case and normalise Unicode, so compare names
+    # the way the most permissive of them would.
+    return unicodedata.normalize("NFC", name).casefold()
+
+
+RESERVED_FOLDED = frozenset(_fold(name) for name in RESERVED)
 
 
 def _safe_output(value: object) -> bool:
@@ -65,8 +75,28 @@ def _safe_output(value: object) -> bool:
         and "." not in path.parts
         and not windows.drive
         and not windows.is_absolute()
-        and value not in RESERVED
+        and _fold(path.parts[0]) not in RESERVED_FOLDED
     )
+
+
+def _view_target(directory: Path, output: str) -> Path:
+    """Where a view may be written, or a refusal when a link would carry it
+    out of the state directory or onto a file the state tool owns.
+
+    A view replaces its target, so a link at the target itself is replaced,
+    never followed; only the folders above it and the target's identity matter.
+    """
+    root = directory.resolve()
+    target = directory / output
+    parent = target.parent.resolve()
+    if parent != root and root not in parent.parents:
+        raise OSError(f"{output} is outside the state directory")
+    if target.exists():
+        for name in RESERVED:
+            reserved = directory / name
+            if reserved.exists() and os.path.samefile(target, reserved):
+                raise OSError(f"{output} is the state tool's {name}")
+    return target
 
 
 def _argv(value: object, where: str) -> list[str]:
@@ -180,7 +210,7 @@ def render(directory: Path, config: object) -> tuple[int, dict]:
         entry: dict = {"id": renderer["id"], "ok": error is None, "output": renderer["output"]}
         if error is None:
             try:
-                _write_atomically(directory / renderer["output"], view)
+                _write_atomically(_view_target(directory, renderer["output"]), view)
             except OSError as failure:
                 error = f"could not write the view: {failure.strerror or failure}"
                 entry["ok"] = False
