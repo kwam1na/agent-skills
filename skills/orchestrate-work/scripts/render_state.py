@@ -29,7 +29,9 @@ publisher's output is not used, so the same does not fail it.
 Each command runs in its own process group. One that outlives its timeout is
 stopped together with its children, and so is every running command when the
 wrapper is interrupted or terminated. Stopping is best-effort: a child that
-leaves the group escapes it, and a wrapper killed outright cannot stop anything.
+leaves the group escapes it, a wrapper killed outright cannot stop anything,
+and on Windows the children of a command that has already exited are no longer
+reachable through it.
 """
 
 from __future__ import annotations
@@ -286,33 +288,34 @@ def _execute(argv: list[str], document: bytes, timeout: int, *, needs_stdout: bo
         )
     except OSError as error:
         return Outcome(None, b"", b"", False, False, f"could not start: {error.strerror or error}")
-    stdout = _Capture(process.stdout, VIEW_LIMIT_BYTES)
-    # Enough bytes that the last ERROR_LIMIT characters survive decoding.
-    stderr = _Capture(process.stderr, ERROR_BYTES, tail=True)
-    feeder = threading.Thread(target=_feed, args=(process.stdin, document), daemon=True)
-    for thread in (stdout, stderr, feeder):
-        thread.start()
     try:
-        code = process.wait(timeout)
-    except subprocess.TimeoutExpired:
-        _stop(process)
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            process.wait(DRAIN_SECONDS)
-        return Outcome(None, bytes(stdout.kept), bytes(stderr.kept), stdout.truncated, False,
-                       f"timed out after {timeout}s")
+        stdout = _Capture(process.stdout, VIEW_LIMIT_BYTES)
+        # Enough bytes that the last ERROR_LIMIT characters survive decoding.
+        stderr = _Capture(process.stderr, ERROR_BYTES, tail=True)
+        feeder = threading.Thread(target=_feed, args=(process.stdin, document), daemon=True)
+        for thread in (stdout, stderr, feeder):
+            thread.start()
+        try:
+            code = process.wait(timeout)
+        except subprocess.TimeoutExpired:
+            _stop(process)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(DRAIN_SECONDS)
+            return Outcome(None, bytes(stdout.kept), bytes(stderr.kept), stdout.truncated, False,
+                           f"timed out after {timeout}s")
+        # The process has exited; its output may still be in flight, or held
+        # open by a child it left behind. Wait a bounded time for the rest.
+        deadline = time.monotonic() + DRAIN_SECONDS
+        for thread in (stdout, stderr):
+            thread.join(max(0.0, deadline - time.monotonic()))
+        stdout_open = stdout.is_alive()
+        if stdout_open and needs_stdout:
+            _stop(process)
     except BaseException:
-        # Interrupted or terminated: the command is in its own group, so the
-        # signal never reached it. Stop it before giving up.
+        # Interrupted or terminated at any point: the command is in its own
+        # group, so the signal never reached it. Stop it before giving up.
         _stop(process)
         raise
-    # The process has exited; its output may still be in flight, or held open
-    # by a child it left behind. Wait a bounded time for the rest.
-    deadline = time.monotonic() + DRAIN_SECONDS
-    for thread in (stdout, stderr):
-        thread.join(max(0.0, deadline - time.monotonic()))
-    stdout_open = stdout.is_alive()
-    if stdout_open and needs_stdout:
-        _stop(process)
     kept_err = bytes(stderr.kept)
     error = None
     if code != 0:

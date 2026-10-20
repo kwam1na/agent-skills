@@ -325,7 +325,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "d74007a08915fe415610f4083b3eba0e8f2efb35073ac5440f9b4c4d80bc8322"
+          "sha256": "ffc9627e8d6e9b18c3c428d9731d2a37b0d4eb1cf60e3826320a7b068354b722"
         },
         {
           "path": "skills/orchestrate-work/scripts/renderers/markdown.py",

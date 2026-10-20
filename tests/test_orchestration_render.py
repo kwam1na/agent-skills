@@ -263,6 +263,20 @@ class BoundedCommandTests(DeliveryStateFixture):
         self.assertEqual(entry["ok"], False)
         self.assertIn("still open", entry["error"])
         self.assertFalse((self.state_dir / "lingering.txt").exists())
+        if os.name != "nt":
+            # The child holding the renderer's stdout was stopped with its group.
+            deadline = time.monotonic() + 5
+            alive = True
+            while alive and time.monotonic() < deadline:
+                alive = False
+                for line in self.pids.read_text().split():
+                    try:
+                        os.kill(int(line), 0)
+                        alive = True
+                    except ProcessLookupError:
+                        pass
+                time.sleep(0.05)
+            self.assertFalse(alive, "the renderer's lingering child was not stopped")
 
     def test_a_renderer_whose_child_holds_only_stderr_still_writes_its_view(self) -> None:
         logger = {
