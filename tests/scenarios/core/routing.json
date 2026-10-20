@@ -29,6 +29,61 @@
       "expectedEntryPoint": "deliver-work",
       "expectedWorkflow": "compound",
       "request": "Compound the reusable learning from this delivery"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "orchestrate",
+      "request": "Deliver this epic"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "orchestrate",
+      "request": "Orchestrate the lanes"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "orchestrate",
+      "request": "Deliver the epic from the plan"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "plan",
+      "request": "Plan the feature"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "review",
+      "request": "Review the epic"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "diagnose",
+      "request": "Diagnose why the epic's lanes stalled"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "orchestrate",
+      "request": "Run the lanes"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "orchestrate",
+      "request": "Start the orchestration"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "orchestrate",
+      "request": "Close out the epics"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "implement",
+      "request": "Implement lane 3"
+    },
+    {
+      "expectedEntryPoint": "deliver-work",
+      "expectedWorkflow": "implement",
+      "request": "Fix the lane assignment bug"
     }
   ],
   "schemaVersion": "agent-skills-routing-scenarios/1"

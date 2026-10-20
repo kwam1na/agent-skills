@@ -128,7 +128,7 @@
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "4150122b7e654767753774bdfcec1a1354f1ef06991391a611028b3bbef1318b"
+          "sha256": "e18e0655702418838ea2ccb046fca9564134bceac35f799f384a0c9a4aabab2e"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",
@@ -305,7 +305,11 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "5cb571bae79b75a358eacdb859afe4067c87a70089cf206a9201f93b45009997"
+          "sha256": "b65b8cdbcab3fd31fe27494a04edf8c19a282385d5ddad3449f7dab109c8c9f4"
+        },
+        {
+          "path": "skills/orchestrate-work/references/orchestration-guide.md",
+          "sha256": "b7e195e6692601bc2cae74f5fbcf0485dabe795905bf3b3714cc8e46fc9ebb35"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",

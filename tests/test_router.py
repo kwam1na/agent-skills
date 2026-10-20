@@ -92,6 +92,29 @@ class RouterTests(unittest.TestCase):
             "Choose a declared repository workflow, then resume delivery.",
         )
 
+    def test_orchestration_routes_to_its_workflow(self) -> None:
+        decision = route_workflow(WorkflowRequest("Deliver this epic"))
+        self.assertEqual(decision.workflow.value, "orchestrate")
+        self.assertEqual(decision.entry_point, "deliver-work")
+        self.assertEqual(decision.workflow_skill, "orchestrate-work")
+
+    def test_orchestration_is_a_declared_workflow(self) -> None:
+        for request in (
+            WorkflowRequest("Implement the change", repository_workflow="orchestrate"),
+            WorkflowRequest("Implement the change", host_workflow_hint="orchestrate"),
+        ):
+            with self.subTest(request=request):
+                decision = route_workflow(request)
+                self.assertEqual(decision.workflow.value, "orchestrate")
+                self.assertEqual(decision.workflow_skill, "orchestrate-work")
+
+    def test_an_unknown_named_workflow_still_clarifies(self) -> None:
+        decision = route_workflow(
+            WorkflowRequest("Deliver this epic", repository_workflow="orchestration")
+        )
+        self.assertEqual(decision.workflow.value, "clarify")
+        self.assertEqual(decision.route_kind.value, "handoff")
+
     def test_invalid_host_workflow_hint_clarifies_actionably(self) -> None:
         decision = route_workflow(
             WorkflowRequest(
