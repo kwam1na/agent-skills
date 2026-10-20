@@ -305,7 +305,7 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "fd442e969280d80cdda36fb9fad9a30dc57a35a73cc1a61bb27e06d05c494983"
+          "sha256": "f27dadb4ba9bce4c77ba038e7ccb5e3626040299c1a7e832e3bbb32ee163d9aa"
         },
         {
           "path": "skills/orchestrate-work/references/schemas/delivery-journal.json",
@@ -321,7 +321,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "6383fab785f5ed4ab4e22b80fdc537c583ded62190f9023cdfbc9b2c603f17fe"
+          "sha256": "80948859c2370c3e89579e3a0ec933518f430e8dc1381a9033d0495bc3e1e14e"
         }
       ],
       "owner": "delivery-agent/user-delegated",

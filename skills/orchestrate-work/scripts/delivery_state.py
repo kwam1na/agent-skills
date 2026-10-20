@@ -87,6 +87,15 @@ def dumps(value: object) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
 
 
+def _require_unicode(value: object, code: str) -> None:
+    # A lone surrogate (from a "\\ud800" escape or an undecodable argument)
+    # has no UTF-8 form, so neither file may hold it.
+    try:
+        json.dumps(value, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:
+        raise StateError(code, "text must be valid Unicode: a lone surrogate cannot be stored") from None
+
+
 def emit(value: object) -> None:
     """Write ``value`` to stdout as ASCII JSON, whatever the console encoding."""
     text = json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True) + "\n"
@@ -243,6 +252,7 @@ def init(directory: Path, headline: str) -> dict:
         if (directory / STATE_FILE).exists():
             raise StateError("state_exists", f"state already exists at {directory / STATE_FILE}")
         state = initial_state(headline)
+        _require_unicode(state, "state_invalid")
         _write_atomically(directory / STATE_FILE, dumps(state))
         (directory / JOURNAL_FILE).touch()
     return state
@@ -397,6 +407,7 @@ def patch(
         errors = state_errors(updated)
         if errors:
             raise StateError("patch_invalid", "; ".join(errors))
+        _require_unicode(updated, "patch_invalid")
         _write_atomically(directory / STATE_FILE, dumps(updated))
     return updated
 
@@ -423,6 +434,7 @@ def append_journal(
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
+        _require_unicode(entry, "entry_invalid")
         line = json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
         complete = _journal_text(directory)[1]
         with open(directory / JOURNAL_FILE, "ab") as stream:
@@ -444,7 +456,8 @@ def _json_argument(value: str | None, name: str) -> object:
         return None
     if value == "-":
         try:
-            text = sys.stdin.buffer.read().decode("utf-8")
+            # A leading byte-order mark, as some Windows writers add, is accepted.
+            text = sys.stdin.buffer.read().decode("utf-8-sig")
         except UnicodeDecodeError:
             raise StateError("patch_invalid", f"{name} on stdin is not UTF-8") from None
     else:

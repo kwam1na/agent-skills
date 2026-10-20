@@ -72,17 +72,19 @@ NARROW_CONSOLE = {"PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
 
 
 def run_tool(
-    directory: Path, *args: str, stdin: str | None = None, environment: dict[str, str] | None = None
+    directory: Path, *args: str, stdin: str | bytes | None = None, environment: dict[str, str] | None = None
 ) -> tuple[int, dict]:
     # Bytes in and out: the tool's contract is UTF-8 on stdin and ASCII JSON on
     # stdout, whatever the console encoding.
     result = subprocess.run(
         [sys.executable, "-B", str(TOOL), "--dir", str(directory), *args],
-        input=None if stdin is None else stdin.encode("utf-8"),
+        input=stdin.encode("utf-8") if isinstance(stdin, str) else stdin,
         capture_output=True,
         env={**os.environ, **(environment or {})},
         check=False,
     )
+    # A crash prints nothing on stdout: show why instead of a bare decode error.
+    assert result.stdout, result.stderr.decode("utf-8", "replace")
     assert result.stdout.isascii(), result.stdout
     return result.returncode, json.loads(result.stdout.decode("ascii"))
 
@@ -237,6 +239,36 @@ class StateToolTests(unittest.TestCase):
         self.assertEqual(patched["state"]["meta"]["headline"], headline)
         code, shown = run_tool(self.directory, "show", environment=NARROW_CONSOLE)
         self.assertEqual(shown["state"]["meta"]["headline"], headline)
+
+    def test_undecodable_input_is_refused_as_json(self) -> None:
+        code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--version", "1", "--patch", "-",
+                                 stdin=b'\xff{"meta":{}}', environment=NARROW_CONSOLE)
+        self.assertEqual((code, refused["code"]), (1, "patch_invalid"))
+        code, patched = run_tool(self.directory, "patch", "--writer", "lead", "--version", "1", "--patch", "-",
+                                 stdin=b'\xef\xbb\xbf{"meta":{"headline":"With a BOM"}}', environment=NARROW_CONSOLE)
+        self.assertEqual(code, 0, patched)
+        self.assertEqual(patched["state"]["meta"]["headline"], "With a BOM")
+        with open(self.directory / state_tool.STATE_FILE, "ab") as stream:
+            stream.write(b"\xff")
+        code, refused = run_tool(self.directory, "show", environment=NARROW_CONSOLE)
+        self.assertEqual((code, refused["code"]), (1, "state_invalid"))
+
+    def test_a_lone_surrogate_is_refused_and_nothing_is_written(self) -> None:
+        state_before = self.state_bytes()
+        journal = self.directory / state_tool.JOURNAL_FILE
+        journal_before = journal.read_bytes()
+        code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--version", "1",
+                                 "--patch", '{"meta":{"headline":"\\ud800"}}')
+        self.assertEqual((code, refused["code"]), (1, "patch_invalid"))
+        with self.assertRaises(state_tool.StateError) as entry:
+            state_tool.append_journal(self.directory, kind="decision.recorded", summary="bad\udcff")
+        self.assertEqual(entry.exception.code, "entry_invalid")
+        with self.assertRaises(state_tool.StateError) as fresh:
+            state_tool.init(self.directory.parent / "fresh", "bad\udcff")
+        self.assertEqual(fresh.exception.code, "state_invalid")
+        self.assertFalse((self.directory.parent / "fresh" / state_tool.STATE_FILE).exists())
+        self.assertEqual(self.state_bytes(), state_before)
+        self.assertEqual(journal.read_bytes(), journal_before)
 
     def test_files_are_the_same_bytes_on_every_platform(self) -> None:
         summary = "caf\u00e9\u2028line\r\nnext"
