@@ -20,6 +20,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ProductReleaseTests(unittest.TestCase):
     def setUp(self) -> None:
+        # Product subprocesses inherit this environment; a pull-request CI event or a declared
+        # non-maintainer context would make every lifecycle mutation refuse, so run as a maintainer.
+        scrubbed = patch.dict(os.environ)
+        scrubbed.start()
+        self.addCleanup(scrubbed.stop)
+        os.environ.pop("GITHUB_EVENT_NAME", None)
+        os.environ.pop("AGENT_SKILLS_EXECUTION_CONTEXT", None)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name)
