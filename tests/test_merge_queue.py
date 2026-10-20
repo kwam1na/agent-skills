@@ -1155,23 +1155,30 @@ class HostileConfigTests(MergeQueueTestCase):
     """The runner's own git commands keep working under a user's global config."""
 
     def hostile(self) -> contextlib.AbstractContextManager:
-        """A global config that signs commits, rewrites line endings and ignores files."""
+        """A system config that rewrites line endings, and a global one that signs and ignores files."""
         signer = self.directory / "refuse-to-sign.py"
         signer.write_text("import sys\nsys.exit(1)\n")
         excludes = self.directory / "global-excludes"
         excludes.write_text("stray.txt\nnotes/\n")
+        # Git for Windows sets autocrlf in its system config by default.
+        system = self.directory / "system.gitconfig"
+        system.write_text("[core]\n\tautocrlf = true\n")
+        attributes = self.directory / "global-attributes"
+        attributes.write_text("* text eol=crlf\n")
         config = self.directory / "hostile.gitconfig"
         lines = [
-            "[core]", "\tautocrlf = true", "\tsafecrlf = true", f"\texcludesFile = {excludes.as_posix()}",
+            "[core]", "\tsafecrlf = true", f"\texcludesFile = {excludes.as_posix()}",
+            f"\tattributesFile = {attributes.as_posix()}",
+            "[diff]", "\trenames = false",
             "[commit]", "\tgpgsign = true",
             "[tag]", "\tgpgsign = true",
             "[push]", "\tgpgSign = true",
-            "[merge]", "\tverifySignatures = true",
+            "[merge]", "\tverifySignatures = true", "\trenames = false",
             "[gpg]", f"\tprogram = {Path(PY).as_posix()} {signer.as_posix()}",
             "[rerere]", "\tenabled = true",
         ]
         config.write_text("\n".join(lines) + "\n")
-        return mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(config)})
+        return mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(config), "GIT_CONFIG_SYSTEM": str(system)})
 
     def test_a_run_with_a_regenerate_and_a_merge_commit_completes(self) -> None:
         adopter = self.adopter()
@@ -1210,6 +1217,20 @@ class HostileConfigTests(MergeQueueTestCase):
             ["git", "show", "origin/main:gen/generated.txt"], cwd=adopter.lane, capture_output=True, check=True,
         ).stdout
         self.assertEqual(generated, b"app two\nlib one\n")
+
+    def test_a_rename_against_a_base_edit_still_merges(self) -> None:
+        adopter = self.adopter()
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        run("checkout", "--quiet", "-b", "feature", "origin/main", cwd=adopter.lane)
+        run("mv", "src/lib.txt", "src/library.txt", cwd=adopter.lane)
+        run("commit", "--quiet", "-m", "rename", cwd=adopter.lane)
+        run("push", "--quiet", "origin", "feature:feature", cwd=adopter.lane)
+        adopter.enqueue("feature", run("rev-parse", "HEAD", cwd=adopter.lane))
+        adopter.advance_base({"src/lib.txt": "lib edited on the base\n"})
+        with self.hostile():
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(adopter.show("origin/main", "src/library.txt"), "lib edited on the base")
 
     def test_a_push_and_merge_survive_signature_requirements(self) -> None:
         adopter = self.adopter()

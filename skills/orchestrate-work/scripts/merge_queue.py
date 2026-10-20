@@ -68,23 +68,27 @@ RENDER_TIMEOUT_SECONDS = 120
 PINNED_GIT_CONFIG = (
     # Nothing is signed or required to be signed, so no step fails or waits on a signing prompt.
     "commit.gpgsign=false",
-    "tag.gpgsign=false",
     "push.gpgSign=false",
     "merge.verifySignatures=false",
-    # Bytes are committed as tools wrote them, unless .gitattributes says otherwise.
+    # Bytes are committed as tools wrote them, unless the repository's own
+    # .gitattributes says otherwise; a global attributes file never applies.
     "core.autocrlf=false",
     "core.safecrlf=false",
+    f"core.attributesFile={os.devnull}",
     # A global excludes file never hides an undeclared change from status.
     f"core.excludesFile={os.devnull}",
-    # A recorded resolution never resolves a conflict on the runner's behalf.
+    # Renames are always followed, so a rename never looks like a conflict.
+    "diff.renames=true",
+    "merge.renames=true",
+    # Defence in depth, for settings no fixture can make bite: a recorded
+    # resolution never resolves a conflict for the runner, status reads the
+    # files rather than a cache, nothing opens an editor, and nothing reaches
+    # into submodules.
     "rerere.enabled=false",
     "rerere.autoUpdate=false",
-    # Status reads the files, not a monitor's cache of them.
     "core.fsmonitor=false",
     "core.untrackedCache=false",
-    # Commits and merges never open an editor.
     "core.editor=true",
-    # Checkouts and merges never reach into submodules on the user's say-so.
     "submodule.recurse=false",
 )
 # Folders git keeps in its own directory; workRoot never sits in one of them.
