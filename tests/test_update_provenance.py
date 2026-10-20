@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -174,8 +175,96 @@ class UpdateProvenanceTests(unittest.TestCase):
         self.assertEqual((self.root / LOCK).read_bytes(), before)
 
     def test_the_writer_leaves_no_bytecode_beside_it(self) -> None:
-        self.write("--check")
-        self.assertEqual(list((ROOT / "scripts").glob("__pycache__")), [])
+        # Without -B and with the environment's own guard removed, only the
+        # writer's own setting keeps bytecode out of the corpus.
+        environment = {key: value for key, value in os.environ.items() if key != "PYTHONDONTWRITEBYTECODE"}
+        self.append("skills/plan-work/SKILL.md", "\nEdited.\n")
+        completed = subprocess.run(
+            [sys.executable, str(self.root / "scripts" / "update-provenance.py")],
+            capture_output=True, text=True, encoding="utf-8", check=False, env=environment,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(list(self.root.rglob("__pycache__")), [])
+
+    def test_a_current_lock_in_another_layout_is_restored_to_canonical_form(self) -> None:
+        canonical = (self.root / LOCK).read_bytes()
+        (self.root / LOCK).write_text(json.dumps(json.loads(canonical)), encoding="utf-8")
+        self.assertTrue([finding for finding in validate_corpus(self.root).findings if finding.rule_id == "document.canonical"])
+        check = self.write("--check")
+        self.assertEqual(check.returncode, 1)
+        self.assertIn(f"noncanonical: {LOCK}", check.stdout)
+        completed = self.write()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual((self.root / LOCK).read_bytes(), canonical)
+        self.assertEqual(list(validate_corpus(self.root).findings), [])
+        # A checkout that converts line endings is current, as the validator reads it.
+        (self.root / LOCK).write_bytes(canonical.replace(b"\n", b"\r\n"))
+        self.assertEqual(self.write("--check").returncode, 0)
+        # The write is a whole-file replacement; no temporary file is left behind.
+        self.assertEqual(sorted(path.name for path in self.root.glob(f".{LOCK}.*")), [])
+
+    def test_a_malformed_lock_is_refused_not_reported_stale(self) -> None:
+        pristine = (self.root / LOCK).read_bytes()
+        text = pristine.decode("utf-8")
+        lock = json.loads(text)
+        no_digest = json.loads(text)
+        del no_digest["entries"][0]["outputs"][0]["sha256"]
+        cases = {
+            "conflict markers": ("<<<<<<< HEAD\n" + text + "=======\n" + text + ">>>>>>> lane\n").encode("utf-8"),
+            "byte-order mark": b"\xef\xbb\xbf" + pristine,
+            "missing digest": (json.dumps(no_digest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        }
+        for name, contents in cases.items():
+            for args in ((), ("--check",)):
+                with self.subTest(case=name, args=args):
+                    (self.root / LOCK).write_bytes(contents)
+                    completed = self.write(*args)
+                    self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+                    self.assertNotIn("Traceback", completed.stderr)
+                    self.assertEqual((self.root / LOCK).read_bytes(), contents)
+        (self.root / LOCK).write_bytes(pristine)
+        empty = self.directory / "empty"
+        empty.mkdir()
+        refused = subprocess.run(
+            [sys.executable, "-B", str(WRITER), "--root", str(empty), "--check"],
+            capture_output=True, text=True, encoding="utf-8", check=False,
+        )
+        self.assertEqual(refused.returncode, 2, refused.stderr)
+        # A catalog skill whose entry the lock lacks.
+        catalog = json.loads((self.root / "catalog.json").read_text(encoding="utf-8"))
+        skill = catalog["skills"][0]
+        lock["entries"] = [entry for entry in lock["entries"] if entry["id"] != skill["provenanceId"]]
+        (self.root / LOCK).write_text(json.dumps(lock, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+        missing_entry = self.write("--skill", skill["id"])
+        self.assertEqual(missing_entry.returncode, 2)
+        self.assertIn("has no entry", missing_entry.stderr)
+
+    def test_an_output_outside_the_corpus_is_never_read(self) -> None:
+        outside = self.directory / "outside.md"
+        outside.write_text("Not the corpus.\n", encoding="utf-8")
+        lock = json.loads((self.root / LOCK).read_text(encoding="utf-8"))
+        original = lock["entries"][0]["outputs"][0]["path"]
+        for name, prepare in (
+            ("dot-dot path", lambda: lock["entries"][0]["outputs"][0].__setitem__("path", "../outside.md")),
+            ("symlink", lambda: ((self.root / original).unlink(), (self.root / original).symlink_to(outside))),
+        ):
+            with self.subTest(case=name):
+                prepare()
+                (self.root / LOCK).write_text(json.dumps(lock, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+                before = (self.root / LOCK).read_bytes()
+                completed = self.write()
+                self.assertEqual(completed.returncode, 2, completed.stdout)
+                self.assertIn("outside the corpus", completed.stderr)
+                self.assertEqual((self.root / LOCK).read_bytes(), before)
+                lock["entries"][0]["outputs"][0]["path"] = original
+
+    def test_a_digest_covers_the_output_bytes_exactly(self) -> None:
+        # Line endings and bytes that are not UTF-8 are digested as stored.
+        edited = self.root / "skills/plan-work/SKILL.md"
+        edited.write_bytes(edited.read_bytes().replace(b"\n", b"\r\n") + b"\xff\xfe\n")
+        self.assertEqual(self.write().returncode, 0)
+        self.assertEqual(outputs(self.root)[next(key for key in outputs(self.root) if key[1] == "skills/plan-work/SKILL.md")],
+                         digest(edited))
 
 
 if __name__ == "__main__":

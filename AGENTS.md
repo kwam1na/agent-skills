@@ -36,10 +36,12 @@ python3 scripts/bootstrap-test-environment.py
 
 Refresh output digests with the provenance writer rather than by hand. It
 recomputes the sha256 of every output `provenance.lock.json` lists, changes
-nothing else, and leaves a current lock byte for byte; `--skill <id>` limits it
+nothing else, leaves a current lock byte for byte, and restores a lock in any
+other layout to canonical form; `--skill <id>` limits it
 to that catalog skill's entry, and `--check` lists stale outputs and exits 1
-without writing. A listed output that is missing is refused, so adding or
-removing an output stays a deliberate edit to the lock:
+without writing. A refusal exits 2 and writes nothing: a malformed lock, or a
+listed output that is missing or outside the corpus, so adding or removing an
+output stays a deliberate edit to the lock:
 
 ```bash
 .venv/bin/python scripts/update-provenance.py
@@ -49,7 +51,8 @@ When a rebase or merge conflicts only in `provenance.lock.json`, take either
 side of the lock, run the writer, then validate the registry before continuing.
 The writer never adds or removes an output, so when one side added or removed a
 listed output, take that side; validating the registry reports any output the
-lock no longer lists.
+lock no longer lists. When both sides changed which outputs are listed, merge
+those lists by hand first, then run the writer.
 
 The `-t .` option enters the test package's dependency guard. Without the test
 extra, that guard reports one installation failure before importing the suite.
