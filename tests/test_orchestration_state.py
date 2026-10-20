@@ -792,6 +792,17 @@ class ReconcileTests(unittest.TestCase):
                 self.assertEqual(self.bytes(), before)
         code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(self.root / "missing.json"))
         self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"))
+        twice = self.root / "twice.json"
+        twice.write_text(json.dumps({"takenAt": taken(), "source": "forge", "items": [
+            {"subject": "y", "state": "open"}, {"subject": "y", "state": "merged"}]}), encoding="utf-8")
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(twice))
+        self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"), "a subject appears once in a snapshot")
+        self.assertIn("each subject appears once", refused["error"])
+        first = self.snapshot("forge", [{"subject": "y", "state": "open", "changeRequest": "cr1"}])
+        second = self.snapshot("forge", [{"subject": "y", "state": "merged", "changeRequest": "cr2"}])
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", first, "--snapshot", second)
+        self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"), "two forge views of one subject conflict")
+        self.assertEqual(self.bytes(), before)
         ahead = self.snapshot("tracker", [{"subject": "z", "title": "Z", "state": "started"}], age=-120)
         code, refused = run_tool(self.directory, "reconcile", "--snapshot", ahead)
         self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"), "a snapshot from the future is refused")
@@ -940,10 +951,20 @@ class ReconcileTests(unittest.TestCase):
             self.lead({"meta": {"headline": f"Moved {state_tool.now()}"}})
 
         other = self.snapshot("tracker", [{"subject": "work-next", "title": "Next", "state": "started"}])
+        attempts = []
         with self.assertRaises(state_tool.StateError) as refused:
-            state_tool.reconcile(self.directory, [Path(other)], between_read_and_write=always)
+            state_tool.reconcile(self.directory, [Path(other)], between_read_and_write=lambda: (attempts.append(1), always()))
         self.assertEqual(refused.exception.code, "version_stale")
+        self.assertEqual(len(attempts), state_tool.RECONCILE_ATTEMPTS, "a bounded number of attempts, then refusal")
         self.assertNotIn("work-next", [item["subject"] for item in state_tool.show(self.directory)["state"]["planned"]])
+
+    def test_work_is_planned_or_queued_never_both(self) -> None:
+        self.lead({"queue": [queue_item("work-a")]})
+        version = state_tool.show(self.directory)["state"]["version"]
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.patch(self.directory, writer="lead", version=version, changes={
+                "planned": [{"subject": "work-a", "title": "A", "lane": None, "stage": "planned"}]})
+        self.assertIn("already in the queue", str(refused.exception))
 
     def test_the_runner_cannot_write_planned_work_and_the_lead_cannot_merge_it(self) -> None:
         self.lead({"planned": [{"subject": "work-a", "title": "A", "lane": None, "stage": "planned"}]})
@@ -985,6 +1006,29 @@ class PublicationTests(unittest.TestCase):
                 self.assertEqual((code, refused["code"]), (1, "ack_invalid"), refused)
         code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
         self.assertEqual((code, acked["published"]["journalThrough"]), (0, 3))
+
+    def test_a_journal_entry_alone_leaves_the_publication_behind(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
+        state_tool.append_journal(self.directory, kind="decision.recorded", summary="Decision 4")
+        code, shown = run_tool(self.directory, "show")
+        self.assertEqual((shown["publication"]["unpublishedEntries"], shown["publication"]["lags"]), (1, True))
+
+    def test_a_malformed_acknowledgement_is_reported_and_repaired_by_the_next_ack(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        published = self.directory / state_tool.PUBLISHED_FILE
+        for contents in ("not json", json.dumps({"version": version, "journalThrough": -5, "at": "x"}),
+                         json.dumps({"version": version, "journalThrough": 1, "at": 3})):
+            with self.subTest(contents=contents):
+                published.write_text(contents, encoding="utf-8")
+                code, shown = run_tool(self.directory, "show")
+                self.assertEqual(code, 0, "the record is still shown")
+                self.assertTrue(shown["publication"]["lags"])
+                self.assertIn("published.json", shown["publication"]["error"])
+        code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
+        self.assertEqual(code, 0, acked)
+        code, shown = run_tool(self.directory, "show")
+        self.assertEqual((shown["publication"]["lags"], "error" in shown["publication"]), (False, False))
 
     def test_ack_never_claims_more_than_the_outbox_held(self) -> None:
         version = state_tool.show(self.directory)["state"]["version"]

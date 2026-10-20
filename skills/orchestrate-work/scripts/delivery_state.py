@@ -338,6 +338,11 @@ def _unique(state: dict) -> list[str]:
         names = [item.get(key) for item in state.get(array, []) if isinstance(item, dict)]
         if len(names) != len(set(map(json.dumps, names))):
             problems.append(f"/{array}: {key} values must be unique")
+    queued = {item.get("subject") for item in state.get("queue", []) if isinstance(item, dict)}
+    both = sorted(str(item.get("subject")) for item in state.get("planned", [])
+                  if isinstance(item, dict) and item.get("subject") in queued)
+    if both:
+        problems.append(f"/planned: {', '.join(both)} already in the queue; work is planned or queued, never both")
     return problems
 
 
@@ -792,6 +797,14 @@ def reconcile(
     if not snapshot_paths:
         raise StateError("snapshot_invalid", "give at least one --snapshot")
     snapshots = [read_snapshot(Path(path), max_age) for path in snapshot_paths]
+    seen: dict[tuple[str, str], str] = {}
+    for path, snapshot in zip(snapshot_paths, snapshots):
+        for item in snapshot["items"]:
+            key = (snapshot["source"], item["subject"])
+            if key in seen:
+                raise StateError("snapshot_invalid", f"{item['subject']} is in two {snapshot['source']} snapshots, "
+                                                     f"{seen[key]} and {Path(path).name}: give one view of each")
+            seen[key] = Path(path).name
     for attempt in range(1, RECONCILE_ATTEMPTS + 1):
         state = read_state(directory)
         lead, recoveries, changes, reports = _plan(state, snapshots)
@@ -890,7 +903,8 @@ def read_published(directory: Path) -> dict | None:
         raise StateError("state_invalid", f"{PUBLISHED_FILE} is not JSON") from None
     if (not isinstance(published, dict) or set(published) != {"version", "journalThrough", "at"}
             or not all(isinstance(published[key], int) and not isinstance(published[key], bool)
-                       for key in ("version", "journalThrough"))):
+                       and published[key] >= 0 for key in ("version", "journalThrough"))
+            or not isinstance(published["at"], str)):
         raise StateError("state_invalid", f"{PUBLISHED_FILE} is malformed")
     return published
 
@@ -904,7 +918,11 @@ def ack(directory: Path, *, version: int, through: int) -> dict:
     with file_lock(directory / STATE_LOCK):
         state = read_state(directory)
         journal = read_journal(directory)
-        previous = read_published(directory) or {"version": 0, "journalThrough": 0}
+        try:
+            previous = read_published(directory) or {"version": 0, "journalThrough": 0}
+        except StateError:
+            # An unreadable acknowledgement is replaced: the ack is its repair.
+            previous = {"version": 0, "journalThrough": 0}
         last = journal[-1]["id"] if journal else 0
         problems = []
         if version > state["version"]:
@@ -929,7 +947,12 @@ def ack(directory: Path, *, version: int, through: int) -> dict:
 
 def publication(directory: Path, shown: dict) -> dict:
     """Whether what was published, and the outbox, lag the record."""
-    published = read_published(directory)
+    try:
+        published = read_published(directory)
+    except StateError as error:
+        # The record is fine; only the acknowledgement is not. Say so, as a lag.
+        return {"publishedVersion": None, "journalThrough": 0, "unpublishedEntries": len(shown["journal"]),
+                "outboxVersion": None, "outboxLags": False, "lags": True, "error": str(error)}
     through = published["journalThrough"] if published else 0
     unpublished = sum(1 for entry in shown["journal"] if entry["id"] > through)
     try:
