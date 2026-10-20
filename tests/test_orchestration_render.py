@@ -769,14 +769,14 @@ class MarkdownRendererTests(DeliveryStateFixture):
     def test_only_meaningful_punctuation_is_escaped(self) -> None:
         text = render_state._markdown_text
         # Identifiers, times, prose punctuation and paths read as they are.
-        for plain in ("change-1", "decision.recorded", "2026-10-20T10:00:00Z", "a/b.c (d), e; f? g! h' \"i\" $5 = 4+1 %",
+        for plain in ("change-1", "decision.recorded", "2026-10-20T10:00:00Z", "a/b.c (d), e; f? g! h' \"i\" = 4+1 %",
                       "a-b+c#d", "lane 2. ready", "path/to/file.md"):
             with self.subTest(plain=plain):
                 self.assertEqual(text(plain), plain)
         # Inline markup, links, raw HTML and entities anywhere in a value.
         for raw, escaped in (("a\\b", "a\\\\b"), ("`c`", "\\`c\\`"), ("*e* _u_", "\\*e\\* \\_u\\_"), ("~~s~~", "\\~\\~s\\~\\~"),
                              ("[l](u)", "\\[l\\](u)"), ("![i](u)", "\\!\\[i\\](u)"), ("<b>", "\\<b\\>"), ("&amp;", "\\&amp;"),
-                             ("a|b", "a\\|b")):
+                             ("a|b", "a\\|b"), ("a $x^2$ b", "a \\$x^2\\$ b")):
             with self.subTest(raw=raw):
                 self.assertEqual(text(raw), escaped)
         # A trailing "#" run after a space would close the headline's heading.
@@ -793,6 +793,10 @@ class MarkdownRendererTests(DeliveryStateFixture):
         for raw, escaped in (("# h", "\\# h"), ("- l", "\\- l"), ("+ l", "\\+ l"), ("> q", "\\> q"), ("| t", "\\| t"),
                              ("12. o", "12\\. o"), ("3) o", "3\\) o"), ("  # h", "\\# h"), ("12 o", "12 o"),
                              ("#", "\\#"), ("-", "\\-"), ("7.", "7\\."),
+                             ("## h", "\\## h"), ("###### h", "\\###### h"), ("##", "\\##"),
+                             # Some renderers take any Unicode space after the marker.
+                             ("#\u00a0h", "\\#\u00a0h"), ("#\u3000h", "\\#\u3000h"), ("#\ufeffh", "\\#\ufeffh"),
+                             ("-\u00a0x", "\\-\u00a0x"), ("1.\u2003x", "1\\.\u2003x"),
                              # Not a block marker without a following space.
                              ("#tag", "#tag"), ("-x", "-x"), ("+1", "+1"), ("1.5", "1.5")):
             with self.subTest(raw=raw):

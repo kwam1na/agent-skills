@@ -85,12 +85,12 @@ CHUNK_BYTES = 64 * 1024
 # or GitHub-flavoured renderer shows are escaped, so the raw file stays readable.
 
 # Anywhere in a value: escapes, code, emphasis, strikethrough, links, raw HTML,
-# entities and tables.
-_MARKDOWN_INLINE = frozenset("\\`*_~[]<>&|")
+# entities, tables and GitHub's math. Their presence also covers block quotes
+# and tables at the start of a line.
+_MARKDOWN_INLINE = frozenset("\\`*_~[]<>&|$")
 # At the start of a value, which may start a line or a list item's content:
-# block quotes and tables at once; headings and list markers only when a space
-# follows or the value ends there, since only then do they open a block.
-_MARKDOWN_LINE_START = frozenset(">|")
+# headings and list markers, only when a space follows or the value ends there,
+# since only then do they open a block.
 _MARKDOWN_MARKER_START = frozenset("#-+")
 
 
@@ -100,8 +100,7 @@ def _markdown_escape(text: str) -> str:
         after = text[index + 1 : index + 2]
         if (
             character in _MARKDOWN_INLINE
-            or (index == 0 and character in _MARKDOWN_LINE_START)
-            or (index == 0 and character in _MARKDOWN_MARKER_START and _opens_block(text, 1))
+            or (index == 0 and character in _MARKDOWN_MARKER_START and _opens_block(text, _run(text, character)))
             # An image opener; its bracket is escaped too.
             or (character == "!" and after == "[")
             # GitHub's bare autolinks: a scheme's "://", "www." and e-mail.
@@ -124,9 +123,21 @@ def _markdown_escape(text: str) -> str:
     return escaped
 
 
+def _run(text: str, character: str) -> int:
+    """The length of a heading's "#" run; other markers are one character."""
+    return len(text) - len(text.lstrip("#")) if character == "#" else 1
+
+
 def _opens_block(text: str, index: int) -> bool:
-    """A block marker ending before ``index`` is followed by space or nothing."""
-    return index >= len(text) or text[index] in " \t"
+    """A block marker ending before ``index`` is followed by space or nothing.
+
+    Any Unicode space or format character counts: some renderers accept one.
+    """
+    return (
+        index >= len(text)
+        or text[index].isspace()
+        or unicodedata.category(text[index]) in {"Zs", "Cf"}
+    )
 
 
 def _markdown_text(value: object) -> str:
