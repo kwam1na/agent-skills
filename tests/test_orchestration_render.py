@@ -741,7 +741,8 @@ class MarkdownRendererTests(DeliveryStateFixture):
         state["queue"] = [
             {**item, "order": order, "subject": f"change-{order}",
              "checks": [{"id": "unit", "state": "passed"}] if order == 7 else []}
-            for order in (12, 3, 7)
+            # Zero and an order longer than Markdown's nine-digit list numbers too.
+            for order in (12, 3, 7, 0, 1234567890)
         ]
         journal = [{**FIXED_JOURNAL[1], "id": entry_id} for entry_id in (1, 2, 10)]
         view = render_state.render_markdown({"state": state, "journal": journal})
@@ -753,7 +754,8 @@ class MarkdownRendererTests(DeliveryStateFixture):
         queue = lines[lines.index("## Queue") + 2 : lines.index("## Lanes") - 1]
         self.assertEqual(
             [line.split(":")[0] for line in queue],
-            ["- 3\\. change-3", "- 7\\. change-7", "  - unit", "- 12\\. change-12"],
+            ["- 0\\. change-0", "- 3\\. change-3", "- 7\\. change-7", "  - unit", "- 12\\. change-12",
+             "- 1234567890\\. change-1234567890"],
         )
         rows = lines[lines.index("## Journal") + 2 :]
         # Newest first, each with the id the journal holds.
