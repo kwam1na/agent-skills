@@ -24,9 +24,6 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills/orchestrate-work/scripts"
 STATE_TOOL = SCRIPTS / "delivery_state.py"
 WRAPPER = SCRIPTS / "render_state.py"
-RENDERERS = SCRIPTS / "renderers"
-MARKDOWN = RENDERERS / "markdown.py"
-STATIC_PAGE = RENDERERS / "static_page.py"
 HEAD_A = "a" * 40
 
 HOSTILE = (
@@ -680,10 +677,9 @@ class WrapperTests(DeliveryStateFixture):
 
 class MarkdownRendererTests(DeliveryStateFixture):
     def render(self) -> str:
-        result = run([sys.executable, "-B", str(MARKDOWN)], json.dumps(self.document, ensure_ascii=False))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(result.stdout)
-        return result.stdout
+        view = render_state.render_markdown(json.loads(json.dumps(self.document, ensure_ascii=False)))
+        self.assertTrue(view)
+        return view
 
     def test_state_text_renders_inert(self) -> None:
         view = self.render()
@@ -720,10 +716,9 @@ class MarkdownRendererTests(DeliveryStateFixture):
 
 class StaticPageTests(DeliveryStateFixture):
     def render(self, document: dict | None = None) -> str:
-        result = run([sys.executable, "-B", str(STATIC_PAGE)], json.dumps(document or self.document, ensure_ascii=False))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(result.stdout)
-        return result.stdout
+        page = render_state.render_static_page(json.loads(json.dumps(document or self.document, ensure_ascii=False)))
+        self.assertTrue(page)
+        return page
 
     def embedded(self, page: str) -> str:
         match = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S)
@@ -750,7 +745,7 @@ class StaticPageTests(DeliveryStateFixture):
                 self.assertNotIn(construct, page.replace(self.embedded(page).lower(), ""))
 
     def test_the_page_template_passes_the_leakage_scan(self) -> None:
-        for path in (STATIC_PAGE, MARKDOWN, WRAPPER):
+        for path in (WRAPPER,):
             contents = path.read_text(encoding="utf-8")
             for class_id, pattern in LEAKAGE_PATTERNS:
                 with self.subTest(path=path.name, pattern=class_id):
@@ -832,7 +827,7 @@ setTimeout(async () => {
     def run_page(self, scenario: dict, document: dict | None = None) -> dict:
         page = self.root / "page.html"
         page.write_text(
-            run([sys.executable, "-B", str(STATIC_PAGE)], json.dumps(document or self.document, ensure_ascii=False)).stdout,
+            render_state.render_static_page(json.loads(json.dumps(document or self.document, ensure_ascii=False))),
             encoding="utf-8",
         )
         shim = self.root / "shim.cjs"

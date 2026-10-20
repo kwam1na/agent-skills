@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills/orchestrate-work"
 SCRIPTS = SKILL / "scripts"
 TOOL = SCRIPTS / "delivery_state.py"
-SCHEMAS = SKILL / "references/schemas"
+SCHEMA_FILE = SKILL / "references/schemas.json"
 HEAD_A = "a" * 40
 HEAD_B = "b" * 40
 
@@ -45,8 +45,9 @@ def _load(name: str):
         sys.dont_write_bytecode = previous
 
 
-schema_module = _load("_schema")
 state_tool = _load("delivery_state")
+# The schema validator lives in the state tool.
+schema_module = state_tool
 
 
 def queue_item(subject: str, **fields: object) -> dict:
@@ -762,7 +763,7 @@ class SchemaAgreementTests(unittest.TestCase):
     def fixtures(self) -> dict[str, list[tuple[str, object]]]:
         state = valid_state()
         return {
-            "delivery-state": [
+            "delivery-state/1": [
                 ("valid", state),
                 ("fresh", state_tool.initial_state("Fresh")),
                 ("version as whole float", with_change(state, ("version",), 2.0)),
@@ -792,7 +793,7 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("lease without holder", with_change(state, ("leases", 0), {"id": "x", "since": "2026-10-20T08:00:00Z"})),
                 ("not an object", []),
             ],
-            "delivery-journal": [
+            "delivery-journal/1": [
                 ("valid", VALID_ENTRY),
                 ("with lane", {**VALID_ENTRY, "lane": "lane-1"}),
                 ("unknown kind", {**VALID_ENTRY, "kind": "candidate.vanished"}),
@@ -812,12 +813,12 @@ class SchemaAgreementTests(unittest.TestCase):
         # matches before a final newline, so these cases are asserted directly.
         state = valid_state()
         cases = {
-            "delivery-state": [
+            "delivery-state/1": [
                 with_change(state, ("meta", "baseHead"), HEAD_A + "\n"),
                 with_change(state, ("queue", 0, "head"), HEAD_A + "\n"),
                 with_change(state, ("meta", "updatedAt"), "2026-10-20T10:00:00Z\n"),
             ],
-            "delivery-journal": [{**VALID_ENTRY, "at": "2026-10-20T10:00:00Z\n"}],
+            "delivery-journal/1": [{**VALID_ENTRY, "at": "2026-10-20T10:00:00Z\n"}],
         }
         for name, documents in cases.items():
             schema = schema_module.load_schema(name)
@@ -840,8 +841,8 @@ class SchemaAgreementTests(unittest.TestCase):
             self.assertEqual(outcomes, {True, False}, f"{name} fixtures must include valid and invalid documents")
 
     def test_closed_value_lists_are_exact(self) -> None:
-        state = schema_module.load_schema("delivery-state")
-        journal = schema_module.load_schema("delivery-journal")
+        state = schema_module.load_schema("delivery-state/1")
+        journal = schema_module.load_schema("delivery-journal/1")
         self.assertEqual(journal["properties"]["kind"]["enum"], JOURNAL_KINDS)
         queue = state["properties"]["queue"]["items"]["properties"]
         self.assertEqual(queue["stage"]["enum"],
@@ -856,14 +857,19 @@ class SchemaAgreementTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 self.assertEqual(schema_module.validate({**VALID_ENTRY, "kind": kind}, journal), [])
 
-    def test_schemas_use_urn_ids_and_declare_no_dialect(self) -> None:
-        for path in sorted(SCHEMAS.glob("*.json")):
-            with self.subTest(path=path.name):
-                schema = json.loads(path.read_text(encoding="utf-8"))
+    def test_schemas_are_keyed_by_name_use_urn_ids_and_declare_no_dialect(self) -> None:
+        text = SCHEMA_FILE.read_text(encoding="utf-8")
+        schemas = json.loads(text)
+        self.assertEqual(text, json.dumps(schemas, indent=2, ensure_ascii=False) + "\n")
+        self.assertEqual(sorted(schemas), ["delivery-journal/1", "delivery-state/1"])
+        for name, schema in schemas.items():
+            with self.subTest(name=name):
+                self.assertEqual(schema["title"], name)
                 self.assertTrue(schema["$id"].startswith("urn:"))
                 self.assertNotIn("$schema", schema)
-                self.assertEqual(path.read_text(encoding="utf-8"),
-                                 json.dumps(schema, indent=2, ensure_ascii=False) + "\n")
+                self.assertEqual(schema_module.load_schema(name), schema)
+        with self.assertRaises(schema_module.SchemaError):
+            schema_module.load_schema("delivery-state")
 
     def test_validator_refuses_a_keyword_it_does_not_implement(self) -> None:
         for schema in ({"type": "object", "oneOf": [{}]}, {"type": "date"}, {"$ref": "other.json#/x"},
@@ -879,7 +885,7 @@ class SchemaAgreementTests(unittest.TestCase):
         findings = [finding for finding in validate_corpus(ROOT).findings
                     if finding.rule_id in {"core.leakage", "core.boundary"}]
         self.assertEqual(findings, [])
-        paths = [*sorted(SCHEMAS.glob("*.json")), *sorted(SCRIPTS.glob("*.py")), SKILL / "SKILL.md"]
+        paths = [SCHEMA_FILE, *sorted(SCRIPTS.glob("*.py")), SKILL / "SKILL.md"]
         for path in paths:
             text = path.read_text(encoding="utf-8")
             for class_id, pattern in LEAKAGE_PATTERNS:
