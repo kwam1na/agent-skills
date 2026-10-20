@@ -313,11 +313,11 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "ad6ece46fff2afe883ecd8b0a2ecd8327c5b357bffe5eb0209ec8a800a84d82f"
+          "sha256": "a621f492f31372d993bb6fa81a86dddd309e703dcc86065f13e222375a6dca0c"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "60ad8b23cd87951cbb1819bca9ce12de0dc0caa6b6129d08a1e6edef65f4571f"
+          "sha256": "4add2516b84c05f8c74400b0fdbeeebd4054b9b590b31fa8e49ae3ef99ba5bbe"
         }
       ],
       "owner": "delivery-agent/user-delegated",

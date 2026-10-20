@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 
-
 if os.name == "nt":
     import msvcrt
 else:

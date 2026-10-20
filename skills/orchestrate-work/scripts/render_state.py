@@ -6,7 +6,10 @@ either is invalid nothing runs. A renderer is any argv that reads the
 validated ``{state, journal}`` document on stdin and writes one view on
 stdout. A publisher is any argv that receives the same document and puts it
 somewhere a view reads. The wrapper only reads the state: views are pure
-functions of it, so one can be replaced without touching the state.
+functions of it, so one can be replaced without touching the state. The two
+built-in views, markdown and static-page, run inside the wrapper instead of as
+commands: they are held to the same view limit, and a timeoutSeconds given for
+one is not used.
 
 Exit codes: 0 when every renderer succeeded, 1 when a renderer failed, 2 when
 the state, the journal or the configuration was refused. A failing publisher

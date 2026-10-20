@@ -426,6 +426,26 @@ FIXED_JOURNAL = [
 ]
 # sha256 of each built-in view of the fixed state. A change here is a change
 # to what every adopter's page shows; make it deliberately.
+# The same views of a delivery with nothing in it: every section empty, nothing
+# being checked, an empty journal, and a queue listed out of order.
+EMPTY_STATE = {
+    **FIXED_STATE,
+    "meta": {**FIXED_STATE["meta"], "headline": "Empty", "baseHead": None,
+             "checking": {"now": None, "next": []}},
+    "lanes": [],
+    "queue": [
+        {**FIXED_STATE["queue"][1], "order": 2, "subject": "change-late", "title": "Late"},
+        {**FIXED_STATE["queue"][0], "order": 1, "subject": "change-early", "title": "Early"},
+    ],
+    "finish": [],
+    "followups": [],
+    "leases": [],
+    "extensions": {},
+}
+PINNED_EMPTY_VIEWS = {
+    "delivery.md": "383e1abf8a7980f62005e2a2ffa9b0ae870a3ac1b04952adc4158277b5bd0449",
+    "delivery.html": "34387ce01e8c9e0e1dccf9ef9ca67a61ce60419839ba2a8f375975736d305927",
+}
 PINNED_VIEWS = {
     "delivery.md": "a02cad22aad1a5862b63cdf3beb5dd21b823ce35d6b94bb6758833612db3062e",
     "delivery.html": "52db5a1e5fbd8d95a3943f76010f60d29fe0ad9c722cfb2d209995eaa39c4d60",
@@ -433,22 +453,54 @@ PINNED_VIEWS = {
 
 
 class PinnedViewTests(unittest.TestCase):
-    def test_the_built_in_views_of_a_fixed_state_are_byte_for_byte_unchanged(self) -> None:
+    def views(self, state: dict, journal: list[dict]) -> dict[str, str]:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary) / "state"
             directory.mkdir()
             (directory / "state.json").write_bytes(
-                (json.dumps(FIXED_STATE, indent=2, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8"))
+                (json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8"))
             (directory / "journal.jsonl").write_bytes(b"".join(
                 json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
-                for entry in FIXED_JOURNAL))
+                for entry in journal))
             code, result = wrapper(directory)
             self.assertEqual(code, 0, result)
-            digests = {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in PINNED_VIEWS}
-            self.assertEqual(digests, PINNED_VIEWS)
+            return {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in PINNED_VIEWS}
+
+    def test_the_built_in_views_of_a_fixed_state_are_byte_for_byte_unchanged(self) -> None:
+        self.assertEqual(self.views(FIXED_STATE, FIXED_JOURNAL), PINNED_VIEWS)
+
+    def test_the_built_in_views_of_an_empty_delivery_are_byte_for_byte_unchanged(self) -> None:
+        self.assertEqual(self.views(EMPTY_STATE, []), PINNED_EMPTY_VIEWS)
 
 
 class WrapperTests(DeliveryStateFixture):
+    def test_a_built_in_view_that_fails_keeps_its_previous_view(self) -> None:
+        renderers = [{"id": "summary", "builtin": "markdown", "output": "delivery.md"}]
+        code, result = wrapper(self.state_dir, "--state-config", self.config(renderers))
+        self.assertEqual(code, 0, result)
+        previous = (self.state_dir / "delivery.md").read_bytes()
+
+        def broken(document: dict) -> str:
+            raise ValueError("cannot draw")
+
+        with mock.patch.dict(render_state.BUILTINS, {"markdown": broken}):
+            code, result = render_state.render(self.state_dir, json.loads(self.config(renderers)))
+        self.assertEqual(code, 1, result)
+        entry = result["renderers"][0]
+        self.assertEqual(entry["ok"], False)
+        self.assertEqual(entry["error"], "the built-in markdown view failed: cannot draw")
+        self.assertEqual((self.state_dir / "delivery.md").read_bytes(), previous)
+
+    def test_a_built_in_view_over_the_limit_is_truncated_and_not_written(self) -> None:
+        renderers = [{"id": "page", "builtin": "static-page", "output": "delivery.html"}]
+        with mock.patch.object(render_state, "VIEW_LIMIT_BYTES", 1000):
+            code, result = render_state.render(self.state_dir, json.loads(self.config(renderers)))
+        self.assertEqual(code, 1, result)
+        entry = result["renderers"][0]
+        self.assertEqual((entry["ok"], entry["truncated"]), (False, True))
+        self.assertIn("1000", entry["error"])
+        self.assertFalse((self.state_dir / "delivery.html").exists())
+
     def test_the_same_state_renders_identically_twice(self) -> None:
         renderers = [
             {"id": "summary", "builtin": "markdown", "output": "delivery.md"},
