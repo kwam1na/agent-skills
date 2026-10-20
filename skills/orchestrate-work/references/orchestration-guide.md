@@ -57,6 +57,36 @@ runner`:
 4. Journal a decision (`--kind decision.recorded`) saying where the record
    starts, and validate.
 
+### Tracker updates
+
+At each journal milestone the lead also posts one tracker update, with the
+host's own tracker tools, mirroring the journal entry it accompanies. Each
+journal kind maps to exactly one instruction below. An update is best-effort,
+like telemetry: one attempt, never a gate. With no tracker tools, delivery
+proceeds and the lead notes the gap in its close-out.
+
+| Journal kind | Tracker update |
+| --- | --- |
+| `lane.assigned` | On the ticket: it moves to started, naming the lane and what it delivers. |
+| `candidate.handed` | On the ticket: the change request, its reviewed head and its review rounds. |
+| `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. |
+| `check.finished` | None: its outcome posts with `candidate.merged` or `candidate.stopped`. |
+| `candidate.merged` | On the ticket: the merge commit, the checks run, and any check reported but not awaited; the ticket moves to its review or completed state. |
+| `candidate.stopped` | On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or waiting on a decision. |
+| `base.broken` | On the epic: the failing check, and that the queue is stopped. |
+| `base.repaired` | On the epic: the fix that landed and the gap it closed. |
+| `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. |
+| `lease.released` | On the same ticket: the lease is released. |
+| `release.started` | None: the release posts once it finishes. |
+| `release.finished` | On the epic: the release shipped, its commit and targets, and who approved it. |
+| `finish.met` | On the epic: the finish line and the evidence that met it. |
+| `decision.recorded` | On the ticket the decision concerns, or the epic: what, why, and who decided, the operator or the lead. A deferred finding links its follow-up item. |
+| `blocker.recorded` | On the blocked ticket: the blocker and who it waits on. |
+| `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. |
+
+Lanes post on their own tickets at the points the lane brief names. The lead
+posts assignments, merges and cross-lane decisions.
+
 ### 1. Plan
 
 - Produce the plan with `$plan-work`: the outcome, scope, the contract
@@ -84,13 +114,18 @@ runner`:
 - In the same step: send the assignment as one message, retitle the lane, add
   or update its element in `lanes[]` with `state: assigned`, and journal
   `lane.assigned`.
+- Never leave a lane idle. When a lane hands off, assign it the next unblocked
+  ticket or follow-up in the same step as recording the hand-off. When no
+  unblocked work exists, record that; an idle lane while unblocked work
+  exists is a lead defect, recorded as a decision.
 - When two lanes must agree a shared contract, route the agreement through the
   lead, and record it as a decision.
 
 ### 4. Run the queue
 
 - Check each hand-off as a claim (the coordination protocol) before queueing
-  it.
+  it. Never hold approved work: an approved candidate enters the queue at
+  once, not batched behind unrelated work or held for a convenient moment.
 - Add the candidate to `queue[]` with its `head`, `leadInputs`,
   `reportedRounds` and `runId`, set its lane to `handed`, and journal
   `candidate.handed`.
@@ -259,6 +294,24 @@ through the queue after syncing the candidate with its base.
   Keep each edit to your own entries, and regenerate generated files rather
   than merging them by hand.
 
+**Tracker updates**
+
+Post on your own ticket, with your host's tracker tools:
+
+- at start;
+- at each decision you make: what and why;
+- at each review round: the lenses' verdicts, the findings and the fixes;
+- at each deferral, linking the follow-up;
+- at hand-off: the change request, the head, the rounds and the validation.
+
+One attempt each, never a gate. With no tracker tools, carry on and say so
+in your hand-off.
+
+**Questions**
+
+Escalate only to the lead, never to the operator: one short question, then
+stop. The lead answers, or takes it to the operator.
+
 **Run events**
 
 `<the repository's run-event command, or "none">`. One attempt, skipped on
@@ -274,6 +327,40 @@ whom; name the lane that owns each shared file>`.
 `<toolchain versions, environment variables, and known failures unrelated to
 any lane, with how to recognise them>`.
 
+## Lead authority and escalation
+
+The lead owns the judgement calls within the approved plan and the operator's
+standing direction: finding triage and deferrals, review-churn scope calls,
+fixing forward on a broken base, lane assignment and rebalancing, lease
+arbitration, merge order, and plan-text corrections that keep the approved
+finish line. For each, the lead decides, journals `decision.recorded` with
+what, why and who decided, posts the tracker update, and informs the lanes
+and the operator it concerns. It does not ask.
+
+The operator is brought in only for:
+
+- a release or production approval the binding requires;
+- a change to the approved scope or finish line;
+- an irreversible or outward-facing action not already authorized;
+- a permission or access grant the lead does not hold;
+- owner intent that is genuinely ambiguous, where neither the plan nor
+  standing direction settles it.
+
+Any other question is the lead's to settle. An escalation is one consolidated
+question with the lead's recommendation, and the lead keeps every unblocked
+lane working while it waits. Lanes escalate to the lead, never to the
+operator.
+
+- **Never hold approved work.** An approved, handed-off candidate enters the
+  queue at once.
+- **Never leave a lane idle.** The lead assigns a lane's next unblocked
+  ticket or follow-up in the same step as its hand-off. An idle lane while
+  unblocked work exists is a lead defect, and the lead records it.
+- **Reconcile at every event.** At every event, whether a hand-off, a runner
+  result, a lane message or an operator message, the lead reconciles the
+  delivery record with the forge, the tracker and the lanes before acting, so
+  the operator never has to prompt a status check.
+
 ## Coordination protocol
 
 These rules hold whatever the host offers for sessions and messages.
@@ -288,9 +375,10 @@ These rules hold whatever the host offers for sessions and messages.
 - When the host holds or refuses a message, keep the undelivered text in the
   lead's notes, alert the operator once, and send it when delivery resumes.
   Never repeat a message to force it through.
-- A lane that is blocked on a decision only the lead or the operator can make
-  sends one short question and stops. Progress and results arrive with the
-  hand-off.
+- A lane that is blocked on a decision it cannot make sends the lead one
+  short question and stops. Lanes never ask the operator directly; the lead
+  answers, or escalates under the lead authority rules. Progress and results
+  arrive with the hand-off.
 
 ### Reports are claims
 

@@ -897,5 +897,79 @@ class SchemaAgreementTests(unittest.TestCase):
                     self.assertIsNone(pattern.search(text))
 
 
+GUIDE = SKILL / "references/orchestration-guide.md"
+ESCALATION_LEAD_IN = "The operator is brought in only for:"
+# The closed list of cases that bring the operator into the loop. A change
+# here changes when every lead stops to ask; make it deliberately.
+OPERATOR_ESCALATIONS = [
+    "a release or production approval the binding requires;",
+    "a change to the approved scope or finish line;",
+    "an irreversible or outward-facing action not already authorized;",
+    "a permission or access grant the lead does not hold;",
+    "owner intent that is genuinely ambiguous, where neither the plan nor standing direction settles it.",
+]
+
+
+def section(text: str, heading: str) -> str:
+    """The body of one Markdown section, up to the next heading of any level."""
+    lines = text.splitlines()
+    start = lines.index(heading) + 1
+    end = next((i for i in range(start, len(lines)) if lines[i].startswith("#")), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def bullets_after(text: str, lead_in: str) -> list[str]:
+    """The bullet list that directly follows a lead-in line, one item per bullet."""
+    lines = text.splitlines()
+    index = lines.index(lead_in) + 1
+    while not lines[index].strip():
+        index += 1
+    items: list[str] = []
+    while index < len(lines) and (lines[index].startswith("- ") or lines[index].startswith("  ")):
+        if lines[index].startswith("- "):
+            items.append(lines[index][2:].strip())
+        else:
+            items[-1] += " " + lines[index].strip()
+        index += 1
+    return items
+
+
+class SkillTextTests(unittest.TestCase):
+    def test_every_journal_kind_has_exactly_one_tracker_update_instruction(self) -> None:
+        kinds = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))["delivery-journal/1"]["properties"]["kind"]["enum"]
+        table = section(GUIDE.read_text(encoding="utf-8"), "### Tracker updates")
+        rows = [line for line in table.splitlines() if line.startswith("| `")]
+        mapped = [row.split("`")[1] for row in rows]
+        # A journal kind added to the schema without an update instruction,
+        # or an instruction for a kind that does not exist, fails here.
+        self.assertEqual(sorted(mapped), sorted(kinds))
+        self.assertEqual(len(mapped), len(set(mapped)))
+        for row in rows:
+            with self.subTest(row=row):
+                instruction = row.split("|")[2].strip()
+                self.assertTrue(instruction.startswith(("On the ", "None: ")), instruction)
+
+    def test_the_operator_escalation_list_is_closed_and_pinned(self) -> None:
+        for path in (SKILL / "SKILL.md", GUIDE):
+            with self.subTest(path=path.name):
+                text = path.read_text(encoding="utf-8")
+                self.assertEqual(text.count(ESCALATION_LEAD_IN), 1)
+                self.assertEqual(bullets_after(text, ESCALATION_LEAD_IN), OPERATOR_ESCALATIONS)
+
+    def test_the_lead_authority_rules_are_stated(self) -> None:
+        for path in (SKILL / "SKILL.md", GUIDE):
+            text = " ".join(path.read_text(encoding="utf-8").split())
+            for rule in ("does not ask", "Never hold approved work.", "Never leave a lane idle.",
+                         "Reconcile at every event.", "Lanes escalate to the lead, never to the operator"):
+                with self.subTest(path=path.name, rule=rule):
+                    self.assertIn(rule, text)
+        brief = " ".join(section(GUIDE.read_text(encoding="utf-8"), "## Lane brief template").split())
+        # The brief's own sections are bold lines, so the whole template is one section.
+        for point in ("at start;", "at each decision you make", "at each review round", "at each deferral",
+                      "at hand-off", "Escalate only to the lead, never to the operator"):
+            with self.subTest(point=point):
+                self.assertIn(point, brief)
+
+
 if __name__ == "__main__":
     unittest.main()
