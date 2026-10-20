@@ -41,6 +41,10 @@ def _check_schema(node: object, where: str, root: dict | None = None) -> None:
         if not names or any(name not in TYPES for name in names):
             raise SchemaError(f"{where}: unsupported type {declared!r}")
     root = node if root is None else root
+    pattern = node.get("pattern")
+    if pattern is not None and (not isinstance(pattern, str) or "$" in pattern[:-1] or pattern.endswith("\\$")):
+        # ECMA-262 anchors are applied only to a single final "$".
+        raise SchemaError(f"{where}: a pattern may anchor with \"$\" only at its very end")
     if "$ref" in node:
         reference = node["$ref"]
         name = reference[len("#/$defs/"):] if isinstance(reference, str) else ""

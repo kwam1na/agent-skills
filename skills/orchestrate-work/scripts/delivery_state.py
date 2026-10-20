@@ -178,11 +178,15 @@ def _journal_text(directory: Path) -> tuple[str, int]:
     left out, and the next append replaces it.
     """
     try:
-        text = (directory / JOURNAL_FILE).read_text(encoding="utf-8")
+        data = (directory / JOURNAL_FILE).read_bytes()
     except FileNotFoundError:
         return "", 0
-    complete = text[: text.rfind("\n") + 1]
-    return complete, len(complete.encode("utf-8"))
+    # Cut before decoding, so a torn tail can never split a character.
+    complete = data[: data.rfind(b"\n") + 1]
+    try:
+        return complete.decode("utf-8"), len(complete)
+    except UnicodeDecodeError:
+        raise StateError("journal_invalid", "journal is not UTF-8") from None
 
 
 def read_journal(directory: Path) -> list[dict]:

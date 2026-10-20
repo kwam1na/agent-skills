@@ -258,6 +258,35 @@ class StateToolTests(unittest.TestCase):
         code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--version", "2")
         self.assertEqual((code, refused["code"]), (1, "patch_invalid"))
 
+    def test_a_merge_patch_deletes_on_null_and_set_stores_null(self) -> None:
+        self.lead(1, {"extensions": {"a": 1, "b": 2}})
+        patched = self.lead(2, {"extensions": {"a": None}})
+        self.assertEqual(patched["extensions"], {"b": 2})
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.patch(self.directory, writer="runner", version=3,
+                             changes={"meta": {"checking": {"now": None}}})
+        self.assertEqual(refused.exception.code, "patch_invalid")
+        patched = state_tool.patch(self.directory, writer="lead", version=3, assignments={"/extensions/b": None})
+        self.assertEqual(patched["extensions"], {"b": None})
+
+    def test_set_unescapes_pointers_and_applies_after_the_merge_patch(self) -> None:
+        patched = state_tool.patch(
+            self.directory, writer="lead", version=1,
+            changes={"meta": {"headline": "From the patch"}, "extensions": {"x~y": 1}},
+            assignments={"/meta/headline": "From set", "/extensions/a~1b": 1, "/extensions/c~0d": 2},
+        )
+        self.assertEqual(patched["meta"]["headline"], "From set")
+        self.assertEqual(patched["extensions"], {"x~y": 1, "a/b": 1, "c~d": 2})
+
+    def test_a_torn_tail_that_splits_a_character_is_ignored_and_then_replaced(self) -> None:
+        state_tool.append_journal(self.directory, kind="decision.recorded", summary="caf\u00e9")
+        journal = self.directory / state_tool.JOURNAL_FILE
+        with open(journal, "ab") as stream:
+            stream.write(b'{"id":2,"summary":"\xc3')
+        self.assertEqual([entry["summary"] for entry in state_tool.show(self.directory)["journal"]], ["caf\u00e9"])
+        self.assertEqual(state_tool.append_journal(self.directory, kind="decision.recorded", summary="n")["id"], 2)
+        self.assertTrue(journal.read_bytes().isascii())
+
     def test_a_journal_that_breaks_sequence_is_invalid(self) -> None:
         state_tool.append_journal(self.directory, kind="decision.recorded", summary="One")
         journal = self.directory / state_tool.JOURNAL_FILE
@@ -486,28 +515,42 @@ class StateToolTests(unittest.TestCase):
         self.assertEqual(list(SCRIPTS.rglob("__pycache__")), [])
 
 
-GUARDED_SETS = {
-    "tests/test_qualification.py": {"core"},
-    "tests/test_provider_qualification.py": {"provider"},
-    "tests/test_linear_qualification.py": {"core", "linear"},
-    "tests/test_bootstrap_qualification.py": {"bootstrap"},
+# Every guard call site, in source order, with the arguments after the test case.
+GUARD_CALLS = {
+    "tests/test_qualification.py": [("pending", ["core"]), ("skip_if_pending", ["core"])],
+    "tests/test_provider_qualification.py": [("skip_if_pending", ["provider"])],
+    "tests/test_linear_qualification.py": [("pending", ["profile"]), ("skip_if_pending", ["core", "linear"])],
+    "tests/test_bootstrap_qualification.py": [
+        ("pending", ["bootstrap"]), ("skip_if_pending", ["bootstrap"]), ("skip_if_pending", ["bootstrap"]),
+    ],
 }
+
+
+def _guard_calls(tree: ast.AST) -> list[tuple[str, list[str]]]:
+    calls = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None)
+        if name not in {"pending", "skip_if_pending"}:
+            continue
+        arguments = node.args[1:] if name == "skip_if_pending" else node.args
+        calls.append((node.lineno, name, [
+            argument.value if isinstance(argument, ast.Constant) else ast.unparse(argument)
+            for argument in arguments
+        ]))
+    return [(name, arguments) for _, name, arguments in sorted(calls)]
 
 
 class SkipGuardTests(unittest.TestCase):
     def test_each_skip_guard_names_its_own_qualification_set(self) -> None:
-        for relative, expected in GUARDED_SETS.items():
-            tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
-            named: set[str] = set()
-            calls = 0
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Call) and getattr(node.func, "id", None) in {"pending", "skip_if_pending"}:
-                    calls += 1
-                    named.update(arg.value for arg in node.args if isinstance(arg, ast.Constant)
-                                 and isinstance(arg.value, str))
+        for relative, expected in GUARD_CALLS.items():
             with self.subTest(path=relative):
-                self.assertGreater(calls, 0)
-                self.assertEqual(named, expected)
+                tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+                self.assertEqual(_guard_calls(tree), expected)
+        # The linear guard's variable ranges over exactly the two profiles it compares.
+        linear = (ROOT / "tests/test_linear_qualification.py").read_text(encoding="utf-8")
+        self.assertIn('for profile in ("core", "linear"):', linear)
 
 
 def valid_state() -> dict:
@@ -668,7 +711,8 @@ class SchemaAgreementTests(unittest.TestCase):
         for schema in ({"type": "object", "oneOf": [{}]}, {"type": "date"}, {"$ref": "other.json#/x"},
                        {"properties": {"x": {"format": "date-time"}}}, {"$ref": "#/$defs/missing"},
                        {"$ref": "#/$defs/a~1b", "$defs": {"a/b": {}}}, {"$ref": "#/$defs/a/b", "$defs": {"a": {}}},
-                       {"$ref": "#/$defs/a%20b", "$defs": {"a b": {}}}):
+                       {"$ref": "#/$defs/a%20b", "$defs": {"a b": {}}}, {"pattern": "(a$|b$)"},
+                       {"pattern": "^a\\$"}, {"pattern": "^a$b"}):
             with self.subTest(schema=schema):
                 with self.assertRaises(schema_module.SchemaError):
                     schema_module._check_schema(schema, "fixture")
