@@ -1,0 +1,3 @@
+alpha.txt: alpha one
+beta.txt: beta one
+gamma.txt: gamma one
