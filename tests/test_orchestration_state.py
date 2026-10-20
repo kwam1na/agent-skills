@@ -67,15 +67,26 @@ def queue_item(subject: str, **fields: object) -> dict:
     return item
 
 
-def run_tool(directory: Path, *args: str, stdin: str | None = None) -> tuple[int, dict]:
+# A console that cannot encode most of Unicode, as a Windows pipe defaults to.
+NARROW_CONSOLE = {"PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+
+
+def run_tool(
+    directory: Path, *args: str, stdin: str | bytes | None = None, environment: dict[str, str] | None = None
+) -> tuple[int, dict]:
+    # Bytes in and out: the tool's contract is UTF-8 on stdin and ASCII JSON on
+    # stdout, whatever the console encoding.
     result = subprocess.run(
         [sys.executable, "-B", str(TOOL), "--dir", str(directory), *args],
-        input=stdin,
+        input=stdin.encode("utf-8") if isinstance(stdin, str) else stdin,
         capture_output=True,
-        text=True,
+        env={**os.environ, **(environment or {})},
         check=False,
     )
-    return result.returncode, json.loads(result.stdout)
+    # A crash prints nothing on stdout: show why instead of a bare decode error.
+    assert result.stdout, result.stderr.decode("utf-8", "replace")
+    assert result.stdout.isascii(), result.stdout
+    return result.returncode, json.loads(result.stdout.decode("ascii"))
 
 
 class StateToolTests(unittest.TestCase):
@@ -200,6 +211,75 @@ class StateToolTests(unittest.TestCase):
         self.assertEqual(code, 0, shown)
         self.assertEqual([entry["summary"] for entry in shown["journal"]], summaries)
         self.assertEqual([entry["id"] for entry in shown["journal"]], [1, 2, 3, 4, 5])
+
+    def test_output_is_parseable_whatever_the_console_encoding(self) -> None:
+        summaries = ["two\u2028lines", "two\u2029paragraphs", "carriage\rreturn", "windows\r\nline", "caf\u00e9 \u2713"]
+        for summary in summaries:
+            with self.subTest(summary=summary):
+                code, appended = run_tool(
+                    self.directory, "journal", "--kind", "decision.recorded", "--summary", summary,
+                    environment=NARROW_CONSOLE,
+                )
+                self.assertEqual(code, 0, appended)
+                self.assertEqual(appended["entry"]["summary"], summary)
+        code, shown = run_tool(self.directory, "show", environment=NARROW_CONSOLE)
+        self.assertEqual(code, 0, shown)
+        self.assertEqual([entry["summary"] for entry in shown["journal"]], summaries)
+        code, refused = run_tool(self.directory, "journal", "--kind", "no.such\u2028kind", "--summary", "x",
+                                 environment=NARROW_CONSOLE)
+        self.assertEqual((code, refused["code"]), (1, "entry_invalid"))
+
+    def test_stdin_patches_are_read_as_utf8_whatever_the_console_encoding(self) -> None:
+        headline = "Caf\u00e9 \u2713 \u2028 done"
+        code, patched = run_tool(
+            self.directory, "patch", "--writer", "lead", "--version", "1", "--patch", "-",
+            stdin=json.dumps({"meta": {"headline": headline}}, ensure_ascii=False), environment=NARROW_CONSOLE,
+        )
+        self.assertEqual(code, 0, patched)
+        self.assertEqual(patched["state"]["meta"]["headline"], headline)
+        code, shown = run_tool(self.directory, "show", environment=NARROW_CONSOLE)
+        self.assertEqual(shown["state"]["meta"]["headline"], headline)
+
+    def test_undecodable_input_is_refused_as_json(self) -> None:
+        code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--version", "1", "--patch", "-",
+                                 stdin=b'\xff{"meta":{}}', environment=NARROW_CONSOLE)
+        self.assertEqual((code, refused["code"]), (1, "patch_invalid"))
+        code, patched = run_tool(self.directory, "patch", "--writer", "lead", "--version", "1", "--patch", "-",
+                                 stdin=b'\xef\xbb\xbf{"meta":{"headline":"With a BOM"}}', environment=NARROW_CONSOLE)
+        self.assertEqual(code, 0, patched)
+        self.assertEqual(patched["state"]["meta"]["headline"], "With a BOM")
+        with open(self.directory / state_tool.STATE_FILE, "ab") as stream:
+            stream.write(b"\xff")
+        code, refused = run_tool(self.directory, "show", environment=NARROW_CONSOLE)
+        self.assertEqual((code, refused["code"]), (1, "state_invalid"))
+
+    def test_a_lone_surrogate_is_refused_and_nothing_is_written(self) -> None:
+        state_before = self.state_bytes()
+        journal = self.directory / state_tool.JOURNAL_FILE
+        journal_before = journal.read_bytes()
+        code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--version", "1",
+                                 "--patch", '{"meta":{"headline":"\\ud800"}}')
+        self.assertEqual((code, refused["code"]), (1, "patch_invalid"))
+        with self.assertRaises(state_tool.StateError) as entry:
+            state_tool.append_journal(self.directory, kind="decision.recorded", summary="bad\udcff")
+        self.assertEqual(entry.exception.code, "entry_invalid")
+        with self.assertRaises(state_tool.StateError) as fresh:
+            state_tool.init(self.directory.parent / "fresh", "bad\udcff")
+        self.assertEqual(fresh.exception.code, "state_invalid")
+        self.assertFalse((self.directory.parent / "fresh" / state_tool.STATE_FILE).exists())
+        self.assertEqual(self.state_bytes(), state_before)
+        self.assertEqual(journal.read_bytes(), journal_before)
+
+    def test_files_are_the_same_bytes_on_every_platform(self) -> None:
+        summary = "caf\u00e9\u2028line\r\nnext"
+        entry = state_tool.append_journal(self.directory, kind="decision.recorded", summary=summary, lane="l\u00e9")
+        line = json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
+        self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), line)
+        state = self.lead(1, {"meta": {"headline": "caf\u00e9\r\nnext"}})
+        expected = (json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+        written = (self.directory / state_tool.STATE_FILE).read_bytes()
+        self.assertEqual(written, expected)
+        self.assertNotIn(b"\r\n", written)
 
     def test_an_unfinished_append_is_ignored_and_then_replaced(self) -> None:
         state_tool.append_journal(self.directory, kind="decision.recorded", summary="Whole")

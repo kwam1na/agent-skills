@@ -9,6 +9,10 @@ short lock and are never refused for concurrency.
 
 The state lock is separate from the merge-queue runner's long-held queue lock,
 so a runner holding the queue never blocks the lead from writing state.
+
+All input and output is byte-exact and independent of the platform: files are
+UTF-8 with "\n" line ends, stdin is read as UTF-8, and stdout is ASCII JSON, so
+any console encoding can carry it.
 """
 
 from __future__ import annotations
@@ -83,6 +87,23 @@ def dumps(value: object) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
 
 
+def _require_unicode(value: object, code: str) -> None:
+    # A lone surrogate (from a "\\ud800" escape or an undecodable argument)
+    # has no UTF-8 form, so neither file may hold it.
+    try:
+        json.dumps(value, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:
+        raise StateError(code, "text must be valid Unicode: a lone surrogate cannot be stored") from None
+
+
+def emit(value: object) -> None:
+    """Write ``value`` to stdout as ASCII JSON, whatever the console encoding."""
+    text = json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True) + "\n"
+    sys.stdout.flush()
+    sys.stdout.buffer.write(text.encode("ascii"))
+    sys.stdout.buffer.flush()
+
+
 @contextlib.contextmanager
 def file_lock(path: Path, timeout: float | None = None) -> Iterator[None]:
     """Hold an OS-released exclusive lock on ``path`` for the block."""
@@ -119,8 +140,8 @@ def file_lock(path: Path, timeout: float | None = None) -> Iterator[None]:
 def _write_atomically(path: Path, text: str) -> None:
     handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
-        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(text)
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(text.encode("utf-8"))
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -159,9 +180,11 @@ def journal_errors(entries: list[object]) -> list[str]:
 def read_state(directory: Path) -> dict:
     path = directory / STATE_FILE
     try:
-        state = json.loads(path.read_text(encoding="utf-8"))
+        state = json.loads(path.read_bytes().decode("utf-8"))
     except FileNotFoundError:
         raise StateError("state_missing", f"no state at {path}; run init first") from None
+    except UnicodeDecodeError:
+        raise StateError("state_invalid", "state is not UTF-8") from None
     except json.JSONDecodeError as error:
         raise StateError("state_invalid", f"state is not JSON: {error}") from None
     errors = state_errors(state)
@@ -229,6 +252,7 @@ def init(directory: Path, headline: str) -> dict:
         if (directory / STATE_FILE).exists():
             raise StateError("state_exists", f"state already exists at {directory / STATE_FILE}")
         state = initial_state(headline)
+        _require_unicode(state, "state_invalid")
         _write_atomically(directory / STATE_FILE, dumps(state))
         (directory / JOURNAL_FILE).touch()
     return state
@@ -383,6 +407,7 @@ def patch(
         errors = state_errors(updated)
         if errors:
             raise StateError("patch_invalid", "; ".join(errors))
+        _require_unicode(updated, "patch_invalid")
         _write_atomically(directory / STATE_FILE, dumps(updated))
     return updated
 
@@ -409,6 +434,7 @@ def append_journal(
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
+        _require_unicode(entry, "entry_invalid")
         line = json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
         complete = _journal_text(directory)[1]
         with open(directory / JOURNAL_FILE, "ab") as stream:
@@ -428,7 +454,14 @@ def show(directory: Path) -> dict:
 def _json_argument(value: str | None, name: str) -> object:
     if value is None:
         return None
-    text = sys.stdin.read() if value == "-" else value
+    if value == "-":
+        try:
+            # A leading byte-order mark, as some Windows writers add, is accepted.
+            text = sys.stdin.buffer.read().decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise StateError("patch_invalid", f"{name} on stdin is not UTF-8") from None
+    else:
+        text = value
     try:
         return json.loads(text)
     except json.JSONDecodeError as error:
@@ -490,9 +523,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             result = show(args.dir)
     except StateError as error:
-        sys.stdout.write(dumps({"ok": False, "code": error.code, "error": str(error)}))
+        emit({"ok": False, "code": error.code, "error": str(error)})
         return 1
-    sys.stdout.write(dumps(result))
+    emit(result)
     return 0
 
 
