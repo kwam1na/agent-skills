@@ -338,6 +338,84 @@ class StateToolTests(unittest.TestCase):
         code, refused = run_tool(self.directory, "patch", "--writer", "lead", "--version", "2")
         self.assertEqual((code, refused["code"]), (1, "patch_invalid"))
 
+    def test_show_reads_the_state_and_journal_from_one_write(self) -> None:
+        state_tool.append_journal(self.directory, kind="decision.recorded", summary="First")
+        landed = threading.Event()
+        attempted = threading.Event()
+        failures: list[BaseException] = []
+
+        def writer() -> None:
+            attempted.set()
+            try:
+                self.lead(1, {"meta": {"headline": "Landed between the reads"}})
+                state_tool.append_journal(self.directory, kind="decision.recorded", summary="Second")
+            except BaseException as error:  # noqa: BLE001
+                failures.append(error)
+            landed.set()
+
+        thread = threading.Thread(target=writer)
+
+        def between_reads() -> None:
+            # A writer that arrives between the two reads must wait for both.
+            thread.start()
+            self.assertTrue(attempted.wait(5))
+            self.assertFalse(landed.wait(0.5), "a write landed while show held the state lock")
+
+        shown = state_tool.show(self.directory, between_reads=between_reads)
+        thread.join(10)
+        self.assertEqual(failures, [])
+        self.assertTrue(landed.is_set())
+        self.assertEqual(shown["state"]["version"], 1)
+        self.assertEqual([entry["summary"] for entry in shown["journal"]], ["First"])
+        after = state_tool.show(self.directory)
+        self.assertEqual(after["state"]["version"], 2)
+        self.assertEqual([entry["summary"] for entry in after["journal"]], ["First", "Second"])
+
+    def test_show_of_a_missing_or_empty_directory_is_state_missing(self) -> None:
+        missing = self.directory.parent / "never-created"
+        empty = self.directory.parent / "empty"
+        empty.mkdir()
+        for directory in (missing, empty):
+            with self.subTest(directory=directory.name):
+                for command in ("show", "validate"):
+                    code, refused = run_tool(directory, command)
+                    self.assertEqual((code, refused["code"]), (1, "state_missing"))
+        self.assertFalse(missing.exists())
+        self.assertEqual(list(empty.iterdir()), [])
+
+    @unittest.skipIf(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                     "POSIX permissions; root ignores them")
+    def test_a_read_only_state_directory_is_refused_as_json(self) -> None:
+        (self.directory / state_tool.STATE_LOCK).unlink(missing_ok=True)
+        os.chmod(self.directory, 0o555)
+        self.addCleanup(os.chmod, self.directory, 0o755)
+        code, refused = run_tool(self.directory, "show")
+        self.assertEqual((code, refused["code"]), (1, "lock_unavailable"))
+
+    def test_show_waits_for_a_write_in_progress(self) -> None:
+        held = threading.Event()
+        release = threading.Event()
+
+        def hold() -> None:
+            with state_tool.file_lock(self.directory / state_tool.STATE_LOCK):
+                held.set()
+                release.wait(10)
+
+        holder = threading.Thread(target=hold)
+        holder.start()
+        self.addCleanup(holder.join)
+        self.addCleanup(release.set)
+        self.assertTrue(held.wait(5))
+        original = state_tool.LOCK_TIMEOUT_SECONDS
+        state_tool.LOCK_TIMEOUT_SECONDS = 0.2
+        try:
+            with self.assertRaises(state_tool.StateError) as refused:
+                state_tool.show(self.directory)
+        finally:
+            state_tool.LOCK_TIMEOUT_SECONDS = original
+            release.set()
+        self.assertEqual(refused.exception.code, "lock_timeout")
+
     def test_a_merge_patch_deletes_on_null_and_set_stores_null(self) -> None:
         self.lead(1, {"extensions": {"a": 1, "b": 2}})
         patched = self.lead(2, {"extensions": {"a": None}})

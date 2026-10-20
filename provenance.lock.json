@@ -321,11 +321,11 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "80948859c2370c3e89579e3a0ec933518f430e8dc1381a9033d0495bc3e1e14e"
+          "sha256": "73693e8b20f0dc0a56f4f9f30c198513dd15284ebf03daf9d04446ffc50dac63"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "16be218034d4321ca7fd7176602e567b9a513c1512d524d151b93b9b3d6da3e8"
+          "sha256": "ffc9627e8d6e9b18c3c428d9731d2a37b0d4eb1cf60e3826320a7b068354b722"
         },
         {
           "path": "skills/orchestrate-work/scripts/renderers/markdown.py",

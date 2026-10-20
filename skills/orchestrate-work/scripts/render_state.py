@@ -16,6 +16,22 @@ All input and output is byte-exact and independent of the platform: the
 document reaches renderers and publishers as UTF-8, views are written as the
 bytes a renderer produced, configuration is read as UTF-8, and the result on
 stdout is ASCII JSON, so any console encoding can carry it.
+
+Every command is bounded. Its output is read in chunks and at most
+``VIEW_LIMIT_BYTES`` is kept; a renderer that writes more is recorded as
+truncated and its view is not written. A command is finished when its process
+exits, not when its output closes; afterwards its pipes get ``DRAIN_SECONDS``
+to empty, so a child it left behind cannot hold the wrapper; a command can
+therefore take up to its timeout plus ``DRAIN_SECONDS``. A renderer whose
+stdout is still open then fails, because its view may be incomplete; a
+publisher's output is not used, so the same does not fail it.
+
+Each command runs in its own process group. One that outlives its timeout is
+stopped together with its children, and so is every running command when the
+wrapper is interrupted or terminated. Stopping is best-effort: a child that
+leaves the group escapes it, a wrapper killed outright cannot stop anything,
+and on Windows the children of a command that has already exited are no longer
+reachable through it.
 """
 
 from __future__ import annotations
@@ -28,9 +44,13 @@ import argparse
 import contextlib
 import json
 import os
+import signal
 import subprocess
 import tempfile
+import threading
+import time
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -51,8 +71,15 @@ DEFAULT_RENDERERS = (
 RESERVED = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK)
 DEFAULT_TIMEOUT_SECONDS = 60
 MAX_TIMEOUT_SECONDS = 600
-# How much of a failing command's stderr the result keeps.
+# How much of a failing command's stderr the result keeps, in characters, and
+# the bytes held to produce it.
 ERROR_LIMIT = 500
+ERROR_BYTES = ERROR_LIMIT * 4
+# The most of one command's stdout the wrapper holds: one view's size.
+VIEW_LIMIT_BYTES = 16 * 1024 * 1024
+# How long a command's pipes may stay open after its process exits.
+DRAIN_SECONDS = 2.0
+CHUNK_BYTES = 64 * 1024
 
 
 class ConfigError(Exception):
@@ -174,18 +201,127 @@ def parse_config(config: object) -> tuple[list[dict], list[dict]]:
     return renderers, publishers
 
 
-def _execute(argv: list[str], document: bytes, timeout: int) -> tuple[int | None, bytes, str | None]:
-    """Run one argv with the document on stdin: its exit code, stdout and error."""
+@dataclass
+class Outcome:
+    """What one command did: its exit code (None when it never finished),
+    the output kept, and whether anything was cut or left open."""
+
+    exit_code: int | None
+    stdout: bytes
+    stderr: bytes
+    truncated: bool
+    stdout_open_after_exit: bool
+    error: str | None
+
+
+class _Capture(threading.Thread):
+    """Drain one pipe, keeping at most ``limit`` bytes: the first ones, or the
+    last ones when ``tail`` is set. Everything beyond is read and dropped, so
+    the command never blocks on a full pipe and the wrapper's memory stays
+    bounded."""
+
+    def __init__(self, stream, limit: int, *, tail: bool = False) -> None:
+        super().__init__(daemon=True)
+        self.stream = stream
+        self.limit = limit
+        self.tail = tail
+        self.kept = bytearray()
+        self.truncated = False
+
+    def run(self) -> None:
+        with contextlib.suppress(OSError, ValueError):
+            while True:
+                chunk = self.stream.read1(CHUNK_BYTES)
+                if not chunk:
+                    self.stream.close()
+                    return
+                if self.tail:
+                    self.kept += chunk
+                    if len(self.kept) > self.limit:
+                        self.truncated = True
+                        del self.kept[: len(self.kept) - self.limit]
+                elif len(self.kept) < self.limit:
+                    room = self.limit - len(self.kept)
+                    self.kept += chunk[:room]
+                    self.truncated = self.truncated or len(chunk) > room
+                else:
+                    self.truncated = True
+
+
+def _feed(stream, document: bytes) -> None:
+    # A command may exit, or never read its input; neither is an error here.
+    with contextlib.suppress(OSError, ValueError):
+        stream.write(document)
+    with contextlib.suppress(OSError, ValueError):
+        stream.close()
+
+
+def _process_group() -> dict:
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def _stop(process: subprocess.Popen) -> None:
+    """Stop a command and every process it started."""
+    with contextlib.suppress(OSError):
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            )
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+    with contextlib.suppress(OSError):
+        process.kill()
+
+
+def _execute(argv: list[str], document: bytes, timeout: int, *, needs_stdout: bool = False) -> Outcome:
+    """Run one argv with the document on stdin, bounded in time and memory.
+
+    With ``needs_stdout``, a command whose stdout is still open after it exits
+    is stopped with its group, since nothing more of its output will be used.
+    """
     try:
-        completed = subprocess.run(argv, input=document, capture_output=True, timeout=timeout, check=False)
-    except subprocess.TimeoutExpired:
-        return None, b"", f"timed out after {timeout}s"
+        process = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **_process_group()
+        )
     except OSError as error:
-        return None, b"", f"could not start: {error.strerror or error}"
-    if completed.returncode != 0:
-        detail = completed.stderr.decode("utf-8", errors="replace").strip()[-ERROR_LIMIT:]
-        return completed.returncode, completed.stdout, detail or f"exited with {completed.returncode}"
-    return 0, completed.stdout, None
+        return Outcome(None, b"", b"", False, False, f"could not start: {error.strerror or error}")
+    try:
+        stdout = _Capture(process.stdout, VIEW_LIMIT_BYTES)
+        # Enough bytes that the last ERROR_LIMIT characters survive decoding.
+        stderr = _Capture(process.stderr, ERROR_BYTES, tail=True)
+        feeder = threading.Thread(target=_feed, args=(process.stdin, document), daemon=True)
+        for thread in (stdout, stderr, feeder):
+            thread.start()
+        try:
+            code = process.wait(timeout)
+        except subprocess.TimeoutExpired:
+            _stop(process)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(DRAIN_SECONDS)
+            return Outcome(None, bytes(stdout.kept), bytes(stderr.kept), stdout.truncated, False,
+                           f"timed out after {timeout}s")
+        # The process has exited; its output may still be in flight, or held
+        # open by a child it left behind. Wait a bounded time for the rest.
+        deadline = time.monotonic() + DRAIN_SECONDS
+        for thread in (stdout, stderr):
+            thread.join(max(0.0, deadline - time.monotonic()))
+        stdout_open = stdout.is_alive()
+        if stdout_open and needs_stdout:
+            _stop(process)
+    except BaseException:
+        # Interrupted or terminated at any point: the command is in its own
+        # group, so the signal never reached it. Stop it before giving up.
+        _stop(process)
+        raise
+    kept_err = bytes(stderr.kept)
+    error = None
+    if code != 0:
+        detail = kept_err.decode("utf-8", errors="replace").strip()[-ERROR_LIMIT:]
+        error = detail or f"exited with {code}"
+    return Outcome(code, bytes(stdout.kept), kept_err, stdout.truncated, stdout_open, error)
 
 
 def _write_atomically(path: Path, contents: bytes) -> None:
@@ -215,11 +351,20 @@ def render(directory: Path, config: object) -> tuple[int, dict]:
 
     rendered = []
     for renderer in renderers:
-        code, view, error = _execute(renderer["argv"], document, renderer["timeout"])
-        entry: dict = {"id": renderer["id"], "ok": error is None, "output": renderer["output"]}
+        outcome = _execute(renderer["argv"], document, renderer["timeout"], needs_stdout=True)
+        error = outcome.error
+        entry: dict = {"id": renderer["id"], "output": renderer["output"]}
+        if outcome.truncated:
+            # A cut view is a broken view: keep the previous one.
+            entry["truncated"] = True
+            error = error or f"the view exceeded {VIEW_LIMIT_BYTES} bytes and was not written"
+        elif error is None and outcome.stdout_open_after_exit:
+            error = (f"the renderer's output was still open {DRAIN_SECONDS:g}s after it exited, "
+                     "so the view may be incomplete and was not written")
+        entry["ok"] = error is None
         if error is None:
             try:
-                _write_atomically(_view_target(directory, renderer["output"]), view)
+                _write_atomically(_view_target(directory, renderer["output"]), outcome.stdout)
             except OSError as failure:
                 error = f"could not write the view: {failure.strerror or failure}"
                 entry["ok"] = False
@@ -229,10 +374,12 @@ def render(directory: Path, config: object) -> tuple[int, dict]:
 
     published = []
     for publisher in publishers:
-        code, _, error = _execute(publisher["argv"], document, publisher["timeout"])
-        entry = {"exitCode": code, "id": publisher["id"], "ok": error is None}
-        if error is not None:
-            entry["error"] = error
+        # A publisher's output is not used; a child it leaves holding the
+        # output does not change how its exit is judged.
+        outcome = _execute(publisher["argv"], document, publisher["timeout"])
+        entry = {"exitCode": outcome.exit_code, "id": publisher["id"], "ok": outcome.error is None}
+        if outcome.error is not None:
+            entry["error"] = outcome.error
         published.append(entry)
 
     ok = all(entry["ok"] for entry in rendered)
@@ -276,7 +423,16 @@ def _load_config(args: argparse.Namespace) -> object:
     return {"renderers": [dict(entry) for entry in DEFAULT_RENDERERS], "publishers": []}
 
 
+def _exit_on_signal(number: int, frame: object) -> None:
+    # Let a termination unwind like an interrupt, so running commands are stopped.
+    raise SystemExit(128 + number)
+
+
 def main(argv: list[str] | None = None) -> int:
+    for name in ("SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(getattr(signal, name), _exit_on_signal)
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", type=Path, required=True, help="the state directory")
     source = parser.add_mutually_exclusive_group()

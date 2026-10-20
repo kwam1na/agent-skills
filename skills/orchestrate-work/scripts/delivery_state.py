@@ -108,10 +108,18 @@ def emit(value: object) -> None:
 def file_lock(path: Path, timeout: float | None = None) -> Iterator[None]:
     """Hold an OS-released exclusive lock on ``path`` for the block."""
     timeout = LOCK_TIMEOUT_SECONDS if timeout is None else timeout
-    descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as error:
+        # A read-only copy of a state directory cannot be locked, so it cannot
+        # be read consistently either; say so rather than fail with a trace.
+        raise StateError("lock_unavailable", f"cannot open {path.name}: {error.strerror or error}") from None
     try:
         if os.fstat(descriptor).st_size == 0:
-            os.write(descriptor, b" ")
+            try:
+                os.write(descriptor, b" ")
+            except OSError as error:
+                raise StateError("lock_unavailable", f"cannot write {path.name}: {error.strerror or error}") from None
         deadline = time.monotonic() + timeout
         while True:
             try:
@@ -446,9 +454,21 @@ def append_journal(
     return entry
 
 
-def show(directory: Path) -> dict:
-    """The validated ``{state, journal}`` pair a renderer reads."""
-    return {"state": read_state(directory), "journal": read_journal(directory)}
+def show(directory: Path, *, between_reads: Callable[[], None] | None = None) -> dict:
+    """The validated ``{state, journal}`` pair a renderer reads.
+
+    Both files are read under the short state lock, so the pair always comes
+    from the same write. ``between_reads`` runs between the two reads, under
+    the lock: a deterministic seam for concurrency tests.
+    """
+    if not (directory / STATE_FILE).is_file():
+        read_state(directory)
+    with file_lock(directory / STATE_LOCK):
+        state = read_state(directory)
+        if between_reads is not None:
+            between_reads()
+        journal = read_journal(directory)
+    return {"state": state, "journal": journal}
 
 
 def _json_argument(value: str | None, name: str) -> object:
