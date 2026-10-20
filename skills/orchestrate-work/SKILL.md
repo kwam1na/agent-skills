@@ -16,10 +16,11 @@ The state document and the journal record where the epic stands. The state is
 the contract; views are rendered from it and can be replaced without touching
 it.
 
-- `references/schemas/delivery-state.json` describes the state document,
-  `delivery-state/1`.
-- `references/schemas/delivery-journal.json` describes one journal entry,
-  `delivery-journal/1`. The journal is append-only.
+`references/schemas.json` holds the skill's schemas, keyed by name:
+
+- `delivery-state/1` describes the state document.
+- `delivery-journal/1` describes one journal entry. The journal is
+  append-only.
 
 Write both only through the state tool, `scripts/delivery_state.py`. Run it
 with `python3 -B` so no bytecode is written beside the skill:

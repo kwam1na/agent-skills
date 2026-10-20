@@ -1,0 +1,460 @@
+{
+  "delivery-state/1": {
+    "$id": "urn:agent-skills:orchestrate-work:delivery-state:1",
+    "title": "delivery-state/1",
+    "description": "Where a decomposed delivery stands. The lead writes every field except the runner-owned ones; the state tool owns version and meta.updatedAt.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "version",
+      "meta",
+      "lanes",
+      "queue",
+      "finish",
+      "followups",
+      "leases",
+      "extensions"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "delivery-state/1"
+      },
+      "version": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "meta": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "headline",
+          "updatedAt",
+          "baseHead",
+          "releasedHead",
+          "checking"
+        ],
+        "properties": {
+          "headline": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "$ref": "#/$defs/timestamp"
+          },
+          "baseHead": {
+            "$ref": "#/$defs/optionalCommit"
+          },
+          "releasedHead": {
+            "$ref": "#/$defs/optionalCommit"
+          },
+          "checking": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "now",
+              "next"
+            ],
+            "properties": {
+              "now": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "subject",
+                      "title",
+                      "startedAt",
+                      "steps"
+                    ],
+                    "properties": {
+                      "subject": {
+                        "$ref": "#/$defs/name"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "startedAt": {
+                        "$ref": "#/$defs/timestamp"
+                      },
+                      "steps": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "label",
+                            "state"
+                          ],
+                          "properties": {
+                            "label": {
+                              "$ref": "#/$defs/name"
+                            },
+                            "state": {
+                              "$ref": "#/$defs/stepState"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "next": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/name"
+                }
+              }
+            }
+          }
+        }
+      },
+      "lanes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "title",
+            "focus",
+            "state",
+            "waitingOn",
+            "since"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "focus": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "idle",
+                "assigned",
+                "working",
+                "reviewing",
+                "handed",
+                "blocked",
+                "done"
+              ]
+            },
+            "waitingOn": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "since": {
+              "$ref": "#/$defs/timestamp"
+            }
+          }
+        }
+      },
+      "queue": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "order",
+            "subject",
+            "title",
+            "lane",
+            "stage",
+            "head",
+            "syncedHead",
+            "leadInputs",
+            "reportedRounds",
+            "runId",
+            "checks"
+          ],
+          "properties": {
+            "order": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "lane": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/name"
+                }
+              ]
+            },
+            "stage": {
+              "enum": [
+                "queued",
+                "syncing",
+                "synced",
+                "checking",
+                "checked",
+                "merging",
+                "merged",
+                "stopped"
+              ]
+            },
+            "head": {
+              "$ref": "#/$defs/commit"
+            },
+            "syncedHead": {
+              "$ref": "#/$defs/optionalCommit"
+            },
+            "leadInputs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
+            "reportedRounds": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              ]
+            },
+            "runId": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/name"
+                }
+              ]
+            },
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "state"
+                ],
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/name"
+                  },
+                  "state": {
+                    "$ref": "#/$defs/stepState"
+                  },
+                  "detail": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "finish": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "text",
+            "met"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "text": {
+              "type": "string"
+            },
+            "met": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "followups": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "title",
+            "reference"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "reference": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "leases": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "holder",
+            "since"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/name"
+            },
+            "holder": {
+              "$ref": "#/$defs/name"
+            },
+            "since": {
+              "$ref": "#/$defs/timestamp"
+            }
+          }
+        }
+      },
+      "extensions": {
+        "type": "object"
+      }
+    },
+    "$defs": {
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      },
+      "commit": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+      },
+      "optionalCommit": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/commit"
+          }
+        ]
+      },
+      "stepState": {
+        "enum": [
+          "pending",
+          "running",
+          "passed",
+          "failed",
+          "skipped",
+          "timed_out"
+        ]
+      }
+    }
+  },
+  "delivery-journal/1": {
+    "$id": "urn:agent-skills:orchestrate-work:delivery-journal:1",
+    "title": "delivery-journal/1",
+    "description": "One append-only journal entry. The journal is a file of these entries, one per line, with ids allocated by the state tool in sequence from 1.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "at",
+      "kind",
+      "lane",
+      "subject",
+      "summary"
+    ],
+    "properties": {
+      "id": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "at": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      },
+      "kind": {
+        "enum": [
+          "lane.assigned",
+          "candidate.handed",
+          "check.started",
+          "check.finished",
+          "candidate.merged",
+          "candidate.stopped",
+          "base.broken",
+          "base.repaired",
+          "lease.granted",
+          "lease.released",
+          "release.started",
+          "release.finished",
+          "finish.met",
+          "decision.recorded",
+          "blocker.recorded",
+          "delivery.closed"
+        ]
+      },
+      "lane": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "minLength": 1
+          }
+        ]
+      },
+      "subject": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "minLength": 1
+          }
+        ]
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

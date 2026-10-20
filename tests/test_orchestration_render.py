@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -23,9 +24,6 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills/orchestrate-work/scripts"
 STATE_TOOL = SCRIPTS / "delivery_state.py"
 WRAPPER = SCRIPTS / "render_state.py"
-RENDERERS = SCRIPTS / "renderers"
-MARKDOWN = RENDERERS / "markdown.py"
-STATIC_PAGE = RENDERERS / "static_page.py"
 HEAD_A = "a" * 40
 
 HOSTILE = (
@@ -384,7 +382,125 @@ class BoundedCommandTests(DeliveryStateFixture):
         self.assertEqual((result.returncode, document["renderers"][0]["output"]), (0, "caf\u00e9.md"), document)
 
 
+# A fixed state and journal, written directly so every timestamp is fixed:
+# the built-in views of it are pinned byte for byte.
+FIXED_STATE = {
+    "schemaVersion": "delivery-state/1",
+    "version": 7,
+    "meta": {
+        "headline": "Pinned delivery " + HOSTILE,
+        "updatedAt": "2026-10-20T12:00:00Z",
+        "baseHead": HEAD_A,
+        "releasedHead": None,
+        "checking": {
+            "now": {"subject": "change-1", "title": "Change one", "startedAt": "2026-10-20T11:59:00Z",
+                    "steps": [{"label": "sync", "state": "passed"}, {"label": "unit", "state": "running"}]},
+            "next": ["change-2"],
+        },
+    },
+    "lanes": [
+        {"id": "lane-1", "title": HOSTILE, "focus": "views", "state": "working", "waitingOn": None,
+         "since": "2026-10-20T10:00:00Z"},
+        {"id": "lane-2", "title": "Runner", "focus": "queue", "state": "blocked", "waitingOn": "lead",
+         "since": "2026-10-20T10:30:00Z"},
+    ],
+    "queue": [
+        {"order": 1, "subject": "change-1", "title": "Change one", "lane": "lane-1", "stage": "checking",
+         "head": HEAD_A, "syncedHead": "b" * 40, "leadInputs": ["codegen"], "reportedRounds": 2,
+         "runId": "run-1", "checks": [{"id": "unit", "state": "running", "detail": "3 of 9"}]},
+        {"order": 2, "subject": "change-2", "title": HOSTILE, "lane": None, "stage": "queued",
+         "head": "c" * 40, "syncedHead": None, "leadInputs": [], "reportedRounds": None, "runId": None,
+         "checks": []},
+    ],
+    "finish": [{"id": "finish-1", "text": "A release ships", "met": False},
+               {"id": "finish-2", "text": HOSTILE, "met": True}],
+    "followups": [{"id": "follow-1", "title": "Later <i>work</i>", "reference": "ticket-9"}],
+    "leases": [{"id": "dev-backend", "holder": "lead", "since": "2026-10-20T09:00:00Z"}],
+    "extensions": {"adopter": {"note": HOSTILE, "nested": [1, {"a": None}]}},
+}
+FIXED_JOURNAL = [
+    {"id": 1, "at": "2026-10-20T10:00:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": None,
+     "summary": "Assigned " + HOSTILE},
+    {"id": 2, "at": "2026-10-20T11:00:00Z", "kind": "candidate.handed", "lane": "lane-1", "subject": "change-1",
+     "summary": "Handed over"},
+]
+# sha256 of each built-in view of the fixed state. A change here is a change
+# to what every adopter's page shows; make it deliberately.
+# The same views of a delivery with nothing in it: every section empty, nothing
+# being checked, an empty journal, and a queue listed out of order.
+EMPTY_STATE = {
+    **FIXED_STATE,
+    "meta": {**FIXED_STATE["meta"], "headline": "Empty", "baseHead": None,
+             "checking": {"now": None, "next": []}},
+    "lanes": [],
+    "queue": [
+        {**FIXED_STATE["queue"][1], "order": 2, "subject": "change-late", "title": "Late"},
+        {**FIXED_STATE["queue"][0], "order": 1, "subject": "change-early", "title": "Early"},
+    ],
+    "finish": [],
+    "followups": [],
+    "leases": [],
+    "extensions": {},
+}
+PINNED_EMPTY_VIEWS = {
+    "delivery.md": "383e1abf8a7980f62005e2a2ffa9b0ae870a3ac1b04952adc4158277b5bd0449",
+    "delivery.html": "34387ce01e8c9e0e1dccf9ef9ca67a61ce60419839ba2a8f375975736d305927",
+}
+PINNED_VIEWS = {
+    "delivery.md": "a02cad22aad1a5862b63cdf3beb5dd21b823ce35d6b94bb6758833612db3062e",
+    "delivery.html": "52db5a1e5fbd8d95a3943f76010f60d29fe0ad9c722cfb2d209995eaa39c4d60",
+}
+
+
+class PinnedViewTests(unittest.TestCase):
+    def views(self, state: dict, journal: list[dict]) -> dict[str, str]:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "state"
+            directory.mkdir()
+            (directory / "state.json").write_bytes(
+                (json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8"))
+            (directory / "journal.jsonl").write_bytes(b"".join(
+                json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
+                for entry in journal))
+            code, result = wrapper(directory)
+            self.assertEqual(code, 0, result)
+            return {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in PINNED_VIEWS}
+
+    def test_the_built_in_views_of_a_fixed_state_are_byte_for_byte_unchanged(self) -> None:
+        self.assertEqual(self.views(FIXED_STATE, FIXED_JOURNAL), PINNED_VIEWS)
+
+    def test_the_built_in_views_of_an_empty_delivery_are_byte_for_byte_unchanged(self) -> None:
+        self.assertEqual(self.views(EMPTY_STATE, []), PINNED_EMPTY_VIEWS)
+
+
 class WrapperTests(DeliveryStateFixture):
+    def test_a_built_in_view_that_fails_keeps_its_previous_view(self) -> None:
+        renderers = [{"id": "summary", "builtin": "markdown", "output": "delivery.md"}]
+        code, result = wrapper(self.state_dir, "--state-config", self.config(renderers))
+        self.assertEqual(code, 0, result)
+        previous = (self.state_dir / "delivery.md").read_bytes()
+
+        def broken(document: dict) -> str:
+            raise ValueError("cannot draw")
+
+        with mock.patch.dict(render_state.BUILTINS, {"markdown": broken}):
+            code, result = render_state.render(self.state_dir, json.loads(self.config(renderers)))
+        self.assertEqual(code, 1, result)
+        entry = result["renderers"][0]
+        self.assertEqual(entry["ok"], False)
+        self.assertEqual(entry["error"], "the built-in markdown view failed: cannot draw")
+        self.assertEqual((self.state_dir / "delivery.md").read_bytes(), previous)
+
+    def test_a_built_in_view_over_the_limit_is_truncated_and_not_written(self) -> None:
+        renderers = [{"id": "page", "builtin": "static-page", "output": "delivery.html"}]
+        with mock.patch.object(render_state, "VIEW_LIMIT_BYTES", 1000):
+            code, result = render_state.render(self.state_dir, json.loads(self.config(renderers)))
+        self.assertEqual(code, 1, result)
+        entry = result["renderers"][0]
+        self.assertEqual((entry["ok"], entry["truncated"]), (False, True))
+        self.assertIn("1000", entry["error"])
+        self.assertFalse((self.state_dir / "delivery.html").exists())
+
     def test_the_same_state_renders_identically_twice(self) -> None:
         renderers = [
             {"id": "summary", "builtin": "markdown", "output": "delivery.md"},
@@ -613,10 +729,9 @@ class WrapperTests(DeliveryStateFixture):
 
 class MarkdownRendererTests(DeliveryStateFixture):
     def render(self) -> str:
-        result = run([sys.executable, "-B", str(MARKDOWN)], json.dumps(self.document, ensure_ascii=False))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(result.stdout)
-        return result.stdout
+        view = render_state.render_markdown(json.loads(json.dumps(self.document, ensure_ascii=False)))
+        self.assertTrue(view)
+        return view
 
     def test_state_text_renders_inert(self) -> None:
         view = self.render()
@@ -653,10 +768,9 @@ class MarkdownRendererTests(DeliveryStateFixture):
 
 class StaticPageTests(DeliveryStateFixture):
     def render(self, document: dict | None = None) -> str:
-        result = run([sys.executable, "-B", str(STATIC_PAGE)], json.dumps(document or self.document, ensure_ascii=False))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(result.stdout)
-        return result.stdout
+        page = render_state.render_static_page(json.loads(json.dumps(document or self.document, ensure_ascii=False)))
+        self.assertTrue(page)
+        return page
 
     def embedded(self, page: str) -> str:
         match = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S)
@@ -683,7 +797,7 @@ class StaticPageTests(DeliveryStateFixture):
                 self.assertNotIn(construct, page.replace(self.embedded(page).lower(), ""))
 
     def test_the_page_template_passes_the_leakage_scan(self) -> None:
-        for path in (STATIC_PAGE, MARKDOWN, WRAPPER):
+        for path in (WRAPPER,):
             contents = path.read_text(encoding="utf-8")
             for class_id, pattern in LEAKAGE_PATTERNS:
                 with self.subTest(path=path.name, pattern=class_id):
@@ -765,7 +879,7 @@ setTimeout(async () => {
     def run_page(self, scenario: dict, document: dict | None = None) -> dict:
         page = self.root / "page.html"
         page.write_text(
-            run([sys.executable, "-B", str(STATIC_PAGE)], json.dumps(document or self.document, ensure_ascii=False)).stdout,
+            render_state.render_static_page(json.loads(json.dumps(document or self.document, ensure_ascii=False))),
             encoding="utf-8",
         )
         shim = self.root / "shim.cjs"

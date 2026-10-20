@@ -6,7 +6,10 @@ either is invalid nothing runs. A renderer is any argv that reads the
 validated ``{state, journal}`` document on stdin and writes one view on
 stdout. A publisher is any argv that receives the same document and puts it
 somewhere a view reads. The wrapper only reads the state: views are pure
-functions of it, so one can be replaced without touching the state.
+functions of it, so one can be replaced without touching the state. The two
+built-in views, markdown and static-page, run inside the wrapper instead of as
+commands: they are held to the same view limit, and a timeoutSeconds given for
+one is not used.
 
 Exit codes: 0 when every renderer succeeded, 1 when a renderer failed, 2 when
 the state, the journal or the configuration was refused. A failing publisher
@@ -45,6 +48,7 @@ import contextlib
 import json
 import os
 import signal
+import string
 import subprocess
 import tempfile
 import threading
@@ -58,11 +62,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from delivery_state import JOURNAL_FILE, QUEUE_LOCK, STATE_FILE, STATE_LOCK, StateError, dumps, show  # noqa: E402
 
 
-RENDERERS = Path(__file__).resolve().parent / "renderers"
-BUILTINS = {
-    "markdown": RENDERERS / "markdown.py",
-    "static-page": RENDERERS / "static_page.py",
-}
 DEFAULT_RENDERERS = (
     {"id": "markdown", "builtin": "markdown", "output": "delivery.md"},
     {"id": "static-page", "builtin": "static-page", "output": "delivery.html"},
@@ -80,6 +79,312 @@ VIEW_LIMIT_BYTES = 16 * 1024 * 1024
 # How long a command's pipes may stay open after its process exits.
 DRAIN_SECONDS = 2.0
 CHUNK_BYTES = 64 * 1024
+
+
+# The built-in markdown view. State text is shown as text: links, markup and
+# raw HTML are neutralised.
+
+_MARKDOWN_PUNCTUATION = frozenset(string.punctuation)
+
+
+def _markdown_text(value: object) -> str:
+    """One inert line of Markdown for a state value."""
+    if value is None:
+        return "none"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    raw = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
+    out = []
+    for character in raw:
+        if character in _MARKDOWN_PUNCTUATION:
+            out.append("\\" + character)
+        elif unicodedata.category(character) in {"Cc", "Zl", "Zp"}:
+            out.append(" ")
+        else:
+            out.append(character)
+    return "".join(out).strip() or "none"
+
+
+def _markdown_section(title: str, rows: list[str], empty: str) -> list[str]:
+    return [f"## {title}", "", *(rows or [empty]), ""]
+
+
+def render_markdown(document: dict) -> str:
+    state = document["state"]
+    meta = state["meta"]
+    lines = [
+        f"# {_markdown_text(meta['headline'])}",
+        "",
+        f"Updated {_markdown_text(meta['updatedAt'])} · state version {_markdown_text(state['version'])}",
+        f"Base head {_markdown_text(meta['baseHead'])} · released head {_markdown_text(meta['releasedHead'])}",
+        "",
+    ]
+
+    checking = meta["checking"]
+    rows = []
+    if checking["now"] is not None:
+        now = checking["now"]
+        rows.append(f"- Now: {_markdown_text(now['subject'])}, {_markdown_text(now['title'])}, since {_markdown_text(now['startedAt'])}")
+        rows.extend(f"  - {_markdown_text(step['label'])}: {_markdown_text(step['state'])}" for step in now["steps"])
+    if checking["next"]:
+        rows.append("- Next: " + ", ".join(_markdown_text(subject) for subject in checking["next"]))
+    lines += _markdown_section("Checking", rows, "Nothing is being checked.")
+
+    rows = []
+    for item in sorted(state["queue"], key=lambda entry: (entry["order"], entry["subject"])):
+        rows.append(
+            f"{_markdown_text(item['order'])}. {_markdown_text(item['subject'])}: {_markdown_text(item['title'])}, {_markdown_text(item['stage'])}"
+            f" · lane {_markdown_text(item['lane'])} · head {_markdown_text(item['head'])}"
+        )
+        rows.extend(f"   - {_markdown_text(check['id'])}: {_markdown_text(check['state'])}" for check in item["checks"])
+    lines += _markdown_section("Queue", rows, "The queue is empty.")
+
+    rows = [
+        f"- {_markdown_text(lane['id'])}: {_markdown_text(lane['title'])}, {_markdown_text(lane['state'])}"
+        f" · focus {_markdown_text(lane['focus'])} · waiting on {_markdown_text(lane['waitingOn'])} · since {_markdown_text(lane['since'])}"
+        for lane in state["lanes"]
+    ]
+    lines += _markdown_section("Lanes", rows, "No lanes.")
+
+    rows = [f"- {'met' if item['met'] else 'open'}: {_markdown_text(item['text'])}" for item in state["finish"]]
+    lines += _markdown_section("Finish line", rows, "No finish line recorded.")
+
+    rows = [f"- {_markdown_text(item['title'])} · {_markdown_text(item['reference'])}" for item in state["followups"]]
+    lines += _markdown_section("Follow-ups", rows, "No follow-ups.")
+
+    rows = [f"- {_markdown_text(lease['id'])}: {_markdown_text(lease['holder'])} since {_markdown_text(lease['since'])}" for lease in state["leases"]]
+    lines += _markdown_section("Leases", rows, "No leases held.")
+
+    rows = [
+        f"- {_markdown_text(entry['id'])}. {_markdown_text(entry['at'])} {_markdown_text(entry['kind'])}"
+        f" · lane {_markdown_text(entry['lane'])} · subject {_markdown_text(entry['subject'])}: {_markdown_text(entry['summary'])}"
+        for entry in reversed(document["journal"])
+    ]
+    lines += _markdown_section("Journal", rows, "The journal is empty.")
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+# The built-in static page. It embeds the state as escaped JSON and draws it
+# through text content only, making no external loads.
+
+_PAGE_ESCAPES = {
+    "<": "\\u003c",
+    ">": "\\u003e",
+    "&": "\\u0026",
+    "\u2028": "\\u2028",
+    "\u2029": "\\u2029",
+}
+
+_PAGE_STYLE = """
+:root { color-scheme: light dark; --ink: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7; --page: #ffffff; --soft: #f5f5f7; }
+@media (prefers-color-scheme: dark) {
+  :root { --ink: #f5f5f7; --muted: #a1a1a6; --line: #3a3a3c; --page: #161617; --soft: #222224; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.5 system-ui, sans-serif; }
+main { max-width: 960px; margin: 0 auto; padding: 32px 16px 64px; overflow-wrap: anywhere; }
+h1 { font-size: 28px; line-height: 1.2; margin: 0 0 8px; }
+h2 { font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 32px 0 8px; }
+ul, ol { list-style: none; margin: 0; padding: 0; }
+li { border-top: 1px solid var(--line); padding: 10px 0; }
+.meta, .detail, .empty { color: var(--muted); font-size: 13px; }
+.note { background: var(--soft); border-radius: 6px; padding: 8px 12px; margin: 16px 0 0; font-size: 13px; }
+.tag { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; margin-left: 8px; font-size: 12px; }
+.steps li { border: 0; padding: 2px 0 2px 16px; }
+""".strip()
+
+# The page's program. It never parses markup: every value reaches the page
+# through textContent on elements it creates itself.
+_PAGE_PROGRAM = """
+(function () {
+  "use strict";
+  var embedded = JSON.parse(document.getElementById("delivery-state").textContent);
+  var app = document.getElementById("app");
+
+  function el(tag, text, className) {
+    var element = document.createElement(tag);
+    if (className) { element.className = className; }
+    if (text !== undefined) { element.textContent = text; }
+    return element;
+  }
+  function show(value) {
+    if (value === null || value === undefined) { return "none"; }
+    if (typeof value === "string") { return value; }
+    if (typeof value === "boolean") { return value ? "yes" : "no"; }
+    return JSON.stringify(value);
+  }
+  function list(tag, items, empty, draw) {
+    if (!items.length) { return el("p", empty, "empty"); }
+    var element = el(tag);
+    items.forEach(function (item) { element.appendChild(draw(item)); });
+    return element;
+  }
+  function row(title, detail, tag) {
+    var item = el("li");
+    var head = el("div", title);
+    if (tag !== undefined) { head.appendChild(el("span", show(tag), "tag")); }
+    item.appendChild(head);
+    if (detail) { item.appendChild(el("div", detail, "detail")); }
+    return item;
+  }
+  function isArray(value) { return Array.isArray(value); }
+  function isObject(value) { return value !== null && typeof value === "object" && !isArray(value); }
+
+  function usable(candidate) {
+    return isObject(candidate) && isObject(candidate.state) && isArray(candidate.journal) &&
+      candidate.state.schemaVersion === embedded.state.schemaVersion &&
+      isObject(candidate.state.meta) && isObject(candidate.state.meta.checking) &&
+      isArray(candidate.state.meta.checking.next) &&
+      ["lanes", "queue", "finish", "followups", "leases"].every(function (key) { return isArray(candidate.state[key]); });
+  }
+
+  function build(doc, note) {
+    var state = doc.state;
+    var meta = state.meta;
+    var parts = [];
+    parts.push(el("h1", show(meta.headline)));
+    parts.push(el("p", "Updated " + show(meta.updatedAt) + " \\u00b7 state version " + show(state.version) +
+      " \\u00b7 base " + show(meta.baseHead) + " \\u00b7 released " + show(meta.releasedHead), "meta"));
+    if (note) { parts.push(el("p", note, "note")); }
+
+    parts.push(el("h2", "Checking"));
+    var now = meta.checking.now;
+    if (now) {
+      var current = el("div");
+      current.appendChild(el("div", show(now.subject) + ": " + show(now.title)));
+      current.appendChild(el("div", "Since " + show(now.startedAt), "detail"));
+      var steps = list("ul", now.steps, "No steps yet.", function (step) {
+        return el("li", show(step.label) + ": " + show(step.state));
+      });
+      if (now.steps.length) { steps.className = "steps"; }
+      current.appendChild(steps);
+      parts.push(current);
+    } else {
+      parts.push(el("p", "Nothing is being checked.", "empty"));
+    }
+    if (meta.checking.next.length) {
+      parts.push(el("p", "Next: " + meta.checking.next.map(show).join(", "), "detail"));
+    }
+
+    var queue = state.queue.slice().sort(function (a, b) { return a.order - b.order; });
+    parts.push(el("h2", "Queue"));
+    parts.push(list("ol", queue, "The queue is empty.", function (item) {
+      var checks = item.checks.map(function (check) { return show(check.id) + " " + show(check.state); }).join(", ");
+      return row(show(item.order) + ". " + show(item.subject) + ": " + show(item.title),
+        "Lane " + show(item.lane) + " \\u00b7 head " + show(item.head) + (checks ? " \\u00b7 " + checks : ""), item.stage);
+    }));
+
+    parts.push(el("h2", "Lanes"));
+    parts.push(list("ul", state.lanes, "No lanes.", function (lane) {
+      return row(show(lane.id) + ": " + show(lane.title),
+        "Focus " + show(lane.focus) + " \\u00b7 waiting on " + show(lane.waitingOn) + " \\u00b7 since " + show(lane.since), lane.state);
+    }));
+
+    parts.push(el("h2", "Finish line"));
+    parts.push(list("ul", state.finish, "No finish line recorded.", function (item) {
+      return row(show(item.text), "", item.met ? "met" : "open");
+    }));
+
+    parts.push(el("h2", "Follow-ups"));
+    parts.push(list("ul", state.followups, "No follow-ups.", function (item) {
+      return row(show(item.title), show(item.reference));
+    }));
+
+    parts.push(el("h2", "Leases"));
+    parts.push(list("ul", state.leases, "No leases held.", function (lease) {
+      return row(show(lease.id) + ": " + show(lease.holder), "Since " + show(lease.since));
+    }));
+
+    parts.push(el("h2", "Journal"));
+    parts.push(list("ol", doc.journal.slice().reverse(), "The journal is empty.", function (entry) {
+      return row(show(entry.summary),
+        show(entry.at) + " \\u00b7 lane " + show(entry.lane) + " \\u00b7 subject " + show(entry.subject), entry.kind);
+    }));
+    return parts;
+  }
+
+  function draw(doc, source, note) {
+    app.replaceChildren.apply(app, build(doc, note));
+    app.setAttribute("data-source", source);
+  }
+  /* The answer to one live document: "shown", "unusable" (a different state
+     version or shape), or "failed" (it passed the checks but could not be
+     drawn). Every failure leaves the embedded state on screen. */
+  function drawLive(doc) {
+    try {
+      if (!usable(doc)) { return "unusable"; }
+      draw(doc, "live");
+      return "shown";
+    } catch (error) {
+      return "failed";
+    }
+  }
+  var notes = {
+    unusable: "Showing the saved state: the live store did not match this page's state version.",
+    failed: "Showing the saved state: the live store's answer could not be shown.",
+    unread: "Showing the saved state: the live store could not be read."
+  };
+  function fallBack(reason) { draw(embedded, "embedded", notes[reason]); }
+
+  draw(embedded, "embedded");
+  var store = globalThis.deliveryStateStore;
+  if (isObject(store) && typeof store.read === "function") {
+    /* A pushed update is newer than whatever read() returns, so once one is
+       shown the read's answer is ignored. */
+    var pushed = false;
+    Promise.resolve().then(function () { return store.read(); }).then(function (doc) {
+      if (pushed) { return; }
+      var result = drawLive(doc);
+      if (result !== "shown") { fallBack(result); }
+    }, function () {
+      if (!pushed) { fallBack("unread"); }
+    });
+    /* A store that cannot subscribe still serves the read above. */
+    try {
+      if (typeof store.subscribe === "function") {
+        store.subscribe(function (doc) {
+          if (drawLive(doc) === "shown") { pushed = true; }
+        });
+      }
+    } catch (error) {
+      /* Nothing to undo: a document already pushed stays shown. */
+    }
+  }
+})();
+""".strip()
+
+
+def _page_embed(document: object) -> str:
+    """The document as JSON that cannot close or break out of its script element."""
+    text = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    for raw, escaped in _PAGE_ESCAPES.items():
+        text = text.replace(raw, escaped)
+    return text
+
+
+def render_static_page(document: dict) -> str:
+    return (
+        "<!doctype html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        "<title>Delivery state</title>\n"
+        f"<style>\n{_PAGE_STYLE}\n</style>\n"
+        "</head>\n"
+        "<body>\n"
+        '<main id="app" data-source="embedded"></main>\n'
+        f'<script type="application/json" id="delivery-state">{_page_embed(document)}</script>\n'
+        f"<script>\n{_PAGE_PROGRAM}\n</script>\n"
+        "</body>\n"
+        "</html>\n"
+    )
+
+
+BUILTINS = {
+    "markdown": render_markdown,
+    "static-page": render_static_page,
+}
 
 
 class ConfigError(Exception):
@@ -178,10 +483,11 @@ def parse_config(config: object) -> tuple[list[dict], list[dict]]:
             raise ConfigError(f"{where}: unknown fields: {', '.join(unknown)}")
         if ("builtin" in entry) == ("argv" in entry):
             raise ConfigError(f"{where}: give exactly one of builtin and argv")
+        builtin = entry.get("builtin")
         if "builtin" in entry:
-            if entry["builtin"] not in BUILTINS:
+            if builtin not in BUILTINS:
                 raise ConfigError(f"{where}: builtin must be one of {', '.join(sorted(BUILTINS))}")
-            argv = [sys.executable, "-B", str(BUILTINS[entry["builtin"]])]
+            argv = None
         else:
             argv = _argv(entry["argv"], where)
         output = entry.get("output")
@@ -190,7 +496,8 @@ def parse_config(config: object) -> tuple[list[dict], list[dict]]:
         if output in outputs:
             raise ConfigError(f"{where}: output {output} is already written by another renderer")
         outputs.add(output)
-        renderers.append({"id": entry["id"], "argv": argv, "output": output, "timeout": _timeout(entry, where)})
+        renderers.append({"id": entry["id"], "argv": argv, "builtin": builtin, "output": output,
+                          "timeout": _timeout(entry, where)})
     publishers = []
     for index, entry in enumerate(_entries(config, "publishers")):
         where = f"publishers[{index}]"
@@ -339,6 +646,17 @@ def _write_atomically(path: Path, contents: bytes) -> None:
         raise
 
 
+def _render_builtin(name: str, document: bytes) -> Outcome:
+    """Draw a built-in view in this process, held to the same view limit."""
+    try:
+        view = BUILTINS[name](json.loads(document.decode("utf-8"))).encode("utf-8")
+    except Exception as error:  # noqa: BLE001 - a view must never stop the others
+        return Outcome(None, b"", b"", False, False, f"the built-in {name} view failed: {error}")
+    if len(view) > VIEW_LIMIT_BYTES:
+        return Outcome(0, view[:VIEW_LIMIT_BYTES], b"", True, False, None)
+    return Outcome(0, view, b"", False, False, None)
+
+
 def render(directory: Path, config: object) -> tuple[int, dict]:
     try:
         renderers, publishers = parse_config(config)
@@ -351,7 +669,10 @@ def render(directory: Path, config: object) -> tuple[int, dict]:
 
     rendered = []
     for renderer in renderers:
-        outcome = _execute(renderer["argv"], document, renderer["timeout"], needs_stdout=True)
+        if renderer["builtin"] is not None:
+            outcome = _render_builtin(renderer["builtin"], document)
+        else:
+            outcome = _execute(renderer["argv"], document, renderer["timeout"], needs_stdout=True)
         error = outcome.error
         entry: dict = {"id": renderer["id"], "output": renderer["output"]}
         if outcome.truncated:
