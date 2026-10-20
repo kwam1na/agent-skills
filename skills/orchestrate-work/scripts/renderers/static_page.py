@@ -201,7 +201,7 @@ PROGRAM = """
         });
       }
     } catch (error) {
-      pushed = false;
+      /* Nothing to undo: a document already pushed stays shown. */
     }
   }
 })();

@@ -333,7 +333,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/renderers/static_page.py",
-          "sha256": "772acab08bb876c167b3eb740deb107ded06dbe12c3f6570e3edcbfea89a54a6"
+          "sha256": "2e27331c604f21243a018177a9b49fd01015d1d9125895dceae6e024baa0ea59"
         }
       ],
       "owner": "delivery-agent/user-delegated",

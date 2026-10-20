@@ -425,7 +425,7 @@ if (scenario.adapter) {
       return answer();
     },
     subscribe: adapter.subscribeThrows
-      ? () => { throw new Error("cannot subscribe"); }
+      ? (cb) => { if (scenario.pushDuringSubscribe) { cb(scenario.pushDuringSubscribe); } throw new Error("cannot subscribe"); }
       : adapter.subscribe ? (cb) => { globalThis.__push = cb; return () => {}; } : undefined,
   };
 }
@@ -535,6 +535,16 @@ setTimeout(async () => {
         shown = self.run_page({"adapter": {"document": self.live_document("Live headline"), "subscribeThrows": True}})
         self.assertIn("Live headline", shown["text"])
         self.assertEqual(shown["source"], "live")
+
+    def test_a_push_made_while_subscribing_survives_a_failed_subscribe(self) -> None:
+        shown = self.run_page(
+            {
+                "adapter": {"document": self.live_document("Older read"), "subscribeThrows": True, "readDelayMs": 30},
+                "pushDuringSubscribe": self.live_document("Pushed while subscribing"),
+            }
+        )
+        self.assertIn("Pushed while subscribing", shown["text"])
+        self.assertNotIn("Older read", shown["text"])
 
     def test_a_pushed_update_with_a_different_schema_version_is_ignored(self) -> None:
         shown = self.run_page(
