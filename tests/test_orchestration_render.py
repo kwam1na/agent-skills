@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 import os
 import re
@@ -8,8 +9,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from agent_skills.validate import LEAKAGE_PATTERNS
 
@@ -118,6 +121,168 @@ class DeliveryStateFixture(unittest.TestCase):
             "argv": python_argv("import sys\nsys.stdout.buffer.write(sys.stdin.buffer.read())\n", self.tools, name),
             "output": f"{name}.json",
         }
+
+
+def _load_wrapper():
+    # Importing the scripts here must not leave bytecode beside them.
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(SCRIPTS))
+    try:
+        spec = importlib.util.spec_from_file_location("render_state_under_test", WRAPPER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.remove(str(SCRIPTS))
+        sys.dont_write_bytecode = previous
+
+
+render_state = _load_wrapper()
+
+# A command that starts a child holding its stdout and stderr open, then exits
+# straight away. The child outlives it by far more than any test waits.
+LINGERING = """import subprocess, sys
+subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"],
+                 stdout=sys.stdout, stderr=sys.stderr, stdin=subprocess.DEVNULL)
+{after}
+"""
+
+
+class BoundedCommandTests(DeliveryStateFixture):
+    def test_an_oversized_view_is_truncated_recorded_and_never_written(self) -> None:
+        limit = render_state.VIEW_LIMIT_BYTES
+        flood = {
+            "id": "flood",
+            "argv": python_argv(
+                f"import sys\nsys.stdin.buffer.read()\nsys.stdout.buffer.write(b'x' * {limit + 1})\n",
+                self.tools, "flood",
+            ),
+            "output": "flood.txt",
+        }
+        within = {
+            "id": "within",
+            "argv": python_argv(
+                f"import sys\nsys.stdin.buffer.read()\nsys.stdout.buffer.write(b'y' * {limit})\n",
+                self.tools, "within",
+            ),
+            "output": "within.txt",
+        }
+        code, result = wrapper(self.state_dir, "--state-config", self.config([flood, within]))
+        self.assertEqual(code, 1, result)
+        by_id = {entry["id"]: entry for entry in result["renderers"]}
+        self.assertEqual(by_id["flood"]["ok"], False)
+        self.assertTrue(by_id["flood"]["truncated"])
+        self.assertIn(str(limit), by_id["flood"]["error"])
+        self.assertFalse((self.state_dir / "flood.txt").exists())
+        self.assertTrue(by_id["within"]["ok"], by_id["within"])
+        self.assertNotIn("truncated", by_id["within"])
+        self.assertEqual((self.state_dir / "within.txt").stat().st_size, limit)
+
+    def test_capture_never_holds_more_than_its_limit(self) -> None:
+        argv = python_argv(
+            "import sys\nfor _ in range(64):\n    sys.stdout.buffer.write(b'z' * 65536)\n"
+            "    sys.stderr.buffer.write(b'e' * 65536)\n",
+            self.tools, "torrent",
+        )
+        with mock.patch.object(render_state, "VIEW_LIMIT_BYTES", 1000):
+            outcome = render_state._execute(argv, b"{}", 30)
+        self.assertEqual(outcome.exit_code, 0)
+        self.assertTrue(outcome.truncated)
+        self.assertEqual(len(outcome.stdout), 1000)
+        self.assertLessEqual(len(outcome.stderr), render_state.ERROR_LIMIT)
+
+    def test_a_failing_command_keeps_only_the_tail_of_its_stderr(self) -> None:
+        noisy = {
+            "id": "noisy",
+            "argv": python_argv(
+                "import sys\nsys.stderr.write('x' * 4_000_000 + ' the real reason')\nsys.exit(4)\n",
+                self.tools, "noisy",
+            ),
+        }
+        code, result = wrapper(self.state_dir, "--state-config", self.config([], [noisy]))
+        self.assertEqual(code, 0, result)
+        entry = result["publishers"][0]
+        self.assertEqual((entry["ok"], entry["exitCode"]), (False, 4))
+        self.assertTrue(entry["error"].endswith("the real reason"))
+        self.assertLessEqual(len(entry["error"]), render_state.ERROR_LIMIT)
+
+    def test_a_publisher_whose_child_keeps_its_output_open_is_ok_when_it_exits_cleanly(self) -> None:
+        lingering = {
+            "id": "lingering",
+            "argv": python_argv(LINGERING.format(after="sys.stdin.buffer.read()"), self.tools, "lingering"),
+            "timeoutSeconds": 10,
+        }
+        started = time.monotonic()
+        code, result = wrapper(self.state_dir, "--state-config", self.config([], [lingering]))
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["publishers"], [{"exitCode": 0, "id": "lingering", "ok": True}])
+
+    def test_a_renderer_whose_child_keeps_its_output_open_fails_without_writing(self) -> None:
+        lingering = {
+            "id": "lingering",
+            "argv": python_argv(
+                LINGERING.format(after="sys.stdin.buffer.read()\nsys.stdout.write('partial')\nsys.stdout.flush()"),
+                self.tools, "lingering",
+            ),
+            "output": "lingering.txt",
+            "timeoutSeconds": 10,
+        }
+        started = time.monotonic()
+        code, result = wrapper(self.state_dir, "--state-config", self.config([lingering]))
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertEqual(code, 1, result)
+        entry = result["renderers"][0]
+        self.assertEqual(entry["ok"], False)
+        self.assertIn("still open", entry["error"])
+        self.assertFalse((self.state_dir / "lingering.txt").exists())
+
+    def test_a_command_that_never_reads_its_input_still_completes(self) -> None:
+        deaf = {
+            "id": "deaf",
+            "argv": python_argv("import sys\nsys.stdout.write('done')\n", self.tools, "deaf"),
+            "output": "deaf.txt",
+            "timeoutSeconds": 10,
+        }
+        big = "x" * 2_000_000
+        version = state_tool(self.state_dir, "show")["state"]["version"]
+        state_tool(self.state_dir, "patch", "--writer", "lead", "--version", str(version),
+                   "--patch", "-", stdin=json.dumps({"extensions": {"big": big}}))
+        code, result = wrapper(self.state_dir, "--state-config", self.config([deaf]))
+        self.assertEqual(code, 0, result)
+        self.assertEqual((self.state_dir / "deaf.txt").read_text(encoding="utf-8"), "done")
+
+    def test_a_timeout_stops_the_command_and_its_children(self) -> None:
+        marker = self.root / "child-survived"
+        spawner = {
+            "id": "spawner",
+            "argv": python_argv(
+                "import subprocess, sys, time\n"
+                "subprocess.Popen([sys.executable, '-c', "
+                f"'import time, pathlib; time.sleep(3); pathlib.Path({str(marker)!r}).write_text(\"x\")'],"
+                " stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)\n"
+                "time.sleep(30)\n",
+                self.tools, "spawner",
+            ),
+            "timeoutSeconds": 1,
+        }
+        code, result = wrapper(self.state_dir, "--state-config", self.config([], [spawner]))
+        self.assertEqual(result["publishers"][0]["error"], "timed out after 1s")
+        time.sleep(4)
+        self.assertFalse(marker.exists(), "the timed-out command's child kept running")
+
+    def test_output_is_ascii_json_whatever_the_console_encoding(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-B", str(WRAPPER), "--dir", str(self.state_dir), "--state-config", "-"],
+            input=("\ufeff" + self.config([{"id": "summary", "builtin": "markdown", "output": "caf\u00e9.md"}]))
+            .encode("utf-8"),
+            capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}, check=False,
+        )
+        self.assertTrue(result.stdout, result.stderr.decode("utf-8", "replace"))
+        self.assertTrue(result.stdout.isascii(), result.stdout)
+        document = json.loads(result.stdout.decode("ascii"))
+        self.assertEqual((result.returncode, document["renderers"][0]["output"]), (0, "caf\u00e9.md"), document)
 
 
 class WrapperTests(DeliveryStateFixture):
