@@ -59,7 +59,10 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from delivery_state import JOURNAL_FILE, QUEUE_LOCK, STATE_FILE, STATE_LOCK, StateError, dumps, show  # noqa: E402
+from delivery_state import (  # noqa: E402
+    JOURNAL_FILE, OUTBOX_DIRECTORY, OUTBOX_FILE, PUBLISHED_FILE, QUEUE_LOCK, STATE_FILE, STATE_LOCK, StateError,
+    dumps, read_published, show,
+)
 
 
 DEFAULT_RENDERERS = (
@@ -67,7 +70,7 @@ DEFAULT_RENDERERS = (
     {"id": "static-page", "builtin": "static-page", "output": "delivery.html"},
 )
 # The files the state tool and the runner own; no view may replace them.
-RESERVED = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK)
+RESERVED = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE, OUTBOX_DIRECTORY)
 DEFAULT_TIMEOUT_SECONDS = 60
 MAX_TIMEOUT_SECONDS = 600
 # How much of a failing command's stderr the result keeps, in characters, and
@@ -561,6 +564,12 @@ def parse_config(config: object) -> tuple[list[dict], list[dict]]:
     publishers = []
     for index, entry in enumerate(_entries(config, "publishers")):
         where = f"publishers[{index}]"
+        if "kind" in entry:
+            # A host publisher runs nothing: the lead publishes its outbox with the host's own tool.
+            if entry["kind"] != "host" or set(entry) != {"id", "kind"}:
+                raise ConfigError(f"{where}: a publisher with a kind is {{id, kind: host}} and nothing else")
+            publishers.append({"id": entry["id"], "kind": "host"})
+            continue
         unknown = sorted(set(entry) - {"id", "argv", "timeoutSeconds"})
         if unknown:
             raise ConfigError(f"{where}: unknown fields: {', '.join(unknown)}")
@@ -717,13 +726,32 @@ def _render_builtin(name: str, document: bytes) -> Outcome:
     return Outcome(0, view, b"", False, False, None)
 
 
+def _write_outbox(directory: Path, publisher_id: str, shown: dict) -> dict:
+    """Leave the state and every journal entry not yet acknowledged for the lead to publish."""
+    entry: dict = {"id": publisher_id, "kind": "host"}
+    try:
+        published = read_published(directory)
+    except StateError as error:
+        return {**entry, "ok": False, "error": str(error)}
+    through = published["journalThrough"] if published else 0
+    journal = [item for item in shown["journal"] if item["id"] > through]
+    outbox = {"version": shown["state"]["version"], "state": shown["state"], "journal": journal}
+    relative = f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE}"
+    try:
+        _write_atomically(directory / OUTBOX_DIRECTORY / OUTBOX_FILE, dumps(outbox).encode("utf-8"))
+    except OSError as failure:
+        return {**entry, "ok": False, "error": f"could not write the outbox: {failure.strerror or failure}"}
+    return {**entry, "ok": True, "outbox": relative, "entries": len(journal), "version": outbox["version"]}
+
+
 def render(directory: Path, config: object) -> tuple[int, dict]:
     try:
         renderers, publishers = parse_config(config)
     except ConfigError as error:
         return 2, {"ok": False, "code": "config_invalid", "error": str(error)}
     try:
-        document = dumps(show(directory)).encode("utf-8")
+        shown = show(directory)
+        document = dumps(shown).encode("utf-8")
     except StateError as error:
         return 2, {"ok": False, "code": error.code, "error": str(error)}
 
@@ -755,6 +783,9 @@ def render(directory: Path, config: object) -> tuple[int, dict]:
 
     published = []
     for publisher in publishers:
+        if publisher.get("kind") == "host":
+            published.append(_write_outbox(directory, publisher["id"], shown))
+            continue
         # A publisher's output is not used; a child it leaves holding the
         # output does not change how its exit is judged.
         outcome = _execute(publisher["argv"], document, publisher["timeout"])

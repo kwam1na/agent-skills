@@ -213,6 +213,54 @@ When a host stores the state with its own tool rather than an argv, follow
 [the publishing step](references/orchestration-guide.md#publishing-step)
 after each runner result.
 
+## Keeping the live view current
+
+Keeping the view current is the lead's job, never the operator's: the
+operator should never have to ask whether it is up to date. At every event,
+such as a hand-off, a merge, a decision or a tracker change, run the sync loop
+in this order:
+
+1. **Snapshot.** With the host's own forge and tracker tools, list the epic's
+   work and write it as `work-snapshot/1` files (in
+   `references/schemas.json`): `{takenAt, source, items}`, where `source` is
+   `forge` or `tracker`. Each item is `{subject, title?, state,
+   changeRequest?, head?}`. A tracker state is `backlog`, `started`,
+   `completed` or `canceled`; a forge state is `open`, `draft`, `merged` or
+   `closed`. The state tool never calls a forge or a tracker itself.
+2. **Reconcile.**
+
+   ```bash
+   python3 -B scripts/delivery_state.py --dir <state directory> reconcile --snapshot <forge snapshot> --snapshot <tracker snapshot>
+   ```
+
+   - A tracker child the record lacks is added: `backlog` as a follow-up,
+     `started` as planned work (the state's `planned` list).
+   - A change request is linked to its queue or planned item, and an open one
+     moves planned work to review.
+   - A merge the runner never recorded is written as the runner's, with a
+     `candidate.merged` journal entry saying so. The runner records its own
+     merges, so this is a recovery path, not the normal one.
+   - Anything it cannot settle, such as a completed child still planned, is
+     reported and left for the lead.
+   - A snapshot older than `--max-age` seconds (900 by default) is refused
+     with `snapshot_stale` and nothing is written: list the work again.
+   - It is idempotent and prints its changes as JSON, or `no drift`.
+3. **Render**, with the wrapper as above. Command publishers run as part of
+   it. A `host` publisher, `{"id": "<id>", "kind": "host"}`, runs nothing: it
+   writes `outbox/outbox.json` in the state directory, holding the record
+   version, the state and every journal entry not yet acknowledged.
+4. **Publish** the outbox with the host's own tool, for a view whose store
+   only the host can write.
+5. **Acknowledge** what went out:
+
+   ```bash
+   python3 -B scripts/delivery_state.py --dir <state directory> ack --version <published version> --through <last journal id published>
+   ```
+
+   The next outbox then carries only later entries. `show` reports a
+   publication or an outbox that lags the record, so an unpublished view is
+   always visible.
+
 ## Running the epic
 
 Work through [the lead checklist](references/orchestration-guide.md#lead-checklist): plan,
@@ -275,7 +323,8 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind <kin
   `checks` and a null `syncedHead`.
 - Journal appends are never refused for concurrency; the tool allocates the
   next id.
-- `show` prints the validated `{state, journal}` pair that renderers read.
+- `show` prints the validated `{state, journal}` pair that renderers read,
+  with a `publication` block saying whether what was published lags it.
 - Output is ASCII JSON on every platform and console; a patch read from
   stdin is UTF-8, with or without a byte-order mark. Text that has no UTF-8
   form, such as a lone surrogate, is refused. The state is UTF-8 and the
