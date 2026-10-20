@@ -48,7 +48,6 @@ import contextlib
 import json
 import os
 import signal
-import string
 import subprocess
 import tempfile
 import threading
@@ -82,9 +81,40 @@ CHUNK_BYTES = 64 * 1024
 
 
 # The built-in markdown view. State text is shown as text: links, markup and
-# raw HTML are neutralised.
+# raw HTML are neutralised. Only characters that can change what a CommonMark
+# or GitHub-flavoured renderer shows are escaped, so the raw file stays readable.
 
-_MARKDOWN_PUNCTUATION = frozenset(string.punctuation)
+# Anywhere in a value: escapes, code, emphasis, strikethrough, links, raw HTML,
+# entities and tables.
+_MARKDOWN_INLINE = frozenset("\\`*_~[]<>&|")
+# At the start of a value, which may start a line or a list item's content:
+# headings, list markers, block quotes and tables.
+_MARKDOWN_LINE_START = frozenset("#-+>|")
+
+
+def _markdown_escape(text: str) -> str:
+    out = []
+    for index, character in enumerate(text):
+        after = text[index + 1 : index + 2]
+        if (
+            character in _MARKDOWN_INLINE
+            or (index == 0 and character in _MARKDOWN_LINE_START)
+            # An image opener; its bracket is escaped too.
+            or (character == "!" and after == "[")
+            # GitHub's bare autolinks: a scheme's "://", "www." and e-mail.
+            or (character == ":" and after == "/")
+            or (character == "." and text[max(0, index - 3) : index].lower() == "www")
+            or character == "@"
+        ):
+            out.append("\\" + character)
+        else:
+            out.append(character)
+    escaped = "".join(out)
+    # An ordered-list marker: digits and "." or ")" at the start.
+    digits = len(text) - len(text.lstrip("0123456789"))
+    if 0 < digits and text[digits : digits + 1] in {".", ")"}:
+        escaped = text[:digits] + "\\" + escaped[digits:]
+    return escaped
 
 
 def _markdown_text(value: object) -> str:
@@ -94,15 +124,12 @@ def _markdown_text(value: object) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
     raw = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
-    out = []
-    for character in raw:
-        if character in _MARKDOWN_PUNCTUATION:
-            out.append("\\" + character)
-        elif unicodedata.category(character) in {"Cc", "Zl", "Zp"}:
-            out.append(" ")
-        else:
-            out.append(character)
-    return "".join(out).strip() or "none"
+    # A line break in state text cannot start a new block; leading space
+    # cannot open an indented code block.
+    flat = "".join(
+        " " if unicodedata.category(character) in {"Cc", "Zl", "Zp"} else character for character in raw
+    ).strip()
+    return _markdown_escape(flat) or "none"
 
 
 def _markdown_section(title: str, rows: list[str], empty: str) -> list[str]:
