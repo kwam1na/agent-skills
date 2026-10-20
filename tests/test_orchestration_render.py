@@ -443,11 +443,11 @@ EMPTY_STATE = {
     "extensions": {},
 }
 PINNED_EMPTY_VIEWS = {
-    "delivery.md": "383e1abf8a7980f62005e2a2ffa9b0ae870a3ac1b04952adc4158277b5bd0449",
+    "delivery.md": "c5e26d237571bf6fa306a93914db9a563cdcacade807bf59b9f2a55f109f337b",
     "delivery.html": "34387ce01e8c9e0e1dccf9ef9ca67a61ce60419839ba2a8f375975736d305927",
 }
 PINNED_VIEWS = {
-    "delivery.md": "a02cad22aad1a5862b63cdf3beb5dd21b823ce35d6b94bb6758833612db3062e",
+    "delivery.md": "1e3672499c653c1a703eb569d8a6ff2d55d1ba77039df962b408683ad54bde87",
     "delivery.html": "52db5a1e5fbd8d95a3943f76010f60d29fe0ad9c722cfb2d209995eaa39c4d60",
 }
 
@@ -740,16 +740,17 @@ class MarkdownRendererTests(DeliveryStateFixture):
         for raw in ("</script>", "<img", "[click]", "](javascript", "<b>", "https://", "[docs]"):
             with self.subTest(raw=raw):
                 self.assertNotRegex(view, r"(?<!\\)" + re.escape(raw))
-        self.assertIn("\\<\\/script\\>", view)
-        self.assertIn("\\[click\\]\\(javascript\\:alert\\(1\\)\\)", view)
+        self.assertIn("\\</script\\>", view)
+        self.assertIn("\\[click\\](javascript:alert(1))", view)
         self.assertNotRegex(view, r"(?<!\\)[<>\[\]]")
         # Line separators cannot start a new block.
         for separator in ("\u2028", "\u2029", "\r"):
             self.assertNotIn(separator, view)
         self.assertIn("next", view)
-        # Emphasis, code, headings, tables and strike markers are escaped too,
-        # and a newline in state text cannot open an indented code block.
-        for escaped in ("\\*em\\*", "\\_u\\_", "\\`code\\`", "\\#", "\\!", "\\|", "\\~", "\\&", "\\<\\!\\-\\-"):
+        # Emphasis, code, tables, strike markers, entities and comments are
+        # escaped too, and a newline in state text cannot open an indented
+        # code block. A "#" or "!" mid-line changes nothing, so it stays plain.
+        for escaped in ("\\*em\\*", "\\_u\\_", "\\`code\\`", "\\|", "\\~", "\\&", "\\<!--", "# ! \\|"):
             self.assertIn(escaped, view)
         self.assertNotIn("\n    indented", view)
         self.assertIn("indented", view)
@@ -759,11 +760,48 @@ class MarkdownRendererTests(DeliveryStateFixture):
         self.assertTrue(view.startswith("# "))
         for heading in ("## Checking", "## Queue", "## Lanes", "## Finish line", "## Follow-ups", "## Leases", "## Journal"):
             self.assertIn(heading, view)
-        self.assertIn("change\\-1", view)
+        self.assertIn("change-1", view)
         # Non-ASCII state text arrives exactly, whatever the console encoding.
         self.assertIn("caf\u00e9 \u2713", view)
         self.assertIn("queued", view)
-        self.assertIn("decision\\.recorded", view)
+        self.assertIn("decision.recorded", view)
+
+    def test_only_meaningful_punctuation_is_escaped(self) -> None:
+        text = render_state._markdown_text
+        # Identifiers, times, prose punctuation and paths read as they are.
+        for plain in ("change-1", "decision.recorded", "2026-10-20T10:00:00Z", "a/b.c (d), e; f? g! h' \"i\" = 4+1 %",
+                      "a-b+c#d", "lane 2. ready", "path/to/file.md"):
+            with self.subTest(plain=plain):
+                self.assertEqual(text(plain), plain)
+        # Inline markup, links, raw HTML and entities anywhere in a value.
+        for raw, escaped in (("a\\b", "a\\\\b"), ("`c`", "\\`c\\`"), ("*e* _u_", "\\*e\\* \\_u\\_"), ("~~s~~", "\\~\\~s\\~\\~"),
+                             ("[l](u)", "\\[l\\](u)"), ("![i](u)", "\\!\\[i\\](u)"), ("<b>", "\\<b\\>"), ("&amp;", "\\&amp;"),
+                             ("a|b", "a\\|b"), ("a $x^2$ b", "a \\$x^2\\$ b")):
+            with self.subTest(raw=raw):
+                self.assertEqual(text(raw), escaped)
+        # A trailing "#" run after a space would close the headline's heading.
+        for raw, escaped in (("Fix issue #", "Fix issue \\#"), ("Fix ##", "Fix \\##"), ("C# and F#", "C# and F#")):
+            with self.subTest(raw=raw):
+                self.assertEqual(text(raw), escaped)
+        # Bare autolinks: a scheme's "://", "www." and e-mail addresses.
+        for raw, escaped in (("https://x.test/p", "https\\://x.test/p"), ("see WWW.x.test", "see WWW\\.x.test"),
+                             ("a@b.co", "a\\@b.co"), ("mailto:a@b.co", "mailto:a\\@b.co")):
+            with self.subTest(raw=raw):
+                self.assertEqual(text(raw), escaped)
+        # At the start of a value, which can start a line or list-item content:
+        # headings, list markers, quotes, tables and ordered-list markers.
+        for raw, escaped in (("# h", "\\# h"), ("- l", "\\- l"), ("+ l", "\\+ l"), ("> q", "\\> q"), ("| t", "\\| t"),
+                             ("12. o", "12\\. o"), ("3) o", "3\\) o"), ("  # h", "\\# h"), ("12 o", "12 o"),
+                             ("#", "\\#"), ("-", "\\-"), ("7.", "7\\."),
+                             ("## h", "\\## h"), ("###### h", "\\###### h"), ("##", "\\##"),
+                             ("---", "\\---"), ("-----", "\\-----"), ("-- -", "\\-- -"), ("--", "--"), ("---x", "---x"),
+                             # Some renderers take any Unicode space after the marker.
+                             ("#\u00a0h", "\\#\u00a0h"), ("#\u3000h", "\\#\u3000h"), ("#\ufeffh", "\\#\ufeffh"),
+                             ("-\u00a0x", "\\-\u00a0x"), ("1.\u2003x", "1\\.\u2003x"),
+                             # Not a block marker without a following space.
+                             ("#tag", "#tag"), ("-x", "-x"), ("+1", "+1"), ("1.5", "1.5")):
+            with self.subTest(raw=raw):
+                self.assertEqual(text(raw), escaped)
 
 
 class StaticPageTests(DeliveryStateFixture):

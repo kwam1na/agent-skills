@@ -47,8 +47,8 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import signal
-import string
 import subprocess
 import tempfile
 import threading
@@ -82,9 +82,66 @@ CHUNK_BYTES = 64 * 1024
 
 
 # The built-in markdown view. State text is shown as text: links, markup and
-# raw HTML are neutralised.
+# raw HTML are neutralised. Only characters that can change what a CommonMark
+# or GitHub-flavoured renderer shows are escaped, so the raw file stays readable.
 
-_MARKDOWN_PUNCTUATION = frozenset(string.punctuation)
+# Anywhere in a value: escapes, code, emphasis, strikethrough, links, raw HTML,
+# entities, tables and GitHub's math. Their presence also covers block quotes
+# and tables at the start of a line.
+_MARKDOWN_INLINE = frozenset("\\`*_~[]<>&|$")
+# At the start of a value, which may start a line or a list item's content:
+# headings and list markers, only when a space follows or the value ends there,
+# since only then do they open a block.
+_MARKDOWN_MARKER_START = frozenset("#-+")
+_THEMATIC_DASHES = re.compile(r"-(?:[ \t]*-){2,}[ \t]*")
+
+
+def _markdown_escape(text: str) -> str:
+    out = []
+    for index, character in enumerate(text):
+        after = text[index + 1 : index + 2]
+        if (
+            character in _MARKDOWN_INLINE
+            or (index == 0 and character in _MARKDOWN_MARKER_START and _opens_block(text, _run(text, character)))
+            # A value of dashes alone would be a thematic break on its own line.
+            or (index == 0 and character == "-" and _THEMATIC_DASHES.fullmatch(text) is not None)
+            # An image opener; its bracket is escaped too.
+            or (character == "!" and after == "[")
+            # GitHub's bare autolinks: a scheme's "://", "www." and e-mail.
+            or (character == ":" and after == "/")
+            or (character == "." and text[max(0, index - 3) : index].lower() == "www")
+            or character == "@"
+        ):
+            out.append("\\" + character)
+        else:
+            out.append(character)
+    escaped = "".join(out)
+    # An ordered-list marker: digits and "." or ")" at the start.
+    digits = len(text) - len(text.lstrip("0123456789"))
+    if 0 < digits and text[digits : digits + 1] in {".", ")"} and _opens_block(text, digits + 1):
+        escaped = text[:digits] + "\\" + escaped[digits:]
+    # A trailing run of "#" after a space would close a heading and vanish.
+    run = len(escaped) - len(escaped.rstrip("#"))
+    if run and (run == len(escaped) or escaped[-run - 1] in " \t"):
+        escaped = escaped[:-run] + "\\" + escaped[-run:]
+    return escaped
+
+
+def _run(text: str, character: str) -> int:
+    """The length of a heading's "#" run; other markers are one character."""
+    return len(text) - len(text.lstrip("#")) if character == "#" else 1
+
+
+def _opens_block(text: str, index: int) -> bool:
+    """A block marker ending before ``index`` is followed by space or nothing.
+
+    Any Unicode space or format character counts: some renderers accept one.
+    """
+    return (
+        index >= len(text)
+        or text[index].isspace()
+        or unicodedata.category(text[index]) in {"Zs", "Cf"}
+    )
 
 
 def _markdown_text(value: object) -> str:
@@ -94,15 +151,12 @@ def _markdown_text(value: object) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
     raw = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
-    out = []
-    for character in raw:
-        if character in _MARKDOWN_PUNCTUATION:
-            out.append("\\" + character)
-        elif unicodedata.category(character) in {"Cc", "Zl", "Zp"}:
-            out.append(" ")
-        else:
-            out.append(character)
-    return "".join(out).strip() or "none"
+    # A line break in state text cannot start a new block; leading space
+    # cannot open an indented code block.
+    flat = "".join(
+        " " if unicodedata.category(character) in {"Cc", "Zl", "Zp"} else character for character in raw
+    ).strip()
+    return _markdown_escape(flat) or "none"
 
 
 def _markdown_section(title: str, rows: list[str], empty: str) -> list[str]:
