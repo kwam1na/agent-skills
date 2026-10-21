@@ -3095,6 +3095,10 @@ class NextTests(unittest.TestCase):
             state_tool.patch(self.directory, writer="runner", version=version, selector=f"queue[subject={subject}]",
                              changes={"stage": "merged"})
 
+    def contents(self) -> dict:
+        return {str(path.relative_to(self.directory)): path.read_bytes() if path.is_file() else None
+                for path in sorted(self.directory.rglob("*"))}
+
     def write(self, name: str, document: dict) -> str:
         path = self.root / name
         path.write_text(json.dumps(document), encoding="utf-8")
@@ -3107,14 +3111,11 @@ class NextTests(unittest.TestCase):
         return self.write("hints.json", {"items": items})
 
     def ranked(self, snapshot: str, hints: str | None = None, *extra: str) -> list[dict]:
-        before = ((self.directory / state_tool.STATE_FILE).read_bytes(),
-                  (self.directory / state_tool.JOURNAL_FILE).read_bytes())
+        before = self.contents()
         code, result = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot", snapshot,
                                 *(("--hints", hints) if hints else ()), *(extra or ("--limit", "20")))
         self.assertEqual(code, 0, result)
-        after = ((self.directory / state_tool.STATE_FILE).read_bytes(),
-                 (self.directory / state_tool.JOURNAL_FILE).read_bytes())
-        self.assertEqual(after, before, "next assigns nothing and writes nothing")
+        self.assertEqual(self.contents(), before, "next assigns nothing and writes nothing")
         self.assertEqual(result["lane"], "lane-1")
         return result["next"]
 
@@ -3344,6 +3345,81 @@ class NextTests(unittest.TestCase):
             with self.subTest(first=first, second=second):
                 self.assertFalse(overlap(first, second))
                 self.assertFalse(overlap(second, first))
+
+    def test_every_rule_holds_where_only_it_decides(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state = state_tool.show(self.directory)["state"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={
+            "lanes": [*state["lanes"], lane("lane-4", state="idle")],
+            "planned": [*state["planned"],
+                        {"subject": "idle-work", "title": "Idle lane's", "lane": "lane-4", "stage": "planned"},
+                        {"subject": "finished", "title": "Done in the tracker", "lane": "lane-2", "stage": "planned"}],
+            "followups": [*state["followups"],
+                          {"id": "taken", "title": "Held by lane-2 as planned work", "reference": "taken"},
+                          {"id": "free", "title": "Also planned, unassigned", "reference": "free"},
+                          {"id": "ghost", "title": "Not in the snapshot", "reference": "ghost"},
+                          {"id": "tie-1", "title": "Tie 1", "reference": "tie-1"},
+                          {"id": "tie-2", "title": "Tie 2", "reference": "tie-2"},
+                          {"id": "none-p", "title": "No priority", "reference": "none-p"},
+                          {"id": "low-p", "title": "Priority 4", "reference": "low-p"},
+                          {"id": "on-idle", "title": "Touches the idle lane's files", "reference": "on-idle"},
+                          {"id": "on-done", "title": "Touches finished work's files", "reference": "on-done"},
+                          {"id": "on-queue", "title": "Touches queued work's files", "reference": "on-queue"},
+                          {"id": "after-cancel", "title": "Blocked by canceled work", "reference": "after-cancel"},
+                          {"id": "dotted", "title": "Dotted path", "reference": "dotted"},
+                          {"id": "float-p", "title": "Float priority", "reference": "float-p"},
+                          {"id": "on-merged", "title": "Touches merged work's files", "reference": "on-merged"}],
+            "queue": [*state["queue"], queue_item("merged-2", lane="lane-2", order=5)],
+        })
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=merged-2]",
+                         changes={"stage": "merged"})
+        items = ["free", "taken", "tie-1", "tie-2", "none-p", "low-p", "on-idle", "on-done", "on-queue", "dotted",
+                 "float-p", "on-merged", "fix-a", "fix-b", "fix-c", "fix-d"]
+        snapshot = self.snapshot([
+            *({"subject": name, "state": "backlog"} for name in items),
+            {"subject": "after-cancel", "state": "backlog", "blockedBy": ["dropped"]},
+            {"subject": "dropped", "state": "canceled"},
+            {"subject": "finished", "state": "completed"},
+        ])
+        hints = self.hints({
+            "idle-work": {"files": ["idle/"]}, "on-idle": {"files": ["idle/x.py"], "priority": 3},
+            "finished": {"files": ["done/"]}, "on-done": {"files": ["done/x.py"], "priority": 3},
+            "waiting": {"files": ["queue/"]}, "on-queue": {"files": ["queue/x.py"], "priority": 3},
+            "busy": {"files": ["src/shared.py"]}, "dotted": {"files": ["./src//shared.py"], "priority": 3},
+            "tie-1": {"priority": 3}, "tie-2": {"priority": 3}, "none-p": {"priority": None},
+            "low-p": {"priority": 4}, "float-p": {"priority": 2.0}, "ghost": {"priority": 1},
+            "after-cancel": {"priority": 3},
+            "merged-2": {"files": ["merged/"]}, "on-merged": {"files": ["merged/x.py"], "priority": 3},
+        })
+        ranked = self.ranked(snapshot, hints)
+        order = [item["subject"] for item in ranked]
+        by = {item["subject"]: item for item in ranked}
+        self.assertEqual(order.count("free"), 1, "planned and follow-up are one item")
+        self.assertNotIn("taken", order, "held by another lane")
+        self.assertLess(order.index("tie-1"), order.index("tie-2"), "the record's order breaks ties")
+        self.assertLess(order.index("low-p"), order.index("none-p"), "no priority after priority 4")
+        self.assertEqual(by["on-idle"]["collidesWith"], [], "an idle lane holds nothing")
+        self.assertEqual(by["on-done"]["collidesWith"], [], "finished in the tracker")
+        self.assertEqual(by["on-queue"]["collidesWith"], ["lane-2"], "queued, not merged")
+        self.assertEqual(by["dotted"]["collidesWith"], ["lane-2"], "a path is compared normalised")
+        self.assertFalse(by["after-cancel"]["blocked"], "a canceled blocker is done")
+        self.assertIs(type(by["float-p"]["priority"]), int)
+        self.assertTrue(by["float-p"]["reason"].endswith("priority 2"), by["float-p"]["reason"])
+        self.assertEqual(by["on-merged"]["collidesWith"], [], "merged work holds nothing")
+        self.assertIn("not in the snapshot", by["ghost"]["reason"])
+        self.assertFalse(by["ghost"]["listed"])
+        listed_unblocked = [name for name in order if by[name]["listed"] and not by[name]["blocked"]]
+        self.assertLess(max(order.index(name) for name in listed_unblocked), order.index("ghost"),
+                        "work the snapshot does not list comes after work it shows unblocked")
+
+    def test_a_path_outside_the_repository_is_refused(self) -> None:
+        snapshot = self.snapshot([{"subject": "fix-a", "state": "backlog"}])
+        for path in ("/etc/passwd", "../outside.py", "src/../../x", "."):
+            with self.subTest(path=path):
+                code, refused = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot", snapshot,
+                                         "--hints", self.hints({"fix-a": {"files": [path]}}))
+                self.assertEqual((code, refused["code"]), (1, "hints_invalid"), refused)
 
     def test_the_hints_schema_is_one_of_the_skill_s_schemas(self) -> None:
         schema = state_tool.load_schema("work-hints/1")

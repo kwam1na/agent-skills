@@ -27,6 +27,7 @@ import copy
 import datetime
 import fnmatch
 import json
+import posixpath
 import os
 import re
 import select
@@ -1770,8 +1771,25 @@ WORK_HINTS_OUTPUT_BYTES = 16 * 1024 * 1024
 
 
 def check_hints(hints: object, name: str) -> dict:
-    """``hints`` as a valid ``work-hints/1``, or a refusal naming it ``name``."""
+    """``hints`` as a valid ``work-hints/1``, its paths normalised, or a refusal naming it ``name``.
+
+    A path is relative to the repository and stays inside it; a folder keeps
+    its trailing /. A priority is a whole number.
+    """
     errors = validate(hints, load_schema("work-hints/1"))
+    if not errors:
+        for subject, hint in hints["items"].items():
+            for field in ("files", "changedFiles"):
+                paths = []
+                for path in hint.get(field, []):
+                    normal = posixpath.normpath(path)
+                    if path.startswith("/") or normal == ".." or normal.startswith("../") or normal == ".":
+                        errors.append(f"/items/{subject}/{field}: {path} is not a path inside the repository")
+                    paths.append(normal + ("/" if path.endswith("/") else ""))
+                if field in hint:
+                    hint[field] = paths
+            if hint.get("priority") is not None:
+                hint["priority"] = int(hint["priority"])
     if errors:
         raise StateError("hints_invalid", f"{name}: " + "; ".join(errors))
     return hints
@@ -1864,9 +1882,12 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
     keyed the same way. They are ordered by:
 
     1. unblocked first: every tracker blocker completed, canceled, or merged
-       in the record; a blocker the snapshot does not list counts as open;
+       in the record; a blocker the snapshot does not list counts as open,
+       and work the snapshot does not list comes after work it shows
+       unblocked, its blockers unknown;
     2. no collision first: no file overlaps a file of work another open lane
-       holds, planned or queued and not merged. Files are the ones an item's
+       holds, planned or queued, not merged and not finished in the tracker.
+       Files are the ones an item's
        change touches when the hints give them, else the ones it declares;
        each reason says which;
     3. priority, 1 first, then 4, then none;
@@ -1884,8 +1905,9 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
     open_lanes = {entry["id"] for entry in state["lanes"]
                   if entry["id"] != lane and entry["state"] not in RESTING_LANE_STATES}
     held: dict[str, list[tuple[str, str]]] = {}
+    finished = {subject for subject, item in tracker.items() if item["state"] in ("completed", "canceled")}
     for item in [*state.get("planned", []), *state["queue"]]:
-        if item["lane"] in open_lanes and item["subject"] not in merged:
+        if item["lane"] in open_lanes and item["subject"] not in merged | finished:
             paths, kind = _files(declared.get(item["subject"], {}))
             held.setdefault(item["lane"], []).extend((path, kind) for path in paths)
     own = [(item["subject"], path) for item in [*state.get("planned", []), *state["queue"]] if item["lane"] == lane
@@ -1893,10 +1915,11 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
     candidates = [(item["subject"], item["title"]) for item in state.get("planned", [])
                   if item["lane"] is None or (item["lane"] == lane and item["stage"] == "planned")]
     candidates += [(item["reference"] or item["id"], item["title"]) for item in state["followups"]]
+    others = {item["subject"] for item in state.get("planned", []) if item["lane"] not in (None, lane)}
     ranked = []
     seen: set[str] = set()
     for order, (subject, title) in enumerate(candidates):
-        if subject in seen or subject in queued:
+        if subject in seen or subject in queued or subject in others:
             continue
         seen.add(subject)
         if tracker.get(subject, {}).get("state") in ("completed", "canceled"):
@@ -1916,7 +1939,9 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
         owned = sorted({path for path in files for held_subject, mine in own
                         if held_subject != subject and _overlap(path, mine)})
         priority = declared.get(subject, {}).get("priority")
-        parts = [f"blocked by {', '.join(open_blockers)}" if open_blockers else "unblocked"]
+        unlisted = subject not in tracker
+        parts = [f"blocked by {', '.join(open_blockers)}" if open_blockers
+                 else "not in the snapshot, so its blockers are unknown" if unlisted else "unblocked"]
         if not files:
             parts.append("no files declared")
         elif collisions:
@@ -1929,10 +1954,11 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
             parts.append(f"{lane} has worked on {', '.join(owned)}")
         parts.append(f"priority {priority}" if priority is not None else "no priority")
         ranked.append({
-            "subject": subject, "title": title, "blocked": bool(open_blockers),
+            "subject": subject, "title": title, "blocked": bool(open_blockers), "listed": not unlisted,
             "collidesWith": sorted(collisions), "owned": bool(owned), "priority": priority,
             "reason": f"{subject}: " + "; ".join(parts),
-            "_key": (bool(open_blockers), bool(collisions), priority or 5, not owned, order),
+            "_key": (bool(open_blockers), unlisted, bool(collisions), 5 if priority is None else priority,
+                     not owned, order),
         })
     ranked.sort(key=lambda entry: entry["_key"])
     for rank, entry in enumerate(ranked, start=1):

@@ -134,7 +134,9 @@ Unblocked work comes first, by the tracker snapshot's `blockedBy`; then work
 whose files do not overlap what another open lane holds; then priority; then
 files the lane holds or has worked on. Each item comes with a one-line reason,
 which says whether the files compared were declared or what a change actually
-touched. The files and priorities come from a `work-hints/1` document (in
+touched; work the snapshot does not list comes after work it shows
+unblocked. Paths are relative to the repository, and a glob's `*` crosses
+folders. The files and priorities come from a `work-hints/1` document (in
 `references/schemas.json`): each item's declared `files`, as paths, folders
 ending in `/` or globs; the `changedFiles` its change actually touches, once
 it has one, used in their place; and its `priority`, 1 the most urgent to 4,
