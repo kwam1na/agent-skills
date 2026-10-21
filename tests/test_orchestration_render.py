@@ -657,6 +657,25 @@ class HostPublisherTests(DeliveryStateFixture):
                             encoding="utf-8")
         self.assertIn("publication", state_tool(self.state_dir, "show", "--binding", str(absolute)))
 
+    def test_show_accepts_a_linked_agents_folder_of_this_repository(self) -> None:
+        real = self.root / "kept-agents"
+        real.mkdir()
+        (real / "orchestration.json").write_text(json.dumps({"state": json.loads(self.config([], []))}), encoding="utf-8")
+        try:
+            (self.root / ".agents").symlink_to(real, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"links are not available here: {error}")
+        self.assertIn("publication", state_tool(self.state_dir, "show", "--binding", str(self.root / ".agents/orchestration.json")))
+
+    def test_show_refuses_a_binding_naming_no_usable_state_directory(self) -> None:
+        for name, state in (("missing", {"publishers": []}), ("empty", {"directory": "", "publishers": []}),
+                            ("not text", {"directory": 7, "publishers": []}),
+                            ("null byte", {"directory": "state\u0000x", "publishers": []})):
+            with self.subTest(name):
+                path = self.root / f"{name}.json"
+                path.write_text(json.dumps({"state": state}), encoding="utf-8")
+                self.assertEqual(self.refused("show", "--binding", str(path))["code"], "binding_invalid")
+
     def refused(self, *args: str) -> dict:
         result = run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(self.state_dir), *args])
         self.assertEqual(result.returncode, 1, result.stdout)

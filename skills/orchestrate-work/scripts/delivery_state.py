@@ -1219,10 +1219,15 @@ def bound_directory(path: Path, member: dict) -> Path:
     directory = member.get("directory")
     if not isinstance(directory, str) or not directory:
         raise StateError("binding_invalid", f"{Path(path).name} names no state directory")
-    binding = Path(path).resolve()
+    # The root is found from the binding's path as given, without following
+    # links, so a linked .agents folder still belongs to this repository.
+    binding = Path(os.path.abspath(path))
     root = binding.parent.parent if binding.parent.name == ".agents" else binding.parent
     named = Path(directory)
-    return (named if named.is_absolute() else root / named).resolve()
+    try:
+        return (named if named.is_absolute() else root / named).resolve()
+    except (OSError, ValueError) as error:
+        raise StateError("binding_invalid", f"{Path(path).name} names an unusable state directory: {error}") from None
 
 
 def require_bound(path: Path, member: dict, directory: Path) -> None:
@@ -1233,6 +1238,11 @@ def require_bound(path: Path, member: dict, directory: Path) -> None:
     """
     bound = bound_directory(path, member)
     shown = Path(directory).resolve()
+    # The same directory under another spelling, such as another letter case
+    # on a filesystem that ignores case, is still the same directory.
+    with contextlib.suppress(OSError):
+        if bound.exists() and shown.exists() and os.path.samefile(bound, shown):
+            return
     if bound != shown:
         raise StateError(
             "binding_invalid",
