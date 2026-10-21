@@ -1538,7 +1538,9 @@ class TrackerSnapshotTests(unittest.TestCase):
             parent, mode = sys.argv[1], sys.argv[2]
             now = datetime.datetime.now(datetime.timezone.utc)
             if mode == "fail":
-                print("the tracker refused", file=sys.stderr); sys.exit(3)
+                print("the tracker refused: Authorization: Bearer secret-token-123", file=sys.stderr); sys.exit(3)
+            if mode == "huge":
+                sys.stdout.write("x" * (17 * 1024 * 1024)); sys.exit(0)
             if mode == "sleep":
                 time.sleep(5)
             if mode == "garbage":
@@ -1582,17 +1584,42 @@ class TrackerSnapshotTests(unittest.TestCase):
     def test_a_failing_or_invalid_command_keeps_the_last_snapshot_and_notes_why_once(self) -> None:
         self.snap()
         kept = self.output.read_bytes()
-        for mode, reason in (("fail", "the tracker refused"), ("garbage", "printed no JSON"),
-                             ("forge", "forge"), ("old", "7200s ago")):
+        for mode, reason, detail in (("fail", "exited with 3", "the tracker refused"),
+                                     ("garbage", "printed no JSON", None),
+                                     ("forge", "not a valid tracker snapshot", "forge"),
+                                     ("old", "too old", "7200s ago"),
+                                     ("huge", "printed more than", None)):
             with self.subTest(mode=mode):
                 result = self.snap(mode)
                 self.assertEqual((result["taken"], result["fallback"]), (False, True))
                 self.assertIn(reason, result["reason"])
+                if detail:
+                    self.assertIn(detail, result["detail"])
                 self.assertEqual(self.output.read_bytes(), kept, "the last snapshot stands")
                 self.assertIn(reason, self.notes()[-1])
+        # What the command printed is never published: the journal names only the reason.
+        self.assertFalse([note for note in self.notes() if "secret-token" in note or "Bearer" in note])
         before = len(self.notes())
-        self.snap("old")
+        self.snap("huge")
         self.assertEqual(len(self.notes()), before, "the same reason is noted once")
+
+    def test_an_outage_that_ended_is_noted_so_the_next_one_is_noted_too(self) -> None:
+        self.snap("fail")
+        self.snap()
+        self.snap("fail")
+        self.assertEqual(self.notes(), [
+            "tracker-snapshot: the command exited with 3; the last snapshot stands",
+            "tracker-snapshot: taken again",
+            "tracker-snapshot: the command exited with 3; the last snapshot stands",
+        ])
+        self.snap()
+        self.snap()
+        self.assertEqual(self.notes().count("tracker-snapshot: taken again"), 2, "a run of successes is noted once")
+
+    def test_an_output_that_cannot_be_written_is_refused_not_a_crash(self) -> None:
+        code, refused = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(),
+                                 "--output", str(self.root / "missing" / "out.json"))
+        self.assertEqual((code, refused["code"]), (1, "output_invalid"), refused)
 
     def test_a_command_that_runs_too_long_is_stopped(self) -> None:
         result = self.snap("sleep", timeoutSeconds=1)
@@ -1641,7 +1668,7 @@ class TrackerSnapshotTests(unittest.TestCase):
                         encoding="utf-8")
         code, result = run_tool(self.directory, "tracker-snapshot", "--binding", str(path), "--output", str(self.output))
         self.assertEqual(result["taken"], False)
-        self.assertIn("more than 60s", result["reason"])
+        self.assertIn("more than 60s", result["detail"])
         code, result = run_tool(self.directory, "tracker-snapshot", "--binding", str(path), "--output", str(self.output),
                                 "--max-age", "86400")
         self.assertEqual(result["taken"], True)

@@ -1233,6 +1233,7 @@ TRACKER_SNAPSHOT_TIMEOUT = 60
 TRACKER_SNAPSHOT_TIMEOUT_CEILING = 600
 TRACKER_SNAPSHOT_OUTPUT_BYTES = 16 * 1024 * 1024
 TRACKER_SNAPSHOT_NOTE = "tracker-snapshot:"
+TRACKER_SNAPSHOT_TAKEN = "tracker-snapshot: taken again"
 
 
 def tracker_snapshot_config(member: dict) -> dict | None:
@@ -1279,7 +1280,7 @@ def _run_bounded(argv: list[str], timeout: int, limit: int) -> tuple[int | None,
                 os.killpg(process.pid, signal.SIGKILL)
         raise
     if len(out) > limit:
-        return process.returncode, b"", f"printed more than {limit} bytes"
+        return None, b"", f"printed more than {limit} bytes"
     detail = err.decode("utf-8", errors="replace").strip()[-300:]
     return process.returncode, out, detail or f"exited with {process.returncode}"
 
@@ -1298,14 +1299,18 @@ def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: fl
         return {"ok": True, "taken": False, "note": "the binding declares no trackerSnapshot command"}
     state = read_state(directory)
     parent = state["meta"].get("trackerParent")
-    reason = None
+    # The journal is published, so it gets a fixed reason class; the command's
+    # own words, which may carry anything it printed, stay in this result.
+    reason, detail = None, None
     if any("{parent}" in part for part in config["argv"]) and not parent:
         reason = "the command needs {parent}, and the record names no meta.trackerParent"
     else:
         argv = [part.replace("{parent}", parent or "") for part in config["argv"]]
         code, out, detail = _run_bounded(argv, config["timeoutSeconds"], TRACKER_SNAPSHOT_OUTPUT_BYTES)
-        if code != 0:
-            reason = detail
+        if code is None:
+            reason = detail if detail.startswith(("timed out", "printed more", "could not start")) else "it did not finish"
+        elif code != 0:
+            reason = f"the command exited with {code}"
         else:
             try:
                 snapshot = check_snapshot(json.loads(out.decode("utf-8-sig")), "the command's snapshot", max_age)
@@ -1314,16 +1319,27 @@ def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: fl
             except (UnicodeDecodeError, json.JSONDecodeError):
                 reason = "the command printed no JSON"
             except StateError as error:
-                reason = str(error)
-    if reason is None:
-        _write_atomically(Path(output), dumps(snapshot))
-        return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"])}
-    summary = f"{TRACKER_SNAPSHOT_NOTE} {reason}; the last snapshot stands"
+                reason = ("the command's snapshot is too old" if error.code == "snapshot_stale"
+                          else "the command's snapshot is not a valid tracker snapshot")
+                detail = str(error)
     last = next((entry for entry in reversed(read_journal(directory))
                  if entry["summary"].startswith(TRACKER_SNAPSHOT_NOTE)), None)
+    if reason is None:
+        try:
+            _write_atomically(Path(output), dumps(snapshot))
+        except OSError as error:
+            raise StateError("output_invalid", f"cannot write {Path(output).name}: {error.strerror or error}") from None
+        if last is not None and last["summary"] != TRACKER_SNAPSHOT_TAKEN:
+            # Say the outage ended, so the next failure is noted again.
+            append_journal(directory, kind="decision.recorded", summary=TRACKER_SNAPSHOT_TAKEN)
+        return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"])}
+    summary = f"{TRACKER_SNAPSHOT_NOTE} {reason}; the last snapshot stands"
     if last is None or last["summary"] != summary:
         append_journal(directory, kind="decision.recorded", summary=summary)
-    return {"ok": True, "taken": False, "reason": reason, "fallback": Path(output).is_file()}
+    result = {"ok": True, "taken": False, "reason": reason, "fallback": Path(output).is_file()}
+    if detail and detail != reason:
+        result["detail"] = detail
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -535,7 +535,7 @@ class FixtureAdopterTests(unittest.TestCase):
         data.write_text(json.dumps({}), encoding="utf-8")
         failed = adopter.state_tool("tracker-snapshot", "--binding", str(path), "--output", str(output))
         self.assertEqual((failed["taken"], failed["fallback"]), (False, True))
-        self.assertIn("no item epic-1", failed["reason"])
+        self.assertIn("no item epic-1", failed["detail"])
         notes = [entry for entry in adopter.show()["journal"] if entry["summary"].startswith("tracker-snapshot:")]
         self.assertEqual(len(notes), 1)
         self.assertFalse(adopter.state_tool("reconcile", "--snapshot", str(output))["drift"])

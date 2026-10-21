@@ -156,7 +156,7 @@ def _normalize_outcome(request: TrackerRequest, value: object) -> AdapterOutcome
                 "Return success data as a mapping.",
             )
         if request.operation is TrackerOperation.LIST_WORK:
-            problem = _work_list_problem(value.data)
+            problem = _work_list_problem(value.data, request.payload.get("parentReference"))
             if problem:
                 return _malformed(request.operation, problem)
         return value
@@ -184,10 +184,14 @@ def _normalize_outcome(request: TrackerRequest, value: object) -> AdapterOutcome
     return value
 
 
-def _work_list_problem(data: Mapping[str, object]) -> str | None:
+def _work_list_problem(data: Mapping[str, object], requested: object = None) -> str | None:
     """Why a list-work result is not the normalized shape, or None."""
+    if set(data) - {"parentReference", "workItems", "auditReference"}:
+        return "Return only the parent reference, the work items and an audit reference."
     if not isinstance(data.get("parentReference"), str) or not data["parentReference"]:
         return "Return the parent reference the work was listed under."
+    if requested is not None and data["parentReference"] != requested:
+        return "Return the work of the parent that was asked for."
     items = data.get("workItems")
     if not isinstance(items, list):
         return "Return the listed work as a list of work items."

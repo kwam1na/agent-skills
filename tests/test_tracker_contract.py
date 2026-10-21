@@ -298,6 +298,8 @@ class ListWorkTests(unittest.TestCase):
             "a reference twice": {**good, "workItems": [item, item]},
             "no title": {**good, "workItems": [{key: value for key, value in item.items() if key != "title"}]},
             "blockers not references": {**good, "workItems": [{**item, "blockedBy": [3]}]},
+            "a field beside the work": {**good, "rawHostPayload": {}},
+            "another parent's work": {**good, "parentReference": "epic-2"},
         }
         for name, data in cases.items():
             with self.subTest(name):
@@ -316,6 +318,13 @@ class ListWorkTests(unittest.TestCase):
         adapter = InMemoryTrackerAdapter(supported_operations=set(TrackerOperation) - {TrackerOperation.LIST_WORK})
         outcome = execute_tracker_operation(CapabilityState.CONFIGURED, self.request(), adapter)
         self.assertEqual(outcome.kind, OutcomeKind.UNSUPPORTED)
+
+    def test_an_audit_reference_may_accompany_the_work(self) -> None:
+        data = {"parentReference": "epic-1", "workItems": CHILDREN, "auditReference": "audit-1"}
+        adapter = InMemoryTrackerAdapter(
+            scripted={TrackerOperation.LIST_WORK: [AdapterOutcome.success(TrackerOperation.LIST_WORK, data)]})
+        outcome = execute_tracker_operation(CapabilityState.CONFIGURED, self.request(), adapter)
+        self.assertEqual(outcome.kind, OutcomeKind.SUCCESS)
 
     def test_a_parent_with_no_children_lists_nothing(self) -> None:
         outcome = execute_tracker_operation(CapabilityState.CONFIGURED, self.request("epic-2"), InMemoryTrackerAdapter())
