@@ -739,6 +739,27 @@ class HostPublisherTests(DeliveryStateFixture):
         self.assertTrue(retired["retired"]["unreadable"])
         self.assertFalse((self.state_dir / "outbox").exists())
 
+    def test_every_state_field_the_binding_schema_declares_renders_and_no_other(self) -> None:
+        schemas = json.loads((ROOT / "skills/orchestrate-work/references/schemas.json").read_text(encoding="utf-8"))
+        fields = schemas["orchestration-binding/1"]["properties"]["state"]["properties"]
+        # A valid value for the fields the wrapper checks; any other field it only has to accept.
+        samples = {"snapshotMaxAgeSeconds": 60, "statusOverrideMaxAgeSeconds": 600,
+                   "trackerSnapshot": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30},
+                   "workHints": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30}}
+        base = json.loads(self.config([], []))
+        for field in fields:
+            if field in base:
+                continue
+            with self.subTest(field=field):
+                config = json.dumps({**base, field: samples.get(field, {})})
+                code, result = wrapper(self.state_dir, "--state-config", config)
+                self.assertEqual(code, 0, result)
+        everything = json.dumps({**base, **{field: samples.get(field, {}) for field in fields if field not in base}})
+        self.assertEqual(wrapper(self.state_dir, "--state-config", everything)[0], 0)
+        code, result = wrapper(self.state_dir, "--state-config", json.dumps({**base, "noSuchField": 1}))
+        self.assertEqual((code, result["code"]), (2, "config_invalid"))
+        self.assertIn("noSuchField", result["error"])
+
     def test_a_state_configuration_may_declare_a_tracker_snapshot_command(self) -> None:
         config = json.dumps({**json.loads(self.config([], [])),
                              "trackerSnapshot": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30}})
