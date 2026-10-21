@@ -87,7 +87,7 @@ ELEMENT_KEYS = {
 SELECTOR = re.compile(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)\]$")
 # Fields only the runner writes. Everything else, apart from the fields the
 # tool itself maintains, belongs to the lead.
-RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory")
+RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory", "sources")
 RUNNER_QUEUE = ("stage", "checks", "syncedHead")
 TOOL_OWNED = ("schemaVersion", "version")
 # A queue element the lead adds starts with the runner's fields empty.
@@ -1082,6 +1082,13 @@ def delivery_status(state: dict, journal: list[dict], at: str | None = None) -> 
                if item["stage"] == "queued" and not item.get("pending")]
     if waiting:
         parts.append(f"next: {waiting[0]}" + (f", then {len(waiting) - 1} more" if len(waiting) > 1 else ""))
+    sources = state["meta"].get("sources") or {}
+    for source in SNAPSHOT_SOURCES:
+        entry = sources.get(source)
+        if entry is not None and entry["status"] == "stale":
+            # What the record shows from a source that stopped answering is only as new as its last read.
+            parts.append(f"{source} last read at {entry['lastReadAt']}" if entry.get("lastReadAt")
+                         else f"{source} never read")
     return {"text": " · ".join(parts) or "Nothing in flight", "source": "derived"}
 
 
@@ -1677,6 +1684,9 @@ def binding_state(path: Path) -> dict:
         age = member.get(name)
         if age is not None and (not isinstance(age, int) or isinstance(age, bool) or age < 1):
             raise StateError("binding_invalid", f"state.{name} is a whole number of seconds, at least 1")
+    interval = member.get("refreshSeconds")
+    if interval is not None and (not isinstance(interval, int) or isinstance(interval, bool) or interval < 0):
+        raise StateError("binding_invalid", "state.refreshSeconds is a whole number of seconds, 0 to turn it off")
     return member
 
 
@@ -1727,8 +1737,9 @@ def host_publishers(member: dict) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
-# A tracker snapshot from the repository's own command, for a lead with no agent
+# Forge and tracker snapshots from the repository's own commands, for a lead with no agent
 
+SNAPSHOT_SOURCES = ("tracker", "forge")
 TRACKER_SNAPSHOT_TIMEOUT = 60
 TRACKER_SNAPSHOT_TIMEOUT_CEILING = 600
 TRACKER_SNAPSHOT_OUTPUT_BYTES = 16 * 1024 * 1024
@@ -1743,13 +1754,15 @@ START_SLACK_SECONDS = 1
 # How many times cleanup freezes what it found and looks again, so a process
 # still spawning cannot leave children the first look missed.
 CLEANUP_PASSES = 5
-TRACKER_SNAPSHOT_NOTE = "tracker-snapshot:"
-TRACKER_SNAPSHOT_TAKEN = "tracker-snapshot: taken again"
+# How often serve reads the declared sources when the binding does not say; 0 turns it off.
+REFRESH_SECONDS = 180
+SNAPSHOTS_DIRECTORY = "snapshots"
 
 
-def tracker_snapshot_config(member: dict) -> dict | None:
-    """The binding's ``state.trackerSnapshot`` block, checked, or None when it has none."""
-    config = member.get("trackerSnapshot")
+def snapshot_config(member: dict, source: str) -> dict | None:
+    """The binding's ``state.<source>Snapshot`` block, checked, or None when it has none."""
+    key = f"{source}Snapshot"
+    config = member.get(key)
     if config is None:
         return None
     argv = config.get("argv") if isinstance(config, dict) else None
@@ -1758,7 +1771,7 @@ def tracker_snapshot_config(member: dict) -> dict | None:
             or not (isinstance(argv, list) and argv and all(isinstance(part, str) and part for part in argv))
             or not isinstance(timeout, int) or isinstance(timeout, bool)
             or not 1 <= timeout <= TRACKER_SNAPSHOT_TIMEOUT_CEILING):
-        raise StateError("binding_invalid", "state.trackerSnapshot is {argv, timeoutSeconds?}: a non-empty argv of "
+        raise StateError("binding_invalid", f"state.{key} is {{argv, timeoutSeconds?}}: a non-empty argv of "
                                             f"strings and a whole timeout from 1 to {TRACKER_SNAPSHOT_TIMEOUT_CEILING}")
     return {"argv": argv, "timeoutSeconds": timeout}
 
@@ -2047,7 +2060,18 @@ def _drain(readers: list[threading.Thread], streams: tuple) -> None:
             stream.close()
 
 
-def _run_bounded(argv: list[str], timeout: int, limit: int, *, preview: Callable[[dict], None] | None = None,
+def tracker_snapshot_config(member: dict) -> dict | None:
+    """The binding's ``state.trackerSnapshot`` block, checked, or None when it has none."""
+    return snapshot_config(member, "tracker")
+
+
+def refresh_interval(member: dict) -> int:
+    """Seconds between serve's reads of the declared sources; 0 when the binding turns them off."""
+    return member.get("refreshSeconds", REFRESH_SECONDS)
+
+
+def _run_bounded(argv: list[str], timeout: int, limit: int, cwd: Path | None = None, *,
+                 preview: Callable[[dict], None] | None = None,
                  cleanup: list | None = None) -> tuple[int | None, bytes, str]:
     """One run of an argv: its exit code (None when it never finished), stdout up to ``limit``, and why not.
 
@@ -2070,6 +2094,7 @@ def _run_bounded(argv: list[str], timeout: int, limit: int, *, preview: Callable
     try:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    env={**os.environ, TRACKER_SNAPSHOT_MARKER: marker.split("=", 1)[1]},
+                                   cwd=cwd,
                                    **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
                                       else {"start_new_session": True}))
     except OSError as error:
@@ -2147,21 +2172,23 @@ def _refuse_record_path(directory: Path, output: Path) -> None:
         raise StateError("output_invalid", f"{output.name} is one of the record's own files: write the snapshot elsewhere")
 
 
-def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: float) -> dict:
-    """Take the tracker snapshot with the binding's command, or keep the last one.
+def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, max_age: float,
+                  cwd: Path | None = None) -> dict:
+    """Take the ``source`` snapshot with the binding's command, or keep the last one.
 
     Best-effort, never a gate: a command that fails, or prints anything but a
-    fresh ``work-snapshot/1`` from the tracker, leaves ``output`` as it was and
+    fresh ``work-snapshot/1`` from that source, leaves ``output`` as it was and
     writes one journal note saying why; reconcile's freshness gate then refuses
     the last snapshot once it is too old. The command and whatever access it
-    needs are the repository's own.
+    needs are the repository's own: the corpus runs no forge or tracker client.
     """
-    config = tracker_snapshot_config(member)
+    config = snapshot_config(member, source)
     if config is None:
-        return {"ok": True, "taken": False, "note": "the binding declares no trackerSnapshot command"}
+        return {"ok": True, "taken": False, "note": f"the binding declares no {source}Snapshot command"}
     _refuse_record_path(directory, Path(output))
     state = read_state(directory)
     parent = state["meta"].get("trackerParent")
+    note, again = f"{source}-snapshot:", f"{source}-snapshot: taken again"
     # The journal is published, so it gets a fixed reason class; the command's
     # own words, which may carry anything it printed, stay in this result.
     reason, detail = None, None
@@ -2170,7 +2197,8 @@ def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: fl
         reason = "the command needs {parent}, and the record names no meta.trackerParent"
     else:
         argv = [part.replace("{parent}", parent or "") for part in config["argv"]]
-        code, out, detail = _run_bounded(argv, config["timeoutSeconds"], TRACKER_SNAPSHOT_OUTPUT_BYTES, cleanup=cleanup)
+        code, out, detail = _run_bounded(argv, config["timeoutSeconds"], TRACKER_SNAPSHOT_OUTPUT_BYTES, cwd,
+                                         cleanup=cleanup)
         if code is None:
             reason = detail if detail.startswith(("timed out", "printed more", "could not start")) else "it did not finish"
         elif code != 0:
@@ -2179,32 +2207,115 @@ def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: fl
             try:
                 snapshot = check_snapshot(json.loads(out.decode("utf-8-sig")), "the command's snapshot", max_age,
                                           parent=parent)
-                if snapshot["source"] != "tracker":
-                    raise StateError("snapshot_invalid", "the command's snapshot is not from the tracker")
+                if snapshot["source"] != source:
+                    raise StateError("snapshot_invalid", f"the command's snapshot is not from the {source}")
             except (UnicodeDecodeError, ValueError, RecursionError):
                 reason = "the command printed no JSON"
             except StateError as error:
                 reason = ("the command's snapshot is too old" if error.code == "snapshot_stale"
-                          else "the command's snapshot is not a valid tracker snapshot")
+                          else f"the command's snapshot is not a valid {source} snapshot")
                 detail = str(error)
-    last = next((entry for entry in reversed(read_journal(directory))
-                 if entry["summary"].startswith(TRACKER_SNAPSHOT_NOTE)), None)
+    last = next((entry for entry in reversed(read_journal(directory)) if entry["summary"].startswith(note)), None)
     if reason is None:
         try:
             _write_atomically(Path(output), dumps(snapshot))
         except OSError as error:
             raise StateError("output_invalid", f"cannot write {Path(output).name}: {error.strerror or error}") from None
-        if last is not None and last["summary"] != TRACKER_SNAPSHOT_TAKEN:
+        if last is not None and last["summary"] != again:
             # Say the outage ended, so the next failure is noted again.
-            append_journal(directory, kind="decision.recorded", summary=TRACKER_SNAPSHOT_TAKEN)
-        return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"]), **_cleanup_note(cleanup)}
-    summary = f"{TRACKER_SNAPSHOT_NOTE} {reason}; the last snapshot stands"
+            append_journal(directory, kind="decision.recorded", summary=again)
+        return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"]),
+                "takenAt": snapshot["takenAt"], **_cleanup_note(cleanup)}
+    summary = f"{note} {reason}; the last snapshot stands"
     if last is None or last["summary"] != summary:
         append_journal(directory, kind="decision.recorded", summary=summary)
     result = {"ok": True, "taken": False, "reason": reason, "fallback": Path(output).is_file(), **_cleanup_note(cleanup)}
     if detail and detail != reason:
         result["detail"] = detail
     return result
+
+
+def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: float) -> dict:
+    """Take the tracker snapshot with the binding's command, or keep the last one."""
+    return take_snapshot(directory, member, output, source="tracker", max_age=max_age)
+
+
+def forge_snapshot(directory: Path, member: dict, output: Path, *, max_age: float) -> dict:
+    """Take the forge snapshot with the binding's command, or keep the last one."""
+    return take_snapshot(directory, member, output, source="forge", max_age=max_age)
+
+
+def _last_read(path: Path) -> str | None:
+    """When the snapshot kept at ``path`` was taken, or None when there is none to read."""
+    try:
+        taken = json.loads(path.read_bytes().decode("utf-8"))["takenAt"]
+    except (OSError, UnicodeDecodeError, ValueError, KeyError, TypeError):
+        return None
+    return taken if isinstance(taken, str) else None
+
+
+def refresh_sources(directory: Path, member: dict, *, cwd: Path | None = None) -> dict:
+    """Read each source the binding declares and reconcile what was read, as serve does on its interval.
+
+    Each snapshot is kept under ``snapshots/`` in the state directory, so a
+    source that fails leaves its last one standing. ``meta.sources`` says, per
+    source, whether it is observed, stale (with when it was last read) or not
+    observed at all; it is written, as the runner, only when that changes, and
+    reconcile writes nothing when nothing drifted, so an idle refresh leaves
+    the record and the journal as they were.
+    """
+    bound = member.get("snapshotMaxAgeSeconds")
+    max_age = float(SNAPSHOT_MAX_AGE_SECONDS if bound is None else bound)
+    folder = Path(directory) / SNAPSHOTS_DIRECTORY
+    statuses: dict[str, dict] = {}
+    taken: list[tuple[str, Path]] = []
+    for source in SNAPSHOT_SOURCES:
+        if snapshot_config(member, source) is None:
+            statuses[source] = {"status": "not_observed"}
+            continue
+        folder.mkdir(exist_ok=True)
+        output = folder / f"{source}.json"
+        result = take_snapshot(directory, member, output, source=source, max_age=max_age, cwd=cwd)
+        if result["taken"]:
+            taken.append((source, output))
+            statuses[source] = {"status": "observed"}
+        else:
+            statuses[source] = {"status": "stale", "lastReadAt": _last_read(output), "reason": result["reason"]}
+    reconciled = None
+    if taken:
+        try:
+            reconciled = reconcile(directory, [path for _, path in taken], max_age=max_age)
+        except StateError as error:
+            # Read but not applied: the record has not caught up with it, so the source is stale.
+            for source, path in taken:
+                statuses[source] = {"status": "stale", "lastReadAt": _last_read(path),
+                                    "reason": f"reconcile refused it: {error}"}
+    _set_sources(directory, statuses)
+    return {"ok": True, "sources": statuses, "reconciled": reconciled}
+
+
+def _set_sources(directory: Path, statuses: dict[str, dict]) -> None:
+    """Write ``meta.sources`` as the runner, only where a source's status changed; ``since`` marks the change."""
+    for _ in range(RECONCILE_ATTEMPTS):
+        state = read_state(directory)
+        current = state["meta"].get("sources") or {}
+        merged = {}
+        for source, status in statuses.items():
+            kept = current.get(source)
+            if kept is not None and {key: value for key, value in kept.items() if key != "since"} == status:
+                merged[source] = kept
+            else:
+                merged[source] = {**status, "since": now()}
+        if merged == current:
+            return
+        try:
+            patch(directory, writer="runner", version=state["version"], assignments={"/meta/sources": merged})
+        except StateError as error:
+            if error.code != "version_stale":
+                raise
+            continue
+        return
+    raise StateError("version_stale", "the record kept changing while the sources were recorded")
 
 
 # ---------------------------------------------------------------------------
@@ -2417,6 +2528,10 @@ def main(argv: list[str] | None = None) -> int:
     snap.add_argument("--binding", type=Path, required=True, help="the repository binding, with state.trackerSnapshot")
     snap.add_argument("--output", type=Path, required=True, help="where the snapshot is written; kept on a failure")
     snap.add_argument("--max-age", type=float, help="refuse a snapshot older than this; overrides the binding")
+    forge = commands.add_parser("forge-snapshot", help="take the forge snapshot with the binding's command")
+    forge.add_argument("--binding", type=Path, required=True, help="the repository binding, with state.forgeSnapshot")
+    forge.add_argument("--output", type=Path, required=True, help="where the snapshot is written; kept on a failure")
+    forge.add_argument("--max-age", type=float, help="refuse a snapshot older than this; overrides the binding")
     retire = commands.add_parser("outbox", help="manage a host publisher's outbox")
     retire.add_argument("--retire", required=True, metavar="PUBLISHER", help="remove this publisher's outbox")
     retire.add_argument("--force", action="store_true", help="also remove an outbox that cannot be read")
@@ -2474,12 +2589,12 @@ def main(argv: list[str] | None = None) -> int:
             max_age = args.max_age if args.max_age is not None else bound
             result = reconcile(args.dir, args.snapshot,
                                max_age=SNAPSHOT_MAX_AGE_SECONDS if max_age is None else float(max_age))
-        elif args.command == "tracker-snapshot":
+        elif args.command in ("tracker-snapshot", "forge-snapshot"):
             member = binding_state(args.binding)
             bound = member.get("snapshotMaxAgeSeconds")
             age = args.max_age if args.max_age is not None else bound
-            result = tracker_snapshot(args.dir, member, args.output,
-                                      max_age=SNAPSHOT_MAX_AGE_SECONDS if age is None else float(age))
+            result = take_snapshot(args.dir, member, args.output, source=args.command.split("-")[0],
+                                   max_age=SNAPSHOT_MAX_AGE_SECONDS if age is None else float(age))
         elif args.command == "outbox":
             result = {"ok": True, "retired": retire_outbox(args.dir, args.retire, force=args.force)}
         elif args.command == "ack":

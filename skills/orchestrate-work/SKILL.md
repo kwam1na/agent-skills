@@ -188,7 +188,10 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   `base.repaired`; a candidate waiting for the lead to accept its hand-off is
   left alone, a refused one stops, and a killed `serve` is cleared by the next
   one. It reads the binding and checks the checkout once before taking
-  anything, and does not start when either is wrong. It prints each result document on a line of its own as it writes it,
+  anything, and does not start when either is wrong. On the binding's
+  `state.refreshSeconds` it also reads the declared forge and tracker
+  snapshot commands and reconciles them, so the record follows both with no
+  lead step. It prints each result document on a line of its own as it writes it,
   and `state/results` keeps them all; `--until-idle` prints them together.
 - `release <ref> [--approved-by <text>]` runs the binding's release targets on
   the base tip or an ancestor of it.
@@ -308,8 +311,25 @@ run the sync loop in this order:
      outcome as the snapshot: each item's `workReference`, `title`,
      `stateType` and `blockedBy` become its `subject`, `title`, `state` and
      `blockedBy`.
-   - **Forge.** List the epic's change requests with the host's own forge
-     tools.
+   - **Forge, with a bound command.** When the binding declares
+     `state.forgeSnapshot`, `{argv, timeoutSeconds?}`, the same way, the state
+     tool runs it with the same checks and the same single note on a failure:
+
+     ```bash
+     python3 -B scripts/delivery_state.py --dir <state directory> forge-snapshot --binding .agents/orchestration.json --output <forge snapshot>
+     ```
+
+   - **Forge, otherwise.** List the epic's change requests with the host's own
+     forge tools.
+   - **With `serve` running,** steps 1 and 2 need no lead: every
+     `state.refreshSeconds` (180 when absent; 0 turns it off), between turns
+     and whether or not it is held, `serve` runs each declared command into
+     `snapshots/` in the state directory and reconciles what it took. An
+     idle refresh writes nothing. The record's `meta.sources` says, per
+     source, `observed`, `stale` (with `lastReadAt`, when it was last read,
+     and the reason) or `not_observed` when the binding declares no command,
+     and changes only when that does; the status line names a stale source
+     and when it was last read. A run in progress delays the next read.
 2. **Reconcile.**
 
    ```bash

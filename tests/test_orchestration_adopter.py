@@ -654,6 +654,55 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertGreater(final["state"]["version"], lead_writes)
         self.assertIn("Status: last landed beta-copy", adopter.view())
 
+    def test_serve_keeps_the_record_current_from_the_forge_and_the_tracker(self) -> None:
+        adopter = FixtureAdopter(self.root)
+        adopter.state_tool("init", "--headline", "Fixture sources")
+        tracker = adopter.root / "tracker data.json"
+        forge = adopter.root / "forge data.json"
+        tracker.write_text(json.dumps({"epic-1": [
+            {"reference": "alpha-copy", "title": "Copy for alpha", "stateType": "started", "blockedBy": []},
+        ]}), encoding="utf-8")
+        forge.write_text(json.dumps([]), encoding="utf-8")
+        # The repository declares its own commands, run from its checkout; the runner knows neither product.
+        binding = adopter.binding()
+        binding["state"].update({
+            "trackerSnapshot": {"argv": [sys.executable, "-B", "tools/tracker.py", "{parent}", str(tracker)]},
+            "forgeSnapshot": {"argv": [sys.executable, "-B", "tools/forge.py", str(forge)]},
+        })
+        adopter.push_to_base({}, "Declare the forge and tracker commands", binding)
+        adopter.lead_patch({"meta": {"trackerParent": "epic-1"}})
+
+        # The first serve reads both: the started ticket becomes planned work, with nothing to land.
+        self.assertEqual(adopter.queue("serve", "--until-idle", expect=0), [])
+        shown = adopter.show()
+        self.assertEqual([item["subject"] for item in shown["state"]["planned"]], ["alpha-copy"])
+        self.assertEqual({source: entry["status"] for source, entry in shown["state"]["meta"]["sources"].items()},
+                         {"tracker": "observed", "forge": "observed"})
+
+        # The work merges on the forge outside the queue; the next serve records it, with no lead action.
+        head = adopter.lane_change("alpha-copy", {"src/alpha.txt": "alpha two\n"})
+        forge.write_text(json.dumps([{"subject": "alpha-copy", "state": "merged", "changeRequest": "change request 1",
+                                      "head": head}]), encoding="utf-8")
+        adopter.queue("serve", "--until-idle", expect=0)
+        merged = adopter.item("alpha-copy")
+        self.assertEqual((merged["stage"], merged["changeRequest"]), ("merged", "change request 1"))
+
+        # Nothing changed on either side: serve writes nothing at all.
+        before = adopter.show()
+        adopter.queue("serve", "--until-idle", expect=0)
+        after = adopter.show()
+        self.assertEqual((after["state"]["version"], len(after["journal"])),
+                         (before["state"]["version"], len(before["journal"])))
+
+        # The forge stops answering: the queue goes on, and the record says when the forge was last read.
+        last = json.loads((adopter.state / "snapshots" / "forge.json").read_text(encoding="utf-8"))["takenAt"]
+        forge.unlink()
+        adopter.queue("serve", "--until-idle", expect=0)
+        stale = adopter.show()
+        self.assertEqual((stale["state"]["meta"]["sources"]["forge"]["status"],
+                          stale["state"]["meta"]["sources"]["forge"]["lastReadAt"]), ("stale", last))
+        self.assertIn(f"forge last read at {last}", stale["status"]["text"])
+
     def test_a_batch_of_two_is_checked_once_and_lands_tree_verified(self) -> None:
         adopter = FixtureAdopter(self.root)
         adopter.state_tool("init", "--headline", "Fixture batch")

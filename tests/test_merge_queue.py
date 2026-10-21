@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import io
 import importlib.util
 import json
 import os
@@ -2990,6 +2991,147 @@ class ServeTests(MergeQueueTestCase):
         self.assertEqual(results, [])
         merges = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "candidate.merged"]
         self.assertEqual(merges, [])
+
+
+SOURCE_TOOL = """
+import datetime, json, sys
+source, world = sys.argv[1], sys.argv[2]
+with open(world + ".runs", "a") as runs:
+    runs.write("run\\n")
+seen = json.load(open(world))
+if seen["mode"] == "fail":
+    print("refused", file=sys.stderr); sys.exit(3)
+taken = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+print(json.dumps({"takenAt": taken, "source": source, "items": seen["items"]}))
+"""
+
+
+class ServeRefreshTests(MergeQueueTestCase):
+    """serve reads the binding's declared forge and tracker snapshots on its interval and reconciles them."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.tools = Path(tempfile.mkdtemp(prefix="merge-queue-sources-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tools, True)
+        (self.tools / "source.py").write_text(SOURCE_TOOL)
+        self.worlds = {source: self.tools / f"{source}.json" for source in ("tracker", "forge")}
+        for source in self.worlds:
+            self.world(source, [])
+
+    def world(self, source: str, items: list[dict], mode: str = "ok") -> None:
+        self.worlds[source].write_text(json.dumps({"mode": mode, "items": items}))
+
+    def runs(self, source: str) -> int:
+        path = Path(str(self.worlds[source]) + ".runs")
+        return len(path.read_text().splitlines()) if path.exists() else 0
+
+    def refreshing(self, *sources: str, **extra: object) -> Adopter:
+        member = {"directory": str(self.directory / "state"), "renderers": [], "publishers": [], **extra}
+        for source in sources:
+            member[f"{source}Snapshot"] = {"argv": [PY, "-B", str(self.tools / "source.py"), source,
+                                                    str(self.worlds[source])], "timeoutSeconds": 10}
+        return self.adopter({"state": member})
+
+    def serve_for(self, adopter: Adopter, ticks: int, *, poll: float = 30.0,
+                  between: Callable[[int, float], None] | None = None) -> list[float]:
+        """Serve on a fake clock until the ``ticks``-th sleep; ``between`` runs at each sleep, with its count and time."""
+        moment = [0.0]
+        slept: list[float] = []
+
+        def sleep(seconds: float) -> None:
+            moment[0] += seconds
+            slept.append(seconds)
+            if between is not None:
+                between(len(slept), moment[0])
+            if len(slept) >= ticks:
+                raise InterruptedError
+
+        with self.assertRaises(InterruptedError):
+            queue.serve(adopter.operator, adopter.state, remote="origin", base="main", poll=poll, sleep=sleep,
+                        clock=lambda: moment[0])
+        return slept
+
+    def hold(self, adopter: Adopter) -> None:
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="lead", version=current["version"],
+                         changes={"meta": {"hold": {"reason": "watching", "since": "2026-10-21T10:00:00Z"}}})
+
+    def sources(self, adopter: Adopter) -> dict | None:
+        return state_tool.read_state(adopter.state)["meta"].get("sources")
+
+    def footprint(self, adopter: Adopter) -> tuple:
+        return state_tool.read_state(adopter.state)["version"], len(state_tool.read_journal(adopter.state))
+
+    def test_a_forge_merge_and_a_tracker_change_reach_the_record_within_one_interval(self) -> None:
+        adopter = self.refreshing("tracker", "forge", refreshSeconds=100)
+        head = self.candidate(adopter)
+        # Held, so the only way the record learns of the merge is the forge.
+        self.hold(adopter)
+        refreshed_at: list[float] = []
+
+        def change(count: int, moment: float) -> None:
+            if count == 1:
+                self.world("forge", [{"subject": "feature", "state": "merged", "head": head}])
+                self.world("tracker", [{"subject": "work-t", "title": "Ticket", "state": "started"}])
+            if self.runs("forge") > len(refreshed_at):
+                refreshed_at.append(moment)
+
+        slept = self.serve_for(adopter, 6, between=change)
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+        self.assertEqual([entry["subject"] for entry in state_tool.read_state(adopter.state)["planned"]], ["work-t"])
+        # Idle polls stop short of the interval, so the next read is on time.
+        self.assertEqual(slept[:4], [30.0, 30.0, 30.0, 10.0])
+        self.assertEqual((self.runs("tracker"), self.runs("forge")), (2, 2))
+        self.assertEqual({source: entry["status"] for source, entry in self.sources(adopter).items()},
+                         {"tracker": "observed", "forge": "observed"})
+
+    def test_an_unchanged_refresh_writes_nothing(self) -> None:
+        adopter = self.refreshing("tracker", "forge", refreshSeconds=30)
+        self.world("tracker", [{"subject": "work-t", "title": "Ticket", "state": "started"}])
+        after_first: list[tuple] = []
+        self.serve_for(adopter, 5, between=lambda count, moment: after_first.append(self.footprint(adopter))
+                       if count == 1 else None)
+        self.assertEqual(self.runs("tracker"), 5)
+        self.assertEqual(self.footprint(adopter), after_first[0])
+
+    def test_the_default_interval_is_three_minutes(self) -> None:
+        adopter = self.refreshing("tracker")
+        self.serve_for(adopter, 8)
+        self.assertEqual(self.runs("tracker"), 2, "read at the start and again at 180s, not at 240s")
+
+    def test_an_interval_of_zero_turns_the_refresh_off(self) -> None:
+        adopter = self.refreshing("tracker", "forge", refreshSeconds=0)
+        self.candidate(adopter)
+        queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+        self.assertEqual((self.runs("tracker"), self.runs("forge")), (0, 0))
+        self.assertIsNone(self.sources(adopter))
+
+    def test_a_failing_source_never_stops_the_queue(self) -> None:
+        adopter = self.refreshing("tracker", refreshSeconds=100)
+        self.world("tracker", [], mode="fail")
+        self.candidate(adopter)
+        queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+        tracker = self.sources(adopter)["tracker"]
+        self.assertEqual((tracker["status"], tracker["lastReadAt"]), ("stale", None))
+        self.assertEqual(self.sources(adopter)["forge"]["status"], "not_observed")
+
+    def test_a_refresh_that_raises_is_reported_and_serving_goes_on(self) -> None:
+        adopter = self.refreshing("tracker", refreshSeconds=100)
+        self.candidate(adopter)
+        broken = state_tool.StateError("state_invalid", "the record cannot be read")
+        with mock.patch.object(queue.delivery_state, "refresh_sources", side_effect=broken), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as errors:
+            queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+        self.assertIn("the record cannot be read", errors.getvalue())
+
+    def test_a_binding_without_sources_reports_both_as_not_observed(self) -> None:
+        adopter = self.refreshing()
+        queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertEqual({source: entry["status"] for source, entry in self.sources(adopter).items()},
+                         {"tracker": "not_observed", "forge": "not_observed"})
 
 
 class InterruptedRunTests(MergeQueueTestCase):
