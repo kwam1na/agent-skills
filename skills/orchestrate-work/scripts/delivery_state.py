@@ -28,11 +28,13 @@ import datetime
 import json
 import os
 import re
+import select
 import signal
 import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -1615,6 +1617,12 @@ TRACKER_SNAPSHOT_TIMEOUT_CEILING = 600
 TRACKER_SNAPSHOT_OUTPUT_BYTES = 16 * 1024 * 1024
 # How long output already written is read after the command exits.
 TRACKER_SNAPSHOT_DRAIN_SECONDS = 2
+# Set to a fresh value in each run's environment: what still carries it after
+# the command exits was left behind by that run.
+TRACKER_SNAPSHOT_MARKER = "ORCHESTRATE_SNAPSHOT_RUN"
+# How far a process table's start times may run early: a boot time or a start
+# printed in whole seconds.
+START_SLACK_SECONDS = 1
 TRACKER_SNAPSHOT_NOTE = "tracker-snapshot:"
 TRACKER_SNAPSHOT_TAKEN = "tracker-snapshot: taken again"
 
@@ -1633,6 +1641,182 @@ def tracker_snapshot_config(member: dict) -> dict | None:
         raise StateError("binding_invalid", "state.trackerSnapshot is {argv, timeoutSeconds?}: a non-empty argv of "
                                             f"strings and a whole timeout from 1 to {TRACKER_SNAPSHOT_TIMEOUT_CEILING}")
     return {"argv": argv, "timeoutSeconds": timeout}
+
+
+def _process_table() -> dict[int, tuple[int, int, int, float]] | None:
+    """Every process as pid: (parent, group, effective uid, start in epoch seconds), or None when unreadable."""
+    proc = Path("/proc")
+    if (proc / "self" / "stat").is_file():
+        try:
+            boot = next(float(line.split()[1]) for line in (proc / "stat").read_text().splitlines()
+                        if line.startswith("btime "))
+            ticks = os.sysconf("SC_CLK_TCK")
+        except (OSError, StopIteration, ValueError):
+            return None
+        table = {}
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                stat_line = (entry / "stat").read_text()
+                fields = stat_line[stat_line.rindex(")") + 2:].split()
+                uid = next(int(line.split()[2]) for line in (entry / "status").read_text().splitlines()
+                           if line.startswith("Uid:"))
+            except (OSError, ValueError, IndexError, StopIteration):
+                continue  # gone while it was read
+            table[int(entry.name)] = (int(fields[1]), int(fields[2]), uid, boot + int(fields[19]) / ticks)
+        return table or None
+    try:
+        listing = subprocess.run(["ps", "-axww", "-o", "pid=,ppid=,pgid=,uid=,lstart="], capture_output=True,
+                                 text=True, timeout=10, env={**os.environ, "LC_ALL": "C", "TZ": "UTC"})
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if listing.returncode != 0:
+        return None
+    table = {}
+    for line in listing.stdout.splitlines():
+        parts = line.split(None, 4)
+        try:
+            start = datetime.datetime.strptime(" ".join(parts[4].split()), "%a %b %d %H:%M:%S %Y")
+            table[int(parts[0])] = (int(parts[1]), int(parts[2]), int(parts[3]),
+                                    start.replace(tzinfo=datetime.timezone.utc).timestamp())
+        except (IndexError, ValueError):
+            continue
+    return table or None
+
+
+def _process_environment(pid: int) -> list[bytes] | None:
+    """A process's environment entries, or None when the system will not show them."""
+    if Path("/proc/self/environ").is_file():
+        try:
+            return Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+        except OSError:
+            return None
+    if sys.platform != "darwin":
+        return None
+    import ctypes
+
+    # KERN_PROCARGS2 gives arguments and environment together; the marker is
+    # a fresh random value, so matching it among the arguments is harmless.
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint, ctypes.c_void_p,
+                            ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t]
+    argmax = ctypes.c_int()
+    size = ctypes.c_size_t(ctypes.sizeof(argmax))
+    if libc.sysctl((ctypes.c_int * 2)(1, 8), 2, ctypes.byref(argmax), ctypes.byref(size), None, 0) != 0:
+        return None  # CTL_KERN, KERN_ARGMAX
+    buffer = ctypes.create_string_buffer(argmax.value)
+    size = ctypes.c_size_t(argmax.value)
+    if libc.sysctl((ctypes.c_int * 3)(1, 49, pid), 3, buffer, ctypes.byref(size), None, 0) != 0:
+        return None  # CTL_KERN, KERN_PROCARGS2: gone, another user's, or hidden by the system
+    raw = buffer.raw[4:size.value]
+    return [entry for entry in raw[raw.find(b"\0"):].split(b"\0") if entry]
+
+
+def _cleanup_selection(group: int, marker: bytes, started: float, table: dict | None,
+                       environment: Callable[[int], list[bytes] | None], *, caller: int | None = None) -> dict:
+    """What cleanup may stop once the command, the leader of ``group``, has exited.
+
+    Only two kinds of process: a member of the command's own group, and one
+    whose environment carries this run's ``marker``. Never pid 0 or 1, the
+    caller or its parent chain, another user's process, or one that started
+    before the run; each of those is refused and named. An unreadable process
+    table selects nothing. The command itself is the caller's to reap, never
+    signalled. The group may be signalled whole only when none of its members
+    was refused.
+    """
+    selection = {"group": group, "selected": [], "refused": [], "unreadable": table is None, "whole_group": False}
+    if table is None:
+        return selection
+    callers: set[int] = set()
+    pid = os.getpid() if caller is None else caller
+    while pid not in callers:
+        callers.add(pid)
+        if pid not in table:
+            break
+        pid = table[pid][0]
+    member_refused = False
+    for pid in sorted(table):
+        _, pgid, owner, start = table[pid]
+        if pid == group:
+            continue
+        in_group = pgid == group
+        if not in_group and marker not in (environment(pid) or ()):
+            continue
+        why = ("pid 1 or below" if pid <= 1 else "the caller or its parent" if pid in callers
+               else "another user's process" if owner != os.geteuid()
+               else "started before the run" if start < started - START_SLACK_SECONDS else None)
+        if why:
+            selection["refused"].append([pid, why])
+            member_refused = member_refused or in_group
+        else:
+            selection["selected"].append(pid)
+    selection["whole_group"] = not member_refused
+    return selection
+
+
+def _describe_selection(selection: dict) -> str:
+    """The selection on one line."""
+    if selection["unreadable"]:
+        return f"cleanup of group {selection['group']}: the process table is unreadable, nothing stopped"
+    refused = ", ".join(f"{pid} ({why})" for pid, why in selection["refused"])
+    return (f"cleanup of group {selection['group']}: {len(selection['selected'])} selected "
+            f"{selection['selected']}; {len(selection['refused'])} refused" + (f": {refused}" if refused else ""))
+
+
+def _exited(process: subprocess.Popen, timeout: float) -> bool:
+    """Whether the command exited within ``timeout``, without reaping it.
+
+    Unreaped, its pid stays reserved, so its group id cannot name another
+    group while the cleanup signals it.
+    """
+    if os.name == "nt":
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return False
+        return True
+    if hasattr(os, "waitid"):
+        ends = time.monotonic() + timeout
+        while True:
+            try:
+                if os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+                    return True
+            except ChildProcessError:
+                return True
+            if time.monotonic() >= ends:
+                return False
+            time.sleep(0.02)
+    queue = select.kqueue()
+    try:
+        watch = select.kevent(process.pid, select.KQ_FILTER_PROC, select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                              select.KQ_NOTE_EXIT)
+        return bool(queue.control([watch], 1, timeout))
+    except ProcessLookupError:
+        return True  # already exited
+    finally:
+        queue.close()
+
+
+def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
+                    preview: Callable[[dict], None] | None, cleanup: list | None) -> None:
+    """Stop what the exited, unreaped command left: its group and what carries the run's marker."""
+    selection = _cleanup_selection(process.pid, marker, started, _process_table(), _process_environment)
+    if cleanup is not None:
+        cleanup.append(selection)
+    if preview is not None:
+        preview(selection)
+        return
+    if selection["unreadable"]:
+        return
+    if selection["whole_group"]:
+        with contextlib.suppress(OSError):
+            os.killpg(process.pid, signal.SIGKILL)
+    for pid in selection["selected"]:
+        # Checked again just before the signal: still in the group, or still carrying the marker.
+        with contextlib.suppress(OSError):
+            if os.getpgid(pid) == process.pid or marker in (_process_environment(pid) or ()):
+                os.kill(pid, signal.SIGKILL)
 
 
 def _stop_group(process: subprocess.Popen) -> None:
@@ -1667,16 +1851,36 @@ def _read_into(stream, buffer: bytearray, cap: int, keep_tail: bool, over: threa
                     del buffer[:-cap]
 
 
-def _run_bounded(argv: list[str], timeout: int, limit: int) -> tuple[int | None, bytes, str]:
+def _drain(readers: list[threading.Thread], streams: tuple) -> None:
+    """Read what the command had already written, for at most the drain window."""
+    drained = time.monotonic() + TRACKER_SNAPSHOT_DRAIN_SECONDS
+    for reader, stream in zip(readers, streams):
+        reader.join(max(0.0, drained - time.monotonic()))
+        if not reader.is_alive():
+            stream.close()
+
+
+def _run_bounded(argv: list[str], timeout: int, limit: int, *, preview: Callable[[dict], None] | None = None,
+                 cleanup: list | None = None) -> tuple[int | None, bytes, str]:
     """One run of an argv: its exit code (None when it never finished), stdout up to ``limit``, and why not.
 
     Reading stops when the command exits, after a short drain for what it had
     already written, not when its output ends: a child it leaves behind may
     hold stdout open long after the command finished. A reader still waiting
     on such a child is left behind as a daemon thread.
+
+    However the run ends, interrupted included, what the command left running
+    is then stopped (``_cleanup_selection``) before the command is reaped, and
+    the selection is appended to ``cleanup``. With ``preview`` the selection is
+    passed to it and nothing it names is signalled; a command that overran its
+    limits is still stopped. On Windows only the command's own process group
+    is stopped, and only when it overran.
     """
+    marker = f"{TRACKER_SNAPSHOT_MARKER}={uuid.uuid4().hex}"
+    started = time.time()
     try:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   env={**os.environ, TRACKER_SNAPSHOT_MARKER: marker.split("=", 1)[1]},
                                    **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
                                       else {"start_new_session": True}))
     except OSError as error:
@@ -1690,30 +1894,27 @@ def _run_bounded(argv: list[str], timeout: int, limit: int) -> tuple[int | None,
     for reader in readers:
         reader.start()
     deadline = time.monotonic() + timeout
+    overran = None
     try:
-        while True:
-            try:
-                process.wait(timeout=0.1)
+        while not _exited(process, 0.1):
+            if over.is_set():
+                overran = f"printed more than {limit} bytes"
                 break
-            except subprocess.TimeoutExpired:
-                if over.is_set():
-                    _stop_group(process)
-                    process.wait()
-                    return None, b"", f"printed more than {limit} bytes"
-                if time.monotonic() >= deadline:
-                    _stop_group(process)
-                    with contextlib.suppress(subprocess.TimeoutExpired):
-                        process.wait(timeout=2)
-                    return None, b"", f"timed out after {timeout}s"
-    except BaseException:
-        # Interrupted: stop the command and its children before giving up.
-        _stop_group(process)
-        raise
-    drained = time.monotonic() + TRACKER_SNAPSHOT_DRAIN_SECONDS
-    for reader, stream in zip(readers, (process.stdout, process.stderr)):
-        reader.join(max(0.0, drained - time.monotonic()))
-        if not reader.is_alive():
-            stream.close()
+            if time.monotonic() >= deadline:
+                overran = f"timed out after {timeout}s"
+                break
+        if overran is None:
+            _drain(readers, (process.stdout, process.stderr))
+    finally:
+        # Overran or interrupted: the command and its group go first.
+        if overran is not None or not _exited(process, 0):
+            _stop_group(process)
+            _exited(process, 5)
+        if os.name != "nt":
+            _stop_leftovers(process, marker.encode(), started, preview=preview, cleanup=cleanup)
+        process.wait()
+    if overran is not None:
+        return None, b"", overran
     # A reader still waiting on a left-behind child adds nothing from here on.
     with lock:
         frozen.set()
@@ -1722,6 +1923,14 @@ def _run_bounded(argv: list[str], timeout: int, limit: int) -> tuple[int | None,
         return None, b"", f"printed more than {limit} bytes"
     detail = errors.decode("utf-8", errors="replace").strip()[-300:]
     return process.returncode, output, detail or f"exited with {process.returncode}"
+
+
+def _cleanup_note(cleanup: list[dict]) -> dict:
+    """The run's cleanup, in the result, when it stopped, refused or could not look at anything."""
+    selection = cleanup[0] if cleanup else None
+    if selection is None or not (selection["selected"] or selection["refused"] or selection["unreadable"]):
+        return {}
+    return {"cleanup": _describe_selection(selection)}
 
 
 # The state directory's own files: a snapshot is never written over one of them.
@@ -1765,11 +1974,12 @@ def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: fl
     # The journal is published, so it gets a fixed reason class; the command's
     # own words, which may carry anything it printed, stay in this result.
     reason, detail = None, None
+    cleanup: list[dict] = []
     if any("{parent}" in part for part in config["argv"]) and not parent:
         reason = "the command needs {parent}, and the record names no meta.trackerParent"
     else:
         argv = [part.replace("{parent}", parent or "") for part in config["argv"]]
-        code, out, detail = _run_bounded(argv, config["timeoutSeconds"], TRACKER_SNAPSHOT_OUTPUT_BYTES)
+        code, out, detail = _run_bounded(argv, config["timeoutSeconds"], TRACKER_SNAPSHOT_OUTPUT_BYTES, cleanup=cleanup)
         if code is None:
             reason = detail if detail.startswith(("timed out", "printed more", "could not start")) else "it did not finish"
         elif code != 0:
@@ -1795,11 +2005,11 @@ def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: fl
         if last is not None and last["summary"] != TRACKER_SNAPSHOT_TAKEN:
             # Say the outage ended, so the next failure is noted again.
             append_journal(directory, kind="decision.recorded", summary=TRACKER_SNAPSHOT_TAKEN)
-        return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"])}
+        return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"]), **_cleanup_note(cleanup)}
     summary = f"{TRACKER_SNAPSHOT_NOTE} {reason}; the last snapshot stands"
     if last is None or last["summary"] != summary:
         append_journal(directory, kind="decision.recorded", summary=summary)
-    result = {"ok": True, "taken": False, "reason": reason, "fallback": Path(output).is_file()}
+    result = {"ok": True, "taken": False, "reason": reason, "fallback": Path(output).is_file(), **_cleanup_note(cleanup)}
     if detail and detail != reason:
         result["detail"] = detail
     return result
