@@ -971,6 +971,22 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         # Stamps that do not order are never before.
         self.assertFalse(_started_before("Wed Oct 21 01:20:50 2026", "Wed Oct 21 01:20:51 2026"))
 
+    def test_a_table_unreadable_for_a_moment_is_read_again_before_anything_is_reported(self) -> None:
+        child = Mock(pid=12345)
+        child.poll.return_value = 0
+        for reads, sent in (([None, ()], []),
+                            ([None, (777,), ()], [(777, signal.SIGTERM)])):
+            tracker = Mock()
+            tracker.escaped.side_effect = reads
+            clock = iter(range(1000))
+            with self.subTest(reads=reads), \
+                 patch("agent_skills.product.os.kill") as kill, \
+                 patch("agent_skills.product.time.sleep"), \
+                 patch("agent_skills.product.time.monotonic", side_effect=lambda: next(clock) * 0.5):
+                _stop_escaped_descendants(child, tracker, signal.SIGTERM)
+            # An escapee first seen once the table reads again still gets the signal.
+            self.assertEqual([call.args for call in kill.call_args_list], sent)
+
     def test_a_reused_child_pid_never_adopts_someone_elses_processes(self) -> None:
         me = os.getpid()
         child = Mock(pid=100)

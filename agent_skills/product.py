@@ -399,22 +399,32 @@ def _stop_escaped_descendants(
     Those not already signalled directly (``signalled``) get the cancellation
     signal; one that left the group on receiving it may so get it twice. Each
     still running two seconds later gets SIGKILL, and any running two seconds
-    after that is reported as a survivor.
+    after that is reported as a survivor. A process table that cannot be read
+    is retried within the same bounds; only one still unreadable at the end
+    of a bound is reported as unobservable.
     """
+    told = set(signalled)
+
+    def tell(pids: tuple[int, ...] | None) -> None:
+        fresh = tuple(pid for pid in pids or () if pid not in told)
+        told.update(fresh)
+        _signal_each(fresh, interrupted)
+
     survivors = tracker.escaped()
     if survivors == ():
         return
-    if survivors is not None:
-        _signal_each(tuple(pid for pid in survivors if pid not in signalled), interrupted)
+    tell(survivors)
     for escalation in (signal.SIGKILL, None):
         deadline = time.monotonic() + 2
-        while survivors and time.monotonic() < deadline:
+        while survivors != () and time.monotonic() < deadline:
             time.sleep(0.05)
             survivors = tracker.escaped()
+            if escalation is not None:
+                tell(survivors)
         if survivors == ():
             return
         if survivors is None:
-            # Escapees were running when the table was last readable.
+            # Escapees may still be running; nothing shows whether they are.
             raise _incomplete_cancellation(
                 child,
                 interrupted=interrupted,
