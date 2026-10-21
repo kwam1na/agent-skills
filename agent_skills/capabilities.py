@@ -210,6 +210,10 @@ def _work_list_problem(data: Mapping[str, object], requested: object = None) -> 
         blockers = item.get("blockedBy", [])
         if not isinstance(blockers, list) or not all(isinstance(entry, str) and entry for entry in blockers):
             return "Return each work item's blockers as a list of references."
+        if reference in blockers:
+            return "Return no work item as its own blocker."
+        if len(set(blockers)) != len(blockers):
+            return "Return each of a work item's blockers once."
     return None
 
 
