@@ -633,6 +633,30 @@ class HostPublisherTests(DeliveryStateFixture):
         path.write_text(json.dumps({"state": json.loads(self.config([], publishers))}), encoding="utf-8")
         return str(path)
 
+    def test_show_refuses_a_binding_that_keeps_its_state_elsewhere(self) -> None:
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        foreign = elsewhere / "orchestration.json"
+        foreign.write_text(json.dumps({"state": json.loads(self.config([], []))}), encoding="utf-8")
+        refused = self.refused("show", "--binding", str(foreign))
+        self.assertEqual(refused["code"], "binding_invalid")
+        # Both paths are named, so the mismatch can be fixed without guessing.
+        self.assertIn(str((elsewhere / "state").resolve()), refused["error"])
+        self.assertIn(str(self.state_dir.resolve()), refused["error"])
+
+    def test_show_accepts_a_binding_whose_state_is_this_directory(self) -> None:
+        # Relative to the repository root, the folder holding .agents/.
+        agents = self.root / ".agents"
+        agents.mkdir()
+        local = agents / "orchestration.json"
+        local.write_text(json.dumps({"state": json.loads(self.config([], []))}), encoding="utf-8")
+        self.assertIn("publication", state_tool(self.state_dir, "show", "--binding", str(local)))
+        # An absolute state directory is taken as it is.
+        absolute = self.root / "absolute.json"
+        absolute.write_text(json.dumps({"state": {**json.loads(self.config([], [])), "directory": str(self.state_dir)}}),
+                            encoding="utf-8")
+        self.assertIn("publication", state_tool(self.state_dir, "show", "--binding", str(absolute)))
+
     def refused(self, *args: str) -> dict:
         result = run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(self.state_dir), *args])
         self.assertEqual(result.returncode, 1, result.stdout)

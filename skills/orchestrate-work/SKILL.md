@@ -301,7 +301,10 @@ python3 -B scripts/delivery_state.py --dir <state directory> outbox --retire <pu
 ```
 
 Add `--force` to retire an outbox that cannot be read; no render rewrites one
-whose publisher is gone.
+whose publisher is gone. The binding given to `show` must keep its state in the
+`--dir` being shown; one from another checkout is refused with
+`binding_invalid`, naming both directories, rather than judging this outbox by
+another record's publishers.
 
 ## Running the epic
 
