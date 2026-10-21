@@ -2641,6 +2641,132 @@ class CheckVisibilityTests(MergeQueueTestCase):
                 self.assertStopped(self.run_queue(adopter, "feature"), "binding_invalid")
 
 
+class ServeTests(MergeQueueTestCase):
+    """serve takes what is queued, in order, as a batch or alone, until the queue is idle or the lead holds it."""
+
+    def serve(self, adopter: Adopter, **options: object) -> list:
+        return queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True, **options)
+
+    def outcomes(self, results: list) -> list[tuple]:
+        return [(result.document()["subcommand"], result.document()["candidate"], result.document()["outcome"])
+                for result in results]
+
+    def test_an_empty_queue_does_nothing(self) -> None:
+        adopter = self.adopter()
+        self.assertEqual(self.serve(adopter), [])
+
+    def test_one_queued_candidate_merges_alone(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        results = self.serve(adopter)
+        self.assertEqual(self.outcomes(results)[-1], ("merge", "feature", "merged"))
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+        # Every result is written down, as the command line's are.
+        self.assertEqual(len(list((adopter.state / "results").glob("*.json"))), len(results))
+
+    def test_two_queued_candidates_run_as_one_batch(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        results = self.serve(adopter)
+        self.assertEqual(self.outcomes(results), [("batch", "first", "merged"), ("batch", "second", "merged")])
+
+    def test_a_known_flake_is_retried_once_under_serve(self) -> None:
+        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
+        adopter = self.adopter({"alwaysRun": [check_entry("suite", "--flaky-once", "test_launcher_cancel")],
+                                "checkOutput": {"failurePattern": r"^FAIL: (?P<id>\S+)"}, "flakes": flakes})
+        self.candidate(adopter)
+        self.serve(adopter)
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+        retried = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "check.retried"]
+        self.assertEqual(len(retried), 1)
+
+    def test_a_hold_pauses_serve(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="lead", version=current["version"],
+                         changes={"meta": {"hold": {"reason": "release in progress", "since": "2026-10-21T10:00:00Z"}}})
+        self.assertEqual(self.serve(adopter), [])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+
+    def test_a_hand_off_waiting_for_the_lead_is_not_taken(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="lead", version=current["version"], selector="queue[subject=feature]",
+                         changes={"pending": True})
+        self.assertEqual(self.serve(adopter), [])
+
+    def test_serve_takes_work_queued_while_it_runs(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+
+        def queue_another(runner, subject) -> None:
+            if subject == "first" and not any(item["subject"] == "second" for item in runner.state()["queue"]):
+                self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+
+        results = self.serve(adopter, seams={"before_merge": queue_another})
+        self.assertEqual([entry for entry in self.outcomes(results) if entry[2] == "merged"],
+                         [("merge", "first", "merged"), ("merge", "second", "merged")])
+
+    def test_a_queue_stopping_result_ends_serve(self) -> None:
+        adopter = self.adopter()
+        # The unit check fails on the base itself: the first candidate stops the queue.
+        adopter.advance_base({"src/app.txt": "FAIL\n"})
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        results = self.serve(adopter)
+        self.assertTrue(results[-1].document()["stop"]["queueStopped"])
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="later")
+        results = self.serve(adopter)
+        # Until the lead confirms the base, serve takes nothing more.
+        self.assertEqual(results, [])
+        self.assertEqual(adopter.item("later")["stage"], "queued")
+        adopter.advance_base({"src/app.txt": "app one\n"})
+        state_tool.append_journal(adopter.state, kind="base.repaired", summary="The base passes again")
+        self.serve(adopter)
+        self.assertEqual(adopter.item("later")["stage"], "merged")
+
+    def test_every_queue_stopping_stop_is_journaled_as_a_broken_base(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        os.environ["MQ_MERGE"] = "unverified"
+        self.addCleanup(os.environ.pop, "MQ_MERGE", None)
+        results = self.serve(adopter)
+        self.assertEqual(results[-1].document()["stop"]["reason"], "merged_unverified")
+        kinds = [entry["kind"] for entry in state_tool.read_journal(adopter.state)]
+        self.assertIn("base.broken", kinds)
+
+    def test_a_killed_serve_restarts_clean_and_merges_nothing_twice(self) -> None:
+        adopter = self.adopter({"alwaysRun": [check_entry("hang", "--hang-once")]})
+        self.candidate(adopter)
+        hang = Path(str(adopter.log) + ".hang")
+        started = Path(str(adopter.log) + ".started")
+        hang.write_text("")
+        self.addCleanup(hang.unlink, True)
+        serving = subprocess.Popen(
+            [PY, "-B", str(SCRIPTS / "merge_queue.py"), "--repo", str(adopter.operator), "--state", str(adopter.state),
+             "--remote", "origin", "--base", "main", "serve", "--poll", "0.2"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 120
+        while not started.exists() and serving.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertTrue(started.exists(), "the check never started")
+        serving.kill()
+        serving.wait()
+        hang.unlink()
+        results = self.serve(adopter)
+        item = adopter.item("feature")
+        self.assertNotIn("running", [check["state"] for check in item["checks"]])
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])
+        # The interrupted candidate stops; it waits for its lane to hand it off again, never merging twice.
+        self.assertEqual(item["stage"], "stopped")
+        self.assertEqual(results, [])
+        merges = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "candidate.merged"]
+        self.assertEqual(merges, [])
+
+
 class InterruptedRunTests(MergeQueueTestCase):
     """A run killed outright leaves live state behind; the next run to take the queue lock clears it first."""
 

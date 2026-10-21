@@ -2005,8 +2005,9 @@ class Runner:
             in_progress = subject is not None and self.item(subject)["stage"] in ("syncing", "checking", "merging")
             if subject is not None and (not refused or in_progress):
                 self.set_item(subject, stage="stopped")
-            if stop.reason == "base_broken":
-                self.journal("base.broken", stop.detail, subject)
+            if queue_stopped:
+                # Every stop that stops the queue leaves the base to confirm by hand; serve waits for base.repaired.
+                self.journal("base.broken", f"{stop.reason}: {stop.detail}", subject)
             if subject is not None:
                 self.journal("candidate.stopped", f"{stop.reason}: {stop.detail}", subject)
 
@@ -2016,6 +2017,17 @@ class Runner:
             self.start()
             step(result)
         return self.invoke(subcommand, subject, guarded)
+
+    def recover(self) -> None:
+        """Take the queue lock just to clear what a killed run left; a lock another runner holds is left alone."""
+        try:
+            with self.locked():
+                with contextlib.suppress(delivery_state.StateError, OSError):
+                    self.recover_interrupted()
+        except Stop:
+            pass
+        finally:
+            shutil.rmtree(self._bootstrap_hooks, ignore_errors=True)
 
     def run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None) -> list[Result]:
         try:
@@ -2084,6 +2096,63 @@ def ascii_json(value: object) -> bytes:
     return (json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True) + "\n").encode("ascii")
 
 
+def base_awaits_repair(journal: list[dict]) -> bool:
+    """Whether the last word on the base is base.broken: the lead confirms it with base.repaired."""
+    last = next((entry["kind"] for entry in reversed(journal) if entry["kind"] in ("base.broken", "base.repaired")), None)
+    return last == "base.broken"
+
+
+def serve(
+    repository: Path,
+    state_directory: Path,
+    *,
+    remote: str,
+    base: str,
+    lead: str = "lead",
+    until_idle: bool = False,
+    poll: float = 30.0,
+    seams: dict[str, Seam] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> list[Result]:
+    """Take what is queued, in order, whenever the merge slot is free.
+
+    Two or more queued candidates run as one batch; one runs alone. A
+    candidate waiting for the lead to accept its hand-off is left alone. The
+    lead's meta.hold pauses serving, and so does a stop that stopped the queue
+    until the lead journals base.repaired; a stopped candidate waits for its
+    lane to hand it off again. Each turn takes the queue lock afresh, so a
+    serve killed outright is cleared by the next one's recovery. With
+    until_idle, serving ends once nothing more can be taken.
+    """
+    results: list[Result] = []
+    while True:
+        # A killed serve or run leaves live state behind; clear it first, even when nothing is queued.
+        Runner(repository, state_directory, remote=remote, base=base, lead=lead).recover()
+        state = delivery_state.read_state(state_directory)
+        journal = delivery_state.read_journal(state_directory)
+        waiting = [
+            item["subject"] for item in sorted(state["queue"], key=lambda entry: (entry["order"], entry["subject"]))
+            if item["stage"] == "queued" and not item.get("pending")
+        ]
+        if state["meta"].get("hold") or base_awaits_repair(journal) or not waiting:
+            if until_idle:
+                return results
+            sleep(poll)
+            continue
+        runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams)
+        taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting)
+        for result in taken:
+            write_result(state_directory, result)
+        results += taken
+        after = delivery_state.read_state(state_directory)
+        moved = any(item["subject"] in waiting and item["stage"] != "queued" for item in after["queue"])
+        if not moved:
+            # Nothing it took left queued (another runner held the lock): wait rather than spin.
+            if until_idle:
+                return results
+            sleep(poll)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="the repository the queue serves")
@@ -2097,10 +2166,20 @@ def main(argv: list[str] | None = None) -> int:
         commands.add_parser(name).add_argument("candidate")
     commands.add_parser("run").add_argument("candidates", nargs="+")
     commands.add_parser("batch").add_argument("candidates", nargs="+")
+    serving = commands.add_parser("serve", help="take queued candidates as they come, until held")
+    serving.add_argument("--poll", type=float, default=30.0, help="seconds between looks at an idle or held queue")
+    serving.add_argument("--until-idle", action="store_true", help="stop once nothing more can be taken")
     release = commands.add_parser("release")
     release.add_argument("ref")
     release.add_argument("--approved-by", help="records an approval the operator already gave")
     args = parser.parse_args(argv)
+    if args.command == "serve":
+        served = serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
+                       until_idle=args.until_idle, poll=args.poll)
+        documents = [result.document() for result in served]
+        sys.stdout.buffer.write(ascii_json(documents))
+        sys.stdout.buffer.flush()
+        return 0 if all(document["outcome"] not in ("stopped", "refused") for document in documents) else 1
     runner = Runner(
         args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
         lock_wait=args.wait,
