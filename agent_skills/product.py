@@ -272,6 +272,7 @@ class _DescendantTracker:
         self._known: dict[int, object] = {}
         self._confirmed = False
         self._root_started: object = None
+        self._unmarked: set[tuple[int, object]] = set()
         self._ticks = 0
 
     def observe(self, *, throttle: bool = False) -> dict[int, _Process] | None:
@@ -328,23 +329,30 @@ class _DescendantTracker:
         if self._marker is None:
             return
         for pid, process in table.items():
-            if pid in self._known or process.zombie or pid == os.getpid():
+            if pid in self._known or process.zombie or pid in (os.getpid(), self._root):
+                continue
+            if (pid, process.started) in self._unmarked:
                 continue
             if _started_before(process.started, self._root_started):
                 continue
             environment = self._environment(pid)
-            if environment is not None and self._marker in environment:
+            if environment is None:
+                continue  # Not readable now; tried again on the next sweep.
+            if self._marker in environment:
                 self._known[pid] = process.started
+            else:
+                # Remembered by pid and start, so each process is read once.
+                self._unmarked.add((pid, process.started))
 
     def escaped(self) -> tuple[int, ...] | None:
         """Known descendants still running outside the child's process group.
 
-        None when the table cannot be read although escapees were last seen:
-        they may still be running, so that is never reported as none.
+        None when the table cannot be read although descendants are known:
+        they may still be running, so that is never reported as none. The
+        marker sweep runs even before the child is confirmed, since only this
+        launch's descendants carry its key.
         """
         table = self.observe()
-        if not self._confirmed:
-            return ()
         if table is None:
             # Any descendant known besides the child may have left the group.
             return None if set(self._known) - {self._root} else ()
@@ -612,6 +620,9 @@ def _run_command(arguments: list[str], root: Path) -> int:
             child = subprocess.Popen(arguments, cwd=root, start_new_session=True,
                                      env=dict(os.environ, **{key: "1"}))
             tracker = _DescendantTracker(child, marker=f"{key}=1".encode())
+            # Confirm the child at once, so a cancellation that comes before
+            # the first wait tick still knows when the tree began.
+            tracker.observe()
         if interrupted:
             interrupt(interrupted, None)
         while not interrupted:

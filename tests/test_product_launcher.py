@@ -1010,6 +1010,18 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         tracker = _DescendantTracker(child, table=lambda: table, marker=marker, environment=environment)
         self.assertEqual(tracker.escaped(), (200,))
         self.assertEqual(sorted(read), [200, 202])
+        # A process that did not match is read once, not on every sweep.
+        read.clear()
+        self.assertEqual(tracker.escaped(), (200,))
+        self.assertEqual(read, [])
+        # A child reaped before the tracker ever confirmed it: the launch key is
+        # unique, so the sweep still adopts what carries it, reading everything.
+        read.clear()
+        early = dict(table)
+        del early[100]
+        unconfirmed = _DescendantTracker(child, table=lambda: early, marker=marker, environment=environment)
+        self.assertEqual(unconfirmed.escaped(), (200, 201))
+        self.assertEqual(sorted(read), [200, 201, 202])
         # Without a marker nothing is read.
         read.clear()
         self.assertEqual(_DescendantTracker(child, table=lambda: table, environment=environment).escaped(), ())
