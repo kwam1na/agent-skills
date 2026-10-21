@@ -328,7 +328,8 @@ def render_markdown(document: dict) -> str:
         return title, None
 
     def summary_row(summary: str | None, indent: str) -> list[str]:
-        return [] if summary is None else [f"{indent}- summary: {_markdown_text(summary)}"]
+        # A blank summary is none, however it was written.
+        return [] if summary is None or not summary.strip() else [f"{indent}- summary: {_markdown_text(summary)}"]
 
     checking = meta["checking"]
     rows = []
@@ -477,7 +478,7 @@ _PAGE_PROGRAM = """
     var head = el("div", title);
     if (tag !== undefined) { head.appendChild(el("span", show(tag), "tag")); }
     item.appendChild(head);
-    if (typeof summary === "string") { item.appendChild(el("div", summary, "summary")); }
+    if (typeof summary === "string" && summary.trim()) { item.appendChild(el("div", summary, "summary")); }
     if (detail) { item.appendChild(el("div", detail, "detail")); }
     return item;
   }

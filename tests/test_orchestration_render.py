@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import datetime
 import hashlib
 import http.client
 import importlib.util
@@ -1991,6 +1992,7 @@ setTimeout(async () => {
   await wait(10 + ((scenario.adapter && scenario.adapter.readDelayMs) || 0));
   const tags = [...new Set(created.map((e) => e.tagName))].sort();
   process.stdout.write(JSON.stringify({ text: byId.app.textContent, tags, every: globalThis.__every || null,
+    summaries: created.filter((e) => e.className === "summary").length,
     source: byId.app.attributes["data-source"] || null,
     status: byId["live-status"].hidden ? null : byId["live-status"].textContent }));
 }, 10);
@@ -2080,6 +2082,23 @@ setTimeout(async () => {
         self.assertIn("position 1 · expected to start around 2026-10-20T13:00:00Z (an estimate)", text)
         self.assertNotIn("12:00:00Z (an estimate)", text)
 
+    def test_a_live_page_stays_live_and_a_fallback_keeps_its_note_when_drawn_again(self) -> None:
+        later = "2026-10-20T13:00:00Z"
+        shown = self.run_page({"adapter": {"document": self.live_document("Live headline")}, "tickTo": later})
+        self.assertEqual(shown["source"], "live")
+        self.assertIn("Live headline", shown["text"])
+        shown = self.run_page({"adapter": {"document": self.live_document("Future headline", "delivery-state/2")},
+                               "tickTo": later})
+        self.assertEqual(shown["source"], "embedded")
+        self.assertIn("Showing the saved state", shown["text"])
+
+    def test_a_blank_summary_draws_nothing(self) -> None:
+        document = ticket_document()
+        document["state"]["tickets"] = {"change-2": {"title": "Tracker title two", "summary": "  "}}
+        self.assertEqual(self.run_page({}, document)["summaries"], 0)
+        self.assertNotIn("summary:", render_state.render_markdown(document))
+        self.assertEqual(self.run_page({}, ticket_document())["summaries"], 3)
+
     def test_an_open_page_draws_itself_again_on_a_quiet_record(self) -> None:
         document = visibility_document()
         document["state"]["meta"]["checking"] = {"now": None, "next": []}
@@ -2101,6 +2120,9 @@ setTimeout(async () => {
             "an absurd history": (None, [10 ** 15] * 5),
             "a history past the calendar": (None, [4 * 10 ** 11] * 5),
             "a history far past the calendar": (None, [10 ** 12] * 5),
+            # The second start lands one second into the year 10000, which the state tool cannot write.
+            "a history just past the calendar": (None, [int((datetime.datetime(9999, 12, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
+                                                              - datetime.datetime(2026, 10, 20, 12, 0, tzinfo=datetime.timezone.utc)).total_seconds()) + 2] * 5),
             "a start partway through a second": ({**running, "startedAt": "2026-10-20T11:58:20.400Z"}, [600] * 5),
         }
         for name, (current, runs) in cases.items():
@@ -2115,6 +2137,9 @@ setTimeout(async () => {
                     # Tied in order: the subjects decide, code point by code point.
                     {**FIXED_STATE["queue"][1], "order": 4, "subject": "\U0001F600-a"},
                     {**FIXED_STATE["queue"][1], "order": 4, "subject": "\uFFFD-b"},
+                    # One subject the start of the other: the shorter goes first.
+                    {**FIXED_STATE["queue"][1], "order": 5, "subject": "tie-ab"},
+                    {**FIXED_STATE["queue"][1], "order": 5, "subject": "tie-a"},
                 ]
                 if runs is not None:
                     state["meta"]["checkHistory"] = {"checks": {}, "runs": runs}
