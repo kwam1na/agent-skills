@@ -698,6 +698,10 @@ def evidence_errors(evidence: object) -> list[str]:
         return ["evidence is a list of entries"]
     problems = []
     for entry in evidence:
+        if isinstance(entry, dict) and set(entry) == {"reason", "detail"}:
+            # What merge_queue.py evidence prints when it refuses.
+            problems.append(f"the evidence command refused: {entry['reason']}: {entry['detail']}")
+            continue
         if not isinstance(entry, dict) or set(entry) != set(EVIDENCE_FIELDS):
             problems.append(f"an evidence entry has exactly {', '.join(EVIDENCE_FIELDS)}")
             continue
