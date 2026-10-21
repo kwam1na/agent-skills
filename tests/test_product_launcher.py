@@ -29,6 +29,7 @@ from agent_skills.product import (
     _process_table,
     _ps_process_table,
     _run_command,
+    _started_before,
     _stop_escaped_descendants,
     _stop_posix_group,
     _wait_for_posix_group,
@@ -827,9 +828,9 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             103: _Process(1, 103, 501, "t3", True),
         })
         self.assertEqual(tracker.escaped(), ())
-        # An unreadable table changes nothing it knows.
+        # Behind an unreadable table, descendants it knew may still be running.
         tables.append(None)
-        self.assertEqual(tracker.escaped(), ())
+        self.assertIsNone(tracker.escaped())
 
     def test_the_tracker_observes_every_third_wait_tick(self) -> None:
         reads = []
@@ -941,6 +942,30 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         # A table never read knows of no escapee, and changes nothing.
         unread = _DescendantTracker(child, table=lambda: None)
         self.assertEqual(unread.escaped(), ())
+        # Known only from the periodic observation, never from escaped(), an
+        # escapee behind a table that cannot be read at cancellation is still
+        # not reported as none.
+        tables = [{100: _Process(me, 100, 501, "t0", False), 102: _Process(100, 102, 501, "t2", False)}]
+        observed = _DescendantTracker(child, table=lambda: tables[-1])
+        observed.observe(throttle=True)
+        tables.append(None)
+        self.assertIsNone(observed.escaped())
+        # A child with no descendant yet has nothing to hide.
+        tables = [{100: _Process(me, 100, 501, "t0", False)}, None]
+        alone = _DescendantTracker(child, table=lambda: tables.pop(0))
+        alone.observe()
+        self.assertEqual(alone.escaped(), ())
+
+    def test_start_stamps_order_with_slack_for_a_wall_clock_step(self) -> None:
+        # macOS: wall-clock (seconds, microseconds), with an hour of slack.
+        self.assertFalse(_started_before((1000, 0), (1000, 5)))
+        self.assertFalse(_started_before((1000 - 3599, 0), (1000, 0)))
+        self.assertTrue(_started_before((1000 - 3601, 0), (1000, 0)))
+        # Linux: ticks since boot, exact.
+        self.assertTrue(_started_before(4, 5))
+        self.assertFalse(_started_before(5, 5))
+        # Stamps that do not order are never before.
+        self.assertFalse(_started_before("Wed Oct 21 01:20:50 2026", "Wed Oct 21 01:20:51 2026"))
 
     def test_a_reused_child_pid_never_adopts_someone_elses_processes(self) -> None:
         me = os.getpid()
@@ -1020,10 +1045,18 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         with patch("agent_skills.product.subprocess.Popen", return_value=child) as popen:
             self.assertEqual(_run_command(["worker"], ROOT), 0)
             _run_command(["worker"], ROOT)
-        markers = [call.kwargs["env"][_LAUNCH_MARKER] for call in popen.call_args_list] if os.name == "posix" else []
         if os.name == "posix":
-            self.assertEqual(len(set(markers)), 2)
-            self.assertTrue(all(len(marker) == 32 for marker in markers))
+            keys = [{key for key in call.kwargs["env"] if key.startswith(_LAUNCH_MARKER + "_")}
+                    for call in popen.call_args_list]
+            # Each launch adds a key of its own, beside any the caller carries.
+            self.assertEqual([len(found) for found in keys], [1, 1])
+            self.assertNotEqual(keys[0], keys[1])
+            self.assertTrue(all(len(key) == len(_LAUNCH_MARKER) + 33 for found in keys for key in found))
+            outer = f"{_LAUNCH_MARKER}_{'0' * 32}"
+            with patch.dict(os.environ, {outer: "1"}), \
+                 patch("agent_skills.product.subprocess.Popen", return_value=child) as nested:
+                _run_command(["worker"], ROOT)
+            self.assertEqual(nested.call_args.kwargs["env"][outer], "1")
 
     @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_escapees_get_the_signal_before_the_group_stops_and_sigkill_when_it_fails(self) -> None:

@@ -154,27 +154,33 @@ def _proc_process_table(proc: Path = Path("/proc")) -> dict[int, _Process]:
     return table
 
 
+_ARGUMENTS_BUFFER: list = []
+
+
 def _darwin_environment(pid: int) -> list[bytes] | None:
-    """A process's environment, from KERN_PROCARGS2; None when it cannot be read."""
+    """A process's arguments and environment, from KERN_PROCARGS2.
+
+    None when it cannot be read: gone, or another user's. The entries after
+    the executable path are returned whole, arguments included; the marker
+    is a fresh random key, so it is matched wherever it appears.
+    """
     import ctypes
 
     libc = ctypes.CDLL(None, use_errno=True)
     libc.sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint, ctypes.c_void_p,
                             ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t]
-    argmax = ctypes.c_int()
-    size = ctypes.c_size_t(ctypes.sizeof(argmax))
-    if libc.sysctl((ctypes.c_int * 2)(1, 8), 2, ctypes.byref(argmax), ctypes.byref(size), None, 0) != 0:
-        return None  # CTL_KERN, KERN_ARGMAX
-    buffer = ctypes.create_string_buffer(argmax.value)
-    size = ctypes.c_size_t(argmax.value)
+    if not _ARGUMENTS_BUFFER:
+        argmax = ctypes.c_int()
+        size = ctypes.c_size_t(ctypes.sizeof(argmax))
+        if libc.sysctl((ctypes.c_int * 2)(1, 8), 2, ctypes.byref(argmax), ctypes.byref(size), None, 0) != 0:
+            return None  # CTL_KERN, KERN_ARGMAX
+        _ARGUMENTS_BUFFER.append(ctypes.create_string_buffer(argmax.value))
+    buffer = _ARGUMENTS_BUFFER[0]
+    size = ctypes.c_size_t(len(buffer))
     if libc.sysctl((ctypes.c_int * 3)(1, 49, pid), 3, buffer, ctypes.byref(size), None, 0) != 0:
-        return None  # CTL_KERN, KERN_PROCARGS2: gone, or not ours
-    raw = buffer.raw[:size.value]
-    # argc, the executable path, padding, argv, then the environment.
-    (argc,) = struct.unpack_from("i", raw, 0)
-    rest = raw[4:]
-    rest = rest[rest.index(b"\0"):].lstrip(b"\0")
-    return [entry for entry in rest.split(b"\0")[argc:] if entry]
+        return None  # CTL_KERN, KERN_PROCARGS2
+    raw = buffer.raw[4:size.value]  # after argc
+    return [entry for entry in raw[raw.index(b"\0"):].split(b"\0") if entry]
 
 
 def _proc_environment(pid: int, proc: Path = Path("/proc")) -> list[bytes] | None:
@@ -222,6 +228,21 @@ def _process_table() -> dict[int, _Process] | None:
         return None
 
 
+def _started_before(started: object, reference: object) -> bool:
+    """Whether a process certainly started before the reference.
+
+    macOS start stamps are wall-clock (seconds, microseconds), so an hour of
+    slack keeps a clock stepped back during a run from hiding descendants.
+    Linux stamps count ticks since boot. Stamps that do not order (ps text)
+    are never before.
+    """
+    if isinstance(started, tuple) and isinstance(reference, tuple):
+        return started[0] < reference[0] - 3600
+    if isinstance(started, int) and isinstance(reference, int):
+        return started < reference
+    return False
+
+
 class _DescendantTracker:
     """Remember every process the launched tree has had, by pid and start time.
 
@@ -251,7 +272,6 @@ class _DescendantTracker:
         self._known: dict[int, object] = {}
         self._confirmed = False
         self._root_started: object = None
-        self._escaped: tuple[int, ...] = ()
         self._ticks = 0
 
     def observe(self, *, throttle: bool = False) -> dict[int, _Process] | None:
@@ -301,18 +321,17 @@ class _DescendantTracker:
         The marker survives what ancestry does not: a double-fork daemon,
         re-parented to init in a session of its own, still carries it, unless
         it cleared its environment. Every descendant started after the child,
-        so only processes started since then are read.
+        so only processes started since then are read. A process whose
+        environment cannot be read at that moment (another user's, or one
+        caught mid-exec) is not adopted.
         """
         if self._marker is None:
             return
         for pid, process in table.items():
             if pid in self._known or process.zombie or pid == os.getpid():
                 continue
-            try:
-                if process.started < self._root_started:
-                    continue
-            except TypeError:
-                pass  # Stamps that do not order are all read.
+            if _started_before(process.started, self._root_started):
+                continue
             environment = self._environment(pid)
             if environment is not None and self._marker in environment:
                 self._known[pid] = process.started
@@ -327,14 +346,14 @@ class _DescendantTracker:
         if not self._confirmed:
             return ()
         if table is None:
-            return None if self._escaped else ()
+            # Any descendant known besides the child may have left the group.
+            return None if set(self._known) - {self._root} else ()
         self.sweep(table)
-        self._escaped = tuple(sorted(
+        return tuple(sorted(
             pid for pid, started in self._known.items()
             if pid in table and table[pid].started == started
             and not table[pid].zombie and table[pid].pgid != self._root
         ))
-        return self._escaped
 
     def group_members(self) -> tuple[int, ...]:
         """Known descendants still visible in the child's process group."""
@@ -587,10 +606,12 @@ def _run_command(arguments: list[str], root: Path) -> int:
         else:
             # Every descendant inherits this marker unless it clears its
             # environment, so cancellation can find even a double-fork daemon.
-            marker = f"{_LAUNCH_MARKER}={uuid.uuid4().hex}"
+            # Each launch has a key of its own, so a launch inside the command
+            # adds its marker beside this one rather than replacing it.
+            key = f"{_LAUNCH_MARKER}_{uuid.uuid4().hex}"
             child = subprocess.Popen(arguments, cwd=root, start_new_session=True,
-                                     env=dict(os.environ, **dict([marker.split("=", 1)])))
-            tracker = _DescendantTracker(child, marker=marker.encode())
+                                     env=dict(os.environ, **{key: "1"}))
+            tracker = _DescendantTracker(child, marker=f"{key}=1".encode())
         if interrupted:
             interrupt(interrupted, None)
         while not interrupted:
