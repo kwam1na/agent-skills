@@ -50,6 +50,8 @@ STATE_LOCK = "state.lock"
 QUEUE_LOCK = "queue.lock"
 # What was last published, and the outbox a host publisher leaves for the lead.
 PUBLISHED_FILE = "published.json"
+# One line per successful write, for a live view to wait on: never read as the record.
+CHANGES_FILE = "changes.jsonl"
 # A recovery in progress: written before a missed merge is recorded, removed
 # once its journal entry is appended, and finished by the next reconcile.
 RECOVERY_FILE = "recovery.json"
@@ -331,6 +333,18 @@ def file_lock(path: Path, timeout: float | None = None) -> Iterator[None]:
         os.close(descriptor)
 
 
+def _note_change(directory: Path, change: str, *, version: int | None = None, journal: int | None = None) -> None:
+    """Record one successful write, for a live view; called under the state lock.
+
+    Best-effort: a write that succeeded is never failed by its notification.
+    """
+    line = json.dumps({"at": now(), "change": change, "journal": journal, "version": version},
+                      ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
+    with contextlib.suppress(OSError):
+        with open(directory / CHANGES_FILE, "ab") as stream:
+            stream.write(line.encode("ascii"))
+
+
 def _write_atomically(path: Path, text: str) -> None:
     handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
@@ -482,6 +496,7 @@ def init(directory: Path, headline: str) -> dict:
         _require_unicode(state, "state_invalid")
         _write_atomically(directory / STATE_FILE, dumps(state))
         (directory / JOURNAL_FILE).touch()
+        _note_change(directory, "init", version=state["version"], journal=0)
     return state
 
 
@@ -800,6 +815,7 @@ def patch(
             raise StateError("patch_invalid", "; ".join(errors))
         _require_unicode(updated, "patch_invalid")
         _write_atomically(directory / STATE_FILE, dumps(updated))
+        _note_change(directory, "patch", version=updated["version"])
     return updated
 
 
@@ -825,7 +841,7 @@ def append_journal(
         if lane is None or owner != lane:
             raise StateError("writer_not_owned", f"{subject} is not {lane}'s work")
     with file_lock(directory / STATE_LOCK):
-        read_state(directory)
+        current = read_state(directory)
         entries = read_journal(directory)
         entry = {
             "id": len(entries) + 1,
@@ -849,6 +865,7 @@ def append_journal(
             stream.write(line.encode("utf-8"))
             stream.flush()
             os.fsync(stream.fileno())
+        _note_change(directory, "journal", version=current["version"], journal=entry["id"])
     return entry
 
 
@@ -1533,6 +1550,7 @@ def retire_outbox(directory: Path, publisher: str, *, force: bool = False) -> di
             (directory / OUTBOX_DIRECTORY / OUTBOX_FILE).unlink()
             with contextlib.suppress(OSError):
                 (directory / OUTBOX_DIRECTORY).rmdir()
+            _note_change(directory, "outbox")
             return {"publisher": None, "version": None, "journalThrough": None, "unreadable": True}
         if outbox is None:
             raise StateError("outbox_missing", "there is no outbox to retire")
@@ -1542,6 +1560,7 @@ def retire_outbox(directory: Path, publisher: str, *, force: bool = False) -> di
         (directory / OUTBOX_DIRECTORY / OUTBOX_FILE).unlink()
         with contextlib.suppress(OSError):
             (directory / OUTBOX_DIRECTORY).rmdir()
+        _note_change(directory, "outbox")
     return {"publisher": owner, "version": outbox["version"], "journalThrough": outbox["journalThrough"]}
 
 
@@ -1725,7 +1744,8 @@ def _run_bounded(argv: list[str], timeout: int, limit: int) -> tuple[int | None,
 
 
 # The state directory's own files: a snapshot is never written over one of them.
-RECORD_NAMES = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE, OUTBOX_DIRECTORY, RECOVERY_FILE)
+RECORD_NAMES = (STATE_FILE, JOURNAL_FILE, CHANGES_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE,
+                OUTBOX_DIRECTORY, RECOVERY_FILE)
 
 
 def _refuse_record_path(directory: Path, output: Path) -> None:
@@ -1859,6 +1879,7 @@ def ack(directory: Path, *, version: int, through: int) -> dict:
             raise StateError("ack_invalid", "; ".join(problems))
         published = {"version": version, "journalThrough": through, "at": now()}
         _write_atomically(directory / PUBLISHED_FILE, dumps(published))
+        _note_change(directory, "ack", version=state["version"], journal=through)
     return published
 
 
