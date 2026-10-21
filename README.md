@@ -29,7 +29,18 @@ python3 scripts/bootstrap-test-environment.py
 .venv/bin/python -m unittest discover -s tests -t . -p 'test_*.py'
 ```
 
-On Windows, use `.venv\Scripts\python.exe` for the three sensor commands.
+`scripts/run-tests.py` runs the same suite across worker processes, half the
+cores by default, and gives the same verdict as `unittest discover` in a
+fraction of the time. A test class that sets `run_serially = True`, or a
+module that sets `RUN_SERIALLY = True`, runs with nothing beside it.
+`--timings <file>` records per-test times, and `--timings-from <file>` starts
+the slowest work first:
+
+```bash
+.venv/bin/python scripts/run-tests.py --timings .test-timings.json
+```
+
+On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
 
 Build and verify the core profile:
 
