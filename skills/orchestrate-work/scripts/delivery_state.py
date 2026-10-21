@@ -889,18 +889,70 @@ def _parse_time(text: str, *, exact: bool = False) -> datetime.datetime:
     return moment
 
 
-def read_snapshot(path: Path, max_age: float) -> dict:
+def read_snapshot(path: Path, max_age: float, *, parent: str | None = None) -> dict:
     """A validated, fresh ``work-snapshot/1``, or a refusal."""
     try:
         snapshot = json.loads(Path(path).read_bytes().decode("utf-8-sig"))
     except (OSError, UnicodeDecodeError, ValueError, RecursionError) as error:
         # ValueError covers JSON a parser refuses, such as a number too long to convert.
         raise StateError("snapshot_invalid", f"cannot read the snapshot {Path(path).name}: {error}") from None
-    return check_snapshot(snapshot, Path(path).name, max_age)
+    return check_snapshot(snapshot, Path(path).name, max_age, parent=parent)
 
 
-def check_snapshot(snapshot: object, name: str, max_age: float) -> dict:
-    """``snapshot`` as a valid, fresh ``work-snapshot/1``, or a refusal naming it ``name``."""
+def dependency_problems(items: list[tuple[str, list[str]]], parent: str | None) -> list[str]:
+    """Why work items' blockers are not a dependency list, naming the items; empty when they are.
+
+    ``items`` are (reference, blockers) pairs. An item may not be the parent,
+    be blocked by the parent, block itself, name a blocker twice, or wait on
+    itself through other items. A blocker outside the items is allowed. Kept
+    identical in the product's tracker contract and the delivery state tool.
+    """
+    problems: list[str] = []
+    blockers_of: dict[str, list[str]] = {}
+    for reference, blockers in items:
+        if parent is not None and reference == parent:
+            problems.append(f"{reference} is the parent itself")
+        if parent is not None and parent in blockers:
+            problems.append(f"{reference} is blocked by its own parent {parent}")
+        if reference in blockers:
+            problems.append(f"{reference} blocks itself")
+        named: set[str] = set()
+        for blocker in blockers:
+            if blocker in named:
+                problems.append(f"{reference} names its blocker {blocker} twice")
+            named.add(blocker)
+        blockers_of[reference] = [blocker for blocker in dict.fromkeys(blockers) if blocker != reference]
+    # A cycle through other items, found without recursion: each is reported
+    # once, from the item it is first reached by.
+    finished: set[str] = set()
+    for start in blockers_of:
+        if start in finished:
+            continue
+        path = [start]
+        stack = [iter(blockers_of[start])]
+        while stack:
+            for blocker in stack[-1]:
+                if blocker not in blockers_of or blocker in finished:
+                    continue
+                if blocker in path:
+                    cycle = path[path.index(blocker):] + [blocker]
+                    problems.append("the blockers form a cycle, each blocked by the next: " + " -> ".join(cycle))
+                    continue
+                path.append(blocker)
+                stack.append(iter(blockers_of[blocker]))
+                break
+            else:
+                stack.pop()
+                finished.add(path.pop())
+    return problems
+
+
+def check_snapshot(snapshot: object, name: str, max_age: float, *, parent: str | None = None) -> dict:
+    """``snapshot`` as a valid, fresh ``work-snapshot/1``, or a refusal naming it ``name``.
+
+    A tracker snapshot's blockers must form a dependency list under ``parent``,
+    the record's tracker parent; a forge snapshot's are ignored, so never checked.
+    """
     errors = validate(snapshot, load_schema("work-snapshot/1"))
     if not errors:
         allowed = SNAPSHOT_STATES[snapshot["source"]]
@@ -909,6 +961,9 @@ def check_snapshot(snapshot: object, name: str, max_age: float) -> dict:
         subjects = [item["subject"] for item in snapshot["items"]]
         if len(subjects) != len(set(subjects)):
             errors.append("/items: each subject appears once")
+        if snapshot["source"] == "tracker":
+            errors += [f"/items: {problem}" for problem in dependency_problems(
+                [(item["subject"], item.get("blockedBy", [])) for item in snapshot["items"]], parent)]
     if not errors:
         try:
             _parse_time(snapshot["takenAt"], exact=True)
@@ -1033,7 +1088,8 @@ def reconcile(
     """
     if not snapshot_paths:
         raise StateError("snapshot_invalid", "give at least one --snapshot")
-    snapshots = [read_snapshot(Path(path), max_age) for path in snapshot_paths]
+    parent = read_state(directory)["meta"].get("trackerParent")
+    snapshots = [read_snapshot(Path(path), max_age, parent=parent) for path in snapshot_paths]
     seen: dict[tuple[str, str], str] = {}
     for path, snapshot in zip(snapshot_paths, snapshots):
         for item in snapshot["items"]:
@@ -1504,7 +1560,8 @@ def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: fl
             reason = f"the command exited with {code}"
         else:
             try:
-                snapshot = check_snapshot(json.loads(out.decode("utf-8-sig")), "the command's snapshot", max_age)
+                snapshot = check_snapshot(json.loads(out.decode("utf-8-sig")), "the command's snapshot", max_age,
+                                          parent=parent)
                 if snapshot["source"] != "tracker":
                     raise StateError("snapshot_invalid", "the command's snapshot is not from the tracker")
             except (UnicodeDecodeError, ValueError, RecursionError):

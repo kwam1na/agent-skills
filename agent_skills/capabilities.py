@@ -210,11 +210,59 @@ def _work_list_problem(data: Mapping[str, object], requested: object = None) -> 
         blockers = item.get("blockedBy", [])
         if not isinstance(blockers, list) or not all(isinstance(entry, str) and entry for entry in blockers):
             return "Return each work item's blockers as a list of references."
-        if reference in blockers:
-            return "Return no work item as its own blocker."
-        if len(set(blockers)) != len(blockers):
-            return "Return each of a work item's blockers once."
+    problems = dependency_problems(
+        [(item["workReference"], item.get("blockedBy", [])) for item in items], data["parentReference"])
+    if problems:
+        return "Return the work items' blockers as a dependency list: " + "; ".join(problems) + "."
     return None
+
+
+def dependency_problems(items: list[tuple[str, list[str]]], parent: str | None) -> list[str]:
+    """Why work items' blockers are not a dependency list, naming the items; empty when they are.
+
+    ``items`` are (reference, blockers) pairs. An item may not be the parent,
+    be blocked by the parent, block itself, name a blocker twice, or wait on
+    itself through other items. A blocker outside the items is allowed. Kept
+    identical in the product's tracker contract and the delivery state tool.
+    """
+    problems: list[str] = []
+    blockers_of: dict[str, list[str]] = {}
+    for reference, blockers in items:
+        if parent is not None and reference == parent:
+            problems.append(f"{reference} is the parent itself")
+        if parent is not None and parent in blockers:
+            problems.append(f"{reference} is blocked by its own parent {parent}")
+        if reference in blockers:
+            problems.append(f"{reference} blocks itself")
+        named: set[str] = set()
+        for blocker in blockers:
+            if blocker in named:
+                problems.append(f"{reference} names its blocker {blocker} twice")
+            named.add(blocker)
+        blockers_of[reference] = [blocker for blocker in dict.fromkeys(blockers) if blocker != reference]
+    # A cycle through other items, found without recursion: each is reported
+    # once, from the item it is first reached by.
+    finished: set[str] = set()
+    for start in blockers_of:
+        if start in finished:
+            continue
+        path = [start]
+        stack = [iter(blockers_of[start])]
+        while stack:
+            for blocker in stack[-1]:
+                if blocker not in blockers_of or blocker in finished:
+                    continue
+                if blocker in path:
+                    cycle = path[path.index(blocker):] + [blocker]
+                    problems.append("the blockers form a cycle, each blocked by the next: " + " -> ".join(cycle))
+                    continue
+                path.append(blocker)
+                stack.append(iter(blockers_of[blocker]))
+                break
+            else:
+                stack.pop()
+                finished.add(path.pop())
+    return problems
 
 
 def work_snapshot(data: Mapping[str, object], taken_at: str) -> dict[str, object]:

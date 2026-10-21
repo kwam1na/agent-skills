@@ -23,6 +23,7 @@ from unittest import mock
 from jsonschema import Draft202012Validator
 
 from agent_skills.validate import LEAKAGE_PATTERNS, validate_corpus
+from tests.dependency_cases import CASES as DEPENDENCY_CASES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1830,6 +1831,51 @@ class TrackerSnapshotTests(unittest.TestCase):
         with mock.patch.object(state_tool, "_read_into", side_effect=late):
             code, out, _ = state_tool._run_bounded(argv, 10, 4096)
         self.assertEqual((code, out.strip()), (0, b"x" * 1000))
+
+    def test_every_dependency_shape_is_checked_in_a_tracker_snapshot(self) -> None:
+        for name, (parent, items, named) in DEPENDENCY_CASES.items():
+            with self.subTest(name):
+                snapshot = {"takenAt": taken(), "source": "tracker", "items": [
+                    {"subject": reference, "state": "backlog", **({"blockedBy": blockers} if blockers else {})}
+                    for reference, blockers in items]}
+                if named is None:
+                    state_tool.check_snapshot(snapshot, "the snapshot", 900, parent=parent)
+                    continue
+                with self.assertRaises(state_tool.StateError) as refused:
+                    state_tool.check_snapshot(snapshot, "the snapshot", 900, parent=parent)
+                self.assertEqual(refused.exception.code, "snapshot_invalid")
+                for text in named:
+                    self.assertIn(text, str(refused.exception))
+
+    def test_the_command_s_snapshot_and_reconcile_check_dependencies_against_the_record_s_parent(self) -> None:
+        # The command prints an item its parent blocks; the parent is the record's.
+        tool = self.root / "blocked tool.py"
+        tool.write_text(textwrap.dedent("""
+            import json, sys, datetime
+            now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            print(json.dumps({"takenAt": now, "source": "tracker", "items": [
+                {"subject": "a", "state": "backlog", "blockedBy": [sys.argv[1]]}]}))
+        """), encoding="utf-8")
+        binding = self.root / "binding blocked.json"
+        binding.write_text(json.dumps({"state": {"directory": "state", "renderers": [], "publishers": [],
+                                                 "trackerSnapshot": {"argv": [sys.executable, "-B", str(tool), "{parent}"]}}}),
+                           encoding="utf-8")
+        code, result = run_tool(self.directory, "tracker-snapshot", "--binding", str(binding), "--output", str(self.output))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["taken"], False, result)
+        self.assertIn("not a valid tracker snapshot", result["reason"])
+        self.assertIn("epic-7", result["detail"])
+        written = self.root / "written.json"
+        written.write_text(json.dumps({"takenAt": taken(), "source": "tracker", "items": [
+            {"subject": "a", "state": "backlog", "blockedBy": ["epic-7"]}]}), encoding="utf-8")
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(written))
+        self.assertEqual((code, refused.get("code")), (1, "snapshot_invalid"), refused)
+        self.assertIn("epic-7", refused["error"])
+
+    def test_a_forge_snapshot_s_blockers_are_not_checked_since_they_are_ignored(self) -> None:
+        snapshot = {"takenAt": taken(), "source": "forge", "items": [
+            {"subject": "a", "state": "open", "blockedBy": ["a", "a"]}]}
+        state_tool.check_snapshot(snapshot, "the snapshot", 900, parent="epic-7")
 
     def test_a_command_that_runs_too_long_is_stopped(self) -> None:
         result = self.snap("sleep", timeoutSeconds=1)
