@@ -45,6 +45,15 @@ JOURNAL_FILE = "journal.jsonl"
 STATE_LOCK = "state.lock"
 # Reserved for the merge-queue runner, which holds it for a whole run.
 QUEUE_LOCK = "queue.lock"
+# What was last published, and the outbox a host publisher leaves for the lead.
+PUBLISHED_FILE = "published.json"
+OUTBOX_DIRECTORY = "outbox"
+OUTBOX_FILE = "outbox.json"
+# A snapshot older than this is refused, so a skipped listing fails loudly.
+SNAPSHOT_MAX_AGE_SECONDS = 900.0
+# How far ahead of this machine a snapshot's clock may run before it is refused.
+SNAPSHOT_CLOCK_SKEW_SECONDS = 60.0
+RECONCILE_ATTEMPTS = 5
 STATE_VERSION = "delivery-state/1"
 WRITERS = ("lead", "runner")
 LOCK_TIMEOUT_SECONDS = 30.0
@@ -52,6 +61,7 @@ LOCK_TIMEOUT_SECONDS = 30.0
 # Arrays whose elements a patch may select, and the field that names each one.
 ELEMENT_KEYS = {
     "queue": "subject",
+    "planned": "subject",
     "lanes": "id",
     "leases": "id",
     "finish": "id",
@@ -328,6 +338,11 @@ def _unique(state: dict) -> list[str]:
         names = [item.get(key) for item in state.get(array, []) if isinstance(item, dict)]
         if len(names) != len(set(map(json.dumps, names))):
             problems.append(f"/{array}: {key} values must be unique")
+    queued = {item.get("subject") for item in state.get("queue", []) if isinstance(item, dict)}
+    both = sorted(str(item.get("subject")) for item in state.get("planned", [])
+                  if isinstance(item, dict) and item.get("subject") in queued)
+    if both:
+        problems.append(f"/planned: {', '.join(both)} already in the queue; work is planned or queued, never both")
     return problems
 
 
@@ -634,6 +649,333 @@ def show(directory: Path, *, between_reads: Callable[[], None] | None = None) ->
     return {"state": state, "journal": journal}
 
 
+# ---------------------------------------------------------------------------
+# Reconciling the record with forge and tracker snapshots
+
+SNAPSHOT_STATES = {
+    "tracker": frozenset({"backlog", "started", "completed", "canceled"}),
+    "forge": frozenset({"open", "draft", "merged", "closed"}),
+}
+
+
+def _parse_time(text: str) -> datetime.datetime:
+    return datetime.datetime.strptime(text.rstrip("Z").split(".")[0], "%Y-%m-%dT%H:%M:%S").replace(
+        tzinfo=datetime.timezone.utc)
+
+
+def read_snapshot(path: Path, max_age: float) -> dict:
+    """A validated, fresh ``work-snapshot/1``, or a refusal."""
+    try:
+        snapshot = json.loads(Path(path).read_bytes().decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise StateError("snapshot_invalid", f"cannot read the snapshot {Path(path).name}: {error}") from None
+    errors = validate(snapshot, load_schema("work-snapshot/1"))
+    if not errors:
+        allowed = SNAPSHOT_STATES[snapshot["source"]]
+        errors = [f"/items/{index}/state: {item['state']} is not a {snapshot['source']} state"
+                  for index, item in enumerate(snapshot["items"]) if item["state"] not in allowed]
+        subjects = [item["subject"] for item in snapshot["items"]]
+        if len(subjects) != len(set(subjects)):
+            errors.append("/items: each subject appears once")
+    if errors:
+        raise StateError("snapshot_invalid", f"{Path(path).name}: " + "; ".join(errors))
+    age = (datetime.datetime.now(datetime.timezone.utc) - _parse_time(snapshot["takenAt"])).total_seconds()
+    if age < -SNAPSHOT_CLOCK_SKEW_SECONDS:
+        raise StateError("snapshot_invalid", f"{Path(path).name} was taken {int(-age)}s in the future: check its clock")
+    if age > max_age:
+        raise StateError(
+            "snapshot_stale",
+            f"{Path(path).name} was taken {int(age)}s ago, more than {max_age:g}s: list the work again",
+        )
+    return snapshot
+
+
+def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[dict], list[dict]]:
+    """The lead's changes, the merges to recover, and what to report, for one read of the state."""
+    lead = {"queue": copy.deepcopy(state["queue"]), "planned": copy.deepcopy(state.get("planned", [])),
+            "followups": copy.deepcopy(state["followups"])}
+    changes: list[dict] = []
+    reports: list[dict] = []
+    recoveries: list[dict] = []
+
+    def queued(subject: str) -> dict | None:
+        return next((item for item in lead["queue"] if item["subject"] == subject), None)
+
+    def planned(subject: str) -> dict | None:
+        return next((item for item in lead["planned"] if item["subject"] == subject), None)
+
+    def followed(subject: str) -> bool:
+        return any(subject in (item["id"], item["reference"]) for item in lead["followups"])
+
+    def change(subject: str, text: str, recovery: bool = False) -> None:
+        changes.append({"subject": subject, "change": text, "recovery": recovery})
+
+    def report(subject: str, text: str) -> None:
+        reports.append({"subject": subject, "note": text})
+
+    # The tracker first, whatever the order given: work it adds is then there
+    # for the forge to link, so one pass reaches the fixed point.
+    for snapshot in sorted(snapshots, key=lambda snapshot: snapshot["source"] != "tracker"):
+        for item in snapshot["items"]:
+            subject, word = item["subject"], item["state"]
+            title = item.get("title") or subject
+            if snapshot["source"] == "tracker":
+                known = queued(subject) or planned(subject)
+                if not known and not followed(subject):
+                    if word == "backlog":
+                        lead["followups"].append({"id": subject, "title": title, "reference": subject})
+                        change(subject, "in the tracker but not the record: added as a follow-up")
+                    elif word == "started":
+                        lead["planned"].append({"subject": subject, "title": title, "lane": None, "stage": "planned"})
+                        change(subject, "started in the tracker but not in the record: added as planned work")
+                    elif word == "completed":
+                        report(subject, "completed in the tracker but never recorded")
+                elif word == "started" and not known:
+                    report(subject, "a follow-up the tracker now shows started: assign it a lane")
+                elif word == "completed" and planned(subject):
+                    report(subject, "completed in the tracker but still planned in the record: check the forge")
+                elif word == "canceled" and planned(subject):
+                    report(subject, "canceled in the tracker but still planned in the record")
+                continue
+            reference = item.get("changeRequest")
+            entry = queued(subject) or planned(subject)
+            if entry is None:
+                if word in ("open", "draft", "merged"):
+                    report(subject, f"{'an' if word == 'open' else 'a'} {word} change request for work the record does not hold")
+                continue
+            if reference and entry.get("changeRequest") != reference:
+                entry["changeRequest"] = reference
+                change(subject, f"linked change request {reference}")
+            if word == "open" and entry is planned(subject) and entry["stage"] == "planned":
+                entry["stage"] = "review"
+                change(subject, "its change request is open: now in review")
+            elif word == "closed" and entry.get("stage") != "merged":
+                report(subject, "its change request closed without merging")
+            elif word == "merged":
+                if entry is planned(subject):
+                    if "head" not in item:
+                        report(subject, "merged on the forge, but the snapshot gives no head to record")
+                        continue
+                    # A hand-off the lead missed: the work joins the queue as the lead's...
+                    lead["planned"] = [other for other in lead["planned"] if other["subject"] != subject]
+                    element = {
+                        "order": max([other["order"] for other in lead["queue"]] or [0]) + 1,
+                        "subject": subject, "title": entry["title"], "lane": entry["lane"], "stage": "queued",
+                        "head": item["head"], "syncedHead": None, "leadInputs": [], "reportedRounds": None,
+                        "runId": None, "checks": [],
+                    }
+                    if entry.get("changeRequest"):
+                        element["changeRequest"] = entry["changeRequest"]
+                    lead["queue"].append(element)
+                    change(subject, "merged on the forge while still planned: added to the queue")
+                    entry = element
+                if entry["stage"] != "merged":
+                    # ...and the merge the runner never saw is recovered as the runner's.
+                    recoveries.append({"subject": subject, "head": item.get("head") or entry["head"],
+                                       "changeRequest": entry.get("changeRequest"), "lane": entry.get("lane")})
+                    change(subject, "merged on the forge but not recorded by the runner: recorded as merged", True)
+    if not lead["planned"] and "planned" not in state:
+        del lead["planned"]
+    changed = {key: value for key, value in lead.items() if value != state.get(key, [] if key == "planned" else None)}
+    return changed, recoveries, changes, reports
+
+
+def reconcile(
+    directory: Path,
+    snapshot_paths: list[Path],
+    *,
+    max_age: float = SNAPSHOT_MAX_AGE_SECONDS,
+    between_read_and_write: Callable[[], None] | None = None,
+) -> dict:
+    """Bring the record up to date with forge and tracker snapshots.
+
+    Lead fields are written as the lead. A merge the runner never recorded is
+    written as the runner, with a journal entry saying so: a recovery path, since
+    the runner records its own merges. Pinned to the version it read; when the
+    record moves under it, the plan is made again from the new record.
+    """
+    if not snapshot_paths:
+        raise StateError("snapshot_invalid", "give at least one --snapshot")
+    snapshots = [read_snapshot(Path(path), max_age) for path in snapshot_paths]
+    seen: dict[tuple[str, str], str] = {}
+    for path, snapshot in zip(snapshot_paths, snapshots):
+        for item in snapshot["items"]:
+            key = (snapshot["source"], item["subject"])
+            if key in seen:
+                raise StateError("snapshot_invalid", f"{item['subject']} is in two {snapshot['source']} snapshots, "
+                                                     f"{seen[key]} and {Path(path).name}: give one view of each")
+            seen[key] = Path(path).name
+    for attempt in range(1, RECONCILE_ATTEMPTS + 1):
+        state = read_state(directory)
+        lead, recoveries, changes, reports = _plan(state, snapshots)
+        if not lead and not recoveries:
+            return {"ok": True, "drift": False, "changes": [], "reports": reports, "summary": "no drift"}
+        try:
+            if lead:
+                patch(directory, writer="lead", version=state["version"], changes=lead,
+                      between_read_and_write=between_read_and_write)
+        except StateError as error:
+            if error.code == "version_stale" and attempt < RECONCILE_ATTEMPTS:
+                continue
+            raise
+        break
+    if recoveries:
+        _recover(directory, recoveries, changes, reports)
+    if not changes:
+        return {"ok": True, "drift": False, "changes": [], "reports": reports, "summary": "no drift"}
+    return {"ok": True, "drift": True, "changes": changes, "reports": reports,
+            "summary": f"{len(changes)} change{'s' if len(changes) != 1 else ''}"}
+
+
+def _recover(directory: Path, recoveries: list[dict], changes: list[dict], reports: list[dict]) -> None:
+    """Record merges the runner missed, as the runner, only while no runner is running.
+
+    A runner holding the queue lock may have merged and not yet recorded it;
+    recording for it would race its own write and journal a false claim. So
+    the queue lock is tried, not waited for, and each item is read again under
+    it: a merge the runner recorded meanwhile is left alone.
+    """
+    def withdraw(subject: str) -> None:
+        changes[:] = [change for change in changes if not (change["subject"] == subject and change["recovery"])]
+
+    with contextlib.ExitStack() as held:
+        try:
+            held.enter_context(file_lock(directory / QUEUE_LOCK, timeout=0))
+        except StateError as error:
+            if error.code != "lock_timeout":
+                raise
+            for recovery in recoveries:
+                withdraw(recovery["subject"])
+                reports.append({"subject": recovery["subject"],
+                                "note": "merged on the forge while the runner is running: reconcile again once it stops"})
+            return
+        for recovery in recoveries:
+            selector = f"queue[subject={recovery['subject']}]"
+            for _ in range(RECONCILE_ATTEMPTS):
+                state = read_state(directory)
+                item = next((item for item in state["queue"] if item["subject"] == recovery["subject"]), None)
+                if item is None or item["stage"] == "merged":
+                    withdraw(recovery["subject"])
+                    break
+                try:
+                    patch(directory, writer="runner", version=state["version"], selector=selector,
+                          changes={"stage": "merged", "syncedHead": recovery["head"]})
+                except StateError as error:
+                    if error.code != "version_stale":
+                        raise
+                    continue
+                where = f" as change request {recovery['changeRequest']}" if recovery["changeRequest"] else ""
+                append_journal(
+                    directory, kind="candidate.merged", subject=recovery["subject"], lane=recovery["lane"],
+                    summary=f"Recorded from a forge snapshot: merged{where} at {recovery['head']}, "
+                            "not recorded by the runner",
+                )
+                break
+            else:
+                raise StateError("version_stale", "the record kept changing while a merge was recovered")
+
+
+def read_outbox(directory: Path) -> dict | None:
+    """The outbox a host publisher last wrote, or None."""
+    try:
+        outbox = json.loads((directory / OUTBOX_DIRECTORY / OUTBOX_FILE).read_bytes().decode("utf-8"))
+    except FileNotFoundError:
+        return None
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise StateError("state_invalid", f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE} is not JSON") from None
+    if (not isinstance(outbox, dict)
+            or not all(isinstance(outbox.get(key), int) and not isinstance(outbox.get(key), bool)
+                       and outbox[key] >= 0 for key in ("version", "journalThrough"))):
+        raise StateError("state_invalid", f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE} is malformed")
+    return outbox
+
+
+# ---------------------------------------------------------------------------
+# Publication: what went out, so an unpublished view is visible
+
+
+def read_published(directory: Path) -> dict | None:
+    try:
+        published = json.loads((directory / PUBLISHED_FILE).read_bytes().decode("utf-8"))
+    except FileNotFoundError:
+        return None
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise StateError("state_invalid", f"{PUBLISHED_FILE} is not JSON") from None
+    if (not isinstance(published, dict) or set(published) != {"version", "journalThrough", "at"}
+            or not all(isinstance(published[key], int) and not isinstance(published[key], bool)
+                       and published[key] >= 0 for key in ("version", "journalThrough"))
+            or not isinstance(published["at"], str)):
+        raise StateError("state_invalid", f"{PUBLISHED_FILE} is malformed")
+    return published
+
+
+def ack(directory: Path, *, version: int, through: int) -> dict:
+    """Record that ``version`` and the journal through entry ``through`` were published.
+
+    Kept beside the state, not in it: an acknowledgement that wrote the state
+    would make the record newer than what it acknowledges.
+    """
+    with file_lock(directory / STATE_LOCK):
+        state = read_state(directory)
+        journal = read_journal(directory)
+        try:
+            previous = read_published(directory) or {"version": 0, "journalThrough": 0}
+        except StateError:
+            # An unreadable acknowledgement is replaced: the ack is its repair.
+            previous = {"version": 0, "journalThrough": 0}
+        last = journal[-1]["id"] if journal else 0
+        problems = []
+        if version > state["version"]:
+            problems.append(f"version {version} is ahead of the record's {state['version']}")
+        if version < max(1, previous["version"]):
+            problems.append(f"version {version} is before the published {previous['version']}")
+        if through > last:
+            problems.append(f"journal entry {through} does not exist; the last is {last}")
+        if through < previous["journalThrough"]:
+            problems.append(f"journal entry {through} is before the published {previous['journalThrough']}")
+        outbox = read_outbox(directory)
+        if outbox is not None and (version > outbox["version"] or through > outbox["journalThrough"]):
+            problems.append(
+                f"the outbox holds version {outbox['version']} through entry {outbox['journalThrough']}: "
+                "acknowledge only what was published")
+        if problems:
+            raise StateError("ack_invalid", "; ".join(problems))
+        published = {"version": version, "journalThrough": through, "at": now()}
+        _write_atomically(directory / PUBLISHED_FILE, dumps(published))
+    return published
+
+
+def publication(directory: Path, shown: dict) -> dict:
+    """Whether what was published, and the outbox, lag the record.
+
+    The record is fine when only an acknowledgement or an outbox is unreadable:
+    each is reported as an error and counted as a lag, never as a failure.
+    """
+    last = shown["journal"][-1]["id"] if shown["journal"] else 0
+    version = shown["state"]["version"]
+    errors = {}
+    try:
+        published = read_published(directory)
+    except StateError as error:
+        published, errors["error"] = None, str(error)
+    try:
+        outbox = read_outbox(directory)
+    except StateError as error:
+        outbox, errors["outboxError"] = None, str(error)
+    through = published["journalThrough"] if published else 0
+    unpublished = sum(1 for entry in shown["journal"] if entry["id"] > through)
+    return {
+        "publishedVersion": published["version"] if published else None,
+        "journalThrough": through,
+        "unpublishedEntries": unpublished,
+        "outboxVersion": outbox["version"] if outbox else None,
+        "outboxLags": "outboxError" in errors or (
+            outbox is not None and (outbox["version"] < version or outbox["journalThrough"] < last)),
+        "lags": published is None or published["version"] < version or unpublished > 0,
+        **errors,
+    }
+
+
 def _json_argument(value: str | None, name: str) -> object:
     if value is None:
         return None
@@ -672,7 +1014,14 @@ def main(argv: list[str] | None = None) -> int:
     entry.add_argument("--summary", required=True)
     entry.add_argument("--lane")
     entry.add_argument("--subject")
-    commands.add_parser("show", help="print the validated state and journal")
+    commands.add_parser("show", help="print the validated state and journal, and whether publication lags")
+    sync = commands.add_parser("reconcile", help="bring the record up to date with forge and tracker snapshots")
+    sync.add_argument("--snapshot", action="append", type=Path, required=True, help="a work-snapshot/1 file")
+    sync.add_argument("--max-age", type=float, default=SNAPSHOT_MAX_AGE_SECONDS,
+                      help="refuse a snapshot older than this many seconds")
+    published = commands.add_parser("ack", help="record which version and journal entries were published")
+    published.add_argument("--version", type=int, required=True)
+    published.add_argument("--through", type=int, required=True, help="the last journal id published")
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
@@ -703,8 +1052,13 @@ def main(argv: list[str] | None = None) -> int:
                     args.dir, kind=args.kind, summary=args.summary, lane=args.lane, subject=args.subject
                 ),
             }
+        elif args.command == "reconcile":
+            result = reconcile(args.dir, args.snapshot, max_age=args.max_age)
+        elif args.command == "ack":
+            result = {"ok": True, "published": ack(args.dir, version=args.version, through=args.through)}
         else:
-            result = show(args.dir)
+            shown = show(args.dir)
+            result = {**shown, "publication": publication(args.dir, shown)}
     except StateError as error:
         emit({"ok": False, "code": error.code, "error": str(error)})
         return 1
