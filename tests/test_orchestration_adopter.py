@@ -541,6 +541,68 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.assertFalse(adopter.state_tool("reconcile", "--snapshot", str(output))["drift"])
 
+
+    def test_a_declared_flake_retries_once_and_a_real_failure_reaches_the_views(self) -> None:
+        adopter = FixtureAdopter(self.root)
+        adopter.state_tool("init", "--headline", "Fixture checks")
+        flaked = self.root / "flake once"
+        # The adopter's suite prints one line per failing test; one test flakes under load.
+        suite = (
+            "import pathlib, sys\n"
+            "flag = pathlib.Path(sys.argv[1])\n"
+            "if flag.exists():\n"
+            "    flag.unlink()\n"
+            "    print('FAIL: test_launcher_cancel flaked under load')\n"
+            "    sys.exit(1)\n"
+            "broken = [path.stem for path in sorted(pathlib.Path('src').glob('*.txt')) if 'BROKEN' in path.read_text()]\n"
+            "for stem in broken:\n"
+            "    print('FAIL: test_source_' + stem + ' marked broken')\n"
+            "sys.exit(1 if broken else 0)\n"
+        )
+        binding = adopter.binding()
+        binding["alwaysRun"] = [{"id": "suite", "argv": [sys.executable, "-B", "tools/suite.py", str(flaked)], "cwd": ".",
+                                 "reasons": ["every change"], "prerequisites": []}]
+        binding["checkOutput"] = {"failurePattern": r"^FAIL: (?P<id>\S+)(?: (?P<message>.*))?$"}
+        binding["flakes"] = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
+        adopter.push_to_base({"tools/suite.py": suite}, "Add the adopter's suite, with its known flake", binding=binding)
+        heads = {
+            "alpha-copy": adopter.lane_change("alpha-copy", {"src/alpha.txt": "alpha two\n"}),
+            "beta-copy": adopter.lane_change("beta-copy", {"src/beta.txt": "beta BROKEN\n"}),
+        }
+        adopter.lead_patch({"queue": [{
+            "order": n, "subject": subject, "title": f"Candidate {subject}", "lane": f"lane-{n}", "stage": "queued",
+            "head": heads[subject], "syncedHead": None, "leadInputs": [], "reportedRounds": 1, "runId": None,
+            "checks": [],
+        } for n, subject in enumerate(heads, start=1)]})
+
+        # The known flake fails the first run of the suite only: one retry, on the record, then a merge.
+        flaked.write_text("", encoding="utf-8")
+        [*_, merged] = adopter.queue("run", "alpha-copy", expect=0)
+        self.assertEqual(merged["outcome"], "merged")
+        journal = adopter.show()["journal"]
+        retried = [entry for entry in journal if entry["kind"] == "check.retried"]
+        self.assertEqual(len(retried), 1)
+        self.assertIn("FLAKE-7", retried[0]["summary"])
+        self.assertIn("test_launcher_cancel", retried[0]["summary"])
+        history = adopter.show()["state"]["meta"]["checkHistory"]
+        self.assertEqual(history["checks"]["suite"]["flakes"], 1)
+
+        # A real failure is never retried, and its failing tests and log reach the record and the views.
+        results = adopter.queue("run", "beta-copy", expect=1)
+        stopped = results[-1]
+        self.assertEqual(stopped["stop"]["reason"], "check_failed")
+        self.assertIn("test_source_beta", stopped["stop"]["detail"])
+        self.assertEqual(len([entry for entry in adopter.show()["journal"] if entry["kind"] == "check.retried"]), 1)
+        checked = next(result for result in results if result["subcommand"] == "check")
+        suite_entry = next(check for check in checked["checks"] if check["id"] == "suite")
+        self.assertEqual(suite_entry["failures"], [{"id": "test_source_beta", "message": "marked broken"}])
+        self.assertIn("FAIL: test_source_beta", (adopter.state / suite_entry["log"]).read_text(encoding="utf-8"))
+        view = adopter.view()
+        self.assertIn(text("failing test_source_beta"), view)
+        self.assertIn(text(f"log {suite_entry['log']}"), view)
+        self.assertIn(text("test_launcher_cancel"), view)
+        self.assertIn(text("check.retried"), view)
+
     def test_a_batch_of_two_is_checked_once_and_lands_tree_verified(self) -> None:
         adopter = FixtureAdopter(self.root)
         adopter.state_tool("init", "--headline", "Fixture batch")

@@ -160,7 +160,11 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   differs from the reviewed head only in declared paths, and pushes it.
 - `check <candidate>` runs the checks the repository's affected-checks
   provider selects, plus `alwaysRun`, plus `fallback` when impact is unknown,
-  on a fresh checkout of the synced head.
+  on a fresh checkout of the synced head. Each check's elapsed time shows
+  against its usual duration; a failed check's failing tests and its log reach
+  the record, the journal and the views. A failure made only of the binding's
+  declared flakes is retried once and journaled as `check.retried`; any other
+  failure is never retried.
 - `merge <candidate>` merges the checked head through the binding's `ready`
   and `merge` commands and confirms the new base.
 - `run <candidate>...` does sync, check and merge in order for each candidate,

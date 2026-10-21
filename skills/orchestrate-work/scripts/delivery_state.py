@@ -80,7 +80,7 @@ ELEMENT_KEYS = {
 SELECTOR = re.compile(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)\]$")
 # Fields only the runner writes. Everything else, apart from the fields the
 # tool itself maintains, belongs to the lead.
-RUNNER_META = ("checking", "baseHead", "releasedHead")
+RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory")
 RUNNER_QUEUE = ("stage", "checks", "syncedHead")
 TOOL_OWNED = ("schemaVersion", "version")
 # A queue element the lead adds starts with the runner's fields empty.
@@ -694,7 +694,8 @@ def show(directory: Path, *, between_reads: Callable[[], None] | None = None) ->
         if between_reads is not None:
             between_reads()
         journal = read_journal(directory)
-    return {"state": state, "journal": journal, "stats": delivery_stats(state, journal)}
+    return {"state": state, "journal": journal, "stats": delivery_stats(state, journal),
+            "estimates": queue_estimates(state)}
 
 
 # ---------------------------------------------------------------------------
@@ -794,6 +795,47 @@ def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> d
         "findings": findings,
         "lastVerdicts": dict(rounds[-1]["verdicts"]) if rounds else None,
     }
+
+
+def median_seconds(values: list[int]) -> int | None:
+    """The median of the last five values, or None with no values: no history means no estimate, never a guess."""
+    recent = sorted(values[-5:])
+    if not recent:
+        return None
+    middle = len(recent) // 2
+    return recent[middle] if len(recent) % 2 else (recent[middle - 1] + recent[middle]) // 2
+
+
+def queue_estimates(state: dict, at: str | None = None) -> dict:
+    """Each waiting candidate's position and expected start, folded from the check history.
+
+    Waiting means queued, in the record's order. The run in progress counts
+    once, batch or not, for whatever of its median run time remains; each
+    candidate ahead adds one median run. Without run history the start is
+    unknown. These are estimates, never promises.
+    """
+    moment = _parse_time(at or now(), exact=True)
+    expected = median_seconds(((state["meta"].get("checkHistory") or {}).get("runs")) or [])
+    current = state["meta"]["checking"]["now"]
+    remaining = 0
+    if current is not None and expected is not None:
+        elapsed = (moment - _parse_time(current["startedAt"], exact=True)).total_seconds()
+        # A start in the future (a clock out of step) still leaves at most one run.
+        remaining = min(expected, max(0, expected - int(elapsed)))
+    waiting = sorted((item for item in state["queue"] if item["stage"] == "queued"),
+                     key=lambda item: (item["order"], item["subject"]))
+    estimates = {}
+    for position, item in enumerate(waiting, start=1):
+        start = None
+        if expected is not None:
+            try:
+                start = moment + datetime.timedelta(seconds=remaining + (position - 1) * expected)
+            except OverflowError:
+                start = None  # a history too long to be a run means nothing about when
+            else:
+                start = start.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        estimates[item["subject"]] = {"position": position, "expectedStart": start}
+    return estimates
 
 
 def delivery_stats(state: dict, journal: list[dict]) -> dict:

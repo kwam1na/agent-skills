@@ -1820,6 +1820,81 @@ class TrackerSnapshotTests(unittest.TestCase):
         self.assertEqual(result["taken"], True)
 
 
+class QueueEstimateTests(unittest.TestCase):
+    """Waiting candidates get a position and an estimated start, folded from the record's check history."""
+
+    NOW = "2026-10-21T10:00:00Z"
+
+    def state(self, *items: dict, now: dict | None = None, runs: list[int] | None = None) -> dict:
+        meta = {"checking": {"now": now, "next": []}}
+        if runs is not None:
+            meta["checkHistory"] = {"checks": {}, "runs": runs}
+        return {"meta": meta, "queue": list(items)}
+
+    def test_a_batch_ahead_counts_once_and_each_waiting_candidate_one_run_more(self) -> None:
+        batch = {"subject": "work-a", "title": "Batch of 2: work-a, work-b", "startedAt": "2026-10-21T09:58:20Z", "steps": []}
+        state = self.state(
+            queue_item("work-a", stage="checking"), queue_item("work-b", order=2, stage="checking"),
+            queue_item("work-c", order=3), queue_item("work-d", order=4), queue_item("work-e", order=5),
+            # Only the last five runs count: the oldest, 50000s, is left out of the median.
+            now=batch, runs=[50000, 500, 600, 600, 700, 9000],
+        )
+        estimates = state_tool.queue_estimates(state, at=self.NOW)
+        # The median run is 600s; the batch has run 100s, so 500s remain, once for both of its members.
+        self.assertEqual(estimates, {
+            "work-c": {"position": 1, "expectedStart": "2026-10-21T10:08:20Z"},
+            "work-d": {"position": 2, "expectedStart": "2026-10-21T10:18:20Z"},
+            "work-e": {"position": 3, "expectedStart": "2026-10-21T10:28:20Z"},
+        })
+
+    def test_without_history_waiting_candidates_get_a_position_and_no_guess(self) -> None:
+        state = self.state(queue_item("work-c"), queue_item("work-d", order=2))
+        self.assertEqual(state_tool.queue_estimates(state, at=self.NOW), {
+            "work-c": {"position": 1, "expectedStart": None},
+            "work-d": {"position": 2, "expectedStart": None},
+        })
+
+    def test_an_overrunning_check_leaves_nothing_remaining_rather_than_negative(self) -> None:
+        running = {"subject": "work-a", "title": "A", "startedAt": "2026-10-21T09:00:00Z", "steps": []}
+        state = self.state(queue_item("work-a", stage="checking"), queue_item("work-c", order=2),
+                           now=running, runs=[600] * 5)
+        self.assertEqual(state_tool.queue_estimates(state, at=self.NOW),
+                         {"work-c": {"position": 1, "expectedStart": self.NOW}})
+
+    def test_only_queued_candidates_wait_and_the_order_decides_the_position(self) -> None:
+        state = self.state(queue_item("work-z", order=3), queue_item("work-m", order=1, stage="merged"),
+                           queue_item("work-y", order=2, stage="stopped"), queue_item("work-x", order=4), runs=[60] * 5)
+        self.assertEqual(state_tool.queue_estimates(state, at=self.NOW), {
+            "work-z": {"position": 1, "expectedStart": self.NOW},
+            "work-x": {"position": 2, "expectedStart": "2026-10-21T10:01:00Z"},
+        })
+
+    def test_an_even_count_takes_the_mean_of_the_middle_two(self) -> None:
+        state = self.state(queue_item("work-c"), queue_item("work-d", order=2), runs=[100, 200, 300, 400])
+        self.assertEqual(state_tool.queue_estimates(state, at=self.NOW)["work-d"]["expectedStart"], "2026-10-21T10:04:10Z")
+
+    def test_a_start_in_the_future_never_adds_more_than_one_run(self) -> None:
+        running = {"subject": "work-a", "title": "A", "startedAt": "2026-10-21T11:00:00Z", "steps": []}
+        state = self.state(queue_item("work-a", stage="checking"), queue_item("work-c", order=2),
+                           now=running, runs=[600] * 5)
+        self.assertEqual(state_tool.queue_estimates(state, at=self.NOW)["work-c"]["expectedStart"], "2026-10-21T10:10:00Z")
+
+    def test_an_absurd_history_leaves_the_start_unknown_rather_than_failing(self) -> None:
+        state = self.state(queue_item("work-c"), queue_item("work-d", order=2), runs=[10 ** 18] * 5)
+        self.assertEqual(state_tool.queue_estimates(state, at=self.NOW)["work-d"],
+                         {"position": 2, "expectedStart": None})
+
+    def test_show_includes_the_estimates(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        directory = Path(temporary.name) / "state"
+        state_tool.init(directory, "Epic underway")
+        version = state_tool.show(directory)["state"]["version"]
+        state_tool.patch(directory, writer="lead", version=version, changes={"queue": [queue_item("work-c")]})
+        shown = state_tool.show(directory)
+        self.assertEqual(shown["estimates"], {"work-c": {"position": 1, "expectedStart": None}})
+
+
 class PublicationTests(unittest.TestCase):
     """What was published, so an unpublished view is visible."""
 
@@ -1932,8 +2007,8 @@ class PublicationTests(unittest.TestCase):
         state_tool.append_journal(self.directory, kind="decision.recorded", summary="Decision 4")
         code, shown = run_tool(self.directory, "show")
         self.assertTrue(shown["publication"]["outboxLags"], "a journal entry the outbox lacks is a lag")
-        # What renderers read: the state, the journal and the stats folded from them.
-        self.assertEqual(sorted(state_tool.show(self.directory)), ["journal", "state", "stats"])
+        # What renderers read: the state, the journal, and the stats and estimates folded from them.
+        self.assertEqual(sorted(state_tool.show(self.directory)), ["estimates", "journal", "state", "stats"])
 
 
 class SkipGuardTests(unittest.TestCase):
@@ -1988,7 +2063,7 @@ VALID_FIXTURES = {
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
-    "candidate.merged", "candidate.stopped", "base.broken", "base.repaired",
+    "check.retried", "candidate.merged", "candidate.stopped", "base.broken", "base.repaired",
     "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed",
 ]

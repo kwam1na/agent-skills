@@ -595,12 +595,12 @@ EMPTY_STATE = {
     "extensions": {},
 }
 PINNED_EMPTY_VIEWS = {
-    "delivery.md": "50bb05fd2692a0bc9ec2d5e2ce43ee10f8dbf683f6274377ad98ee428887df9a",
-    "delivery.html": "312119cc85670a81f82418cb3d86870d0d3e1e546210f9a35d8b5d5a17a6f323",
+    "delivery.md": "ee0fc476dfb0eb093a6a12a52fe0745943942be5ca9cf0158fc98e4167b61422",
+    "delivery.html": "fcb71d21e1ee7d6441c024671e6ca6ff22149a45b9697b389d07f4439e123208",
 }
 PINNED_VIEWS = {
-    "delivery.md": "802f692197c8aeb9dd94d4886d70d70bce8855483867df80d490f785e022073f",
-    "delivery.html": "f05ccf0df9fba588f08d1ef2b87ed6fa10c4b5473b668a3b9caec7c8c2438ef0",
+    "delivery.md": "6cc957b383a306c8d5b57741020d79bde2b774bcae61a08b88f31d0828be7ad3",
+    "delivery.html": "fe8679a7088f7d21107d329cf246f8f298c68957c4fd3644e1286481e8921cda",
 }
 
 
@@ -837,6 +837,63 @@ class StatsViewTests(unittest.TestCase):
         self.assertIn("Nothing planned outside the queue.", view)
 
 
+def visibility_document() -> dict:
+    """The fixed state with timed steps, a failed check with its log, and queue estimates; as of 12:00:00."""
+    state = copy.deepcopy(FIXED_STATE)
+    state["meta"]["checking"]["now"]["steps"] = [
+        {"label": "fmt", "state": "passed", "startedAt": "2026-10-20T11:50:00Z", "finishedAt": "2026-10-20T11:50:30Z",
+         "expectedSeconds": 40},
+        {"label": "unit", "state": "running", "startedAt": "2026-10-20T11:58:20Z", "expectedSeconds": 600},
+        {"label": "lint", "state": "running", "startedAt": "2026-10-20T11:48:00Z", "expectedSeconds": 600},
+        {"label": "docs", "state": "running", "startedAt": "2026-10-20T11:59:00Z"},
+    ]
+    state["queue"][0]["checks"] = [
+        {"id": "suite", "state": "failed", "failures": ["test_alpha", "test_beta"], "log": "logs/01-suite.log"},
+    ]
+    return {"state": state, "journal": FIXED_JOURNAL,
+            "estimates": {"change-2": {"position": 1, "expectedStart": "2026-10-20T12:08:20Z"}}}
+
+
+VISIBILITY_LINES = (
+    "fmt: passed · took 30s",
+    "unit: running · 1m 40s of an expected 10m 00s",
+    "lint: running · 12m 00s of an expected 10m 00s, over the expected time",
+    "docs: running · 1m 00s, no expected time yet",
+    "suite: failed · failing test_alpha, test_beta · log logs/01-suite.log",
+    "position 1 · expected to start around 2026-10-20T12:08:20Z (an estimate)",
+)
+
+
+class CheckVisibilityViewTests(unittest.TestCase):
+    """Both views show elapsed against expected, failing tests with their log, and queue estimates."""
+
+    def test_the_markdown_view_shows_timing_failures_and_estimates(self) -> None:
+        view = render_state.render_markdown(visibility_document())
+        for line in VISIBILITY_LINES:
+            with self.subTest(line=line):
+                self.assertIn(render_state._markdown_text(line), view)
+
+    def test_exactly_the_expected_time_is_not_over(self) -> None:
+        document = visibility_document()
+        document["state"]["meta"]["checking"]["now"]["steps"] = [
+            {"label": "unit", "state": "running", "startedAt": "2026-10-20T11:50:00.999Z", "expectedSeconds": 600}]
+        view = render_state.render_markdown(document)
+        self.assertIn(render_state._markdown_text("unit: running · 10m 00s of an expected 10m 00s"), view)
+        self.assertNotIn("over the expected time", view)
+
+    def test_an_unknown_start_reads_as_unknown(self) -> None:
+        document = visibility_document()
+        document["estimates"] = {"change-2": {"position": 1, "expectedStart": None}}
+        self.assertIn(render_state._markdown_text("position 1 · start time unknown (an estimate)"),
+                      render_state.render_markdown(document))
+
+    def test_a_document_without_estimates_or_timing_renders_as_before(self) -> None:
+        document = {"state": FIXED_STATE, "journal": FIXED_JOURNAL}
+        view = render_state.render_markdown(document)
+        self.assertNotIn("expected", view)
+        self.assertNotIn("position", view)
+
+
 class WrapperTests(DeliveryStateFixture):
     def test_a_built_in_view_that_fails_keeps_its_previous_view(self) -> None:
         renderers = [{"id": "summary", "builtin": "markdown", "output": "delivery.md"}]
@@ -910,7 +967,7 @@ class WrapperTests(DeliveryStateFixture):
         self.assertEqual(code, 0, result)
         received = json.loads((self.state_dir / "echo.json").read_bytes().decode("utf-8"))
         self.assertEqual(received, self.document)
-        self.assertEqual(set(received), {"state", "journal", "stats"})
+        self.assertEqual(set(received), {"state", "journal", "stats", "estimates"})
 
     def test_extensions_reach_renderers_unchanged(self) -> None:
         wrapper(self.state_dir, "--state-config", self.config([self.capture_renderer("echo")]))
@@ -1270,6 +1327,7 @@ function node(tag) {
   return el;
 }
 const byId = { "delivery-state": { textContent: embedded }, app: node("main") };
+if (scenario.now) { Date.now = () => Date.parse(scenario.now); }
 globalThis.document = {
   getElementById: (id) => byId[id] || null,
   createElement: node,
@@ -1336,6 +1394,33 @@ setTimeout(async () => {
         self.assertIn("10000000 rounds, findings P0/P1/P2/P3 0/10000000/1000000000000000000000/123456789012",
                       shown["text"])
         self.assertNotRegex(shown["text"], r"\de[+-]?\d")
+
+
+    def test_the_page_shows_timing_failures_and_estimates_as_the_markdown_does(self) -> None:
+        # At the moment of the record's last write, the page reads as the markdown does.
+        shown = self.run_page({"now": "2026-10-20T12:00:00Z"}, visibility_document())
+        for line in VISIBILITY_LINES:
+            with self.subTest(line=line):
+                self.assertIn(line, shown["text"])
+
+    def test_a_page_whose_clock_is_behind_the_record_counts_from_the_records_last_write(self) -> None:
+        shown = self.run_page({"now": "2026-10-20T11:59:00Z"}, visibility_document())
+        self.assertIn("unit: running · 1m 40s of an expected 10m 00s", shown["text"])
+
+    def test_fractions_of_a_second_never_make_the_views_disagree(self) -> None:
+        document = visibility_document()
+        document["state"]["meta"]["updatedAt"] = "2026-10-20T12:00:00.100Z"
+        document["state"]["meta"]["checking"]["now"]["steps"] = [
+            {"label": "unit", "state": "running", "startedAt": "2026-10-20T11:58:20.900Z", "expectedSeconds": 600}]
+        line = "unit: running · 1m 40s of an expected 10m 00s"
+        self.assertIn(render_state._markdown_text(line), render_state.render_markdown(document))
+        self.assertIn(line, self.run_page({"now": "2026-10-20T12:00:00.100Z"}, document)["text"])
+
+    def test_the_page_counts_a_running_check_live_from_its_own_clock(self) -> None:
+        # Five minutes after the last write, with no write since, the page still counts on.
+        shown = self.run_page({"now": "2026-10-20T12:05:00Z"}, visibility_document())
+        self.assertIn("unit: running · 6m 40s of an expected 10m 00s", shown["text"])
+        self.assertIn("docs: running · 6m 00s, no expected time yet", shown["text"])
 
     def test_without_an_adapter_the_embedded_state_is_shown(self) -> None:
         shown = self.run_page({})

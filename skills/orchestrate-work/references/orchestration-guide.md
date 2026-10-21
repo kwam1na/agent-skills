@@ -97,6 +97,7 @@ proceeds and the lead notes the gap in its close-out.
 | `candidate.handed` | On the ticket: the hand-off checked as a claim and queued, with its change request, reviewed head and review rounds. |
 | `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. |
 | `check.finished` | None: its outcome posts with `candidate.merged` or `candidate.stopped`. |
+| `check.retried` | On the flake's tracking reference: one more retry, naming the candidate and the failing tests, as evidence for fixing the flake. |
 | `candidate.merged` | On the ticket: the merge commit, the checks run, and any check reported but not awaited; the ticket moves to its review or completed state. |
 | `candidate.stopped` | On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or pending a decision. |
 | `base.broken` | On the epic: the failing check, and that the queue is stopped. |
@@ -578,6 +579,8 @@ substitutes inside a longer string:
 | `fallback` | Checks in the affected-check entry shape, added when impact is unknown. |
 | `checkTimeoutSeconds` | The default check timeout. |
 | `checkTimeoutCeiling` | The maximum any check may ask for. |
+| `checkOutput` | Optional. `{failurePattern}`: a regular expression with a named group `id` and an optional named group `message`, matched line by line against a failed check's output. Each match is a failing test or step, shown in the record, the journal and the views. |
+| `flakes` | Optional. Known flakes, each `{check, tests?, ref}`: the check's id, the regular expressions its flaky failure ids match in full (leave `tests` out when the whole check is flaky), and the reference that tracks the flake. See "Flakes and retries". |
 | `parallelChecks` | Optional. How many checks marked `parallelSafe` may run at once; 1 when absent. A check without `parallelSafe` always runs alone. |
 | `batch` | Optional. `{culpritSearch}`: how `batch` finds the member that failed a batch's checks, `bisect` (the default, fewest check runs) or `serial` (each prefix in order). |
 | `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match; these names are matched without case. The runner drops an inherited setting of them before running git or any declared argv; a profile's environment may still set them for its checks. |
@@ -695,6 +698,47 @@ the runner proves two things before pushing:
 
 So the code that merges is the code the lenses reviewed, plus only what the
 binding declares may change.
+
+### What the record shows about checks
+
+- **Progress.** Each step in `meta.checking.now.steps` carries its
+  `startedAt`, and its `finishedAt` once it ends. A step with history also
+  carries `expectedSeconds`, the median of that check's last five passing
+  durations. A check with no history has no estimate, never a guess. The
+  views show a running step's elapsed time against the expected time, in
+  whole seconds, and mark one that has run over: the markdown view as of the
+  record's last write, the page as of the moment it draws, on load and at
+  each update it receives, by its own clock.
+- **History.** `meta.checkHistory` keeps each check's last five passing
+  durations and how often a declared flake made it retry, and the last five
+  whole check runs. Only the runner writes it.
+- **Failure detail.** A failed or timed-out check's whole output is kept under
+  `logs/` in the state directory, each run in a file of its own; prune old
+  logs with the rest of the record. The binding's `checkOutput.failurePattern`
+  is matched against each line of the output and of the error output on its
+  own; a match with no `id`, or an empty one, names nothing, and an id found
+  twice keeps its first message. The result names every failing test with its
+  message, and the log. The queue row names the same tests and log, and so
+  does the `check_failed` stop, a batch culprit's included, up to ten tests
+  and then how many more; the journal entry and the views carry the same.
+- **Queue estimates.** The state tool's `show` adds a position and an expected
+  start for each candidate waiting at `queued`. The start counts what remains
+  of the run in progress once (a batch is one run), then one median run for
+  each candidate ahead. Without run history the start is unknown. Both are
+  estimates, never promises.
+
+### Flakes and retries
+
+A failed check is retried once, and only once, when every failure it shows
+is a declared flake: the binding's `flakes` names the check without `tests`,
+or every failing id matches one of its `tests` patterns in full. The runner
+journals `check.retried` with the failing ids and the flake's reference
+before it retries, and counts the retry in the check's history. A retry that
+fails again stops the candidate as usual, and its result keeps both failures.
+Never retried: a mix of a flake and anything else; a timeout; and, for a flake
+declared with `tests`, a failure whose ids the pattern cannot read, since the
+patterns can only vouch for failures they can name. A declaration without
+`tests` covers the whole check, whatever its output says.
 
 ### What a batch proves
 

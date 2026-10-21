@@ -94,6 +94,17 @@
                             },
                             "state": {
                               "$ref": "#/$defs/stepState"
+                            },
+                            "startedAt": {
+                              "$ref": "#/$defs/timestamp"
+                            },
+                            "finishedAt": {
+                              "$ref": "#/$defs/timestamp"
+                            },
+                            "expectedSeconds": {
+                              "description": "The median of the step's last passing durations in the check history; absent with no history.",
+                              "type": "integer",
+                              "minimum": 0
                             }
                           }
                         }
@@ -113,6 +124,48 @@
           "trackerParent": {
             "description": "Optional, the lead's: the tracker reference of the item the delivery's work is listed under, for a bound tracker snapshot command.",
             "$ref": "#/$defs/name"
+          },
+          "checkHistory": {
+            "description": "Written by the runner. The last five passing durations and the flake-retry count of each check, and the last five whole check runs, in seconds. Absent until the runner first records a run.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "checks",
+              "runs"
+            ],
+            "properties": {
+              "checks": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "seconds",
+                    "flakes"
+                  ],
+                  "properties": {
+                    "seconds": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "flakes": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              },
+              "runs": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
           }
         }
       },
@@ -268,6 +321,18 @@
                   },
                   "detail": {
                     "type": "string"
+                  },
+                  "failures": {
+                    "description": "The failing test or step ids the binding's failure pattern found in the check's output.",
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/name"
+                    }
+                  },
+                  "log": {
+                    "description": "The check's output, relative to the state directory.",
+                    "type": "string",
+                    "minLength": 1
                   }
                 }
               }
@@ -464,6 +529,7 @@
           "candidate.handed",
           "check.started",
           "check.finished",
+          "check.retried",
           "candidate.merged",
           "candidate.stopped",
           "base.broken",
@@ -964,6 +1030,81 @@
             "seconds": {
               "type": "number",
               "minimum": 0
+            },
+            "failures": {
+              "description": "Each failing test or step the binding's failure pattern found in the output, with its message.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "message"
+                ],
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/name"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "log": {
+              "description": "The check's output, relative to the state directory.",
+              "type": "string",
+              "minLength": 1
+            },
+            "retried": {
+              "description": "The first run of a check whose failures all matched a declared flake, which was retried once.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "flake",
+                "failures",
+                "log",
+                "exitCode"
+              ],
+              "properties": {
+                "flake": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "failures": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "message"
+                    ],
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/name"
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "log": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "exitCode": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ]
+                }
+              }
             }
           }
         }
@@ -1549,6 +1690,48 @@
               "bisect",
               "serial"
             ]
+          }
+        }
+      },
+      "checkOutput": {
+        "description": "Optional. failurePattern is a regular expression, matched line by line against a failed check's output, with a named group id and an optional named group message; each match is a failing test or step.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "failurePattern"
+        ],
+        "properties": {
+          "failurePattern": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "flakes": {
+        "description": "Optional. Known flakes: a check id, the regular expressions its flaky failure ids match (absent: the whole check is flaky), and the reference that tracks the flake. A failed check whose failures all match is retried once.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "check",
+            "ref"
+          ],
+          "properties": {
+            "check": {
+              "$ref": "#/$defs/name"
+            },
+            "tests": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       }
