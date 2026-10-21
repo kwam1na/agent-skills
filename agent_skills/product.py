@@ -356,18 +356,28 @@ class _ForkWatcher(threading.Thread):
         self._ended = ended
         # By pid and start, so a reused pid is registered again.
         self._watched: set[tuple[int, object]] = set()
+        # The start each pid's registration was made for.
+        self._starts: dict[int, object] = {}
         self._closed = False
 
     def watch(self, pid: int, started: object) -> None:
         if self._closed or (pid, started) in self._watched:
             return
         self._watched.add((pid, started))
-        event = self._select.kevent(pid, self._select.KQ_FILTER_PROC, self._select.KQ_EV_ADD,
-                                    self._select.KQ_NOTE_FORK | self._select.KQ_NOTE_EXIT)
+        notes = self._select.KQ_NOTE_FORK | self._select.KQ_NOTE_EXIT
         try:
-            self._queue.control([event], 0, 0)
+            self._queue.control([self._select.kevent(
+                pid, self._select.KQ_FILTER_PROC, self._select.KQ_EV_ADD, notes)], 0, 0)
+            # The pid may have been reused before the registration: keep it
+            # only on the process that was learned.
+            current = _darwin_process(pid)
+            if current is None or current.started != started:
+                self._queue.control([self._select.kevent(
+                    pid, self._select.KQ_FILTER_PROC, self._select.KQ_EV_DELETE, notes)], 0, 0)
+                return
         except (OSError, ValueError):
             return  # Gone already, not ours to watch, or the watcher closed.
+        self._starts[pid] = started
         self._children_of(pid)
 
     def _children_of(self, pid: int) -> None:
@@ -381,9 +391,12 @@ class _ForkWatcher(threading.Thread):
                     events = self._queue.control(None, 64, 0.1)
                 except (OSError, ValueError):
                     return
+                # One stamp per batch, taken as it arrives: the closest
+                # bound on when each exit in it happened.
+                seen = _wall_stamp()
                 for event in events:
                     if event.fflags & self._select.KQ_NOTE_EXIT and self._ended is not None:
-                        self._ended(event.ident, _wall_stamp())
+                        self._ended(event.ident, self._starts.get(event.ident), seen)
                     if event.fflags & self._select.KQ_NOTE_FORK:
                         try:
                             self._children_of(event.ident)
@@ -447,11 +460,13 @@ class _DescendantTracker:
     launch's environment marker (see ``sweep``). On macOS, which discloses
     no environment for Apple system binaries (/bin/sh, /bin/sleep and the
     like), a fork watcher learns each child as it is forked, best effort,
-    and the sweep also recognises a holder of the launch's lifeline pipe.
+    and the sweep also recognises a holder of the launch's lifeline pipe,
+    and a job left in the group of a descendant that has exited.
     A descendant that escapes and is orphaned between two observations,
     with no readable marker and no lifeline (it closed its descriptors),
     and whose fork the watcher did not see, is still missed. On Linux
-    neither the fork watcher nor the lifeline applies.
+    neither the fork watcher, the lifeline nor the group of an exited
+    descendant applies.
 
     Every process is learned for a reason: ``group`` (in the child's process
     group), ``descendant`` (by ancestry in the table), ``forked`` (seen being
@@ -555,8 +570,13 @@ class _DescendantTracker:
         descendant and while it was still there (it is now, or the fork
         watcher saw it exit later), joined that descendant's group, in a
         session the run created. This finds a job a short-lived shell left
-        behind (``nohup sleep &``) after the shell exited.
+        behind (``nohup sleep &``) after the shell exited. The exit is bounded
+        by when the watcher received it, so this relies on no pid being
+        reused within that instant. It applies only where the fork watcher
+        runs (macOS).
         """
+        if self._watcher_factory is None:
+            return False
         leader = process.pgid
         started = self._known.get(leader)
         if started is None or leader == self._root or _precedes(process.started, started):
@@ -567,11 +587,15 @@ class _DescendantTracker:
         end = self._ends.get(leader)
         return end is not None and end[0] == started and _precedes(process.started, end[1])
 
-    def ended(self, pid: int, at: object) -> None:
-        """Remember when the fork watcher saw a known process exit."""
+    def ended(self, pid: int, started: object, at: object) -> None:
+        """Remember when the fork watcher saw a known process exit.
+
+        ``started`` is the start its registration was made for; an exit of
+        any other process holding that pid is not this one's.
+        """
         with self._lock:
-            started = self._root_started if pid == self._root else self._known.get(pid)
-            if started is not None:
+            known = self._root_started if pid == self._root else self._known.get(pid)
+            if known is not None and known == started:
                 self._ends[pid] = (started, at)
 
     def _callers(self, table: dict[int, _Process]) -> set[int]:
@@ -595,7 +619,9 @@ class _DescendantTracker:
         ``marker`` or ``lifeline`` match is only as good as the match, so
         it must also have started no earlier than the child, by its exact
         stamp, or, before the child is confirmed, than the launcher.
-        Ancestry and the fork watcher show parentage directly.
+        Ancestry and the fork watcher show parentage directly, so for them
+        an hour of slack covers a clock stepped back during the run, and
+        still refuses a long-running process of the caller's.
         """
         if pid <= 1:
             return "init"
@@ -604,8 +630,13 @@ class _DescendantTracker:
         if not self._in_group(process) and hasattr(os, "geteuid") and process.uid != os.geteuid():
             return "other-user"
         reference = self._root_started if self._root_started is not None else self._floor
-        if why in ("marker", "lifeline") and reference is not None and _precedes(process.started, reference):
-            return "before-run"
+        if reference is not None:
+            # A match by marker or lifeline by its exact stamp; any other,
+            # whose parentage is shown, with the hour of slack a clock
+            # stepped back during a run needs.
+            precedes = _precedes if why in ("marker", "lifeline") else _started_before
+            if precedes(process.started, reference):
+                return "before-run"
         return None
 
     def _learn(self, pid: int, process: _Process, why: str, table: dict[int, _Process] | None) -> bool:
@@ -759,7 +790,9 @@ class _DescendantTracker:
             return {
                 "group": self._root if self._root_present else None,
                 "escaped": None if escaped is None else [[pid, self._why[pid]] for pid in escaped],
-                "refused": [[pid, why] for pid, why in self._live_refusals(self._last_table)],
+                # Behind an unreadable table every refusal still counts.
+                "refused": [[pid, why] for pid, why in
+                            self._live_refusals(None if escaped is None else self._last_table)],
             }
 
     def group_members(self) -> tuple[int, ...]:

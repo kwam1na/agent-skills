@@ -22,7 +22,9 @@ from agent_skills.product import (
     _LAUNCH_MARKER,
     _Process,
     _darwin_environment,
+    _ForkWatcher,
     _darwin_pipes,
+    _darwin_process,
     _darwin_process_table,
     _lifeline_handle,
     _observed_child_liveness,
@@ -33,6 +35,7 @@ from agent_skills.product import (
     _run_command,
     _started_before,
     _stop_escaped_descendants,
+    _wall_stamp,
     _stop_posix_group,
     _wait_for_posix_group,
 )
@@ -1221,6 +1224,12 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         tracker = _DescendantTracker(child, table=lambda: table, lifeline=lambda: 0xA, pipes=pipes)
         self.assertEqual(tracker.escaped(), (200,))
         self.assertEqual(tracker.preview()["escaped"], [[200, "lifeline"]])
+        # A holder that started before the child, by its exact stamp, is refused.
+        stamped = {100: _Process(me, 100, UID, (10, 5), False), 203: _Process(1, 203, UID, (10, 4), False)}
+        early_holder = _DescendantTracker(child, table=lambda: stamped, lifeline=lambda: 0xA,
+                                          pipes=lambda pid: {0xA})
+        self.assertEqual(early_holder.escaped(), ())
+        self.assertIn([203, "before-run"], early_holder.preview()["refused"])
         # Once nothing holds the read end it names nobody, so a closed pipe,
         # which any process may hold, is never a match.
         for lifeline in (lambda: None, lambda: 0):
@@ -1342,7 +1351,22 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             self.assertEqual(tracker.escaped(), ())
             self.assertEqual(tracker.refused(), (300,))
             self.assertEqual(tracker.preview()["refused"], [[300, "other-user"]])
-            # Once it exits, it no longer stands between cancellation and a clean result.
+            # Behind a table that cannot be read, it still counts.
+            reads = [None]
+            unreadable = tracker._table
+            tracker._table = lambda: reads[-1] if reads else table
+            self.assertEqual(tracker.refused(), (300,))
+            self.assertEqual(tracker.preview()["refused"], [[300, "other-user"]])
+            reads.clear()
+            tracker._table = unreadable
+            # A zombie, a pid that now names a later process, or one back in
+            # the child's group no longer counts; nor, read afresh, one that exited.
+            for later in (_Process(1, 300, UID + 1, 11, True), _Process(1, 300, UID + 1, 99, False),
+                          _Process(1, 100, UID + 1, 11, False)):
+                table[300] = later
+                self.assertEqual(tracker.refused(), (), later)
+            table[300] = _Process(1, 300, UID + 1, 11, False)
+            self.assertEqual(tracker.refused(), (300,))
             del table[300]
             self.assertEqual(tracker.refused(), ())
             # An ancestry-learned descendant is labelled so; another user's,
@@ -1362,25 +1386,45 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         me = os.getpid()
         child = Mock(pid=100)
         table = {100: _Process(me, 100, UID, (10, 0), False), 300: _Process(100, 300, UID, (11, 0), False)}
-        tracker = _DescendantTracker(child, table=lambda: table)
+        tracker = _DescendantTracker(child, table=lambda: table, watcher=lambda *callbacks: Mock())
         tracker.observe()
         del table[300]
-        tracker.ended(300, (15, 0))
+        tracker.ended(300, (12, 0), (13, 0))   # another process's exit under that pid: ignored
+        tracker.ended(300, (11, 0), (15, 0))
         table.update({
             310: _Process(1, 300, UID, (14, 0), False),   # started while the shell was there
             311: _Process(1, 300, UID, (16, 0), False),   # after it was seen to exit
             312: _Process(1, 300, UID, (10, 500000), False),  # before the shell started
         })
         self.assertEqual(tracker.escaped(), (310,))
+        self.assertEqual(tracker.preview()["escaped"], [[310, "descendant"]])
         # While the descendant is there, its group is its own.
         table[400] = _Process(100, 400, UID, (20, 0), False)
         tracker.observe()
         table[401] = _Process(1, 400, UID, (21, 0), False)
         self.assertEqual(tracker.escaped(), (310, 400, 401))
         # An exit seen for a pid that now names a later process vouches for nothing.
-        tracker.ended(500, (30, 0))
+        tracker.ended(500, (29, 0), (30, 0))
         table[501] = _Process(1, 500, UID, (25, 0), False)
         self.assertEqual(tracker.escaped(), (310, 400, 401))
+        # A known leader whose pid now names an unrelated process that leads
+        # a group of its own vouches for none of that group.
+        table[600] = _Process(100, 600, UID, (30, 0), False)
+        tracker.observe()
+        table[600] = _Process(1, 600, UID, (40, 0), False)
+        table[601] = _Process(1, 600, UID, (41, 0), False)
+        self.assertNotIn(601, tracker.escaped())
+        # The child's own group counts only while the child is there.
+        table[100] = _Process(1, 100, UID, (50, 0), False)
+        table[602] = _Process(1, 100, UID, (51, 0), False)
+        self.assertNotIn(602, tracker.escaped())
+        # Without the fork watcher (Linux), a group vouches for nobody.
+        plain = _DescendantTracker(child, table=lambda: table)
+        table[100] = _Process(me, 100, UID, (10, 0), False)
+        table[700] = _Process(100, 700, UID, (60, 0), False)
+        plain.observe()
+        table[701] = _Process(1, 700, UID, (61, 0), False)
+        self.assertNotIn(701, plain.escaped())
 
     def test_a_marker_match_started_before_the_run_is_refused_by_its_exact_macos_stamp(self) -> None:
         me = os.getpid()
@@ -1394,12 +1438,33 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         tracker = _DescendantTracker(child, table=lambda: table, marker=marker, environment=lambda pid: [marker])
         self.assertEqual(tracker.escaped(), (201,))
         self.assertEqual(tracker.preview()["refused"], [[200, "before-run"]])
+        # Once the child is confirmed its start is the bound, not the launcher's.
+        bounded = {**table, me: _Process(1, me, UID, (20, 0), False), 205: _Process(1, 205, UID, (20, 250000), False)}
+        confirmed = _DescendantTracker(child, table=lambda: bounded, marker=marker, environment=lambda pid: [marker])
+        self.assertEqual(confirmed.escaped(), (201,))
+        self.assertIn([205, "before-run"], confirmed.preview()["refused"])
+        # A descendant shown by ancestry is kept through a small clock step
+        # back, but not one an hour and more before the child.
+        stepped = {100: _Process(me, 100, UID, (5000, 0), False),
+                   206: _Process(100, 206, UID, (4999, 0), False),
+                   207: _Process(100, 207, UID, (1000, 0), False)}
+        ancestry = _DescendantTracker(child, table=lambda: stepped)
+        ancestry.observe()
+        stepped[206] = _Process(1, 206, UID, (4999, 0), False)
+        stepped[207] = _Process(1, 207, UID, (1000, 0), False)
+        self.assertEqual(ancestry.escaped(), (206,))
+        self.assertIn([207, "before-run"], ancestry.preview()["refused"])
         # Before the child is confirmed, the launcher's own start is the bound.
         early = {me: _Process(1, me, UID, (20, 0), False), 202: _Process(1, 202, UID, (19, 999999), False),
                  203: _Process(1, 203, UID, (20, 0), False)}
         unconfirmed = _DescendantTracker(child, table=lambda: early, marker=marker, environment=lambda pid: [marker])
         self.assertEqual(unconfirmed.escaped(), (203,))
         self.assertEqual(unconfirmed.refused(), (202,))
+        # Confirmed later, by a child that started after that match, the
+        # match is checked against the child's start and refused.
+        early[100] = _Process(me, 100, UID, (20, 1), False)
+        self.assertEqual(unconfirmed.escaped(), ())
+        self.assertIn([203, "before-run"], unconfirmed.preview()["refused"])
 
     def test_each_learned_process_is_watched_for_forks_and_a_zombie_is_not_adopted(self) -> None:
         me = os.getpid()
@@ -1419,6 +1484,10 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         self.assertNotIn(304, [args[0] for args, _ in watcher.watch.call_args_list])
         tracker.close()
         watcher.close.assert_called_once_with()
+        factory = Mock(return_value=Mock())
+        wired = _DescendantTracker(child, table=lambda: table, watcher=factory)
+        wired.observe()
+        self.assertEqual(factory.call_args.args, (wired.adopt, wired.ended))
         # A watcher that cannot start leaves the tree to the table.
         failing = _DescendantTracker(child, table=lambda: table, watcher=Mock(side_effect=OSError("kqueue")))
         failing.observe()
@@ -1431,6 +1500,52 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         with patch("agent_skills.product._darwin_process",
                    side_effect={400: early[400], 401: _Process(400, 401, UID, 12, False)}.get):
             self.assertFalse(unconfirmed.adopt(401, 400))
+
+    @unittest.skipUnless(sys.platform == "darwin", "kqueue process events")
+    def test_the_fork_watcher_reports_each_fork_with_its_parent_and_each_exit(self) -> None:
+        # Signals nothing: a Python parent forks one grandchild, both exit.
+        stamp = _wall_stamp()
+        self.assertIsInstance(stamp, tuple)
+        self.assertEqual(len(stamp), 2)
+        self.assertFalse(_started_before(stamp, _darwin_process(os.getpid()).started))
+        offered, ended = [], []
+        with tempfile.TemporaryDirectory() as directory:
+            go = Path(directory) / "go"
+            parent = subprocess.Popen([sys.executable, "-c",
+                "import os, sys, time\nfrom pathlib import Path\n"
+                "while not Path(sys.argv[1]).exists(): time.sleep(0.01)\n"
+                "pid = os.fork()\n"
+                "if pid == 0:\n    time.sleep(0.3)\n    os._exit(0)\n"
+                "os.waitpid(pid, 0)\n", str(go)])
+            started = _darwin_process(parent.pid).started
+
+            def adopt(pid, by):
+                offered.append((pid, by))
+                process = _darwin_process(pid)
+                if process is not None:
+                    watcher.watch(pid, process.started)
+
+            watcher = _ForkWatcher(adopt, lambda pid, start, at: ended.append((pid, start)))
+            watcher.start()
+            try:
+                watcher.watch(parent.pid, started)
+                go.write_text("1")
+                parent.wait(timeout=10)
+                deadline = time.monotonic() + 5
+                while len(ended) < 2 and time.monotonic() < deadline:
+                    time.sleep(0.02)
+            finally:
+                watcher.close()
+        self.assertEqual([by for _, by in offered], [parent.pid])
+        self.assertIn((parent.pid, started), ended)
+        self.assertIn(offered[0][0], [pid for pid, _ in ended])
+        self.assertFalse(watcher.is_alive())
+        # A registration for a start the pid no longer has is dropped.
+        stale = _ForkWatcher(lambda *args: None)
+        stale.watch(os.getpid(), (0, 0))
+        self.assertNotIn(os.getpid(), stale._starts)
+        stale.start()
+        stale.close()
 
     @unittest.skipUnless(sys.platform == "darwin", "the lifeline pipe is macOS only")
     def test_the_lifeline_read_end_goes_only_to_the_child_and_both_ends_are_closed(self) -> None:
