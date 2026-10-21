@@ -505,6 +505,41 @@ class FixtureAdopterTests(unittest.TestCase):
         # 9. The lead keeps the live view current: snapshots, reconcile, render, publish, acknowledge.
         self.keep_the_live_view_current(adopter)
 
+        # 10. With the repository's tracker command bound, the sync loop takes the snapshot itself.
+        self.take_the_tracker_snapshot_with_the_binding(adopter)
+
+    def take_the_tracker_snapshot_with_the_binding(self, adopter: FixtureAdopter) -> None:
+        data = adopter.root / "tracker data.json"
+        data.write_text(json.dumps({"epic-1": [
+            {"reference": "theta-docs", "title": "Docs for theta", "stateType": "backlog", "blockedBy": []},
+            {"reference": "iota-copy", "title": "Copy for iota", "stateType": "started", "blockedBy": ["theta-docs"]},
+        ]}), encoding="utf-8")
+        binding = adopter.binding()
+        binding["state"]["trackerSnapshot"] = {
+            "argv": [sys.executable, "-B", str(adopter.operator / "tools/tracker.py"), "{parent}", str(data)],
+            "timeoutSeconds": 30}
+        path = adopter.root / "binding with a tracker command.json"
+        path.write_text(json.dumps(binding, indent=2), encoding="utf-8")
+        adopter.lead_patch({"meta": {"trackerParent": "epic-1"}})
+        output = adopter.root / "tracker snapshot.json"
+
+        taken = adopter.state_tool("tracker-snapshot", "--binding", str(path), "--output", str(output))
+        self.assertEqual((taken["taken"], taken["items"]), (True, 2))
+        reconciled = adopter.state_tool("reconcile", "--snapshot", str(output), "--binding", str(path))
+        self.assertEqual(sorted(change["subject"] for change in reconciled["changes"]), ["iota-copy", "theta-docs"])
+        state = adopter.show()["state"]
+        self.assertIn("theta-docs", [followup["id"] for followup in state["followups"]])
+        self.assertIn("iota-copy", [item["subject"] for item in state["planned"]])
+
+        # The tracker fails: the last snapshot stands, one note says why, and reconcile finds no drift.
+        data.write_text(json.dumps({}), encoding="utf-8")
+        failed = adopter.state_tool("tracker-snapshot", "--binding", str(path), "--output", str(output))
+        self.assertEqual((failed["taken"], failed["fallback"]), (False, True))
+        self.assertIn("no item epic-1", failed["reason"])
+        notes = [entry for entry in adopter.show()["journal"] if entry["summary"].startswith("tracker-snapshot:")]
+        self.assertEqual(len(notes), 1)
+        self.assertFalse(adopter.state_tool("reconcile", "--snapshot", str(output))["drift"])
+
     def test_a_batch_of_two_is_checked_once_and_lands_tree_verified(self) -> None:
         adopter = FixtureAdopter(self.root)
         adopter.state_tool("init", "--headline", "Fixture batch")

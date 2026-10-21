@@ -22,6 +22,14 @@ The tracker capability exposes only these neutral operations:
 - `update-status`
 - `attach-evidence`
 - `close-or-handoff`
+- `list-work`
+
+`list-work` is read-only. Given a `parentReference`, it returns that parent and
+its `workItems`: each with its `workReference`, `title`, `stateType` (one of
+`backlog`, `started`, `completed` or `canceled`) and `blockedBy`, the references
+of the items that block it. A result of any other shape normalizes to
+`malformed`. Its success can be written out as a `work-snapshot/1` tracker
+snapshot.
 
 Mutating operations require a stable idempotency key. Repeating an accepted
 mutation with the same operation and key must return the same successful result

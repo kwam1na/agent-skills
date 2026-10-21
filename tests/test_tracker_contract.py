@@ -4,13 +4,17 @@ import json
 import unittest
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
+
 from agent_skills.capabilities import (
     AdapterOutcome,
     CapabilityState,
+    MUTATING_OPERATIONS,
     OutcomeKind,
     TrackerRequest,
     TrackerOperation,
     execute_tracker_operation,
+    work_snapshot,
 )
 from agent_skills.fake_tracker import InMemoryTrackerAdapter
 
@@ -246,6 +250,77 @@ class TrackerContractTests(unittest.TestCase):
         self.assertEqual(adapter.mutations, [])
         self.assertEqual(adapter.scripted[request.operation], [])
 
+
+
+CHILDREN = [
+    {"workReference": "work-1", "title": "Plan the work", "stateType": "completed", "blockedBy": []},
+    {"workReference": "work-2", "title": "Build it", "stateType": "started", "blockedBy": ["work-1"]},
+    {"workReference": "work-3", "title": "Later work", "stateType": "backlog", "blockedBy": []},
+    {"workReference": "work-4", "title": "Dropped work", "stateType": "canceled", "blockedBy": []},
+]
+
+
+class ListWorkTests(unittest.TestCase):
+    """list-work reads a parent's child items, normalized so they write out as a tracker snapshot."""
+
+    def request(self, parent: str = "epic-1") -> TrackerRequest:
+        return TrackerRequest(TrackerOperation.LIST_WORK, {"parentReference": parent})
+
+    def test_list_work_is_read_only_and_needs_no_idempotency_key(self) -> None:
+        self.assertNotIn(TrackerOperation.LIST_WORK, MUTATING_OPERATIONS)
+        adapter = InMemoryTrackerAdapter(work={"epic-1": CHILDREN})
+        outcome = execute_tracker_operation(CapabilityState.CONFIGURED, self.request(), adapter)
+        self.assertEqual(outcome.kind, OutcomeKind.SUCCESS)
+        self.assertEqual(outcome.data, {"parentReference": "epic-1", "workItems": CHILDREN})
+        self.assertEqual(adapter.mutations, [])
+
+    def test_its_outcome_writes_out_as_a_valid_tracker_snapshot(self) -> None:
+        adapter = InMemoryTrackerAdapter(work={"epic-1": CHILDREN})
+        outcome = execute_tracker_operation(CapabilityState.CONFIGURED, self.request(), adapter)
+        snapshot = work_snapshot(outcome.data, "2026-10-21T05:00:00Z")
+        schemas = json.loads((ROOT / "skills/orchestrate-work/references/schemas.json").read_text(encoding="utf-8"))
+        Draft202012Validator(schemas["work-snapshot/1"]).validate(snapshot)
+        self.assertEqual(snapshot["source"], "tracker")
+        self.assertEqual([(item["subject"], item["state"]) for item in snapshot["items"]], [
+            ("work-1", "completed"), ("work-2", "started"), ("work-3", "backlog"), ("work-4", "canceled")])
+        self.assertEqual(snapshot["items"][1]["blockedBy"], ["work-1"])
+        self.assertNotIn("blockedBy", snapshot["items"][0], "an item nothing blocks carries no blockers")
+
+    def test_a_result_of_any_other_shape_is_malformed(self) -> None:
+        good = {"parentReference": "epic-1", "workItems": CHILDREN}
+        item = CHILDREN[0]
+        cases = {
+            "no parent": {"workItems": CHILDREN},
+            "items not a list": {**good, "workItems": {"work-1": item}},
+            "an unknown state type": {**good, "workItems": [{**item, "stateType": "triage"}]},
+            "an extra field": {**good, "workItems": [{**item, "rawHostPayload": {}}]},
+            "a missing reference": {**good, "workItems": [{**item, "workReference": ""}]},
+            "a reference twice": {**good, "workItems": [item, item]},
+            "no title": {**good, "workItems": [{key: value for key, value in item.items() if key != "title"}]},
+            "blockers not references": {**good, "workItems": [{**item, "blockedBy": [3]}]},
+        }
+        for name, data in cases.items():
+            with self.subTest(name):
+                adapter = InMemoryTrackerAdapter(
+                    scripted={TrackerOperation.LIST_WORK: [AdapterOutcome.success(TrackerOperation.LIST_WORK, data)]})
+                outcome = execute_tracker_operation(CapabilityState.CONFIGURED, self.request(), adapter)
+                self.assertEqual(outcome.kind, OutcomeKind.MALFORMED)
+                self.assertTrue(outcome.action)
+
+    def test_without_the_capability_the_listing_is_unavailable_or_unsupported(self) -> None:
+        for state in (CapabilityState.ABSENT, CapabilityState.AVAILABLE, CapabilityState.BLOCKED):
+            with self.subTest(state=state):
+                outcome = execute_tracker_operation(state, self.request(), InMemoryTrackerAdapter())
+                self.assertEqual(outcome.kind, OutcomeKind.UNAVAILABLE)
+                self.assertTrue(outcome.action)
+        adapter = InMemoryTrackerAdapter(supported_operations=set(TrackerOperation) - {TrackerOperation.LIST_WORK})
+        outcome = execute_tracker_operation(CapabilityState.CONFIGURED, self.request(), adapter)
+        self.assertEqual(outcome.kind, OutcomeKind.UNSUPPORTED)
+
+    def test_a_parent_with_no_children_lists_nothing(self) -> None:
+        outcome = execute_tracker_operation(CapabilityState.CONFIGURED, self.request("epic-2"), InMemoryTrackerAdapter())
+        self.assertEqual((outcome.kind, outcome.data["workItems"]), (OutcomeKind.SUCCESS, []))
+        self.assertEqual(work_snapshot(outcome.data, "2026-10-21T05:00:00Z")["items"], [])
 
 if __name__ == "__main__":
     unittest.main()

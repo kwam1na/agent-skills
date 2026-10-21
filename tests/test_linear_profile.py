@@ -90,6 +90,7 @@ class LinearProfileTests(unittest.TestCase):
                 "update-status": ["update"],
                 "attach-evidence": ["create"],
                 "close-or-handoff": ["update"],
+                "list-work": ["search", "read"],
             },
         )
         self.assertEqual(
@@ -123,6 +124,7 @@ class LinearProfileTests(unittest.TestCase):
                 "handoffReference",
                 "auditReference",
             },
+            "list-work": {"parentReference", "workItems", "auditReference"},
         }
         mappings = self.contract()["operationMappings"]
 

@@ -52,6 +52,9 @@ Map the neutral operations directly:
 - `update-status` uses update.
 - `attach-evidence` uses create.
 - `close-or-handoff` uses update.
+- `list-work` uses search for the parent's child items, then read for each
+  item's state type and blockers. It is read-only, and returns each item's
+  state type normalized to backlog, started, completed or canceled.
 - Reconciliation after an uncertain mutation uses reconciliation only.
 
 Do not substitute another provider operation or access path. Retain the resolved

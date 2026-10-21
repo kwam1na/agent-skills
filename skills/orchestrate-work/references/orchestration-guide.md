@@ -417,8 +417,9 @@ operator.
   the operator never has to prompt a status check. Tracker reconciliation
   mirrors the forge's, so no item depends on the lead remembering to record
   it:
-  - List the epic's child items with the host's tracker tools and compare
-    them with the record.
+  - List the epic's child items, with the binding's `trackerSnapshot`
+    command when it declares one and the tracker capability's `list-work`
+    otherwise, and compare them with the record.
   - Add any item the record lacks, such as a follow-up or deferral filed but
     never recorded, before the views are published. It goes to `followups[]`,
     which needs no escalation. It becomes planned work only when the approved
@@ -585,7 +586,7 @@ substitutes inside a longer string:
 | `release` | Ordered targets, each with an `id`, `argv`, `stopsOnFailure` and `requiresApproval`, and an optional `timeoutSeconds`. |
 | `fullHealth` | The argv for the close-out run. |
 | `leases` | Each lease's `id`, `description` and `defaultHolder`, plus optional `materialize` and `withdraw` argv. |
-| `state` | `{directory, renderers, publishers, snapshotMaxAgeSeconds?}`. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`, or `{id, kind: "host"}`, which writes an outbox for the lead to publish; at most one publisher is a host publisher. `snapshotMaxAgeSeconds`, a whole number of seconds, is how old a forge or tracker snapshot may be before `reconcile` refuses it, 900 when absent. After each of its state writes the runner passes this member to the render wrapper. |
+| `state` | `{directory, renderers, publishers, snapshotMaxAgeSeconds?, trackerSnapshot?}`. `trackerSnapshot`, `{argv, timeoutSeconds?}`, is the repository's command that prints the delivery's `work-snapshot/1` tracker snapshot; `{parent}` in its argv is the record's `meta.trackerParent`, and the command owns whatever access it needs. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`, or `{id, kind: "host"}`, which writes an outbox for the lead to publish; at most one publisher is a host publisher. `snapshotMaxAgeSeconds`, a whole number of seconds, is how old a forge or tracker snapshot may be before `reconcile` refuses it, 900 when absent. After each of its state writes the runner passes this member to the render wrapper. |
 
 ### Git hooks
 

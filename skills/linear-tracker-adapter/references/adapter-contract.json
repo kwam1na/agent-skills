@@ -97,6 +97,18 @@
         "update"
       ],
       "trackerOperation": "close-or-handoff"
+    },
+    {
+      "allowedOutputFields": [
+        "parentReference",
+        "workItems",
+        "auditReference"
+      ],
+      "hostOperations": [
+        "search",
+        "read"
+      ],
+      "trackerOperation": "list-work"
     }
   ],
   "outputPolicy": {

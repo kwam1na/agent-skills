@@ -78,8 +78,8 @@ question only the operator can answer reaches the operator through the lead.
   delivery record with the forge, the tracker and the lanes, by
   [the sync loop](#keeping-the-live-view-current), so the operator
   never has to prompt a status check. For the tracker, the lead lists the
-  epic's child items with its host's tracker tools and compares them with the
-  record. An item the record lacks, such as a follow-up filed but never
+  epic's child items, with the binding's snapshot command or the tracker
+  capability's `list-work`, and compares them with the record. An item the record lacks, such as a follow-up filed but never
   recorded, is added before the views are published: to the follow-ups, or to
   planned work only when the approved plan covers it. When a state disagrees
   with the record, the record wins for states the lead or runner owns, except
@@ -230,13 +230,32 @@ operator should never have to ask whether it is up to date. At every event,
 such as a hand-off, a merge, a decision or a tracker change, run the sync loop
 in this order:
 
-1. **Snapshot.** With the host's own forge and tracker tools, list the epic's
-   work and write it as `work-snapshot/1` files (in
-   `references/schemas.json`): `{takenAt, source, items}`, where `source` is
-   `forge` or `tracker`. Each item is `{subject, title?, state,
-   changeRequest?, head?}`. A tracker state is `backlog`, `started`,
-   `completed` or `canceled`; a forge state is `open`, `draft`, `merged` or
-   `closed`. The state tool never calls a forge or a tracker itself.
+1. **Snapshot.** List the epic's work and write it as `work-snapshot/1` files
+   (in `references/schemas.json`): `{takenAt, source, items}`, where `source`
+   is `forge` or `tracker`. Each item is `{subject, title?, state,
+   changeRequest?, head?, blockedBy?}`. A tracker state is `backlog`,
+   `started`, `completed` or `canceled`; a forge state is `open`, `draft`,
+   `merged` or `closed`. The state tool never calls a forge or a tracker
+   itself.
+   - **Tracker, with a bound command.** When the binding declares
+     `state.trackerSnapshot`, `{argv, timeoutSeconds?}`, run it through the
+     state tool. The repository's command prints the snapshot for the record's
+     `meta.trackerParent`, which `{parent}` in its argv names. A command that
+     fails, or prints anything but a fresh tracker snapshot, keeps the last
+     snapshot and journals why once, and reconcile then refuses that snapshot
+     once it is too old:
+
+     ```bash
+     python3 -B scripts/delivery_state.py --dir <state directory> tracker-snapshot --binding .agents/orchestration.json --output <tracker snapshot>
+     ```
+
+   - **Tracker, otherwise.** Take it through the tracker capability's
+     `list-work` for the epic's parent item, and write its normalized
+     outcome as the snapshot: each item's `workReference`, `title`,
+     `stateType` and `blockedBy` become its `subject`, `title`, `state` and
+     `blockedBy`.
+   - **Forge.** List the epic's change requests with the host's own forge
+     tools.
 2. **Reconcile.**
 
    ```bash
