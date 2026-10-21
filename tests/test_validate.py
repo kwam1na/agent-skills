@@ -161,7 +161,6 @@ class CorpusValidationTests(unittest.TestCase):
             "HTTP request",
             "SDK client",
             "OAuth flow",
-            "credential store",
             "api_key=abcdefgh",
             r"C:\Users\example\repo\SKILL.md",
         )

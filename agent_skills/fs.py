@@ -51,6 +51,10 @@ def repository_paths(root: Path) -> tuple[Path, Path]:
             capture_output=True,
             text=True,
         ).stdout.strip()
+    except FileNotFoundError as error:
+        raise FileSafetyError(
+            "prerequisite.git_missing: Install Git and make git available on PATH, then retry"
+        ) from error
     except (OSError, subprocess.CalledProcessError) as error:
         raise FileSafetyError("repository.invalid: lifecycle root must be a Git repository") from error
     if Path(top_level).resolve() != resolved:

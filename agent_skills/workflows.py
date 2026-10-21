@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import re
-from typing import Mapping
+from typing import Callable, Mapping
 
 from agent_skills.capabilities import (
     AdapterOutcome,
@@ -28,6 +28,43 @@ class Sensor:
     name: str
     required: bool = True
     available: bool = True
+    needs_credentials: bool = False
+    credential_available: bool = False
+    skip_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.skip_reason not in {None, "needs external service", "exceeds time budget"}:
+            raise ValueError("unsupported explicit sensor skip reason")
+
+
+@dataclass(frozen=True)
+class SensorResult:
+    """Neutral evidence; ordinary execution continues to use boolean pass/fail."""
+
+    outcome: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.outcome != "skipped" or self.reason not in {
+            "needs credentials", "needs external service", "exceeds time budget"
+        }:
+            raise ValueError("skipped sensor requires a supported reason")
+
+
+def _sensor_skip(sensor: Sensor) -> SensorResult | None:
+    if sensor.needs_credentials and not sensor.credential_available:
+        return SensorResult("skipped", "needs credentials")
+    if sensor.skip_reason:
+        return SensorResult("skipped", sensor.skip_reason)
+    return None
+
+
+def run_sensor(sensor: Sensor, run: Callable[[], bool]) -> bool | SensorResult:
+    """Check declared runnability before invoking a caller-owned sensor command."""
+    skipped = _sensor_skip(sensor)
+    if skipped is not None:
+        return skipped
+    return run()
 
 
 @dataclass(frozen=True)
@@ -85,7 +122,7 @@ def _sensors(request: PlanningRequest) -> tuple[Sensor, ...]:
             name = sensor.name.strip()
             if name and name not in seen:
                 seen.add(name)
-                sensors.append(Sensor(name, sensor.required, sensor.available))
+                sensors.append(replace(sensor, name=name))
         return tuple(sensors)
     return tuple(Sensor(name) for name in _unique(request.generic_sensors))
 
@@ -144,6 +181,12 @@ def plan_work(request: PlanningRequest) -> WorkPlan:
                             "available": sensor.available,
                             "name": sensor.name,
                             "required": sensor.required,
+                            **(
+                                {"needsCredentials": True,
+                                 "credentialAvailable": sensor.credential_available}
+                                if sensor.needs_credentials else {}
+                            ),
+                            **({"skipReason": sensor.skip_reason} if sensor.skip_reason else {}),
                         }
                         for sensor in sensors
                     ),
@@ -193,7 +236,7 @@ class ExecutionRequest:
     completed_work: tuple[str, ...] = ()
     completed_finish_line: tuple[str, ...] = ()
     completed_dependencies: tuple[str, ...] = ()
-    sensor_results: Mapping[str, bool] = field(default_factory=dict)
+    sensor_results: Mapping[str, bool | SensorResult] = field(default_factory=dict)
     approved_handoffs: tuple[str, ...] = ()
     evidence: tuple[str, ...] = ()
     blockers: tuple[str, ...] = ()
@@ -209,7 +252,7 @@ class ExecutionResult:
     posture: str
     completed_work: tuple[str, ...]
     completed_finish_line: tuple[str, ...]
-    sensor_results: tuple[tuple[str, bool], ...]
+    sensor_results: tuple[tuple[str, bool | SensorResult], ...]
     evidence: tuple[str, ...]
     blockers: tuple[str, ...]
     handoffs: tuple[str, ...]
@@ -223,6 +266,19 @@ def execute_work(request: ExecutionRequest) -> ExecutionResult:
     approved_handoffs = set(_unique(request.approved_handoffs))
     evidence = _unique(request.evidence)
 
+    sensor_results = dict(request.sensor_results)
+    for sensor in request.plan.sensors:
+        skipped = _sensor_skip(sensor)
+        reported = sensor_results.get(sensor.name)
+        if skipped is not None:
+            if sensor.name in sensor_results and reported != skipped:
+                raise ValueError(f"cannot report a declared skipped sensor as executed: {sensor.name}")
+            sensor_results[sensor.name] = skipped
+        elif isinstance(reported, SensorResult):
+            raise ValueError(f"skipped sensor requires explicit marking: {sensor.name}")
+    if any(type(value) is not bool and not isinstance(value, SensorResult)
+           for value in sensor_results.values()):
+        raise ValueError("sensor evidence must be pass, fail, or skipped with reason")
     blockers = list(_unique(request.blockers))
     blockers.extend(
         f"out-of-scope work reported complete: {item}"
@@ -237,14 +293,14 @@ def execute_work(request: ExecutionRequest) -> ExecutionResult:
     blockers.extend(
         f"required sensor unavailable: {sensor.name}"
         for sensor in request.plan.sensors
-        if sensor.required and not sensor.available
+        if sensor.required and not sensor.available and _sensor_skip(sensor) is None
     )
     blockers.extend(
         f"required sensor failed: {sensor.name}"
         for sensor in request.plan.sensors
         if sensor.required
         and sensor.available
-        and request.sensor_results.get(sensor.name) is False
+        and sensor_results.get(sensor.name) is False
     )
 
     finish_line_complete = set(request.plan.finish_line) <= set(
@@ -256,7 +312,7 @@ def execute_work(request: ExecutionRequest) -> ExecutionResult:
         for sensor in request.plan.sensors
         if sensor.required
         and sensor.available
-        and sensor.name not in request.sensor_results
+        and sensor.name not in sensor_results
     )
     missing_approvals = tuple(
         handoff
@@ -273,6 +329,11 @@ def execute_work(request: ExecutionRequest) -> ExecutionResult:
         )
 
     handoffs = list(request.plan.handoffs)
+    handoffs.extend(
+        f"not verified: {name} ({result.reason})"
+        for name, result in sorted(sensor_results.items())
+        if isinstance(result, SensorResult)
+    )
     handoffs.extend(f"approval required: {handoff}" for handoff in missing_approvals)
     if blockers:
         status = "blocked"
@@ -319,7 +380,15 @@ def execute_work(request: ExecutionRequest) -> ExecutionResult:
                 _tracking_outcome(
                     request.tracker_state,
                     TrackerOperation.CLOSE_OR_HANDOFF,
-                    {"status": status, "blockers": tuple(blockers)},
+                    {
+                        "status": status,
+                        "blockers": tuple(blockers),
+                        **(
+                            {"handoffs": tuple(handoffs)}
+                            if any(isinstance(value, SensorResult) for value in sensor_results.values())
+                            else {}
+                        ),
+                    },
                     request.tracker_adapter,
                     f"{request.tracking_key}:close-or-handoff"
                     if request.tracking_key
@@ -338,7 +407,7 @@ def execute_work(request: ExecutionRequest) -> ExecutionResult:
         posture=request.plan.posture,
         completed_work=completed_work,
         completed_finish_line=completed_finish_line,
-        sensor_results=tuple(sorted(request.sensor_results.items())),
+        sensor_results=tuple(sorted(sensor_results.items())),
         evidence=evidence,
         blockers=tuple(blockers),
         handoffs=_unique(tuple(handoffs)),
@@ -454,6 +523,8 @@ class ReviewRequest:
     grace_verification: GraceVerification | None = None
     round_history: tuple[ReviewRoundPass, ...] = ()
     base_move_reopenings: tuple[BaseMoveReopening, ...] = ()
+    sensor_evidence: tuple[tuple[str, bool | SensorResult], ...] = ()
+    reported_sensor_results: Mapping[str, bool | SensorResult] | None = None
 
 
 @dataclass(frozen=True)
@@ -718,6 +789,16 @@ def _normalized_history(
 
 
 def review_work(request: ReviewRequest) -> ReviewResult:
+    if (
+        request.reported_sensor_results is not None
+        and dict(request.sensor_evidence) != dict(request.reported_sensor_results)
+    ):
+        raise ValueError("sensor evidence mismatch between retained results and review handoff")
+    sensor_gaps = tuple(
+        f"sensor evidence missing: {name} ({result.reason})"
+        for name, result in request.sensor_evidence
+        if isinstance(result, SensorResult)
+    )
     required_lenses = _unique(request.required_lenses)
     if not required_lenses:
         raise ValueError("review requires at least one lens")
@@ -786,7 +867,7 @@ def review_work(request: ReviewRequest) -> ReviewResult:
             rounds=(),
             dissent=(),
             failures=(),
-            blockers=(),
+            blockers=sensor_gaps,
             action="Run the required review lenses.",
             late_findings=(),
             round_history=history,
@@ -796,6 +877,7 @@ def review_work(request: ReviewRequest) -> ReviewResult:
 
     latest = rounds[-1]
     blockers = list(_round_blockers(latest, required_lenses, len(rounds)))
+    blockers.extend(sensor_gaps)
     for reopening in reopenings:
         replay = next(item for item in history if item.pass_id == reopening.pass_id)
         blockers.extend(

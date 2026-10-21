@@ -480,3 +480,14 @@ When applying this skill, produce:
 - CI wiring
 - harness tests
 - a short README section explaining how to run the harness
+
+### Sensor Runnability Guidance
+
+Repository validation guidance should name each sensor's command and whether it
+needs credentials. Mark gated commands `needs-credentials` and explain how the
+environment declares availability without exposing secrets. No declaration
+means unavailable. Also retain explicit non-execution reasons `needs external
+service` or `exceeds time budget` where applicable. These produce skipped
+outcomes with named verification gaps, not passing checks; failed commands
+remain failed. This guidance neither provisions access nor defines harness gate
+admission for skipped evidence.

@@ -1,5 +1,11 @@
 # Product generations
 
+For a skills-only pilot, install the **workflow-only core release** using the
+[core install commands](../README.md#install-core-skills-without-a-harness).
+That shape requires Python 3.11 or newer and Git, with directory-symlink support;
+it does not require Node, the harness, or policy files. Omit `--product`.
+The runtime and policy prerequisites below apply only to product generations.
+
 A release may carry a `runtime/` payload alongside its selected portable workflow
 profile. The existing release manifest covers both, and the lifecycle retains,
 verifies, switches, and rolls them back as one generation. No separate runtime

@@ -31,7 +31,7 @@ CORE_SKILL_PATHS = (
     "skills/review-work/SKILL.md",
 )
 FORBIDDEN = re.compile(
-    r"\b(?:linear|mcp|https?|sdk|oauth|credentials?)\b", re.IGNORECASE
+    r"\b(?:linear|mcp|https?|sdk|oauth)\b", re.IGNORECASE
 )
 
 
@@ -52,6 +52,13 @@ class CoreBoundaryTests(unittest.TestCase):
         ):
             with self.subTest(required=required):
                 self.assertIn(required, normalized)
+
+    def test_generic_credential_declaration_is_not_provider_coupling(self) -> None:
+        from agent_skills.validate import LEAKAGE_PATTERNS
+        self.assertFalse(any(pattern.search("needs-credentials: credential unavailable")
+                             for _, pattern in LEAKAGE_PATTERNS))
+        for literal in ("Athena credential", "oauth credential", "password=examplepassword"):
+            self.assertTrue(any(pattern.search(literal) for _, pattern in LEAKAGE_PATTERNS))
 
     def test_core_has_no_provider_or_transport_vocabulary(self) -> None:
         for relative in (*CORE_RUNTIME_PATHS, *CORE_SKILL_PATHS):

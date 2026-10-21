@@ -64,6 +64,21 @@ represent an installed but unexposed generation. A later verified update or
 rollback writes the fixed exposure metadata and projections; no separate
 migration mechanism is required.
 
+## Outside-adopter discovery
+
+Follow the [workflow-only core install](../README.md#install-core-skills-without-a-harness)
+for a skills-only pilot. An absent `.agents/` root is created during installation;
+`AGENTS.md` is neither required nor generated. Agents still read existing
+repository instructions, including `CLAUDE.md`; automatic loading of that file
+is host-specific. Start a fresh session to discover installed skills.
+
+Git ignore rules do not affect filesystem discovery. An ignored `.claude/`
+therefore supports local Claude links through the ordinary lifecycle, while
+those links remain excluded from normal Git staging. The README gives the
+parent-directory negation needed to track only `.claude/skills/`; a child-only
+negation cannot reopen an ignored parent. Removal preserves pre-existing host
+directories and unrelated files, including local Claude settings.
+
 ## Single-workflow first adoption
 
 The maintainer-only adoption command is available only while the managed

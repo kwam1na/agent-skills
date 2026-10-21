@@ -34,16 +34,27 @@ def _load_runner():
 
 
 class QualificationTests(unittest.TestCase):
-    def test_checked_product_core_replays_exactly(self) -> None:
-        product = ROOT / "qualifications/product"
-        current = "core-concurrent-delivery-v1"
+    def test_current_outside_adopter_release_replays_exactly(self) -> None:
+        releases = ROOT / "qualifications/outside-adopter"
+        current = "core-outside-adopter-v1"
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             output = directory / "core.json"
-            result = self._run_qualification(product / f"{current}.zip",
-                                             product / f"{current}.release.json", output, directory)
+            result = self._run_qualification(
+                releases / f"{current}.zip", releases / f"{current}.release.json",
+                output, directory,
+            )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(output.read_bytes(), (product / f"{current}.json").read_bytes())
+            self.assertEqual(output.read_bytes(), (releases / f"{current}.json").read_bytes())
+
+    def test_retained_product_core_keeps_its_original_binding(self) -> None:
+        product = ROOT / "qualifications/product"
+        retained = "core-concurrent-delivery-v1"
+        record = json.loads((product / f"{retained}.json").read_text())
+        self.assertEqual(record["release"]["archiveSha256"], hashlib.sha256(
+            (product / f"{retained}.zip").read_bytes()).hexdigest())
+        self.assertEqual(record["summary"]["result"], "passed")
+        # The current driver proves new candidates; it must not restamp history.
 
     def test_record_output_cannot_alias_candidate_archive_or_metadata(self) -> None:
         for target in ("archive", "metadata", "symlink"):
@@ -335,10 +346,6 @@ class QualificationTests(unittest.TestCase):
             self.assertNotIn(str(directory), serialized)
             self.assertNotIn(secret, serialized)
             self.assertNotIn("linear", serialized.lower())
-            self.assertEqual(
-                record_path.read_bytes(),
-                (ROOT / "qualifications" / "core-workflows-concurrent-delivery-v1.json").read_bytes(),
-            )
 
             replay = self._run_qualification(
                 second_archive,
@@ -432,13 +439,7 @@ class QualificationTests(unittest.TestCase):
 
     def test_trusted_sensor_change_changes_the_driver_identity(self) -> None:
         runner = _load_runner()
-        recorded = json.loads(
-            (ROOT / "qualifications" / "core-workflows-concurrent-delivery-v1.json").read_text(encoding="utf-8")
-        )
-        self.assertEqual(
-            recorded["qualificationDriverSha256"],
-            runner.qualification_driver_sha256(ROOT),
-        )
+        current_digest = runner.qualification_driver_sha256(ROOT)
         with tempfile.TemporaryDirectory() as temporary:
             copied = Path(temporary) / "trusted-evidence"
             for relative in runner.TRUSTED_EVIDENCE_PATHS:
@@ -458,7 +459,7 @@ class QualificationTests(unittest.TestCase):
 
             after_fixture_change = runner.qualification_driver_sha256(copied)
 
-            self.assertEqual(before, recorded["qualificationDriverSha256"])
+            self.assertEqual(before, current_digest)
             self.assertNotEqual(after_sensor_change, before)
             self.assertNotEqual(after_fixture_change, before)
 

@@ -1,5 +1,13 @@
 # Compatibility
 
+The [workflow-only core install](../README.md#install-core-skills-without-a-harness)
+uses Python 3.11 or newer, Git on `PATH`, and relative directory symlinks.
+It has no Node requirement: a CommonJS Node 20 service needs no package-format
+change or policy files. The outside-adopter fixture exercises the archive with
+Python site-packages disabled and no Node executable available, using only
+`CLAUDE.md` and an ignored `.claude/` directory. Its sensor proves installed
+discovery links and restoration, not execution inside a live agent session.
+
 The registry declares Codex and Claude Code as supported discovery hosts for
 each current workflow body. Host metadata under `agents/` is cataloged as a
 file in the same provenance record as its skill body; it does not create a

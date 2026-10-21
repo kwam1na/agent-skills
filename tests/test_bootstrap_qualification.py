@@ -22,8 +22,8 @@ def load_runner():
 
 
 class BootstrapQualificationTests(unittest.TestCase):
-    def test_current_bootstrap_product_replays_and_matches_source(self) -> None:
-        product = ROOT / "qualifications/product/bootstrap-concurrent-delivery-v1"
+    def test_current_bootstrap_release_replays_and_matches_source(self) -> None:
+        product = ROOT / "qualifications/outside-adopter/bootstrap-outside-adopter-v1"
         archive = product.with_suffix(".zip")
         metadata = product.with_suffix(".release.json")
         checked = json.loads(product.with_suffix(".json").read_text())
@@ -33,7 +33,7 @@ class BootstrapQualificationTests(unittest.TestCase):
             release = verify_release(archive, metadata, extract_to=extracted)
             self.assertEqual(
                 release.archive_sha256,
-                "18183b739211ebcaabb684939afc9eb423f062f5a0f632787eb712cda93e165e",
+                checked["release"]["archiveSha256"],
             )
             self.assertEqual(load_runner().qualify(archive, metadata), checked)
             projected = build_release(
@@ -56,12 +56,12 @@ class BootstrapQualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="bootstrap-workflows-concurrent-delivery-v1",
+                release_id="bootstrap-outside-adopter-v1",
                 profile_id="bootstrap",
             )
             replay = runner.qualify(archive, metadata)
         checked = json.loads(
-            (ROOT / "qualifications/bootstrap-workflows-concurrent-delivery-v1.json").read_text()
+            (ROOT / "qualifications/outside-adopter/bootstrap-outside-adopter-v1.json").read_text()
         )
         self.assertEqual(replay, checked)
 
@@ -75,7 +75,7 @@ class BootstrapQualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="bootstrap-workflows-concurrent-delivery-v1",
+                release_id="bootstrap-outside-adopter-v1",
                 profile_id="bootstrap",
             )
             record = runner.qualify(archive, metadata)

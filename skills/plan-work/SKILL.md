@@ -98,7 +98,16 @@ report that no tracking mutation occurred, and give an actionable handoff.
 
 Treat specialized external sensors the same way: an unavailable optional sensor
 is reported honestly; an unavailable required sensor remains visible as a
-completion blocker.
+completion blocker unless explicitly declared skipped under the sensor
+runnability contract.
+
+For each credential-gated sensor, retain the repository's `needs-credentials`
+marking and whether this environment declares the credential available. Default
+to unavailable when no declaration exists. Preserve explicit `needs external
+service` and `exceeds time budget` declarations as skip reasons. Separate work
+completion from verification: identify the checks that will remain unverified,
+and do not promise a passing finish-line requirement from a skipped check.
+Do not replace a repository sensor with a generic check to hide its absence.
 
 ## Handoff
 

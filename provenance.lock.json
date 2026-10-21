@@ -6,13 +6,13 @@
       "id": "bootstrap-agent-harness",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The source guidance is extended with the qualified delivery-product wiring and first-policy bootstrap contract; host metadata remains a host adapter.",
+        "reason": "The source guidance is extended with the qualified delivery-product wiring and first-policy bootstrap contract; host metadata remains a host adapter. Explicit sensor runnability and skipped evidence remain visible without claiming verification.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/bootstrap-agent-harness/SKILL.md",
-          "sha256": "61f8ce380b25f726bb8324f5788eb8b0ef3763e96a1bb41c4d7678fa6a75d64a"
+          "sha256": "24dc4da65699940232f63c88e1d4ec08c4b2716778c34937158fc14c8e6d5a91"
         },
         {
           "path": "skills/bootstrap-agent-harness/agents/openai.yaml",
@@ -208,13 +208,13 @@
       "id": "execute-work",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The baseline execution slice is narrowed to incremental work, repository sensor evidence, explicit blockers, approval handoffs, and honest completion states. Shared host-neutral v2 observations, immutable replacement attempts, and durable selected-output capture preserve existing review authority. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
+        "reason": "The baseline execution slice is narrowed to incremental work, repository sensor evidence, explicit blockers, approval handoffs, and honest completion states. Shared host-neutral v2 observations, immutable replacement attempts, and durable selected-output capture preserve existing review authority. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions. Explicit sensor runnability and skipped evidence remain visible without claiming verification.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/execute-work/SKILL.md",
-          "sha256": "09eb0b0737b3f0ad408c6b04ee772651bddf76651c63a54accd261151a6a3377"
+          "sha256": "38446e68b39164e90aa8abf325f69852a366de6077200710d26b3e38e729a390"
         },
         {
           "path": "skills/execute-work/references/run-observation-contract.md",
@@ -753,13 +753,13 @@
       "id": "plan-work",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The baseline planning slice is narrowed to scope, finish-line, dependency, posture, sensor, and approval-handoff decisions without implementation behavior. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
+        "reason": "The baseline planning slice is narrowed to scope, finish-line, dependency, posture, sensor, and approval-handoff decisions without implementation behavior. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions. Explicit sensor runnability and skipped evidence remain visible without claiming verification.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "101838d8b559f8cfb530784b4deecd8b5e870b1f93ac1cc99b819bc5325b7f67"
+          "sha256": "cba8fefb7ed33c528c434dfc7d462ac2c7320668c0b89b4ebb4fcf6e1178bf03"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -778,13 +778,13 @@
       "id": "review-work",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The review source is narrowed to caller-selected lenses, evidence-bearing convergence, visible dissent, typed failure, bounded outcomes, and exact base-move reopening; repository reviewer policy remains an overlay. Versioned deferral scope and shared host-neutral v2 observations preserve existing review authority. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
+        "reason": "The review source is narrowed to caller-selected lenses, evidence-bearing convergence, visible dissent, typed failure, bounded outcomes, and exact base-move reopening; repository reviewer policy remains an overlay. Versioned deferral scope and shared host-neutral v2 observations preserve existing review authority. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions. Explicit sensor runnability and skipped evidence remain visible without claiming verification.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/review-work/SKILL.md",
-          "sha256": "ee5e3f1c542893dcc00cf026c2b7f3af4fbf31d6fe1cd6092fe0e8575d609320"
+          "sha256": "fcd6c8e6929c678755c0960e111e1e62339f5aeb97bd96a1f31b5b522c75f70a"
         }
       ],
       "owner": "agent-skills-corpus",

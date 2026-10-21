@@ -2,6 +2,7 @@
   "schemaVersion": "agent-skills-catalog/1",
   "skills": [
     {
+      "degradedBehavior": " Explicitly unavailable sensors retain skipped outcomes and reasons as missing verification evidence.",
       "dependencies": [],
       "externalTools": [],
       "hosts": [
@@ -207,7 +208,7 @@
         "run-observability",
         "tracker-operations"
       ],
-      "degradedBehavior": "Optional tracking and sensors may be absent; declared product gates and recovery remain authoritative and cannot be replaced with executor-invented evidence. Unsupported v2 reporting remains explicit; retain selected output without changing delivery authority. Terminal handoffs retain the bound review release identity and any release installed mid-review. Shared sensor resources follow the declared allocation; explicit caller scope remains authoritative for stale test pins.",
+      "degradedBehavior": "Optional tracking and sensors may be absent; declared product gates and recovery remain authoritative and cannot be replaced with executor-invented evidence. Unsupported v2 reporting remains explicit; retain selected output without changing delivery authority. Terminal handoffs retain the bound review release identity and any release installed mid-review. Shared sensor resources follow the declared allocation; explicit caller scope remains authoritative for stale test pins. Explicitly unavailable sensors retain skipped outcomes and reasons as missing verification evidence.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
@@ -296,7 +297,7 @@
         "planning-workflow",
         "tracker-operations"
       ],
-      "degradedBehavior": "Planning remains complete without optional tracking and reports unavailable optional sensors without replacing repository authority. Nonconverging plan review is not guaranteed to terminate without an operator decision; parallel resources and extension test pins are planned.",
+      "degradedBehavior": "Planning remains complete without optional tracking and reports unavailable optional sensors without replacing repository authority. Nonconverging plan review is not guaranteed to terminate without an operator decision; parallel resources and extension test pins are planned. Explicitly unavailable sensors retain skipped outcomes and reasons as missing verification evidence.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",
@@ -322,7 +323,7 @@
         "review-workflow",
         "run-observability"
       ],
-      "degradedBehavior": "Unavailable reviewer evidence remains a failed acquisition; unavailable host cost is explicitly unreported. Unsupported v2 reporting remains explicit; retain selected output without changing delivery authority. Unbounded plan-review rounds are outside the delivery bound and reducer.",
+      "degradedBehavior": "Unavailable reviewer evidence remains a failed acquisition; unavailable host cost is explicitly unreported. Unsupported v2 reporting remains explicit; retain selected output without changing delivery authority. Unbounded plan-review rounds are outside the delivery bound and reducer. Explicitly unavailable sensors retain skipped outcomes and reasons as missing verification evidence.",
       "dependencies": [
         {
           "id": "compound-delivery-kernel",

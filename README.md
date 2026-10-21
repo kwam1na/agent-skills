@@ -73,7 +73,7 @@ python3 scripts/qualify-bootstrap.py \
 ```
 
 The current checked qualification record is
-`qualifications/bootstrap-workflows-concurrent-delivery-v1.json`.
+`qualifications/outside-adopter/bootstrap-outside-adopter-v1.json`.
 
 The detached release metadata authenticates the ZIP before it is parsed. The
 manifest then authenticates the complete payload and its single profile group.
@@ -132,7 +132,7 @@ named in the record remains the single release under qualification. That prior
 fixture is built only from the verified candidate extraction, never from the
 runner checkout corpus.
 The current workflow-only record is checked in at
-`qualifications/core-workflows-concurrent-delivery-v1.json`.
+`qualifications/outside-adopter/core-outside-adopter-v1.json`.
 Historical records retain their original bytes under `qualifications/history/`.
 Historical product records such as `linear-product-v1` also remain immutable
 under `qualifications/product/`.
@@ -230,7 +230,7 @@ written manifest and reviewer artifacts. Its deterministic record covers
 success, blocked, failed, cancelled, interrupted, duplicate, unsupported
 version, reconciliation, anti-vacuity, completeness, and redaction behavior
 while retaining no local paths or opaque host references. The checked record is
-`qualifications/provider-workflows-concurrent-delivery-v1.json`.
+`qualifications/outside-adopter/provider-outside-adopter-v1.json`.
 Its `workflowGraphSha256` names the actual installed graph, and the installation
 scenario compares that graph and both new skill bodies with the verified
 candidate. A failed qualifier cannot leave an earlier success record at the
@@ -241,6 +241,69 @@ bytes and their evidence output. Host and connector provenance remains the
 responsibility of the protected external run that supplies host events; the
 controlled host-event inputs used here do not independently prove external
 calls.
+
+## Install core skills without a harness
+
+For a skills-only pilot, use the **workflow-only core release**, built without
+`--runtime-directory`. Prerequisites are Python 3.11 or newer (standard library
+only), Git on `PATH`, an existing Git repository, and permission to create
+relative directory symlinks. No Node, npm, Python packages, harness, tracker
+integration, or adopter policy files are required for this archive install.
+The service can remain CommonJS on Node 20; its runtime is independent of the
+installer. On Windows, enable Developer Mode or grant symlink privileges.
+
+Obtain `core.zip`, `core.release.json`, and the qualification record for those
+exact bytes from a trusted maintainer. Authenticate the handoff before executing
+the archive: detached metadata checks integrity but is not a signature or an
+independent trust anchor. See [release distribution](docs/release-distribution.md)
+for distribution and private-mirror options. The producer build and
+`scripts/qualify-core.py` commands above prepare the workflow-only handoff.
+
+Replace the absolute paths below. Run `apply` once to install, `status` to check
+that `lifecycle` is `current` with empty `blockers`, and `remove` when ending the
+pilot. Omit `--product`: that option requires the optional runtime and policy.
+
+```sh
+python3 -B /path/to/core.zip --root /path/to/repository apply --archive /path/to/core.zip --metadata /path/to/core.release.json --maintenance
+python3 -B /path/to/repository/.agent-skills/current --root /path/to/repository status
+python3 -B /path/to/repository/.agent-skills/current --root /path/to/repository remove --maintenance
+```
+
+Use the same `apply` command with a new qualified archive to update; applying
+identical bytes is a no-op. `status` and `remove` run from installed bytes and do
+not need the original archive or producer checkout. Keep `-B` to avoid writing
+Python bytecode into the immutable generation. If Python is absent or older
+than 3.11, install a supported interpreter before running these commands. If Git
+is absent, the lifecycle refuses before mutation with instructions to install
+Git and put it on `PATH`.
+
+Start a fresh agent session after installation. Codex discovers
+`.agents/skills/<name>/SKILL.md`; Claude Code discovers
+`.claude/skills/<name>/SKILL.md`. Invoke `deliver-work` to begin the pilot.
+The installer does not require or create `AGENTS.md`. Read the repository's
+existing instructions, including `CLAUDE.md` when that is its instruction file;
+the installed workflows direct the agent to read repository instructions, and
+host-specific automatic instruction loading remains the host's responsibility.
+
+A `.claude/` ignore rule does not block local discovery or installation. Leaving
+it unchanged gives local-only Claude links: Git will not include them in a
+normal add. There is no separate local-only lifecycle mode, and other managed
+paths remain visible to Git. To make the Claude links trackable while keeping
+other Claude settings ignored, replace the rule with:
+
+```gitignore
+.claude/
+!.claude/
+.claude/*
+!.claude/skills/
+```
+
+Adding only `!.claude/skills/` beneath `.claude/` is insufficient: Git does not
+traverse the excluded parent. The lifecycle never edits ignore rules or stages
+files. Review any other ignore rules before committing managed files.
+Removal restores pre-install working-tree files and directories, preserving
+adopter-owned edits and pre-existing discovery directories. Private Git
+bookkeeping is excluded from this restoration guarantee.
 
 ## Repository lifecycle
 

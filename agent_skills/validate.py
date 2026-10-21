@@ -55,7 +55,7 @@ LEAKAGE_PATTERNS = (
     (
         "provider-boundary",
         re.compile(
-            r"\b(?:linear|mcp|https?|sdk|oauth|credentials?)\b",
+            r"\b(?:linear|mcp|https?|sdk|oauth)\b",
             re.IGNORECASE,
         ),
     ),

@@ -261,8 +261,29 @@ as the whole.
 
 Run the smallest honest targeted sensors before broader repository gates. An
 unavailable optional sensor is reported; an unavailable or failed required
-sensor blocks completion. Required approvals must also be recorded before the
+sensor blocks completion unless its non-execution is explicitly declared under
+the skipped-sensor contract below. A failed execution is never a skip. Required approvals must also be recorded before the
 work can be complete.
+
+### Skipped Sensor Evidence
+
+A sensor has three evidence outcomes: passed, failed, or skipped with a reason.
+Repository guidance may mark a sensor `needs-credentials`. Try that command
+only when the environment explicitly declares the credential available; otherwise
+record `skipped: needs credentials` without invoking it. Never probe, provision,
+or disclose credentials. If declared available, run normally and preserve pass
+or fail, including authentication failures. An unmarked environmental failure
+remains failed; do not infer permission to skip from its error output.
+
+An explicit runnability declaration may also name `needs external service` or
+`exceeds time budget`. Retain the declaration and reason with the skipped
+outcome; these describe a sensor that applies but cannot run here. Keep these
+separate from the not-applicable judgement recorded below. A skip is never
+passing evidence. Preserve the original result beside every handoff or summary,
+and prominently list `not verified: <sensor> (<reason>)`, even when this is the
+only applicable sensor and the implementation work is complete. Do not invent
+runtime gate admission or waive a repository's explicit passing requirement;
+harness gate obligations retain their own authority.
 
 Time a repository gate while it runs and retain that wall time beside its
 outcome, because `gate.reported` needs how long the gate ran and a finished
@@ -280,7 +301,10 @@ Use these result categories:
 - `blocked` when a dependency, required sensor, approval, or explicit blocker
   prevents progress or a completion claim; and
 - `complete` only when the full scope and finish line are satisfied, required
-  sensors pass, and approval handoffs are complete.
+  sensors pass or are explicitly skipped with named verification gaps, and
+  approval handoffs are complete. Completion of work is not verification of
+  skipped checks; never mark an explicit finish-line requirement to pass a
+  check as satisfied by a skip.
 
 ## Resolve Optional Tracking
 

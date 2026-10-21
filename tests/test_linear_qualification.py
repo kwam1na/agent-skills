@@ -935,27 +935,26 @@ class LinearQualificationTests(unittest.TestCase):
         checked = json.loads(RECORD.read_text(encoding="utf-8"))
         self.assertEqual(replay, checked)
 
-    def test_checked_product_workflow_projection_matches_current_source(self) -> None:
-        current_products = {
-            "core": ("core-concurrent-delivery-v1", "6b0e7ee069858b69ded91647d6ce3bd53d49af1ff2bac5b6ac495948720c3943"),
-            "linear": ("linear-concurrent-delivery-v1", "e63b1f2bb5516d55445aa7050f2a9366b05abdb9d8584bdeed4119abb5440578"),
-        }
+    def test_current_core_workflow_release_matches_source(self) -> None:
+        release_path = ROOT / "qualifications/outside-adopter/core-outside-adopter-v1"
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            for profile in ("core", "linear"):
-                product, expected_archive_sha256 = current_products[profile]
-                archive = PRODUCT / f"{product}.zip"
-                metadata = PRODUCT / f"{product}.release.json"
-                extracted = directory / profile
-                release = verify_release(archive, metadata, extract_to=extracted)
-                self.assertEqual(release.archive_sha256, expected_archive_sha256)
-                projected = build_release(extracted, directory / f"{profile}-projection.zip",
-                                          directory / f"{profile}-projection.json",
-                                          release_id=release.release_id, profile_id=profile)
-                current = build_release(ROOT, directory / f"{profile}-current.zip",
-                                        directory / f"{profile}-current.json",
-                                        release_id=release.release_id, profile_id=profile)
-                self.assertEqual(projected, current, "checked product workflows differ from current source")
+            extracted = directory / "core"
+            release = verify_release(
+                release_path.with_suffix(".zip"),
+                release_path.with_suffix(".release.json"),
+                extract_to=extracted,
+            )
+            projected = build_release(
+                extracted, directory / "projection.zip", directory / "projection.json",
+                release_id=release.release_id, profile_id="core",
+            )
+            current = build_release(
+                ROOT, directory / "current.zip", directory / "current.json",
+                release_id=release.release_id, profile_id="core",
+            )
+            self.assertEqual(projected, current, "checked core workflows differ from current source")
+        # The retained Linear product still replays against its historical binding above.
         self.assertIn("linear-concurrent-delivery-v1", (ROOT / "README.md").read_text())
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:

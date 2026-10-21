@@ -116,3 +116,14 @@ Return the outcome, all supplied rounds, visible dissent, typed failures,
 blockers, and the next action. Evidence remains owned by the caller. Do not
 write review state, mutate delivery state, or persist review artifacts from this
 workflow.
+
+## Missing Sensor Evidence
+
+Review the retained sensor results alongside the reported handoff. A `skipped`
+sensor is missing evidence, never a green check, even if execution completed.
+Name each skipped sensor and reason prominently. Compare the original outcome
+and its explicit runnability declaration with the summary; relabelling skipped
+as passed is an evidence mismatch that must be corrected. Do not infer a
+passing result from a completion status. Preserve missing evidence as a review
+blocker rather than issuing unconditional alignment; the caller decides any
+further delivery or gate admission under its own policy.

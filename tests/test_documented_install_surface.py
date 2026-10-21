@@ -31,3 +31,13 @@ class DocumentedInstallSurfaceTests(LifecycleFixture, unittest.TestCase):
         self.assertEqual(status[lifecycle_key], expected_state)
         self.assertEqual(status[blockers_key], [])
 
+
+
+class OutsideAdopterDocumentationTests(unittest.TestCase):
+    def test_workflow_only_commands_and_prerequisites_are_explicit(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("## Install core skills without a harness", readme)
+        section = readme.split("## Install core skills without a harness", 1)[1].split("\n## ", 1)[0]
+        normalized = " ".join(section.split())
+        for phrase in ("Python 3.11 or newer", "Git", "No Node", "CLAUDE.md", "local-only"):
+            self.assertIn(phrase, normalized)
