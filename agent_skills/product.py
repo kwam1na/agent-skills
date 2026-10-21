@@ -77,7 +77,18 @@ def _incomplete_cancellation(
 
 
 def _wait_for_posix_group(child: subprocess.Popen, timeout: float) -> bool:
-    """Poll the isolated process group until it drains or the bound expires."""
+    """Poll the isolated process group until it drains or the bound expires.
+
+    While the group's last members are exiting, some kernels (macOS among
+    them) answer the probe with EPERM rather than ESRCH: the group still
+    exists but none of its members can be signalled. That is a group being
+    torn down, not a failure, so it is polled like any live group.
+
+    EPERM can also mean a member owned by another user that will never
+    drain. The bound covers that: the caller escalates, and a group that is
+    still there after escalation is reported as an incomplete cancellation,
+    never as a clean one.
+    """
     deadline = time.monotonic() + timeout
     while True:
         child.poll()
@@ -85,6 +96,8 @@ def _wait_for_posix_group(child: subprocess.Popen, timeout: float) -> bool:
             os.killpg(child.pid, 0)
         except ProcessLookupError:
             return True
+        except PermissionError:
+            pass
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.05)
@@ -141,7 +154,8 @@ def _run_command(arguments: list[str], root: Path) -> int:
         if child is not None and not windows:
             try:
                 os.killpg(child.pid, signum)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
+                # Gone, or only members that are already exiting remain.
                 pass
 
     signals = (signal.SIGINT, signal.SIGTERM)
@@ -206,6 +220,22 @@ def _run_command(arguments: list[str], root: Path) -> int:
             os.killpg(child.pid, signal.SIGKILL)
         except ProcessLookupError:
             return 128 + interrupted
+        except PermissionError as error:
+            # Only members that cannot be signalled remain: exiting ones,
+            # which drain within the same bound, or another user's.
+            cause: BaseException = error
+            try:
+                drained = _wait_for_posix_group(child, 2)
+            except (OSError, subprocess.SubprocessError) as wait_failure:
+                drained, cause = False, wait_failure
+            if drained:
+                return 128 + interrupted
+            raise _incomplete_cancellation(
+                child,
+                interrupted=interrupted,
+                platform="posix",
+                cleanup="group-drain-refused",
+            ) from cause
         except OSError as error:
             raise _incomplete_cancellation(
                 child,
