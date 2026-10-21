@@ -558,11 +558,12 @@ class StatsViewTests(unittest.TestCase):
 
     def test_the_markdown_view_shows_stats_planned_work_and_change_requests(self) -> None:
         view = render_state.render_markdown(self.document())
-        self.assertIn("  - stats: build 30m 00s · review 20m 00s · 2 rounds, findings P0/P1/P2/P3 0/1/2/1"
+        self.assertIn("\n  - stats: build 30m 00s · review 20m 00s · 2 rounds, findings P0/P1/P2/P3 0/1/2/1"
                       " · wait unknown · check to merge unknown · total unknown", view)
         self.assertIn("· head " + HEAD_A + " · change request change request 7", view)
-        self.assertIn("  - stats: build unknown · review unknown · rounds unknown", view)
+        self.assertIn("\n  - stats: build unknown · review unknown · rounds unknown", view)
         planned = view[view.index("## Planned"):view.index("## Lanes")]
+        self.assertIn("\n  - stats: build unknown", planned, "planned stats nest under their row")
         self.assertIn(f"- change-3: {render_state._markdown_text(HOSTILE)}, review · lane lane-2"
                       f" · change request {render_state._markdown_text(HOSTILE)}", planned)
         reported = {**self.document(), "stats": {"change-1": {**self.document()["stats"]["change-1"],
