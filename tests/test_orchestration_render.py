@@ -1280,6 +1280,15 @@ class ChangeNotificationTests(DeliveryStateFixture):
         self.assertEqual(json.loads(result.stdout)["code"], "patch_invalid")
         self.assertEqual(len(self.changes()), before + 1, "a refused write records no change")
 
+    def test_each_write_the_tool_makes_for_a_lane_records_one_change(self) -> None:
+        # A hand-off writes the record, then journals it: one change each.
+        before = len(self.changes())
+        state_tool(self.state_dir, "handoff", "--lane", "lane-1", "--subject", "change-1", "--head", "d" * 40,
+                   "--change-request", "cr 9")
+        changes = self.changes()[before:]
+        self.assertEqual([change["change"] for change in changes], ["patch", "journal"])
+        self.assertEqual(changes[0]["version"], state_tool(self.state_dir, "show")["state"]["version"])
+
     def test_a_notification_that_cannot_be_written_never_fails_the_write(self) -> None:
         path = self.state_dir / "changes.jsonl"
         path.unlink(missing_ok=True)

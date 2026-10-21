@@ -649,6 +649,7 @@ def _tool_write(directory: Path, change: Callable[[dict], object]) -> tuple[dict
             raise StateError("patch_invalid", "; ".join(errors))
         _require_unicode(updated, "patch_invalid")
         _write_atomically(directory / STATE_FILE, dumps(updated))
+        _note_change(directory, "patch", version=updated["version"])
     return updated, outcome
 
 
