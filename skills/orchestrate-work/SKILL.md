@@ -202,7 +202,8 @@ python3 -B scripts/render_state.py --dir <state directory>
   `publishers`. A renderer is any argv, or a built-in (`markdown` or
   `static-page`), that reads the validated `{state, journal}` on stdin and
   writes one view on stdout to its `output` inside the state directory. A
-  publisher is any argv that puts the same document somewhere a view reads.
+  publisher is any argv that puts the same document somewhere a view reads,
+  or a `host` publisher that leaves an outbox for the lead (see below).
 - With no configuration it renders both built-ins, `delivery.md` and
   `delivery.html`.
 - It exits 0 when every renderer succeeded and 1 when one failed. A failing
@@ -212,6 +213,67 @@ python3 -B scripts/render_state.py --dir <state directory>
 When a host stores the state with its own tool rather than an argv, follow
 [the publishing step](references/orchestration-guide.md#publishing-step)
 after each runner result.
+
+## Keeping the live view current
+
+Keeping the view current is the lead's job, never the operator's: the
+operator should never have to ask whether it is up to date. At every event,
+such as a hand-off, a merge, a decision or a tracker change, run the sync loop
+in this order:
+
+1. **Snapshot.** With the host's own forge and tracker tools, list the epic's
+   work and write it as `work-snapshot/1` files (in
+   `references/schemas.json`): `{takenAt, source, items}`, where `source` is
+   `forge` or `tracker`. Each item is `{subject, title?, state,
+   changeRequest?, head?}`. A tracker state is `backlog`, `started`,
+   `completed` or `canceled`; a forge state is `open`, `draft`, `merged` or
+   `closed`. The state tool never calls a forge or a tracker itself.
+2. **Reconcile.**
+
+   ```bash
+   python3 -B scripts/delivery_state.py --dir <state directory> reconcile --snapshot <forge snapshot> --snapshot <tracker snapshot>
+   ```
+
+   - A tracker child the record lacks is added: `backlog` as a follow-up,
+     `started` as planned work (the state's `planned` list). Planned work is
+     only what the approved plan covers, so write a started child outside it
+     as `backlog` in the snapshot: it then becomes a follow-up.
+   - A change request is linked to its queue or planned item, and an open one
+     moves planned work to review.
+   - A merge the runner never recorded is written as the runner's, with a
+     `candidate.merged` journal entry saying so. The runner records its own
+     merges, so this is a recovery path, not the normal one.
+   - Anything it cannot settle, such as a completed child still planned, is
+     reported and left for the lead.
+   - A snapshot older than `--max-age` seconds (900 by default) is refused
+     with `snapshot_stale`, and one dated ahead of this machine's clock with
+     `snapshot_invalid`; nothing is written: list the work again. A listing
+     that fails is noted, and the loop carries on to render and publish.
+   - Tracker snapshots apply before forge snapshots, whatever their order, so
+     one pass settles both.
+   - A merge is never recovered while the runner holds the queue: it is
+     reported, and the next pass after the runner stops records it if the
+     runner did not.
+   - It is idempotent and prints its changes as JSON, or `no drift`.
+3. **Render**, with the wrapper as above. Command publishers run as part of
+   it. A `host` publisher, `{"id": "<id>", "kind": "host"}`, runs nothing: it
+   writes `outbox/outbox.json` in the state directory, holding the record
+   `version`, the `journalThrough` id it reaches, the state and every journal
+   entry not yet acknowledged. Readers ignore fields they do not know, so
+   later projections can join these.
+4. **Publish** the outbox with the host's own tool, for a view whose store
+   only the host can write.
+5. **Acknowledge** what went out:
+
+   ```bash
+   python3 -B scripts/delivery_state.py --dir <state directory> ack --version <outbox version> --through <outbox journalThrough>
+   ```
+
+   Acknowledge the outbox's own `version` and `journalThrough`, never the
+   record's: an acknowledgement beyond what the outbox held is refused with
+   `ack_invalid`. The next outbox then carries only later entries. `show` reports a
+   publication or an outbox that lags the record, so an unpublished view is
+   always visible.
 
 ## Running the epic
 
@@ -275,7 +337,8 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind <kin
   `checks` and a null `syncedHead`.
 - Journal appends are never refused for concurrency; the tool allocates the
   next id.
-- `show` prints the validated `{state, journal}` pair that renderers read.
+- `show` prints the validated `{state, journal}` pair that renderers read,
+  with a `publication` block saying whether what was published lags it.
 - Output is ASCII JSON on every platform and console; a patch read from
   stdin is UTF-8, with or without a byte-order mark. Text that has no UTF-8
   form, such as a lone surrogate, is refused. The state is UTF-8 and the

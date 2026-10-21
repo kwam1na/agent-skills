@@ -109,7 +109,8 @@ class DeliveryStateFixture(unittest.TestCase):
         }
         state_tool(self.state_dir, "patch", "--writer", "lead", "--version", str(version), "--patch", json.dumps(changes))
         state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", HOSTILE, "--lane", "lane-1")
-        self.document = state_tool(self.state_dir, "show")
+        # What a renderer reads: the state tool's show, without its publication status.
+        self.document = {key: value for key, value in state_tool(self.state_dir, "show").items() if key != "publication"}
 
     def config(self, renderers: list[dict] | None = None, publishers: list[dict] | None = None) -> str:
         return json.dumps({"directory": "state", "renderers": renderers or [], "publishers": publishers or []})
@@ -471,6 +472,59 @@ class PinnedViewTests(unittest.TestCase):
 
     def test_the_built_in_views_of_an_empty_delivery_are_byte_for_byte_unchanged(self) -> None:
         self.assertEqual(self.views(EMPTY_STATE, []), PINNED_EMPTY_VIEWS)
+
+
+class HostPublisherTests(DeliveryStateFixture):
+    """A host publisher leaves an outbox the lead publishes with its host's own tool."""
+
+    def outbox(self) -> dict:
+        return json.loads((self.state_dir / "outbox" / "outbox.json").read_text(encoding="utf-8"))
+
+    def test_the_outbox_holds_the_state_and_exactly_the_unacknowledged_entries(self) -> None:
+        host = [{"id": "live", "kind": "host"}]
+        code, result = wrapper(self.state_dir, "--state-config", self.config([], host))
+        self.assertEqual(code, 0, result)
+        shown = state_tool(self.state_dir, "show")
+        self.assertEqual(result["publishers"], [{"id": "live", "kind": "host", "ok": True,
+                                                 "outbox": "outbox/outbox.json", "entries": len(shown["journal"]),
+                                                 "version": shown["state"]["version"],
+                                                 "journalThrough": shown["journal"][-1]["id"]}])
+        outbox = self.outbox()
+        self.assertEqual(outbox["version"], shown["state"]["version"])
+        self.assertEqual(outbox["state"], shown["state"])
+        self.assertEqual(outbox["journal"], shown["journal"])
+        last = shown["journal"][-1]["id"]
+        state_tool(self.state_dir, "ack", "--version", str(outbox["version"]), "--through", str(last))
+        wrapper(self.state_dir, "--state-config", self.config([], host))
+        self.assertEqual((self.outbox()["journal"], self.outbox()["journalThrough"]), ([], last))
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "After the ack")
+        wrapper(self.state_dir, "--state-config", self.config([], host))
+        self.assertEqual([entry["summary"] for entry in self.outbox()["journal"]], ["After the ack"])
+
+    def test_show_flags_an_outbox_older_than_the_record(self) -> None:
+        wrapper(self.state_dir, "--state-config", self.config([], [{"id": "live", "kind": "host"}]))
+        self.assertFalse(state_tool(self.state_dir, "show")["publication"]["outboxLags"])
+        version = state_tool(self.state_dir, "show")["state"]["version"]
+        state_tool(self.state_dir, "patch", "--writer", "lead", "--version", str(version),
+                   "--patch", json.dumps({"meta": {"headline": "Moved on"}}))
+        publication = state_tool(self.state_dir, "show")["publication"]
+        self.assertEqual((publication["outboxVersion"], publication["outboxLags"]), (version, True))
+        # A journal entry alone moves no version, and still leaves the outbox behind.
+        wrapper(self.state_dir, "--state-config", self.config([], [{"id": "live", "kind": "host"}]))
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Journal only")
+        self.assertTrue(state_tool(self.state_dir, "show")["publication"]["outboxLags"])
+
+    def test_a_host_publisher_takes_no_argv_and_no_view_may_claim_its_names(self) -> None:
+        for publisher in ({"id": "live", "kind": "host", "argv": ["x"]}, {"id": "live", "kind": "shell"},
+                          {"id": "live", "kind": "host", "timeoutSeconds": 5}):
+            with self.subTest(publisher=publisher):
+                code, result = wrapper(self.state_dir, "--state-config", self.config([], [publisher]))
+                self.assertEqual((code, result["code"]), (2, "config_invalid"), result)
+        for output in ("outbox/outbox.json", "published.json", "OUTBOX/x.md"):
+            with self.subTest(output=output):
+                renderer = [{"id": "sneaky", "builtin": "markdown", "output": output}]
+                code, result = wrapper(self.state_dir, "--state-config", self.config(renderer))
+                self.assertEqual((code, result["code"]), (2, "config_invalid"), result)
 
 
 class WrapperTests(DeliveryStateFixture):

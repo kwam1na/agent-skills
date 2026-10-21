@@ -267,6 +267,50 @@
                   }
                 }
               }
+            },
+            "changeRequest": {
+              "$ref": "#/$defs/name"
+            }
+          }
+        }
+      },
+      "planned": {
+        "description": "Work the lead knows is under way but has not handed to the queue. Optional; the lead owns it.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subject",
+            "title",
+            "lane",
+            "stage"
+          ],
+          "properties": {
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "lane": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/name"
+                }
+              ]
+            },
+            "stage": {
+              "enum": [
+                "planned",
+                "review"
+              ]
+            },
+            "changeRequest": {
+              "$ref": "#/$defs/name"
             }
           }
         }
@@ -1342,24 +1386,45 @@
           "publishers": {
             "type": "array",
             "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "id",
-                "argv"
-              ],
-              "properties": {
-                "id": {
-                  "$ref": "#/$defs/name"
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "argv"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/name"
+                    },
+                    "argv": {
+                      "$ref": "#/$defs/argv"
+                    },
+                    "timeoutSeconds": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
                 },
-                "argv": {
-                  "$ref": "#/$defs/argv"
-                },
-                "timeoutSeconds": {
-                  "type": "integer",
-                  "minimum": 1
+                {
+                  "description": "A host publisher: the wrapper writes an outbox that the lead publishes with its host's own tool.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "kind"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/name"
+                    },
+                    "kind": {
+                      "const": "host"
+                    }
+                  }
                 }
-              }
+              ]
             }
           }
         }
@@ -1452,6 +1517,80 @@
             "minimum": 1
           }
         }
+      }
+    }
+  },
+  "work-snapshot/1": {
+    "$id": "urn:agent-skills:orchestrate-work:work-snapshot:1",
+    "title": "work-snapshot/1",
+    "description": "What the lead's forge or tracker said about the epic's work at one moment. The lead writes it with its own tools; the state tool never calls a forge or tracker.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "takenAt",
+      "source",
+      "items"
+    ],
+    "properties": {
+      "takenAt": {
+        "$ref": "#/$defs/timestamp"
+      },
+      "source": {
+        "enum": [
+          "forge",
+          "tracker"
+        ]
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subject",
+            "state"
+          ],
+          "properties": {
+            "subject": {
+              "$ref": "#/$defs/name"
+            },
+            "title": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "backlog",
+                "started",
+                "completed",
+                "canceled",
+                "open",
+                "draft",
+                "merged",
+                "closed"
+              ]
+            },
+            "changeRequest": {
+              "$ref": "#/$defs/name"
+            },
+            "head": {
+              "$ref": "#/$defs/commit"
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      },
+      "commit": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
       }
     }
   }
