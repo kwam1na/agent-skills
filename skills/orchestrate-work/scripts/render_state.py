@@ -367,6 +367,10 @@ _PAGE_PROGRAM = """
     if (value === null || value === undefined) { return "none"; }
     if (typeof value === "string") { return value; }
     if (typeof value === "boolean") { return value ? "yes" : "no"; }
+    if (typeof value === "number" && Number.isInteger(value)) {
+      /* A whole number in full, never in exponent form, however large. */
+      return value === 0 ? "0" : value.toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 0 });
+    }
     return JSON.stringify(value);
   }
   function list(tag, items, empty, draw) {

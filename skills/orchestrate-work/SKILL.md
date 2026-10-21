@@ -399,7 +399,10 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind revi
   published lags it. `stats` is derived, never stored: per queued or planned
   candidate, the build, review, wait, check-to-merge and total seconds, the
   rounds and their findings. A stat whose events are missing is null, never
-  zero; with no recorded rounds, the count is the lane's `reportedRounds`.
+  zero; with no recorded rounds, the count is the lane's `reportedRounds`. A
+  candidate handed again follows its latest attempt: its total runs to that
+  attempt's merge and is null unless it merged. Times keep six fractional
+  digits, dropping the rest, and durations are whole seconds.
 - Output is ASCII JSON on every platform and console; a patch read from
   stdin is UTF-8, with or without a byte-order mark. Text that has no UTF-8
   form, such as a lone surrogate, is refused. The state is UTF-8 and the

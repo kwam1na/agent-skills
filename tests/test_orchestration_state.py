@@ -1227,10 +1227,7 @@ class DeliveryStatsTests(unittest.TestCase):
         journal.append(entry(8, "2026-10-20T10:09:00.25Z", "candidate.stopped", "work-a"))
         stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
         self.assertEqual((stats["outcome"], stats["checkToMergeSeconds"]), ("stopped", 480))
-        self.assertEqual(stats["totalSeconds"], 600, "the total ends at a merge, here the earlier one")
-        journal[1] = entry(2, "2026-10-20T09:10:00Z", "decision.recorded", "work-a")
-        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
-        self.assertIsNone(stats["totalSeconds"], "a stopped candidate has no total")
+        self.assertIsNone(stats["totalSeconds"], "the total follows the latest attempt, which stopped")
 
     def test_times_compare_as_times_and_durations_count_whole_seconds(self) -> None:
         # As text, "10:00:00.9Z" sorts before "10:00:00Z" and "10:00:02Z" after "10:00:02.6Z";
@@ -1274,6 +1271,90 @@ class DeliveryStatsTests(unittest.TestCase):
         self.assertEqual((stats["rounds"], stats["findings"]), (1, {"P0": 0, "P1": 0, "P2": 0, "P3": 1}))
         self.assertEqual((stats["buildSeconds"], stats["reviewSeconds"]), (None, 900),
                          "a review that started before the assignment has no build time")
+
+    def test_stats_follow_the_latest_attempt_after_a_merge_and_a_re_hand(self) -> None:
+        journal = [
+            entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T10:00:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(3, "2026-10-20T10:05:00Z", "check.started", "work-a", "lane-1"),
+            entry(4, "2026-10-20T10:10:00Z", "candidate.merged", "work-a", "lane-1"),
+            entry(5, "2026-10-20T11:00:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(6, "2026-10-20T11:05:00Z", "check.started", "work-a", "lane-1"),
+            entry(7, "2026-10-20T11:20:00Z", "candidate.stopped", "work-a", "lane-1"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        # Everything about the end follows the latest hand-off, which stopped:
+        # the earlier merge's total is not this attempt's.
+        self.assertEqual(
+            (stats["handedAt"], stats["checkStartedAt"], stats["endedAt"], stats["outcome"]),
+            ("2026-10-20T11:00:00Z", "2026-10-20T11:05:00Z", "2026-10-20T11:20:00Z", "stopped"),
+        )
+        self.assertEqual((stats["checkToMergeSeconds"], stats["totalSeconds"]), (900, None))
+        # A later attempt that merges again has its own total, from the assignment.
+        journal += [
+            entry(8, "2026-10-20T12:00:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(9, "2026-10-20T12:05:00Z", "check.started", "work-a", "lane-1"),
+            entry(10, "2026-10-20T12:15:00Z", "candidate.merged", "work-a", "lane-1"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        self.assertEqual((stats["outcome"], stats["totalSeconds"]), ("merged", 11700))
+
+    def test_a_merge_recovered_from_the_forge_ends_the_latest_attempt(self) -> None:
+        # Merged on the forge before any check: reconcile records the merge alone.
+        journal = [
+            entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T10:00:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(3, "2026-10-20T10:30:00Z", "candidate.merged", "work-a"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        self.assertEqual((stats["outcome"], stats["endedAt"], stats["totalSeconds"], stats["checkToMergeSeconds"]),
+                         ("merged", "2026-10-20T10:30:00Z", 5400, None))
+        # After a stop and a re-hand, the recovered merge ends the new attempt.
+        journal = [
+            entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T10:00:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(3, "2026-10-20T10:05:00Z", "check.started", "work-a"),
+            entry(4, "2026-10-20T10:10:00Z", "candidate.stopped", "work-a"),
+            entry(5, "2026-10-20T11:00:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(6, "2026-10-20T11:02:00Z", "candidate.merged", "work-a"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        self.assertEqual((stats["outcome"], stats["totalSeconds"]), ("merged", 7320))
+        # The total always ends where the attempt ended: a stop after a
+        # recovered merge has no total, and a second merge after a check is
+        # where both end.
+        base = [entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+                entry(2, "2026-10-20T10:00:00Z", "candidate.handed", "work-a", "lane-1"),
+                entry(3, "2026-10-20T10:10:00Z", "candidate.merged", "work-a"),
+                entry(4, "2026-10-20T10:20:00Z", "check.started", "work-a")]
+        stopped = state_tool.delivery_stats(self.state(queue_item("work-a")), [
+            *base, entry(5, "2026-10-20T10:30:00Z", "candidate.stopped", "work-a")])["work-a"]
+        self.assertEqual((stopped["outcome"], stopped["totalSeconds"]), ("stopped", None))
+        again = state_tool.delivery_stats(self.state(queue_item("work-a")), [
+            *base, entry(5, "2026-10-20T10:40:00Z", "candidate.merged", "work-a")])["work-a"]
+        self.assertEqual((again["outcome"], again["endedAt"], again["totalSeconds"]),
+                         ("merged", "2026-10-20T10:40:00Z", 6000))
+        # With no hand-off on record, the last merge stands, as before.
+        journal = [
+            entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T10:30:00Z", "candidate.merged", "work-a"),
+        ]
+        self.assertEqual(state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]["totalSeconds"], 5400)
+
+    def test_fractions_beyond_the_microsecond_are_truncated_never_rounded(self) -> None:
+        # A schema timestamp may carry any number of fractional digits; the
+        # stats keep the first six and drop the rest, so they never round up.
+        moment = state_tool._parse_time("2026-10-20T09:00:00.1234569Z", exact=True)
+        self.assertEqual(moment.microsecond, 123456)
+        self.assertEqual(state_tool._seconds("2026-10-20T09:00:00Z", "2026-10-20T09:00:00.9999999Z"), 0)
+        self.assertEqual(state_tool._seconds("2026-10-20T09:00:00.0000009Z", "2026-10-20T09:00:01.0000001Z"), 1)
+        journal = [
+            entry(1, "2026-10-20T09:00:00.000000001Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T09:30:00.999999999Z", "review.round", "work-a", "lane-1", review=review(
+                1, "2026-10-20T09:10:00.123456789Z", "2026-10-20T09:30:00.999999999Z")),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        self.assertEqual((stats["buildSeconds"], stats["reviewSeconds"]), (600, 1200))
 
     def test_planned_work_has_stats_and_the_fold_is_in_show(self) -> None:
         temporary = tempfile.TemporaryDirectory()
