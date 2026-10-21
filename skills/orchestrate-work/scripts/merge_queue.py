@@ -1877,6 +1877,9 @@ class Runner:
                             f"checked on its own; run the full health check before anything else merges",
                         )
                         document.stop["queueStopped"] = True
+                        with contextlib.suppress(Stop, delivery_state.StateError, OSError):
+                            self.journal("base.broken", f"{stop.reason} after a partial landing; "
+                                         f"{self.base} holds the batch's tree up to {landed[-1]}", member.subject)
                     if stop.reason == "batch_tree_mismatch":
                         # Nothing of it landed; it is batched again once the base is confirmed.
                         with contextlib.suppress(Stop, delivery_state.StateError):
@@ -2096,12 +2099,6 @@ def ascii_json(value: object) -> bytes:
     return (json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True) + "\n").encode("ascii")
 
 
-def base_awaits_repair(journal: list[dict]) -> bool:
-    """Whether the last word on the base is base.broken: the lead confirms it with base.repaired."""
-    last = next((entry["kind"] for entry in reversed(journal) if entry["kind"] in ("base.broken", "base.repaired")), None)
-    return last == "base.broken"
-
-
 def serve(
     repository: Path,
     state_directory: Path,
@@ -2134,13 +2131,19 @@ def serve(
             item["subject"] for item in sorted(state["queue"], key=lambda entry: (entry["order"], entry["subject"]))
             if item["stage"] == "queued" and not item.get("pending")
         ]
-        if state["meta"].get("hold") or base_awaits_repair(journal) or not waiting:
+        if state["meta"].get("hold") or delivery_state.base_awaits_repair(journal) or not waiting:
             if until_idle:
                 return results
             sleep(poll)
             continue
         runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams)
         taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting)
+        if all(result.stop is not None and result.stop["reason"] == "queue_locked" for result in taken):
+            # Another runner holds the queue: nothing was attempted, so nothing is recorded.
+            if until_idle:
+                return results
+            sleep(poll)
+            continue
         for result in taken:
             write_result(state_directory, result)
         results += taken

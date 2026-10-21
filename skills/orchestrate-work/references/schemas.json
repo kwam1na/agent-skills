@@ -220,6 +220,10 @@
                 }
               }
             ]
+          },
+          "handoffsNeedAcceptance": {
+            "description": "Set by the lead. true makes every lane hand-off wait as pending until the lead accepts it; absent or false, a hand-off is accepted as it is made.",
+            "type": "boolean"
           }
         }
       },
@@ -1726,10 +1730,6 @@
                 "minimum": 1
               }
             }
-          },
-          "handoffsNeedAcceptance": {
-            "description": "Optional. true makes every lane hand-off wait for the lead to accept it before the runner takes it.",
-            "type": "boolean"
           },
           "statusOverrideMaxAgeSeconds": {
             "description": "Optional. How long a lead's status override lasts before the derived status line returns; 14400 when absent.",

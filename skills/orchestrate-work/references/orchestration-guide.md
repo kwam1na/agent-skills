@@ -100,7 +100,7 @@ proceeds and the lead notes the gap in its close-out.
 | `check.retried` | On the flake's tracking reference: one more retry, naming the candidate and the failing tests, as evidence for fixing the flake. |
 | `candidate.merged` | On the ticket: the merge commit, the checks run, and any check reported but not awaited; the ticket moves to its review or completed state. |
 | `candidate.stopped` | On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or pending a decision. |
-| `base.broken` | On the epic: the failing check, and that the queue is stopped. |
+| `base.broken` | On the epic: the stop code and its detail (the failing check, an unverified merge, a base that moved under a batch, or a batch that landed in part), and that the queue is stopped; `base.repaired` reopens it. |
 | `base.repaired` | On the epic: the fix that landed and the gap it closed. |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. |
 | `lease.released` | On the same ticket: the lease is released. |
@@ -157,8 +157,8 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   Journal a `review.round`, or queue a hand-off yourself, only for a lane
   that could not write to the record, with the times, verdicts and findings
   it gives, so its stop's stats are complete.
-- Check each hand-off as a claim (the coordination protocol). When the
-  binding's `state.handoffsNeedAcceptance` is true, a hand-off waits as
+- Check each hand-off as a claim (the coordination protocol). When you set
+  the record's `meta.handoffsNeedAcceptance` to true, every hand-off waits as
   `pending` until you run `handoff --accept <subject>`, or
   `handoff --reject <subject> --reason <why>` to send it back to the lane's
   plan. Never hold approved work: an approved candidate enters the queue at
@@ -189,10 +189,11 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   order. When two or more approved candidates wait and the checks are slow,
   run them with `batch` instead, in queue order: one check run covers them all
   (see "What a batch proves" in the binding guide).
-- On a stop, read its code in the result document, act, then name the
-  candidate again to re-queue it. A re-queued candidate runs again, still
-  pinned to its reviewed `head` or the runner's last `syncedHead`; write a new
-  reviewed `head` into its queue element first when the lane hands off again.
+- On a stop, read its code in the result document and act. Under `serve`, a
+  stopped candidate runs again once its lane hands it off again, at a new
+  head or the same one; without `serve`, name the candidate again to re-queue
+  it. A re-queued candidate runs again, still pinned to its reviewed `head` or
+  the runner's last `syncedHead`.
   A candidate returned to its lane takes priority over the lane's current
   assignment: set the lane's `focus` to the returned candidate, and say so in
   the message that returns it.
@@ -389,7 +390,7 @@ python3 -B <skill>/scripts/delivery_state.py --dir <state> handoff --lane <lane>
 
 The hand-off queues your planned work at its reviewed head; the runner takes
 it from there. To hand off a stopped candidate again, run the same command
-with its new head. Anything outside your own lane is refused with
+with its head, new or unchanged. Anything outside your own lane is refused with
 `writer_not_owned`.
 
 One attempt, never a gate. When you cannot write to the record, give each

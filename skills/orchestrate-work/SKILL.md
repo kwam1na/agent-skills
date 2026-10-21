@@ -194,8 +194,9 @@ The runner works only in detached checkouts under the binding's `workRoot`,
 never touches the operator's checkout or the base branch, and writes a result
 document and journal entries for every subcommand. Every stop names a code,
 such as `candidate_moved`, `source_conflict`, `sync_step_failed`,
-`check_failed`, `base_broken` or `merged_unverified`; the lead reads the code,
-acts, and names the candidate again to re-queue it. A candidate that already
+`check_failed`, `base_broken` or `merged_unverified`; the lead reads the code
+and acts. Under `serve` the lane hands a stopped candidate off again; without
+it, the lead names the candidate again to re-queue it. A candidate that already
 merged is refused with `already_merged`. The lead checklist lists every code
 and what to do about it.
 

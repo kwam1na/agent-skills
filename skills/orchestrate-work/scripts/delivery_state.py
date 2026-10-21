@@ -616,7 +616,8 @@ def _stamp_lane(before: dict, after: dict, lane: str) -> None:
     """The tool keeps since: it moves when the lane's state changes, and only then."""
     old = next(entry for entry in before["lanes"] if entry["id"] == lane)
     new = next(entry for entry in after["lanes"] if entry["id"] == lane)
-    new["since"] = now() if new["state"] != old["state"] else old["since"]
+    if "state" in new:
+        new["since"] = now() if new["state"] != old.get("state") else old.get("since")
 
 
 def _tool_write(directory: Path, change: Callable[[dict], object]) -> tuple[dict, object]:
@@ -649,7 +650,6 @@ def handoff(
     head: str,
     change_request: str,
     rounds: int | None = None,
-    needs_acceptance: bool = False,
 ) -> dict:
     """A lane hands its reviewed work to the queue, and the hand-off is journaled.
 
@@ -684,15 +684,14 @@ def handoff(
             state["queue"].append(item)
         if rounds is not None:
             item["reportedRounds"] = rounds
-        if needs_acceptance:
+        # The lead's own policy, from the record, so no caller can leave it out; only the lead clears the wait.
+        if state["meta"].get("handoffsNeedAcceptance"):
             item["pending"] = True
-        else:
-            item.pop("pending", None)
         _set_lane_state(state, lane, "handed")
         return copy.deepcopy(item)
 
     _, item = _tool_write(directory, change)
-    waiting = "; waiting for the lead to accept it" if needs_acceptance else ""
+    waiting = "; waiting for the lead to accept it" if item.get("pending") else ""
     rounds_text = f" after {rounds} review rounds" if rounds is not None else ""
     append_journal(directory, kind="candidate.handed", lane=lane, subject=subject,
                    summary=f"{lane} handed {subject} at {head} ({change_request}){rounds_text}{waiting}")
@@ -998,7 +997,7 @@ def queue_estimates(state: dict, at: str | None = None) -> dict:
         elapsed = (moment - _parse_time(current["startedAt"], exact=True)).total_seconds()
         # A start in the future (a clock out of step) still leaves at most one run.
         remaining = min(expected, max(0, expected - int(elapsed)))
-    waiting = sorted((item for item in state["queue"] if item["stage"] == "queued"),
+    waiting = sorted((item for item in state["queue"] if item["stage"] == "queued" and not item.get("pending")),
                      key=lambda item: (item["order"], item["subject"]))
     estimates = {}
     for position, item in enumerate(waiting, start=1):
@@ -1031,6 +1030,11 @@ def delivery_status(state: dict, journal: list[dict], at: str | None = None) -> 
         # An override says so, and until when, so a stale manual line never passes as derived state.
         return {"text": override["text"], "source": "override", "expiresAt": override["expiresAt"]}
     parts = []
+    hold = state["meta"].get("hold")
+    if hold:
+        parts.append(f"Serving is paused: {hold['reason']}")
+    elif base_awaits_repair(journal):
+        parts.append("Serving is paused until the base is confirmed")
     current = state["meta"]["checking"]["now"]
     if current is not None:
         text = f"Checking {current['title']}"
@@ -1053,6 +1057,12 @@ def delivery_status(state: dict, journal: list[dict], at: str | None = None) -> 
     if waiting:
         parts.append(f"next: {waiting[0]}" + (f", then {len(waiting) - 1} more" if len(waiting) > 1 else ""))
     return {"text": " · ".join(parts) or "Nothing in flight", "source": "derived"}
+
+
+def base_awaits_repair(journal: list[dict]) -> bool:
+    """Whether the last word on the base is base.broken: the lead confirms it with base.repaired."""
+    last = next((entry["kind"] for entry in reversed(journal) if entry["kind"] in ("base.broken", "base.repaired")), None)
+    return last == "base.broken"
 
 
 def lane_focus(state: dict) -> dict:
@@ -1875,9 +1885,8 @@ def _handoff_command(args: argparse.Namespace) -> dict:
     missing = [name for name in ("lane", "subject", "head", "change_request") if not getattr(args, name)]
     if missing:
         raise StateError("handoff_invalid", "a hand-off needs " + ", ".join("--" + name.replace("_", "-") for name in missing))
-    needs = bool(binding_state(args.binding).get("handoffsNeedAcceptance")) if args.binding is not None else False
     return handoff(args.dir, lane=args.lane, subject=args.subject, head=args.head,
-                   change_request=args.change_request, rounds=args.rounds, needs_acceptance=needs)
+                   change_request=args.change_request, rounds=args.rounds)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1915,7 +1924,6 @@ def main(argv: list[str] | None = None) -> int:
     hand.add_argument("--head")
     hand.add_argument("--change-request")
     hand.add_argument("--rounds", type=int)
-    hand.add_argument("--binding", type=Path, help="the repository binding, for state.handoffsNeedAcceptance")
     headline = commands.add_parser("headline", help="the lead's status line, shown until it expires")
     told = headline.add_mutually_exclusive_group(required=True)
     told.add_argument("--text", help="the status line")

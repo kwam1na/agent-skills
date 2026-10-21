@@ -2727,6 +2727,34 @@ class ServeTests(MergeQueueTestCase):
         self.serve(adopter)
         self.assertEqual(adopter.item("later")["stage"], "merged")
 
+    def test_a_partial_landing_pauses_serve_until_the_base_is_confirmed(self) -> None:
+        adopter = self.adopter()
+        for name, changes in (("first", {"src/lib.txt": "lib two\n"}), ("second", {"src/app.txt": "app two\n"}),
+                              ("third", {"src/extra.txt": "extra\n"})):
+            self.candidate(adopter, changes, name=name)
+
+        def refuse_second(runner, subject) -> None:
+            if subject == "second":
+                os.environ["MQ_MERGE"] = "refuse"
+
+        self.addCleanup(os.environ.pop, "MQ_MERGE", None)
+        self.serve(adopter, seams={"before_batch_landing": refuse_second})
+        os.environ.pop("MQ_MERGE", None)
+        self.assertEqual(adopter.item("first")["stage"], "merged")
+        self.assertEqual(adopter.item("third")["stage"], "queued")
+        self.assertIn("base.broken", [entry["kind"] for entry in state_tool.read_journal(adopter.state)])
+        # The base holds a prefix checked only as part of the batch: nothing more is taken until it is confirmed.
+        self.assertEqual(self.serve(adopter), [])
+        self.assertEqual(adopter.item("third")["stage"], "queued")
+
+    def test_serve_records_nothing_while_another_runner_holds_the_queue(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        with state_tool.file_lock(adopter.state / state_tool.QUEUE_LOCK):
+            self.assertEqual(self.serve(adopter), [])
+        self.assertEqual(list((adopter.state / "results").glob("*.json")), [])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+
     def test_every_queue_stopping_stop_is_journaled_as_a_broken_base(self) -> None:
         adopter = self.adopter()
         self.candidate(adopter)

@@ -1869,6 +1869,11 @@ class QueueEstimateTests(unittest.TestCase):
             "work-x": {"position": 2, "expectedStart": "2026-10-21T10:01:00Z"},
         })
 
+    def test_a_hand_off_waiting_for_the_lead_does_not_wait_in_the_queue(self) -> None:
+        state = self.state(queue_item("work-c", pending=True), queue_item("work-d", order=2), runs=[60] * 5)
+        self.assertEqual(state_tool.queue_estimates(state, at=self.NOW),
+                         {"work-d": {"position": 1, "expectedStart": self.NOW}})
+
     def test_an_even_count_takes_the_mean_of_the_middle_two(self) -> None:
         state = self.state(queue_item("work-c"), queue_item("work-d", order=2), runs=[100, 200, 300, 400])
         self.assertEqual(state_tool.queue_estimates(state, at=self.NOW)["work-d"]["expectedStart"], "2026-10-21T10:04:10Z")
@@ -2001,15 +2006,19 @@ class LaneWriterTests(unittest.TestCase):
             self.directory, lane="lane-1", subject="work-q", head="b" * 40, change_request="cr")), "handoff_invalid")
 
     def test_when_the_lead_must_accept_a_hand_off_waits_until_accepted_or_returns_on_rejection(self) -> None:
-        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr",
-                           needs_acceptance=True)
+        # The policy is the record's, so a lane cannot skip it by leaving anything out of its command.
+        self.lead({"meta": {"handoffsNeedAcceptance": True}})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr")
+        item = next(entry for entry in state_tool.read_state(self.directory)["queue"] if entry["subject"] == "work-a")
+        self.assertTrue(item["pending"])
+        # Handing it off again does not clear the wait either.
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="b" * 40, change_request="cr")
         item = next(entry for entry in state_tool.read_state(self.directory)["queue"] if entry["subject"] == "work-a")
         self.assertTrue(item["pending"])
         state_tool.accept_handoff(self.directory, "work-a")
         item = next(entry for entry in state_tool.read_state(self.directory)["queue"] if entry["subject"] == "work-a")
         self.assertNotIn("pending", item)
-        state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr",
-                           needs_acceptance=True)
+        state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr")
         state_tool.reject_handoff(self.directory, "work-b", "the review missed the migration")
         state = state_tool.read_state(self.directory)
         self.assertNotIn("work-b", [entry["subject"] for entry in state["queue"]])
@@ -2018,6 +2027,15 @@ class LaneWriterTests(unittest.TestCase):
                      if entry["kind"] == "decision.recorded"}
         self.assertIn("Accepted", decisions["work-a"])
         self.assertIn("the review missed the migration", decisions["work-b"])
+
+    def test_a_lane_that_drops_its_own_state_is_refused_as_invalid_not_crashed(self) -> None:
+        version = self.version()
+        state = state_tool.read_state(self.directory)
+        lanes = [{key: value for key, value in entry.items() if not (entry["id"] == "lane-1" and key == "state")}
+                 for entry in state["lanes"]]
+        code = self.refused(lambda: state_tool.patch(self.directory, writer="lane", lane="lane-1", version=version,
+                                                     assignments={"/lanes": lanes}))
+        self.assertIn(code, ("patch_invalid", "writer_not_owned"))
 
     def test_accept_and_reject_need_a_pending_hand_off(self) -> None:
         self.assertEqual(self.refused(lambda: state_tool.accept_handoff(self.directory, "work-q")), "handoff_invalid")
@@ -2049,10 +2067,9 @@ class LaneWriterTests(unittest.TestCase):
         code, refused = run_tool(self.directory, "patch", "--writer", "lane", "--lane", "lane-2", "--version",
                                  str(self.version()), "--element", "lanes[id=lane-1]", "--patch", '{"focus": "x"}')
         self.assertEqual((code, refused["code"]), (1, "writer_not_owned"))
-        binding = self.directory.parent / "binding.json"
-        binding.write_text(json.dumps({"state": {"publishers": [], "handoffsNeedAcceptance": True}}))
+        self.lead({"meta": {"handoffsNeedAcceptance": True}})
         code, pending = run_tool(self.directory, "handoff", "--lane", "lane-2", "--subject", "work-b",
-                                 "--head", "c" * 40, "--change-request", "cr", "--binding", str(binding))
+                                 "--head", "c" * 40, "--change-request", "cr")
         self.assertTrue(pending["item"]["pending"])
         code, accepted = run_tool(self.directory, "handoff", "--accept", "work-b")
         self.assertEqual(code, 0, accepted)
@@ -2106,6 +2123,18 @@ class StatusTests(unittest.TestCase):
         expired = {**override, "expiresAt": "2026-10-21T11:59:59Z"}
         self.assertEqual(state_tool.delivery_status(self.record(override=expired), [], at=self.NOW),
                          {"text": "Nothing in flight", "source": "derived"})
+
+    def test_the_status_says_when_serving_is_paused_and_why(self) -> None:
+        held = self.record(queue=[queue_item("work-c")])
+        held["meta"]["hold"] = {"reason": "release in progress", "since": "2026-10-21T11:00:00Z"}
+        self.assertEqual(state_tool.delivery_status(held, [], at=self.NOW)["text"],
+                         "Serving is paused: release in progress · next: work-c")
+        broken = [entry(1, "2026-10-21T11:00:00Z", "base.broken")]
+        self.assertEqual(state_tool.delivery_status(self.record(queue=[queue_item("work-c")]), broken, at=self.NOW)["text"],
+                         "Serving is paused until the base is confirmed · next: work-c")
+        repaired = [*broken, entry(2, "2026-10-21T11:30:00Z", "base.repaired")]
+        self.assertEqual(state_tool.delivery_status(self.record(queue=[queue_item("work-c")]), repaired, at=self.NOW)["text"],
+                         "next: work-c")
 
     def test_an_empty_lane_focus_derives_from_its_work(self) -> None:
         record = self.record(
