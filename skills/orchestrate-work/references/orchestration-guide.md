@@ -423,9 +423,10 @@ own and hand it off only if that step succeeded:
 python3 -B <skill>/scripts/merge_queue.py --repo <lane checkout> --remote <remote> --base <base> evidence --check <reusable check> --head <head you ran it on>
 ```
 
-It exits 1, with the reason, when the check is not reusable in your head's
-binding or the head is not a commit; a refusal pasted into `--evidence` is
-refused as the evidence command's. Record only a run that finished at the head
+It exits 1 with the reason whenever it refuses: the head is not a commit, its
+tree has no valid binding for this base, the check is not reusable in that
+binding, or git fails. A refusal pasted into `--evidence` is refused as the
+evidence command's. Record only a run that finished at the head
 you name; add `--result failed` for one that failed, or leave the evidence out.
 
 The hand-off queues your planned work at its reviewed head; the runner takes
@@ -848,7 +849,8 @@ it ran the check, the binding changed the check, or the run failed or is
 missing. When there was evidence for the check but it was not reused, the
 result's notes say why. A reusable check may use no placeholder but
 `{treeSha}`, in its argv or its profile's environment, and no other binding
-check may name it as a prerequisite; the binding is refused otherwise, since
+check may name it as a prerequisite; with any reusable check, the `prepare`
+steps may use no placeholder but `{treeSha}` either. The binding is refused otherwise, since
 only the tree may differ between the lane's run and the one it stands for. The record shows a reused check as `reused`, with the head of the
 lane's run, in the result (`reusedFrom`), the queue row, the checking panel,
 the journal (`check.reused`) and both views. A reused check adds nothing to the

@@ -4,6 +4,7 @@ import contextlib
 import copy
 import io
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -3658,6 +3659,14 @@ class ReusedCheckTests(MergeQueueTestCase):
         runner.notes = []
         self.assertEqual(runner.reusable([("feature", own)], [full, report], tree), {})
         self.assertIn("another check needs its output", runner.notes[0])
+        # Asked again, as a batch's culprit search does, it says so once.
+        runner.reusable([("feature", own)], [full, report], tree)
+        self.assertEqual(len(runner.notes), 1)
+        # A changed definition is named before a changed tree.
+        runner.notes = []
+        both = {**own, "evidence": [{**own["evidence"][0], "tree": "0" * 40, "definition": "sha256:" + "0" * 64}]}
+        self.assertEqual(runner.reusable([("feature", both)], [full], tree), {})
+        self.assertIn("its definition changed", runner.notes[0])
 
     def test_a_batch_whose_combined_tree_is_the_last_members_checked_tree_reuses_its_run(self) -> None:
         adopter = self.reusing()
@@ -3721,6 +3730,18 @@ class ReusedCheckTests(MergeQueueTestCase):
         self.assertEqual(code, 0, found)
         self.assertEqual(found, queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=head))
         self.assertEqual(found["tree"], run("rev-parse", f"{head}^{{tree}}", cwd=adopter.lane))
+        # A git failure is reported, not raised.
+        with mock.patch.object(queue.Runner, "evidence", side_effect=RuntimeError("boom")), \
+             mock.patch.object(sys, "stdout", new=io.TextIOWrapper(io.BytesIO())) as captured:
+            code = queue.main(["--repo", str(adopter.lane), "--remote", "origin", "--base", "main",
+                               "evidence", "--check", "full", "--head", head])
+            captured.flush()
+            printed = json.loads(captured.buffer.getvalue())
+        self.assertEqual((code, printed), (1, {"reason": "git_failed", "detail": "boom"}))
+        # Every other command still needs --state.
+        with self.assertRaises(SystemExit) as stopped, contextlib.redirect_stderr(io.StringIO()):
+            queue.main(["--remote", "origin", "--base", "main", "run", "x"])
+        self.assertEqual(stopped.exception.code, 2)
         code, failed = command("--check", "full", "--head", head, "--result", "failed")
         self.assertEqual((code, failed["result"]), (0, "failed"))
         for args, reason in ((("--check", "always", "--head", head), "binding_invalid"),
@@ -3753,14 +3774,23 @@ class ReusedCheckTests(MergeQueueTestCase):
                 change(next(check for check in varying["alwaysRun"] if check["id"] == "full"))
                 self.assertTrue([error for error in queue.binding_errors(varying) if "which the tree does not" in error],
                                 queue.binding_errors(varying))
+        preparing = copy.deepcopy(binding)
+        preparing["prepare"] = [[PY, "tools/prepare.py", "{baseHead}"]]
+        self.assertTrue([error for error in queue.binding_errors(preparing) if "the prepare steps use {baseHead}" in error],
+                        queue.binding_errors(preparing))
+        preparing["reusableChecks"] = []
+        self.assertEqual(queue.binding_errors(preparing), [])
         tree_only = copy.deepcopy(binding)
         next(check for check in tree_only["alwaysRun"] if check["id"] == "full")["argv"].append("{treeSha}")
         self.assertEqual(queue.binding_errors(tree_only), [])
         # A check another check builds on is never reused.
-        feeding = copy.deepcopy(binding)
-        next(check for check in feeding["alwaysRun"] if check["id"] == "always")["prerequisites"] = ["full"]
-        self.assertTrue([error for error in queue.binding_errors(feeding) if "prerequisite of always" in error],
-                        queue.binding_errors(feeding))
+        for where, name in (("alwaysRun", "always"), ("fallback", "fallback")):
+            with self.subTest(dependant=where):
+                feeding = copy.deepcopy(binding)
+                feeding["reusableChecks"] = ["full"]
+                next(check for check in feeding[where] if check["id"] == name)["prerequisites"] = ["full"]
+                self.assertTrue([error for error in queue.binding_errors(feeding) if f"prerequisite of {name}" in error],
+                                queue.binding_errors(feeding))
 
     def test_a_check_definition_changes_with_anything_that_changes_the_run(self) -> None:
         adopter = self.reusing()

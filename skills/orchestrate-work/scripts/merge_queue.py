@@ -286,6 +286,13 @@ def binding_errors(binding: object) -> list[str]:
     if len(set(reusable)) != len(reusable):
         errors.append("/reusableChecks: ids must be unique")
     checks = {check["id"]: check for check in [*binding["alwaysRun"], *binding["fallback"]]}
+    if reusable:
+        # The prepare steps set up every check's checkout, a reused one's included.
+        varying = sorted({element for argv in binding["prepare"] for element in argv
+                          if PLACEHOLDER.match(element) and PLACEHOLDER.match(element)[1] != "treeSha"})
+        if varying:
+            errors.append(f"/reusableChecks: the prepare steps use {', '.join(varying)}, which the tree does not "
+                          "determine; with reusable checks they may use only {treeSha}")
     for name in reusable:
         if name not in own:
             errors.append(f"/reusableChecks: {name} is not one of the binding's own checks (alwaysRun or fallback)")
@@ -1071,8 +1078,9 @@ class Runner:
                     why.append(f"{subject} at {entry['head']}: {reason}")
                 if check["id"] in found:
                     break
-            if check["id"] not in found and why:
-                self.notes.append(f"{check['id']} was run, not reused: " + "; ".join(why))
+            note = f"{check['id']} was run, not reused: " + "; ".join(why)
+            if check["id"] not in found and why and note not in self.notes:
+                self.notes.append(note)
         return found
 
     def load(self) -> str:
