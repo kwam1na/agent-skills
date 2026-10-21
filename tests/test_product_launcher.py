@@ -471,7 +471,15 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                         + "Path('worker.pid').write_text(str(os.getpid()))\nwhile True: time.sleep(1)\n"
                     )
                     parent = root / "parent.py"
-                    parent.write_text("import subprocess, sys\nsubprocess.run([sys.executable, 'worker.py'])\n")
+                    parent.write_text(
+                        "import signal, subprocess, sys\nfrom pathlib import Path\n"
+                        "def quit_received(signum, _frame):\n"
+                        "    Path('parent.sig').write_text(str(signum))\n"
+                        "    sys.exit(128 + signum)\n"
+                        # Default SIGQUIT termination produces macOS crash dialogs.
+                        "signal.signal(signal.SIGQUIT, quit_received)\n"
+                        "subprocess.run([sys.executable, 'worker.py'])\n"
+                    )
                     launcher = subprocess.Popen([sys.executable, "-c",
                         "from pathlib import Path; from agent_skills.product import _run_command; import sys; "
                         "raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))", str(root)],
@@ -488,6 +496,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                         else:
                             launcher.send_signal(signum)
                         self.assertEqual(launcher.wait(timeout=7), 128 + signum)
+                        if signum == signal.SIGQUIT:
+                            self.assertEqual((root / "parent.sig").read_text(), str(signum))
                         if not resistant:
                             self.assertTrue((root / "worker.sig").is_file(), "worker never received the forwarded signal")
                             self.assertEqual((root / "worker.sig").read_text(), str(signum))
