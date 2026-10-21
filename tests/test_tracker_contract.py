@@ -299,6 +299,8 @@ class ListWorkTests(unittest.TestCase):
             "no title": {**good, "workItems": [{key: value for key, value in item.items() if key != "title"}]},
             "blockers not references": {**good, "workItems": [{**item, "blockedBy": [3]}]},
             "an empty blocker": {**good, "workItems": [{**item, "blockedBy": [""]}]},
+            "an item that blocks itself": {**good, "workItems": [{**item, "blockedBy": [item["workReference"]]}]},
+            "a blocker named twice": {**good, "workItems": [{**item, "blockedBy": ["work-9", "work-9"]}]},
             "a field beside the work": {**good, "rawHostPayload": {}},
             "another parent's work": {**good, "parentReference": "epic-2"},
         }

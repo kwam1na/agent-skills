@@ -1886,7 +1886,7 @@
               "$ref": "#/$defs/commit"
             },
             "blockedBy": {
-              "description": "Tracker snapshots only: the subjects of the items that block this one.",
+              "description": "Tracker snapshots only: the subjects of the items that block this one. Blockers are the tracker's: reconcile ignores any a forge snapshot carries.",
               "type": "array",
               "items": {
                 "$ref": "#/$defs/name"

@@ -31,6 +31,7 @@ import re
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Iterator
@@ -1340,6 +1341,8 @@ def host_publishers(member: dict) -> set[str]:
 TRACKER_SNAPSHOT_TIMEOUT = 60
 TRACKER_SNAPSHOT_TIMEOUT_CEILING = 600
 TRACKER_SNAPSHOT_OUTPUT_BYTES = 16 * 1024 * 1024
+# How long output already written is read after the command exits.
+TRACKER_SNAPSHOT_DRAIN_SECONDS = 2
 TRACKER_SNAPSHOT_NOTE = "tracker-snapshot:"
 TRACKER_SNAPSHOT_TAKEN = "tracker-snapshot: taken again"
 
@@ -1360,37 +1363,83 @@ def tracker_snapshot_config(member: dict) -> dict | None:
     return {"argv": argv, "timeoutSeconds": timeout}
 
 
+def _stop_group(process: subprocess.Popen) -> None:
+    with contextlib.suppress(OSError):
+        if os.name == "nt":
+            process.kill()
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+
+
+def _read_into(stream, buffer: bytearray, cap: int, keep_tail: bool, over: threading.Event) -> None:
+    """Read ``stream`` to its end into ``buffer``: past ``cap`` stop and flag it, or keep only the last ``cap`` bytes.
+
+    The thread holds the stream itself, never a bare descriptor, so the
+    descriptor cannot be closed and reused under it.
+    """
+    with contextlib.suppress(OSError, ValueError):
+        while True:
+            data = os.read(stream.fileno(), 65536)
+            if not data:
+                return
+            buffer.extend(data)
+            if len(buffer) > cap:
+                if not keep_tail:
+                    over.set()
+                    return
+                del buffer[:-cap]
+
+
 def _run_bounded(argv: list[str], timeout: int, limit: int) -> tuple[int | None, bytes, str]:
-    """One run of an argv: its exit code (None when it never finished), stdout up to ``limit``, and why not."""
+    """One run of an argv: its exit code (None when it never finished), stdout up to ``limit``, and why not.
+
+    Reading stops when the command exits, after a short drain for what it had
+    already written, not when its output ends: a child it leaves behind may
+    hold stdout open long after the command finished. A reader still waiting
+    on such a child is left behind as a daemon thread.
+    """
     try:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
                                       else {"start_new_session": True}))
     except OSError as error:
         return None, b"", f"could not start: {error.strerror or error}"
+    out, err, over = bytearray(), bytearray(), threading.Event()
+    readers = [
+        threading.Thread(target=_read_into, args=(process.stdout, out, limit, False, over), daemon=True),
+        threading.Thread(target=_read_into, args=(process.stderr, err, 64 * 1024, True, over), daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+    deadline = time.monotonic() + timeout
     try:
-        out, err = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        with contextlib.suppress(OSError):
-            if os.name == "nt":
-                process.kill()
-            else:
-                os.killpg(process.pid, signal.SIGKILL)
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            process.communicate(timeout=2)
-        return None, b"", f"timed out after {timeout}s"
+        while True:
+            try:
+                process.wait(timeout=0.1)
+                break
+            except subprocess.TimeoutExpired:
+                if over.is_set():
+                    _stop_group(process)
+                    process.wait()
+                    return None, b"", f"printed more than {limit} bytes"
+                if time.monotonic() >= deadline:
+                    _stop_group(process)
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        process.wait(timeout=2)
+                    return None, b"", f"timed out after {timeout}s"
     except BaseException:
         # Interrupted: stop the command and its children before giving up.
-        with contextlib.suppress(OSError):
-            if os.name == "nt":
-                process.kill()
-            else:
-                os.killpg(process.pid, signal.SIGKILL)
+        _stop_group(process)
         raise
-    if len(out) > limit:
+    drained = time.monotonic() + TRACKER_SNAPSHOT_DRAIN_SECONDS
+    for reader, stream in zip(readers, (process.stdout, process.stderr)):
+        reader.join(max(0.0, drained - time.monotonic()))
+        if not reader.is_alive():
+            stream.close()
+    if over.is_set() or len(out) > limit:
         return None, b"", f"printed more than {limit} bytes"
-    detail = err.decode("utf-8", errors="replace").strip()[-300:]
-    return process.returncode, out, detail or f"exited with {process.returncode}"
+    detail = bytes(err).decode("utf-8", errors="replace").strip()[-300:]
+    return process.returncode, bytes(out), detail or f"exited with {process.returncode}"
 
 
 # The state directory's own files: a snapshot is never written over one of them.
