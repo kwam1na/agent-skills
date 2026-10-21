@@ -2178,15 +2178,22 @@ class SourceRefreshTests(unittest.TestCase):
         self.world("tracker", [{"subject": "work-p", "state": "canceled"}])
         self.world("forge", [{"subject": "work-a", "state": "closed"}])
         self.refresh("tracker", "forge")
-        reports = [{"subject": "work-p", "note": "canceled in the tracker but still planned in the record"},
-                   {"subject": "work-a", "note": "its change request closed without merging"}]
+        reports = [{"subject": "work-a", "note": "its change request closed without merging"},
+                   {"subject": "work-p", "note": "canceled in the tracker but still planned in the record"}]
         self.assertEqual(state_tool.read_state(self.directory)["meta"]["sourceReports"], reports)
         self.assertEqual(state_tool.show(self.directory)["status"]["text"],
-                         "next: work-a · for the lead: work-p: canceled in the tracker but still planned in the record, "
-                         "then 1 more")
+                         "next: work-a · for the lead: work-a: its change request closed without merging, then 1 more")
         before = self.footprint()
         self.refresh("tracker", "forge")
         self.assertEqual(self.footprint(), before, "the same reports are not written again")
+        # The same reports in another order are the same reports.
+        self.queue(queue_item("work-a"), queue_item("work-b", order=2))
+        self.world("forge", [{"subject": "work-a", "state": "closed"}, {"subject": "work-b", "state": "closed"}])
+        self.refresh("tracker", "forge")
+        before = self.footprint()
+        self.world("forge", [{"subject": "work-b", "state": "closed"}, {"subject": "work-a", "state": "closed"}])
+        self.refresh("tracker", "forge")
+        self.assertEqual(self.footprint(), before)
         self.world("tracker", [])
         self.world("forge", [])
         self.refresh("tracker", "forge")
@@ -2215,6 +2222,27 @@ class SourceRefreshTests(unittest.TestCase):
         self.assertEqual([entry["subject"] for entry in state_tool.read_state(self.directory)["planned"]], ["work-t"])
         self.assertEqual(self.sources()["forge"]["status"], "stale")
         self.assertIn("forgeSnapshot", self.sources()["forge"]["reason"])
+
+    def test_a_block_that_turns_bad_leaves_its_source_s_last_read_counting(self) -> None:
+        self.queue(queue_item("work-a"))
+        self.world("forge", [{"subject": "work-a", "state": "closed"}])
+        self.refresh("tracker", "forge")
+        member = self.member("tracker", "forge")
+        member["forgeSnapshot"]["timeoutSeconds"] = 900
+        state_tool.refresh_sources(self.directory, member)
+        self.assertEqual([report["subject"] for report in state_tool.read_state(self.directory)["meta"]["sourceReports"]],
+                         ["work-a"])
+
+    def test_a_command_s_error_output_is_kept_only_as_a_tail(self) -> None:
+        import tracemalloc
+        tracemalloc.start()
+        self.addCleanup(tracemalloc.stop)
+        code, _, detail = state_tool._run_bounded(
+            [sys.executable, "-c", "import sys\nfor _ in range(800): sys.stderr.write('e' * 65536)\nsys.exit(4)"], 30, 1024)
+        _, peak = tracemalloc.get_traced_memory()
+        self.assertEqual(code, 4)
+        self.assertLessEqual(len(detail), 300)
+        self.assertLess(peak, 8 * 1024 * 1024, "50 MiB on stderr is never held whole")
 
     def test_a_reconcile_that_keeps_refusing_keeps_the_last_applied_read_and_writes_once(self) -> None:
         self.refresh("tracker")

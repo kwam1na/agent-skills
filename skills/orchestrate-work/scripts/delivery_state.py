@@ -2286,9 +2286,10 @@ def refresh_sources(directory: Path, member: dict, *, cwd: Path | None = None) -
         try:
             declared = snapshot_config(member, source) is not None
         except StateError as error:
-            # A block the tool cannot run leaves the other source to be read.
+            # A block the tool cannot run leaves the other source to be read, and its own last read standing.
             statuses[source] = {"status": "stale", "lastReadAt": _last_read(folder / f"{source}.json"),
                                 "reason": str(error)}
+            kept += _still_fresh(folder / f"{source}.json", max_age)
             continue
         if not declared:
             statuses[source] = {"status": "not_observed"}
@@ -2301,10 +2302,7 @@ def refresh_sources(directory: Path, member: dict, *, cwd: Path | None = None) -
             statuses[source] = {"status": "observed"}
             continue
         statuses[source] = {"status": "stale", "lastReadAt": _last_read(applied), "reason": result["reason"]}
-        with contextlib.suppress(StateError):
-            # The last applied read still speaks for its source while it is fresh, so its reports stand.
-            read_snapshot(applied, max_age)
-            kept.append(applied)
+        kept += _still_fresh(applied, max_age)
     reconciled = None
     if taken:
         try:
@@ -2321,6 +2319,15 @@ def refresh_sources(directory: Path, member: dict, *, cwd: Path | None = None) -
     return {"ok": True, "sources": statuses, "reconciled": reconciled}
 
 
+def _still_fresh(applied: Path, max_age: float) -> list[Path]:
+    """The last applied read, while it is fresh: it still speaks for its source, so its reports stand."""
+    try:
+        read_snapshot(applied, max_age)
+    except StateError:
+        return []
+    return [applied]
+
+
 def _set_sources(directory: Path, statuses: dict[str, dict], reports: list[dict] | None) -> None:
     """Write ``meta.sources`` and ``meta.sourceReports`` as the runner, only where they changed.
 
@@ -2328,6 +2335,9 @@ def _set_sources(directory: Path, statuses: dict[str, dict], reports: list[dict]
     what the last applied reconcile left for the lead, replaced only by the
     next one: ``None`` keeps them as they are.
     """
+    if reports is not None:
+        # In a fixed order, so the same reports listed differently are not a change.
+        reports = sorted(reports, key=lambda report: (report["subject"] or "", report["note"]))
     for _ in range(RECONCILE_ATTEMPTS):
         state = read_state(directory)
         current = state["meta"].get("sources") or {}
