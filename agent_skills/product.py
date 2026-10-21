@@ -83,6 +83,11 @@ def _wait_for_posix_group(child: subprocess.Popen, timeout: float) -> bool:
     them) answer the probe with EPERM rather than ESRCH: the group still
     exists but none of its members can be signalled. That is a group being
     torn down, not a failure, so it is polled like any live group.
+
+    EPERM can also mean a member owned by another user that will never
+    drain. The bound covers that: the caller escalates, and a group that is
+    still there after escalation is reported as an incomplete cancellation,
+    never as a clean one.
     """
     deadline = time.monotonic() + timeout
     while True:
@@ -216,19 +221,21 @@ def _run_command(arguments: list[str], root: Path) -> int:
         except ProcessLookupError:
             return 128 + interrupted
         except PermissionError as error:
-            # Only exiting members remain; give them the same bound to drain.
+            # Only members that cannot be signalled remain: exiting ones,
+            # which drain within the same bound, or another user's.
+            cause: BaseException = error
             try:
                 drained = _wait_for_posix_group(child, 2)
-            except (OSError, subprocess.SubprocessError):
-                drained = False
+            except (OSError, subprocess.SubprocessError) as wait_failure:
+                drained, cause = False, wait_failure
             if drained:
                 return 128 + interrupted
             raise _incomplete_cancellation(
                 child,
                 interrupted=interrupted,
                 platform="posix",
-                cleanup="sigkill-failed",
-            ) from error
+                cleanup="group-drain-refused",
+            ) from cause
         except OSError as error:
             raise _incomplete_cancellation(
                 child,

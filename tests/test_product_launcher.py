@@ -23,6 +23,21 @@ from agent_skills.product import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+def _await_pid(path: Path, seconds: float = 5) -> int | None:
+    """The pid a worker wrote, once the whole number is there.
+
+    write_text empties the file before writing it, so a reader can see the
+    file exist and still find it empty; wait for a whole pid instead.
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            return int(path.read_text())
+        except (FileNotFoundError, ValueError):
+            time.sleep(0.02)
+    return None
+
+
 POSIX_SIGNALS = (signal.SIGINT, signal.SIGTERM) + tuple(
     getattr(signal, name) for name in ("SIGHUP", "SIGQUIT") if hasattr(signal, name)
 )
@@ -338,8 +353,14 @@ class ProductLauncherTests(unittest.TestCase):
         self.assertEqual(self._cancel_with_group(kill_group, [False, True]), 128 + signal.SIGTERM)
         with self.assertRaises(CancellationIncompleteError) as raised:
             self._cancel_with_group(kill_group, [False, False])
-        self.assertEqual(raised.exception.cleanup, "sigkill-failed")
+        self.assertEqual(raised.exception.cleanup, "group-drain-refused")
         self.assertIs(raised.exception.__cause__, refusal)
+        # A failure while waiting for that drain is the reported cause.
+        wait_failure = OSError("group observation unavailable")
+        with self.assertRaises(CancellationIncompleteError) as raised:
+            self._cancel_with_group(kill_group, [False, wait_failure])
+        self.assertEqual(raised.exception.cleanup, "group-drain-refused")
+        self.assertIs(raised.exception.__cause__, wait_failure)
 
     @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_forwarding_to_a_group_whose_members_are_exiting_does_not_escape_the_handler(self) -> None:
@@ -433,11 +454,8 @@ raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))
             )
             worker_pid = None
             try:
-                deadline = time.monotonic() + 5
-                while not (root / "worker.pid").exists() and time.monotonic() < deadline:
-                    time.sleep(0.02)
-                self.assertTrue((root / "worker.pid").exists())
-                worker_pid = int((root / "worker.pid").read_text())
+                worker_pid = _await_pid(root / "worker.pid")
+                self.assertIsNotNone(worker_pid, "worker never wrote its pid")
                 launcher.send_signal(signal.SIGHUP)
                 time.sleep(0.2)
                 self.assertIsNone(launcher.poll(), "inherited ignored SIGHUP was overridden")
@@ -537,11 +555,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                         cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
                     worker_pid = None
                     try:
-                        deadline = time.monotonic() + 5
-                        while not (root / "worker.pid").exists() and time.monotonic() < deadline:
-                            time.sleep(0.02)
-                        self.assertTrue((root / "worker.pid").exists())
-                        worker_pid = int((root / "worker.pid").read_text())
+                        worker_pid = _await_pid(root / "worker.pid")
+                        self.assertIsNotNone(worker_pid, "worker never wrote its pid")
                         if terminal_group:
                             os.killpg(launcher.pid, signum)
                         else:
