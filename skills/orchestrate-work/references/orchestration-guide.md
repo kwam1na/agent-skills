@@ -239,6 +239,10 @@ decision. Lanes post on their own tickets at the points the lane brief names.
 - Start the live view at the beginning of the delivery and point the
   operator at its address; it re-renders on every record write, so it is
   never stale.
+- The live view is sized for a handful of pages on this machine. Each open
+  page holds one connection and one thread, and each update carries the
+  whole record. A page that reconnects gets the whole current record at
+  once, so it never needs the change log's history to catch up.
 - After every runner result and every lead write, render the views with
   `render_state.py`. When the host stores the live document with its own
   tool, follow the publishing step.
