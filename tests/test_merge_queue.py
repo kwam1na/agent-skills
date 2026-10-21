@@ -1826,7 +1826,7 @@ class BatchTests(MergeQueueTestCase):
         self.assertTrue(documents["second"]["stop"]["queueStopped"])
         # The second candidate did not land: the base holds the push on top of the first.
         self.assertEqual(adopter.show(adopter.tip("main"), "src/app.txt"), "app one")
-        self.assertIn("checked only as part of the whole batch", " ".join(documents["second"]["notes"]))
+        self.assertIn("may not have been checked on its own", " ".join(documents["second"]["notes"]))
         self.assertEqual(adopter.item("second")["stage"], "queued")
         self.assertEqual(adopter.item("third")["stage"], "queued")
 
@@ -1967,6 +1967,24 @@ class BatchTests(MergeQueueTestCase):
         self.assertTrue(documents["second"]["stop"]["queueStopped"])
         self.assertTrue(documents["third"]["stop"]["queueStopped"])
         self.assertEqual(adopter.item("third")["stage"], "queued")
+
+    def test_a_runner_error_after_a_partial_landing_stops_the_queue(self) -> None:
+        adopter = self.adopter()
+        subjects = self.trio(adopter)
+        real = queue.Runner.merge
+
+        def failing_second(runner, subject, result, **options):
+            if subject == "second":
+                raise RuntimeError("the state write kept failing")
+            return real(runner, subject, result, **options)
+
+        with mock.patch.object(queue.Runner, "merge", failing_second):
+            documents = self.batch_documents(adopter, *subjects)
+        self.assertEqual(documents["first"]["outcome"], "merged")
+        for name in ("second", "third"):
+            self.assertEqual(documents[name]["stop"]["reason"], "runner_error")
+            self.assertTrue(documents[name]["stop"]["queueStopped"], documents[name]["stop"])
+        self.assertIn("holds the tree the batch built up to first", " ".join(documents["second"]["notes"]))
 
     def test_members_resolve_from_the_base_not_the_tree_built_so_far(self) -> None:
         adopter = self.adopter()

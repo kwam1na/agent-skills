@@ -1651,13 +1651,15 @@ class Runner:
                 document.selection, document.checks = record.selection, list(record.checks)
                 try:
                     self.land(member, previous, document)
-                except Stop as stop:
+                except Exception as error:  # noqa: BLE001 - a partial landing stops the queue however it ends
+                    stop = error if isinstance(error, Stop) else Stop(
+                        "runner_error", f"{type(error).__name__}: {error}"[:800])
                     self.stopped(document, stop, member.subject)
                     if landed:
-                        # The base now holds a tree checked only as part of the whole batch.
+                        # The base now holds a tree that may not have been checked on its own.
                         document.notes.append(
-                            f"{self.base} holds the tree the batch built up to {landed[-1]}, which was checked only "
-                            f"as part of the whole batch; run the full health check before anything else merges",
+                            f"{self.base} holds the tree the batch built up to {landed[-1]}, which may not have been "
+                            f"checked on its own; run the full health check before anything else merges",
                         )
                         document.stop["queueStopped"] = True
                     if stop.reason == "batch_tree_mismatch":
