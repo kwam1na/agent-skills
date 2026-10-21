@@ -253,7 +253,8 @@ in this order:
    changeRequest?, head?, blockedBy?}`. A tracker state is `backlog`,
    `started`, `completed` or `canceled`; a forge state is `open`, `draft`,
    `merged` or `closed`. The state tool never calls a forge or a tracker
-   itself.
+   itself. Blockers are the tracker's: `blockedBy` on a forge item is
+   ignored, never merged with the tracker's.
    - **Tracker, with a bound command.** When the binding declares
      `state.trackerSnapshot`, `{argv, timeoutSeconds?}`, run it through the
      state tool. The repository's command prints the snapshot for the record's

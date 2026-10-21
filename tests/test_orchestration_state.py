@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import datetime
 import importlib.util
@@ -7,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -769,6 +771,24 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual((code, result["drift"], result["changes"]), (0, False, []))
         self.assertEqual(result["summary"], "no drift")
         self.assertEqual(state_tool.show(self.directory)["state"]["version"], version)
+
+    def test_a_forge_snapshot_s_blockers_change_nothing_the_tracker_s_are_authoritative(self) -> None:
+        self.lead({"planned": [{"subject": "work-a", "title": "A", "lane": None, "stage": "planned"}]})
+        plain = self.snapshot("forge", [{"subject": "work-a", "state": "open", "changeRequest": "cr-1"}])
+        blocked = self.snapshot("forge", [{"subject": "work-a", "state": "open", "changeRequest": "cr-1",
+                                           "blockedBy": ["work-b", "work-c"]}])
+        twin = self.root / "twin"
+        shutil.copytree(self.directory, twin)
+        code, with_blockers = run_tool(self.directory, "reconcile", "--snapshot", blocked)
+        self.assertEqual(code, 0, with_blockers)
+        code, without = run_tool(twin, "reconcile", "--snapshot", plain)
+        self.assertEqual(code, 0, without)
+        self.assertEqual((with_blockers["changes"], with_blockers["reports"]), (without["changes"], without["reports"]))
+        self.assertTrue(with_blockers["changes"], "the forge snapshot still moved the work into review")
+        lead_view = ("queue", "planned", "followups")
+        state, twin_state = state_tool.show(self.directory)["state"], state_tool.show(twin)["state"]
+        self.assertEqual([state[key] for key in lead_view], [twin_state[key] for key in lead_view])
+        self.assertNotIn("work-b", json.dumps(state), "a forge blocker never reaches the record")
 
     def test_tracker_completion_the_record_has_not_seen_is_reported_not_written(self) -> None:
         self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "planned"}]})
@@ -1626,6 +1646,15 @@ class TrackerSnapshotTests(unittest.TestCase):
                 sys.stdout.write("x" * (17 * 1024 * 1024)); sys.exit(0)
             if mode == "sleep":
                 time.sleep(5)
+            if mode == "noisy":
+                sys.stderr.write("warning\\n" * 30000); sys.stderr.flush()
+            if mode == "holder":
+                # A detached child that inherits stdout and stderr and outlives the command.
+                import os, subprocess
+                child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                         stdout=sys.stdout, stderr=sys.stderr, start_new_session=True)
+                with open(os.environ["HOLDER_PID_FILE"], "w") as handle:
+                    handle.write(str(child.pid))
             if mode == "garbage":
                 print("not json"); sys.exit(0)
             if mode == "bigint":
@@ -1766,6 +1795,41 @@ class TrackerSnapshotTests(unittest.TestCase):
         code, refused = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(),
                                  "--output", str(self.root / "missing" / "out.json"))
         self.assertEqual((code, refused["code"]), (1, "output_invalid"), refused)
+
+    def test_a_child_that_holds_stdout_open_does_not_turn_valid_output_into_a_timeout(self) -> None:
+        pid_file = self.root / "holder.pid"
+
+        def stop_holder() -> None:
+            # Only the one child this test started, by the pid it wrote.
+            with contextlib.suppress(OSError, ValueError):
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+
+        self.addCleanup(stop_holder)
+        started = time.monotonic()
+        code, result = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding("holder", timeoutSeconds=20),
+                                "--output", str(self.output), environment={"HOLDER_PID_FILE": str(pid_file)})
+        elapsed = time.monotonic() - started
+        self.assertEqual(code, 0, result)
+        self.assertEqual((result["taken"], result.get("items")), (True, 2), result)
+        self.assertLess(elapsed, 15, "reading stopped at the command's exit, not at the child's")
+        self.assertTrue(pid_file.exists(), "the child really was holding the output")
+
+    def test_a_command_s_long_warnings_on_stderr_do_not_cost_its_snapshot(self) -> None:
+        result = self.snap("noisy")
+        self.assertEqual((result["taken"], result.get("items")), (True, 2), result)
+
+    def test_output_still_unread_when_the_command_exits_is_read_in_the_drain(self) -> None:
+        # Readers that lag behind the exit still collect what was written before it.
+        read = state_tool._read_into
+
+        def late(*args: object) -> None:
+            time.sleep(0.5)
+            read(*args)
+
+        argv = [sys.executable, "-c", "print('x' * 1000)"]
+        with mock.patch.object(state_tool, "_read_into", side_effect=late):
+            code, out, _ = state_tool._run_bounded(argv, 10, 4096)
+        self.assertEqual((code, out.strip()), (0, b"x" * 1000))
 
     def test_a_command_that_runs_too_long_is_stopped(self) -> None:
         result = self.snap("sleep", timeoutSeconds=1)

@@ -136,7 +136,7 @@
         },
         {
           "path": "skills/deliver-work/references/capability-contract.md",
-          "sha256": "3da45324049d4077dad3e17000f67a0714ae3833a36bedf53944f603fe8bae7d"
+          "sha256": "a40b54904d27f2cf4336f76ed541d4fa30648661967a1f590cfc4cc5f35b66fb"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -247,7 +247,7 @@
       "outputs": [
         {
           "path": "skills/linear-tracker-adapter/SKILL.md",
-          "sha256": "94f290e72021841c307edc1901418b1935467de89fab7bc1feb4024e65cdf7c8"
+          "sha256": "9f3aa50e21c53837c9a4f00a43bc4b60c08e66bfe8245d8d5db5ead1d8bb4eab"
         },
         {
           "path": "skills/linear-tracker-adapter/references/adapter-contract.json",
@@ -305,19 +305,19 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "e093c5508a638cacd101a53a009ec0b8d82adeae5d84484839519d63c44b2f19"
+          "sha256": "8a72b2ab825982326fc37ab0fcc679ad37cfa84ea11ca539ad292691406e6583"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "7213605d449560c31baa0ee2f104ab4c9b99dbf0596802c8ec82946d6c131865"
+          "sha256": "ea8f4dc447075dc68aef024ec8f4374a091e25660e3626de718da67950e1f0ea"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "1173e40bdb8433fa706dc72ee7dcd5e91f103c94d1ee9fbada97e89d0385a830"
+          "sha256": "455441d72a0647af31b33df57f3952d4639ca512b799c1e6ba361c1ebea6a262"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "dc6659412cf3855c8e084153f0a9457da0e39b4aeeb5e4cac391bb2a9c404e4c"
+          "sha256": "37091f14b8a4a77393df1793675133a2669341a5393d7fad38533033a90d438c"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",

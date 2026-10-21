@@ -22,15 +22,21 @@ from agent_skills.product import (
     _LAUNCH_MARKER,
     _Process,
     _darwin_environment,
+    _ForkWatcher,
+    _darwin_pipes,
+    _darwin_process,
     _darwin_process_table,
+    _lifeline_handle,
     _observed_child_liveness,
     _proc_environment,
     _proc_process_table,
     _process_table,
     _ps_process_table,
     _run_command,
+    _precedes,
     _started_before,
     _stop_escaped_descendants,
+    _wall_stamp,
     _stop_posix_group,
     _wait_for_posix_group,
 )
@@ -39,6 +45,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # Every fixture process inherits this variable, even one that leaves its
 # process group or session, so teardown can find whatever a test left behind.
 FIXTURE_MARKER = "AGENT_SKILLS_LAUNCHER_FIXTURE"
+# Fake process tables name the runner as the owner of the processes it may stop.
+UID = os.geteuid() if hasattr(os, "geteuid") else 0
 
 
 def _fixture_processes(token: str) -> list[int]:
@@ -92,6 +100,12 @@ def _reap_fixtures(token: str, settle: float = 2) -> list[int]:
     while _fixture_processes(token) and time.monotonic() < deadline:
         time.sleep(0.05)
     return survivors
+
+
+def _running(pid: int) -> bool:
+    """Whether pid is a live process (not gone, and not a zombie)."""
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
 
 
 def _await_pid(path: Path, seconds: float = 5) -> int | None:
@@ -736,11 +750,81 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                         launcher.kill()
                         launcher.wait()
 
+    @unittest.skipUnless(sys.platform == "darwin", "Apple system binaries hide their environment")
+    def test_a_daemon_running_a_system_binary_is_stopped_with_the_tree(self) -> None:
+        # Each daemon double-forks so no ancestry is left, and runs an Apple
+        # binary whose environment macOS does not disclose, so the launch
+        # marker in its environment cannot be seen. Pid files show liveness,
+        # since neither can the fixture marker.
+        double_fork = (
+            "time.sleep(0.5)\n"
+            "if os.fork() == 0:\n"
+            "    if os.fork(): os._exit(0)\n"
+            "    os.setsid()\n"
+            "    if os.fork(): os._exit(0)\n"
+            "    Path('daemon.pid').write_text(str(os.getpid()))\n"
+        )
+        scenarios = {
+            "exec-sleep": double_fork + "    os.execv('/bin/sleep', ['/bin/sleep', '1000'])\n",
+            "exec-sh": double_fork + (
+                "    os.execv('/bin/sh', ['/bin/sh', '-c',\n"
+                "             'trap \"\" TERM INT HUP; /bin/sleep 1000 & echo $! > sleep.pid; wait'])\n"
+            ),
+            # A Python grandchild with close_fds (the default) starts a shell
+            # that backgrounds the job and exits at once: no inherited file
+            # descriptor survives either.
+            "close-fds-shell": (
+                "time.sleep(0.5)\n"
+                "subprocess.Popen(['/bin/sh', '-c', 'trap \"\" TERM INT HUP; '\n"
+                "                  '/usr/bin/nohup /bin/sleep 1000 >/dev/null 2>&1 & echo $! > daemon.pid'],\n"
+                "                 start_new_session=True)\n"
+            ),
+        }
+        for mode, body in scenarios.items():
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "parent.py").write_text(
+                    "import os, subprocess, time\nfrom pathlib import Path\n" + body
+                    + "Path('ready').write_text('1')\nwhile True: time.sleep(1)\n"
+                )
+                launcher = subprocess.Popen([sys.executable, "-c",
+                    "from pathlib import Path; from agent_skills.product import _run_command; import sys; "
+                    "raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))", str(root)],
+                    cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                    env=self.fixture_env())
+                daemons = []
+                try:
+                    daemon = _await_pid(root / "daemon.pid")
+                    self.assertIsNotNone(daemon, "the daemon never started")
+                    daemons.append(daemon)
+                    if mode == "exec-sh":
+                        sleeper = _await_pid(root / "sleep.pid")
+                        self.assertIsNotNone(sleeper, "the shell never started its job")
+                        daemons.append(sleeper)
+                    deadline = time.monotonic() + 5
+                    while not (root / "ready").exists() and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    time.sleep(0.3)
+                    launcher.send_signal(signal.SIGTERM)
+                    self.assertEqual(launcher.wait(timeout=20), 128 + signal.SIGTERM)
+                    running = [pid for pid in daemons if _running(pid)]
+                    self.assertEqual(running, [], f"a {mode} daemon outlived a clean cancellation")
+                finally:
+                    if launcher.poll() is None:
+                        launcher.kill()
+                        launcher.wait()
+                    for pid in daemons:
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+
     def test_an_escaped_descendant_that_cannot_be_stopped_is_reported_by_pid(self) -> None:
         child = Mock(pid=12345)
         child.poll.return_value = 0
         tracker = Mock()
         tracker.escaped.return_value = (777,)
+        tracker.refused.return_value = ()
         clock = iter(range(1000))
         for signalled, first in (((), signal.SIGTERM), ((777,), None)):
             with self.subTest(signalled=signalled), \
@@ -805,31 +889,31 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         tables = []
         tracker = _DescendantTracker(child, table=lambda: tables[-1])
         # A process that is not this launcher's child is never tracked.
-        tables.append({100: _Process(1, 100, 501, "t0", False), 101: _Process(100, 300, 501, "t1", False)})
+        tables.append({100: _Process(1, 100, UID, "t0", False), 101: _Process(100, 300, UID, "t1", False)})
         tracker.observe()
         self.assertEqual(tracker.escaped(), ())
         tables.append({
-            100: _Process(me, 100, 501, "t0", False),
-            101: _Process(100, 100, 501, "t1", False),   # the parent's worker, in the group
-            102: _Process(101, 100, 501, "t2", False),   # a grandchild, still in the group
-            900: _Process(1, 900, 501, "t9", False),     # unrelated
+            100: _Process(me, 100, UID, "t0", False),
+            101: _Process(100, 100, UID, "t1", False),   # the parent's worker, in the group
+            102: _Process(101, 100, UID, "t2", False),   # a grandchild, still in the group
+            900: _Process(1, 900, UID, "t9", False),     # unrelated
         })
         tracker.observe()
         self.assertEqual(tracker.escaped(), ())
         self.assertEqual(tracker.group_members(), (100, 101, 102))
         # The worker exits; its child calls setsid() and is reparented to init.
         tables.append({
-            100: _Process(me, 100, 501, "t0", False),
-            102: _Process(1, 102, 501, "t2", False),
-            103: _Process(102, 102, 501, "t3", False),   # born after it escaped
-            900: _Process(1, 900, 501, "t9", False),
+            100: _Process(me, 100, UID, "t0", False),
+            102: _Process(1, 102, UID, "t2", False),
+            103: _Process(102, 102, UID, "t3", False),   # born after it escaped
+            900: _Process(1, 900, UID, "t9", False),
         })
         self.assertEqual(tracker.escaped(), (102, 103))
         # A reused pid is someone else, and a zombie is not running.
         tables.append({
-            100: _Process(me, 100, 501, "t0", False),
-            102: _Process(1, 102, 501, "other", False),
-            103: _Process(1, 103, 501, "t3", True),
+            100: _Process(me, 100, UID, "t0", False),
+            102: _Process(1, 102, UID, "other", False),
+            103: _Process(1, 103, UID, "t3", True),
         })
         self.assertEqual(tracker.escaped(), ())
         # Behind an unreadable table, descendants it knew may still be running.
@@ -853,11 +937,14 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             ):
                 (proc / pid).mkdir()
                 (proc / pid / "stat").write_text(stat)
+            # The effective uid, from status: a non-dumpable process's entry
+            # is owned by root whoever runs it. Without status, the owner.
+            (proc / "41" / "status").write_text("Name:\tworker\nUid:\t1000\t1234\t1000\t1000\n")
             (proc / "self").mkdir()  # Not a pid: skipped.
             table = _proc_process_table(proc)
         owner = os.getuid() if hasattr(os, "getuid") else 0
         self.assertEqual(table, {
-            41: _Process(7, 41, owner, 5551, False),
+            41: _Process(7, 41, 1234, 5551, False),
             42: _Process(41, 41, owner, 5552, True),
         })
         listing = " 41  7 41 501 S    Wed Oct 21 01:20:50 2026\n 42 41 41 501 Z+   Wed Oct 21 01:20:51 2026\n"
@@ -931,7 +1018,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         me = os.getpid()
         child = Mock(pid=100)
         child.poll.return_value = 0
-        tables = [{100: _Process(me, 100, 501, "t0", False), 102: _Process(100, 102, 501, "t2", False)}]
+        tables = [{100: _Process(me, 100, UID, "t0", False), 102: _Process(100, 102, UID, "t2", False)}]
         tracker = _DescendantTracker(child, table=lambda: tables[-1])
         self.assertEqual(tracker.escaped(), (102,))
         tables.append(None)
@@ -949,13 +1036,13 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         # Known only from the periodic observation, never from escaped(), an
         # escapee behind a table that cannot be read at cancellation is still
         # not reported as none.
-        tables = [{100: _Process(me, 100, 501, "t0", False), 102: _Process(100, 102, 501, "t2", False)}]
+        tables = [{100: _Process(me, 100, UID, "t0", False), 102: _Process(100, 102, UID, "t2", False)}]
         observed = _DescendantTracker(child, table=lambda: tables[-1])
         observed.observe(throttle=True)
         tables.append(None)
         self.assertIsNone(observed.escaped())
         # A child with no descendant yet has nothing to hide.
-        tables = [{100: _Process(me, 100, 501, "t0", False)}, None]
+        tables = [{100: _Process(me, 100, UID, "t0", False)}, None]
         alone = _DescendantTracker(child, table=lambda: tables.pop(0))
         alone.observe()
         self.assertEqual(alone.escaped(), ())
@@ -978,6 +1065,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                             ([None, (777,), ()], [(777, signal.SIGTERM)])):
             tracker = Mock()
             tracker.escaped.side_effect = reads
+            tracker.refused.return_value = ()
             clock = iter(range(1000))
             with self.subTest(reads=reads), \
                  patch("agent_skills.product.os.kill") as kill, \
@@ -990,11 +1078,11 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
     def test_a_reused_child_pid_never_adopts_someone_elses_processes(self) -> None:
         me = os.getpid()
         child = Mock(pid=100)
-        tables = [{100: _Process(me, 100, 501, "t0", False)}]
+        tables = [{100: _Process(me, 100, UID, "t0", False)}]
         tracker = _DescendantTracker(child, table=lambda: tables[-1])
         tracker.observe()
         # The child is reaped and pid 100 now leads an unrelated group.
-        tables.append({100: _Process(1, 100, 501, "other", False), 555: _Process(100, 100, 501, "t5", False)})
+        tables.append({100: _Process(1, 100, UID, "other", False), 555: _Process(100, 100, UID, "t5", False)})
         self.assertEqual(tracker.escaped(), ())
         self.assertEqual(tracker.group_members(), ())
 
@@ -1002,17 +1090,17 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         # Re-parented to init before the first observation, still in the group.
         me = os.getpid()
         child = Mock(pid=100)
-        tables = [{100: _Process(me, 100, 501, "t0", False), 104: _Process(1, 100, 501, "t4", False)}]
+        tables = [{100: _Process(me, 100, UID, "t0", False), 104: _Process(1, 100, UID, "t4", False)}]
         tracker = _DescendantTracker(child, table=lambda: tables[-1])
         tracker.observe()
-        tables.append({100: _Process(me, 100, 501, "t0", False), 104: _Process(1, 104, 501, "t4", False)})
+        tables.append({100: _Process(me, 100, UID, "t0", False), 104: _Process(1, 104, UID, "t4", False)})
         self.assertEqual(tracker.escaped(), (104,))
 
     def test_the_marker_sweep_adopts_marked_processes_started_since_the_child(self) -> None:
         me = os.getpid()
         child = Mock(pid=100)
         marker = b"AGENT_SKILLS_LAUNCH=abc"
-        environments = {200: [b"HOME=/", marker], 201: [marker], 202: [b"HOME=/"], me: [marker]}
+        environments = {200: [b"HOME=/", marker], 201: [marker], 202: [b"HOME=/"], 204: [marker], me: [marker]}
         read = []
 
         def environment(pid):
@@ -1020,12 +1108,13 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             return environments.get(pid)
 
         table = {
-            100: _Process(me, 100, 501, 10, False),
-            200: _Process(1, 200, 501, 12, False),   # a double-fork daemon, marked
-            201: _Process(1, 201, 501, 5, False),    # started before the child: never read
-            202: _Process(1, 202, 501, 13, False),   # unmarked
-            203: _Process(1, 203, 501, 14, True),    # a zombie
-            me: _Process(1, me, 501, 11, False),     # the launcher itself
+            100: _Process(me, 100, UID, 10, False),
+            200: _Process(1, 200, UID, 12, False),   # a double-fork daemon, marked
+            201: _Process(1, 201, UID, 5, False),    # started before the child: never read
+            202: _Process(1, 202, UID, 13, False),   # unmarked
+            203: _Process(1, 203, UID, 14, True),    # a zombie
+            204: _Process(1, 204, UID, 2, False),    # started before the launcher itself
+            me: _Process(1, me, UID, 3, False),      # the launcher itself
         }
         tracker = _DescendantTracker(child, table=lambda: table, marker=marker, environment=environment)
         self.assertEqual(tracker.escaped(), (200,))
@@ -1035,7 +1124,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         self.assertEqual(tracker.escaped(), (200,))
         self.assertEqual(read, [])
         # A child reaped before the tracker ever confirmed it: the launch key is
-        # unique, so the sweep still adopts what carries it, reading everything.
+        # unique, so the sweep still adopts what carries it, reading everything
+        # started since the launcher itself.
         read.clear()
         early = dict(table)
         del early[100]
@@ -1046,6 +1136,521 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         read.clear()
         self.assertEqual(_DescendantTracker(child, table=lambda: table, environment=environment).escaped(), ())
         self.assertEqual(read, [])
+
+    def test_cleanup_never_selects_the_caller_chain_init_or_another_users_process(self) -> None:
+        # An environment reader that says every process carries the marker
+        # stands in for any matching rule gone wrong.
+        me = os.getpid()
+        parent, grandparent = 9001, 9002
+        child = Mock(pid=100)
+        marker = b"AGENT_SKILLS_LAUNCH_k=1"
+        table = {
+            grandparent: _Process(1, grandparent, UID, 20, False),
+            parent: _Process(grandparent, parent, UID, 20, False),
+            me: _Process(parent, me, UID, 20, False),
+            100: _Process(me, 100, UID, 20, False),
+            1: _Process(0, 1, UID, 20, False),
+            200: _Process(1, 200, UID, 21, False),       # this run's daemon
+            300: _Process(1, 300, UID + 1, 21, False),   # another user's
+        }
+
+        def marked(pid):
+            return [marker] if pid in {1, 200, 202, 300, parent, grandparent} else [b"HOME=/"]
+
+        with patch("agent_skills.product.os.getppid", return_value=parent), \
+             patch("agent_skills.product.os.kill", side_effect=AssertionError("signalled")), \
+             patch("agent_skills.product.os.killpg", side_effect=AssertionError("signalled")):
+            tracker = _DescendantTracker(child, table=lambda: table, marker=marker, environment=marked)
+            self.assertEqual(tracker.escaped(), (200,))
+            self.assertEqual(tracker.refused(), (1, 300, parent, grandparent))
+            self.assertEqual(tracker.preview(), {
+                "group": 100,
+                "escaped": [[200, "marker"]],
+                "refused": [[1, "init"], [300, "other-user"], [parent, "caller"], [grandparent, "caller"]],
+            })
+            # A known descendant whose pid now names a later process is not selected.
+            table[201] = _Process(100, 201, UID, 22, False)
+            tracker.observe()
+            table[201] = _Process(1, 201, UID, 23, False)
+            self.assertEqual(tracker.escaped(), (200,))
+            # Nor is one that started before the run, by an exact start stamp.
+            early = _DescendantTracker(child, table=lambda: {**table, 202: _Process(1, 202, UID, 19, False)},
+                                       marker=marker, environment=marked)
+            with patch("agent_skills.product._started_before", return_value=False):
+                self.assertEqual(early.escaped(), (200,))
+            self.assertIn([202, "before-run"], early.preview()["refused"])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process tables")
+    def test_the_test_runners_own_parents_are_never_selected(self) -> None:
+        table = _process_table()
+        self.assertIsNotNone(table)
+        parents, pid = [], table[os.getpid()].ppid
+        while pid > 1 and pid in table and pid not in parents:
+            parents.append(pid)
+            pid = table[pid].ppid
+        self.assertTrue(parents)
+        marker = b"AGENT_SKILLS_LAUNCH_k=1"
+        # The widest selection the tracker can make: a child reaped before it
+        # was confirmed, so nothing is ruled out by start time, and a reader
+        # that says every process carries the marker.
+        child = Mock(pid=0)
+        with patch("agent_skills.product.os.kill", side_effect=AssertionError("signalled")), \
+             patch("agent_skills.product.os.killpg", side_effect=AssertionError("signalled")):
+            tracker = _DescendantTracker(child, marker=marker, environment=lambda pid: [marker])
+            preview = tracker.preview()
+        selected = {pid for pid, _ in preview["escaped"]}
+        refused = {pid for pid, _ in preview["refused"]}
+        self.assertIsNone(preview["group"])
+        self.assertEqual(selected & set(parents), set())
+        self.assertNotIn(os.getpid(), selected)
+        self.assertNotIn(1, selected)
+        self.assertTrue(all(table[pid].uid == UID for pid in selected if pid in table))
+        runner = table[os.getpid()].started
+        self.assertFalse([pid for pid in selected if pid in table and table[pid].started < runner])
+        # The parents started before the runner, so none is even a candidate;
+        # whatever is refused names the rule it broke.
+        self.assertEqual(refused & set(parents) - {pid for pid, why in preview["refused"] if why == "caller"}, set())
+        self.assertLessEqual({why for _, why in preview["refused"]}, {"init", "caller", "other-user", "before-run"})
+
+    def test_the_lifeline_names_only_holders_of_its_live_read_end(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        table = {
+            100: _Process(me, 100, UID, 10, False),
+            200: _Process(1, 200, UID, 12, False),   # holds the read end
+            201: _Process(1, 201, UID, 12, False),   # holds a pipe whose peer closed
+            202: _Process(1, 202, UID, 12, False),   # pipes unreadable
+        }
+        pipes = {200: {0xA}, 201: {0xB, 0}}.get
+        tracker = _DescendantTracker(child, table=lambda: table, lifeline=lambda: 0xA, pipes=pipes)
+        self.assertEqual(tracker.escaped(), (200,))
+        self.assertEqual(tracker.preview()["escaped"], [[200, "lifeline"]])
+        # A holder that started before the child, by its exact stamp, is refused.
+        stamped = {100: _Process(me, 100, UID, (10, 5), False), 203: _Process(1, 203, UID, (10, 4), False)}
+        early_holder = _DescendantTracker(child, table=lambda: stamped, lifeline=lambda: 0xA,
+                                          pipes=lambda pid: {0xA})
+        self.assertEqual(early_holder.escaped(), ())
+        self.assertIn([203, "before-run"], early_holder.preview()["refused"])
+        # Once nothing holds the read end it names nobody, so a closed pipe,
+        # which any process may hold, is never a match.
+        for lifeline in (lambda: None, lambda: 0):
+            closed = _DescendantTracker(child, table=lambda: table, lifeline=lifeline,
+                                        pipes=lambda pid: {0, 0xA, 0xB})
+            self.assertEqual(closed.escaped(), ())
+        # A read end that closes during the scan may have its handle reused.
+        handles = iter([0xA])
+        flipped = _DescendantTracker(child, table=lambda: table, lifeline=lambda: next(handles, None), pipes=pipes)
+        self.assertEqual(flipped.escaped(), ())
+        # Before the child is confirmed, the lifeline names nobody.
+        early = {pid: process for pid, process in table.items() if pid != 100}
+        unconfirmed = _DescendantTracker(child, table=lambda: early, lifeline=lambda: 0xA, pipes=pipes)
+        self.assertEqual(unconfirmed.escaped(), ())
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS pipe handles")
+    def test_the_lifeline_handle_is_the_read_end_while_anything_holds_it(self) -> None:
+        read, write = os.pipe()
+        holder = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"], pass_fds=(read,))
+        os.close(read)
+        try:
+            handle = _lifeline_handle(write)
+            self.assertIsNotNone(handle)
+            self.assertIn(handle, _darwin_pipes(holder.pid))
+            self.assertNotIn(handle, _darwin_pipes(os.getpid()))
+        finally:
+            holder.kill()
+            holder.wait()
+        try:
+            self.assertIsNone(_lifeline_handle(write))
+        finally:
+            os.close(write)
+
+    def test_the_fork_watcher_adopts_only_children_of_known_processes(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        table = {100: _Process(me, 100, UID, 10, False)}
+        tracker = _DescendantTracker(child, table=lambda: table)
+        processes = {
+            100: table[100],
+            555: _Process(1, 555, UID, 5, False),
+            300: _Process(100, 300, UID, 11, False),
+            301: _Process(555, 301, UID, 11, False),
+            302: _Process(300, 302, UID + 1, 12, False),
+        }
+        with patch("agent_skills.product._darwin_process", side_effect=processes.get):
+            self.assertFalse(tracker.adopt(300, 100))   # not confirmed yet
+            tracker.observe()
+            self.assertTrue(tracker.adopt(300, 100))
+            self.assertFalse(tracker.adopt(301, 555))   # its parent is not this run's
+            self.assertFalse(tracker.adopt(301, 100))   # not that parent's child
+            self.assertFalse(tracker.adopt(302, 300))   # another user's
+            # A parent whose pid now names a later process vouches for nobody.
+            processes[300] = _Process(100, 300, UID, 99, False)
+            processes[303] = _Process(300, 303, UID, 100, False)
+            self.assertFalse(tracker.adopt(303, 300))
+        # Refusals count while the refused process is still running.
+        table[302] = processes[302]
+        self.assertEqual(tracker.refused(), (302,))
+        table[300] = _Process(1, 300, UID, 11, False)
+        self.assertEqual(tracker.escaped(), (300,))
+        self.assertEqual(tracker.preview()["escaped"], [[300, "forked"]])
+
+    def test_a_refused_candidate_fails_cancellation_closed_and_is_never_signalled(self) -> None:
+        child = Mock(pid=12345)
+        child.poll.return_value = 0
+        for escaped in ([()], [(777,), ()]):
+            tracker = Mock()
+            tracker.escaped.side_effect = escaped
+            tracker.refused.return_value = (9001,)
+            clock = iter(range(1000))
+            with self.subTest(escaped=escaped), \
+                 patch("agent_skills.product.os.kill") as kill, \
+                 patch("agent_skills.product.time.sleep"), \
+                 patch("agent_skills.product.time.monotonic", side_effect=lambda: next(clock) * 0.5):
+                with self.assertRaises(CancellationIncompleteError) as raised:
+                    _stop_escaped_descendants(child, tracker, signal.SIGTERM)
+            self.assertEqual(raised.exception.cleanup, "escaped-descendants-refused")
+            self.assertNotIn(9001, [call.args[0] for call in kill.call_args_list])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_a_cleanup_preview_reports_the_selection_and_stops_nothing(self) -> None:
+        handlers = {}
+        child = Mock(pid=12345)
+
+        def register(sig, handler):
+            handlers[sig] = handler
+            return signal.SIG_DFL
+
+        def wait(*, timeout):
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+            raise subprocess.TimeoutExpired("worker", timeout)
+
+        child.wait.side_effect = wait
+        tracker = Mock()
+        tracker.preview.return_value = {"group": 12345, "escaped": [[777, "marker"]], "refused": []}
+        seen = []
+        with patch("agent_skills.product.signal.signal", side_effect=register), \
+             patch("agent_skills.product.subprocess.Popen", return_value=child), \
+             patch("agent_skills.product._DescendantTracker", return_value=tracker), \
+             patch("agent_skills.product.os.killpg", side_effect=AssertionError("signalled")), \
+             patch("agent_skills.product.os.kill", side_effect=AssertionError("signalled")), \
+             patch("agent_skills.product._stop_posix_group", side_effect=AssertionError("stopped")):
+            self.assertEqual(_run_command(["worker"], ROOT, preview=seen.append), 128 + signal.SIGTERM)
+        self.assertEqual(seen, [tracker.preview.return_value])
+
+    def test_another_users_group_member_that_leaves_the_group_is_refused_not_signalled(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        table = {100: _Process(me, 100, UID, 10, False), 300: _Process(100, 100, UID + 1, 11, False)}
+        with patch("agent_skills.product.os.kill", side_effect=AssertionError("signalled")), \
+             patch("agent_skills.product.os.killpg", side_effect=AssertionError("signalled")):
+            # Each read is a snapshot of its own, as a real table is.
+            tracker = _DescendantTracker(child, table=lambda: dict(table))
+            tracker.observe()
+            # A setuid program in the group is learned, and is no refusal.
+            self.assertEqual(tracker.group_members(), (100, 300))
+            self.assertEqual(tracker.refused(), ())
+            table[300] = _Process(1, 300, UID + 1, 11, False)   # it calls setsid()
+            self.assertEqual(tracker.escaped(), ())
+            self.assertEqual(tracker.refused(), (300,))
+            self.assertEqual(tracker.preview()["refused"], [[300, "other-user"]])
+            # Another user's child the fork watcher offers, which no table read
+            # has shown, is refused too.
+            forked = {100: table[100], 320: _Process(100, 320, UID + 1, 12, False)}
+            with patch("agent_skills.product._darwin_process", side_effect=forked.get):
+                self.assertFalse(tracker.adopt(320, 100))
+            # Behind a table that cannot be read, every refusal still counts.
+            reads = [None]
+            unreadable = tracker._table
+            tracker._table = lambda: reads[-1] if reads else dict(table)
+            self.assertEqual(tracker.refused(), (300, 320))
+            self.assertEqual(tracker.preview()["refused"], [[300, "other-user"], [320, "other-user"]])
+            reads.clear()
+            tracker._table = unreadable
+            # A zombie, a pid that now names a later process, or one back in
+            # the child's group no longer counts; nor, read afresh, one that exited.
+            for later in (_Process(1, 300, UID + 1, 11, True), _Process(1, 300, UID + 1, 99, False),
+                          _Process(1, 100, UID + 1, 11, False)):
+                table[300] = later
+                self.assertEqual(tracker.refused(), (), later)
+            table[300] = _Process(1, 300, UID + 1, 11, False)
+            self.assertEqual(tracker.refused(), (300,))
+            del table[300]
+            self.assertEqual(tracker.refused(), ())
+            # An ancestry-learned descendant is labelled so; another user's,
+            # outside the group, is refused when it is learned.
+            table.update({301: _Process(100, 301, UID, 12, False), 302: _Process(301, 302, UID, 13, False),
+                          303: _Process(301, 303, UID + 1, 13, False)})
+            tracker.observe()
+            table[301] = _Process(1, 301, UID, 12, False)
+            table[302] = _Process(1, 302, UID, 13, False)
+            self.assertEqual(tracker.preview()["escaped"], [[301, "descendant"], [302, "descendant"]])
+            self.assertEqual(tracker.refused(), (303,))
+
+    def test_a_job_left_in_a_known_descendants_group_is_found_after_that_descendant_exits(self) -> None:
+        # A shell in a session of its own backgrounds a job and exits at once:
+        # the job is reparented to init, with no ancestry left, but it is
+        # still in the group the shell's pid names.
+        me = os.getpid()
+        child = Mock(pid=100)
+        table = {100: _Process(me, 100, UID, (10, 0), False), 300: _Process(100, 300, UID, (11, 0), False)}
+        tracker = _DescendantTracker(child, table=lambda: table, watcher=lambda *callbacks: Mock())
+        tracker.observe()
+        del table[300]
+        tracker.ended(300, (12, 0), (13, 0))   # another process's exit under that pid: ignored
+        tracker.ended(300, (11, 0), (15, 0))
+        table.update({
+            310: _Process(1, 300, UID, (14, 0), False),   # started while the shell was there
+            311: _Process(1, 300, UID, (16, 0), False),   # after it was seen to exit
+            312: _Process(1, 300, UID, (10, 500000), False),  # before the shell started
+        })
+        self.assertEqual(tracker.escaped(), (310,))
+        self.assertEqual(tracker.preview()["escaped"], [[310, "descendant"]])
+        # A later exit reported for another process under that pid widens nothing,
+        # and a process started at the very instant of the exit is not counted.
+        tracker.ended(300, (12, 0), (20, 0))
+        self.assertEqual(tracker._ends[300], ((11, 0), (15, 0)))
+        table[313] = _Process(1, 300, UID, (15, 0), False)
+        self.assertEqual(tracker.escaped(), (310,))
+        # An end recorded for another start vouches for nothing.
+        tracker._ends[300] = ((12, 0), (20, 0))
+        table[314] = _Process(1, 300, UID, (14, 500000), False)
+        self.assertNotIn(314, tracker.escaped())
+        del table[314]
+        tracker._ends[300] = ((11, 0), (15, 0))
+        # While the descendant is there, its group is its own.
+        table[400] = _Process(100, 400, UID, (20, 0), False)
+        tracker.observe()
+        table[401] = _Process(1, 400, UID, (21, 0), False)
+        self.assertEqual(tracker.escaped(), (310, 400, 401))
+        # An exit seen for a pid that now names a later process vouches for nothing.
+        tracker.ended(500, (29, 0), (30, 0))
+        table[501] = _Process(1, 500, UID, (25, 0), False)
+        self.assertEqual(tracker.escaped(), (310, 400, 401))
+        # A known leader whose pid now names an unrelated process that leads
+        # a group of its own vouches for none of that group.
+        table[600] = _Process(100, 600, UID, (30, 0), False)
+        tracker.observe()
+        table[600] = _Process(1, 600, UID, (40, 0), False)
+        table[601] = _Process(1, 600, UID, (41, 0), False)
+        self.assertNotIn(601, tracker.escaped())
+        # The child's pid, now naming a later process, vouches for nothing
+        # (its own group is signalled as a whole while the child is there).
+        table[100] = _Process(1, 100, UID, (50, 0), False)
+        table[602] = _Process(1, 100, UID, (51, 0), False)
+        self.assertNotIn(602, tracker.escaped())
+        # Without the fork watcher (Linux), a group vouches for nobody.
+        plain = _DescendantTracker(child, table=lambda: table)
+        table[100] = _Process(me, 100, UID, (10, 0), False)
+        table[700] = _Process(100, 700, UID, (60, 0), False)
+        plain.observe()
+        table[701] = _Process(1, 700, UID, (61, 0), False)
+        self.assertNotIn(701, plain.escaped())
+
+    def test_a_marker_match_started_before_the_run_is_refused_by_its_exact_macos_stamp(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        marker = b"AGENT_SKILLS_LAUNCH_k=1"
+        table = {
+            100: _Process(me, 100, UID, (20, 500000), False),
+            200: _Process(1, 200, UID, (20, 499999), False),   # a microsecond earlier, inside the slack
+            201: _Process(1, 201, UID, (20, 500000), False),   # the same instant
+        }
+        tracker = _DescendantTracker(child, table=lambda: table, marker=marker, environment=lambda pid: [marker])
+        self.assertEqual(tracker.escaped(), (201,))
+        self.assertEqual(tracker.preview()["refused"], [[200, "before-run"]])
+        # Once the child is confirmed its start is the bound, not the launcher's.
+        bounded = {**table, me: _Process(1, me, UID, (20, 0), False), 205: _Process(1, 205, UID, (20, 250000), False)}
+        confirmed = _DescendantTracker(child, table=lambda: bounded, marker=marker, environment=lambda pid: [marker])
+        self.assertEqual(confirmed.escaped(), (201,))
+        self.assertIn([205, "before-run"], confirmed.preview()["refused"])
+        # A descendant shown by ancestry is kept through a small clock step
+        # back, but not one an hour and more before the child.
+        stepped = {100: _Process(me, 100, UID, (5000, 0), False),
+                   206: _Process(100, 206, UID, (4999, 0), False),
+                   207: _Process(100, 207, UID, (1000, 0), False)}
+        ancestry = _DescendantTracker(child, table=lambda: stepped)
+        ancestry.observe()
+        stepped[206] = _Process(1, 206, UID, (4999, 0), False)
+        stepped[207] = _Process(1, 207, UID, (1000, 0), False)
+        self.assertEqual(ancestry.escaped(), (206,))
+        self.assertIn([207, "before-run"], ancestry.preview()["refused"])
+        # Before the child is confirmed, the launcher's own start is the bound.
+        early = {me: _Process(1, me, UID, (20, 0), False), 202: _Process(1, 202, UID, (19, 999999), False),
+                 203: _Process(1, 203, UID, (20, 0), False)}
+        unconfirmed = _DescendantTracker(child, table=lambda: early, marker=marker, environment=lambda pid: [marker])
+        self.assertEqual(unconfirmed.escaped(), (203,))
+        self.assertEqual(unconfirmed.refused(), (202,))
+        # Confirmed later, by a child that started after that match, the
+        # match is checked against the child's start and refused.
+        early[100] = _Process(me, 100, UID, (20, 1), False)
+        self.assertEqual(unconfirmed.escaped(), ())
+        self.assertIn([203, "before-run"], unconfirmed.preview()["refused"])
+
+    def test_each_learned_process_is_watched_for_forks_and_a_zombie_is_not_adopted(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        table = {100: _Process(me, 100, UID, 10, False)}
+        watcher = Mock()
+        tracker = _DescendantTracker(child, table=lambda: table, watcher=lambda *callbacks: watcher)
+        processes = {100: table[100], 300: _Process(100, 300, UID, 11, False),
+                     304: _Process(100, 304, UID, 12, True)}
+        with patch("agent_skills.product._darwin_process", side_effect=processes.get):
+            tracker.observe()
+            watcher.start.assert_called_once_with()
+            self.assertTrue(tracker.adopt(300, 100))
+            self.assertFalse(tracker.adopt(304, 100))
+        self.assertIn(call(100, 10), watcher.watch.call_args_list)
+        self.assertIn(call(300, 11), watcher.watch.call_args_list)
+        self.assertNotIn(304, [args[0] for args, _ in watcher.watch.call_args_list])
+        tracker.close()
+        watcher.close.assert_called_once_with()
+        factory = Mock(return_value=Mock())
+        wired = _DescendantTracker(child, table=lambda: table, watcher=factory)
+        wired.observe()
+        self.assertEqual(factory.call_args.args, (wired.adopt, wired.ended))
+        # A watcher that cannot start leaves the tree to the table.
+        failing = _DescendantTracker(child, table=lambda: table, watcher=Mock(side_effect=OSError("kqueue")))
+        failing.observe()
+        self.assertEqual(failing.group_members(), (100,))
+        # Before the child is confirmed nothing vouches, not even a marked parent.
+        marker = b"AGENT_SKILLS_LAUNCH_k=1"
+        early = {me: _Process(1, me, UID, 1, False), 400: _Process(1, 400, UID, 11, False)}
+        unconfirmed = _DescendantTracker(child, table=lambda: early, marker=marker, environment=lambda pid: [marker])
+        self.assertEqual(unconfirmed.escaped(), (400,))
+        with patch("agent_skills.product._darwin_process",
+                   side_effect={400: early[400], 401: _Process(400, 401, UID, 12, False)}.get):
+            self.assertFalse(unconfirmed.adopt(401, 400))
+
+    @unittest.skipUnless(sys.platform == "darwin", "kqueue process events")
+    def test_the_fork_watcher_reports_each_fork_with_its_parent_and_each_exit(self) -> None:
+        # Signals nothing: a Python parent forks one grandchild, both exit.
+        stamp = _wall_stamp()
+        self.assertIsInstance(stamp, tuple)
+        self.assertEqual(len(stamp), 2)
+        self.assertFalse(_started_before(stamp, _darwin_process(os.getpid()).started))
+        # Microseconds, not a truncated second.
+        self.assertTrue(any(_wall_stamp()[1] for _ in range(5)))
+        offered, ended = [], []
+        with tempfile.TemporaryDirectory() as directory:
+            go = Path(directory) / "go"
+            parent = subprocess.Popen([sys.executable, "-c",
+                "import os, sys, time\nfrom pathlib import Path\n"
+                "while not Path(sys.argv[1]).exists(): time.sleep(0.01)\n"
+                "pid = os.fork()\n"
+                "if pid == 0:\n    time.sleep(0.3)\n    os._exit(0)\n"
+                "os.waitpid(pid, 0)\n", str(go)])
+            watcher = None
+            try:
+                started = _darwin_process(parent.pid).started
+
+                def adopt(pid, by):
+                    offered.append((pid, by))
+                    process = _darwin_process(pid)
+                    if process is not None:
+                        watcher.watch(pid, process.started)
+
+                # Exactly comparable with a start stamp: no truncation.
+                self.assertFalse(_precedes(_wall_stamp(), started))
+                seen_at = []
+                watcher = _ForkWatcher(adopt, lambda pid, start, at: ended.append((pid, start)) or seen_at.append(at))
+                watcher.start()
+                watcher.watch(parent.pid, started)
+                before = _wall_stamp()
+                go.write_text("1")
+                parent.wait(timeout=10)
+                deadline = time.monotonic() + 5
+                while len(ended) < 2 and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                after = _wall_stamp()
+            finally:
+                if watcher is not None:
+                    watcher.close()
+                if parent.poll() is None:
+                    parent.kill()
+                    parent.wait()
+        self.assertEqual([by for _, by in offered], [parent.pid])
+        self.assertIn((parent.pid, started), ended)
+        self.assertIn(offered[0][0], [pid for pid, _ in ended])
+        # Each exit is stamped when it was seen, between these two readings.
+        self.assertTrue(seen_at and all(before <= at <= after for at in seen_at), (before, seen_at, after))
+        self.assertFalse(watcher.is_alive())
+        # A registration for a start the pid no longer has is dropped.
+        stale = _ForkWatcher(lambda *args: None)
+        stale.watch(os.getpid(), (0, 0))
+        self.assertNotIn(os.getpid(), stale._starts)
+        # The same pid with another start is registered anew.
+        stale.watch(os.getpid(), _darwin_process(os.getpid()).started)
+        self.assertEqual(stale._starts[os.getpid()], _darwin_process(os.getpid()).started)
+        stale.start()
+        stale.close()
+
+    @unittest.skipUnless(sys.platform == "darwin", "kqueue process events")
+    def test_a_fork_watch_records_its_start_first_keeps_an_exited_process_and_forgets_a_failure(self) -> None:
+        watcher = _ForkWatcher(lambda *args: None)
+        kqueue = watcher._queue
+        seen = []
+
+        class Queue:
+            def __init__(self, failure=None):
+                self.failure = failure
+
+            def control(self, changes, *_):
+                seen.append(dict(watcher._starts))
+                if self.failure:
+                    raise self.failure
+                return []
+
+        try:
+            process = _Process(1, 4242, UID, (5, 0), False)
+            reads = iter([process, None])   # there before the registration, gone after it
+            watcher._queue = Queue()
+            with patch("agent_skills.product._darwin_process", side_effect=lambda pid: next(reads)), \
+                 patch("agent_skills.product._darwin_children", return_value=[]):
+                watcher.watch(4242, (5, 0))
+            # Recorded before the registration, and kept so its exit is reported.
+            self.assertEqual(seen, [{4242: (5, 0)}])
+            self.assertEqual(watcher._starts, {4242: (5, 0)})
+            # Forgetting another start leaves this one.
+            watcher._forget(4242, (1, 0))
+            self.assertEqual(watcher._starts, {4242: (5, 0)})
+            # A registration that fails is forgotten.
+            watcher._queue = Queue(OSError("gone"))
+            with patch("agent_skills.product._darwin_process", return_value=_Process(1, 4243, UID, (6, 0), False)):
+                watcher.watch(4243, (6, 0))
+            self.assertNotIn(4243, watcher._starts)
+            # A pid that already names another process is never registered.
+            seen.clear()
+            with patch("agent_skills.product._darwin_process", return_value=_Process(1, 4244, UID, (9, 0), False)):
+                watcher.watch(4244, (7, 0))
+            self.assertEqual(seen, [])
+            self.assertNotIn(4244, watcher._starts)
+        finally:
+            kqueue.close()
+
+    @unittest.skipUnless(sys.platform == "darwin", "the lifeline pipe is macOS only")
+    def test_the_lifeline_read_end_goes_only_to_the_child_and_both_ends_are_closed(self) -> None:
+        child = Mock(pid=12345)
+        child.wait.return_value = 0
+        ends = []
+        real_pipe = os.pipe
+
+        def pipe():
+            ends.extend(real_pipe())
+            return tuple(ends)
+
+        tracker = Mock()
+        with patch("agent_skills.product.os.pipe", side_effect=pipe), \
+             patch("agent_skills.product.subprocess.Popen", return_value=child) as popen, \
+             patch("agent_skills.product._DescendantTracker", return_value=tracker) as made:
+            self.assertEqual(_run_command(["worker"], ROOT), 0)
+        read_end, write_end = ends
+        self.assertEqual(popen.call_args.kwargs["pass_fds"], (read_end,))
+        self.assertIsNotNone(made.call_args.kwargs["lifeline"])
+        self.assertIsNotNone(made.call_args.kwargs["watcher"])
+        tracker.close.assert_called_once_with()
+        for fd in (read_end, write_end):
+            with self.assertRaises(OSError):
+                os.fstat(fd)
 
     def test_process_environments_are_read_where_the_platform_exposes_them(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
