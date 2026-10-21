@@ -596,11 +596,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "50bb05fd2692a0bc9ec2d5e2ce43ee10f8dbf683f6274377ad98ee428887df9a",
-    "delivery.html": "f814c96ab54d8a0462a0d129ab3667f9aa01edb8632c8f14697fba39257d0e93",
+    "delivery.html": "f9e41b31d8a153a1431ad0887cff07828d80c29a7a7e31ea0829c2d4dfe099d7",
 }
 PINNED_VIEWS = {
     "delivery.md": "802f692197c8aeb9dd94d4886d70d70bce8855483867df80d490f785e022073f",
-    "delivery.html": "0e86816f18e126abd02c88f4cf79b2ca69afc42cceda8f377bbb99d0a6d1d78a",
+    "delivery.html": "0ac6cdf5a7a3fe4220060be046af1a8910d03661c4fe97d18a310e86a8efee3c",
 }
 
 
@@ -1275,6 +1275,17 @@ setTimeout(async () => {
         document["state"]["meta"]["headline"] = headline
         document["state"]["schemaVersion"] = schema_version
         return document
+
+    def test_large_counts_are_whole_numbers_never_exponents(self) -> None:
+        document = copy.deepcopy(self.document)
+        subject = document["state"]["queue"][0]["subject"]
+        stats = document["stats"][subject]
+        stats.update({"rounds": 10 ** 7, "roundsSource": "journal",
+                      "findings": {"P0": 0, "P1": 10 ** 7, "P2": 10 ** 21, "P3": 123456789012}})
+        shown = self.run_page({}, document)
+        self.assertIn("10000000 rounds, findings P0/P1/P2/P3 0/10000000/1000000000000000000000/123456789012",
+                      shown["text"])
+        self.assertNotRegex(shown["text"], r"\de[+-]?\d")
 
     def test_without_an_adapter_the_embedded_state_is_shown(self) -> None:
         shown = self.run_page({})
