@@ -752,7 +752,20 @@ def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> d
                     None)
         if last is not None and last["kind"] == "candidate.stopped":
             ended, outcome = last, "stopped"
-    merged = next((entry for entry in reversed(own) if entry["kind"] == "candidate.merged"), None)
+    # The total ends where the latest attempt ended, and only at a merge. A
+    # merge recovered from the forge, with no check, ends an attempt nothing
+    # else ended. A merge that a later hand-off superseded is not this
+    # candidate's total. With no hand-off on record, the last merge stands.
+    if outcome == "merged":
+        merged = ended
+    elif handed is None:
+        merged = next((entry for entry in reversed(own) if entry["kind"] == "candidate.merged"), None)
+    elif ended is None:
+        merged = next((entry for entry in after_handing if entry["kind"] == "candidate.merged"), None)
+        if merged is not None:
+            ended, outcome = merged, "merged"
+    else:
+        merged = None
 
     def at(entry: dict | None) -> str | None:
         return entry["at"] if entry else None
@@ -789,7 +802,12 @@ def delivery_stats(state: dict, journal: list[dict]) -> dict:
     A pure fold of the record, in one pass over the journal. A stat whose
     events are missing is null, never zero: an older candidate with no
     assignment entry has no build time. With no journaled rounds, the round
-    count is the lane's reported one.
+    count is the lane's reported one. A candidate handed again follows its
+    latest attempt: its hand-off, check and end are that attempt's, and its
+    total runs from the assignment to that attempt's merge, null unless that
+    attempt merged; a merge recovered from the forge, with no check, counts.
+    Its assignment, build and review times, rounds and findings cover every
+    attempt.
     """
     by_subject: dict[str, list[dict]] = {}
     by_lane: dict[str, list[dict]] = {}
@@ -814,7 +832,13 @@ SNAPSHOT_STATES = {
 
 
 def _parse_time(text: str, *, exact: bool = False) -> datetime.datetime:
-    """A schema timestamp as UTC; ``exact`` keeps its fraction of a second, to the microsecond."""
+    """A schema timestamp as UTC; ``exact`` keeps its fraction of a second, to the microsecond.
+
+    Digits beyond the sixth are dropped, never rounded, so a time never moves
+    later than it was written. Times in the same microsecond compare as equal,
+    even when the later one was written first; durations are whole seconds in
+    any case.
+    """
     whole, _, fraction = text.rstrip("Z").partition(".")
     moment = datetime.datetime.strptime(whole, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
     if exact and fraction:
@@ -1222,6 +1246,47 @@ def binding_state(path: Path) -> dict:
     return member
 
 
+def bound_directory(path: Path, member: dict) -> Path:
+    """The state directory a binding names, as an absolute path.
+
+    A relative ``state.directory`` is relative to the repository root: the
+    folder holding ``.agents/`` when the binding lives there, as it does in a
+    repository, and otherwise the folder holding the binding.
+    """
+    directory = member.get("directory")
+    if not isinstance(directory, str) or not directory:
+        raise StateError("binding_invalid", f"{Path(path).name} names no state directory")
+    # The root is found from the binding's path as given, without following
+    # links, so a linked .agents folder still belongs to this repository.
+    binding = Path(os.path.abspath(path))
+    root = binding.parent.parent if binding.parent.name == ".agents" else binding.parent
+    named = Path(directory)
+    try:
+        return (named if named.is_absolute() else root / named).resolve()
+    except (OSError, ValueError) as error:
+        raise StateError("binding_invalid", f"{Path(path).name} names an unusable state directory: {error}") from None
+
+
+def require_bound(path: Path, member: dict, directory: Path) -> None:
+    """Refuse a binding that keeps its state somewhere other than ``directory``.
+
+    A binding from another checkout would judge this record's outbox against
+    publishers that are not this record's.
+    """
+    bound = bound_directory(path, member)
+    shown = Path(directory).resolve()
+    # The same directory under another spelling, such as another letter case
+    # on a filesystem that ignores case, is still the same directory.
+    with contextlib.suppress(OSError):
+        if bound.exists() and shown.exists() and os.path.samefile(bound, shown):
+            return
+    if bound != shown:
+        raise StateError(
+            "binding_invalid",
+            f"{Path(path).name} keeps its state in {bound}, not in {shown}, the directory being shown",
+        )
+
+
 def host_publishers(member: dict) -> set[str]:
     return {entry["id"] for entry in member.get("publishers", [])
             if isinstance(entry, dict) and entry.get("kind") == "host" and isinstance(entry.get("id"), str)}
@@ -1592,7 +1657,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "ack":
             result = {"ok": True, "published": ack(args.dir, version=args.version, through=args.through)}
         else:
-            hosts = host_publishers(binding_state(args.binding)) if args.binding is not None else None
+            hosts = None
+            if args.binding is not None:
+                member = binding_state(args.binding)
+                require_bound(args.binding, member, args.dir)
+                hosts = host_publishers(member)
             shown = show(args.dir)
             result = {**shown, "publication": publication(args.dir, shown, hosts)}
     except StateError as error:

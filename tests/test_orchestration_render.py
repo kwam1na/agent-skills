@@ -596,11 +596,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "50bb05fd2692a0bc9ec2d5e2ce43ee10f8dbf683f6274377ad98ee428887df9a",
-    "delivery.html": "f814c96ab54d8a0462a0d129ab3667f9aa01edb8632c8f14697fba39257d0e93",
+    "delivery.html": "312119cc85670a81f82418cb3d86870d0d3e1e546210f9a35d8b5d5a17a6f323",
 }
 PINNED_VIEWS = {
     "delivery.md": "802f692197c8aeb9dd94d4886d70d70bce8855483867df80d490f785e022073f",
-    "delivery.html": "0e86816f18e126abd02c88f4cf79b2ca69afc42cceda8f377bbb99d0a6d1d78a",
+    "delivery.html": "f05ccf0df9fba588f08d1ef2b87ed6fa10c4b5473b668a3b9caec7c8c2438ef0",
 }
 
 
@@ -632,6 +632,51 @@ class HostPublisherTests(DeliveryStateFixture):
         path = self.root / f"binding {len(list(self.root.iterdir()))}.json"
         path.write_text(json.dumps({"state": json.loads(self.config([], publishers))}), encoding="utf-8")
         return str(path)
+
+    def test_show_refuses_a_binding_that_keeps_its_state_elsewhere(self) -> None:
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        foreign = elsewhere / "orchestration.json"
+        foreign.write_text(json.dumps({"state": json.loads(self.config([], []))}), encoding="utf-8")
+        # Another checkout's state exists, as it does for a real foreign binding.
+        state_tool(elsewhere / "state", "init", "--headline", "Another delivery")
+        refused = self.refused("show", "--binding", str(foreign))
+        self.assertEqual(refused["code"], "binding_invalid")
+        # Both paths are named, so the mismatch can be fixed without guessing.
+        self.assertIn(str((elsewhere / "state").resolve()), refused["error"])
+        self.assertIn(str(self.state_dir.resolve()), refused["error"])
+
+    def test_show_accepts_a_binding_whose_state_is_this_directory(self) -> None:
+        # Relative to the repository root, the folder holding .agents/.
+        agents = self.root / ".agents"
+        agents.mkdir()
+        local = agents / "orchestration.json"
+        local.write_text(json.dumps({"state": json.loads(self.config([], []))}), encoding="utf-8")
+        self.assertIn("publication", state_tool(self.state_dir, "show", "--binding", str(local)))
+        # An absolute state directory is taken as it is.
+        absolute = self.root / "absolute.json"
+        absolute.write_text(json.dumps({"state": {**json.loads(self.config([], [])), "directory": str(self.state_dir)}}),
+                            encoding="utf-8")
+        self.assertIn("publication", state_tool(self.state_dir, "show", "--binding", str(absolute)))
+
+    def test_show_accepts_a_linked_agents_folder_of_this_repository(self) -> None:
+        real = self.root / "kept-agents"
+        real.mkdir()
+        (real / "orchestration.json").write_text(json.dumps({"state": json.loads(self.config([], []))}), encoding="utf-8")
+        try:
+            (self.root / ".agents").symlink_to(real, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"links are not available here: {error}")
+        self.assertIn("publication", state_tool(self.state_dir, "show", "--binding", str(self.root / ".agents/orchestration.json")))
+
+    def test_show_refuses_a_binding_naming_no_usable_state_directory(self) -> None:
+        for name, state in (("missing", {"publishers": []}), ("empty", {"directory": "", "publishers": []}),
+                            ("not text", {"directory": 7, "publishers": []}),
+                            ("null byte", {"directory": "state\u0000x", "publishers": []})):
+            with self.subTest(name):
+                path = self.root / f"{name}.json"
+                path.write_text(json.dumps({"state": state}), encoding="utf-8")
+                self.assertEqual(self.refused("show", "--binding", str(path))["code"], "binding_invalid")
 
     def refused(self, *args: str) -> dict:
         result = run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(self.state_dir), *args])
@@ -1280,6 +1325,17 @@ setTimeout(async () => {
         document["state"]["meta"]["headline"] = headline
         document["state"]["schemaVersion"] = schema_version
         return document
+
+    def test_large_counts_are_whole_numbers_never_exponents(self) -> None:
+        document = copy.deepcopy(self.document)
+        subject = document["state"]["queue"][0]["subject"]
+        stats = document["stats"][subject]
+        stats.update({"rounds": 10 ** 7, "roundsSource": "journal",
+                      "findings": {"P0": -0.0, "P1": 10 ** 7, "P2": 10 ** 21, "P3": 123456789012}})
+        shown = self.run_page({}, document)
+        self.assertIn("10000000 rounds, findings P0/P1/P2/P3 0/10000000/1000000000000000000000/123456789012",
+                      shown["text"])
+        self.assertNotRegex(shown["text"], r"\de[+-]?\d")
 
     def test_without_an_adapter_the_embedded_state_is_shown(self) -> None:
         shown = self.run_page({})
