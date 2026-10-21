@@ -2092,11 +2092,14 @@ setTimeout(async () => {
         self.assertEqual(shown["source"], "embedded")
         self.assertIn("Showing the saved state", shown["text"])
 
-    def test_a_blank_summary_draws_nothing(self) -> None:
+    def test_a_blank_summary_draws_nothing_and_both_views_agree_on_blank(self) -> None:
         document = ticket_document()
-        document["state"]["tickets"] = {"change-2": {"title": "Tracker title two", "summary": "  "}}
-        self.assertEqual(self.run_page({}, document)["summaries"], 0)
-        self.assertNotIn("summary:", render_state.render_markdown(document))
+        for text in ("  ", "\u001c\u0085\u3000", "\ufeff"):
+            with self.subTest(summary=repr(text)):
+                document["state"]["tickets"] = {"change-2": {"title": "Tracker title two", "summary": text}}
+                blank = not text.strip()
+                self.assertEqual(self.run_page({}, document)["summaries"], 0 if blank else 1)
+                self.assertEqual("summary:" not in render_state.render_markdown(document), blank)
         self.assertEqual(self.run_page({}, ticket_document())["summaries"], 3)
 
     def test_an_open_page_draws_itself_again_on_a_quiet_record(self) -> None:

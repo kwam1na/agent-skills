@@ -473,12 +473,14 @@ _PAGE_PROGRAM = """
     items.forEach(function (item) { element.appendChild(draw(item)); });
     return element;
   }
+  /* Blank as the state tool reads it: only the characters Python counts as whitespace. */
+  var BLANK = /^[\\t\\n\\v\\f\\r\\u001c-\\u001f \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$/;
   function row(title, detail, tag, summary) {
     var item = el("li");
     var head = el("div", title);
     if (tag !== undefined) { head.appendChild(el("span", show(tag), "tag")); }
     item.appendChild(head);
-    if (typeof summary === "string" && summary.trim()) { item.appendChild(el("div", summary, "summary")); }
+    if (typeof summary === "string" && !BLANK.test(summary)) { item.appendChild(el("div", summary, "summary")); }
     if (detail) { item.appendChild(el("div", detail, "detail")); }
     return item;
   }
