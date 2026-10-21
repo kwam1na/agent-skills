@@ -28,6 +28,8 @@ import datetime
 import json
 import os
 import re
+import signal
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -848,8 +850,14 @@ def read_snapshot(path: Path, max_age: float) -> dict:
     """A validated, fresh ``work-snapshot/1``, or a refusal."""
     try:
         snapshot = json.loads(Path(path).read_bytes().decode("utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as error:
+        # ValueError covers JSON a parser refuses, such as a number too long to convert.
         raise StateError("snapshot_invalid", f"cannot read the snapshot {Path(path).name}: {error}") from None
+    return check_snapshot(snapshot, Path(path).name, max_age)
+
+
+def check_snapshot(snapshot: object, name: str, max_age: float) -> dict:
+    """``snapshot`` as a valid, fresh ``work-snapshot/1``, or a refusal naming it ``name``."""
     errors = validate(snapshot, load_schema("work-snapshot/1"))
     if not errors:
         allowed = SNAPSHOT_STATES[snapshot["source"]]
@@ -858,15 +866,20 @@ def read_snapshot(path: Path, max_age: float) -> dict:
         subjects = [item["subject"] for item in snapshot["items"]]
         if len(subjects) != len(set(subjects)):
             errors.append("/items: each subject appears once")
+    if not errors:
+        try:
+            _parse_time(snapshot["takenAt"], exact=True)
+        except ValueError:
+            errors.append("/takenAt: not a real time")
     if errors:
-        raise StateError("snapshot_invalid", f"{Path(path).name}: " + "; ".join(errors))
+        raise StateError("snapshot_invalid", f"{name}: " + "; ".join(errors))
     age = (datetime.datetime.now(datetime.timezone.utc) - _parse_time(snapshot["takenAt"])).total_seconds()
     if age < -SNAPSHOT_CLOCK_SKEW_SECONDS:
-        raise StateError("snapshot_invalid", f"{Path(path).name} was taken {int(-age)}s in the future: check its clock")
+        raise StateError("snapshot_invalid", f"{name} was taken {int(-age)}s in the future: check its clock")
     if age > max_age:
         raise StateError(
             "snapshot_stale",
-            f"{Path(path).name} was taken {int(age)}s ago, more than {max_age:g}s: list the work again",
+            f"{name} was taken {int(age)}s ago, more than {max_age:g}s: list the work again",
         )
     return snapshot
 
@@ -1233,9 +1246,190 @@ def binding_state(path: Path) -> dict:
     return member
 
 
+def bound_directory(path: Path, member: dict) -> Path:
+    """The state directory a binding names, as an absolute path.
+
+    A relative ``state.directory`` is relative to the repository root: the
+    folder holding ``.agents/`` when the binding lives there, as it does in a
+    repository, and otherwise the folder holding the binding.
+    """
+    directory = member.get("directory")
+    if not isinstance(directory, str) or not directory:
+        raise StateError("binding_invalid", f"{Path(path).name} names no state directory")
+    # The root is found from the binding's path as given, without following
+    # links, so a linked .agents folder still belongs to this repository.
+    binding = Path(os.path.abspath(path))
+    root = binding.parent.parent if binding.parent.name == ".agents" else binding.parent
+    named = Path(directory)
+    try:
+        return (named if named.is_absolute() else root / named).resolve()
+    except (OSError, ValueError) as error:
+        raise StateError("binding_invalid", f"{Path(path).name} names an unusable state directory: {error}") from None
+
+
+def require_bound(path: Path, member: dict, directory: Path) -> None:
+    """Refuse a binding that keeps its state somewhere other than ``directory``.
+
+    A binding from another checkout would judge this record's outbox against
+    publishers that are not this record's.
+    """
+    bound = bound_directory(path, member)
+    shown = Path(directory).resolve()
+    # The same directory under another spelling, such as another letter case
+    # on a filesystem that ignores case, is still the same directory.
+    with contextlib.suppress(OSError):
+        if bound.exists() and shown.exists() and os.path.samefile(bound, shown):
+            return
+    if bound != shown:
+        raise StateError(
+            "binding_invalid",
+            f"{Path(path).name} keeps its state in {bound}, not in {shown}, the directory being shown",
+        )
+
+
 def host_publishers(member: dict) -> set[str]:
     return {entry["id"] for entry in member.get("publishers", [])
             if isinstance(entry, dict) and entry.get("kind") == "host" and isinstance(entry.get("id"), str)}
+
+
+# ---------------------------------------------------------------------------
+# A tracker snapshot from the repository's own command, for a lead with no agent
+
+TRACKER_SNAPSHOT_TIMEOUT = 60
+TRACKER_SNAPSHOT_TIMEOUT_CEILING = 600
+TRACKER_SNAPSHOT_OUTPUT_BYTES = 16 * 1024 * 1024
+TRACKER_SNAPSHOT_NOTE = "tracker-snapshot:"
+TRACKER_SNAPSHOT_TAKEN = "tracker-snapshot: taken again"
+
+
+def tracker_snapshot_config(member: dict) -> dict | None:
+    """The binding's ``state.trackerSnapshot`` block, checked, or None when it has none."""
+    config = member.get("trackerSnapshot")
+    if config is None:
+        return None
+    argv = config.get("argv") if isinstance(config, dict) else None
+    timeout = config.get("timeoutSeconds", TRACKER_SNAPSHOT_TIMEOUT) if isinstance(config, dict) else None
+    if (not isinstance(config, dict) or set(config) - {"argv", "timeoutSeconds"}
+            or not (isinstance(argv, list) and argv and all(isinstance(part, str) and part for part in argv))
+            or not isinstance(timeout, int) or isinstance(timeout, bool)
+            or not 1 <= timeout <= TRACKER_SNAPSHOT_TIMEOUT_CEILING):
+        raise StateError("binding_invalid", "state.trackerSnapshot is {argv, timeoutSeconds?}: a non-empty argv of "
+                                            f"strings and a whole timeout from 1 to {TRACKER_SNAPSHOT_TIMEOUT_CEILING}")
+    return {"argv": argv, "timeoutSeconds": timeout}
+
+
+def _run_bounded(argv: list[str], timeout: int, limit: int) -> tuple[int | None, bytes, str]:
+    """One run of an argv: its exit code (None when it never finished), stdout up to ``limit``, and why not."""
+    try:
+        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+                                      else {"start_new_session": True}))
+    except OSError as error:
+        return None, b"", f"could not start: {error.strerror or error}"
+    try:
+        out, err = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(OSError):
+            if os.name == "nt":
+                process.kill()
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.communicate(timeout=2)
+        return None, b"", f"timed out after {timeout}s"
+    except BaseException:
+        # Interrupted: stop the command and its children before giving up.
+        with contextlib.suppress(OSError):
+            if os.name == "nt":
+                process.kill()
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+        raise
+    if len(out) > limit:
+        return None, b"", f"printed more than {limit} bytes"
+    detail = err.decode("utf-8", errors="replace").strip()[-300:]
+    return process.returncode, out, detail or f"exited with {process.returncode}"
+
+
+# The state directory's own files: a snapshot is never written over one of them.
+RECORD_NAMES = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE, OUTBOX_DIRECTORY, RECOVERY_FILE)
+
+
+def _refuse_record_path(directory: Path, output: Path) -> None:
+    # By file identity, not by path text: a filesystem that ignores case can
+    # name the state directory in a case its path does not spell.
+    chain = [Path(output).resolve(), *Path(output).resolve().parents]
+    below = None
+    for index, ancestor in enumerate(chain):
+        try:
+            if os.path.samefile(ancestor, directory):
+                below = chain[index - 1] if index else ancestor
+                break
+        except OSError:
+            continue
+    if below is None:
+        return
+    first = below.name.casefold()
+    if first in {name.casefold() for name in RECORD_NAMES} or first.startswith(RECOVERY_QUARANTINE.casefold()):
+        raise StateError("output_invalid", f"{output.name} is one of the record's own files: write the snapshot elsewhere")
+
+
+def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: float) -> dict:
+    """Take the tracker snapshot with the binding's command, or keep the last one.
+
+    Best-effort, never a gate: a command that fails, or prints anything but a
+    fresh ``work-snapshot/1`` from the tracker, leaves ``output`` as it was and
+    writes one journal note saying why; reconcile's freshness gate then refuses
+    the last snapshot once it is too old. The command and whatever access it
+    needs are the repository's own.
+    """
+    config = tracker_snapshot_config(member)
+    if config is None:
+        return {"ok": True, "taken": False, "note": "the binding declares no trackerSnapshot command"}
+    _refuse_record_path(directory, Path(output))
+    state = read_state(directory)
+    parent = state["meta"].get("trackerParent")
+    # The journal is published, so it gets a fixed reason class; the command's
+    # own words, which may carry anything it printed, stay in this result.
+    reason, detail = None, None
+    if any("{parent}" in part for part in config["argv"]) and not parent:
+        reason = "the command needs {parent}, and the record names no meta.trackerParent"
+    else:
+        argv = [part.replace("{parent}", parent or "") for part in config["argv"]]
+        code, out, detail = _run_bounded(argv, config["timeoutSeconds"], TRACKER_SNAPSHOT_OUTPUT_BYTES)
+        if code is None:
+            reason = detail if detail.startswith(("timed out", "printed more", "could not start")) else "it did not finish"
+        elif code != 0:
+            reason = f"the command exited with {code}"
+        else:
+            try:
+                snapshot = check_snapshot(json.loads(out.decode("utf-8-sig")), "the command's snapshot", max_age)
+                if snapshot["source"] != "tracker":
+                    raise StateError("snapshot_invalid", "the command's snapshot is not from the tracker")
+            except (UnicodeDecodeError, ValueError, RecursionError):
+                reason = "the command printed no JSON"
+            except StateError as error:
+                reason = ("the command's snapshot is too old" if error.code == "snapshot_stale"
+                          else "the command's snapshot is not a valid tracker snapshot")
+                detail = str(error)
+    last = next((entry for entry in reversed(read_journal(directory))
+                 if entry["summary"].startswith(TRACKER_SNAPSHOT_NOTE)), None)
+    if reason is None:
+        try:
+            _write_atomically(Path(output), dumps(snapshot))
+        except OSError as error:
+            raise StateError("output_invalid", f"cannot write {Path(output).name}: {error.strerror or error}") from None
+        if last is not None and last["summary"] != TRACKER_SNAPSHOT_TAKEN:
+            # Say the outage ended, so the next failure is noted again.
+            append_journal(directory, kind="decision.recorded", summary=TRACKER_SNAPSHOT_TAKEN)
+        return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"])}
+    summary = f"{TRACKER_SNAPSHOT_NOTE} {reason}; the last snapshot stands"
+    if last is None or last["summary"] != summary:
+        append_journal(directory, kind="decision.recorded", summary=summary)
+    result = {"ok": True, "taken": False, "reason": reason, "fallback": Path(output).is_file()}
+    if detail and detail != reason:
+        result["detail"] = detail
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1405,6 +1599,10 @@ def main(argv: list[str] | None = None) -> int:
     sync.add_argument("--max-age", type=float,
                       help="refuse a snapshot older than this many seconds; overrides the binding")
     sync.add_argument("--binding", type=Path, help="the repository binding, for its state.snapshotMaxAgeSeconds")
+    snap = commands.add_parser("tracker-snapshot", help="take the tracker snapshot with the binding's command")
+    snap.add_argument("--binding", type=Path, required=True, help="the repository binding, with state.trackerSnapshot")
+    snap.add_argument("--output", type=Path, required=True, help="where the snapshot is written; kept on a failure")
+    snap.add_argument("--max-age", type=float, help="refuse a snapshot older than this; overrides the binding")
     retire = commands.add_parser("outbox", help="manage a host publisher's outbox")
     retire.add_argument("--retire", required=True, metavar="PUBLISHER", help="remove this publisher's outbox")
     retire.add_argument("--force", action="store_true", help="also remove an outbox that cannot be read")
@@ -1448,12 +1646,22 @@ def main(argv: list[str] | None = None) -> int:
             max_age = args.max_age if args.max_age is not None else bound
             result = reconcile(args.dir, args.snapshot,
                                max_age=SNAPSHOT_MAX_AGE_SECONDS if max_age is None else float(max_age))
+        elif args.command == "tracker-snapshot":
+            member = binding_state(args.binding)
+            bound = member.get("snapshotMaxAgeSeconds")
+            age = args.max_age if args.max_age is not None else bound
+            result = tracker_snapshot(args.dir, member, args.output,
+                                      max_age=SNAPSHOT_MAX_AGE_SECONDS if age is None else float(age))
         elif args.command == "outbox":
             result = {"ok": True, "retired": retire_outbox(args.dir, args.retire, force=args.force)}
         elif args.command == "ack":
             result = {"ok": True, "published": ack(args.dir, version=args.version, through=args.through)}
         else:
-            hosts = host_publishers(binding_state(args.binding)) if args.binding is not None else None
+            hosts = None
+            if args.binding is not None:
+                member = binding_state(args.binding)
+                require_bound(args.binding, member, args.dir)
+                hosts = host_publishers(member)
             shown = show(args.dir)
             result = {**shown, "publication": publication(args.dir, shown, hosts)}
     except StateError as error:

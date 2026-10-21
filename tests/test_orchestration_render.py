@@ -633,6 +633,51 @@ class HostPublisherTests(DeliveryStateFixture):
         path.write_text(json.dumps({"state": json.loads(self.config([], publishers))}), encoding="utf-8")
         return str(path)
 
+    def test_show_refuses_a_binding_that_keeps_its_state_elsewhere(self) -> None:
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        foreign = elsewhere / "orchestration.json"
+        foreign.write_text(json.dumps({"state": json.loads(self.config([], []))}), encoding="utf-8")
+        # Another checkout's state exists, as it does for a real foreign binding.
+        state_tool(elsewhere / "state", "init", "--headline", "Another delivery")
+        refused = self.refused("show", "--binding", str(foreign))
+        self.assertEqual(refused["code"], "binding_invalid")
+        # Both paths are named, so the mismatch can be fixed without guessing.
+        self.assertIn(str((elsewhere / "state").resolve()), refused["error"])
+        self.assertIn(str(self.state_dir.resolve()), refused["error"])
+
+    def test_show_accepts_a_binding_whose_state_is_this_directory(self) -> None:
+        # Relative to the repository root, the folder holding .agents/.
+        agents = self.root / ".agents"
+        agents.mkdir()
+        local = agents / "orchestration.json"
+        local.write_text(json.dumps({"state": json.loads(self.config([], []))}), encoding="utf-8")
+        self.assertIn("publication", state_tool(self.state_dir, "show", "--binding", str(local)))
+        # An absolute state directory is taken as it is.
+        absolute = self.root / "absolute.json"
+        absolute.write_text(json.dumps({"state": {**json.loads(self.config([], [])), "directory": str(self.state_dir)}}),
+                            encoding="utf-8")
+        self.assertIn("publication", state_tool(self.state_dir, "show", "--binding", str(absolute)))
+
+    def test_show_accepts_a_linked_agents_folder_of_this_repository(self) -> None:
+        real = self.root / "kept-agents"
+        real.mkdir()
+        (real / "orchestration.json").write_text(json.dumps({"state": json.loads(self.config([], []))}), encoding="utf-8")
+        try:
+            (self.root / ".agents").symlink_to(real, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"links are not available here: {error}")
+        self.assertIn("publication", state_tool(self.state_dir, "show", "--binding", str(self.root / ".agents/orchestration.json")))
+
+    def test_show_refuses_a_binding_naming_no_usable_state_directory(self) -> None:
+        for name, state in (("missing", {"publishers": []}), ("empty", {"directory": "", "publishers": []}),
+                            ("not text", {"directory": 7, "publishers": []}),
+                            ("null byte", {"directory": "state\u0000x", "publishers": []})):
+            with self.subTest(name):
+                path = self.root / f"{name}.json"
+                path.write_text(json.dumps({"state": state}), encoding="utf-8")
+                self.assertEqual(self.refused("show", "--binding", str(path))["code"], "binding_invalid")
+
     def refused(self, *args: str) -> dict:
         result = run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(self.state_dir), *args])
         self.assertEqual(result.returncode, 1, result.stdout)
@@ -685,6 +730,11 @@ class HostPublisherTests(DeliveryStateFixture):
         retired = state_tool(self.state_dir, "outbox", "--retire", "live", "--force")
         self.assertTrue(retired["retired"]["unreadable"])
         self.assertFalse((self.state_dir / "outbox").exists())
+
+    def test_a_state_configuration_may_declare_a_tracker_snapshot_command(self) -> None:
+        config = json.dumps({**json.loads(self.config([], [])),
+                             "trackerSnapshot": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30}})
+        self.assertEqual(wrapper(self.state_dir, "--state-config", config)[0], 0)
 
     def test_one_host_publisher_and_a_whole_max_age_per_configuration(self) -> None:
         two = [{"id": "live", "kind": "host"}, {"id": "mirror", "kind": "host"}]

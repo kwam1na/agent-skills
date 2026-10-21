@@ -23,7 +23,7 @@ from agent_skills.release import RUNTIME_FILES, VerifiedRelease, build_release, 
 CONTRACT_PATH = "skills/linear-tracker-adapter/references/adapter-contract.json"
 ADAPTER_ROOT = "skills/linear-tracker-adapter"
 GRAPH_PATH = "workflows/delivery-v1.json"
-TRUSTED_CONTRACT_SHA256 = "053f4bb98357f8c5b6b6d2093cb915e76f2a57526f53d8dace3056cff6e5a658"
+TRUSTED_CONTRACT_SHA256 = "82b9bd2de7a3a38b866dbdccca66cc0b37fd253b58a816412984f67484b94f45"
 REQUIRED_SCENARIOS = (
     "core-qualification-binding",
     "collector-candidate-binding",

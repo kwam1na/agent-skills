@@ -90,12 +90,19 @@ class LinearProfileTests(unittest.TestCase):
                 "update-status": ["update"],
                 "attach-evidence": ["create"],
                 "close-or-handoff": ["update"],
+                "list-work": ["search", "read"],
             },
         )
         self.assertEqual(
             set(self.contract()["allowedHostOperations"]),
             {"create", "read", "update", "search", "relations", "reconciliation"},
         )
+
+    def test_list_work_folds_every_workflow_state_type_into_the_normalized_four(self) -> None:
+        text = " ".join(ADAPTER.read_text(encoding="utf-8").split())
+        self.assertIn("`triage`, `backlog` and `unstarted` become `backlog`", text)
+        self.assertIn("`started`, `completed` and `canceled` stay as they are", text)
+        self.assertIn("never a guess", text)
 
     def test_contract_allowlists_normalized_outputs_and_redacts_audit_data(self) -> None:
         expected_outputs = {
@@ -123,6 +130,7 @@ class LinearProfileTests(unittest.TestCase):
                 "handoffReference",
                 "auditReference",
             },
+            "list-work": {"parentReference", "workItems", "auditReference"},
         }
         mappings = self.contract()["operationMappings"]
 

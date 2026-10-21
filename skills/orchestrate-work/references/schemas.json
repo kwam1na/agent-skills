@@ -109,6 +109,10 @@
                 }
               }
             }
+          },
+          "trackerParent": {
+            "description": "Optional, the lead's: the tracker reference of the item the delivery's work is listed under, for a bound tracker snapshot command.",
+            "$ref": "#/$defs/name"
           }
         }
       },
@@ -1502,6 +1506,27 @@
             "description": "How old a forge or tracker snapshot may be before reconcile refuses it, in seconds. Optional; 900 when absent, and --max-age overrides it.",
             "type": "integer",
             "minimum": 1
+          },
+          "trackerSnapshot": {
+            "description": "Optional: the repository's command that prints a work-snapshot/1 tracker snapshot of the delivery's work, for tracker-snapshot to run. {parent} in argv is the record's meta.trackerParent.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "argv"
+            ],
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
           }
         }
       },
@@ -1676,6 +1701,13 @@
             },
             "head": {
               "$ref": "#/$defs/commit"
+            },
+            "blockedBy": {
+              "description": "Tracker snapshots only: the subjects of the items that block this one.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
             }
           }
         }
