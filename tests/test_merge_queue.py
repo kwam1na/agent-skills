@@ -1833,9 +1833,11 @@ class BatchTests(MergeQueueTestCase):
         self.candidate(adopter, {"src/lib.txt": "lib two\n", "gen/generated.txt": "app one\nlib two\n"}, name="second")
         # This one conflicts with the first in a source file.
         self.candidate(adopter, {"src/app.txt": "app three\n"}, name="third")
-        results = self.batch(adopter, "first", "second", "third")
+        # The conflicting member sits in the middle: the one after it still joins the batch.
+        results = self.batch(adopter, "first", "third", "second")
         documents = {result.document()["candidate"]: result.document() for result in results}
         self.assertEqual(documents["third"]["stop"]["reason"], "source_conflict")
+        self.assertIn("dropped from the batch", documents["third"]["stop"]["detail"])
         self.assertEqual(adopter.item("third")["stage"], "stopped")
         self.assertEqual(documents["first"]["outcome"], "merged")
         self.assertEqual(documents["second"]["outcome"], "merged")
@@ -1915,6 +1917,14 @@ class ParallelCheckTests(MergeQueueTestCase):
         self.assertTrue(self.overlap(spans["p1"], spans["p2"]), spans)
         self.assertFalse(self.overlap(spans["solo"], spans["p1"]), spans)
         self.assertFalse(self.overlap(spans["solo"], spans["p2"]), spans)
+
+    def test_a_check_not_marked_parallel_safe_waits_even_with_room_under_the_limit(self) -> None:
+        checks = [self.timed("p1", True), self.timed("solo", False)]
+        adopter = self.adopter({"alwaysRun": checks, "parallelChecks": 3})
+        self.candidate(adopter)
+        self.run_queue(adopter, "feature")
+        spans = self.spans(adopter)
+        self.assertFalse(self.overlap(spans["solo"], spans["p1"]), spans)
 
     def test_the_limit_defaults_to_one(self) -> None:
         checks = [self.timed("p1", True), self.timed("p2", True)]

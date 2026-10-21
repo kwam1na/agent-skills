@@ -48,7 +48,7 @@ PLACEHOLDERS = frozenset({
 })
 PLACEHOLDER = re.compile(r"^\{([A-Za-z]+)\}$")
 # Reasons that stop the whole queue rather than one candidate.
-QUEUE_STOPPING = frozenset({"base_broken", "merged_unverified"})
+QUEUE_STOPPING = frozenset({"base_broken", "merged_unverified", "batch_tree_mismatch"})
 # Reasons for which the runner attempted nothing and leaves the queue as it was.
 REFUSALS = frozenset({
     "queue_locked", "candidate_unknown", "already_merged", "binding_invalid", "not_synced",
@@ -429,6 +429,18 @@ class Result:
 
 
 Seam = Callable[["Runner", str], None]
+
+
+@dataclass
+class Member:
+    """One candidate in a batch: what it resolved to, and the commit and tree the batch built with it."""
+
+    subject: str
+    item: dict
+    branch: str
+    head: str
+    commit: str
+    tree: str
 
 
 class Runner:
@@ -951,8 +963,24 @@ class Runner:
         checkout = self.checkout(head, "sync", prepare=True, context=context.with_values(treeSha=self.tree(head)))
         self.merge_base_in(checkout, base_head, branch)
         declared = self.declared_paths(item)
-        # Each pass that changes anything is committed; nothing is pushed until
-        # every check below passes, so a stop leaves the branch as it was.
+        self.settle(subject, item, checkout, context, inputs, declared, f"Regenerate after syncing {branch} with {self.base}")
+        self.seam("after_sync", subject)
+        self.compare_with_review(checkout, item["head"], base_head, declared)
+        synced = self.rev("HEAD", cwd=checkout)
+        self.push(branch, head, synced, subject)
+        result.syncedHead = synced
+        self.set_item(subject, stage="synced", syncedHead=synced)
+        self.write(assignments={"/meta/baseHead": base_head})
+        result.outcome = "synced"
+
+    def settle(
+        self, subject: str, item: dict, checkout: Path, context: Context, inputs: dict, declared: list[str], message: str,
+    ) -> None:
+        """Run the sync passes until they change nothing, committing each pass that changes something.
+
+        Nothing is pushed until every later check passes, so a stop leaves the
+        branch as it was.
+        """
         touched: set[str] = set()
         for attempt in (1, 2):
             pass_context = context.with_values(treeSha=self.tree("HEAD", cwd=checkout))
@@ -964,39 +992,41 @@ class Runner:
             if attempt == 2:
                 raise Stop("unstable_regeneration", "regeneration still changed files on its second pass", changed)
             self.git("add", "--all", cwd=checkout)
-            self.git("commit", "--quiet", "-m", f"Regenerate after syncing {branch} with {self.base}", cwd=checkout)
+            self.git("commit", "--quiet", "-m", message, cwd=checkout)
         undeclared = [path for path in sorted(touched) if not matches_any(path, declared)]
         if undeclared:
             raise Stop("undeclared_change", "a sync step changed files outside the declared paths", undeclared)
-        self.seam("after_sync", subject)
-        self.compare_with_review(checkout, item["head"], base_head, declared)
-        synced = self.rev("HEAD", cwd=checkout)
-        self.push(branch, head, synced, subject)
-        result.syncedHead = synced
-        self.set_item(subject, stage="synced", syncedHead=synced)
-        self.write(assignments={"/meta/baseHead": base_head})
-        result.outcome = "synced"
 
     def merge_base_in(self, checkout: Path, base_head: str, branch: str) -> None:
-        merged = self.git("merge", "--no-ff", "--no-commit", "--no-edit", base_head, cwd=checkout, check=False)
+        self.merge_in(checkout, base_head, base_head, "--theirs", f"Merge {self.base} into {branch}")
+
+    def merge_in(self, checkout: Path, other: str, base_side: str, side: str, message: str) -> None:
+        """Merge ``other`` into the checkout; only regenerable paths may conflict, and they take the base side.
+
+        ``base_side`` is the commit that holds the base's version of a path and
+        ``side`` the checkout option that selects it: the base is the incoming
+        side when a candidate syncs, and the checkout's own side when a batch
+        merges a candidate into the tree it has accumulated.
+        """
+        merged = self.git("merge", "--no-ff", "--no-commit", "--no-edit", other, cwd=checkout, check=False)
         conflicts = sorted(set(filter(None, self.git(
             "diff", "--name-only", "-z", "--diff-filter=U", cwd=checkout).stdout.split("\0"))))
         if merged.returncode != 0 and not conflicts:
-            raise RuntimeError(f"merging the base failed: {merged.stderr.strip()}")
+            raise RuntimeError(f"merging {other} failed: {merged.stderr.strip()}")
         outside = [path for path in conflicts if not matches_any(path, self.binding["regenerable"]["paths"])]
         if outside:
             self.git("merge", "--abort", cwd=checkout, check=False)
             raise Stop("source_conflict", "the base conflicts outside the regenerable paths", outside)
         for path in conflicts:
             # Take the base side; a path the base deleted stays deleted.
-            if self.git("cat-file", "-e", f"{base_head}:{path}", cwd=checkout, check=False).returncode == 0:
-                self.git("checkout", "--theirs", "--", path, cwd=checkout)
+            if self.git("cat-file", "-e", f"{base_side}:{path}", cwd=checkout, check=False).returncode == 0:
+                self.git("checkout", side, "--", path, cwd=checkout)
                 self.git("add", "--", path, cwd=checkout)
             else:
                 self.git("rm", "--quiet", "--force", "--", path, cwd=checkout)
         if self.git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=checkout, check=False).returncode == 0:
             # Committed before anything else runs, so every later step sees the new merge base.
-            self.git("commit", "--quiet", "-m", f"Merge {self.base} into {branch}", cwd=checkout)
+            self.git("commit", "--quiet", "-m", message, cwd=checkout)
 
     def run_pass(self, subject: str, item: dict, checkout: Path, context: Context, inputs: dict) -> None:
         timeout = self.binding["checkTimeoutSeconds"]
@@ -1386,6 +1416,237 @@ class Runner:
         self.journal("candidate.merged", f"Merged {item['title']} at {synced}", subject)
         result.outcome = "merged"
 
+    # -- batch -------------------------------------------------------------
+
+    def build_batch(self, members: list[str], base_head: str, results: dict[str, Result]) -> list[Member]:
+        """Merge each member into one tree, in order, and record the commit and tree after each.
+
+        Each member goes through the same steps a sync runs, on the tree the
+        batch has built so far. A member that stops drops out of the batch and
+        the rest continue.
+        """
+        checkout = self.checkout(base_head, "batch", context=self.context(None, base_head).with_values(
+            treeSha=self.tree(base_head)))
+        inputs = {entry["id"]: entry for entry in self.binding["leadInputs"]}
+        built: list[Member] = []
+        accumulated = base_head
+        for subject in members:
+            result = results[subject]
+            result.base, result.baseHead = self.base, base_head
+            try:
+                item = self.item(subject)
+                if item["stage"] == "merged":
+                    raise Stop("already_merged", f"{subject} is already merged")
+                context = self.context(subject, accumulated)
+                branch, head = self.resolve(subject, context, checkout)
+                result.head = head
+                if head not in (item["head"], item["syncedHead"]):
+                    raise Stop("candidate_moved", f"{subject} is at {head}, not the reviewed or last synced head")
+                tip = self.fetch(branch, "candidate")
+                if tip != head:
+                    raise Stop("candidate_moved", f"{branch} moved to {tip} after {subject} resolved to {head}")
+                unknown = [name for name in item["leadInputs"] if name not in inputs]
+                if unknown:
+                    raise Stop("binding_invalid", f"the binding declares no lead input {unknown}")
+                context = context.with_values(branch=branch, head=head)
+                self.merge_in(checkout, head, accumulated, "--ours", f"Merge {branch} into the batch")
+                declared = self.declared_paths(item)
+                self.settle(subject, item, checkout, context, inputs, declared, f"Regenerate after adding {branch} to the batch")
+                self.compare_with_review(checkout, item["head"], accumulated, declared)
+            except Stop as stop:
+                # The tree goes back to what the batch had built before this member.
+                self.git("merge", "--abort", cwd=checkout, check=False)
+                self.git("reset", "--quiet", "--hard", accumulated, cwd=checkout)
+                self.git("clean", "--quiet", "-fd", cwd=checkout)
+                stop.detail = f"dropped from the batch: {stop.detail}"
+                self.stopped(result, stop, subject)
+                continue
+            accumulated = self.rev("HEAD", cwd=checkout)
+            built.append(Member(subject, item, branch, head, accumulated, self.tree(accumulated)))
+        return built
+
+    def check_tree(self, members: list[Member], base_head: str, result: Result, what: str) -> tuple[list[dict], list[dict], Path, list[dict]]:
+        """Select and run the checks for the tree the batch built up to its last member.
+
+        Returns the failed checks, the selected checks, the checkout and the changes.
+        """
+        subjects = [member.subject for member in members]
+        commit = members[-1].commit
+        names = ", ".join(subjects)
+        self.checking(subjects[0], f"{what} of {len(subjects)}: {names}", [{"label": "selecting checks", "state": "running"}])
+        context = self.context(subjects[0], base_head).with_values(head=commit, treeSha=self.tree(commit))
+        checkout = self.checkout(commit, "batch-check", context=context)
+        self.assert_clean(checkout, "a fresh checkout of the batch")
+        changes = self.changes(base_head, commit)
+        selection, checks = self.select(subjects[0], base_head, commit, changes, checkout, context)
+        result.selection = selection
+        if not checks and changes:
+            raise Stop("no_checks", "nothing would check this batch's changes")
+        self.write_progress(subjects, [(check["id"], "pending") for check in checks])
+        outcomes = self.run_checks(subjects, checks, checkout, context, result)
+        self.assert_clean(checkout, "the checkout after the batch's checks")
+        failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
+        return failed, checks, checkout, changes
+
+    def culprit(self, built: list[Member], base_head: str, failed: list[dict]) -> tuple[int, list[dict], Result]:
+        """The first member whose prefix of the batch fails, with that prefix's failed checks and its check result."""
+        search = self.binding.get("batch", {}).get("culpritSearch", "bisect")
+        tested: dict[int, tuple[list[dict], Result]] = {}
+
+        def fails(count: int) -> bool:
+            probe = Result("batch", built[count - 1].subject)
+            prefix_failed, _, _, _ = self.check_tree(built[:count], base_head, probe, "Finding the failing member, prefix")
+            tested[count] = (prefix_failed, probe)
+            return bool(prefix_failed)
+
+        if search == "serial":
+            found = next((count for count in range(1, len(built)) if fails(count)), len(built))
+        else:
+            passing, failing = 0, len(built)
+            while failing - passing > 1:
+                middle = (passing + failing) // 2
+                if fails(middle):
+                    failing = middle
+                else:
+                    passing = middle
+            found = failing
+        prefix_failed, probe = tested.get(found, (failed, None))
+        return found, prefix_failed, probe
+
+    def land(self, member: Member, previous_tree: str, result: Result) -> None:
+        """Land one member with exactly the tree the batch recorded for it."""
+        self.seam("before_batch_landing", member.subject)
+        base_now = self.fetch(self.base, "base")
+        if self.tree(base_now) != previous_tree:
+            raise Stop(
+                "batch_tree_mismatch",
+                f"{self.base} at {base_now} is not the tree the batch recorded before {member.subject}; nothing more lands",
+            )
+        # The synced head carries the checked tree itself, on top of the base as it now is.
+        synced = self.git(
+            "commit-tree", member.tree, "-p", member.head, "-p", base_now,
+            "-m", f"Merge {self.base} into {member.branch}",
+        ).stdout.strip()
+        self.push(member.branch, member.head, synced, member.subject)
+        result.syncedHead = synced
+        self.set_item(member.subject, stage="checked", syncedHead=synced)
+        self.merge(member.subject, result)
+
+    def batch_round(self, members: list[str], results: list[Result]) -> list[str]:
+        """Build, check once and land one batch. Returns the members left for another round."""
+        documents = {subject: Result("batch", subject) for subject in members}
+        landed: set[str] = set()
+        built: list[Member] = []
+        self.notes = []
+        try:
+            base_head = self.load()
+            self.start()
+            built = self.build_batch(members, base_head, documents)
+            if len(built) < 2:
+                return [member.subject for member in built]
+            subjects = [member.subject for member in built]
+            for subject in subjects:
+                self.set_item(subject, stage="checking", checks=[])
+            titles = ", ".join(member.item["title"] for member in built)
+            for subject in subjects:
+                self.journal("check.started", f"Checking {titles} as one batch", subject)
+            shared = Result("batch", None)
+            failed, checks, _, _ = self.check_tree(built, base_head, shared, "Batch")
+            keep, later = built, []
+            if failed:
+                found, prefix_failed, probe = self.culprit(built, base_head, failed)
+                culprit = built[found - 1]
+                record = probe or shared
+                stop = Stop(
+                    "check_failed",
+                    f"culprit of the batch: {', '.join(check['id'] for check in prefix_failed)} first fail when "
+                    f"{culprit.subject} joins",
+                )
+                if found == 1:
+                    # Alone on the base, the usual rule tells the base's own failures apart.
+                    _, _, checkout, changes = self.check_tree(built[:1], base_head, Result("batch", None), "Rechecking")
+                    try:
+                        self.classify(prefix_failed, checks, checkout, base_head, changes, self.context(culprit.subject, base_head), record)
+                    except Stop as classified:
+                        if classified.reason == "base_broken":
+                            stop = classified
+                documents[culprit.subject].selection = record.selection
+                documents[culprit.subject].checks = record.checks
+                self.stopped(documents[culprit.subject], stop, culprit.subject)
+                if stop.reason in QUEUE_STOPPING:
+                    for member in built[found:]:
+                        self.set_item(member.subject, stage="queued", checks=[])
+                    return []
+                keep, later = built[:found - 1], built[found:]
+                for member in later:
+                    self.set_item(member.subject, stage="queued", checks=[])
+            else:
+                for subject in subjects:
+                    self.journal("check.finished", f"Checks passed for {titles} as one batch", subject)
+            previous = self.tree(base_head)
+            for member in keep:
+                document = documents[member.subject]
+                document.selection, document.checks = shared.selection, list(shared.checks)
+                try:
+                    self.land(member, previous, document)
+                except Stop as stop:
+                    self.stopped(document, stop, member.subject)
+                    remaining = keep[keep.index(member):]
+                    if stop.reason == "batch_tree_mismatch":
+                        for other in remaining:
+                            self.set_item(other.subject, stage="queued", checks=[])
+                    for other in remaining[1:]:
+                        documents[other.subject].stop = {
+                            "reason": stop.reason, "detail": f"the batch stopped before {other.subject}: {stop.detail}",
+                            "paths": [], "queueStopped": stop.reason in QUEUE_STOPPING,
+                        }
+                        if stop.reason != "batch_tree_mismatch":
+                            self.set_item(other.subject, stage="queued", checks=[])
+                    for member_left in later:
+                        documents[member_left.subject].stop = documents[remaining[-1].subject].stop
+                    return []
+                landed.add(member.subject)
+                previous = member.tree
+            return [member.subject for member in later]
+        except Stop as stop:
+            for subject in members:
+                if subject not in landed and documents[subject].stop is None:
+                    self.stopped(documents[subject], stop, subject)
+            return []
+        except Exception as error:  # noqa: BLE001 - every run ends with a result document
+            stop = Stop("runner_error", f"{type(error).__name__}: {error}"[:800])
+            for subject in members:
+                if subject not in landed and documents[subject].stop is None:
+                    self.stopped(documents[subject], stop, subject)
+            return []
+        finally:
+            self.remove_checkouts()
+            for subject in members:
+                document = documents[subject]
+                document.hooksBypassed = self.hooks_bypassed
+                document.notes.extend(note for note in self.notes if note not in document.notes)
+                with contextlib.suppress(Exception):
+                    self.finish_checking(subject)
+            # A member left for another round reports there, not here.
+            results.extend(
+                documents[subject] for subject in members
+                if documents[subject].stop is not None or subject in landed
+            )
+
+    def batch(self, subjects: list[str]) -> list[Result]:
+        if len(subjects) < 2 or len(set(subjects)) != len(subjects):
+            result = Result("batch", subjects[0] if subjects else None)
+            self.stopped(result, Stop("binding_invalid", "a batch needs two or more different candidates"), None)
+            return [result]
+        results: list[Result] = []
+        members = list(subjects)
+        while members:
+            if len(members) == 1:
+                self._run_one(members[0], results)
+                break
+            members = self.batch_round(members, results)
+        return results
+
     # -- release -----------------------------------------------------------
 
     def release(self, ref: str, approved_by: str | None, result: Result) -> None:
@@ -1501,6 +1762,8 @@ class Runner:
     def _run_locked(self, subcommand: str, subjects: list[str], approved_by: str | None) -> list[Result]:
         if subcommand == "release":
             return [self.prepared("release", None, lambda result: self.release(subjects[0], approved_by, result))]
+        if subcommand == "batch":
+            return self.batch(subjects)
         steps = {"sync": self.sync, "check": self.check, "merge": self.merge}
         if subcommand in steps:
             return [self.prepared(subcommand, subjects[0], lambda result: steps[subcommand](subjects[0], result))]
@@ -1561,6 +1824,7 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("sync", "check", "merge"):
         commands.add_parser(name).add_argument("candidate")
     commands.add_parser("run").add_argument("candidates", nargs="+")
+    commands.add_parser("batch").add_argument("candidates", nargs="+")
     release = commands.add_parser("release")
     release.add_argument("ref")
     release.add_argument("--approved-by", help="records an approval the operator already gave")
@@ -1571,12 +1835,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.command == "release":
         results = runner.run_command("release", [args.ref], args.approved_by)
-    elif args.command == "run":
-        results = runner.run_command("run", args.candidates)
+    elif args.command in ("run", "batch"):
+        results = runner.run_command(args.command, args.candidates)
     else:
         results = runner.run_command(args.command, [args.candidate])
     documents = [write_result(runner.state_directory, result) for result in results]
-    sys.stdout.buffer.write(ascii_json(documents if args.command == "run" else documents[0]))
+    sys.stdout.buffer.write(ascii_json(documents if args.command in ("run", "batch") else documents[0]))
     sys.stdout.buffer.flush()
     return 0 if all(document["outcome"] not in ("stopped", "refused") for document in documents) else 1
 
