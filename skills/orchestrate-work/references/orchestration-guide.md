@@ -694,16 +694,21 @@ binding declares may change.
   `startedAt`, and its `finishedAt` once it ends. A step with history also
   carries `expectedSeconds`, the median of that check's last five passing
   durations. A check with no history has no estimate, never a guess. The
-  views show a running step's elapsed time against the expected time, as of
-  the record's last write, and mark one that has run over.
+  views show a running step's elapsed time against the expected time, in
+  whole seconds, and mark one that has run over: the markdown view as of the
+  record's last write, the page counting on from its own clock.
 - **History.** `meta.checkHistory` keeps each check's last five passing
   durations and how often a declared flake made it retry, and the last five
   whole check runs. Only the runner writes it.
 - **Failure detail.** A failed or timed-out check's whole output is kept under
-  `logs/` in the state directory. Its result names the failing tests the
-  binding's `checkOutput.failurePattern` finds, with their messages, and the
-  log. The queue row and the `check_failed` stop name the same tests and log,
-  and so do the journal entry and the views.
+  `logs/` in the state directory, each run in a file of its own; prune old
+  logs with the rest of the record. The binding's `checkOutput.failurePattern`
+  is matched against each line of the output and of the error output on its
+  own; a match with no `id`, or an empty one, names nothing, and an id found
+  twice keeps its first message. The result names every failing test with its
+  message, and the log. The queue row names the same tests and log, and so
+  does the `check_failed` stop, a batch culprit's included, up to ten tests
+  and then how many more; the journal entry and the views carry the same.
 - **Queue estimates.** The state tool's `show` adds a position and an expected
   start for each candidate waiting at `queued`. The start counts what remains
   of the run in progress once (a batch is one run), then one median run for
@@ -718,8 +723,10 @@ or every failing id matches one of its `tests` patterns in full. The runner
 journals `check.retried` with the failing ids and the flake's reference
 before it retries, and counts the retry in the check's history. A retry that
 fails again stops the candidate as usual, and its result keeps both failures.
-A failure the pattern cannot name, a mix of a flake and anything else, and a
-timeout are never retried.
+Never retried: a mix of a flake and anything else; a timeout; and, for a flake
+declared with `tests`, a failure whose ids the pattern cannot read, since the
+patterns can only vouch for failures they can name. A declaration without
+`tests` covers the whole check, whatever its output says.
 
 ### What a batch proves
 

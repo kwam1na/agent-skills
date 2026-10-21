@@ -820,15 +820,20 @@ def queue_estimates(state: dict, at: str | None = None) -> dict:
     remaining = 0
     if current is not None and expected is not None:
         elapsed = (moment - _parse_time(current["startedAt"], exact=True)).total_seconds()
-        remaining = max(0, expected - int(elapsed))
+        # A start in the future (a clock out of step) still leaves at most one run.
+        remaining = min(expected, max(0, expected - int(elapsed)))
     waiting = sorted((item for item in state["queue"] if item["stage"] == "queued"),
                      key=lambda item: (item["order"], item["subject"]))
     estimates = {}
     for position, item in enumerate(waiting, start=1):
         start = None
         if expected is not None:
-            start = moment + datetime.timedelta(seconds=remaining + (position - 1) * expected)
-            start = start.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            try:
+                start = moment + datetime.timedelta(seconds=remaining + (position - 1) * expected)
+            except OverflowError:
+                start = None  # a history too long to be a run means nothing about when
+            else:
+                start = start.replace(microsecond=0).isoformat().replace("+00:00", "Z")
         estimates[item["subject"]] = {"position": position, "expectedStart": start}
     return estimates
 

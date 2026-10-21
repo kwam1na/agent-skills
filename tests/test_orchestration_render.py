@@ -873,6 +873,14 @@ class CheckVisibilityViewTests(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertIn(render_state._markdown_text(line), view)
 
+    def test_exactly_the_expected_time_is_not_over(self) -> None:
+        document = visibility_document()
+        document["state"]["meta"]["checking"]["now"]["steps"] = [
+            {"label": "unit", "state": "running", "startedAt": "2026-10-20T11:50:00.999Z", "expectedSeconds": 600}]
+        view = render_state.render_markdown(document)
+        self.assertIn(render_state._markdown_text("unit: running · 10m 00s of an expected 10m 00s"), view)
+        self.assertNotIn("over the expected time", view)
+
     def test_an_unknown_start_reads_as_unknown(self) -> None:
         document = visibility_document()
         document["estimates"] = {"change-2": {"position": 1, "expectedStart": None}}
@@ -1319,6 +1327,7 @@ function node(tag) {
   return el;
 }
 const byId = { "delivery-state": { textContent: embedded }, app: node("main") };
+if (scenario.now) { Date.now = () => Date.parse(scenario.now); }
 globalThis.document = {
   getElementById: (id) => byId[id] || null,
   createElement: node,
@@ -1388,10 +1397,17 @@ setTimeout(async () => {
 
 
     def test_the_page_shows_timing_failures_and_estimates_as_the_markdown_does(self) -> None:
-        shown = self.run_page({}, visibility_document())
+        # At the moment of the record's last write, the page reads as the markdown does.
+        shown = self.run_page({"now": "2026-10-20T12:00:00Z"}, visibility_document())
         for line in VISIBILITY_LINES:
             with self.subTest(line=line):
                 self.assertIn(line, shown["text"])
+
+    def test_the_page_counts_a_running_check_live_from_its_own_clock(self) -> None:
+        # Five minutes after the last write, with no write since, the page still counts on.
+        shown = self.run_page({"now": "2026-10-20T12:05:00Z"}, visibility_document())
+        self.assertIn("unit: running · 6m 40s of an expected 10m 00s", shown["text"])
+        self.assertIn("docs: running · 6m 00s, no expected time yet", shown["text"])
 
     def test_without_an_adapter_the_embedded_state_is_shown(self) -> None:
         shown = self.run_page({})

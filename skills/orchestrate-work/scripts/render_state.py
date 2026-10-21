@@ -235,16 +235,13 @@ def _elapsed(start: object, end: object) -> int | None:
     """Whole seconds between two record timestamps, or None when either is missing."""
     if not isinstance(start, str) or not isinstance(end, str):
         return None
-    moments = []
-    for text in (start, end):
-        whole, _, fraction = text.rstrip("Z").partition(".")
-        moment = datetime.datetime.strptime(whole, "%Y-%m-%dT%H:%M:%S")
-        moments.append(moment + datetime.timedelta(microseconds=int(fraction[:6].ljust(6, "0")) if fraction else 0))
+    # Whole seconds of each timestamp, as the page counts them.
+    moments = [datetime.datetime.strptime(text.rstrip("Z").partition(".")[0], "%Y-%m-%dT%H:%M:%S") for text in (start, end)]
     return max(0, int((moments[1] - moments[0]).total_seconds()))
 
 
 def _step_text(step: dict, as_of: str) -> str:
-    """A check step with its timing, as of the record's last write; the page's program writes the same line."""
+    """A check step with its timing, as of the record's last write; the page counts on from its own clock."""
     text = f"{step['label']}: {step['state']}"
     if "finishedAt" in step and "startedAt" in step:
         return text + f" · took {_duration(_elapsed(step['startedAt'], step['finishedAt']))}"
@@ -443,10 +440,16 @@ _PAGE_PROGRAM = """
     if (seconds < 86400) { return Math.floor(seconds / 3600) + "h " + two(Math.floor(seconds / 60) % 60) + "m"; }
     return Math.floor(seconds / 86400) + "d " + two(Math.floor(seconds / 3600) % 24) + "h";
   }
+  function seconds(text) { return Math.floor(Date.parse(text) / 1000); }
   function elapsed(start, end) {
     if (typeof start !== "string" || typeof end !== "string") { return null; }
-    var span = Math.floor((Date.parse(end) - Date.parse(start)) / 1000);
+    var span = seconds(end) - seconds(start);
     return isNaN(span) ? null : Math.max(0, span);
+  }
+  /* A live page counts a running step on from its own clock, never from before the record's last write. */
+  function liveNow(asOf) {
+    var at = new Date(Math.max(Date.now(), Date.parse(asOf) || 0));
+    return isNaN(at.getTime()) ? asOf : at.toISOString();
   }
   function stepText(step, asOf) {
     var text = show(step.label) + ": " + show(step.state);
@@ -516,7 +519,7 @@ _PAGE_PROGRAM = """
       current.appendChild(el("div", show(now.subject) + ": " + show(now.title)));
       current.appendChild(el("div", "Since " + show(now.startedAt), "detail"));
       var steps = list("ul", now.steps, "No steps yet.", function (step) {
-        return el("li", stepText(step, meta.updatedAt));
+        return el("li", stepText(step, liveNow(meta.updatedAt)));
       });
       if (now.steps.length) { steps.className = "steps"; }
       current.appendChild(steps);

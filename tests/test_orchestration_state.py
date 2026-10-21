@@ -1869,6 +1869,21 @@ class QueueEstimateTests(unittest.TestCase):
             "work-x": {"position": 2, "expectedStart": "2026-10-21T10:01:00Z"},
         })
 
+    def test_an_even_count_takes_the_mean_of_the_middle_two(self) -> None:
+        state = self.state(queue_item("work-c"), queue_item("work-d", order=2), runs=[100, 200, 300, 400])
+        self.assertEqual(state_tool.queue_estimates(state, at=self.NOW)["work-d"]["expectedStart"], "2026-10-21T10:04:10Z")
+
+    def test_a_start_in_the_future_never_adds_more_than_one_run(self) -> None:
+        running = {"subject": "work-a", "title": "A", "startedAt": "2026-10-21T11:00:00Z", "steps": []}
+        state = self.state(queue_item("work-a", stage="checking"), queue_item("work-c", order=2),
+                           now=running, runs=[600] * 5)
+        self.assertEqual(state_tool.queue_estimates(state, at=self.NOW)["work-c"]["expectedStart"], "2026-10-21T10:10:00Z")
+
+    def test_an_absurd_history_leaves_the_start_unknown_rather_than_failing(self) -> None:
+        state = self.state(queue_item("work-c"), queue_item("work-d", order=2), runs=[10 ** 18] * 5)
+        self.assertEqual(state_tool.queue_estimates(state, at=self.NOW)["work-d"],
+                         {"position": 2, "expectedStart": None})
+
     def test_show_includes_the_estimates(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

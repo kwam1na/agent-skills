@@ -32,6 +32,7 @@ import subprocess
 import tempfile
 import time
 import unicodedata
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 from typing import Callable, Iterable, Iterator
@@ -60,6 +61,8 @@ PRIVATE_REF = "refs/merge-queue"
 STATE_PATCH_ATTEMPTS = 5
 # How many passing durations, and whole runs, the check history keeps.
 HISTORY_LENGTH = 5
+# How many failing tests a stop names before it says how many more there are.
+STOP_FAILURES = 10
 # The skill's renderer wrapper, called after every state write.
 RENDER_WRAPPER = Path(__file__).resolve().parent / "render_state.py"
 RENDER_TIMEOUT_SECONDS = 120
@@ -749,7 +752,7 @@ class Runner:
         """Write a check's whole output under the state directory; returns its path relative to it."""
         self._logs += 1
         stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        name = f"{stamp}-{self._logs:03d}-{re.sub(r'[^A-Za-z0-9._-]', '_', check_id)}.log"
+        name = f"{stamp}-{self._logs:03d}-{uuid.uuid4().hex[:8]}-{re.sub(r'[^A-Za-z0-9._-]', '_', check_id)}.log"
         directory = self.state_directory / "logs"
         directory.mkdir(parents=True, exist_ok=True)
         (directory / name).write_bytes((completed.stdout + completed.stderr).encode("utf-8", "replace"))
@@ -760,9 +763,15 @@ class Runner:
         settings = self.binding.get("checkOutput")
         if not settings:
             return []
+        pattern = re.compile(settings["failurePattern"])
         found: dict[str, str] = {}
-        for match in re.finditer(settings["failurePattern"], completed.stdout + completed.stderr, re.MULTILINE):
-            found.setdefault(match["id"], (match.groupdict().get("message") or "").strip())
+        for stream in (completed.stdout, completed.stderr):
+            for line in stream.splitlines():
+                match = pattern.search(line)
+                # A match whose id is missing or empty names nothing.
+                if match is None or not match["id"]:
+                    continue
+                found.setdefault(match["id"], (match.groupdict().get("message") or "").strip())
         return [{"id": name, "message": message} for name, message in found.items()]
 
     def flake_for(self, check_id: str, failures: list[dict]) -> str | None:
@@ -1393,7 +1402,10 @@ class Runner:
         profile = self.binding["profiles"].get(check.get("environmentProfile", ""), {"environment": {}})
         return self.run_argv(check["argv"], cwd, context, timeout, extra_env=profile["environment"])
 
-    def run_checks(self, subjects: list[str], checks: list[dict], checkout: Path, context: Context, result: Result) -> dict[str, str]:
+    def run_checks(
+        self, subjects: list[str], checks: list[dict], checkout: Path, context: Context, result: Result,
+        whole_run: bool = True,
+    ) -> dict[str, str]:
         outcomes: dict[str, str] = {}
         records = {check["id"]: {"id": check["id"], "state": "pending"} for check in checks}
         history = self.history()["checks"]
@@ -1411,7 +1423,8 @@ class Runner:
         def begin(check: dict) -> None:
             record = records[check["id"]]
             record.update(state="running", startedAt=now())
-            record.pop("finishedAt", None)
+            for key in ("finishedAt", "failures", "log"):
+                record.pop(key, None)
 
         def finish(check: dict, completed: Completed) -> dict:
             """Record one finished run of a check; a failed or timed-out run keeps its output and failing tests."""
@@ -1487,7 +1500,7 @@ class Runner:
                     outcomes[check["id"]] = entry["state"]
                     result.checks.append(entry)
                 show()
-        self.record_history(passed, flaked, int(round(time.monotonic() - began)) if checks else None)
+        self.record_history(passed, flaked, int(round(time.monotonic() - began)) if checks and whole_run else None)
         return outcomes
 
     def classify(self, failed: list[dict], selected: list[dict], checkout: Path, base_head: str, changes: list[dict], context: Context, result: Result) -> None:
@@ -1530,7 +1543,9 @@ class Runner:
         entry = next((item for item in reversed(result.checks) if item["id"] == check_id), {})
         parts = []
         if entry.get("failures"):
-            parts.append("failing " + ", ".join(failure["id"] for failure in entry["failures"]))
+            named = [failure["id"] for failure in entry["failures"]]
+            more = f" and {len(named) - STOP_FAILURES} more" if len(named) > STOP_FAILURES else ""
+            parts.append("failing " + ", ".join(named[:STOP_FAILURES]) + more)
         if entry.get("log"):
             parts.append("log " + entry["log"])
         return check_id + (f" ({'; '.join(parts)})" if parts else "")
@@ -1645,7 +1660,9 @@ class Runner:
             built.append(Member(subject, item, branch, head, accumulated, self.tree(accumulated)))
         return built
 
-    def check_tree(self, members: list[Member], base_head: str, result: Result, what: str) -> tuple[list[dict], list[dict], Path, list[dict]]:
+    def check_tree(
+        self, members: list[Member], base_head: str, result: Result, what: str, whole_run: bool = True,
+    ) -> tuple[list[dict], list[dict], Path, list[dict]]:
         """Select and run the checks for the tree the batch built up to its last member.
 
         Returns the failed checks, the selected checks, the checkout and the changes.
@@ -1664,7 +1681,7 @@ class Runner:
         if not checks and changes:
             raise Stop("no_checks", "nothing would check this batch's changes")
         self.write_progress(subjects, [{"id": check["id"], "state": "pending"} for check in checks])
-        outcomes = self.run_checks(subjects, checks, checkout, context, result)
+        outcomes = self.run_checks(subjects, checks, checkout, context, result, whole_run=whole_run)
         self.assert_clean(checkout, "the checkout after the batch's checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
         return failed, checks, checkout, changes
@@ -1682,7 +1699,7 @@ class Runner:
         def fails(count: int) -> bool:
             result = Result("batch", built[count - 1].subject)
             prefix_failed, checks, checkout, changes = self.check_tree(
-                built[:count], base_head, result, "Finding the failing member, prefix")
+                built[:count], base_head, result, "Finding the failing member, prefix", whole_run=False)
             tested[count] = Probe(prefix_failed, checks, checkout, changes, result)
             return bool(prefix_failed)
 
@@ -1772,8 +1789,9 @@ class Runner:
                 culprit = built[found - 1]
                 stop = Stop(
                     "check_failed",
-                    f"culprit of the batch: {', '.join(check['id'] for check in failing.failed)} first fail when "
-                    f"{culprit.subject} joins",
+                    f"culprit of the batch: "
+                    f"{'; '.join(self.failure_text(check['id'], failing.result) for check in failing.failed)} "
+                    f"first fail when {culprit.subject} joins",
                 )
                 if found == 1:
                     # Alone on the base, the usual rule tells the base's own failures apart.

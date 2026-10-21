@@ -2119,6 +2119,22 @@ class BatchTests(MergeQueueTestCase):
             self.batch(adopter, *subjects)
         self.assertEqual(seen, ["checking"] * 3)
 
+    def test_a_failing_batch_names_the_culprits_tests_and_log_and_its_probes_stay_out_of_the_history(self) -> None:
+        adopter = self.adopter({"alwaysRun": [check_entry("suite", "--fail-with", "test_app")],
+                                "checkOutput": FAILURE_OUTPUT})
+        subjects = self.trio(adopter)
+        documents = self.batch_documents(adopter, *subjects)
+        detail = documents["second"]["stop"]["detail"]
+        self.assertEqual(documents["second"]["stop"]["reason"], "check_failed")
+        self.assertIn("culprit", detail)
+        self.assertIn("failing test_app", detail)
+        self.assertIn("log logs/", detail)
+        stopped = [entry for entry in state_tool.read_journal(adopter.state)
+                   if entry["kind"] == "candidate.stopped" and entry.get("subject") == "second"]
+        self.assertIn("failing test_app", stopped[-1]["summary"])
+        # The batch's run and the third's own run count; the prefixes checked to find the culprit do not.
+        self.assertEqual(len(state_tool.read_state(adopter.state)["meta"]["checkHistory"]["runs"]), 2)
+
     def test_a_batch_needs_two_candidates(self) -> None:
         adopter = self.adopter()
         self.candidate(adopter, name="only")
@@ -2385,6 +2401,95 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.candidate(adopter)
         self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
         self.assertEqual(self.journal(adopter, "check.retried"), [])
+
+    def failing_output(self, adopter_changes: dict, script: str) -> list:
+        """Run a check whose failing output a short script prints, and return the run's results."""
+        argv = [PY, "-c", "import pathlib, sys\n"
+                "if pathlib.Path('src/app.txt').read_text() == 'app one\\n': sys.exit(0)\n" + script]
+        adopter = self.adopter({"alwaysRun": [{"id": "suite", "argv": argv, "cwd": ".", "reasons": ["r"],
+                                               "prerequisites": []}], **adopter_changes})
+        self.candidate(adopter)
+        self.adopter_in_use = adopter
+        return self.run_queue(adopter, "feature")
+
+    def test_matches_with_no_id_or_an_empty_id_are_skipped_not_fatal(self) -> None:
+        for pattern in (r"^FAIL:(?: (?P<id>[a-z_]+))?", r"^FAIL: ?(?P<id>\S*)"):
+            with self.subTest(pattern=pattern):
+                self.fresh()
+                results = self.failing_output({"checkOutput": {"failurePattern": pattern}},
+                                              "print('FAIL:')\nprint('FAIL: test_named')\nsys.exit(1)\n")
+                self.assertStopped(results, "check_failed")
+                entry = self.check_entry_of(results, "suite")
+                self.assertEqual([failure["id"] for failure in entry["failures"]], ["test_named"])
+                self.assertTrue(entry["log"])
+
+    def test_the_pattern_is_matched_one_line_at_a_time_in_each_stream(self) -> None:
+        # A negated class cannot run past a line's end, and stdout's last line never joins stderr's first.
+        script = ("sys.stdout.write('FAIL: t_a boom\\nsome other output\\nFAIL: t_flaky')\n"
+                  "sys.stderr.write('FAIL: t_real\\n')\nsys.exit(1)\n")
+        results = self.failing_output({"checkOutput": {"failurePattern": r"^FAIL: (?P<id>[^ ]+)"}}, script)
+        entry = self.check_entry_of(results, "suite")
+        self.assertEqual([failure["id"] for failure in entry["failures"]], ["t_a", "t_flaky", "t_real"])
+
+    def test_a_repeated_id_keeps_its_first_message(self) -> None:
+        results = self.failing_output({"checkOutput": FAILURE_OUTPUT},
+                                      "print('FAIL: t_a first')\nprint('FAIL: t_a second')\nsys.exit(1)\n")
+        self.assertEqual(self.check_entry_of(results, "suite")["failures"], [{"id": "t_a", "message": "first"}])
+
+    def test_a_flake_pattern_must_match_the_whole_failure_id(self) -> None:
+        flakes = [{"check": "suite", "tests": ["test_launcher"], "ref": "V26-2764"}]
+        adopter = self.visible_adopter([check_entry("suite", "--flaky-once", "test_launcher_cancel_real_bug")],
+                                       flakes=flakes)
+        self.candidate(adopter)
+        self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        self.assertEqual(self.journal(adopter, "check.retried"), [])
+
+    def test_a_long_list_of_failures_is_kept_whole_in_the_result_and_shortened_in_the_stop(self) -> None:
+        ids = [f"test_{number:02d}" for number in range(30)]
+        adopter = self.visible_adopter([check_entry("suite", "--fail-with", *ids)])
+        self.candidate(adopter)
+        results = self.run_queue(adopter, "feature")
+        document = self.assertStopped(results, "check_failed")
+        self.assertEqual(len(self.check_entry_of(results, "suite")["failures"]), 30)
+        self.assertIn("test_09 and 20 more", document["stop"]["detail"])
+        self.assertNotIn("test_10", document["stop"]["detail"])
+
+    def test_a_run_that_retried_a_flake_still_joins_the_history(self) -> None:
+        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "V26-2764"}]
+        adopter = self.visible_adopter([check_entry("suite", "--flaky-once", "test_launcher_cancel")], flakes=flakes)
+        self.candidate(adopter)
+        self.run_queue(adopter, "feature")
+        history = state_tool.read_state(adopter.state)["meta"]["checkHistory"]
+        self.assertEqual(len(history["runs"]), 1)
+        self.assertEqual(len(history["checks"]["suite"]["seconds"]), 1)
+
+    def test_a_retried_check_shows_no_stale_failure_while_it_runs_again(self) -> None:
+        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "V26-2764"}]
+        adopter = self.visible_adopter([check_entry("suite", "--flaky-once", "test_launcher_cancel")], flakes=flakes)
+        self.candidate(adopter)
+        real = state_tool.patch
+        rows: list[dict] = []
+
+        def recording(directory, **kwargs):
+            written = real(directory, **kwargs)
+            item = next(element for element in written["queue"] if element["subject"] == "feature")
+            rows.extend(check for check in item["checks"] if check["id"] == "suite" and check["state"] == "running")
+            return written
+
+        with mock.patch.object(queue.delivery_state, "patch", recording):
+            self.run_queue(adopter, "feature")
+        self.assertEqual(len(rows), 2)
+        self.assertFalse(any("failures" in row or "log" in row for row in rows), rows)
+
+    def test_log_names_never_collide(self) -> None:
+        runner = self.adopter().runner()
+        completed = queue.Completed(1, "out\n", "", False, 0.1)
+        names = {runner.save_log("same", completed) for _ in range(20)}
+        names |= {self.adopter_runner_again().save_log("same", completed) for _ in range(5)}
+        self.assertEqual(len(names), 25)
+
+    def adopter_runner_again(self) -> "queue.Runner":
+        return queue.Runner(self.directory / "operator", self.directory / "state", remote="origin", base="main")
 
     def test_a_binding_with_a_bad_failure_pattern_or_flake_is_refused(self) -> None:
         for name, changes in (
