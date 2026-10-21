@@ -24,6 +24,7 @@ sys.dont_write_bytecode = True
 import argparse
 import json
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -46,6 +47,15 @@ def _modules(root: Path):
     return canonical_json, safe_relative_path, sha256_bytes
 
 
+def _unique_keys(pairs: list[tuple[str, object]]) -> dict:
+    """An object whose keys are unique; a hand-merged duplicate is refused."""
+    keys = [key for key, _ in pairs]
+    duplicates = sorted({key for key in keys if keys.count(key) > 1})
+    if duplicates:
+        raise WriterError("the lock repeats a key: " + ", ".join(duplicates))
+    return dict(pairs)
+
+
 def entry_for_skill(root: Path, skill: str) -> str:
     """The provenance entry id the catalog names for ``skill``."""
     catalog = json.loads((root / CATALOG).read_text(encoding="utf-8"))
@@ -59,8 +69,10 @@ def recompute(root: Path, skill: str | None = None) -> tuple[dict, list[str], bo
     """The lock with current digests, the outputs whose digest changed, and
     whether the lock on disk differs from its canonical form."""
     canonical_json, safe_relative_path, sha256_bytes = _modules(root)
+    if (root / LOCK).is_symlink():
+        raise WriterError(f"{LOCK} is a symlink; the writer only replaces a regular file")
     raw = (root / LOCK).read_bytes()
-    lock = json.loads(raw.decode("utf-8"))
+    lock = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_keys)
     selected = None if skill is None else entry_for_skill(root, skill)
     if selected is not None and not any(entry["id"] == selected for entry in lock["entries"]):
         raise WriterError(f"the lock has no entry {selected} for skill {skill}")
@@ -94,6 +106,8 @@ def write_atomically(path: Path, contents: bytes) -> None:
     try:
         with os.fdopen(handle, "wb") as stream:
             stream.write(contents)
+        # The temporary file is private; keep the lock's own permissions.
+        os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
         os.replace(temporary, path)
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
@@ -115,7 +129,8 @@ def main(argv: list[str] | None = None) -> int:
     except WriterError as error:
         print(f"update-provenance: {error}", file=sys.stderr)
         return 2
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, AttributeError, ImportError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, AttributeError, ImportError,
+            RecursionError) as error:
         # A malformed or unreadable lock is a refusal, never "stale".
         print(f"update-provenance: cannot read the corpus at {root}: {type(error).__name__}: {error}", file=sys.stderr)
         return 2

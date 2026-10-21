@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -200,6 +201,20 @@ class UpdateProvenanceTests(unittest.TestCase):
         # A checkout that converts line endings is current, as the validator reads it.
         (self.root / LOCK).write_bytes(canonical.replace(b"\n", b"\r\n"))
         self.assertEqual(self.write("--check").returncode, 0)
+        # A rewrite keeps the lock's own permissions.
+        (self.root / LOCK).chmod(0o644)
+        (self.root / LOCK).write_text(json.dumps(json.loads(canonical)), encoding="utf-8")
+        self.assertEqual(self.write().returncode, 0)
+        self.assertEqual(stat.S_IMODE((self.root / LOCK).stat().st_mode), 0o644)
+        # A symlinked lock is refused rather than replaced by a regular file.
+        moved = self.directory / "lock-elsewhere.json"
+        (self.root / LOCK).rename(moved)
+        (self.root / LOCK).symlink_to(moved)
+        linked = self.write()
+        self.assertEqual(linked.returncode, 2)
+        self.assertTrue((self.root / LOCK).is_symlink())
+        (self.root / LOCK).unlink()
+        moved.rename(self.root / LOCK)
         # The write is a whole-file replacement; no temporary file is left behind.
         self.assertEqual(sorted(path.name for path in self.root.glob(f".{LOCK}.*")), [])
 
@@ -210,6 +225,8 @@ class UpdateProvenanceTests(unittest.TestCase):
         no_digest = json.loads(text)
         del no_digest["entries"][0]["outputs"][0]["sha256"]
         cases = {
+            "duplicate key": text.replace('"entries":', '"schemaVersion": "x",\n  "entries":', 1).encode("utf-8"),
+            "deep nesting": b"[" * 100000 + b"]" * 100000,
             "conflict markers": ("<<<<<<< HEAD\n" + text + "=======\n" + text + ">>>>>>> lane\n").encode("utf-8"),
             "byte-order mark": b"\xef\xbb\xbf" + pristine,
             "missing digest": (json.dumps(no_digest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
