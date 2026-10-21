@@ -19,9 +19,25 @@ from agent_skills.product import (
     CancellationIncompleteError,
     _observed_child_liveness,
     _run_command,
+    _wait_for_posix_group,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+def _await_pid(path: Path, seconds: float = 5) -> int | None:
+    """The pid a worker wrote, once the whole number is there.
+
+    write_text empties the file before writing it, so a reader can see the
+    file exist and still find it empty; wait for a whole pid instead.
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            return int(path.read_text())
+        except (FileNotFoundError, ValueError):
+            time.sleep(0.02)
+    return None
+
+
 POSIX_SIGNALS = (signal.SIGINT, signal.SIGTERM) + tuple(
     getattr(signal, name) for name in ("SIGHUP", "SIGQUIT") if hasattr(signal, name)
 )
@@ -291,6 +307,70 @@ class ProductLauncherTests(unittest.TestCase):
         self.assertEqual(handlers, {sig: signal.SIG_DFL for sig in POSIX_SIGNALS})
 
     @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_a_group_probe_refused_while_its_members_exit_is_polled_until_it_drains(self) -> None:
+        # macOS answers a group whose last members are exiting with EPERM, not
+        # ESRCH: the group is being torn down, not unobservable.
+        child = Mock(pid=12345)
+        with patch("agent_skills.product.os.killpg",
+                   side_effect=[PermissionError, PermissionError, ProcessLookupError]) as killpg:
+            self.assertTrue(_wait_for_posix_group(child, 5))
+        self.assertEqual(killpg.call_count, 3)
+        with patch("agent_skills.product.os.killpg", side_effect=PermissionError):
+            # A group that stays unsignallable is not drained, and is never an error.
+            self.assertFalse(_wait_for_posix_group(child, 0.12))
+
+    def _cancel_with_group(self, kill_group, drains):
+        handlers = {}
+        child = Mock(pid=12345)
+
+        def register(sig, handler):
+            handlers[sig] = handler
+            return signal.SIG_DFL
+
+        def wait(*, timeout):
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+            raise subprocess.TimeoutExpired("worker", timeout)
+
+        child.wait.side_effect = wait
+        child.poll.return_value = None
+        with patch("agent_skills.product.signal.signal", side_effect=register), \
+             patch("agent_skills.product.subprocess.Popen", return_value=child), \
+             patch("agent_skills.product.os.killpg", side_effect=kill_group), \
+             patch("agent_skills.product._wait_for_posix_group", side_effect=drains):
+            try:
+                return _run_command(["worker"], ROOT)
+            finally:
+                self.assertEqual(handlers, {sig: signal.SIG_DFL for sig in POSIX_SIGNALS})
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_a_sigkill_refused_while_members_exit_is_clean_once_the_group_drains(self) -> None:
+        refusal = PermissionError("only exiting members remain")
+
+        def kill_group(pid, forwarded):
+            if forwarded == signal.SIGKILL:
+                raise refusal
+
+        self.assertEqual(self._cancel_with_group(kill_group, [False, True]), 128 + signal.SIGTERM)
+        with self.assertRaises(CancellationIncompleteError) as raised:
+            self._cancel_with_group(kill_group, [False, False])
+        self.assertEqual(raised.exception.cleanup, "group-drain-refused")
+        self.assertIs(raised.exception.__cause__, refusal)
+        # A failure while waiting for that drain is the reported cause.
+        wait_failure = OSError("group observation unavailable")
+        with self.assertRaises(CancellationIncompleteError) as raised:
+            self._cancel_with_group(kill_group, [False, wait_failure])
+        self.assertEqual(raised.exception.cleanup, "group-drain-refused")
+        self.assertIs(raised.exception.__cause__, wait_failure)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_forwarding_to_a_group_whose_members_are_exiting_does_not_escape_the_handler(self) -> None:
+        def kill_group(pid, forwarded):
+            if forwarded == signal.SIGTERM:
+                raise PermissionError("only exiting members remain")
+
+        self.assertEqual(self._cancel_with_group(kill_group, [True]), 128 + signal.SIGTERM)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_posix_post_escalation_timeout_reports_observed_child_only(self) -> None:
         handlers = {}
         child = Mock(pid=12345)
@@ -374,11 +454,8 @@ raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))
             )
             worker_pid = None
             try:
-                deadline = time.monotonic() + 5
-                while not (root / "worker.pid").exists() and time.monotonic() < deadline:
-                    time.sleep(0.02)
-                self.assertTrue((root / "worker.pid").exists())
-                worker_pid = int((root / "worker.pid").read_text())
+                worker_pid = _await_pid(root / "worker.pid")
+                self.assertIsNotNone(worker_pid, "worker never wrote its pid")
                 launcher.send_signal(signal.SIGHUP)
                 time.sleep(0.2)
                 self.assertIsNone(launcher.poll(), "inherited ignored SIGHUP was overridden")
@@ -478,11 +555,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                         cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
                     worker_pid = None
                     try:
-                        deadline = time.monotonic() + 5
-                        while not (root / "worker.pid").exists() and time.monotonic() < deadline:
-                            time.sleep(0.02)
-                        self.assertTrue((root / "worker.pid").exists())
-                        worker_pid = int((root / "worker.pid").read_text())
+                        worker_pid = _await_pid(root / "worker.pid")
+                        self.assertIsNotNone(worker_pid, "worker never wrote its pid")
                         if terminal_group:
                             os.killpg(launcher.pid, signum)
                         else:
