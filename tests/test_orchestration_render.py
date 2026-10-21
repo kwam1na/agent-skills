@@ -745,7 +745,8 @@ class HostPublisherTests(DeliveryStateFixture):
         # Values the schema allows; the wrapper checks snapshotMaxAgeSeconds and only has to accept the rest.
         samples = {"snapshotMaxAgeSeconds": 60, "statusOverrideMaxAgeSeconds": 600,
                    "trackerSnapshot": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30},
-                   "workHints": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30}}
+                   "workHints": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30},
+                   "forgeSnapshot": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30}, "refreshSeconds": 180}
         base = json.loads(self.config([], []))
         for field in fields:
             if field in base:
