@@ -1222,6 +1222,47 @@ def binding_state(path: Path) -> dict:
     return member
 
 
+def bound_directory(path: Path, member: dict) -> Path:
+    """The state directory a binding names, as an absolute path.
+
+    A relative ``state.directory`` is relative to the repository root: the
+    folder holding ``.agents/`` when the binding lives there, as it does in a
+    repository, and otherwise the folder holding the binding.
+    """
+    directory = member.get("directory")
+    if not isinstance(directory, str) or not directory:
+        raise StateError("binding_invalid", f"{Path(path).name} names no state directory")
+    # The root is found from the binding's path as given, without following
+    # links, so a linked .agents folder still belongs to this repository.
+    binding = Path(os.path.abspath(path))
+    root = binding.parent.parent if binding.parent.name == ".agents" else binding.parent
+    named = Path(directory)
+    try:
+        return (named if named.is_absolute() else root / named).resolve()
+    except (OSError, ValueError) as error:
+        raise StateError("binding_invalid", f"{Path(path).name} names an unusable state directory: {error}") from None
+
+
+def require_bound(path: Path, member: dict, directory: Path) -> None:
+    """Refuse a binding that keeps its state somewhere other than ``directory``.
+
+    A binding from another checkout would judge this record's outbox against
+    publishers that are not this record's.
+    """
+    bound = bound_directory(path, member)
+    shown = Path(directory).resolve()
+    # The same directory under another spelling, such as another letter case
+    # on a filesystem that ignores case, is still the same directory.
+    with contextlib.suppress(OSError):
+        if bound.exists() and shown.exists() and os.path.samefile(bound, shown):
+            return
+    if bound != shown:
+        raise StateError(
+            "binding_invalid",
+            f"{Path(path).name} keeps its state in {bound}, not in {shown}, the directory being shown",
+        )
+
+
 def host_publishers(member: dict) -> set[str]:
     return {entry["id"] for entry in member.get("publishers", [])
             if isinstance(entry, dict) and entry.get("kind") == "host" and isinstance(entry.get("id"), str)}
@@ -1592,7 +1633,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "ack":
             result = {"ok": True, "published": ack(args.dir, version=args.version, through=args.through)}
         else:
-            hosts = host_publishers(binding_state(args.binding)) if args.binding is not None else None
+            hosts = None
+            if args.binding is not None:
+                member = binding_state(args.binding)
+                require_bound(args.binding, member, args.dir)
+                hosts = host_publishers(member)
             shown = show(args.dir)
             result = {**shown, "publication": publication(args.dir, shown, hosts)}
     except StateError as error:
