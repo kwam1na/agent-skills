@@ -507,7 +507,7 @@ class FixtureAdopterTests(unittest.TestCase):
 
         # 10. With the repository's tracker command bound, the sync loop takes the snapshot itself.
         self.take_the_tracker_snapshot_with_the_binding(adopter)
-        self.assertTrue((adopter.root / "tracker snapshot.json").is_file(), "the snapshot step ran")
+        self.assertEqual(adopter.show()["state"]["meta"].get("trackerParent"), "epic-1", "the snapshot step ran")
 
     def take_the_tracker_snapshot_with_the_binding(self, adopter: FixtureAdopter) -> None:
         data = adopter.root / "tracker data.json"
