@@ -48,7 +48,7 @@ class TrackerContractTests(unittest.TestCase):
             with self.subTest(operation=operation):
                 request = TrackerRequest(
                     operation=operation,
-                    payload={"sequence": index},
+                    payload={"sequence": index, "parentReference": "parent-1"},
                     idempotency_key=f"request-{index}",
                 )
                 outcome = execute_tracker_operation(
@@ -326,6 +326,15 @@ class ListWorkTests(unittest.TestCase):
             scripted={TrackerOperation.LIST_WORK: [AdapterOutcome.success(TrackerOperation.LIST_WORK, data)]})
         outcome = execute_tracker_operation(CapabilityState.CONFIGURED, self.request(), adapter)
         self.assertEqual(outcome.kind, OutcomeKind.SUCCESS)
+
+    def test_a_listing_names_its_parent(self) -> None:
+        for payload in ({}, {"parentReference": ""}, {"parentReference": 3}):
+            with self.subTest(payload=payload):
+                adapter = InMemoryTrackerAdapter(work={"epic-1": CHILDREN})
+                outcome = execute_tracker_operation(
+                    CapabilityState.CONFIGURED, TrackerRequest(TrackerOperation.LIST_WORK, payload), adapter)
+                self.assertEqual(outcome.kind, OutcomeKind.MALFORMED)
+                self.assertIn("parent", outcome.action)
 
     def test_each_parent_lists_its_own_children(self) -> None:
         adapter = InMemoryTrackerAdapter(work={"epic-1": CHILDREN[:1], "epic-2": CHILDREN[1:]})

@@ -244,4 +244,11 @@ def execute_tracker_operation(
             request.operation,
             "Provide a stable idempotency key before the mutation.",
         )
+    if request.operation is TrackerOperation.LIST_WORK and not (
+        isinstance(request.payload.get("parentReference"), str) and request.payload["parentReference"].strip()
+    ):
+        return _malformed(
+            request.operation,
+            "Name the parent reference whose work to list.",
+        )
     return _normalize_outcome(request, adapter.execute(request))
