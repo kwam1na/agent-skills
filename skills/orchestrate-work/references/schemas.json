@@ -2027,6 +2027,58 @@
       }
     }
   },
+  "work-hints/1": {
+    "$id": "urn:agent-skills:orchestrate-work:work-hints:1",
+    "title": "work-hints/1",
+    "description": "What the lead knows about the work beside its tracker state: the files each item is expected to touch, and its priority. The lead writes it; next reads it to rank a lane's next work.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "items"
+    ],
+    "properties": {
+      "items": {
+        "description": "Keyed by subject, as in work-snapshot/1.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "files": {
+              "description": "Paths the item is expected to touch, relative to the repository: a file, a folder ending in /, or a glob.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            },
+            "priority": {
+              "description": "1 is the most urgent, 4 the least; null when it has none.",
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer",
+                  "enum": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "path": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
   "work-snapshot/1": {
     "$id": "urn:agent-skills:orchestrate-work:work-snapshot:1",
     "title": "work-snapshot/1",

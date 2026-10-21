@@ -25,6 +25,7 @@ import argparse
 import contextlib
 import copy
 import datetime
+import fnmatch
 import json
 import os
 import re
@@ -1757,6 +1758,121 @@ def host_publishers(member: dict) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# What a lane could take next: a ranking with reasons, never an assignment
+
+# Lanes in these states hold no files another lane should avoid.
+RESTING_LANE_STATES = ("idle", "done")
+NEXT_LIMIT = 5
+
+
+def read_hints(path: Path) -> dict:
+    """A validated ``work-hints/1``, or a refusal."""
+    try:
+        hints = json.loads(Path(path).read_bytes().decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as error:
+        raise StateError("hints_invalid", f"cannot read the hints {Path(path).name}: {error}") from None
+    errors = validate(hints, load_schema("work-hints/1"))
+    if errors:
+        raise StateError("hints_invalid", f"{Path(path).name}: " + "; ".join(errors))
+    return hints
+
+
+def _overlap(first: str, second: str) -> bool:
+    """Whether two declared paths can name the same file: equal, one inside the other, or a glob matching."""
+    a, b = first.rstrip("/"), second.rstrip("/")
+    return (a == b or a.startswith(b + "/") or b.startswith(a + "/")
+            or fnmatch.fnmatchcase(a, b) or fnmatch.fnmatchcase(b, a))
+
+
+def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) -> list[dict]:
+    """The planned and follow-up work ``lane`` could take next, best first, each with a one-line reason.
+
+    Candidates are planned work no lane holds, or ``lane`` holds, and the
+    follow-ups, less anything queued and anything the tracker shows completed
+    or canceled. They are ordered by:
+
+    1. unblocked first: every tracker blocker completed, canceled, or merged
+       in the record; a blocker the snapshot does not list counts as open;
+    2. no collision first: no declared file overlaps a file of work another
+       open lane holds, planned or queued and not merged;
+    3. priority, 1 first, then 4, then none;
+    4. files ``lane`` has held before first;
+    5. the record's own order.
+
+    It reads only; the lead decides and assigns.
+    """
+    if not any(entry["id"] == lane for entry in state["lanes"]):
+        raise StateError("lane_unknown", f"there is no lane {lane}")
+    declared = {} if hints is None else hints["items"]
+    tracker = {item["subject"]: item for item in snapshot["items"]}
+    merged = {item["subject"] for item in state["queue"] if item["stage"] == "merged"}
+    queued = {item["subject"] for item in state["queue"]}
+    open_lanes = {entry["id"] for entry in state["lanes"]
+                  if entry["id"] != lane and entry["state"] not in RESTING_LANE_STATES}
+    held: dict[str, list[str]] = {}
+    for item in [*state.get("planned", []), *state["queue"]]:
+        if item["lane"] in open_lanes and item["subject"] not in merged:
+            held.setdefault(item["lane"], []).extend(declared.get(item["subject"], {}).get("files", []))
+    own = [path for item in [*state.get("planned", []), *state["queue"]] if item["lane"] == lane
+           for path in declared.get(item["subject"], {}).get("files", [])]
+    candidates = [(item["subject"], item["title"]) for item in state.get("planned", [])
+                  if item["lane"] in (None, lane)]
+    candidates += [(item["id"], item["title"]) for item in state["followups"]]
+    ranked = []
+    seen: set[str] = set()
+    for order, (subject, title) in enumerate(candidates):
+        if subject in seen or subject in queued:
+            continue
+        seen.add(subject)
+        if tracker.get(subject, {}).get("state") in ("completed", "canceled"):
+            continue
+        open_blockers = []
+        for blocker in tracker.get(subject, {}).get("blockedBy", []):
+            if blocker in merged or tracker.get(blocker, {}).get("state") in ("completed", "canceled"):
+                continue
+            open_blockers.append(blocker if blocker in tracker else f"{blocker} (not in the snapshot)")
+        files = declared.get(subject, {}).get("files", [])
+        collisions = {other: sorted({path for path in files for theirs in paths if _overlap(path, theirs)})
+                      for other, paths in sorted(held.items())}
+        collisions = {other: paths for other, paths in collisions.items() if paths}
+        owned = sorted({path for path in files for mine in own if _overlap(path, mine)})
+        priority = declared.get(subject, {}).get("priority")
+        parts = [f"blocked by {', '.join(open_blockers)}" if open_blockers else "unblocked"]
+        if not files:
+            parts.append("no files declared")
+        elif collisions:
+            parts.append("collides with " + "; ".join(f"{other} on {', '.join(paths)}"
+                                                       for other, paths in collisions.items()))
+        else:
+            parts.append("no collision with an open lane")
+        if owned:
+            parts.append(f"{lane} has worked on {', '.join(owned)}")
+        parts.append(f"priority {priority}" if priority is not None else "no priority")
+        ranked.append({
+            "subject": subject, "title": title, "blocked": bool(open_blockers),
+            "collidesWith": sorted(collisions), "owned": bool(owned), "priority": priority,
+            "reason": f"{subject}: " + "; ".join(parts),
+            "_key": (bool(open_blockers), bool(collisions), priority or 5, not owned, order),
+        })
+    ranked.sort(key=lambda entry: entry["_key"])
+    for rank, entry in enumerate(ranked, start=1):
+        del entry["_key"]
+        entry["rank"] = rank
+    return ranked
+
+
+def suggest_next(directory: Path, lane: str, snapshot_path: Path, hints_path: Path | None, *,
+                 max_age: float, limit: int = NEXT_LIMIT) -> dict:
+    """``next_for_lane`` from the record, a tracker snapshot and optional hints; it writes nothing."""
+    snapshot = read_snapshot(Path(snapshot_path), max_age)
+    if snapshot["source"] != "tracker":
+        raise StateError("snapshot_invalid", f"{Path(snapshot_path).name} is not a tracker snapshot")
+    hints = read_hints(hints_path) if hints_path is not None else None
+    ranked = next_for_lane(read_state(directory), lane, snapshot, hints)
+    return {"ok": True, "lane": lane, "next": ranked[:max(limit, 0)]}
+
+
+# ---------------------------------------------------------------------------
 # Forge and tracker snapshots from the repository's own commands, for a lead with no agent
 
 SNAPSHOT_SOURCES = ("tracker", "forge")
@@ -2585,6 +2701,13 @@ def main(argv: list[str] | None = None) -> int:
     sync.add_argument("--max-age", type=float,
                       help="refuse a snapshot older than this many seconds; overrides the binding")
     sync.add_argument("--binding", type=Path, help="the repository binding, for its state.snapshotMaxAgeSeconds")
+    suggest = commands.add_parser("next", help="rank the work a lane could take next, with reasons; assigns nothing")
+    suggest.add_argument("--lane", required=True)
+    suggest.add_argument("--snapshot", type=Path, required=True, help="a tracker work-snapshot/1 file, for blockers")
+    suggest.add_argument("--hints", type=Path, help="a work-hints/1 file: each item's files and priority")
+    suggest.add_argument("--limit", type=int, default=NEXT_LIMIT, help=f"how many to list, {NEXT_LIMIT} when absent")
+    suggest.add_argument("--max-age", type=float, help="seconds a snapshot may be old; overrides the binding")
+    suggest.add_argument("--binding", type=Path, help="the repository binding, for state.snapshotMaxAgeSeconds")
     snap = commands.add_parser("tracker-snapshot", help="take the tracker snapshot with the binding's command")
     snap.add_argument("--binding", type=Path, required=True, help="the repository binding, with state.trackerSnapshot")
     snap.add_argument("--output", type=Path, required=True, help="where the snapshot is written; kept on a failure")
@@ -2650,6 +2773,11 @@ def main(argv: list[str] | None = None) -> int:
             max_age = args.max_age if args.max_age is not None else bound
             result = reconcile(args.dir, args.snapshot,
                                max_age=SNAPSHOT_MAX_AGE_SECONDS if max_age is None else float(max_age))
+        elif args.command == "next":
+            bound = binding_state(args.binding).get("snapshotMaxAgeSeconds") if args.binding is not None else None
+            age = args.max_age if args.max_age is not None else bound
+            result = suggest_next(args.dir, args.lane, args.snapshot, args.hints, limit=args.limit,
+                                  max_age=SNAPSHOT_MAX_AGE_SECONDS if age is None else float(age))
         elif args.command in ("tracker-snapshot", "forge-snapshot"):
             member = binding_state(args.binding)
             bound = member.get("snapshotMaxAgeSeconds")

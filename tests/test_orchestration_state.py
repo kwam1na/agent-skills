@@ -3062,6 +3062,163 @@ class SnapshotCleanupTests(unittest.TestCase):
         self.assertFalse(selection["whole_group"], "a refused member keeps the group from being signalled whole")
 
 
+class NextTests(unittest.TestCase):
+    """next --lane ranks the work a lane could take next, with a reason each, and assigns nothing."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.directory = self.root / "state"
+        state_tool.init(self.directory, "Epic underway")
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={
+            "lanes": [lane("lane-1", state="idle"), lane("lane-2"), lane("lane-3", state="done")],
+            # lane-2 is working on src/shared.py; lane-1 once landed src/mine.py; lane-3 is done.
+            "planned": [{"subject": "busy", "title": "Busy", "lane": "lane-2", "stage": "planned"},
+                        {"subject": "free", "title": "Free", "lane": None, "stage": "planned"},
+                        {"subject": "taken", "title": "Taken", "lane": "lane-2", "stage": "planned"},
+                        # lane-3 is done: what it still holds collides with nothing.
+                        {"subject": "parked", "title": "Parked", "lane": "lane-3", "stage": "planned"}],
+            "queue": [queue_item("landed", lane="lane-1"), queue_item("old", lane="lane-3", order=2),
+                      queue_item("waiting", lane="lane-2", order=3)],
+            "followups": [{"id": "waiting", "title": "Already queued", "reference": "waiting"},
+                          {"id": "fix-a", "title": "Fix A", "reference": "fix-a"},
+                          {"id": "fix-b", "title": "Fix B", "reference": "fix-b"},
+                          {"id": "fix-c", "title": "Fix C", "reference": "fix-c"},
+                          {"id": "fix-d", "title": "Fix D", "reference": "fix-d"},
+                          {"id": "gone", "title": "Gone", "reference": "gone"}],
+        })
+        for subject in ("landed", "old"):
+            version = state_tool.show(self.directory)["state"]["version"]
+            state_tool.patch(self.directory, writer="runner", version=version, selector=f"queue[subject={subject}]",
+                             changes={"stage": "merged"})
+
+    def write(self, name: str, document: dict) -> str:
+        path = self.root / name
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return str(path)
+
+    def snapshot(self, items: list[dict]) -> str:
+        return self.write("tracker.json", {"takenAt": taken(), "source": "tracker", "items": items})
+
+    def hints(self, items: dict) -> str:
+        return self.write("hints.json", {"items": items})
+
+    def ranked(self, snapshot: str, hints: str | None = None, *extra: str) -> list[dict]:
+        before = ((self.directory / state_tool.STATE_FILE).read_bytes(),
+                  (self.directory / state_tool.JOURNAL_FILE).read_bytes())
+        code, result = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot", snapshot,
+                                *(("--hints", hints) if hints else ()), *(extra or ("--limit", "20")))
+        self.assertEqual(code, 0, result)
+        after = ((self.directory / state_tool.STATE_FILE).read_bytes(),
+                 (self.directory / state_tool.JOURNAL_FILE).read_bytes())
+        self.assertEqual(after, before, "next assigns nothing and writes nothing")
+        self.assertEqual(result["lane"], "lane-1")
+        return result["next"]
+
+    def test_unblocked_non_colliding_higher_priority_work_ranks_first_and_each_says_why(self) -> None:
+        snapshot = self.snapshot([
+            {"subject": "free", "state": "backlog"},
+            {"subject": "fix-a", "state": "backlog", "blockedBy": ["busy"]},        # blocked by unfinished work
+            {"subject": "fix-b", "state": "backlog"},
+            {"subject": "fix-c", "state": "backlog", "blockedBy": ["landed-ticket"]},
+            {"subject": "landed-ticket", "state": "completed"},
+            # Blocked only by work the record shows merged, which the snapshot does not list.
+            {"subject": "fix-d", "state": "backlog", "blockedBy": ["landed"]},
+            {"subject": "busy", "state": "started"},
+            {"subject": "gone", "state": "canceled"},
+        ])
+        hints = self.hints({
+            "fix-a": {"files": ["docs/a.md"], "priority": 1},                       # urgent, but blocked
+            "fix-b": {"files": ["src/shared.py"], "priority": 2},                   # collides with lane-2
+            "fix-c": {"files": ["docs/d.md"], "priority": 3},                       # lane-3's, but lane-3 is done
+            "fix-d": {"files": ["src/mine.py"], "priority": 3},                     # lane-1's own file
+            "parked": {"files": ["docs/d.md"]},
+            "free": {"files": ["docs/free.md"], "priority": 2},
+            "busy": {"files": ["src/shared.py"], "priority": 2},
+            "landed": {"files": ["src/mine.py"]},
+            "old": {"files": ["docs/d.md"]},
+        })
+        ranked = self.ranked(snapshot, hints)
+        order = [item["subject"] for item in ranked]
+        # Never: work another lane holds, completed or canceled work, or work already queued.
+        self.assertEqual(sorted(order), ["fix-a", "fix-b", "fix-c", "fix-d", "free"])
+        self.assertEqual(order[0], "free", ranked)
+        self.assertLess(order.index("fix-d"), order.index("fix-c"), "the lane's own files first, whatever the order")
+        self.assertLess(order.index("fix-c"), order.index("fix-b"), "a collision ranks below a lower priority")
+        self.assertEqual(order[-1], "fix-a", "blocked work is never ahead of unblocked work")
+        reasons = {item["subject"]: item["reason"] for item in ranked}
+        self.assertIn("blocked by busy", reasons["fix-a"])
+        self.assertIn("lane-2", reasons["fix-b"])
+        self.assertIn("src/shared.py", reasons["fix-b"])
+        self.assertIn("src/mine.py", reasons["fix-d"])
+        self.assertIn("unblocked", reasons["fix-d"], "a blocker the record shows merged is done")
+        self.assertEqual(next(item for item in ranked if item["subject"] == "fix-c")["collidesWith"], [],
+                         "a done lane holds nothing")
+        self.assertIn("priority 2", reasons["free"])
+        for item in ranked:
+            self.assertNotIn("\n", item["reason"])
+            self.assertTrue(item["reason"].startswith(item["subject"] + ":"), item)
+        self.assertEqual([item["rank"] for item in ranked], list(range(1, len(ranked) + 1)))
+
+    def test_a_blocked_item_is_never_first_even_alone_with_the_highest_priority(self) -> None:
+        snapshot = self.snapshot([{"subject": "free", "state": "backlog", "blockedBy": ["outside"]},
+                                  {"subject": "fix-a", "state": "backlog"}])
+        ranked = self.ranked(snapshot, self.hints({"free": {"files": [], "priority": 1},
+                                                   "fix-a": {"files": [], "priority": None}}))
+        order = [item["subject"] for item in ranked]
+        self.assertNotEqual(order[0], "free")
+        self.assertLess(order.index("fix-a"), order.index("free"))
+        free = next(item for item in ranked if item["subject"] == "free")
+        self.assertTrue(free["blocked"])
+        self.assertTrue(all(item["blocked"] for item in ranked[order.index("free"):]), "only blocked work after it")
+        self.assertIn("outside", free["reason"])
+        self.assertIn("not in the snapshot", free["reason"])
+
+    def test_a_collision_ranks_below_a_non_colliding_item_of_the_same_priority(self) -> None:
+        snapshot = self.snapshot([{"subject": "fix-a", "state": "backlog"}, {"subject": "fix-b", "state": "backlog"}])
+        for colliding in (["src/shared.py"], ["src/"], ["src/*.py"]):
+            with self.subTest(colliding=colliding):
+                ranked = self.ranked(snapshot, self.hints({
+                    "fix-a": {"files": colliding, "priority": 2}, "fix-b": {"files": ["docs/b.md"], "priority": 2},
+                    "busy": {"files": ["src/shared.py"]}}))
+                order = [item["subject"] for item in ranked]
+                self.assertLess(order.index("fix-b"), order.index("fix-a"), ranked)
+                self.assertEqual(next(item for item in ranked if item["subject"] == "fix-a")["collidesWith"], ["lane-2"])
+
+    def test_without_hints_the_ranking_still_works_and_says_files_are_unknown(self) -> None:
+        snapshot = self.snapshot([{"subject": "fix-a", "state": "backlog", "blockedBy": ["fix-b"]},
+                                  {"subject": "fix-b", "state": "backlog"}])
+        ranked = self.ranked(snapshot)
+        order = [item["subject"] for item in ranked]
+        self.assertLess(order.index("fix-b"), order.index("fix-a"))
+        self.assertIn("no files declared", ranked[0]["reason"])
+
+    def test_the_limit_shortens_the_list(self) -> None:
+        snapshot = self.snapshot([{"subject": name, "state": "backlog"} for name in ("fix-a", "fix-b", "fix-c")])
+        self.assertEqual(len(self.ranked(snapshot, None, "--limit", "2")), 2)
+
+    def test_an_unknown_lane_a_forge_snapshot_or_malformed_hints_are_refused(self) -> None:
+        tracker = self.snapshot([{"subject": "fix-a", "state": "backlog"}])
+        code, refused = run_tool(self.directory, "next", "--lane", "lane-9", "--snapshot", tracker)
+        self.assertEqual((code, refused["code"]), (1, "lane_unknown"), refused)
+        forge = self.write("forge.json", {"takenAt": taken(), "source": "forge", "items": []})
+        code, refused = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot", forge)
+        self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"), refused)
+        for bad in ({"items": {"fix-a": {"priority": 9}}}, {"items": {"fix-a": {"files": "src"}}}, {"items": []},
+                    {"items": {"fix-a": {"owner": "x"}}}):
+            with self.subTest(bad=bad):
+                code, refused = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot", tracker,
+                                         "--hints", self.write("bad.json", bad))
+                self.assertEqual((code, refused["code"]), (1, "hints_invalid"), refused)
+
+    def test_the_hints_schema_is_one_of_the_skill_s_schemas(self) -> None:
+        schema = state_tool.load_schema("work-hints/1")
+        self.assertEqual(state_tool.validate({"items": {"x": {"files": ["a/b.py", "c/"], "priority": 1}}}, schema), [])
+        self.assertTrue(state_tool.validate({"items": {"x": {"priority": 0}}}, schema))
+
+
 class PublicationTests(unittest.TestCase):
     """What was published, so an unpublished view is visible."""
 
@@ -3340,7 +3497,7 @@ class SchemaAgreementTests(unittest.TestCase):
         self.assertEqual(text, json.dumps(schemas, indent=2, ensure_ascii=False) + "\n")
         self.assertEqual(sorted(schemas), [
             "affected-checks/1", "delivery-journal/1", "delivery-state/1", "merge-queue-result/1", "orchestration-binding/1",
-            "work-snapshot/1",
+            "work-hints/1", "work-snapshot/1",
         ])
         for name, schema in schemas.items():
             with self.subTest(name=name):

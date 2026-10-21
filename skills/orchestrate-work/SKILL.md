@@ -120,6 +120,22 @@ lane report treated as a claim to check. Without a session capability, the
 lead runs lanes as subagents or in sequence. Leases, including those held
 outside the epic, follow the same protocol.
 
+When a lane hands off, the state tool can suggest its next work. It ranks the
+planned work no other lane holds and the follow-ups, and never assigns any of
+it; the lead still decides and sends:
+
+```bash
+python3 -B scripts/delivery_state.py --dir <state directory> next --lane <lane> --snapshot <tracker snapshot> --hints <work hints>
+```
+
+Unblocked work comes first, by the tracker snapshot's `blockedBy`; then work
+whose declared files do not overlap what another open lane holds; then
+priority; then files the lane has worked on before. Each item comes with a
+one-line reason. The optional `work-hints/1` file (in
+`references/schemas.json`) is the lead's, written beside the snapshots: each
+item's `files`, as paths, folders ending in `/` or globs, and its `priority`,
+1 the most urgent to 4, or null.
+
 ## Findings and a broken base
 
 Triage every review finding with
