@@ -3127,6 +3127,29 @@ class ServeRefreshTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("feature")["stage"], "merged")
         self.assertIn("the record cannot be read", errors.getvalue())
 
+    def test_a_merge_the_forge_reports_is_recorded_before_the_queue_is_read(self) -> None:
+        adopter = self.refreshing("forge", refreshSeconds=100)
+        head = self.candidate(adopter)
+        self.world("forge", [{"subject": "feature", "state": "merged", "head": head}])
+        results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        # Recorded from the forge first, so serve never takes work that already landed.
+        self.assertEqual(results, [])
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+        self.assertNotIn("forge merge", " ".join(adopter.log_lines()))
+
+    def test_serve_does_not_start_on_a_snapshot_block_or_interval_it_cannot_use(self) -> None:
+        for name, extra, word in (("timeout", {"forgeSnapshot": {"argv": ["tool"], "timeoutSeconds": 900}}, "forgeSnapshot"),
+                                  ("interval", {"refreshSeconds": 86401}, "refreshSeconds")):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.refreshing("tracker", **extra)
+                self.candidate(adopter)
+                [refused] = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+                document = refused.document()
+                self.assertEqual((document["subcommand"], document["stop"]["reason"]), ("serve", "binding_invalid"))
+                self.assertIn(word, document["stop"]["detail"])
+                self.assertEqual(adopter.item("feature")["stage"], "queued")
+
     def test_a_binding_without_sources_reports_both_as_not_observed(self) -> None:
         adopter = self.refreshing()
         queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)

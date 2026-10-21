@@ -2122,6 +2122,14 @@ def _setup_stop(repository: Path, state_directory: Path, *, remote: str, base: s
         with runner.locked():
             result.baseHead = runner.load()
             result.base = base
+        # A refresh setting the tool cannot use would fail on every interval: refuse it here, once.
+        member = (runner.binding or {}).get("state", {})
+        try:
+            delivery_state.refresh_interval(member)
+            for source in delivery_state.SNAPSHOT_SOURCES:
+                delivery_state.snapshot_config(member, source)
+        except delivery_state.StateError as error:
+            raise Stop("binding_invalid", str(error)) from None
 
     try:
         result = runner.invoke("serve", None, check)

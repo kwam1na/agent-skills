@@ -322,14 +322,19 @@ run the sync loop in this order:
    - **Forge, otherwise.** List the epic's change requests with the host's own
      forge tools.
    - **With `serve` running,** steps 1 and 2 need no lead: every
-     `state.refreshSeconds` (180 when absent; 0 turns it off), between turns
-     and whether or not it is held, `serve` runs each declared command into
-     `snapshots/` in the state directory and reconciles what it took. An
-     idle refresh writes nothing. The record's `meta.sources` says, per
-     source, `observed`, `stale` (with `lastReadAt`, when it was last read,
-     and the reason) or `not_observed` when the binding declares no command,
-     and changes only when that does; the status line names a stale source
-     and when it was last read. A run in progress delays the next read.
+     `state.refreshSeconds` (180 when absent, at most 86400; 0 turns it off),
+     between turns and whether or not it is held, `serve` runs each declared
+     command into `snapshots/` in the state directory and reconciles what it
+     took. A snapshot is kept there only once reconcile has applied it, and a
+     failed source's last fresh one still counts. An idle refresh writes
+     nothing. The record's `meta.sources` says, per source, `observed`,
+     `stale` (with `lastReadAt`, the last read the record took in, and the
+     reason) or `not_observed` when the binding declares no command, and
+     changes only when that does. What reconcile could not settle, such as a
+     change request closed without merging, goes to `meta.sourceReports` for
+     the lead. The status line names a stale source, when it was last read,
+     and the first report. A run in progress delays the next read, and
+     `serve` does not start on a snapshot block or interval it cannot use.
 2. **Reconcile.**
 
    ```bash

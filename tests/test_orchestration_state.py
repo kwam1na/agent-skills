@@ -2171,6 +2171,89 @@ class SourceRefreshTests(unittest.TestCase):
                              changes={"meta": {"sources": {"tracker": {"status": "not_observed", "since": taken(0)}}}})
         self.assertEqual(caught.exception.code, "field_not_owned")
 
+    def test_what_reconcile_leaves_for_the_lead_reaches_the_record_and_changes_only_when_it_does(self) -> None:
+        self.queue(queue_item("work-a"))
+        version = state_tool.read_state(self.directory)["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"planned": [planned("work-p")]})
+        self.world("tracker", [{"subject": "work-p", "state": "canceled"}])
+        self.world("forge", [{"subject": "work-a", "state": "closed"}])
+        self.refresh("tracker", "forge")
+        reports = [{"subject": "work-p", "note": "canceled in the tracker but still planned in the record"},
+                   {"subject": "work-a", "note": "its change request closed without merging"}]
+        self.assertEqual(state_tool.read_state(self.directory)["meta"]["sourceReports"], reports)
+        self.assertEqual(state_tool.show(self.directory)["status"]["text"],
+                         "next: work-a · for the lead: work-p: canceled in the tracker but still planned in the record, "
+                         "then 1 more")
+        before = self.footprint()
+        self.refresh("tracker", "forge")
+        self.assertEqual(self.footprint(), before, "the same reports are not written again")
+        self.world("tracker", [])
+        self.world("forge", [])
+        self.refresh("tracker", "forge")
+        self.assertEqual(state_tool.read_state(self.directory)["meta"]["sourceReports"], [])
+
+    def test_a_failed_source_s_last_fresh_read_still_counts_for_the_reports(self) -> None:
+        self.queue(queue_item("work-a"))
+        self.world("forge", [{"subject": "work-a", "state": "closed"}])
+        self.refresh("tracker", "forge")
+        self.world("forge", [], mode="fail")
+        self.refresh("tracker", "forge")
+        self.assertEqual([report["subject"] for report in state_tool.read_state(self.directory)["meta"]["sourceReports"]],
+                         ["work-a"], "a forge outage does not clear what the forge last said")
+        self.world("tracker", [], mode="fail")
+        self.refresh("tracker", "forge")
+        self.assertEqual([report["subject"] for report in state_tool.read_state(self.directory)["meta"]["sourceReports"]],
+                         ["work-a"], "nothing was reconciled, so the reports stand")
+
+    def test_a_block_the_tool_cannot_run_marks_only_its_own_source_stale(self) -> None:
+        self.world("tracker", [{"subject": "work-t", "title": "Ticket", "state": "started"}])
+        member = self.member("tracker")
+        member["forgeSnapshot"] = {"argv": ["tool"], "timeoutSeconds": 900}
+        result = state_tool.refresh_sources(self.directory, member)
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.sources()["tracker"]["status"], "observed")
+        self.assertEqual([entry["subject"] for entry in state_tool.read_state(self.directory)["planned"]], ["work-t"])
+        self.assertEqual(self.sources()["forge"]["status"], "stale")
+        self.assertIn("forgeSnapshot", self.sources()["forge"]["reason"])
+
+    def test_a_reconcile_that_keeps_refusing_keeps_the_last_applied_read_and_writes_once(self) -> None:
+        self.refresh("tracker")
+        applied = json.loads((self.directory / "snapshots" / "tracker.json").read_text(encoding="utf-8"))["takenAt"]
+        refused = state_tool.StateError("version_stale", "the record kept changing")
+        with mock.patch.object(state_tool, "reconcile", side_effect=refused):
+            time.sleep(1.1)
+            self.refresh("tracker")
+            self.assertEqual(self.sources()["tracker"]["lastReadAt"], applied, "a refused read was never applied")
+            before = self.footprint()
+            time.sleep(1.1)
+            self.refresh("tracker")
+            self.assertEqual(self.footprint(), before)
+
+    def test_an_unchanged_read_after_an_outage_ended_writes_nothing(self) -> None:
+        self.world("tracker", [], mode="fail")
+        self.refresh("tracker")
+        self.world("tracker", [])
+        self.refresh("tracker")
+        before = self.footprint()
+        self.refresh("tracker")
+        self.assertEqual(self.footprint(), before)
+
+    def test_the_interval_has_a_ceiling(self) -> None:
+        for bad in (86401, 10 ** 400):
+            with self.subTest(bad=bad):
+                with self.assertRaises(state_tool.StateError) as caught:
+                    state_tool.refresh_interval({"refreshSeconds": bad})
+                self.assertEqual(caught.exception.code, "binding_invalid")
+        self.assertEqual(state_tool.refresh_interval({"refreshSeconds": 86400}), 86400)
+
+    def test_a_command_that_never_stops_printing_is_stopped_at_the_limit(self) -> None:
+        started = time.monotonic()
+        code, out, reason = state_tool._run_bounded(
+            [sys.executable, "-c", "import sys\nwhile True: sys.stdout.write('x' * 65536)"], 30, 1_000_000)
+        self.assertEqual((code, out), (None, b""))
+        self.assertIn("printed more than 1000000 bytes", reason)
+        self.assertLess(time.monotonic() - started, 15, "stopped at the limit, not at the timeout")
+
     def test_the_status_says_when_a_stale_source_was_last_read(self) -> None:
         record = {"meta": {"headline": "Epic", "checking": {"now": None, "next": []}, "sources": {
             "tracker": {"status": "stale", "since": "2026-10-21T11:00:00Z", "lastReadAt": "2026-10-21T10:57:00Z",

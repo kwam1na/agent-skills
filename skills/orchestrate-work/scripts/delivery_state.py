@@ -87,7 +87,7 @@ ELEMENT_KEYS = {
 SELECTOR = re.compile(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)\]$")
 # Fields only the runner writes. Everything else, apart from the fields the
 # tool itself maintains, belongs to the lead.
-RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory", "sources")
+RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory", "sources", "sourceReports")
 RUNNER_QUEUE = ("stage", "checks", "syncedHead")
 TOOL_OWNED = ("schemaVersion", "version")
 # A queue element the lead adds starts with the runner's fields empty.
@@ -1089,6 +1089,12 @@ def delivery_status(state: dict, journal: list[dict], at: str | None = None) -> 
             # What the record shows from a source that stopped answering is only as new as its last read.
             parts.append(f"{source} last read at {entry['lastReadAt']}" if entry.get("lastReadAt")
                          else f"{source} never read")
+    reports = state["meta"].get("sourceReports") or []
+    if reports:
+        # What a refresh could not settle by itself waits on the lead, so the line says so.
+        first = reports[0]
+        said = f"{first['subject']}: {first['note']}" if first.get("subject") else first["note"]
+        parts.append(f"for the lead: {said}" + (f", then {len(reports) - 1} more" if len(reports) > 1 else ""))
     return {"text": " · ".join(parts) or "Nothing in flight", "source": "derived"}
 
 
@@ -1684,9 +1690,7 @@ def binding_state(path: Path) -> dict:
         age = member.get(name)
         if age is not None and (not isinstance(age, int) or isinstance(age, bool) or age < 1):
             raise StateError("binding_invalid", f"state.{name} is a whole number of seconds, at least 1")
-    interval = member.get("refreshSeconds")
-    if interval is not None and (not isinstance(interval, int) or isinstance(interval, bool) or interval < 0):
-        raise StateError("binding_invalid", "state.refreshSeconds is a whole number of seconds, 0 to turn it off")
+    refresh_interval(member)
     return member
 
 
@@ -1754,8 +1758,9 @@ START_SLACK_SECONDS = 1
 # How many times cleanup freezes what it found and looks again, so a process
 # still spawning cannot leave children the first look missed.
 CLEANUP_PASSES = 5
-# How often serve reads the declared sources when the binding does not say; 0 turns it off.
+# How often serve reads the declared sources when the binding does not say; 0 turns it off. At most a day.
 REFRESH_SECONDS = 180
+REFRESH_SECONDS_CEILING = 86400
 SNAPSHOTS_DIRECTORY = "snapshots"
 
 
@@ -2067,7 +2072,11 @@ def tracker_snapshot_config(member: dict) -> dict | None:
 
 def refresh_interval(member: dict) -> int:
     """Seconds between serve's reads of the declared sources; 0 when the binding turns them off."""
-    return member.get("refreshSeconds", REFRESH_SECONDS)
+    interval = member.get("refreshSeconds", REFRESH_SECONDS)
+    if not isinstance(interval, int) or isinstance(interval, bool) or not 0 <= interval <= REFRESH_SECONDS_CEILING:
+        raise StateError("binding_invalid", "state.refreshSeconds is a whole number of seconds from 0, which turns "
+                                            f"the refresh off, to {REFRESH_SECONDS_CEILING}")
+    return interval
 
 
 def _run_bounded(argv: list[str], timeout: int, limit: int, cwd: Path | None = None, *,
@@ -2268,34 +2277,57 @@ def refresh_sources(directory: Path, member: dict, *, cwd: Path | None = None) -
     max_age = float(SNAPSHOT_MAX_AGE_SECONDS if bound is None else bound)
     folder = Path(directory) / SNAPSHOTS_DIRECTORY
     statuses: dict[str, dict] = {}
-    taken: list[tuple[str, Path]] = []
+    # Each source's snapshot is read into <source>.next.json and kept as
+    # <source>.json only once reconcile applied it: lastReadAt is then the last
+    # read the record took in, however often reconcile refuses newer ones.
+    taken: list[tuple[str, Path, Path]] = []
+    kept: list[Path] = []
     for source in SNAPSHOT_SOURCES:
-        if snapshot_config(member, source) is None:
+        try:
+            declared = snapshot_config(member, source) is not None
+        except StateError as error:
+            # A block the tool cannot run leaves the other source to be read.
+            statuses[source] = {"status": "stale", "lastReadAt": _last_read(folder / f"{source}.json"),
+                                "reason": str(error)}
+            continue
+        if not declared:
             statuses[source] = {"status": "not_observed"}
             continue
         folder.mkdir(exist_ok=True)
-        output = folder / f"{source}.json"
-        result = take_snapshot(directory, member, output, source=source, max_age=max_age, cwd=cwd)
+        applied, fresh = folder / f"{source}.json", folder / f"{source}.next.json"
+        result = take_snapshot(directory, member, fresh, source=source, max_age=max_age, cwd=cwd)
         if result["taken"]:
-            taken.append((source, output))
+            taken.append((source, fresh, applied))
             statuses[source] = {"status": "observed"}
-        else:
-            statuses[source] = {"status": "stale", "lastReadAt": _last_read(output), "reason": result["reason"]}
+            continue
+        statuses[source] = {"status": "stale", "lastReadAt": _last_read(applied), "reason": result["reason"]}
+        with contextlib.suppress(StateError):
+            # The last applied read still speaks for its source while it is fresh, so its reports stand.
+            read_snapshot(applied, max_age)
+            kept.append(applied)
     reconciled = None
     if taken:
         try:
-            reconciled = reconcile(directory, [path for _, path in taken], max_age=max_age)
+            reconciled = reconcile(directory, [fresh for _, fresh, _ in taken] + kept, max_age=max_age)
         except StateError as error:
             # Read but not applied: the record has not caught up with it, so the source is stale.
-            for source, path in taken:
-                statuses[source] = {"status": "stale", "lastReadAt": _last_read(path),
+            for source, _, applied in taken:
+                statuses[source] = {"status": "stale", "lastReadAt": _last_read(applied),
                                     "reason": f"reconcile refused it: {error}"}
-    _set_sources(directory, statuses)
+        else:
+            for _, fresh, applied in taken:
+                os.replace(fresh, applied)
+    _set_sources(directory, statuses, None if reconciled is None else reconciled["reports"])
     return {"ok": True, "sources": statuses, "reconciled": reconciled}
 
 
-def _set_sources(directory: Path, statuses: dict[str, dict]) -> None:
-    """Write ``meta.sources`` as the runner, only where a source's status changed; ``since`` marks the change."""
+def _set_sources(directory: Path, statuses: dict[str, dict], reports: list[dict] | None) -> None:
+    """Write ``meta.sources`` and ``meta.sourceReports`` as the runner, only where they changed.
+
+    A source's ``since`` marks when its status last changed. The reports are
+    what the last applied reconcile left for the lead, replaced only by the
+    next one: ``None`` keeps them as they are.
+    """
     for _ in range(RECONCILE_ATTEMPTS):
         state = read_state(directory)
         current = state["meta"].get("sources") or {}
@@ -2306,10 +2338,13 @@ def _set_sources(directory: Path, statuses: dict[str, dict]) -> None:
                 merged[source] = kept
             else:
                 merged[source] = {**status, "since": now()}
-        if merged == current:
+        assignments = {} if merged == current else {"/meta/sources": merged}
+        if reports is not None and reports != state["meta"].get("sourceReports", []):
+            assignments["/meta/sourceReports"] = reports
+        if not assignments:
             return
         try:
-            patch(directory, writer="runner", version=state["version"], assignments={"/meta/sources": merged})
+            patch(directory, writer="runner", version=state["version"], assignments=assignments)
         except StateError as error:
             if error.code != "version_stale":
                 raise
