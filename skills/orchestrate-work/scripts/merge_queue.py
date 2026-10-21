@@ -2300,6 +2300,30 @@ def _refresh(repository: Path, state_directory: Path, member: dict) -> None:
         print(f"serve: the refresh of the forge and tracker failed: {error}", file=sys.stderr, flush=True)
 
 
+def hold_for_setup(state_directory: Path, detail: str) -> bool:
+    """Hold serving because its setup cannot be used, as the runner and only where no hold is set; journal it once.
+
+    The candidates stay queued as they are: nothing was wrong with them, so no
+    lane hands anything off again. The lead repairs the setup and clears the hold.
+    """
+    reason = f"serve cannot use its setup: {detail[:300]}"
+    for _ in range(STATE_PATCH_ATTEMPTS):
+        current = delivery_state.read_state(state_directory)
+        if current["meta"].get("hold"):
+            return False
+        try:
+            delivery_state.patch(state_directory, writer="runner", version=current["version"],
+                                 assignments={"/meta/hold": {"reason": reason, "since": delivery_state.now()}})
+        except delivery_state.StateError as error:
+            if error.code != "version_stale":
+                raise
+            continue
+        delivery_state.append_journal(state_directory, kind="blocker.recorded", writer="runner",
+                                      summary=f"Serving is held: {reason}. Repair it, then clear meta.hold.")
+        return True
+    return False
+
+
 def serve(
     repository: Path,
     state_directory: Path,
@@ -2321,12 +2345,16 @@ def serve(
     lead's meta.hold pauses serving, and so does a stop that stopped the queue
     until the lead journals base.repaired; a stopped candidate waits for its
     lane to hand it off again, and so does a refused one, which serve would
-    otherwise take again every turn. A checkout or binding the runner cannot
-    use ends serve before it takes anything, with that one result. Each turn
-    takes the queue lock afresh, so a serve killed outright is cleared by the
-    next one's recovery. Between turns, on the binding's state.refreshSeconds,
-    serve reads the declared forge and tracker snapshots and reconciles them,
-    whether or not it is held; a run in progress delays the read. With
+    otherwise take again every turn. Before each turn that takes work, and
+    after any refusal, serve checks its checkout and binding again: when they
+    cannot be used, it holds itself (meta.hold, set only where none is) and
+    stops no candidate, since none was at fault. A checkout or binding the
+    runner cannot use ends serve before it takes anything, with that one
+    result. Each turn takes the queue lock afresh, so a serve killed outright
+    is cleared by the next one's recovery. Between turns, on the binding's
+    state.refreshSeconds, serve reads the declared forge and tracker snapshots
+    and reconciles them, whether or not it is held; a run in progress delays
+    the read. With
     until_idle, serving ends once nothing more can be taken and returns every
     result; without it, serving never returns, so each result goes to
     on_result as it is written and none is kept.
@@ -2371,6 +2399,15 @@ def serve(
                 return results
             pause()
             continue
+        # A setup that broke since the last turn would refuse every candidate in turn: hold instead, taking none.
+        checked = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+        if checked.stop is not None:
+            if checked.stop["reason"] != "queue_locked":
+                hold_for_setup(state_directory, checked.stop["detail"])
+            if until_idle:
+                return results
+            sleep(poll)
+            continue
         heads = {item["subject"]: item["head"] for item in state["queue"]}
         runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams)
         taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting)
@@ -2380,9 +2417,19 @@ def serve(
                 return results
             pause()
             continue
+        refused = [result for result in taken if result.outcome == "refused" and result.candidate is not None
+                   and result.stop["reason"] != "queue_locked"]
+        candidates_refused = True
+        if refused:
+            # A refusal names its code, not its cause: the setup check says whether the setup broke during the turn.
+            again = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+            if again.stop is not None:
+                candidates_refused = False
+                if again.stop["reason"] != "queue_locked":
+                    hold_for_setup(state_directory, again.stop["detail"])
         for result in taken:
             write_result(state_directory, result)
-            if result.outcome == "refused" and result.candidate is not None and result.stop["reason"] != "queue_locked":
+            if candidates_refused and result in refused:
                 # A refusal leaves the candidate queued as it was; serve stops it, journaled once, as any stop.
                 with contextlib.suppress(Stop, delivery_state.StateError):
                     runner.write(selector=f"queue[subject={result.candidate}]",

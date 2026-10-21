@@ -190,7 +190,13 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   nothing more until you confirm the base and journal `base.repaired`. A
   stopped candidate waits for its lane to hand it off again; under `serve`, so
   does one the runner refuses, such as one with a lead input the binding does
-  not declare.
+  not declare. A refusal whose cause is the setup, such as a removed checkout
+  or a binding made invalid on the base, stops nothing: `serve` holds itself
+  with the setup error as the hold's reason and journals `blocker.recorded`.
+  Repair the setup, then clear `meta.hold`; the queue resumes in order, with
+  no lane handing off again. A refusal during a turn whose setup broke can
+  still journal `candidate.stopped` for the refused candidates; they stay
+  queued.
 - Leave the status line to the record: the views derive it from what is being
   checked, what landed last, which lanes are blocked and what is next. Set a
   status of your own with `headline --text`, only for what the record cannot

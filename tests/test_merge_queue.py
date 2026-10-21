@@ -2800,6 +2800,101 @@ class ServeTests(MergeQueueTestCase):
         self.assertEqual(list((adopter.state / "results").glob("*.json")), [])
         self.assertEqual(adopter.item("feature")["stage"], "queued")
 
+    def break_checkout(self, adopter: Adopter) -> Callable[[], None]:
+        """Take the operator's checkout away, as a removed clone would; the returned call puts it back."""
+        git, away = adopter.operator / ".git", adopter.operator / ".git-away"
+        git.rename(away)
+        return lambda: away.rename(git)
+
+    def blockers(self, adopter: Adopter) -> list[dict]:
+        return [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "blocker.recorded"]
+
+    def test_a_checkout_removed_between_turns_holds_serve_and_stops_nothing(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        real = queue.Runner.recover
+        restore: list[Callable[[], None]] = []
+
+        def break_after_startup(runner) -> None:
+            # The startup check has passed; the checkout goes before the first turn takes anything.
+            if not restore:
+                restore.append(self.break_checkout(adopter))
+            real(runner)
+
+        with mock.patch.object(queue.Runner, "recover", break_after_startup):
+            results = self.serve(adopter)
+        self.assertEqual(results, [])
+        hold = state_tool.read_state(adopter.state)["meta"]["hold"]
+        self.assertIn("top level of a checkout", hold["reason"])
+        self.assertEqual(len(self.blockers(adopter)), 1)
+        self.assertEqual([adopter.item(name)["stage"] for name in ("first", "second")], ["queued", "queued"])
+        self.assertNotIn("candidate.stopped", [entry["kind"] for entry in state_tool.read_journal(adopter.state)])
+        self.assertTrue(state_tool.show(adopter.state)["status"]["text"].startswith("Serving is paused: "))
+        # Repaired and released by the lead: the queue lands in order, with no lane handing anything off again.
+        restore[0]()
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="lead", version=current["version"], assignments={"/meta/hold": None})
+        self.assertEqual(self.outcomes(self.serve(adopter)), [("batch", "first", "merged"), ("batch", "second", "merged")])
+
+    def test_a_binding_made_invalid_mid_run_holds_serve_with_its_reason(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.recover
+        broken: list[bool] = []
+
+        def break_after_startup(runner) -> None:
+            if not broken:
+                broken.append(True)
+                adopter.advance_base({".agents/orchestration.json": "{ not json\n"})
+            real(runner)
+
+        with mock.patch.object(queue.Runner, "recover", break_after_startup):
+            self.serve(adopter)
+        hold = state_tool.read_state(adopter.state)["meta"]["hold"]
+        self.assertIn(".agents/orchestration.json", hold["reason"])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertEqual(len(self.blockers(adopter)), 1)
+
+    def test_a_setup_that_breaks_during_a_turn_holds_serve_without_stopping_its_candidates(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.run_command
+        restore: list[Callable[[], None]] = []
+
+        def break_then_run(runner, *args, **kwargs):
+            if not restore:
+                restore.append(self.break_checkout(adopter))
+            return real(runner, *args, **kwargs)
+
+        with mock.patch.object(queue.Runner, "run_command", break_then_run):
+            results = self.serve(adopter)
+        self.assertEqual(results[-1].document()["stop"]["reason"], "binding_invalid")
+        # The refusal was the setup's, not the candidate's: the candidate waits, and serving is held.
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertIn("top level of a checkout", state_tool.read_state(adopter.state)["meta"]["hold"]["reason"])
+        self.assertEqual(len(self.blockers(adopter)), 1)
+        restore[0]()
+
+    def test_a_candidate_whose_check_fails_stops_alone_and_holds_nothing(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/app.txt": "FAIL\n"}, name="first")
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        self.serve(adopter)
+        self.assertEqual((adopter.item("first")["stage"], adopter.item("second")["stage"]), ("stopped", "merged"))
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"].get("hold"))
+        self.assertEqual(self.blockers(adopter), [])
+
+    def test_a_hold_already_set_is_never_replaced_by_serve(self) -> None:
+        adopter = self.adopter()
+        lead_hold = {"reason": "release in progress", "since": "2026-10-21T10:00:00Z"}
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="lead", version=current["version"], changes={"meta": {"hold": lead_hold}})
+        # The lead held serving while a turn ran; that turn's setup refusal leaves the lead's hold as it is.
+        queue.hold_for_setup(adopter.state, "--repo must be the top level of a checkout")
+        self.assertEqual(state_tool.read_state(adopter.state)["meta"]["hold"], lead_hold)
+        self.assertEqual(self.blockers(adopter), [])
+
     def test_a_refused_candidate_stops_once_and_is_not_taken_again(self) -> None:
         adopter = self.adopter()
         # A lead input the binding does not declare: the runner refuses the candidate before doing anything.
