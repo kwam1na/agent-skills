@@ -870,7 +870,7 @@ def ticket_document() -> dict:
     state = copy.deepcopy(FIXED_STATE)
     state["tickets"] = {
         "change-2": {"title": "Tracker title two", "summary": "Shows each ticket's summary from the tracker."},
-        "change-3": {"title": "Tracker title three"},
+        "change-3": {"title": "Tracker title three", "summary": "Plans the third change."},
         "ticket-9": {"title": "Tracker follow-up", "summary": "Opens with what the work does."},
     }
     return {"state": state, "journal": FIXED_JOURNAL}
@@ -880,6 +880,7 @@ TICKET_LINES = (
     "change-2: Tracker title two",
     "Shows each ticket's summary from the tracker.",
     "change-3: Tracker title three",
+    "Plans the third change.",
     "Tracker follow-up",
     "Opens with what the work does.",
 )
@@ -967,7 +968,16 @@ class TicketViewTests(unittest.TestCase):
         self.assertNotIn(render_state._markdown_text("change-2: " + HOSTILE), view, "the tracker's title replaces the record's")
         # Work with no ticket keeps the record's own title, and no summary line.
         self.assertIn(render_state._markdown_text("change-1: Change one"), view)
-        self.assertEqual(view.count("summary:"), 2)
+        self.assertEqual(view.count("summary:"), 3)
+
+    def test_a_follow_up_s_ticket_is_found_by_its_reference_before_its_id(self) -> None:
+        document = ticket_document()
+        document["state"]["tickets"]["follow-1"] = {"title": "By its id", "summary": "Found by id."}
+        view = render_state.render_markdown(document)
+        self.assertIn(render_state._markdown_text("Tracker follow-up"), view)
+        self.assertNotIn("By its id", view)
+        del document["state"]["tickets"]["ticket-9"]
+        self.assertIn(render_state._markdown_text("By its id"), render_state.render_markdown(document))
 
     def test_without_tickets_the_views_show_the_record_s_titles(self) -> None:
         view = render_state.render_markdown({"state": FIXED_STATE, "journal": FIXED_JOURNAL})
@@ -1944,6 +1954,8 @@ const indicator = node("p");
 indicator.hidden = true;  // as the page's own markup starts it
 const byId = { "delivery-state": { textContent: embedded }, app: node("main"), "live-status": indicator };
 if (scenario.now) { Date.now = () => Date.parse(scenario.now); }
+// The page's redraw timer is held here and fired on demand, so no test waits on it.
+globalThis.setInterval = (callback, ms) => { globalThis.__tick = callback; globalThis.__every = ms; return 1; };
 globalThis.document = {
   getElementById: (id) => byId[id] || null,
   createElement: node,
@@ -1975,9 +1987,10 @@ new Function(program)();
 setTimeout(async () => {
   if (scenario.push && globalThis.__push) { globalThis.__push(scenario.push); }
   if (scenario.status !== undefined && globalThis.__status) { globalThis.__status(scenario.status); }
+  if (scenario.tickTo && globalThis.__tick) { Date.now = () => Date.parse(scenario.tickTo); globalThis.__tick(); }
   await wait(10 + ((scenario.adapter && scenario.adapter.readDelayMs) || 0));
   const tags = [...new Set(created.map((e) => e.tagName))].sort();
-  process.stdout.write(JSON.stringify({ text: byId.app.textContent, tags,
+  process.stdout.write(JSON.stringify({ text: byId.app.textContent, tags, every: globalThis.__every || null,
     source: byId.app.attributes["data-source"] || null,
     status: byId["live-status"].hidden ? null : byId["live-status"].textContent }));
 }, 10);
@@ -2048,6 +2061,13 @@ setTimeout(async () => {
                         "the summary comes right after the title")
         self.assertNotIn("change-2: " + HOSTILE, text)
         self.assertIn("change-1: Change one", text)
+        self.assertLess(text.index("change-3: Tracker title three"), text.index("Plans the third change."))
+        # A follow-up's ticket is found by its reference before its id.
+        document = ticket_document()
+        document["state"]["tickets"]["follow-1"] = {"title": "By its id", "summary": "Found by id."}
+        text = self.run_page({}, document)["text"]
+        self.assertIn("Tracker follow-up", text)
+        self.assertNotIn("By its id", text)
 
     def test_the_page_works_out_expected_starts_from_its_own_clock(self) -> None:
         # Nothing running and a quiet record: an hour on, the next start is now, never an hour ago.
@@ -2060,6 +2080,15 @@ setTimeout(async () => {
         self.assertIn("position 1 · expected to start around 2026-10-20T13:00:00Z (an estimate)", text)
         self.assertNotIn("12:00:00Z (an estimate)", text)
 
+    def test_an_open_page_draws_itself_again_on_a_quiet_record(self) -> None:
+        document = visibility_document()
+        document["state"]["meta"]["checking"] = {"now": None, "next": []}
+        document["state"]["queue"][0]["stage"] = "merged"
+        shown = self.run_page({"now": "2026-10-20T12:00:00Z", "tickTo": "2026-10-20T12:45:00Z"}, document)
+        self.assertEqual(shown["every"], 30000)
+        self.assertIn("position 1 · expected to start around 2026-10-20T12:45:00Z (an estimate)", shown["text"])
+        self.assertNotIn("12:00:00Z (an estimate)", shown["text"])
+
     def test_the_page_s_expected_starts_agree_with_the_state_tool_s(self) -> None:
         now = "2026-10-20T12:00:00.250Z"
         running = {"subject": "change-1", "title": "Change one", "startedAt": "2026-10-20T11:58:20.900Z", "steps": []}
@@ -2070,6 +2099,9 @@ setTimeout(async () => {
             "an even count": (None, [100, 200, 300, 400]),
             "a start in the future": ({**running, "startedAt": "2026-10-20T13:00:00Z"}, [600] * 5),
             "an absurd history": (None, [10 ** 15] * 5),
+            "a history past the calendar": (None, [4 * 10 ** 11] * 5),
+            "a history far past the calendar": (None, [10 ** 12] * 5),
+            "a start partway through a second": ({**running, "startedAt": "2026-10-20T11:58:20.400Z"}, [600] * 5),
         }
         for name, (current, runs) in cases.items():
             with self.subTest(case=name):
@@ -2080,13 +2112,19 @@ setTimeout(async () => {
                     {**FIXED_STATE["queue"][0], "stage": "checking" if current else "merged"},
                     {**FIXED_STATE["queue"][1], "order": 3, "subject": "change-z"},
                     {**FIXED_STATE["queue"][1], "order": 2, "subject": "change-y"},
+                    # Tied in order: the subjects decide, code point by code point.
+                    {**FIXED_STATE["queue"][1], "order": 4, "subject": "\U0001F600-a"},
+                    {**FIXED_STATE["queue"][1], "order": 4, "subject": "\uFFFD-b"},
                 ]
                 if runs is not None:
                     state["meta"]["checkHistory"] = {"checks": {}, "runs": runs}
                 expected = delivery_state.queue_estimates(state, at=now)
                 text = self.run_page({"now": now}, {"state": state, "journal": []})["text"]
                 for subject, estimate in expected.items():
-                    self.assertIn(render_state._estimate_text(estimate), text, subject)
+                    # Each estimate on its own row: the first after the row's subject.
+                    row = text.index(f"{subject}: ")
+                    shown = text[row:text.index("(an estimate)", row) + len("(an estimate)")]
+                    self.assertTrue(shown.endswith(render_state._estimate_text(estimate)), (subject, shown))
 
     def test_the_page_counts_a_running_check_live_from_its_own_clock(self) -> None:
         # Five minutes after the last write, with no write since, the page still counts on.

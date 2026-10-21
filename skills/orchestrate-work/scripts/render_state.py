@@ -540,15 +540,25 @@ _PAGE_PROGRAM = """
       var spent = Math.trunc((moment - Date.parse(current.startedAt)) / 1000);
       remaining = isNaN(spent) ? expected : Math.min(expected, Math.max(0, expected - spent));
     }
+    /* Ties in order go by subject, code point by code point, as the state tool sorts them. */
+    function bySubject(a, b) {
+      var left = Array.from(a), right = Array.from(b);
+      for (var index = 0; index < Math.min(left.length, right.length); index += 1) {
+        var difference = left[index].codePointAt(0) - right[index].codePointAt(0);
+        if (difference) { return difference; }
+      }
+      return left.length - right.length;
+    }
     var waiting = state.queue.filter(function (item) { return item.stage === "queued"; }).sort(function (a, b) {
-      return a.order - b.order || (a.subject < b.subject ? -1 : a.subject > b.subject ? 1 : 0);
+      return a.order - b.order || bySubject(a.subject, b.subject);
     });
     var estimates = {};
     waiting.forEach(function (item, index) {
       var start = null;
       if (expected !== null && !isNaN(moment)) {
         var at = new Date(Math.floor((moment + (remaining + index * expected) * 1000) / 1000) * 1000);
-        start = isNaN(at.getTime()) ? null : at.toISOString().replace(".000Z", "Z");
+        /* Past the calendar the state tool writes, the start is unknown there too. */
+        start = isNaN(at.getTime()) || at.getUTCFullYear() > 9999 ? null : at.toISOString().replace(".000Z", "Z");
       }
       estimates[item.subject] = { position: index + 1, expectedStart: start };
     });
@@ -698,9 +708,11 @@ _PAGE_PROGRAM = """
     return parts;
   }
 
+  var shown = null;
   function draw(doc, source, note) {
     app.replaceChildren.apply(app, build(doc, note));
     app.setAttribute("data-source", source);
+    shown = { doc: doc, source: source, note: note };
   }
   /* The answer to one live document: "shown", "unusable" (a different state
      version or shape), or "failed" (it passed the checks but could not be
@@ -722,6 +734,13 @@ _PAGE_PROGRAM = """
   function fallBack(reason) { draw(embedded, "embedded", notes[reason]); }
 
   draw(embedded, "embedded");
+  /* Drawn again each half minute from what is shown, so running times and
+     expected starts follow the page's clock on a quiet record. */
+  if (typeof setInterval === "function") {
+    setInterval(function () {
+      try { draw(shown.doc, shown.source, shown.note); } catch (error) { /* the last drawing stays */ }
+    }, 30000);
+  }
   var store = globalThis.deliveryStateStore;
   /* A live store says whether its stream is connected; the page says so quietly. */
   var indicator = document.getElementById("live-status");

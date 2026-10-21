@@ -816,6 +816,8 @@ class ReconcileTests(unittest.TestCase):
         now = {"subject": "work-now", "title": "Work in progress", "state": "started"}
         code, result = run_tool(self.directory, "reconcile", "--snapshot", tracker(later, now))
         self.assertEqual(code, 0, result)
+        self.assertEqual(sorted(change["subject"] for change in result["changes"]), ["work-later", "work-now"],
+                         "work added with its ticket is one change")
         state = state_tool.show(self.directory)["state"]
         # Only what adds to the record: a title the record already holds, with no summary, is not repeated.
         self.assertEqual(state["tickets"], {
@@ -885,6 +887,38 @@ class ReconcileTests(unittest.TestCase):
         code, result = run_tool(self.directory, "reconcile", "--snapshot", longest)
         self.assertEqual(code, 0, result)
         self.assertEqual(len(state_tool.show(self.directory)["state"]["tickets"]["x"]["summary"]), limit)
+        # Counted in characters, not in UTF-16 units.
+        wide = self.snapshot("tracker", [{"subject": "x", "title": "X", "state": "backlog",
+                                          "summary": "\U0001F600" * limit}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", wide)
+        self.assertEqual(code, 0, result)
+        wider = self.snapshot("tracker", [{"subject": "x", "title": "X", "state": "backlog",
+                                           "summary": "\U0001F600" * (limit + 1)}])
+        self.assertEqual(run_tool(self.directory, "reconcile", "--snapshot", wider)[1]["code"], "snapshot_invalid")
+
+    def test_a_blank_summary_is_none_and_text_that_cannot_be_stored_is_refused_up_front(self) -> None:
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "planned"}]})
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot(
+            "tracker", [{"subject": "work-now", "title": "Work", "state": "started", "summary": "  \n "}]))
+        self.assertEqual((code, result["drift"]), (0, False), result)
+        self.assertEqual(self.bytes(), before)
+        path = self.root / "lone surrogate.json"
+        path.write_text('{"takenAt": "%s", "source": "tracker", "items": [{"subject": "work-now", "title": "Work", '
+                        '"state": "started", "summary": "\\ud800"}]}' % taken(), encoding="utf-8")
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(path))
+        self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"))
+        self.assertEqual(self.bytes(), before)
+
+    def test_a_follow_up_id_that_names_queued_work_keeps_the_queue_s_title(self) -> None:
+        self.lead({"queue": [queue_item("work-a")],
+                   "followups": [{"id": "work-a", "title": "A follow-up's title", "reference": "work-f"}]})
+        before = self.bytes()
+        own = state_tool.show(self.directory)["state"]["queue"][0]["title"]
+        code, result = run_tool(self.directory, "reconcile", "--snapshot",
+                                self.snapshot("tracker", [{"subject": "work-a", "title": own, "state": "started"}]))
+        self.assertEqual((code, result["drift"]), (0, False), result)
+        self.assertEqual(self.bytes(), before)
 
     def test_a_stale_or_malformed_snapshot_is_refused_and_nothing_is_written(self) -> None:
         before = self.bytes()

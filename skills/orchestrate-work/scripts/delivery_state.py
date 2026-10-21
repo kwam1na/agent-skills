@@ -1313,6 +1313,11 @@ def check_snapshot(snapshot: object, name: str, max_age: float, *, parent: str |
     """
     errors = validate(snapshot, load_schema("work-snapshot/1"))
     if not errors:
+        try:
+            _require_unicode(snapshot, "snapshot_invalid")
+        except StateError as error:
+            errors.append(str(error))
+    if not errors:
         allowed = SNAPSHOT_STATES[snapshot["source"]]
         errors = [f"/items/{index}/state: {item['state']} is not a {snapshot['source']} state"
                   for index, item in enumerate(snapshot["items"]) if item["state"] not in allowed]
@@ -1457,13 +1462,14 @@ def _ticket_changes(tickets: dict, listed: dict[str, dict], lead: dict) -> dict:
     for subject, item in listed.items():
         if subject not in own:
             continue
-        # A ticket listed without a title keeps the record's own.
+        # A ticket listed without a title keeps the record's own; a blank summary is none.
         title = item.get("title") or own[subject]
-        wanted = {"title": title, **({"summary": item["summary"]} if "summary" in item else {})}
-        if "summary" not in item and title == own[subject]:
+        summary = item["summary"] if (item.get("summary") or "").strip() else None
+        wanted = {"title": title, **({"summary": summary} if summary is not None else {})}
+        if summary is None and title == own[subject]:
             wanted = None
         if tickets.get(subject) != wanted:
-            patch[subject] = None if wanted is None else {"title": title, "summary": item.get("summary")}
+            patch[subject] = None if wanted is None else {"title": title, "summary": summary}
     return patch
 
 

@@ -38,8 +38,9 @@ it through the state tool, then render the views.
   these fields; no product tool writes `extensions`.
 - **Ticket titles and summaries come from the tracker.** The optional
   `tickets` map, `{<subject>: {title, summary?}}`, holds each ticket's own
-  title and summary for work the record holds. `reconcile` keeps it from
-  tracker snapshots; the lead never writes it by hand.
+  title and summary for work the record held when it was written; an entry
+  stays once written. `reconcile` keeps it from tracker snapshots; the lead
+  never writes it by hand.
 - **One element, one version, per write.** Update queue and lane elements one
   at a time with `--element 'queue[subject=<subject>]'`. Each write needs the
   current `--version`, so read it again with `show` between writes; a stale
@@ -786,8 +787,8 @@ binding declares may change.
   each candidate ahead. Without run history the start is unknown. Both are
   estimates, never promises. The markdown view shows them as of the
   record's last write; the page works them out again from the record's
-  history by its own clock, so a quiet record never shows a start that has
-  already passed.
+  history by its own clock, and draws itself again each half minute, so a
+  quiet record never shows a start that has already passed.
 
 ### Flakes and retries
 
