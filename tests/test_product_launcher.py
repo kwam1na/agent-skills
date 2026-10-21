@@ -1711,7 +1711,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             self.assertEqual(tracker.escaped(), (301,))
             self.assertEqual(tracker.preview()["identity"], "unique-id")
             # A table some of whose processes fell back says so.
-            table[302] = _Process(1, 302, UID, (12, 0), False)
+            table[302] = _Process(100, 302, UID, (12, 0), False)
             self.assertEqual(tracker.preview()["identity"], "mixed")
             # A refused candidate read once with its id and once without is
             # still the same process, and still counts.
@@ -1806,6 +1806,64 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             plain = _darwin_process(os.getpid())
         self.assertEqual(plain.started, tuple(me.started[:2]))
         self.assertIsNone(plain.parent_unique)
+
+    def test_a_process_read_with_and_without_its_unique_id_is_the_same_process_everywhere(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        full = {
+            100: _Process(me, 100, UID, _Stamp(10, 0, 40), False, 30),
+            300: _Process(100, 100, UID, _Stamp(11, 0, 50), False, 40),   # a group member
+            301: _Process(100, 301, UID, _Stamp(11, 0, 51), False, 40),   # escaped
+        }
+        plain = {pid: process._replace(started=tuple(process.started[:2]), parent_unique=None)
+                 for pid, process in full.items()}
+        reads = [full]
+        tracker = _DescendantTracker(child, table=lambda: dict(reads[-1]), watcher=lambda *callbacks: Mock())
+        tracker.observe()
+        for table in (plain, full, plain):
+            reads.append(table)
+            self.assertEqual(tracker.escaped(), (301,))
+            self.assertEqual(tracker.group_members(), (100, 300))
+            self.assertEqual(tracker.preview()["group"], 100)
+        self.assertEqual(tracker.preview()["identity"], "start-time")
+        # A known descendant read without its id still seeds ancestry.
+        reads.append({**plain, 301: plain[301]._replace(ppid=1), 302: _Process(301, 302, UID, (12, 0), False)})
+        self.assertIn(302, tracker.escaped())
+        # It still vouches, as a parent, for a fork the watcher saw.
+        with patch("agent_skills.product._darwin_process",
+                   side_effect={301: plain[301], 320: _Process(301, 320, UID, (13, 0), False)}.get):
+            self.assertTrue(tracker.adopt(320, 301))
+        # Its exit, reported with the start read without the id, is its own.
+        tracker.ended(301, (11, 0), (20, 0))
+        self.assertEqual(tracker._ends[301][1], (20, 0))
+        # And while it is there, its group is its own.
+        reads.append({**plain, 330: _Process(1, 301, UID, (21, 0), False)})
+        self.assertIn(330, tracker.escaped())
+
+    def test_a_marker_carrier_reusing_a_known_pid_is_read_and_an_unread_table_says_so(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        marker = b"AGENT_SKILLS_LAUNCH_k=1"
+        table = {100: _Process(me, 100, UID, _Stamp(10, 0, 40), False, 30),
+                 200: _Process(1, 200, UID, _Stamp(12, 0, 50), False, 7)}
+        read = []
+        tracker = _DescendantTracker(child, table=lambda: dict(table), marker=marker,
+                                     environment=lambda pid: read.append(pid) or [marker])
+        self.assertEqual(tracker.escaped(), (200,))
+        table[200] = _Process(1, 200, UID, _Stamp(13, 0, 60), False, 999)
+        read.clear()
+        self.assertEqual(tracker.escaped(), (200,))
+        self.assertEqual(read, [200])
+        self.assertEqual(tracker.preview()["escaped"], [[200, "marker"]])
+        # The identity describes the run's processes, not an unrelated one
+        # that fell back.
+        table[500] = _Process(1, 500, UID, (14, 0), False)
+        environment_free = tracker._environment
+        tracker._environment = lambda pid: [b"HOME=/"] if pid == 500 else environment_free(pid)
+        self.assertEqual(tracker.preview()["identity"], "unique-id")
+        # Before any table has been read, the preview names no identity.
+        unread = _DescendantTracker(child, table=lambda: None)
+        self.assertEqual(unread.preview()["identity"], "unread")
 
     def test_process_environments_are_read_where_the_platform_exposes_them(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

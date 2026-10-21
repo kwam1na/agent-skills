@@ -578,9 +578,8 @@ class _DescendantTracker:
         # The launcher's own start: no descendant started before it.
         self._floor: object = None
         self._last_table: dict[int, _Process] = {}
-        # How the last table told processes apart (see ``preview``).
-        self._identity = "unread"
-        self._unmarked: set[tuple[int, object]] = set()
+        # Starts read and found unmarked, by pid, so each process is read once.
+        self._unmarked: dict[int, list[object]] = {}
         self._ticks = 0
 
     def observe(self, *, throttle: bool = False) -> dict[int, _Process] | None:
@@ -596,9 +595,6 @@ class _DescendantTracker:
         if table is None:
             return None
         self._last_table = table
-        stamped = {isinstance(process.started, _Stamp) for process in table.values()}
-        self._identity = {frozenset({True}): "unique-id", frozenset({False}): "start-time"}.get(
-            frozenset(stamped), "mixed" if stamped else self._identity)
         if self._floor is None and os.getpid() in table:
             self._floor = table[os.getpid()].started
         root = table.get(self._root)
@@ -631,7 +627,7 @@ class _DescendantTracker:
             seeds.add(self._root)
         for pid, process in table.items():
             if _same_process(process.started, self._known.get(pid)) or process.zombie \
-                    or (pid, process.started) in self._refused:
+                    or self._is_refused(pid, process.started):
                 continue
             if root_present and process.pgid == self._root:
                 self._learn(pid, process, "group", table)
@@ -753,7 +749,7 @@ class _DescendantTracker:
                 return False  # Forked by another process that held that pid.
             if _same_process(process.started, self._known.get(pid)):
                 return True
-            if (pid, process.started) in self._refused:
+            if self._is_refused(pid, process.started):
                 return False
             return self._learn(pid, process, "forked", None)
 
@@ -800,7 +796,8 @@ class _DescendantTracker:
             if _same_process(process.started, self._known.get(pid)) or process.zombie \
                     or pid in (os.getpid(), self._root):
                 continue
-            if (pid, process.started) in self._unmarked or (pid, process.started) in self._refused:
+            if any(_same_process(process.started, seen) for seen in self._unmarked.get(pid, ())) \
+                    or self._is_refused(pid, process.started):
                 continue
             reference = self._root_started if self._root_started is not None else self._floor
             if _started_before(process.started, reference):
@@ -814,7 +811,7 @@ class _DescendantTracker:
                 self._learn(pid, process, "marker" if marked else "lifeline", table)
             elif environment is not None and pipes is not None:
                 # Remembered by pid and start, so each process is read once.
-                self._unmarked.add((pid, process.started))
+                self._unmarked.setdefault(pid, []).append(process.started)
             # Otherwise not readable now; tried again on the next sweep.
 
     def escaped(self) -> tuple[int, ...] | None:
@@ -844,6 +841,25 @@ class _DescendantTracker:
                 else:
                     self._refused[(pid, started)] = refusal
             return tuple(sorted(selected))
+
+    def _is_refused(self, pid: int, started: object) -> bool:
+        """Whether this process was refused, however its start was read."""
+        return any(refused == pid and _same_process(started, stamp) for refused, stamp in self._refused)
+
+    def _identity(self, table: dict[int, _Process]) -> str:
+        """How the run's processes were told apart in this table.
+
+        Over the launcher, the child, and every process learned or refused:
+        ``unique-id``, ``start-time`` where the unique id could not be read,
+        ``mixed``, or ``unread`` before any of them was read.
+        """
+        pids = {os.getpid(), self._root, *self._known, *(pid for pid, _ in self._refused)}
+        stamped = {isinstance(table[pid].started, _Stamp) for pid in pids if pid in table}
+        if not stamped:
+            return "unread"
+        if len(stamped) > 1:
+            return "mixed"
+        return "unique-id" if True in stamped else "start-time"
 
     def _live_refusals(self, table: dict[int, _Process] | None) -> list[tuple[int, str]]:
         """Refused candidates still running outside the child's group, by pid.
@@ -876,7 +892,7 @@ class _DescendantTracker:
             return {
                 # How the last table told processes apart: the kernel's unique
                 # id, the start stamp where it cannot be read, or a mix.
-                "identity": self._identity,
+                "identity": self._identity(self._last_table),
                 "group": self._root if self._root_present else None,
                 "escaped": None if escaped is None else [[pid, self._why[pid]] for pid in escaped],
                 # Behind an unreadable table every refusal still counts.
