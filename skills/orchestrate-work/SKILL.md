@@ -136,11 +136,12 @@ first, declares the missing provider membership or adds the check to
 ## The merge queue
 
 The lead owns every merge through the runner, `merge_queue.py`. Run it with
-`python3 -B` from the repository it serves, naming the state directory, the
-remote and the base branch every time:
+`python3 -B` from the top level of a checkout of the repository it serves, or
+name that top level with `--repo`; a subdirectory is refused. Name the state
+directory, the remote and the base branch every time:
 
 ```text
-python3 -B <skill>/scripts/merge_queue.py --state <state directory> --remote <remote> --base <base branch> [--lead <holder>] [--wait <seconds>] <subcommand>
+python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state <state directory> --remote <remote> --base <base branch> [--lead <holder>] [--wait <seconds>] <subcommand>
 ```
 
 - The runner reads the repository's binding, `.agents/orchestration.json`,
