@@ -29,6 +29,13 @@ it through the state tool, then render the views.
   writes `stage`, `syncedHead`, `checks`, `meta.baseHead`,
   `meta.releasedHead` and `meta.checking`; a lead attempt is refused with
   `field_not_owned`.
+- **Planned work and change requests are the lead's.** The optional
+  `planned[]` list holds work under way but not yet handed to the queue,
+  `{subject, title, lane, stage: planned|review, changeRequest?}`, selected
+  as `planned[subject=<subject>]`; a queue or planned element's optional
+  `changeRequest` names its change request. `reconcile` maintains both from
+  snapshots. A record that kept these under `extensions` moves them onto
+  these fields; no product tool writes `extensions`.
 - **One element, one version, per write.** Update queue and lane elements one
   at a time with `--element 'queue[subject=<subject>]'`. Each write needs the
   current `--version`, so read it again with `show` between writes; a stale
@@ -39,6 +46,14 @@ it through the state tool, then render the views.
   array in a lead merge patch: every existing element copied exactly from
   that read, including the runner's fields, plus the new element. A copy that
   changes a runner-owned field is refused with `field_not_owned`.
+- **Live state comes before the work.** While a candidate's checks run, the
+  runner names every selected check in `meta.checking.now.steps` and in that
+  queue element's `checks`, in run order. It marks a check `running` before
+  the check starts and records its result when it ends, writing both places in
+  one patch, so the checking panel and the queue row always agree. A check
+  whose prerequisite failed reads `skipped`; one that never started reads
+  `pending`. Whatever acts as the runner should write live state the same way:
+  before the work starts, not after it.
 
 ### Before the repository has the runner
 
@@ -536,7 +551,7 @@ substitutes inside a longer string:
 | `release` | Ordered targets, each with an `id`, `argv`, `stopsOnFailure` and `requiresApproval`, and an optional `timeoutSeconds`. |
 | `fullHealth` | The argv for the close-out run. |
 | `leases` | Each lease's `id`, `description` and `defaultHolder`, plus optional `materialize` and `withdraw` argv. |
-| `state` | `{directory, renderers, publishers}`. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`. After each of its state writes the runner passes this member to the render wrapper. |
+| `state` | `{directory, renderers, publishers}`. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`, or `{id, kind: "host"}`, which writes an outbox for the lead to publish. After each of its state writes the runner passes this member to the render wrapper. |
 
 ### Git hooks
 
@@ -650,7 +665,9 @@ binding's `state.publishers`, and the render wrapper, `render_state.py`, runs
 them after every state write, recording any failure without stopping.
 
 Some hosts store a live document only through their own tool, not through a
-command the binding can name. Then publishing is a lead step:
+command the binding can name. Then publishing is a lead step. With a `host`
+publisher in the binding, publish the outbox it writes and acknowledge it, as
+the skill's sync loop says. Without one:
 
 1. After each runner result (a sync, a check, a merge, a release or a stop),
    and after each lead write to the state, read the validated document with

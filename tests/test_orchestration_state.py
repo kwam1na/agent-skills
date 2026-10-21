@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import datetime
 import importlib.util
 import json
 import os
@@ -704,6 +705,413 @@ def _guard_calls(tree: ast.AST) -> list[tuple[str, list[str]]]:
     return [(name, arguments) for _, name, arguments in sorted(calls)]
 
 
+def taken(seconds_ago: float = 0) -> str:
+    moment = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=seconds_ago)
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+class ReconcileTests(unittest.TestCase):
+    """The record is reconciled from neutral snapshots the lead writes with its own tools."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.directory = self.root / "state"
+        state_tool.init(self.directory, "Epic underway")
+        self.count = 0
+
+    def snapshot(self, source: str, items: list[dict], *, age: float = 0) -> str:
+        self.count += 1
+        path = self.root / f"snapshot {self.count}.json"
+        path.write_text(json.dumps({"takenAt": taken(age), "source": source, "items": items}), encoding="utf-8")
+        return str(path)
+
+    def lead(self, changes: dict) -> dict:
+        version = state_tool.show(self.directory)["state"]["version"]
+        return state_tool.patch(self.directory, writer="lead", version=version, changes=changes)
+
+    def bytes(self) -> tuple[bytes, bytes]:
+        return (self.directory / state_tool.STATE_FILE).read_bytes(), (self.directory / state_tool.JOURNAL_FILE).read_bytes()
+
+    def test_tracker_children_missing_from_the_record_are_added_and_a_second_run_finds_no_drift(self) -> None:
+        tracker = self.snapshot("tracker", [
+            {"subject": "work-later", "title": "Later work", "state": "backlog"},
+            {"subject": "work-now", "title": "Work in progress", "state": "started"},
+            {"subject": "work-dropped", "title": "Dropped", "state": "canceled"},
+        ])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", tracker)
+        self.assertEqual(code, 0, result)
+        self.assertTrue(result["drift"])
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state["followups"], [{"id": "work-later", "title": "Later work", "reference": "work-later"}])
+        self.assertEqual(state["planned"], [{"subject": "work-now", "title": "Work in progress", "lane": None,
+                                              "stage": "planned"}])
+        self.assertEqual(len(result["changes"]), 2)
+        again = self.snapshot("tracker", json.loads(Path(tracker).read_text())["items"])
+        version = state["version"]
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", again)
+        self.assertEqual((code, result["drift"], result["changes"]), (0, False, []))
+        self.assertEqual(result["summary"], "no drift")
+        self.assertEqual(state_tool.show(self.directory)["state"]["version"], version)
+
+    def test_tracker_completion_the_record_has_not_seen_is_reported_not_written(self) -> None:
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "planned"}]})
+        before = self.bytes()
+        tracker = self.snapshot("tracker", [
+            {"subject": "work-now", "title": "Work", "state": "completed"},
+            {"subject": "work-unknown", "title": "Never recorded", "state": "completed"},
+        ])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", tracker)
+        self.assertEqual((code, result["changes"]), (0, []))
+        self.assertEqual(sorted(report["subject"] for report in result["reports"]), ["work-now", "work-unknown"])
+        self.assertEqual(self.bytes(), before)
+
+    def test_a_stale_or_malformed_snapshot_is_refused_and_nothing_is_written(self) -> None:
+        before = self.bytes()
+        stale = self.snapshot("tracker", [{"subject": "x", "title": "X", "state": "started"}], age=901)
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", stale)
+        self.assertEqual((code, refused["code"]), (1, "snapshot_stale"))
+        fresh = self.snapshot("tracker", [{"subject": "x", "title": "X", "state": "started"}])
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", fresh, "--snapshot", stale)
+        self.assertEqual((code, refused["code"]), (1, "snapshot_stale"), "one stale snapshot refuses them all")
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", stale, "--max-age", "1000")
+        self.assertEqual(code, 0, refused)
+        self.assertEqual(state_tool.show(self.directory)["state"]["planned"][0]["subject"], "x")
+        before = self.bytes()
+        for name, document in {
+            "wrong state word": {"takenAt": taken(), "source": "tracker", "items": [{"subject": "y", "state": "open"}]},
+            "unknown source": {"takenAt": taken(), "source": "chat", "items": []},
+            "no items": {"takenAt": taken(), "source": "forge"},
+        }.items():
+            with self.subTest(name):
+                path = self.root / f"{name}.json"
+                path.write_text(json.dumps(document), encoding="utf-8")
+                code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(path))
+                self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"))
+                self.assertEqual(self.bytes(), before)
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(self.root / "missing.json"))
+        self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"))
+        twice = self.root / "twice.json"
+        twice.write_text(json.dumps({"takenAt": taken(), "source": "forge", "items": [
+            {"subject": "y", "state": "open"}, {"subject": "y", "state": "merged"}]}), encoding="utf-8")
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(twice))
+        self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"), "a subject appears once in a snapshot")
+        self.assertIn("each subject appears once", refused["error"])
+        first = self.snapshot("forge", [{"subject": "y", "state": "open", "changeRequest": "cr1"}])
+        second = self.snapshot("forge", [{"subject": "y", "state": "merged", "changeRequest": "cr2"}])
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", first, "--snapshot", second)
+        self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"), "two forge views of one subject conflict")
+        self.assertEqual(self.bytes(), before)
+        ahead = self.snapshot("tracker", [{"subject": "z", "title": "Z", "state": "started"}], age=-120)
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", ahead)
+        self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"), "a snapshot from the future is refused")
+        self.assertEqual(self.bytes(), before)
+        skewed = self.snapshot("tracker", [{"subject": "z", "title": "Z", "state": "started"}], age=-30)
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", skewed)
+        self.assertEqual(code, 0, "a clock a little ahead is tolerated")
+
+    def test_an_open_change_request_links_planned_work_and_moves_it_to_review(self) -> None:
+        self.lead({"planned": [
+            {"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "planned"},
+            {"subject": "work-b", "title": "B", "lane": None, "stage": "planned"},
+        ], "queue": [queue_item("work-c")]})
+        forge = self.snapshot("forge", [
+            {"subject": "work-a", "state": "open", "changeRequest": "change 11", "head": HEAD_A},
+            {"subject": "work-b", "state": "draft", "changeRequest": "change 12"},
+            {"subject": "work-c", "state": "open", "changeRequest": "change 13"},
+            {"subject": "work-unrecorded", "state": "open", "changeRequest": "change 14"},
+        ])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual(code, 0, result)
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state["planned"], [
+            {"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "review", "changeRequest": "change 11"},
+            {"subject": "work-b", "title": "B", "lane": None, "stage": "planned", "changeRequest": "change 12"},
+        ])
+        self.assertEqual(state["queue"][0]["changeRequest"], "change 13")
+        self.assertEqual(state["queue"][0]["stage"], "queued", "the lead's reconcile never writes runner fields")
+        self.assertEqual([report["subject"] for report in result["reports"]], ["work-unrecorded"])
+        again = self.snapshot("forge", json.loads(Path(forge).read_text())["items"])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", again)
+        self.assertEqual((code, result["drift"]), (0, False))
+
+    def test_a_snapshot_exactly_the_maximum_age_old_is_fresh_and_one_second_more_is_stale(self) -> None:
+        moment = datetime.datetime(2026, 10, 20, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        path = self.root / "boundary.json"
+        path.write_text(json.dumps({"takenAt": "2026-10-20T12:00:00Z", "source": "tracker", "items": []}),
+                        encoding="utf-8")
+        for elapsed, fresh in ((state_tool.SNAPSHOT_MAX_AGE_SECONDS, True), (state_tool.SNAPSHOT_MAX_AGE_SECONDS + 1, False)):
+            later = moment + datetime.timedelta(seconds=elapsed)
+
+            class Frozen(datetime.datetime):
+                @classmethod
+                def now(cls, tz=None):  # noqa: ANN001, ANN206 - the clock the tool reads
+                    return later
+
+            with self.subTest(elapsed=elapsed), mock.patch.object(state_tool.datetime, "datetime", Frozen):
+                if fresh:
+                    self.assertEqual(state_tool.read_snapshot(path, state_tool.SNAPSHOT_MAX_AGE_SECONDS)["items"], [])
+                else:
+                    with self.assertRaises(state_tool.StateError) as refused:
+                        state_tool.read_snapshot(path, state_tool.SNAPSHOT_MAX_AGE_SECONDS)
+                    self.assertEqual(refused.exception.code, "snapshot_stale")
+
+    def test_one_pass_reaches_the_fixed_point_whatever_order_the_snapshots_come_in(self) -> None:
+        tracker = [{"subject": "work-new", "title": "New", "state": "started"}]
+        forge = [{"subject": "work-new", "state": "open", "changeRequest": "change 31"}]
+        for order in (("forge", "tracker"), ("tracker", "forge")):
+            with self.subTest(order=order):
+                directory = self.root / f"state {'-'.join(order)}"
+                state_tool.init(directory, "Epic underway")
+                items = {"tracker": tracker, "forge": forge}
+                paths = [self.snapshot(source, items[source]) for source in order]
+                arguments = [argument for path in paths for argument in ("--snapshot", path)]
+                code, result = run_tool(directory, "reconcile", *arguments)
+                self.assertEqual((code, result["reports"]), (0, []), result)
+                self.assertEqual(state_tool.show(directory)["state"]["planned"], [
+                    {"subject": "work-new", "title": "New", "lane": None, "stage": "review",
+                     "changeRequest": "change 31"}])
+                code, result = run_tool(directory, "reconcile", *arguments)
+                self.assertEqual((code, result["drift"]), (0, False))
+
+    def test_no_merge_is_recovered_while_the_runner_holds_the_queue(self) -> None:
+        self.lead({"queue": [queue_item("work-m", changeRequest="change 41")]})
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-m]",
+                         changes={"stage": "merging"})
+        forge = self.snapshot("forge", [{"subject": "work-m", "state": "merged", "changeRequest": "change 41",
+                                         "head": HEAD_B}])
+        before = self.bytes()
+        # The runner has merged on the forge and not yet recorded it.
+        with state_tool.file_lock(self.directory / state_tool.QUEUE_LOCK):
+            code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["drift"], result["changes"]), (0, False, []), result)
+        self.assertEqual([(report["subject"], "runner is running" in report["note"]) for report in result["reports"]],
+                         [("work-m", True)])
+        self.assertEqual(self.bytes(), before)
+        # Once the runner has gone without recording it, the next pass recovers it.
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, [change["recovery"] for change in result["changes"]]), (0, [True]), result)
+        self.assertEqual(state_tool.show(self.directory)["state"]["queue"][0]["stage"], "merged")
+
+    def test_a_merge_the_runner_records_after_the_plan_is_left_as_the_runner_wrote_it(self) -> None:
+        self.lead({"queue": [queue_item("work-r", changeRequest="change 51")]})
+        forge = self.snapshot("forge", [{"subject": "work-r", "state": "merged", "changeRequest": "change 51",
+                                         "head": HEAD_B}])
+        planning = state_tool._plan
+
+        def runner_records_its_merge(*args: object) -> tuple:
+            planned = planning(*args)
+            version = state_tool.show(self.directory)["state"]["version"]
+            state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-r]",
+                             changes={"stage": "merged", "syncedHead": HEAD_A})
+            state_tool.append_journal(self.directory, kind="candidate.merged", subject="work-r", summary="Merged")
+            return planned
+
+        with mock.patch.object(state_tool, "_plan", runner_records_its_merge):
+            result = state_tool.reconcile(self.directory, [Path(forge)])
+        self.assertEqual((result["drift"], result["changes"]), (False, []))
+        shown = state_tool.show(self.directory)
+        self.assertEqual(shown["state"]["queue"][0]["syncedHead"], HEAD_A)
+        self.assertEqual([entry["summary"] for entry in shown["journal"] if entry["kind"] == "candidate.merged"],
+                         ["Merged"])
+
+    def test_a_merge_the_runner_did_not_record_is_recorded_through_the_recovery_path(self) -> None:
+        self.lead({
+            "planned": [{"subject": "work-p", "title": "P", "lane": "lane-2", "stage": "review",
+                         "changeRequest": "change 21"}],
+            "queue": [queue_item("work-q"), queue_item("work-done", order=2)],
+        })
+        state_tool.patch(self.directory, writer="runner", version=state_tool.show(self.directory)["state"]["version"],
+                         selector="queue[subject=work-done]", changes={"stage": "merged"})
+        journal_before = state_tool.show(self.directory)["journal"]
+        forge = self.snapshot("forge", [
+            {"subject": "work-p", "state": "merged", "changeRequest": "change 21", "head": HEAD_B},
+            {"subject": "work-q", "state": "merged", "changeRequest": "change 22", "head": HEAD_B},
+            {"subject": "work-done", "state": "merged", "changeRequest": "change 23", "head": HEAD_A},
+        ])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual(code, 0, result)
+        shown = state_tool.show(self.directory)
+        queue = {item["subject"]: item for item in shown["state"]["queue"]}
+        # Planned work found merged joins the queue, as the lead, then is recorded merged, as the runner.
+        self.assertEqual(shown["state"]["planned"], [])
+        self.assertEqual((queue["work-p"]["stage"], queue["work-p"]["head"], queue["work-p"]["syncedHead"]),
+                         ("merged", HEAD_B, HEAD_B))
+        self.assertEqual((queue["work-p"]["lane"], queue["work-p"]["changeRequest"]), ("lane-2", "change 21"))
+        self.assertEqual((queue["work-q"]["stage"], queue["work-q"]["syncedHead"]), ("merged", HEAD_B))
+        # A merge the runner recorded stays exactly as the runner wrote it.
+        self.assertEqual((queue["work-done"]["stage"], queue["work-done"]["syncedHead"]), ("merged", None))
+        added = shown["journal"][len(journal_before):]
+        self.assertEqual([(entry["kind"], entry["subject"]) for entry in added],
+                         [("candidate.merged", "work-p"), ("candidate.merged", "work-q")])
+        self.assertTrue(all("not recorded by the runner" in entry["summary"] for entry in added))
+        self.assertEqual(sorted(change["subject"] for change in result["changes"] if change["recovery"]),
+                         ["work-p", "work-q"])
+        again = self.snapshot("forge", json.loads(Path(forge).read_text())["items"])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", again)
+        self.assertEqual((code, result["drift"]), (0, False))
+        self.assertEqual(len(state_tool.show(self.directory)["journal"]), len(shown["journal"]))
+
+    def test_reconcile_retries_a_record_that_moved_and_refuses_one_that_keeps_moving(self) -> None:
+        tracker = self.snapshot("tracker", [{"subject": "work-now", "title": "Work", "state": "started"}])
+        landed = []
+
+        def once() -> None:
+            if not landed:
+                landed.append(self.lead({"meta": {"headline": "Moved under reconcile"}}))
+
+        result = state_tool.reconcile(self.directory, [Path(tracker)], between_read_and_write=once)
+        self.assertTrue(result["drift"])
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state["meta"]["headline"], "Moved under reconcile")
+        self.assertEqual(state["planned"][0]["subject"], "work-now")
+
+        def always() -> None:
+            self.lead({"meta": {"headline": f"Moved {state_tool.now()}"}})
+
+        other = self.snapshot("tracker", [{"subject": "work-next", "title": "Next", "state": "started"}])
+        attempts = []
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.reconcile(self.directory, [Path(other)], between_read_and_write=lambda: (attempts.append(1), always()))
+        self.assertEqual(refused.exception.code, "version_stale")
+        self.assertEqual(len(attempts), state_tool.RECONCILE_ATTEMPTS, "a bounded number of attempts, then refusal")
+        self.assertNotIn("work-next", [item["subject"] for item in state_tool.show(self.directory)["state"]["planned"]])
+
+    def test_work_is_planned_or_queued_never_both(self) -> None:
+        self.lead({"queue": [queue_item("work-a")]})
+        version = state_tool.show(self.directory)["state"]["version"]
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.patch(self.directory, writer="lead", version=version, changes={
+                "planned": [{"subject": "work-a", "title": "A", "lane": None, "stage": "planned"}]})
+        self.assertIn("already in the queue", str(refused.exception))
+
+    def test_the_runner_cannot_write_planned_work_and_the_lead_cannot_merge_it(self) -> None:
+        self.lead({"planned": [{"subject": "work-a", "title": "A", "lane": None, "stage": "planned"}]})
+        version = state_tool.show(self.directory)["state"]["version"]
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.patch(self.directory, writer="runner", version=version, selector="planned[subject=work-a]",
+                             changes={"stage": "review"})
+        self.assertEqual(refused.exception.code, "field_not_owned")
+        patched = state_tool.patch(self.directory, writer="lead", version=version, selector="planned[subject=work-a]",
+                                   changes={"stage": "review", "changeRequest": "change 1"})
+        self.assertEqual(patched["planned"][0]["stage"], "review")
+
+
+class PublicationTests(unittest.TestCase):
+    """What was published, so an unpublished view is visible."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name) / "state"
+        state_tool.init(self.directory, "Epic underway")
+        for number in range(1, 4):
+            state_tool.append_journal(self.directory, kind="decision.recorded", summary=f"Decision {number}")
+
+    def test_ack_records_what_went_out_and_never_moves_backwards(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "2")
+        self.assertEqual(code, 0, acked)
+        self.assertEqual(acked["published"], {"version": version, "journalThrough": 2, "at": acked["published"]["at"]})
+        self.assertEqual(state_tool.show(self.directory)["state"]["version"], version, "an ack is not a state write")
+        for args, reason in (
+            (["--version", str(version + 1), "--through", "2"], "a version the record has not reached"),
+            (["--version", str(version), "--through", "9"], "a journal entry that does not exist"),
+            (["--version", str(version), "--through", "1"], "an earlier journal entry"),
+            (["--version", "0", "--through", "2"], "an earlier version"),
+        ):
+            with self.subTest(reason):
+                code, refused = run_tool(self.directory, "ack", *args)
+                self.assertEqual((code, refused["code"]), (1, "ack_invalid"), refused)
+        code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
+        self.assertEqual((code, acked["published"]["journalThrough"]), (0, 3))
+
+    def test_a_journal_entry_alone_leaves_the_publication_behind(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
+        state_tool.append_journal(self.directory, kind="decision.recorded", summary="Decision 4")
+        code, shown = run_tool(self.directory, "show")
+        self.assertEqual((shown["publication"]["unpublishedEntries"], shown["publication"]["lags"]), (1, True))
+
+    def test_a_malformed_acknowledgement_is_reported_and_repaired_by_the_next_ack(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        published = self.directory / state_tool.PUBLISHED_FILE
+        for contents in ("not json", json.dumps({"version": version, "journalThrough": -5, "at": "x"}),
+                         json.dumps({"version": version, "journalThrough": 1, "at": "x", "extra": True}),
+                         json.dumps({"version": version, "journalThrough": 1, "at": 3})):
+            with self.subTest(contents=contents):
+                published.write_text(contents, encoding="utf-8")
+                code, shown = run_tool(self.directory, "show")
+                self.assertEqual(code, 0, "the record is still shown")
+                self.assertTrue(shown["publication"]["lags"])
+                self.assertIn("published.json", shown["publication"]["error"])
+        outbox = self.directory / "outbox" / "outbox.json"
+        outbox.parent.mkdir()
+        outbox.write_text(json.dumps({"version": version - 1, "journalThrough": 3, "state": {}, "journal": []}))
+        code, shown = run_tool(self.directory, "show")
+        self.assertEqual((shown["publication"]["outboxVersion"], shown["publication"]["outboxLags"]),
+                         (version - 1, True), "a bad acknowledgement hides nothing about the outbox")
+        outbox.write_text(json.dumps({"version": version, "journalThrough": 3, "state": {}, "journal": []}))
+        code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
+        self.assertEqual(code, 0, acked)
+        code, shown = run_tool(self.directory, "show")
+        self.assertEqual((shown["publication"]["lags"], "error" in shown["publication"]), (False, False))
+
+    def test_an_unreadable_outbox_is_reported_as_a_lag(self) -> None:
+        outbox = self.directory / "outbox" / "outbox.json"
+        outbox.parent.mkdir()
+        for contents in ("garbage", json.dumps({"version": "one", "journalThrough": 1}),
+                         json.dumps({"version": -3, "journalThrough": -1})):
+            with self.subTest(contents=contents):
+                outbox.write_text(contents, encoding="utf-8")
+                code, shown = run_tool(self.directory, "show")
+                self.assertEqual(code, 0)
+                self.assertEqual((shown["publication"]["outboxVersion"], shown["publication"]["outboxLags"]),
+                                 (None, True))
+                self.assertIn("outbox", shown["publication"]["outboxError"])
+
+    def test_ack_never_claims_more_than_the_outbox_held(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        outbox = self.directory / "outbox" / "outbox.json"
+        outbox.parent.mkdir()
+        outbox.write_text(json.dumps({"version": version, "journalThrough": 2, "state": {}, "journal": []}))
+        code, refused = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
+        self.assertEqual((code, refused["code"]), (1, "ack_invalid"), "entry 3 was never in the outbox")
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"meta": {"headline": "Later"}})
+        code, refused = run_tool(self.directory, "ack", "--version", str(version + 1), "--through", "2")
+        self.assertEqual((code, refused["code"]), (1, "ack_invalid"), "the record's version, not the outbox's")
+        self.assertIn("outbox", refused["error"])
+        code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "2")
+        self.assertEqual((code, acked["published"]["journalThrough"]), (0, 2))
+
+    def test_show_flags_a_publication_that_lags_the_record(self) -> None:
+        code, shown = run_tool(self.directory, "show")
+        self.assertEqual(shown["publication"], {"publishedVersion": None, "journalThrough": 0, "unpublishedEntries": 3,
+                                                "outboxVersion": None, "outboxLags": False, "lags": True})
+        version = shown["state"]["version"]
+        run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
+        code, shown = run_tool(self.directory, "show")
+        self.assertFalse(shown["publication"]["lags"])
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"meta": {"headline": "Later"}})
+        code, shown = run_tool(self.directory, "show")
+        self.assertTrue(shown["publication"]["lags"])
+        self.assertEqual(shown["publication"]["publishedVersion"], version)
+        # An outbox is behind when the record or the journal has moved past it.
+        version = shown["state"]["version"]
+        outbox = self.directory / "outbox" / "outbox.json"
+        outbox.parent.mkdir()
+        outbox.write_text(json.dumps({"version": version, "journalThrough": 3, "state": {}, "journal": []}))
+        code, shown = run_tool(self.directory, "show")
+        self.assertEqual((shown["publication"]["outboxVersion"], shown["publication"]["outboxLags"]), (version, False))
+        state_tool.append_journal(self.directory, kind="decision.recorded", summary="Decision 4")
+        code, shown = run_tool(self.directory, "show")
+        self.assertTrue(shown["publication"]["outboxLags"], "a journal entry the outbox lacks is a lag")
+        # The function renderers read is unchanged: exactly the state and the journal.
+        self.assertEqual(sorted(state_tool.show(self.directory)), ["journal", "state"])
+
+
 class SkipGuardTests(unittest.TestCase):
     def test_each_skip_guard_names_its_own_qualification_set(self) -> None:
         for relative, expected in GUARD_CALLS.items():
@@ -866,6 +1274,7 @@ class SchemaAgreementTests(unittest.TestCase):
         self.assertEqual(text, json.dumps(schemas, indent=2, ensure_ascii=False) + "\n")
         self.assertEqual(sorted(schemas), [
             "affected-checks/1", "delivery-journal/1", "delivery-state/1", "merge-queue-result/1", "orchestration-binding/1",
+            "work-snapshot/1",
         ])
         for name, schema in schemas.items():
             with self.subTest(name=name):
@@ -946,8 +1355,10 @@ def bullets_after(text: str, lead_in: str) -> list[str]:
 
 
 # Files the skill text names that live in an adopter's repository or are
-# written as views, not shipped with the skill.
-ADOPTER_FILES = frozenset({".agents/orchestration.json", "delivery.md", "delivery.html"})
+# written into its state directory, as views, the outbox or the
+# acknowledgement, not shipped with the skill.
+ADOPTER_FILES = frozenset({".agents/orchestration.json", "delivery.md", "delivery.html", "outbox/outbox.json",
+                           "published.json"})
 
 
 class SkillTextTests(unittest.TestCase):

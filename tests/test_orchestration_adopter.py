@@ -8,6 +8,7 @@ the state tool, the merge-queue runner, and the renderer wrapper.
 
 from __future__ import annotations
 
+import datetime
 import importlib.util
 import json
 import os
@@ -200,6 +201,10 @@ class FixtureAdopter:
     def show(self) -> dict:
         return self.state_tool("show")
 
+    def document(self) -> dict:
+        """What the renderers read: ``show`` without its publication status."""
+        return {key: value for key, value in self.show().items() if key != "publication"}
+
     def queue(self, *args: str, expect: int | None = None) -> object:
         return self.tool(
             RUNNER, "--repo", str(self.operator), "--state", str(self.state), "--remote", REMOTE, "--base", BASE,
@@ -357,10 +362,8 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertIn(f"- Now: {text('beta-copy')}", during)
         rows = during.split(f"- 2\\. {text('beta-copy')}: ", 1)[1].split("\n", 2)
         self.assertIn(", checking · lane", rows[0])
-        # The runner records a check's state only when it finishes, so the running fallback
-        # reads as pending. A tracked follow-up has the runner mark a check running as it
-        # starts; when it lands, this expects running.
-        self.assertEqual(rows[1], f"  - {text('full')}: pending")
+        # The runner marks a check running as it starts, so the fallback reads as running.
+        self.assertEqual(rows[1], f"  - {text('full')}: running")
         view = adopter.view()
         self.assertQueueRow(view, "alpha-copy", "merged")
         self.assertQueueRow(view, "beta-copy", "merged")
@@ -432,7 +435,9 @@ class FixtureAdopterTests(unittest.TestCase):
                                 str(adopter.operator / ".agents/orchestration.json"))
         self.assertEqual([(entry["id"], entry["ok"]) for entry in rendered["renderers"]],
                          [("markdown", True), ("page", True)])
-        final = adopter.show()
+        self.assertEqual([(entry["id"], entry["kind"], entry["ok"]) for entry in rendered["publishers"]],
+                         [("live", "host", True)])
+        final = adopter.document()
         page = (adopter.state / "delivery.html").read_text(encoding="utf-8")
         embedded = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S)
         self.assertEqual(json.loads(embedded.group(1)), final)
@@ -469,6 +474,90 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual(sum(line.startswith("ready ") for line in adopter.log_lines()), 3)
         self.assertEqual([line for line in adopter.log_lines() if line.startswith("release ")],
                          [f"release package {released_head}", f"release publish {released_head}"])
+
+        # 9. The lead keeps the live view current: snapshots, reconcile, render, publish, acknowledge.
+        self.keep_the_live_view_current(adopter)
+
+    def keep_the_live_view_current(self, adopter: FixtureAdopter) -> None:
+        # A fourth candidate is handed over, then merged on the forge by hand: the runner never sees it.
+        hand_merged = adopter.lane_change("delta-copy", {"src/delta.txt": "delta one\n"})
+        handed = {"order": 4, "subject": "delta-copy", "title": "Candidate delta-copy", "lane": "lane-1",
+                  "stage": "queued", "head": hand_merged, "syncedHead": None, "leadInputs": [], "reportedRounds": 1,
+                  "runId": None, "checks": []}
+        adopter.lead_patch({"queue": adopter.show()["state"]["queue"] + [handed]})
+        adopter.git("push", "--quiet", REMOTE, f"lane/delta-copy:{BASE}", cwd=adopter.lane)
+        self.assertEqual(adopter.tip(BASE), hand_merged)
+
+        # The lead writes what its tracker and forge say, with its own tools.
+        now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        tracker = adopter.root / "tracker snapshot.json"
+        tracker.write_text(json.dumps({"takenAt": now, "source": "tracker", "items": [
+            {"subject": "gamma-notes", "title": "Notes for gamma", "state": "backlog"},
+            {"subject": "epsilon-copy", "title": "Copy for epsilon", "state": "started"},
+            {"subject": "alpha-copy", "state": "completed"},
+            {"subject": "delta-copy", "state": "completed"},
+        ]}, indent=2), encoding="utf-8")
+        forge = adopter.root / "forge snapshot.json"
+        forge.write_text(json.dumps({"takenAt": now, "source": "forge", "items": [
+            {"subject": "epsilon-copy", "state": "open", "changeRequest": "change 5"},
+            {"subject": "delta-copy", "state": "merged", "changeRequest": "change 4", "head": hand_merged},
+        ]}, indent=2), encoding="utf-8")
+        snapshots = ["--snapshot", str(tracker), "--snapshot", str(forge)]
+
+        reconciled = adopter.state_tool("reconcile", *snapshots)
+        self.assertTrue(reconciled["drift"])
+        self.assertEqual([(change["subject"], change["recovery"]) for change in reconciled["changes"]], [
+            ("gamma-notes", False), ("epsilon-copy", False), ("epsilon-copy", False), ("epsilon-copy", False),
+            ("delta-copy", False), ("delta-copy", True),
+        ])
+        self.assertEqual(reconciled["reports"], [])
+        state = adopter.show()["state"]
+        self.assertEqual(state["followups"][-1], {"id": "gamma-notes", "title": "Notes for gamma",
+                                                  "reference": "gamma-notes"})
+        self.assertEqual(state["planned"], [{"subject": "epsilon-copy", "title": "Copy for epsilon", "lane": None,
+                                             "stage": "review", "changeRequest": "change 5"}])
+        recovered = adopter.item("delta-copy")
+        self.assertEqual((recovered["stage"], recovered["syncedHead"], recovered["changeRequest"]),
+                         ("merged", hand_merged, "change 4"))
+        recorded = adopter.show()["journal"][-1]
+        self.assertEqual((recorded["kind"], recorded["subject"]), ("candidate.merged", "delta-copy"))
+        self.assertIn(hand_merged, recorded["summary"])
+
+        # Nothing has been published yet, so the view lags the record.
+        shown = adopter.show()
+        self.assertTrue(shown["publication"]["lags"])
+        self.assertIsNone(shown["publication"]["publishedVersion"])
+
+        # Render: the host publisher leaves the projection and every unacknowledged entry in the outbox.
+        binding = str(adopter.operator / ".agents/orchestration.json")
+        adopter.tool(WRAPPER, "--dir", str(adopter.state), "--binding", binding)
+        outbox_path = adopter.state / "outbox" / "outbox.json"
+        outbox = json.loads(outbox_path.read_text(encoding="utf-8"))
+        self.assertEqual(outbox["version"], shown["state"]["version"])
+        self.assertEqual(outbox["state"], shown["state"])
+        self.assertEqual(outbox["journal"], shown["journal"])
+        self.assertFalse(adopter.show()["publication"]["outboxLags"])
+
+        # The lead publishes the outbox with its host's own tool, then acknowledges what it published.
+        last = outbox["journalThrough"]
+        self.assertEqual(last, outbox["journal"][-1]["id"])
+        adopter.state_tool("ack", "--version", str(outbox["version"]), "--through", str(last))
+        published = adopter.show()["publication"]
+        self.assertEqual((published["publishedVersion"], published["journalThrough"], published["unpublishedEntries"],
+                          published["lags"]), (outbox["version"], last, 0, False))
+
+        # The next pass finds no drift and has nothing new to publish.
+        again = adopter.state_tool("reconcile", *snapshots)
+        self.assertEqual((again["drift"], again["changes"], again["summary"]), (False, [], "no drift"))
+        adopter.tool(WRAPPER, "--dir", str(adopter.state), "--binding", binding)
+        self.assertEqual(json.loads(outbox_path.read_text(encoding="utf-8"))["journal"], [])
+
+        # A new entry lags the published view, and the next outbox carries exactly that entry.
+        adopter.journal("delivery.closed", "The hand-merged candidate is recorded")
+        self.assertTrue(adopter.show()["publication"]["lags"])
+        adopter.tool(WRAPPER, "--dir", str(adopter.state), "--binding", binding)
+        pending = json.loads(outbox_path.read_text(encoding="utf-8"))["journal"]
+        self.assertEqual([(entry["id"], entry["kind"]) for entry in pending], [(last + 1, "delivery.closed")])
 
 
 # Defaults a tool must never assume about its adopter: a remote or branch
