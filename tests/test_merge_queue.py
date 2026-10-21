@@ -2891,14 +2891,55 @@ class ServeTests(MergeQueueTestCase):
 
         self.serve(adopter, seams={"after_sync": break_once})
         item = adopter.item("feature")
-        # Synced, then the setup went: the candidate is queued again as it was, not left synced or stopped.
-        self.assertEqual((item["stage"], item["syncedHead"], item["checks"]), ("queued", None, []))
+        # Synced, then the setup went: the candidate is queued again, not left synced or stopped.
+        self.assertEqual((item["stage"], item["checks"]), ("queued", []))
         self.assertIn("top level of a checkout", state_tool.read_state(adopter.state)["meta"]["hold"]["reason"])
         self.assertEqual(len(self.blockers(adopter)), 1)
         restore[0]()
         self.release_hold(adopter)
         self.serve(adopter)
         self.assertEqual(adopter.item("feature")["stage"], "merged")
+
+    def test_a_candidate_put_back_after_its_sync_was_pushed_merges_once_the_hold_is_cleared(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.check
+        restore: list[Callable[[], None]] = []
+
+        def break_then_check(runner, subject, result):
+            # Sync has pushed its synced head to the candidate's branch; the setup goes before the check.
+            if not restore:
+                restore.append(self.break_checkout(adopter))
+            return real(runner, subject, result)
+
+        with mock.patch.object(queue.Runner, "check", break_then_check):
+            self.serve(adopter)
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        restore[0]()
+        self.release_hold(adopter)
+        self.serve(adopter)
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+
+    def test_a_batch_put_back_after_a_member_was_pushed_merges_once_the_hold_is_cleared(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        real = queue.Runner.merge
+        restore: list[Callable[[], None]] = []
+
+        def break_then_merge(runner, subject, result, **kwargs):
+            # The batch has pushed its first member's synced head; the setup goes before that member's merge begins.
+            if not restore:
+                restore.append(self.break_checkout(adopter))
+            return real(runner, subject, result, **kwargs)
+
+        with mock.patch.object(queue.Runner, "merge", break_then_merge):
+            self.serve(adopter)
+        self.assertEqual([adopter.item(name)["stage"] for name in ("first", "second")], ["queued", "queued"])
+        restore[0]()
+        self.release_hold(adopter)
+        self.serve(adopter)
+        self.assertEqual([adopter.item(name)["stage"] for name in ("first", "second")], ["merged", "merged"])
 
     def test_a_setup_that_breaks_during_a_batch_puts_its_members_back(self) -> None:
         adopter = self.adopter()

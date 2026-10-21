@@ -2342,7 +2342,8 @@ def _requeue(subject: str, head: str | None) -> Callable[[dict], tuple[dict | No
         item = next((entry for entry in current["queue"] if entry["subject"] == subject), None)
         if item is None or item["head"] != head or item["stage"] not in ("queued", "synced", "checked", "stopped"):
             raise Stop("candidate_unknown", f"{subject} changed since serve took it")
-        return None, {"/stage": "queued", "/syncedHead": None, "/checks": []}
+        # syncedHead stays: sync may already have pushed it to the candidate's branch, and the next sync accepts it.
+        return None, {"/stage": "queued", "/checks": []}
 
     return build
 
