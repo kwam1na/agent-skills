@@ -133,7 +133,9 @@ def _darwin_process(pid: int, info=None) -> _Process | None:
 
     PROC_PIDT_BSDINFOWITHUNIQID adds the process's unique id and its
     parent's to PROC_PIDTBSDINFO; where it cannot be read, the start stamp
-    alone identifies the process.
+    alone identifies the process. Both flavors take the same permission
+    check, so on a given system one process is read the same way each time;
+    a stamp read either way still matches (see ``_same_process``).
     """
     import ctypes
 
@@ -399,13 +401,13 @@ class _ForkWatcher(threading.Thread):
             # One gone by the second read keeps it, so its exit is still
             # reported; that relies on no pid being reused between the reads.
             before = _darwin_process(pid)
-            if before is None or before.started != started:
+            if before is None or not _same_process(before.started, started):
                 self._forget(pid, started)
                 return
             self._queue.control([self._select.kevent(
                 pid, self._select.KQ_FILTER_PROC, self._select.KQ_EV_ADD, notes)], 0, 0)
             current = _darwin_process(pid)
-            if current is not None and current.started != started:
+            if current is not None and not _same_process(current.started, started):
                 self._forget(pid, started)
                 self._queue.control([self._select.kevent(
                     pid, self._select.KQ_FILTER_PROC, self._select.KQ_EV_DELETE, notes)], 0, 0)
@@ -469,6 +471,21 @@ def _started_before(started: object, reference: object) -> bool:
     if isinstance(started, int) and isinstance(reference, int):
         return started < reference
     return False
+
+
+def _same_process(started: object, known: object) -> bool:
+    """Whether two start stamps name the same process.
+
+    By unique id where both have one. A stamp read with its unique id and one
+    read without (a read that fell back) are compared by the clock alone, so
+    a process is never taken for a different one, and a refusal never
+    dropped, because one read fell back.
+    """
+    if isinstance(started, _Stamp) and isinstance(known, _Stamp):
+        return started.unique == known.unique
+    if isinstance(started, tuple) and isinstance(known, tuple):
+        return tuple(started[:2]) == tuple(known[:2])
+    return started is not None and started == known
 
 
 def _wall_stamp() -> tuple[int, int]:
@@ -561,6 +578,8 @@ class _DescendantTracker:
         # The launcher's own start: no descendant started before it.
         self._floor: object = None
         self._last_table: dict[int, _Process] = {}
+        # How the last table told processes apart (see ``preview``).
+        self._identity = "unread"
         self._unmarked: set[tuple[int, object]] = set()
         self._ticks = 0
 
@@ -577,6 +596,9 @@ class _DescendantTracker:
         if table is None:
             return None
         self._last_table = table
+        stamped = {isinstance(process.started, _Stamp) for process in table.values()}
+        self._identity = {frozenset({True}): "unique-id", frozenset({False}): "start-time"}.get(
+            frozenset(stamped), "mixed" if stamped else self._identity)
         if self._floor is None and os.getpid() in table:
             self._floor = table[os.getpid()].started
         root = table.get(self._root)
@@ -599,16 +621,16 @@ class _DescendantTracker:
                 if watcher is not None:
                     watcher.watch(self._root, root.started)
         live = {pid for pid, started in self._known.items()
-                if pid in table and table[pid].started == started}
+                if pid in table and _same_process(table[pid].started, started)}
         seeds = set(live)
         # Once the child is reaped its pid may be reused, so the root and its
         # process group count only while the same child is still there.
-        root_present = root is not None and root.started == self._root_started
+        root_present = root is not None and _same_process(root.started, self._root_started)
         self._root_present = root_present
         if root_present:
             seeds.add(self._root)
         for pid, process in table.items():
-            if self._known.get(pid) == process.started or process.zombie \
+            if _same_process(process.started, self._known.get(pid)) or process.zombie \
                     or (pid, process.started) in self._refused:
                 continue
             if root_present and process.pgid == self._root:
@@ -640,10 +662,10 @@ class _DescendantTracker:
         if started is None or leader == self._root or _precedes(process.started, started):
             return False
         current = table.get(leader)
-        if current is not None and current.started == started:
+        if current is not None and _same_process(current.started, started):
             return True
         end = self._ends.get(leader)
-        return end is not None and end[0] == started and _precedes(process.started, end[1])
+        return end is not None and _same_process(end[0], started) and _precedes(process.started, end[1])
 
     def ended(self, pid: int, started: object, at: object) -> None:
         """Remember when the fork watcher saw a known process exit.
@@ -653,7 +675,7 @@ class _DescendantTracker:
         """
         with self._lock:
             known = self._root_started if pid == self._root else self._known.get(pid)
-            if known is not None and known == started:
+            if known is not None and _same_process(started, known):
                 self._ends[pid] = (started, at)
 
     def _callers(self, table: dict[int, _Process]) -> set[int]:
@@ -725,11 +747,11 @@ class _DescendantTracker:
                 return False
             vouched = self._root_started if parent == self._root else self._known.get(parent)
             current = _darwin_process(parent)
-            if vouched is None or current is None or current.started != vouched:
+            if vouched is None or current is None or not _same_process(current.started, vouched):
                 return False
             if isinstance(vouched, _Stamp) and process.parent_unique not in (None, vouched.unique):
                 return False  # Forked by another process that held that pid.
-            if self._known.get(pid) == process.started:
+            if _same_process(process.started, self._known.get(pid)):
                 return True
             if (pid, process.started) in self._refused:
                 return False
@@ -775,7 +797,8 @@ class _DescendantTracker:
             return
         lifeline = (self._lifeline() or None) if self._lifeline is not None and self._confirmed else None
         for pid, process in table.items():
-            if pid in self._known or process.zombie or pid in (os.getpid(), self._root):
+            if _same_process(process.started, self._known.get(pid)) or process.zombie \
+                    or pid in (os.getpid(), self._root):
                 continue
             if (pid, process.started) in self._unmarked or (pid, process.started) in self._refused:
                 continue
@@ -812,7 +835,8 @@ class _DescendantTracker:
             selected = []
             for pid, started in self._known.items():
                 process = table.get(pid)
-                if process is None or process.started != started or process.zombie or process.pgid == self._root:
+                if process is None or not _same_process(process.started, started) or process.zombie \
+                        or process.pgid == self._root:
                     continue
                 refusal = self._refusal(pid, process, table, self._why[pid])
                 if refusal is None:
@@ -830,7 +854,7 @@ class _DescendantTracker:
         """
         return sorted({
             (pid, why) for (pid, started), why in self._refused.items()
-            if table is None or (pid in table and table[pid].started == started
+            if table is None or (pid in table and _same_process(table[pid].started, started)
                                  and not table[pid].zombie and table[pid].pgid != self._root)
         })
 
@@ -849,11 +873,10 @@ class _DescendantTracker:
         """
         with self._lock:
             escaped = self.escaped()
-            reference = self._root_started if self._root_started is not None else self._floor
             return {
-                # How processes were told apart: the kernel's unique id, or,
-                # where it cannot be read, the start stamp.
-                "identity": "unique-id" if isinstance(reference, _Stamp) else "start-time",
+                # How the last table told processes apart: the kernel's unique
+                # id, the start stamp where it cannot be read, or a mix.
+                "identity": self._identity,
                 "group": self._root if self._root_present else None,
                 "escaped": None if escaped is None else [[pid, self._why[pid]] for pid in escaped],
                 # Behind an unreadable table every refusal still counts.
@@ -869,7 +892,7 @@ class _DescendantTracker:
                 return ()
             return tuple(sorted(
                 pid for pid, started in self._known.items()
-                if pid in table and table[pid].started == started
+                if pid in table and _same_process(table[pid].started, started)
                 and not table[pid].zombie and table[pid].pgid == self._root
             ))
 

@@ -36,6 +36,7 @@ from agent_skills.product import (
     _ps_process_table,
     _run_command,
     _precedes,
+    _same_process,
     _started_before,
     _stop_escaped_descendants,
     _wall_stamp,
@@ -1621,6 +1622,13 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             with patch("agent_skills.product._darwin_process", return_value=_Process(1, 4243, UID, (6, 0), False)):
                 watcher.watch(4243, (6, 0))
             self.assertNotIn(4243, watcher._starts)
+            # Nor one that names another process with the very same clock reading.
+            seen.clear()
+            with patch("agent_skills.product._darwin_process",
+                       return_value=_Process(1, 4245, UID, _Stamp(9, 0, 2), False)):
+                watcher.watch(4245, _Stamp(9, 0, 1))
+            self.assertEqual(seen, [])
+            self.assertNotIn(4245, watcher._starts)
             # A pid that already names another process is never registered.
             seen.clear()
             with patch("agent_skills.product._darwin_process", return_value=_Process(1, 4244, UID, (9, 0), False)):
@@ -1667,6 +1675,16 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         # Against a stamp without one (an exit seen), the clock decides.
         self.assertTrue(_precedes(_Stamp(14, 0, 99), (15, 0)))
         self.assertFalse(_precedes(_Stamp(15, 0, 1), (15, 0)))
+        self.assertFalse(_precedes((20, 5), _Stamp(20, 5, 9)))
+        self.assertTrue(_precedes(_Stamp(20, 4, 9), (20, 5)))
+        # The same process by unique id, even when the clock reads alike; a
+        # stamp read without its id matches by the clock, so a fallen-back
+        # read never makes a process, or its refusal, disappear.
+        self.assertTrue(_same_process(_Stamp(11, 0, 50), _Stamp(12, 0, 50)))
+        self.assertFalse(_same_process(_Stamp(11, 0, 50), _Stamp(11, 0, 77)))
+        self.assertTrue(_same_process((11, 0), _Stamp(11, 0, 50)))
+        self.assertFalse(_same_process((11, 1), _Stamp(11, 0, 50)))
+        self.assertFalse(_same_process(_Stamp(11, 0, 50), None))
 
     def test_a_pid_reused_by_a_process_with_a_new_unique_id_is_never_selected(self) -> None:
         me = os.getpid()
@@ -1692,6 +1710,16 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             table[301] = _Process(100, 301, UID, _Stamp(12, 0, 79), False, 40)
             self.assertEqual(tracker.escaped(), (301,))
             self.assertEqual(tracker.preview()["identity"], "unique-id")
+            # A table some of whose processes fell back says so.
+            table[302] = _Process(1, 302, UID, (12, 0), False)
+            self.assertEqual(tracker.preview()["identity"], "mixed")
+            # A refused candidate read once with its id and once without is
+            # still the same process, and still counts.
+            table[303] = _Process(100, 303, UID + 1, _Stamp(12, 0, 53), False, 40)
+            tracker.observe()
+            self.assertEqual(tracker.refused(), (303,))
+            table[303] = _Process(100, 303, UID + 1, (12, 0), False)
+            self.assertEqual(tracker.refused(), (303,))
 
     def test_a_process_forked_by_a_known_descendant_is_found_after_it_is_reparented(self) -> None:
         # Its parent's unique id survives reparenting to init, so a daemon whose
@@ -1712,6 +1740,10 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         })
         self.assertEqual(tracker.escaped(), (310, 312))
         self.assertEqual(tracker.preview()["escaped"], [[310, "descendant"], [312, "descendant"]])
+        # The launcher's other children are not the run's: the child's own
+        # parent, the launcher, vouches for nobody.
+        table[900] = _Process(me, 900, UID, _Stamp(21, 0, 160), False, 30)
+        self.assertNotIn(900, tracker.escaped())
         # The fork watcher's parent is checked by unique id, not by pid alone.
         table[300] = _Process(100, 100, UID, _Stamp(11, 0, 50), False, 40)
         processes = {300: table[300], 320: _Process(300, 320, UID, _Stamp(13, 0, 70), False, 51)}
@@ -1737,6 +1769,20 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         self.assertEqual(read, [201])
         self.assertEqual(tracker.refused(), ())
         self.assertEqual(tracker.preview()["escaped"], [[201, "marker"]])
+        # A marked process's own parent vouches for nothing: its sibling is not the run's.
+        table[202] = _Process(1, 202, UID, _Stamp(6, 0, 42), False, 7)
+        read.clear()
+        environment = {202: [b"HOME=/"]}
+        tracker._environment = lambda pid: environment.get(pid, [marker])
+        self.assertEqual(tracker.escaped(), (201,))
+        # Nor does a refused process vouch for its children: another user's
+        # marked process is refused, and a child it forks later is not the run's.
+        table[203] = _Process(1, 203, UID + 1, _Stamp(7, 0, 43), False, 1)
+        self.assertEqual(tracker.escaped(), (201,))
+        self.assertEqual(tracker.refused(), (203,))
+        table[204] = _Process(1, 204, UID, _Stamp(8, 0, 44), False, 43)
+        environment[204] = [b"HOME=/"]
+        self.assertEqual(tracker.escaped(), (201,))
 
     @unittest.skipUnless(sys.platform == "darwin", "libproc")
     def test_the_macos_process_reader_returns_unique_ids_and_the_parents(self) -> None:
