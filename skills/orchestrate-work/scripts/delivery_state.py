@@ -1052,6 +1052,11 @@ def delivery_status(state: dict, journal: list[dict], at: str | None = None) -> 
     ]
     if blocked:
         parts.append("blocked: " + ", ".join(blocked))
+    stopped = [item["subject"] for item in sorted(state["queue"], key=lambda item: (item["order"], item["subject"]))
+               if item["stage"] == "stopped"]
+    if stopped:
+        # Stopped work waits for its lane to hand it off again; it is never "nothing in flight".
+        parts.append("stopped: " + ", ".join(stopped))
     waiting = [item["subject"] for item in sorted(state["queue"], key=lambda item: (item["order"], item["subject"]))
                if item["stage"] == "queued" and not item.get("pending")]
     if waiting:

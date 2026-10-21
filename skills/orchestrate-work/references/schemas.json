@@ -888,7 +888,8 @@
           "merge",
           "run",
           "release",
-          "batch"
+          "batch",
+          "serve"
         ]
       },
       "candidate": {

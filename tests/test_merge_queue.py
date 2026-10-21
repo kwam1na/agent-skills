@@ -2780,6 +2780,78 @@ class ServeTests(MergeQueueTestCase):
                  if entry["kind"] == "candidate.stopped" and entry["subject"] == "first"]
         self.assertEqual(len(stops), 1)
 
+    def test_a_candidate_handed_off_again_after_its_refusal_keeps_its_new_head(self) -> None:
+        adopter = self.adopter()
+        adopter.enqueue("first", adopter.lane_commit("first", {"src/lib.txt": "lib two\n"}), lead_inputs=["nope"])
+        real = queue.Runner.run_command
+        newer: list[str] = []
+
+        def refused_then_handed_again(runner, *args, **kwargs):
+            taken = real(runner, *args, **kwargs)
+            if not newer:
+                # The lane hands it off again, at a new head, between the refusal and serve's stop.
+                newer.append(adopter.lane_commit("first", {"src/lib.txt": "lib three\n"}))
+                adopter.lead_set("first", head=newer[0], leadInputs=[])
+            return taken
+
+        with mock.patch.object(queue.Runner, "run_command", refused_then_handed_again):
+            results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True,
+                                  sleep=lambda seconds: None)
+        self.assertEqual(results[0].document()["stop"]["reason"], "binding_invalid")
+        item = adopter.item("first")
+        # The new head waits to be taken on its own merits; serve's stop was for the head it refused.
+        self.assertEqual((item["head"], item["stage"]), (newer[0], "queued"))
+
+    def test_a_reader_that_goes_away_leaves_serve_serving(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        serving = subprocess.Popen(
+            [PY, "-B", str(SCRIPTS / "merge_queue.py"), "--repo", str(adopter.operator), "--state", str(adopter.state),
+             "--remote", "origin", "--base", "main", "serve", "--poll", "0.2"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.addCleanup(lambda: serving.poll() is None and serving.kill())
+        serving.stdout.close()  # type: ignore[union-attr]
+        deadline = time.monotonic() + 120
+        while adopter.item("first")["stage"] != "merged" and serving.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertEqual(adopter.item("first")["stage"], "merged")
+        # Serving goes on with nobody reading: it takes work queued after the reader left.
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        while adopter.item("second")["stage"] != "merged" and serving.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertEqual(adopter.item("second")["stage"], "merged")
+        serving.terminate()
+        _, errors = serving.communicate(timeout=60)
+        self.assertEqual(serving.returncode, 0, errors.decode("utf-8", "replace"))
+
+    def test_serve_refuses_to_start_on_a_wrong_checkout_and_stops_nothing(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        results = queue.serve(adopter.operator / "src", adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertEqual([(document["subcommand"], document["candidate"], document["outcome"], document["stop"]["reason"])
+                          for document in (result.document() for result in results)],
+                         [("serve", None, "refused", "binding_invalid")])
+        self.assertIn("top level of a checkout", results[0].document()["stop"]["detail"])
+        # Nothing was taken: the queued candidate stays queued, with nothing journaled against it.
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertNotIn("candidate.stopped", [entry["kind"] for entry in state_tool.read_journal(adopter.state)])
+
+    def test_the_serve_command_ends_at_startup_when_its_base_cannot_be_read(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        # A base the remote does not have: serving would fail every turn, so it never starts.
+        completed = subprocess.run(
+            [PY, "-B", str(SCRIPTS / "merge_queue.py"), "--repo", str(adopter.operator), "--state", str(adopter.state),
+             "--remote", "origin", "--base", "elsewhere", "serve", "--poll", "0.2"],
+            capture_output=True, timeout=120, check=False,
+        )
+        self.assertEqual(completed.returncode, 1, completed.stderr.decode("utf-8", "replace"))
+        [document] = [json.loads(line) for line in completed.stdout.decode("ascii").splitlines()]
+        self.assertEqual((document["subcommand"], document["candidate"]), ("serve", None))
+        self.assertIn(document["outcome"], ("refused", "stopped"))
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+
     def test_a_long_serve_reports_each_result_as_it_is_written(self) -> None:
         adopter = self.adopter()
         self.candidate(adopter)

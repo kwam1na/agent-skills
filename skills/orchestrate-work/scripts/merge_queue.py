@@ -2099,6 +2099,30 @@ def ascii_json(value: object) -> bytes:
     return (json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True) + "\n").encode("ascii")
 
 
+def _refused_stop(subject: str, head: str | None) -> Callable[[dict], tuple[dict | None, dict]]:
+    """Stop a refused candidate only as serve took it: a lane that handed it off again since keeps its new head."""
+
+    def build(current: dict) -> tuple[dict | None, dict]:
+        item = next((entry for entry in current["queue"] if entry["subject"] == subject), None)
+        if item is None or item["stage"] != "queued" or item["head"] != head:
+            raise Stop("candidate_unknown", f"{subject} changed since serve took it")
+        return None, {"/stage": "stopped"}
+
+    return build
+
+
+def _setup_stop(repository: Path, state_directory: Path, *, remote: str, base: str, lead: str) -> Result:
+    """Read the binding from the base and check the checkout once, under the queue lock, before serving anything."""
+    runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead)
+
+    def check(result: Result) -> None:
+        with runner.locked():
+            result.baseHead = runner.load()
+            result.base = base
+
+    return runner.invoke("serve", None, check)
+
+
 def serve(
     repository: Path,
     state_directory: Path,
@@ -2119,13 +2143,27 @@ def serve(
     lead's meta.hold pauses serving, and so does a stop that stopped the queue
     until the lead journals base.repaired; a stopped candidate waits for its
     lane to hand it off again, and so does a refused one, which serve would
-    otherwise take again every turn. Each turn takes the queue lock afresh, so
+    otherwise take again every turn. A checkout or binding the runner cannot
+    use ends serve before it takes anything, with that one result. Each turn takes the queue lock afresh, so
     a serve killed outright is cleared by the next one's recovery. With
     until_idle, serving ends once nothing more can be taken and returns every
     result; without it, serving never returns, so each result goes to
     on_result as it is written and none is kept.
     """
     results: list[Result] = []
+    while True:
+        # A wrong checkout or binding would refuse every candidate in turn: find it once, before taking any.
+        setup = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+        if setup.stop is None:
+            break
+        if setup.stop["reason"] != "queue_locked":
+            write_result(state_directory, setup)
+            if on_result is not None:
+                on_result(setup)
+            return [setup]
+        if until_idle:
+            return results
+        sleep(poll)
     while True:
         # A killed serve or run leaves live state behind; clear it first, even when nothing is queued.
         Runner(repository, state_directory, remote=remote, base=base, lead=lead).recover()
@@ -2140,6 +2178,7 @@ def serve(
                 return results
             sleep(poll)
             continue
+        heads = {item["subject"]: item["head"] for item in state["queue"]}
         runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams)
         taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting)
         if all(result.stop is not None and result.stop["reason"] == "queue_locked" for result in taken):
@@ -2153,8 +2192,10 @@ def serve(
             if result.outcome == "refused" and result.candidate is not None and result.stop["reason"] != "queue_locked":
                 # A refusal leaves the candidate queued as it was; serve stops it, journaled once, as any stop.
                 with contextlib.suppress(Stop, delivery_state.StateError):
-                    if runner.item(result.candidate)["stage"] == "queued":
-                        runner.set_item(result.candidate, stage="stopped")
+                    runner.write(selector=f"queue[subject={result.candidate}]",
+                                 build=_refused_stop(result.candidate, heads.get(result.candidate)))
+        for result in taken:
+            # Reported only once every result is written and every refusal stopped, so a reader never loses them.
             if on_result is not None:
                 on_result(result)
         if until_idle:
@@ -2191,20 +2232,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve" and not args.until_idle:
         # Serving until stopped: one document a line as each is written; state/results keeps them all.
         def report(result: Result) -> None:
-            sys.stdout.buffer.write(json.dumps(result.document(), ensure_ascii=True, sort_keys=True).encode("ascii") + b"\n")
-            sys.stdout.buffer.flush()
+            try:
+                sys.stdout.buffer.write(json.dumps(result.document(), ensure_ascii=True, sort_keys=True).encode("ascii") + b"\n")
+                sys.stdout.buffer.flush()
+            except BrokenPipeError:
+                # Nobody reads any more: serving goes on, and state/results keeps every document.
+                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
 
         def interrupt(signum: int, frame: object) -> None:
             raise KeyboardInterrupt
 
         signal.signal(signal.SIGTERM, interrupt)
         try:
-            serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead, poll=args.poll,
-                  on_result=report)
+            # Serving until stopped returns only when it cannot start.
+            refused = serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
+                            poll=args.poll, on_result=report)
         except KeyboardInterrupt:
             # A stop mid-turn leaves live state the next serve or run clears first.
-            pass
-        return 0
+            return 0
+        return 1 if refused else 0
     if args.command == "serve":
         served = serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
                        until_idle=True, poll=args.poll)

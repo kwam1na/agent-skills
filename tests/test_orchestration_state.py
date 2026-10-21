@@ -2079,6 +2079,8 @@ class LaneWriterTests(unittest.TestCase):
         code, blocked = run_tool(self.directory, "focus", "--lane", "lane-1", "--text", "Blocked on the lead",
                                  "--state", "blocked", "--waiting-on", "lead")
         self.assertEqual(code, 0, blocked)
+        own = next(entry for entry in blocked["state"]["lanes"] if entry["id"] == "lane-1")
+        self.assertEqual((own["state"], own["waitingOn"]), ("blocked", "lead"))
         code, cleared = run_tool(self.directory, "focus", "--lane", "lane-1", "--text", "Unblocked",
                                  "--state", "working", "--waiting-on", "")
         self.assertEqual(code, 0, cleared)
@@ -2189,6 +2191,12 @@ class StatusTests(unittest.TestCase):
             "lane-1": "work-c: queued, 2 review rounds",
             "lane-3": "work-r: review",
         })
+
+    def test_stopped_work_is_named_rather_than_nothing_in_flight(self) -> None:
+        record = self.record(queue=[queue_item("work-b", order=2, stage="stopped"),
+                                    queue_item("work-a", stage="stopped"), queue_item("work-c", order=3)])
+        self.assertEqual(state_tool.delivery_status(record, [], at=self.NOW)["text"],
+                         "stopped: work-a, work-b · next: work-c")
 
     def test_an_override_has_expired_at_its_expiry(self) -> None:
         override = {"text": "Holding", "setAt": "2026-10-21T11:00:00Z", "expiresAt": self.NOW}

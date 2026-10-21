@@ -172,7 +172,10 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   `meta.hold` (`{reason, since}`) to pause it, as before a release, and clear
   it to resume. The hold takes effect at serve's next turn: a batch already
   being checked still lands, so release only once `meta.checking.now` is
-  empty. A stop that stops the queue journals `base.broken`; `serve` takes
+  empty. Before starting `serve` on a record kept without it, check that no
+  earlier stop left the base unconfirmed: an older stop that stopped the
+  queue journaled no `base.broken`, so journal one, or set the hold, until
+  the base is confirmed. A stop that stops the queue journals `base.broken`; `serve` takes
   nothing more until you confirm the base and journal `base.repaired`. A
   stopped candidate waits for its lane to hand it off again; under `serve`, so
   does one the runner refuses, such as one with a lead input the binding does
