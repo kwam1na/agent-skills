@@ -1583,6 +1583,11 @@ class LiveCheckStateTests(MergeQueueTestCase):
         return [json.loads(line) for line in path.read_text().splitlines()]
 
     @staticmethod
+    def shape(entries: list[dict]) -> list[dict]:
+        """Steps or checks without their times, failures or logs: the states these tests pin."""
+        return [{key: entry[key] for key in ("label", "id", "state") if key in entry} for entry in entries]
+
+    @staticmethod
     def as_steps(states: dict[str, str]) -> list[dict]:
         return [{"label": name, "state": state} for name, state in states.items()]
 
@@ -1598,8 +1603,8 @@ class LiveCheckStateTests(MergeQueueTestCase):
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
         self.assertEqual(results[1].document()["selection"]["fallbackReasons"], ["provider_failed"])
         [seen] = self.snapshots(adopter)
-        self.assertEqual(seen["steps"], self.as_steps({"full": "running"}))
-        self.assertEqual(seen["queue"], self.as_checks({"full": "running"}))
+        self.assertEqual(self.shape(seen["steps"]), self.as_steps({"full": "running"}))
+        self.assertEqual(self.shape(seen["queue"]), self.as_checks({"full": "running"}))
 
     def test_a_lead_write_to_another_item_during_a_check_is_kept(self) -> None:
         lead_writes = check_entry("lead-writes", "--lead-writes")
@@ -1610,7 +1615,7 @@ class LiveCheckStateTests(MergeQueueTestCase):
             results = self.run_queue(adopter, "feature")
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
         self.assertEqual(adopter.item("other")["title"], "Renamed by the lead")
-        self.assertEqual(adopter.item("feature")["checks"], self.as_checks({"after": "passed", "lead-writes": "passed"}))
+        self.assertEqual(self.shape(adopter.item("feature")["checks"]), self.as_checks({"after": "passed", "lead-writes": "passed"}))
 
     def recording(self, subject: str = "feature"):
         """Wrap the state tool: after every runner write, record the panel's steps and the queue row."""
@@ -1646,8 +1651,8 @@ class LiveCheckStateTests(MergeQueueTestCase):
         with patched:
             self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
         writes = self.live(seen)
-        # Pending, then each check running and then finished, with d skipped.
-        self.assertEqual(len(writes), 8)
+        # Pending, then each check running and then finished, with d skipped, then the history.
+        self.assertEqual(len(writes), 9)
 
     @unittest.skipIf(os.name == "nt", "process groups and ps are POSIX")
     def test_a_timed_out_check_reads_timed_out_in_both_views(self) -> None:
@@ -1659,7 +1664,7 @@ class LiveCheckStateTests(MergeQueueTestCase):
         states = [steps[0] for steps, _ in self.live(seen)]
         self.assertIn(("slow", "running"), states)
         self.assertIn(("slow", "timed_out"), states)
-        self.assertEqual(adopter.item("feature")["checks"][0], {"id": "slow", "state": "timed_out"})
+        self.assertEqual(self.shape(adopter.item("feature")["checks"])[0], {"id": "slow", "state": "timed_out"})
 
     def test_a_retry_rebuilds_from_fresh_state_and_keeps_the_leads_write(self) -> None:
         adopter = self.snapshot_adopter("trio", {"alwaysRun": []})
@@ -1698,7 +1703,7 @@ class LiveCheckStateTests(MergeQueueTestCase):
         self.assertIsNone(state["meta"]["checking"]["now"])
         self.assertEqual(adopter.item("feature")["stage"], "stopped")
         self.assertEqual(
-            adopter.item("feature")["checks"], self.as_checks({"a": "passed", "b": "pending", "c": "pending", "d": "pending"}),
+            self.shape(adopter.item("feature")["checks"]), self.as_checks({"a": "passed", "b": "pending", "c": "pending", "d": "pending"}),
         )
 
     def test_steps_advance_in_order_and_a_failure_is_recorded_in_both_views(self) -> None:
@@ -1715,11 +1720,11 @@ class LiveCheckStateTests(MergeQueueTestCase):
         self.assertEqual(sorted(seen), ["a", "b", "c"])
         for name, states in expected.items():
             with self.subTest(check=name):
-                self.assertEqual(seen[name]["steps"], self.as_steps(states))
-                self.assertEqual(seen[name]["queue"], self.as_checks(states))
+                self.assertEqual(self.shape(seen[name]["steps"]), self.as_steps(states))
+                self.assertEqual(self.shape(seen[name]["queue"]), self.as_checks(states))
         # After the run the queue keeps every check's final state; d never ran because b failed.
         final = {"a": "passed", "b": "failed", "c": "passed", "d": "skipped"}
-        self.assertEqual(adopter.item("feature")["checks"], self.as_checks(final))
+        self.assertEqual(self.shape(adopter.item("feature")["checks"]), self.as_checks(final))
 
     def test_a_finished_check_never_reads_running_again_and_one_check_runs_at_a_time(self) -> None:
         adopter = self.snapshot_adopter("trio", {"alwaysRun": []})
@@ -2187,7 +2192,7 @@ class ParallelCheckTests(MergeQueueTestCase):
         running: list[int] = []
 
         def counting(runner, subjects, states):
-            running.append(sum(1 for _, state in states if state == "running"))
+            running.append(sum(1 for record in states if record["state"] == "running"))
             return real(runner, subjects, states)
 
         with mock.patch.object(queue.Runner, "write_progress", counting):
