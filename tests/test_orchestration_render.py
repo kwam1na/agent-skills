@@ -1024,7 +1024,7 @@ class LiveTests(DeliveryStateFixture):
         seen = client.wait_for(lambda doc: doc["journal"] and doc["journal"][-1]["summary"] == "Reached the page")
         self.assertIsNotNone(seen)
         self.assertLess(time.monotonic() - written, 3.0)
-        self.assertEqual(set(seen), {"state", "journal", "stats", "estimates"})
+        self.assertEqual(set(seen), {"state", "journal", "stats", "estimates", "status", "focus"})
         status, page = client.get("")
         self.assertEqual(status, 200)
         self.assertIn(b"EventSource(\"/events\")", page)
