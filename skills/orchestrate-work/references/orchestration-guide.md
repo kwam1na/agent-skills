@@ -36,6 +36,10 @@ it through the state tool, then render the views.
   `changeRequest` names its change request. `reconcile` maintains both from
   snapshots. A record that kept these under `extensions` moves them onto
   these fields; no product tool writes `extensions`.
+- **Ticket titles and summaries come from the tracker.** The optional
+  `tickets` map, `{<subject>: {title, summary?}}`, holds each ticket's own
+  title and summary for work the record holds. `reconcile` keeps it from
+  tracker snapshots; the lead never writes it by hand.
 - **One element, one version, per write.** Update queue and lane elements one
   at a time with `--element 'queue[subject=<subject>]'`. Each write needs the
   current `--version`, so read it again with `show` between writes; a stale
@@ -129,6 +133,9 @@ decision. Lanes post on their own tickets at the points the lane brief names.
 - Through the tracker capability, create the epic and one ticket per unit,
   each ticket nested under the epic, carrying its unit's scope, required
   scenarios, sensors and dependencies.
+- Open each ticket's Summary with what the work does, in a sentence or two;
+  where it came from, such as "deferred from" another ticket, comes after.
+  The views show that opening as the ticket's summary, from the tracker.
 - Without a configured tracker, keep the tickets in the plan and report that
   no tracker operation was performed.
 - Write the lane brief from the lane brief template below once, for every
@@ -777,7 +784,10 @@ binding declares may change.
   start for each candidate waiting at `queued`. The start counts what remains
   of the run in progress once (a batch is one run), then one median run for
   each candidate ahead. Without run history the start is unknown. Both are
-  estimates, never promises.
+  estimates, never promises. The markdown view shows them as of the
+  record's last write; the page works them out again from the record's
+  history by its own clock, so a quiet record never shows a start that has
+  already passed.
 
 ### Flakes and retries
 

@@ -318,11 +318,23 @@ def render_markdown(document: dict) -> str:
         "",
     ]
 
+    tickets = state.get("tickets") or {}
+
+    def ticket(keys: tuple, title: str) -> tuple[str, str | None]:
+        """The tracker's title and summary for work, by the first key it has a ticket for; else the record's title."""
+        for key in keys:
+            if key is not None and isinstance(tickets.get(key), dict):
+                return tickets[key]["title"], tickets[key].get("summary")
+        return title, None
+
+    def summary_row(summary: str | None, indent: str) -> list[str]:
+        return [] if summary is None else [f"{indent}- summary: {_markdown_text(summary)}"]
+
     checking = meta["checking"]
     rows = []
     if checking["now"] is not None:
         now = checking["now"]
-        rows.append(f"- Now: {_markdown_text(now['subject'])}, {_markdown_text(now['title'])}, since {_markdown_text(now['startedAt'])}")
+        rows.append(f"- Now: {_markdown_text(now['subject'])}, {_markdown_text(ticket((now['subject'],), now['title'])[0])}, since {_markdown_text(now['startedAt'])}")
         rows.extend(f"  - {_markdown_text(_step_text(step, meta['updatedAt']))}" for step in now["steps"])
     if checking["next"]:
         rows.append("- Next: " + ", ".join(_markdown_text(subject) for subject in checking["next"]))
@@ -341,11 +353,13 @@ def render_markdown(document: dict) -> str:
 
     rows = []
     for item in sorted(state["queue"], key=lambda entry: (entry["order"], entry["subject"])):
+        title, summary = ticket((item["subject"],), item["title"])
         # A bullet, not an ordered list: the order is the record's, not Markdown's.
         rows.append(
-            f"- {_markdown_number(item['order'])} {_markdown_text(item['subject'])}: {_markdown_text(item['title'])}, {_markdown_text(item['stage'])}"
+            f"- {_markdown_number(item['order'])} {_markdown_text(item['subject'])}: {_markdown_text(title)}, {_markdown_text(item['stage'])}"
             f" · lane {_markdown_text(item['lane'])} · head {_markdown_text(item['head'])}{change_request(item)}"
         )
+        rows.extend(summary_row(summary, "  "))
         rows.extend(stats_row(item, "  "))
         if isinstance(estimates.get(item["subject"]), dict):
             rows.append(f"  - {_markdown_text(_estimate_text(estimates[item['subject']]))}")
@@ -354,8 +368,10 @@ def render_markdown(document: dict) -> str:
 
     rows = []
     for item in state.get("planned", []):
-        rows.append(f"- {_markdown_text(item['subject'])}: {_markdown_text(item['title'])}, {_markdown_text(item['stage'])}"
+        title, summary = ticket((item["subject"],), item["title"])
+        rows.append(f"- {_markdown_text(item['subject'])}: {_markdown_text(title)}, {_markdown_text(item['stage'])}"
                     f" · lane {_markdown_text(item['lane'])}{change_request(item)}")
+        rows.extend(summary_row(summary, "  "))
         rows.extend(stats_row(item, "  "))
     lines += _markdown_section("Planned", rows, "Nothing planned outside the queue.")
 
@@ -376,7 +392,11 @@ def render_markdown(document: dict) -> str:
     rows = [f"- {'met' if item['met'] else 'open'}: {_markdown_text(item['text'])}" for item in state["finish"]]
     lines += _markdown_section("Finish line", rows, "No finish line recorded.")
 
-    rows = [f"- {_markdown_text(item['title'])} · {_markdown_text(item['reference'])}" for item in state["followups"]]
+    rows = []
+    for item in state["followups"]:
+        title, summary = ticket((item["reference"], item["id"]), item["title"])
+        rows.append(f"- {_markdown_text(title)} · {_markdown_text(item['reference'])}")
+        rows.extend(summary_row(summary, "  "))
     lines += _markdown_section("Follow-ups", rows, "No follow-ups.")
 
     rows = [f"- {_markdown_text(lease['id'])}: {_markdown_text(lease['holder'])} since {_markdown_text(lease['since'])}" for lease in state["leases"]]
@@ -452,11 +472,12 @@ _PAGE_PROGRAM = """
     items.forEach(function (item) { element.appendChild(draw(item)); });
     return element;
   }
-  function row(title, detail, tag) {
+  function row(title, detail, tag, summary) {
     var item = el("li");
     var head = el("div", title);
     if (tag !== undefined) { head.appendChild(el("span", show(tag), "tag")); }
     item.appendChild(head);
+    if (typeof summary === "string") { item.appendChild(el("div", summary, "summary")); }
     if (detail) { item.appendChild(el("div", detail, "detail")); }
     return item;
   }
@@ -500,6 +521,39 @@ _PAGE_PROGRAM = """
     if (typeof check.log === "string") { text += " \\u00b7 log " + check.log; }
     return text;
   }
+  /* The median of the last five runs, or null with none: no history means no estimate, never a guess. */
+  function medianSeconds(values) {
+    var recent = values.slice(-5).filter(function (value) { return typeof value === "number"; })
+      .sort(function (a, b) { return a - b; });
+    if (!recent.length) { return null; }
+    var middle = Math.floor(recent.length / 2);
+    return recent.length % 2 ? recent[middle] : Math.floor((recent[middle - 1] + recent[middle]) / 2);
+  }
+  /* Each waiting candidate's position and expected start, as the state tool folds them, from the page's own clock. */
+  function queueEstimates(state, asOf) {
+    var moment = Date.parse(asOf);
+    var history = isObject(state.meta.checkHistory) && isArray(state.meta.checkHistory.runs) ? state.meta.checkHistory.runs : [];
+    var expected = medianSeconds(history);
+    var current = state.meta.checking.now;
+    var remaining = 0;
+    if (isObject(current) && expected !== null) {
+      var spent = Math.trunc((moment - Date.parse(current.startedAt)) / 1000);
+      remaining = isNaN(spent) ? expected : Math.min(expected, Math.max(0, expected - spent));
+    }
+    var waiting = state.queue.filter(function (item) { return item.stage === "queued"; }).sort(function (a, b) {
+      return a.order - b.order || (a.subject < b.subject ? -1 : a.subject > b.subject ? 1 : 0);
+    });
+    var estimates = {};
+    waiting.forEach(function (item, index) {
+      var start = null;
+      if (expected !== null && !isNaN(moment)) {
+        var at = new Date(Math.floor((moment + (remaining + index * expected) * 1000) / 1000) * 1000);
+        start = isNaN(at.getTime()) ? null : at.toISOString().replace(".000Z", "Z");
+      }
+      estimates[item.subject] = { position: index + 1, expectedStart: start };
+    });
+    return estimates;
+  }
   function estimateText(estimate) {
     var when = typeof estimate.expectedStart === "string" ? "expected to start around " + estimate.expectedStart : "start time unknown";
     return "position " + show(estimate.position) + " \\u00b7 " + when + " (an estimate)";
@@ -535,6 +589,17 @@ _PAGE_PROGRAM = """
     var state = doc.state;
     var meta = state.meta;
     var parts = [];
+    var tickets = isObject(state.tickets) ? state.tickets : {};
+    /* The tracker's own title and summary for work, by the first key it has a ticket for. */
+    function ticket(keys, title) {
+      for (var index = 0; index < keys.length; index += 1) {
+        var key = keys[index];
+        if (typeof key === "string" && Object.prototype.hasOwnProperty.call(tickets, key) && isObject(tickets[key])) {
+          return { title: tickets[key].title, summary: tickets[key].summary };
+        }
+      }
+      return { title: title, summary: undefined };
+    }
     parts.push(el("h1", show(meta.headline)));
     parts.push(el("p", "Updated " + show(meta.updatedAt) + " \\u00b7 state version " + show(state.version) +
       " \\u00b7 base " + show(meta.baseHead) + " \\u00b7 released " + show(meta.releasedHead), "meta"));
@@ -548,7 +613,7 @@ _PAGE_PROGRAM = """
     var now = meta.checking.now;
     if (now) {
       var current = el("div");
-      current.appendChild(el("div", show(now.subject) + ": " + show(now.title)));
+      current.appendChild(el("div", show(now.subject) + ": " + show(ticket([now.subject], now.title).title)));
       current.appendChild(el("div", "Since " + show(now.startedAt), "detail"));
       var steps = list("ul", now.steps, "No steps yet.", function (step) {
         return el("li", stepText(step, liveNow(meta.updatedAt)));
@@ -565,7 +630,8 @@ _PAGE_PROGRAM = """
 
     /* Stats are derived by the state tool; a live document without them still draws. */
     var stats = isObject(doc.stats) ? doc.stats : {};
-    var estimates = isObject(doc.estimates) ? doc.estimates : {};
+    /* Worked out here, from the page's own clock: a quiet record never shows a start already past. */
+    var estimates = queueEstimates(state, liveNow(meta.updatedAt));
     function changeRequest(item) {
       return item.changeRequest === undefined || item.changeRequest === null ? "" : " \\u00b7 change request " + show(item.changeRequest);
     }
@@ -579,9 +645,10 @@ _PAGE_PROGRAM = """
     parts.push(el("h2", "Queue"));
     parts.push(list("ol", queue, "The queue is empty.", function (item) {
       var checks = item.checks.map(function (check) { return show(check.id) + " " + show(check.state); }).join(", ");
-      var entry = withStats(row(show(item.order) + ". " + show(item.subject) + ": " + show(item.title),
+      var known = ticket([item.subject], item.title);
+      var entry = withStats(row(show(item.order) + ". " + show(item.subject) + ": " + show(known.title),
         "Lane " + show(item.lane) + " \\u00b7 head " + show(item.head) + changeRequest(item) + (checks ? " \\u00b7 " + checks : ""),
-        item.stage), item);
+        item.stage, known.summary), item);
       var estimate = Object.prototype.hasOwnProperty.call(estimates, item.subject) ? estimates[item.subject] : null;
       if (isObject(estimate)) { entry.appendChild(el("div", estimateText(estimate), "detail")); }
       item.checks.forEach(function (check) {
@@ -594,8 +661,9 @@ _PAGE_PROGRAM = """
 
     parts.push(el("h2", "Planned"));
     parts.push(list("ul", isArray(state.planned) ? state.planned : [], "Nothing planned outside the queue.", function (item) {
-      return withStats(row(show(item.subject) + ": " + show(item.title), "Lane " + show(item.lane) + changeRequest(item),
-        item.stage), item);
+      var known = ticket([item.subject], item.title);
+      return withStats(row(show(item.subject) + ": " + show(known.title), "Lane " + show(item.lane) + changeRequest(item),
+        item.stage, known.summary), item);
     }));
 
     parts.push(el("h2", "Lanes"));
@@ -613,7 +681,8 @@ _PAGE_PROGRAM = """
 
     parts.push(el("h2", "Follow-ups"));
     parts.push(list("ul", state.followups, "No follow-ups.", function (item) {
-      return row(show(item.title), show(item.reference));
+      var known = ticket([item.reference, item.id], item.title);
+      return row(show(known.title), show(item.reference), undefined, known.summary);
     }));
 
     parts.push(el("h2", "Leases"));

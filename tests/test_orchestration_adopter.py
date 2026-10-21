@@ -519,7 +519,8 @@ class FixtureAdopterTests(unittest.TestCase):
     def take_the_tracker_snapshot_with_the_binding(self, adopter: FixtureAdopter) -> None:
         data = adopter.root / "tracker data.json"
         data.write_text(json.dumps({"epic-1": [
-            {"reference": "theta-docs", "title": "Docs for theta", "stateType": "backlog", "blockedBy": []},
+            {"reference": "theta-docs", "title": "Docs for theta", "stateType": "backlog", "blockedBy": [],
+             "summary": "Documents theta for operators."},
             {"reference": "iota-copy", "title": "Copy for iota", "stateType": "started", "blockedBy": ["theta-docs"]},
         ]}), encoding="utf-8")
         binding = adopter.binding()
@@ -538,6 +539,25 @@ class FixtureAdopterTests(unittest.TestCase):
         state = adopter.show()["state"]
         self.assertIn("theta-docs", [followup["id"] for followup in state["followups"]])
         self.assertIn("iota-copy", [item["subject"] for item in state["planned"]])
+        self.assertEqual(state["tickets"], {"theta-docs": {"title": "Docs for theta",
+                                                           "summary": "Documents theta for operators."}})
+
+        # The summary is edited in the tracker: the next snapshot updates the record, and the views show it.
+        children = json.loads(data.read_text(encoding="utf-8"))
+        children["epic-1"][0]["summary"] = "Documents theta, with examples. " + "x" * 2000
+        data.write_text(json.dumps(children), encoding="utf-8")
+        adopter.state_tool("tracker-snapshot", "--binding", str(path), "--output", str(output))
+        reconciled = adopter.state_tool("reconcile", "--snapshot", str(output), "--binding", str(path))
+        self.assertEqual([change["subject"] for change in reconciled["changes"]], ["theta-docs"])
+        summary = adopter.show()["state"]["tickets"]["theta-docs"]["summary"]
+        self.assertTrue(summary.startswith("Documents theta, with examples."))
+        self.assertEqual(len(summary), 1000, "the tracker command shortens it to the bound")
+        adopter.tool(WRAPPER, "--dir", str(adopter.state), "--binding", str(path))
+        self.assertIn("  - summary: " + text("Documents theta, with examples."), adopter.view())
+        version = adopter.show()["state"]["version"]
+        adopter.state_tool("tracker-snapshot", "--binding", str(path), "--output", str(output))
+        self.assertFalse(adopter.state_tool("reconcile", "--snapshot", str(output), "--binding", str(path))["drift"])
+        self.assertEqual(adopter.show()["state"]["version"], version, "an unchanged summary writes nothing")
 
         # The tracker fails: the last snapshot stands, one note says why, and reconcile finds no drift.
         data.write_text(json.dumps({}), encoding="utf-8")

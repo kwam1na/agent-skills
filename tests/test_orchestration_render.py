@@ -859,8 +859,30 @@ def visibility_document() -> dict:
     state["queue"][0]["checks"] = [
         {"id": "suite", "state": "failed", "failures": ["test_alpha", "test_beta"], "log": "logs/01-suite.log"},
     ]
+    # One run of history, 560s: the run in progress since 11:59:00 has 500s left at 12:00:00.
+    state["meta"]["checkHistory"] = {"checks": {}, "runs": [560]}
     return {"state": state, "journal": FIXED_JOURNAL,
-            "estimates": {"change-2": {"position": 1, "expectedStart": "2026-10-20T12:08:20Z"}}}
+            "estimates": delivery_state.queue_estimates(state, at=state["meta"]["updatedAt"])}
+
+
+def ticket_document() -> dict:
+    """The fixed state with the tracker's own titles and summaries for its queued, planned and follow-up work."""
+    state = copy.deepcopy(FIXED_STATE)
+    state["tickets"] = {
+        "change-2": {"title": "Tracker title two", "summary": "Shows each ticket's summary from the tracker."},
+        "change-3": {"title": "Tracker title three"},
+        "ticket-9": {"title": "Tracker follow-up", "summary": "Opens with what the work does."},
+    }
+    return {"state": state, "journal": FIXED_JOURNAL}
+
+
+TICKET_LINES = (
+    "change-2: Tracker title two",
+    "Shows each ticket's summary from the tracker.",
+    "change-3: Tracker title three",
+    "Tracker follow-up",
+    "Opens with what the work does.",
+)
 
 
 VISIBILITY_LINES = (
@@ -929,6 +951,28 @@ class CheckVisibilityViewTests(unittest.TestCase):
         view = render_state.render_markdown(document)
         self.assertNotIn("expected", view)
         self.assertNotIn("position", view)
+
+
+class TicketViewTests(unittest.TestCase):
+    """Both views show each ticket's tracker title, then its summary, falling back to the record's title."""
+
+    def test_the_markdown_view_shows_tracker_titles_then_summaries(self) -> None:
+        view = render_state.render_markdown(ticket_document())
+        for line in TICKET_LINES:
+            with self.subTest(line=line):
+                self.assertIn(render_state._markdown_text(line), view)
+        self.assertLess(view.index(render_state._markdown_text("change-2: Tracker title two")),
+                        view.index(render_state._markdown_text("Shows each ticket's summary from the tracker.")))
+        self.assertIn("  - summary: " + render_state._markdown_text("Opens with what the work does."), view)
+        self.assertNotIn(render_state._markdown_text("change-2: " + HOSTILE), view, "the tracker's title replaces the record's")
+        # Work with no ticket keeps the record's own title, and no summary line.
+        self.assertIn(render_state._markdown_text("change-1: Change one"), view)
+        self.assertEqual(view.count("summary:"), 2)
+
+    def test_without_tickets_the_views_show_the_record_s_titles(self) -> None:
+        view = render_state.render_markdown({"state": FIXED_STATE, "journal": FIXED_JOURNAL})
+        self.assertNotIn("summary:", view)
+        self.assertIn(render_state._markdown_text("change-2: " + HOSTILE), view)
 
 
 class LiveClient:
@@ -1993,6 +2037,56 @@ setTimeout(async () => {
         line = "unit: running · 1m 40s of an expected 10m 00s"
         self.assertIn(render_state._markdown_text(line), render_state.render_markdown(document))
         self.assertIn(line, self.run_page({"now": "2026-10-20T12:00:00.100Z"}, document)["text"])
+
+    def test_the_page_shows_tracker_titles_then_summaries_as_the_markdown_does(self) -> None:
+        text = self.run_page({}, ticket_document())["text"]
+        for line in TICKET_LINES:
+            with self.subTest(line=line):
+                self.assertIn(line, text)
+        self.assertLess(text.index("change-2: Tracker title two"), text.index("Shows each ticket's summary from the tracker."))
+        self.assertLess(text.index("Shows each ticket's summary from the tracker."), text.index("Lane none"),
+                        "the summary comes right after the title")
+        self.assertNotIn("change-2: " + HOSTILE, text)
+        self.assertIn("change-1: Change one", text)
+
+    def test_the_page_works_out_expected_starts_from_its_own_clock(self) -> None:
+        # Nothing running and a quiet record: an hour on, the next start is now, never an hour ago.
+        document = visibility_document()
+        state = document["state"]
+        state["meta"]["checking"] = {"now": None, "next": []}
+        state["queue"][0]["stage"] = "merged"
+        document["estimates"] = {"change-2": {"position": 1, "expectedStart": "2026-10-20T12:00:00Z"}}
+        text = self.run_page({"now": "2026-10-20T13:00:00Z"}, document)["text"]
+        self.assertIn("position 1 · expected to start around 2026-10-20T13:00:00Z (an estimate)", text)
+        self.assertNotIn("12:00:00Z (an estimate)", text)
+
+    def test_the_page_s_expected_starts_agree_with_the_state_tool_s(self) -> None:
+        now = "2026-10-20T12:00:00.250Z"
+        running = {"subject": "change-1", "title": "Change one", "startedAt": "2026-10-20T11:58:20.900Z", "steps": []}
+        cases = {
+            "a run in progress, five of six runs counted": (running, [50000, 500, 600, 600, 700, 9000]),
+            "no history": (running, None),
+            "an overrunning run": ({**running, "startedAt": "2026-10-20T10:00:00Z"}, [600] * 5),
+            "an even count": (None, [100, 200, 300, 400]),
+            "a start in the future": ({**running, "startedAt": "2026-10-20T13:00:00Z"}, [600] * 5),
+            "an absurd history": (None, [10 ** 15] * 5),
+        }
+        for name, (current, runs) in cases.items():
+            with self.subTest(case=name):
+                state = copy.deepcopy(FIXED_STATE)
+                state["meta"]["updatedAt"] = now
+                state["meta"]["checking"] = {"now": current, "next": []}
+                state["queue"] = [
+                    {**FIXED_STATE["queue"][0], "stage": "checking" if current else "merged"},
+                    {**FIXED_STATE["queue"][1], "order": 3, "subject": "change-z"},
+                    {**FIXED_STATE["queue"][1], "order": 2, "subject": "change-y"},
+                ]
+                if runs is not None:
+                    state["meta"]["checkHistory"] = {"checks": {}, "runs": runs}
+                expected = delivery_state.queue_estimates(state, at=now)
+                text = self.run_page({"now": now}, {"state": state, "journal": []})["text"]
+                for subject, estimate in expected.items():
+                    self.assertIn(render_state._estimate_text(estimate), text, subject)
 
     def test_the_page_counts_a_running_check_live_from_its_own_clock(self) -> None:
         # Five minutes after the last write, with no write since, the page still counts on.
