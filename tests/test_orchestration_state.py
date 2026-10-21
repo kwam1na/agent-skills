@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import ast
 import threading
 import time
@@ -694,7 +695,9 @@ GUARD_CALLS = {
         ("skip_if_pending", ["core"]), ("pending", ["core"]), ("skip_if_pending", ["core"]), ("skip_if_pending", ["core"]),
     ],
     "tests/test_provider_qualification.py": [("skip_if_pending", ["provider"])],
-    "tests/test_linear_qualification.py": [("pending", ["profile"]), ("skip_if_pending", ["core", "linear"])],
+    "tests/test_linear_qualification.py": [
+        ("skip_if_pending", ["core", "linear"]), ("pending", ["profile"]), ("skip_if_pending", ["core", "linear"]),
+    ],
     "tests/test_bootstrap_qualification.py": [
         ("pending", ["bootstrap"]), ("skip_if_pending", ["bootstrap"]), ("skip_if_pending", ["bootstrap"]),
     ],
@@ -1517,6 +1520,223 @@ class BindingMaxAgeTests(unittest.TestCase):
             with self.subTest(path=Path(path).name):
                 code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(self.snapshot), "--binding", path)
                 self.assertEqual((code, refused["code"]), (1, "binding_invalid"), refused)
+
+
+class TrackerSnapshotTests(unittest.TestCase):
+    """The binding's own command takes the tracker snapshot; a failure keeps the last one."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.directory = self.root / "state"
+        state_tool.init(self.directory, "Epic underway")
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"meta": {"trackerParent": "epic-7"}})
+        self.output = self.root / "tracker snapshot.json"
+        self.tool = self.root / "tracker tool.py"
+        self.tool.write_text(textwrap.dedent("""
+            import json, sys, time, datetime
+            parent, mode = sys.argv[1], sys.argv[2]
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if mode == "fail":
+                print("the tracker refused: Authorization: Bearer secret-token-123", file=sys.stderr); sys.exit(3)
+            if mode == "huge":
+                sys.stdout.write("x" * (17 * 1024 * 1024)); sys.exit(0)
+            if mode == "sleep":
+                time.sleep(5)
+            if mode == "garbage":
+                print("not json"); sys.exit(0)
+            if mode == "bigint":
+                print('{"takenAt": ' + "9" * 5000 + '}'); sys.exit(0)
+            if mode == "deep":
+                print("[" * 200000 + "]" * 200000); sys.exit(0)
+            taken = now - datetime.timedelta(seconds=7200 if mode == "old" else 0)
+            source = "forge" if mode in ("forge", "forgeok") else "tracker"
+            if mode == "forgeok":
+                print(json.dumps({"takenAt": taken.strftime("%Y-%m-%dT%H:%M:%SZ"), "source": "forge", "items": [
+                    {"subject": "a", "state": "open"}]})); sys.exit(0)
+            if mode == "baddate":
+                print(json.dumps({"takenAt": "2026-02-30T00:00:00Z", "source": "tracker", "items": []})); sys.exit(0)
+            print(json.dumps({"takenAt": taken.strftime("%Y-%m-%dT%H:%M:%SZ"), "source": source, "items": [
+                {"subject": parent + "-child-1", "title": "Later work", "state": "backlog"},
+                {"subject": parent + "-child-2", "title": "Work now", "state": "started",
+                 "blockedBy": [parent + "-child-1"]}]}))
+        """), encoding="utf-8")
+
+    def binding(self, mode: str = "ok", **block: object) -> str:
+        path = self.root / f"binding {mode}.json"
+        member = {"directory": "state", "renderers": [], "publishers": [],
+                  "trackerSnapshot": {"argv": [sys.executable, "-B", str(self.tool), "{parent}", mode], **block}}
+        path.write_text(json.dumps({"state": member}), encoding="utf-8")
+        return str(path)
+
+    def snap(self, mode: str = "ok", *extra: str, **block: object) -> dict:
+        code, result = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(mode, **block),
+                                "--output", str(self.output), *extra)
+        self.assertEqual(code, 0, result)
+        return result
+
+    def notes(self) -> list[str]:
+        return [entry["summary"] for entry in state_tool.show(self.directory)["journal"]
+                if entry["summary"].startswith("tracker-snapshot:")]
+
+    def test_the_command_takes_a_snapshot_reconcile_reads_with_no_agent(self) -> None:
+        result = self.snap()
+        self.assertEqual((result["taken"], result["items"]), (True, 2))
+        snapshot = json.loads(self.output.read_text(encoding="utf-8"))
+        self.assertEqual(snapshot["items"][1]["blockedBy"], ["epic-7-child-1"], "the parent came from the record")
+        code, reconciled = run_tool(self.directory, "reconcile", "--snapshot", str(self.output))
+        self.assertEqual((code, reconciled["drift"]), (0, True), reconciled)
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state["followups"][0]["id"], "epic-7-child-1")
+        self.assertEqual(state["planned"][0]["subject"], "epic-7-child-2")
+
+    def test_a_failing_or_invalid_command_keeps_the_last_snapshot_and_notes_why_once(self) -> None:
+        self.snap()
+        kept = self.output.read_bytes()
+        for mode, reason, detail in (("fail", "exited with 3", "the tracker refused"),
+                                     ("garbage", "printed no JSON", None),
+                                     ("forge", "not a valid tracker snapshot", "forge"),
+                                     ("old", "too old", "7200s ago"),
+                                     ("huge", "printed more than", None),
+                                     ("bigint", "printed no JSON", None),
+                                     ("deep", "printed no JSON", None),
+                                     ("forgeok", "not a valid tracker snapshot", "not from the tracker"),
+                                     ("baddate", "not a valid tracker snapshot", "not a real time")):
+            with self.subTest(mode=mode):
+                result = self.snap(mode)
+                self.assertEqual((result["taken"], result["fallback"]), (False, True))
+                self.assertIn(reason, result["reason"])
+                if detail:
+                    self.assertIn(detail, result["detail"])
+                self.assertEqual(self.output.read_bytes(), kept, "the last snapshot stands")
+                self.assertIn(reason, self.notes()[-1])
+        # What the command printed is never published: the journal names only the reason.
+        self.assertFalse([note for note in self.notes() if "secret-token" in note or "Bearer" in note])
+        before = len(self.notes())
+        self.snap("baddate")
+        self.assertEqual(len(self.notes()), before, "the same reason is noted once")
+
+    def test_an_outage_that_ended_is_noted_so_the_next_one_is_noted_too(self) -> None:
+        self.snap("fail")
+        self.snap()
+        self.snap("fail")
+        self.assertEqual(self.notes(), [
+            "tracker-snapshot: the command exited with 3; the last snapshot stands",
+            "tracker-snapshot: taken again",
+            "tracker-snapshot: the command exited with 3; the last snapshot stands",
+        ])
+        self.snap()
+        self.snap()
+        self.assertEqual(self.notes().count("tracker-snapshot: taken again"), 2, "a run of successes is noted once")
+
+    def test_reconcile_refuses_a_snapshot_the_parser_cannot_read(self) -> None:
+        for name, text in (("long number", '{"takenAt": ' + "9" * 5000 + "}"),
+                           ("deep nesting", "[" * 200000 + "]" * 200000)):
+            with self.subTest(name):
+                path = self.root / f"{name}.json"
+                path.write_text(text, encoding="utf-8")
+                code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(path))
+                self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"), refused)
+
+    def test_a_reason_that_comes_back_after_another_is_noted_again(self) -> None:
+        self.snap("fail")
+        self.snap("garbage")
+        self.snap("fail")
+        self.assertEqual(len(self.notes()), 3)
+
+    def test_a_snapshot_is_never_written_over_the_record_s_own_files(self) -> None:
+        (self.directory / "outbox").mkdir()
+        before = {name: (self.directory / name).read_bytes() for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE)}
+        for name in ("state.json", "journal.jsonl", "STATE.JSON", "outbox/outbox.json", "published.json",
+                     "recovery.json", "recovery.json.invalid.2", "queue.lock"):
+            with self.subTest(name=name):
+                code, refused = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(),
+                                         "--output", str(self.directory / name))
+                self.assertEqual((code, refused["code"]), (1, "output_invalid"), refused)
+        self.assertEqual({name: (self.directory / name).read_bytes() for name in before}, before)
+        # The directory named in another case is still the directory, where the filesystem ignores case.
+        other_case = self.directory.with_name(self.directory.name.upper())
+        if other_case.exists() and os.path.samefile(other_case, self.directory):
+            code, refused = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(),
+                                     "--output", str(other_case / "state.json"))
+            self.assertEqual((code, refused["code"]), (1, "output_invalid"), refused)
+            code, refused = run_tool(other_case, "tracker-snapshot", "--binding", self.binding(),
+                                     "--output", str(self.directory / "state.json"))
+            self.assertEqual((code, refused["code"]), (1, "output_invalid"), refused)
+            self.assertEqual({name: (self.directory / name).read_bytes() for name in before}, before)
+        code, result = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(),
+                                "--output", str(self.directory / "tracker snapshot.json"))
+        self.assertEqual((code, result["taken"]), (0, True), "any other name in the directory is fine")
+
+    def test_the_binding_schema_takes_a_tracker_snapshot_block(self) -> None:
+        schema = state_tool.load_schema("orchestration-binding/1")
+        member = schema["properties"]["state"]
+        block = {"argv": ["tool", "{parent}"], "timeoutSeconds": 30}
+        errors = state_tool.validate({"directory": "s", "renderers": [], "publishers": [], "trackerSnapshot": block},
+                                     {**member, "$defs": schema["$defs"]})
+        self.assertEqual(errors, [])
+        errors = state_tool.validate({"directory": "s", "renderers": [], "publishers": [],
+                                      "trackerSnapshot": {"argv": ["tool"], "extra": 1}}, {**member, "$defs": schema["$defs"]})
+        self.assertTrue(errors)
+
+    def test_an_output_that_cannot_be_written_is_refused_not_a_crash(self) -> None:
+        code, refused = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(),
+                                 "--output", str(self.root / "missing" / "out.json"))
+        self.assertEqual((code, refused["code"]), (1, "output_invalid"), refused)
+
+    def test_a_command_that_runs_too_long_is_stopped(self) -> None:
+        result = self.snap("sleep", timeoutSeconds=1)
+        self.assertEqual(result["taken"], False)
+        self.assertIn("timed out after 1s", result["reason"])
+        self.assertFalse(result["fallback"], "there was no earlier snapshot to fall back to")
+
+    def test_a_stale_fallback_is_refused_by_reconcile(self) -> None:
+        self.snap()
+        stale = json.loads(self.output.read_text(encoding="utf-8"))
+        stale["takenAt"] = taken(3600)
+        self.output.write_text(json.dumps(stale), encoding="utf-8")
+        self.snap("fail")
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(self.output))
+        self.assertEqual((code, refused["code"]), (1, "snapshot_stale"))
+
+    def test_the_command_needs_a_parent_when_it_names_one(self) -> None:
+        fresh = self.root / "unparented"
+        state_tool.init(fresh, "No parent")
+        code, result = run_tool(fresh, "tracker-snapshot", "--binding", self.binding(), "--output", str(self.output))
+        self.assertEqual((code, result["taken"]), (0, False))
+        self.assertIn("meta.trackerParent", result["reason"])
+
+    def test_without_a_command_nothing_runs_and_a_malformed_block_is_refused(self) -> None:
+        plain = self.root / "plain.json"
+        plain.write_text(json.dumps({"state": {"directory": "state", "renderers": [], "publishers": []}}),
+                         encoding="utf-8")
+        code, result = run_tool(self.directory, "tracker-snapshot", "--binding", str(plain), "--output", str(self.output))
+        self.assertEqual((code, result["taken"]), (0, False))
+        self.assertFalse(self.output.exists())
+        for block in ({"argv": []}, {"argv": ["x"], "timeoutSeconds": 0}, {"argv": ["x"], "retries": 2},
+                      {"argv": "x"}):
+            with self.subTest(block=block):
+                path = self.root / "bad.json"
+                path.write_text(json.dumps({"state": {"directory": "state", "renderers": [], "publishers": [],
+                                                      "trackerSnapshot": block}}), encoding="utf-8")
+                code, refused = run_tool(self.directory, "tracker-snapshot", "--binding", str(path),
+                                         "--output", str(self.output))
+                self.assertEqual((code, refused["code"]), (1, "binding_invalid"))
+
+    def test_the_binding_s_max_age_applies_to_the_command_s_snapshot(self) -> None:
+        path = self.root / "strict.json"
+        path.write_text(json.dumps({"state": {"directory": "state", "renderers": [], "publishers": [],
+                                              "snapshotMaxAgeSeconds": 60, "trackerSnapshot": {
+                                                  "argv": [sys.executable, "-B", str(self.tool), "{parent}", "old"]}}}),
+                        encoding="utf-8")
+        code, result = run_tool(self.directory, "tracker-snapshot", "--binding", str(path), "--output", str(self.output))
+        self.assertEqual(result["taken"], False)
+        self.assertIn("more than 60s", result["detail"])
+        code, result = run_tool(self.directory, "tracker-snapshot", "--binding", str(path), "--output", str(self.output),
+                                "--max-age", "86400")
+        self.assertEqual(result["taken"], True)
 
 
 class PublicationTests(unittest.TestCase):

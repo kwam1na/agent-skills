@@ -5,7 +5,8 @@
     "link-dependencies",
     "update-status",
     "attach-evidence",
-    "close-or-handoff"
+    "close-or-handoff",
+    "list-work"
   ],
   "outcomes": [
     "success",
