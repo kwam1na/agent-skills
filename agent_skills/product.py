@@ -4,9 +4,11 @@ from __future__ import annotations
 import json
 import os
 import signal
+import struct
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import NamedTuple
 
@@ -83,6 +85,9 @@ def _incomplete_cancellation(
     )
 
 
+_LAUNCH_MARKER = "AGENT_SKILLS_LAUNCH"
+
+
 class _Process(NamedTuple):
     ppid: int
     pgid: int
@@ -99,18 +104,22 @@ def _darwin_process_table() -> dict[int, _Process]:
     macOS hides other users' processes from this call, so they never appear.
     """
     import ctypes
-    import struct
 
     libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
     libproc.proc_listallpids.argtypes = [ctypes.c_void_p, ctypes.c_int]
     libproc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
-    count = libproc.proc_listallpids(None, 0)
-    if count <= 0:
-        raise OSError(ctypes.get_errno(), "proc_listallpids failed")
-    pids = (ctypes.c_int * (count + 64))()
-    count = libproc.proc_listallpids(pids, ctypes.sizeof(pids))
-    if count <= 0:
-        raise OSError(ctypes.get_errno(), "proc_listallpids failed")
+    capacity = libproc.proc_listallpids(None, 0)
+    while True:
+        if capacity <= 0:
+            raise OSError(ctypes.get_errno(), "proc_listallpids failed")
+        pids = (ctypes.c_int * (capacity + 256))()
+        count = libproc.proc_listallpids(pids, ctypes.sizeof(pids))
+        if count <= 0:
+            raise OSError(ctypes.get_errno(), "proc_listallpids failed")
+        # A full buffer may have dropped pids; ask again with more room.
+        if count < len(pids):
+            break
+        capacity = count * 2
     # struct proc_bsdinfo (PROC_PIDTBSDINFO): pbi_status at 4, pbi_ppid and
     # pbi_uid at 16, pbi_pgid at 100, pbi_start_tvsec and _tvusec at 120.
     size = 136
@@ -141,8 +150,50 @@ def _proc_process_table(proc: Path = Path("/proc")) -> dict[int, _Process]:
             continue  # It exited while we looked.
         # The command name is parenthesised and may itself hold spaces.
         fields = stat[stat.rindex(")") + 2:].split()
-        table[int(entry.name)] = _Process(int(fields[1]), int(fields[2]), uid, fields[19], fields[0] == "Z")
+        table[int(entry.name)] = _Process(int(fields[1]), int(fields[2]), uid, int(fields[19]), fields[0] == "Z")
     return table
+
+
+def _darwin_environment(pid: int) -> list[bytes] | None:
+    """A process's environment, from KERN_PROCARGS2; None when it cannot be read."""
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint, ctypes.c_void_p,
+                            ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t]
+    argmax = ctypes.c_int()
+    size = ctypes.c_size_t(ctypes.sizeof(argmax))
+    if libc.sysctl((ctypes.c_int * 2)(1, 8), 2, ctypes.byref(argmax), ctypes.byref(size), None, 0) != 0:
+        return None  # CTL_KERN, KERN_ARGMAX
+    buffer = ctypes.create_string_buffer(argmax.value)
+    size = ctypes.c_size_t(argmax.value)
+    if libc.sysctl((ctypes.c_int * 3)(1, 49, pid), 3, buffer, ctypes.byref(size), None, 0) != 0:
+        return None  # CTL_KERN, KERN_PROCARGS2: gone, or not ours
+    raw = buffer.raw[:size.value]
+    # argc, the executable path, padding, argv, then the environment.
+    (argc,) = struct.unpack_from("i", raw, 0)
+    rest = raw[4:]
+    rest = rest[rest.index(b"\0"):].lstrip(b"\0")
+    return [entry for entry in rest.split(b"\0")[argc:] if entry]
+
+
+def _proc_environment(pid: int, proc: Path = Path("/proc")) -> list[bytes] | None:
+    try:
+        return (proc / str(pid) / "environ").read_bytes().split(b"\0")
+    except OSError:
+        return None
+
+
+def _process_environment(pid: int) -> list[bytes] | None:
+    """A process's environment where the platform exposes it, else None."""
+    try:
+        if sys.platform == "darwin":
+            return _darwin_environment(pid)
+        if Path("/proc/self/environ").is_file():
+            return _proc_environment(pid)
+    except (OSError, ValueError, struct.error):
+        pass
+    return None
 
 
 def _ps_process_table() -> dict[int, _Process]:
@@ -180,18 +231,27 @@ class _DescendantTracker:
     keeps watching the tree while it runs, so it can still recognise such a
     process by its pid and start time when cancellation comes.
 
-    A descendant born, escaped and orphaned between two observations is not
-    seen; the observation interval bounds that window.
+    It observes every third wait tick (0.3 s) while the command runs, and
+    every drain tick (0.05 s) once cancellation starts. Ancestry alone misses
+    a descendant born, escaped and orphaned between two observations, such
+    as a classic double-fork daemon, so cancellation also sweeps for the
+    launch's environment marker (see ``sweep``). Only a descendant that both
+    escapes that way and clears its environment is not found.
     """
 
     # The launcher's wait loop ticks every 0.1 s; observe every third tick.
     EVERY = 3
 
-    def __init__(self, child: subprocess.Popen, table=_process_table) -> None:
+    def __init__(self, child: subprocess.Popen, table=_process_table, marker: bytes | None = None,
+                 environment=_process_environment) -> None:
         self._root = child.pid
         self._table = table
+        self._marker = marker
+        self._environment = environment
         self._known: dict[int, object] = {}
         self._confirmed = False
+        self._root_started: object = None
+        self._escaped: tuple[int, ...] = ()
         self._ticks = 0
 
     def observe(self, *, throttle: bool = False) -> dict[int, _Process] | None:
@@ -209,13 +269,19 @@ class _DescendantTracker:
             if root is None or root.ppid != os.getpid():
                 return table
             self._confirmed = True
+            self._root_started = root.started
         live = {pid for pid, started in self._known.items()
                 if pid in table and table[pid].started == started}
-        seeds = live | {self._root}
+        seeds = set(live)
+        # Once the child is reaped its pid may be reused, so the root and its
+        # process group count only while the same child is still there.
+        root_present = root is not None and root.started == self._root_started
+        if root_present:
+            seeds.add(self._root)
         for pid, process in table.items():
             if pid in self._known or process.zombie:
                 continue
-            if process.pgid == self._root or self._descends(pid, table, seeds):
+            if (root_present and process.pgid == self._root) or self._descends(pid, table, seeds):
                 self._known[pid] = process.started
         return table
 
@@ -229,24 +295,57 @@ class _DescendantTracker:
                 return True
         return False
 
-    def escaped(self) -> tuple[int, ...]:
-        """Known descendants still running outside the child's process group."""
+    def sweep(self, table: dict[int, _Process]) -> None:
+        """Adopt every process that carries this launch's environment marker.
+
+        The marker survives what ancestry does not: a double-fork daemon,
+        re-parented to init in a session of its own, still carries it, unless
+        it cleared its environment. Every descendant started after the child,
+        so only processes started since then are read.
+        """
+        if self._marker is None:
+            return
+        for pid, process in table.items():
+            if pid in self._known or process.zombie or pid == os.getpid():
+                continue
+            try:
+                if process.started < self._root_started:
+                    continue
+            except TypeError:
+                pass  # Stamps that do not order are all read.
+            environment = self._environment(pid)
+            if environment is not None and self._marker in environment:
+                self._known[pid] = process.started
+
+    def escaped(self) -> tuple[int, ...] | None:
+        """Known descendants still running outside the child's process group.
+
+        None when the table cannot be read although escapees were last seen:
+        they may still be running, so that is never reported as none.
+        """
         table = self.observe()
+        if not self._confirmed:
+            return ()
+        if table is None:
+            return None if self._escaped else ()
+        self.sweep(table)
+        self._escaped = tuple(sorted(
+            pid for pid, started in self._known.items()
+            if pid in table and table[pid].started == started
+            and not table[pid].zombie and table[pid].pgid != self._root
+        ))
+        return self._escaped
+
+    def group_members(self) -> tuple[int, ...]:
+        """Known descendants still visible in the child's process group."""
+        table = self._table()
         if table is None or not self._confirmed:
             return ()
         return tuple(sorted(
             pid for pid, started in self._known.items()
             if pid in table and table[pid].started == started
-            and not table[pid].zombie and table[pid].pgid != self._root
+            and not table[pid].zombie and table[pid].pgid == self._root
         ))
-
-    def group_members(self) -> tuple[int, ...]:
-        """Processes still visible in the child's process group."""
-        table = self._table()
-        if table is None or not self._confirmed:
-            return ()
-        return tuple(sorted(pid for pid, process in table.items()
-                            if process.pgid == self._root and not process.zombie))
 
 
 def _signal_each(pids: tuple[int, ...], signum: int) -> None:
@@ -271,16 +370,25 @@ def _stop_escaped_descendants(
     after that is reported as a survivor.
     """
     survivors = tracker.escaped()
-    if not survivors:
+    if survivors == ():
         return
-    _signal_each(tuple(pid for pid in survivors if pid not in signalled), interrupted)
+    if survivors is not None:
+        _signal_each(tuple(pid for pid in survivors if pid not in signalled), interrupted)
     for escalation in (signal.SIGKILL, None):
         deadline = time.monotonic() + 2
         while survivors and time.monotonic() < deadline:
             time.sleep(0.05)
             survivors = tracker.escaped()
-        if not survivors:
+        if survivors == ():
             return
+        if survivors is None:
+            # Escapees were running when the table was last readable.
+            raise _incomplete_cancellation(
+                child,
+                interrupted=interrupted,
+                platform="posix",
+                cleanup="escaped-descendants-unobservable",
+            )
         if escalation is not None:
             _signal_each(survivors, escalation)
     raise _incomplete_cancellation(
@@ -292,7 +400,7 @@ def _stop_escaped_descendants(
     )
 
 
-def _wait_for_posix_group(child: subprocess.Popen, timeout: float) -> bool:
+def _wait_for_posix_group(child: subprocess.Popen, timeout: float, observe=None) -> bool:
     """Poll the isolated process group until it drains or the bound expires.
 
     While the group's last members are exiting, some kernels (macOS among
@@ -308,6 +416,11 @@ def _wait_for_posix_group(child: subprocess.Popen, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while True:
         child.poll()
+        if observe is not None:
+            # A member may fork on the cancellation signal and its fork leave
+            # the group; watching every tick catches one whose parent lives
+            # for at least one tick.
+            observe()
         try:
             os.killpg(child.pid, 0)
         except ProcessLookupError:
@@ -362,7 +475,7 @@ def _stop_posix_group(child: subprocess.Popen, interrupted: int, tracker: _Desce
     """Stop the child's process group, escalating to SIGKILL, or raise."""
     # Wait for the whole group, including workers whose parent exited first.
     try:
-        drained = _wait_for_posix_group(child, 2)
+        drained = _wait_for_posix_group(child, 2, tracker.observe)
     except (OSError, subprocess.SubprocessError) as error:
         raise _incomplete_cancellation(
             child,
@@ -381,7 +494,7 @@ def _stop_posix_group(child: subprocess.Popen, interrupted: int, tracker: _Desce
         # which drain within the same bound, or another user's.
         cause: BaseException = error
         try:
-            drained = _wait_for_posix_group(child, 2)
+            drained = _wait_for_posix_group(child, 2, tracker.observe)
         except (OSError, subprocess.SubprocessError) as wait_failure:
             drained, cause = False, wait_failure
         if drained:
@@ -420,7 +533,7 @@ def _stop_posix_group(child: subprocess.Popen, interrupted: int, tracker: _Desce
     # does not show the group is gone: a member owned by another user, which
     # nothing here may signal, can still be running in it.
     try:
-        drained = _wait_for_posix_group(child, 2)
+        drained = _wait_for_posix_group(child, 2, tracker.observe)
     except (OSError, subprocess.SubprocessError) as error:
         raise _incomplete_cancellation(
             child,
@@ -468,8 +581,12 @@ def _run_command(arguments: list[str], root: Path) -> int:
             # the whole tree before the direct child exits.
             child = subprocess.Popen(arguments, cwd=root, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
         else:
-            child = subprocess.Popen(arguments, cwd=root, start_new_session=True)
-            tracker = _DescendantTracker(child)
+            # Every descendant inherits this marker unless it clears its
+            # environment, so cancellation can find even a double-fork daemon.
+            marker = f"{_LAUNCH_MARKER}={uuid.uuid4().hex}"
+            child = subprocess.Popen(arguments, cwd=root, start_new_session=True,
+                                     env=dict(os.environ, **dict([marker.split("=", 1)])))
+            tracker = _DescendantTracker(child, marker=marker.encode())
         if interrupted:
             interrupt(interrupted, None)
         while not interrupted:
@@ -506,12 +623,12 @@ def _run_command(arguments: list[str], root: Path) -> int:
             return 128 + interrupted
         # Descendants that already left the group get the same signal now, so
         # they stop alongside it rather than after it.
-        signalled = tracker.escaped()
+        signalled = tracker.escaped() or ()
         _signal_each(signalled, interrupted)
         try:
             _stop_posix_group(child, interrupted, tracker)
         except CancellationIncompleteError:
-            _signal_each(tracker.escaped(), signal.SIGKILL)
+            _signal_each(tracker.escaped() or (), signal.SIGKILL)
             raise
         _stop_escaped_descendants(child, tracker, interrupted, signalled)
         return 128 + interrupted
