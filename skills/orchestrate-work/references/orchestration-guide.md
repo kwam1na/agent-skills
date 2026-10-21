@@ -150,26 +150,44 @@ decision. Lanes post on their own tickets at the points the lane brief names.
 
 ### 4. Run the queue
 
-- Journal a `review.round` for each round a lane reports in its hand-off
-  when the lane could not write to the record itself, with the times,
-  verdicts and findings it gives, so its stop's stats are complete.
-- Check each hand-off as a claim (the coordination protocol) before queueing
-  it. Never hold approved work: an approved candidate enters the queue at
+- Lanes write their own hand-off, review rounds and focus through the state
+  tool (the lane brief says how). Its `handoff` command moves a lane's planned
+  work into `queue[]` at `queued`, with its head, change request and rounds,
+  sets the lane to `handed`, and journals `candidate.handed`; you do not.
+  Journal a `review.round`, or queue a hand-off yourself, only for a lane
+  that could not write to the record, with the times, verdicts and findings
+  it gives, so its stop's stats are complete.
+- Check each hand-off as a claim (the coordination protocol). When the
+  binding's `state.handoffsNeedAcceptance` is true, a hand-off waits as
+  `pending` until you run `handoff --accept <subject>`, or
+  `handoff --reject <subject> --reason <why>` to send it back to the lane's
+  plan. Never hold approved work: an approved candidate enters the queue at
   once, not batched behind unrelated work or held for a convenient moment.
-- Add the candidate to `queue[]` with its `head`, `leadInputs`,
-  `reportedRounds` and `runId`, and journal `candidate.handed`. The queue
-  element now carries the candidate. In the same step, reassign the lane
-  (step 3): its `lanes[]` element moves to `assigned` with its new focus. Set
-  it to `handed` only when no unblocked work exists for it, and record that.
+- Reassign the lane (step 3) once it has handed off: its `lanes[]` element
+  moves to `assigned` with its next ticket. Leave it `handed` only when no
+  unblocked work exists for it, and record that.
+- Start the runner's `serve` once, and leave it running: it takes whatever is
+  queued, in order, whenever the merge slot is free, as one batch when two or
+  more wait and alone otherwise, retrying a declared flake once. Set
+  `meta.hold` (`{reason, since}`) to pause it, as before a release, and clear
+  it to resume. A stop that stops the queue journals `base.broken`; `serve`
+  takes nothing more until you confirm the base and journal `base.repaired`.
+  A stopped candidate waits for its lane to hand it off again.
+- Leave the status line to the record: the views derive it from what is being
+  checked, what landed last, which lanes are blocked and what is next. Set a
+  status of your own with `headline --text`, only for what the record cannot
+  say, such as a release in progress; it expires after the binding's
+  `state.statusOverrideMaxAgeSeconds`, four hours by default, so it cannot go
+  stale.
 - Before the run, make sure the lead holds every lease a named lead input
   needs: its holder in `leases[]` must equal the name passed as `--lead`. Get
   it through the lease sequence in the coordination protocol (request,
   acknowledge, then record the lead as holder and journal `lease.granted`),
   never by overwriting another holder.
-- Run the queue with the runner's `run` subcommand, in queue order. When two
-  or more approved candidates wait and the checks are slow, run them with
-  `batch` instead, in queue order: one check run covers them all (see "What a
-  batch proves" in the binding guide).
+- Without `serve`, run the queue with the runner's `run` subcommand, in queue
+  order. When two or more approved candidates wait and the checks are slow,
+  run them with `batch` instead, in queue order: one check run covers them all
+  (see "What a batch proves" in the binding guide).
 - On a stop, read its code in the result document, act, then name the
   candidate again to re-queue it. A re-queued candidate runs again, still
   pinned to its reviewed `head` or the runner's last `syncedHead`; write a new
@@ -355,8 +373,23 @@ At the end of each review round, alongside its tracker post, record the round
 in the delivery record:
 
 ```bash
-python3 -B <skill>/scripts/delivery_state.py --dir <state> journal --kind review.round --subject <subject> --lane <lane> --review '{"round": <n>, "startedAt": "<dispatched>", "finishedAt": "<last verdict>", "verdicts": {"<lens>": "approve"}, "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}'
+python3 -B <skill>/scripts/delivery_state.py --dir <state> journal --writer lane --kind review.round --subject <subject> --lane <lane> --review '{"round": <n>, "startedAt": "<dispatched>", "finishedAt": "<last verdict>", "verdicts": {"<lens>": "approve"}, "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}'
 ```
+
+**Focus and hand-off**
+
+Say what you are doing as it changes, and hand your work off yourself, through
+the state tool; the lead no longer writes either for you:
+
+```bash
+python3 -B <skill>/scripts/delivery_state.py --dir <state> focus --lane <lane> --text "<what you are doing>" [--state working|reviewing|blocked] [--waiting-on <who>]
+python3 -B <skill>/scripts/delivery_state.py --dir <state> handoff --lane <lane> --subject <subject> --head <reviewed head> --change-request <reference> --rounds <n>
+```
+
+The hand-off queues your planned work at its reviewed head; the runner takes
+it from there. To hand off a stopped candidate again, run the same command
+with its new head. Anything outside your own lane is refused with
+`writer_not_owned`.
 
 One attempt, never a gate. When you cannot write to the record, give each
 round in your hand-off as

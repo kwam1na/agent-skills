@@ -39,11 +39,14 @@ tracker, host or forge.
   lane delivers one assigned ticket at a time, and never merges, releases, or
   holds a lease it was not granted.
 - **State writers.** The lead writes every state field except the
-  runner-owned ones. The runner writes only its result documents, journal
-  entries, and its own fields: `queue[i].stage`, `queue[i].checks`,
-  `queue[i].syncedHead`, `meta.checking`, `meta.baseHead` and
-  `meta.releasedHead`. Every write goes through the state tool, which checks
-  the declared writer against this ownership.
+  runner-owned and lane-owned ones. The runner writes only its result
+  documents, journal entries, and its own fields: `queue[i].stage`,
+  `queue[i].checks`, `queue[i].syncedHead`, `meta.checking`, `meta.baseHead`,
+  `meta.releasedHead` and `meta.checkHistory`. A lane writes only its own
+  lane's `focus`, `state` and `waitingOn`, its own review rounds, and its own
+  hand-off, which the tool turns into a queue element. Every write goes
+  through the state tool, which checks the declared writer against this
+  ownership and refuses anything else with `writer_not_owned` for a lane.
 
 ## Lead authority
 
@@ -178,6 +181,12 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   arrival made them fail; it stops that member, lands those before it, and
   batches those after it again. Use it when the checks are slow and several
   approved candidates wait; a lone candidate goes through `run`.
+- `serve [--poll <seconds>] [--until-idle]` takes whatever is queued, in
+  order, whenever the merge slot is free: a batch when two or more wait, one
+  alone otherwise. The lead starts it once. `meta.hold` pauses it, and so does
+  a queue-stopping stop until the lead journals `base.repaired`; a candidate
+  waiting for the lead to accept its hand-off is left alone, and a killed
+  `serve` is cleared by the next one.
 - `release <ref> [--approved-by <text>]` runs the binding's release targets on
   the base tip or an ancestor of it.
 
