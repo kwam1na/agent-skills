@@ -456,6 +456,7 @@
       "kind": {
         "enum": [
           "lane.assigned",
+          "review.round",
           "candidate.handed",
           "check.started",
           "check.finished",
@@ -498,6 +499,69 @@
       "summary": {
         "type": "string",
         "minLength": 1
+      },
+      "review": {
+        "description": "One review round of a candidate, on review.round entries only: when it ran, each lens's verdict, and the findings it raised by severity.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "round",
+          "startedAt",
+          "finishedAt",
+          "verdicts",
+          "findings"
+        ],
+        "properties": {
+          "round": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "startedAt": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+          },
+          "finishedAt": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+          },
+          "verdicts": {
+            "type": "object",
+            "additionalProperties": {
+              "enum": [
+                "approve",
+                "changes"
+              ]
+            }
+          },
+          "findings": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ],
+            "properties": {
+              "P0": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "P1": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "P2": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "P3": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
       }
     }
   },

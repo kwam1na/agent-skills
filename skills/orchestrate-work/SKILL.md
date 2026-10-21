@@ -201,7 +201,7 @@ python3 -B scripts/render_state.py --dir <state directory>
   invalid, nothing runs and it exits 2.
 - It reads only the binding's `state` member: `directory`, `renderers` and
   `publishers`. A renderer is any argv, or a built-in (`markdown` or
-  `static-page`), that reads the validated `{state, journal}` on stdin and
+  `static-page`), that reads the validated `{state, journal, stats}` on stdin and
   writes one view on stdout to its `output` inside the state directory. A
   publisher is any argv that puts the same document somewhere a view reads,
   or a `host` publisher that leaves an outbox for the lead (see below).
@@ -315,6 +315,7 @@ python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --element 'queue[subject=<subject>]' --patch '<json merge patch>'
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --element 'lanes[id=<lane>]' --set '{"/waitingOn": null}'
 python3 -B scripts/delivery_state.py --dir <state directory> journal --kind <kind> --summary "<what happened>"
+python3 -B scripts/delivery_state.py --dir <state directory> journal --kind review.round --subject <subject> --lane <lane> --review '<review json>'
 ```
 
 - A merge patch removes any field it sets to null. To set a nullable field to
@@ -338,8 +339,18 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind <kin
   `checks` and a null `syncedHead`.
 - Journal appends are never refused for concurrency; the tool allocates the
   next id.
-- `show` prints the validated `{state, journal}` pair that renderers read,
-  with a `publication` block saying whether what was published lags it.
+- A `review.round` entry records one review round of a candidate: its
+  `review` is `{round, startedAt, finishedAt, verdicts, findings}`, where
+  `verdicts` maps each lens to `approve` or `changes` and `findings` counts
+  `P0` to `P3`. The summary is written for it when `--summary` is left out. A
+  round that finishes before it starts, names no candidate or has no verdict
+  is refused. The lead or the lane writes it; the runner never does.
+- `show` prints the validated `{state, journal, stats}` document that
+  renderers read, with a `publication` block saying whether what was
+  published lags it. `stats` is derived, never stored: per queued or planned
+  candidate, the build, review, wait, check-to-merge and total seconds, the
+  rounds and their findings. A stat whose events are missing is null, never
+  zero; with no recorded rounds, the count is the lane's `reportedRounds`.
 - Output is ASCII JSON on every platform and console; a patch read from
   stdin is UTF-8, with or without a byte-order mark. Text that has no UTF-8
   form, such as a lone surrogate, is refused. The state is UTF-8 and the

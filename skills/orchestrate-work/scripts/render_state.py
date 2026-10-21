@@ -3,7 +3,7 @@
 
 Run with ``python3 -B``. The state and journal are validated first; when
 either is invalid nothing runs. A renderer is any argv that reads the
-validated ``{state, journal}`` document on stdin and writes one view on
+validated ``{state, journal, stats}`` document on stdin and writes one view on
 stdout. A publisher is any argv that receives the same document and puts it
 somewhere a view reads. The wrapper only reads the state: views are pure
 functions of it, so one can be replaced without touching the state. The two
@@ -171,6 +171,35 @@ def _markdown_section(title: str, rows: list[str], empty: str) -> list[str]:
     return [f"## {title}", "", *(rows or [empty]), ""]
 
 
+def _duration(seconds: object) -> str:
+    """A stat's duration for people; the page's program writes it the same way."""
+    if not isinstance(seconds, int) or isinstance(seconds, bool):
+        return "unknown"
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60:02d}s"
+    if seconds < 86400:
+        return f"{seconds // 3600}h {seconds // 60 % 60:02d}m"
+    return f"{seconds // 86400}d {seconds // 3600 % 24:02d}h"
+
+
+def _stats_text(stats: dict) -> str:
+    """One line of a candidate's stats; the page's program writes the same line."""
+    rounds = stats.get("rounds")
+    if rounds is None:
+        review = "rounds unknown"
+    elif stats.get("roundsSource") == "reported":
+        review = f"{rounds} {'round' if rounds == 1 else 'rounds'} (reported)"
+    else:
+        findings = stats.get("findings") or {}
+        counts = "/".join(str(findings.get(severity, "?")) for severity in ("P0", "P1", "P2", "P3"))
+        review = f"{rounds} {'round' if rounds == 1 else 'rounds'}, findings P0/P1/P2/P3 {counts}"
+    return (f"build {_duration(stats.get('buildSeconds'))} · review {_duration(stats.get('reviewSeconds'))}"
+            f" · {review} · wait {_duration(stats.get('waitSeconds'))}"
+            f" · check to merge {_duration(stats.get('checkToMergeSeconds'))} · total {_duration(stats.get('totalSeconds'))}")
+
+
 def render_markdown(document: dict) -> str:
     state = document["state"]
     meta = state["meta"]
@@ -192,15 +221,33 @@ def render_markdown(document: dict) -> str:
         rows.append("- Next: " + ", ".join(_markdown_text(subject) for subject in checking["next"]))
     lines += _markdown_section("Checking", rows, "Nothing is being checked.")
 
+    stats = document.get("stats") or {}
+
+    def change_request(item: dict) -> str:
+        reference = item.get("changeRequest")
+        return "" if reference is None else f" · change request {_markdown_text(reference)}"
+
+    def stats_row(item: dict, indent: str) -> list[str]:
+        found = stats.get(item["subject"])
+        return [f"{indent}- stats: {_markdown_text(_stats_text(found))}"] if isinstance(found, dict) else []
+
     rows = []
     for item in sorted(state["queue"], key=lambda entry: (entry["order"], entry["subject"])):
         # A bullet, not an ordered list: the order is the record's, not Markdown's.
         rows.append(
             f"- {_markdown_number(item['order'])} {_markdown_text(item['subject'])}: {_markdown_text(item['title'])}, {_markdown_text(item['stage'])}"
-            f" · lane {_markdown_text(item['lane'])} · head {_markdown_text(item['head'])}"
+            f" · lane {_markdown_text(item['lane'])} · head {_markdown_text(item['head'])}{change_request(item)}"
         )
+        rows.extend(stats_row(item, "  "))
         rows.extend(f"  - {_markdown_text(check['id'])}: {_markdown_text(check['state'])}" for check in item["checks"])
     lines += _markdown_section("Queue", rows, "The queue is empty.")
+
+    rows = []
+    for item in state.get("planned", []):
+        rows.append(f"- {_markdown_text(item['subject'])}: {_markdown_text(item['title'])}, {_markdown_text(item['stage'])}"
+                    f" · lane {_markdown_text(item['lane'])}{change_request(item)}")
+        rows.extend(stats_row(item, "  "))
+    lines += _markdown_section("Planned", rows, "Nothing planned outside the queue.")
 
     rows = [
         f"- {_markdown_text(lane['id'])}: {_markdown_text(lane['title'])}, {_markdown_text(lane['state'])}"
@@ -290,6 +337,30 @@ _PAGE_PROGRAM = """
     if (detail) { item.appendChild(el("div", detail, "detail")); }
     return item;
   }
+  function duration(seconds) {
+    if (typeof seconds !== "number" || Math.floor(seconds) !== seconds) { return "unknown"; }
+    function two(value) { return (value < 10 ? "0" : "") + value; }
+    if (seconds < 60) { return seconds + "s"; }
+    if (seconds < 3600) { return Math.floor(seconds / 60) + "m " + two(seconds % 60) + "s"; }
+    if (seconds < 86400) { return Math.floor(seconds / 3600) + "h " + two(Math.floor(seconds / 60) % 60) + "m"; }
+    return Math.floor(seconds / 86400) + "d " + two(Math.floor(seconds / 3600) % 24) + "h";
+  }
+  function statsText(stats) {
+    var review;
+    if (stats.rounds === null || stats.rounds === undefined) {
+      review = "rounds unknown";
+    } else if (stats.roundsSource === "reported") {
+      review = show(stats.rounds) + (stats.rounds === 1 ? " round" : " rounds") + " (reported)";
+    } else {
+      var findings = isObject(stats.findings) ? stats.findings : {};
+      review = show(stats.rounds) + (stats.rounds === 1 ? " round" : " rounds") + ", findings P0/P1/P2/P3 " + ["P0", "P1", "P2", "P3"].map(function (severity) {
+        return severity in findings ? show(findings[severity]) : "?";
+      }).join("/");
+    }
+    return "build " + duration(stats.buildSeconds) + " \\u00b7 review " + duration(stats.reviewSeconds) +
+      " \\u00b7 " + review + " \\u00b7 wait " + duration(stats.waitSeconds) +
+      " \\u00b7 check to merge " + duration(stats.checkToMergeSeconds) + " \\u00b7 total " + duration(stats.totalSeconds);
+  }
   function isArray(value) { return Array.isArray(value); }
   function isObject(value) { return value !== null && typeof value === "object" && !isArray(value); }
 
@@ -329,12 +400,30 @@ _PAGE_PROGRAM = """
       parts.push(el("p", "Next: " + meta.checking.next.map(show).join(", "), "detail"));
     }
 
+    /* Stats are derived by the state tool; a live document without them still draws. */
+    var stats = isObject(doc.stats) ? doc.stats : {};
+    function changeRequest(item) {
+      return item.changeRequest === undefined || item.changeRequest === null ? "" : " \\u00b7 change request " + show(item.changeRequest);
+    }
+    function withStats(entry, item) {
+      var found = Object.prototype.hasOwnProperty.call(stats, item.subject) ? stats[item.subject] : null;
+      if (isObject(found)) { entry.appendChild(el("div", statsText(found), "detail")); }
+      return entry;
+    }
+
     var queue = state.queue.slice().sort(function (a, b) { return a.order - b.order; });
     parts.push(el("h2", "Queue"));
     parts.push(list("ol", queue, "The queue is empty.", function (item) {
       var checks = item.checks.map(function (check) { return show(check.id) + " " + show(check.state); }).join(", ");
-      return row(show(item.order) + ". " + show(item.subject) + ": " + show(item.title),
-        "Lane " + show(item.lane) + " \\u00b7 head " + show(item.head) + (checks ? " \\u00b7 " + checks : ""), item.stage);
+      return withStats(row(show(item.order) + ". " + show(item.subject) + ": " + show(item.title),
+        "Lane " + show(item.lane) + " \\u00b7 head " + show(item.head) + changeRequest(item) + (checks ? " \\u00b7 " + checks : ""),
+        item.stage), item);
+    }));
+
+    parts.push(el("h2", "Planned"));
+    parts.push(list("ul", isArray(state.planned) ? state.planned : [], "Nothing planned outside the queue.", function (item) {
+      return withStats(row(show(item.subject) + ": " + show(item.title), "Lane " + show(item.lane) + changeRequest(item),
+        item.stage), item);
     }));
 
     parts.push(el("h2", "Lanes"));
@@ -737,7 +826,7 @@ def _write_outbox(directory: Path, publisher_id: str, shown: dict) -> dict:
     journal = [item for item in shown["journal"] if item["id"] > through]
     # Readers ignore fields they do not know, so later projections can join these.
     outbox = {"version": shown["state"]["version"], "journalThrough": journal[-1]["id"] if journal else through,
-              "state": shown["state"], "journal": journal}
+              "state": shown["state"], "journal": journal, "stats": shown["stats"]}
     relative = f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE}"
     try:
         _write_atomically(directory / OUTBOX_DIRECTORY / OUTBOX_FILE, dumps(outbox).encode("utf-8"))

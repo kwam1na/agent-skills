@@ -408,7 +408,8 @@ FIXED_STATE = {
     "queue": [
         {"order": 1, "subject": "change-1", "title": "Change one", "lane": "lane-1", "stage": "checking",
          "head": HEAD_A, "syncedHead": "b" * 40, "leadInputs": ["codegen"], "reportedRounds": 2,
-         "runId": "run-1", "checks": [{"id": "unit", "state": "running", "detail": "3 of 9"}]},
+         "runId": "run-1", "checks": [{"id": "unit", "state": "running", "detail": "3 of 9"}],
+         "changeRequest": "change request 7"},
         {"order": 2, "subject": "change-2", "title": HOSTILE, "lane": None, "stage": "queued",
          "head": "c" * 40, "syncedHead": None, "leadInputs": [], "reportedRounds": None, "runId": None,
          "checks": []},
@@ -417,12 +418,24 @@ FIXED_STATE = {
                {"id": "finish-2", "text": HOSTILE, "met": True}],
     "followups": [{"id": "follow-1", "title": "Later <i>work</i>", "reference": "ticket-9"}],
     "leases": [{"id": "dev-backend", "holder": "lead", "since": "2026-10-20T09:00:00Z"}],
+    "planned": [{"subject": "change-3", "title": HOSTILE, "lane": "lane-2", "stage": "review",
+                 "changeRequest": HOSTILE}],
     "extensions": {"adopter": {"note": HOSTILE, "nested": [1, {"a": None}]}},
 }
 FIXED_JOURNAL = [
     {"id": 1, "at": "2026-10-20T10:00:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": None,
      "summary": "Assigned " + HOSTILE},
-    {"id": 2, "at": "2026-10-20T11:00:00Z", "kind": "candidate.handed", "lane": "lane-1", "subject": "change-1",
+    {"id": 2, "at": "2026-10-20T10:40:00Z", "kind": "review.round", "lane": "lane-1", "subject": "change-1",
+     "summary": "Round 1 " + HOSTILE,
+     "review": {"round": 1, "startedAt": "2026-10-20T10:30:00Z", "finishedAt": "2026-10-20T10:40:00Z",
+                "verdicts": {"outcome": "changes", "adversarial": "changes"},
+                "findings": {"P0": 0, "P1": 1, "P2": 2, "P3": 0}}},
+    {"id": 3, "at": "2026-10-20T10:50:00Z", "kind": "review.round", "lane": "lane-1", "subject": "change-1",
+     "summary": "Round 2",
+     "review": {"round": 2, "startedAt": "2026-10-20T10:45:00Z", "finishedAt": "2026-10-20T10:50:00Z",
+                "verdicts": {"outcome": "approve", "adversarial": "approve"},
+                "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 1}}},
+    {"id": 4, "at": "2026-10-20T11:00:00Z", "kind": "candidate.handed", "lane": "lane-1", "subject": "change-1",
      "summary": "Handed over"},
 ]
 # sha256 of each built-in view of the fixed state. A change here is a change
@@ -441,15 +454,16 @@ EMPTY_STATE = {
     "finish": [],
     "followups": [],
     "leases": [],
+    "planned": [],
     "extensions": {},
 }
 PINNED_EMPTY_VIEWS = {
-    "delivery.md": "1c0c8f7680eb5a0bff91b9dd347d5d7fd01337e53b65aeed46c4a2328880edb3",
-    "delivery.html": "34387ce01e8c9e0e1dccf9ef9ca67a61ce60419839ba2a8f375975736d305927",
+    "delivery.md": "50bb05fd2692a0bc9ec2d5e2ce43ee10f8dbf683f6274377ad98ee428887df9a",
+    "delivery.html": "f814c96ab54d8a0462a0d129ab3667f9aa01edb8632c8f14697fba39257d0e93",
 }
 PINNED_VIEWS = {
-    "delivery.md": "8c719ca1d3c0a48d4baebec90cb6b3ae3b7ab647d053060484e814759a2aabeb",
-    "delivery.html": "52db5a1e5fbd8d95a3943f76010f60d29fe0ad9c722cfb2d209995eaa39c4d60",
+    "delivery.md": "802f692197c8aeb9dd94d4886d70d70bce8855483867df80d490f785e022073f",
+    "delivery.html": "0e86816f18e126abd02c88f4cf79b2ca69afc42cceda8f377bbb99d0a6d1d78a",
 }
 
 
@@ -492,6 +506,7 @@ class HostPublisherTests(DeliveryStateFixture):
         outbox = self.outbox()
         self.assertEqual(outbox["version"], shown["state"]["version"])
         self.assertEqual(outbox["state"], shown["state"])
+        self.assertEqual(outbox["stats"], shown["stats"], "host-published views carry the stats")
         self.assertEqual(outbox["journal"], shown["journal"])
         last = shown["journal"][-1]["id"]
         state_tool(self.state_dir, "ack", "--version", str(outbox["version"]), "--through", str(last))
@@ -525,6 +540,43 @@ class HostPublisherTests(DeliveryStateFixture):
                 renderer = [{"id": "sneaky", "builtin": "markdown", "output": output}]
                 code, result = wrapper(self.state_dir, "--state-config", self.config(renderer))
                 self.assertEqual((code, result["code"]), (2, "config_invalid"), result)
+
+
+class StatsViewTests(unittest.TestCase):
+    """Both built-in views show each stop's stats, planned work and change requests."""
+
+    def document(self) -> dict:
+        return {"state": FIXED_STATE, "journal": FIXED_JOURNAL,
+                "stats": sys.modules[render_state.show.__module__].delivery_stats(FIXED_STATE, FIXED_JOURNAL)}
+
+    def test_durations_read_in_the_largest_fitting_units(self) -> None:
+        for seconds, text in ((None, "unknown"), (True, "unknown"), (0, "0s"), (59, "59s"), (60, "1m 00s"),
+                              (3599, "59m 59s"), (3600, "1h 00m"), (86399, "23h 59m"), (86400, "1d 00h"),
+                              (90061, "1d 01h")):
+            with self.subTest(seconds=seconds):
+                self.assertEqual(render_state._duration(seconds), text)
+
+    def test_the_markdown_view_shows_stats_planned_work_and_change_requests(self) -> None:
+        view = render_state.render_markdown(self.document())
+        self.assertIn("\n  - stats: build 30m 00s · review 20m 00s · 2 rounds, findings P0/P1/P2/P3 0/1/2/1"
+                      " · wait unknown · check to merge unknown · total unknown", view)
+        self.assertIn("· head " + HEAD_A + " · change request change request 7", view)
+        self.assertIn("\n  - stats: build unknown · review unknown · rounds unknown", view)
+        planned = view[view.index("## Planned"):view.index("## Lanes")]
+        self.assertIn("\n  - stats: build unknown", planned, "planned stats nest under their row")
+        self.assertIn(f"- change-3: {render_state._markdown_text(HOSTILE)}, review · lane lane-2"
+                      f" · change request {render_state._markdown_text(HOSTILE)}", planned)
+        reported = {**self.document(), "stats": {"change-1": {**self.document()["stats"]["change-1"],
+                                                               "rounds": 4, "roundsSource": "reported", "findings": None}}}
+        self.assertIn("4 rounds (reported)", render_state.render_markdown(reported))
+        one = {**self.document(), "stats": {"change-1": {**self.document()["stats"]["change-1"], "rounds": 1}}}
+        self.assertIn("· 1 round, findings", render_state.render_markdown(one))
+
+    def test_a_document_without_stats_or_planned_work_still_renders(self) -> None:
+        state = {key: value for key, value in FIXED_STATE.items() if key != "planned"}
+        view = render_state.render_markdown({"state": state, "journal": FIXED_JOURNAL})
+        self.assertNotIn("stats:", view)
+        self.assertIn("Nothing planned outside the queue.", view)
 
 
 class WrapperTests(DeliveryStateFixture):
@@ -600,7 +652,7 @@ class WrapperTests(DeliveryStateFixture):
         self.assertEqual(code, 0, result)
         received = json.loads((self.state_dir / "echo.json").read_bytes().decode("utf-8"))
         self.assertEqual(received, self.document)
-        self.assertEqual(set(received), {"state", "journal"})
+        self.assertEqual(set(received), {"state", "journal", "stats"})
 
     def test_extensions_reach_renderers_unchanged(self) -> None:
         wrapper(self.state_dir, "--state-config", self.config([self.capture_renderer("echo")]))
@@ -805,7 +857,7 @@ class MarkdownRendererTests(DeliveryStateFixture):
             with self.subTest(line=line):
                 # No line, nested or not, opens an ordered list.
                 self.assertNotRegex(line, r"^\s*(?:[-*+]\s+)*\d{1,9}[.)](?:\s|$)")
-        queue = lines[lines.index("## Queue") + 2 : lines.index("## Lanes") - 1]
+        queue = lines[lines.index("## Queue") + 2 : lines.index("## Planned") - 1]
         self.assertEqual(
             [line.split(":")[0] for line in queue],
             ["- 0\\. change-0", "- 3\\. change-3", "- 7\\. change-7", "  - unit", "- 12\\. change-12",
@@ -1061,6 +1113,32 @@ setTimeout(async () => {
         self.assertEqual(shown["source"], "embedded")
         self.assertIn("could not be shown", shown["text"])
         self.assertNotIn("Broken headline", shown["text"])
+
+    def test_the_page_writes_each_stop_s_stats_as_the_markdown_view_does(self) -> None:
+        stats = {}
+        planned = []
+        for index, seconds in enumerate((None, 0, 59, 60, 3599, 3600, 86399, 86400, 90061)):
+            subject = f"stop-{index}"
+            planned.append({"subject": subject, "title": subject, "lane": None, "stage": "planned"})
+            stats[subject] = {"buildSeconds": seconds, "reviewSeconds": seconds, "waitSeconds": None,
+                              "checkToMergeSeconds": seconds, "totalSeconds": seconds,
+                              "rounds": index or None, "roundsSource": ("journal", "reported")[index % 2] if index else None,
+                              "findings": {"P0": index, "P1": 0, "P2": 1, "P3": 2} if index % 2 == 0 else None}
+        document = copy.deepcopy(self.document)
+        document["state"]["planned"] = planned
+        document["stats"] = stats
+        shown = self.run_page({}, document)
+        for subject, found in stats.items():
+            with self.subTest(subject=subject):
+                self.assertIn(render_state._stats_text(found), shown["text"])
+
+    def test_a_live_document_without_stats_or_planned_work_is_still_shown(self) -> None:
+        live = self.live_document("Live without stats")
+        live.pop("stats", None)
+        live["state"].pop("planned", None)
+        shown = self.run_page({"adapter": {"document": live}})
+        self.assertEqual(shown["source"], "live")
+        self.assertIn("Nothing planned outside the queue.", shown["text"])
 
     def test_a_hostile_live_answer_falls_back_without_an_unhandled_error(self) -> None:
         shown = self.run_page({"adapter": {"throwingGetter": True}})

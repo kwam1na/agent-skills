@@ -722,7 +722,8 @@ class Runner:
         if subject is not None:
             with contextlib.suppress(Stop):
                 lane = self.item(subject).get("lane")
-        delivery_state.append_journal(self.state_directory, kind=kind, summary=summary, lane=lane, subject=subject)
+        delivery_state.append_journal(self.state_directory, kind=kind, summary=summary, lane=lane, subject=subject,
+                                      writer="runner")
         self.render()
 
     def checking(self, subject: str | None, title: str = "", steps: list[dict] | None = None) -> None:
