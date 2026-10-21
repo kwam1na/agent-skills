@@ -638,6 +638,8 @@ class HostPublisherTests(DeliveryStateFixture):
         elsewhere.mkdir()
         foreign = elsewhere / "orchestration.json"
         foreign.write_text(json.dumps({"state": json.loads(self.config([], []))}), encoding="utf-8")
+        # Another checkout's state exists, as it does for a real foreign binding.
+        state_tool(elsewhere / "state", "init", "--headline", "Another delivery")
         refused = self.refused("show", "--binding", str(foreign))
         self.assertEqual(refused["code"], "binding_invalid")
         # Both paths are named, so the mismatch can be fixed without guessing.
