@@ -1298,7 +1298,7 @@
         }
       },
       "workRoot": {
-        "description": "The directory for the runner's temporary checkouts, relative to the checkout's top level unless absolute; the runner refuses a --repo below the top level. It must not contain any checkout of the repository git lists, apart from the leftover checkouts under workRoot/checkouts that the runner marks as its own, nor the git directory or the common git directory. Inside a git directory it must sit beside git's own folders, never in one. Inside any checkout of the repository it must hold no tracked file, sit in no submodule, and be ignored there. workRoot/checkouts and workRoot/empty-hooks must not be a symlink. Paths are compared without case or Unicode normal form.",
+        "description": "The directory for the runner's temporary checkouts, relative to the checkout's top level unless absolute; the runner refuses a --repo below the top level. It must not contain any checkout of the repository git lists, apart from the leftover checkouts under workRoot/checkouts that the runner marks as its own, nor the git directory or the common git directory. Inside a git directory it must sit beside git's own folders, never in one. Inside any checkout of the repository it must hold no tracked file, sit in no submodule, and be ignored there. workRoot/checkouts and workRoot/empty-hooks must not be a symlink or junction. Paths are compared without case or Unicode normal form.",
         "$ref": "#/$defs/name"
       },
       "candidate": {
