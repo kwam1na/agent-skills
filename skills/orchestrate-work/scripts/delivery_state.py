@@ -870,7 +870,8 @@ def show(directory: Path, *, between_reads: Callable[[], None] | None = None) ->
             between_reads()
         journal = read_journal(directory)
     return {"state": state, "journal": journal, "stats": delivery_stats(state, journal),
-            "estimates": queue_estimates(state)}
+            "estimates": queue_estimates(state), "status": delivery_status(state, journal),
+            "focus": lane_focus(state)}
 
 
 # ---------------------------------------------------------------------------
@@ -1011,6 +1012,82 @@ def queue_estimates(state: dict, at: str | None = None) -> dict:
                 start = start.replace(microsecond=0).isoformat().replace("+00:00", "Z")
         estimates[item["subject"]] = {"position": position, "expectedStart": start}
     return estimates
+
+
+# How long a lead's status override lasts when the binding does not say.
+STATUS_OVERRIDE_MAX_AGE_SECONDS = 4 * 3600
+FINISHED_STEPS = ("passed", "failed", "skipped", "timed_out")
+
+
+def delivery_status(state: dict, journal: list[dict], at: str | None = None) -> dict:
+    """One line on where the delivery stands: the lead's override while it is fresh, or one derived from the record.
+
+    The derived line names what is being checked and how far it has got, the
+    last landing, the lanes that are blocked, and what is next.
+    """
+    moment = _parse_time(at or now(), exact=True)
+    override = state["meta"].get("statusOverride")
+    if override and moment < _parse_time(override["expiresAt"], exact=True):
+        return {"text": override["text"], "source": "override"}
+    parts = []
+    current = state["meta"]["checking"]["now"]
+    if current is not None:
+        text = f"Checking {current['title']}"
+        steps = [step for step in current["steps"] if step["label"] != "selecting checks"]
+        if steps:
+            done = sum(1 for step in steps if step["state"] in FINISHED_STEPS)
+            text += f", {done} of {len(steps)} checks done"
+        parts.append(text)
+    landed = next((entry for entry in reversed(journal) if entry["kind"] == "candidate.merged"), None)
+    if landed is not None:
+        parts.append(f"last landed {landed['subject']} at {landed['at']}")
+    blocked = [
+        lane["id"] + (f" (waiting on {lane['waitingOn']})" if lane.get("waitingOn") else "")
+        for lane in state["lanes"] if lane["state"] == "blocked"
+    ]
+    if blocked:
+        parts.append("blocked: " + ", ".join(blocked))
+    waiting = [item["subject"] for item in sorted(state["queue"], key=lambda item: (item["order"], item["subject"]))
+               if item["stage"] == "queued" and not item.get("pending")]
+    if waiting:
+        parts.append(f"next: {waiting[0]}" + (f", then {len(waiting) - 1} more" if len(waiting) > 1 else ""))
+    return {"text": " · ".join(parts) or "Nothing in flight", "source": "derived"}
+
+
+def lane_focus(state: dict) -> dict:
+    """For each lane that wrote no focus of its own, one derived from its work: subject, stage, review rounds."""
+    focus = {}
+    for lane in state["lanes"]:
+        if lane["focus"]:
+            continue
+        own = [item for item in state["queue"] if item["lane"] == lane["id"] and item["stage"] != "merged"]
+        if own:
+            item = max(own, key=lambda element: (element["order"], element["subject"]))
+            rounds = item.get("reportedRounds")
+            told = "rounds unknown" if rounds is None else f"{rounds} review {'round' if rounds == 1 else 'rounds'}"
+            focus[lane["id"]] = f"{item['subject']}: {item['stage']}, {told}"
+            continue
+        planned = [item for item in state.get("planned", []) if item["lane"] == lane["id"]]
+        if planned:
+            focus[lane["id"]] = f"{planned[-1]['subject']}: {planned[-1]['stage']}"
+    return focus
+
+
+def set_status_override(directory: Path, text: str | None, max_age: int) -> dict:
+    """The lead's status line, shown instead of the derived one for max_age seconds; None clears it."""
+
+    def change(state: dict) -> None:
+        if text is None:
+            state["meta"]["statusOverride"] = None
+            return
+        set_at = now()
+        expires = _parse_time(set_at, exact=True) + datetime.timedelta(seconds=max_age)
+        state["meta"]["statusOverride"] = {
+            "text": text, "setAt": set_at, "expiresAt": expires.isoformat().replace("+00:00", "Z"),
+        }
+
+    updated, _ = _tool_write(directory, change)
+    return updated
 
 
 def delivery_stats(state: dict, journal: list[dict]) -> dict:
@@ -1838,6 +1915,12 @@ def main(argv: list[str] | None = None) -> int:
     hand.add_argument("--change-request")
     hand.add_argument("--rounds", type=int)
     hand.add_argument("--binding", type=Path, help="the repository binding, for state.handoffsNeedAcceptance")
+    headline = commands.add_parser("headline", help="the lead's status line, shown until it expires")
+    told = headline.add_mutually_exclusive_group(required=True)
+    told.add_argument("--text", help="the status line")
+    told.add_argument("--clear", action="store_true", help="go back to the derived status line")
+    headline.add_argument("--max-age", type=int, help="seconds until it expires; overrides the binding")
+    headline.add_argument("--binding", type=Path, help="the repository binding, for state.statusOverrideMaxAgeSeconds")
     focused = commands.add_parser("focus", help="a lane says what it is doing")
     focused.add_argument("--lane", required=True)
     focused.add_argument("--text", required=True)
@@ -1894,6 +1977,12 @@ def main(argv: list[str] | None = None) -> int:
                     writer="lane" if args.writer == "lane" else None,
                 ),
             }
+        elif args.command == "headline":
+            bound = binding_state(args.binding).get("statusOverrideMaxAgeSeconds") if args.binding is not None else None
+            age = args.max_age if args.max_age is not None else bound or STATUS_OVERRIDE_MAX_AGE_SECONDS
+            if age < 1:
+                raise StateError("patch_invalid", "--max-age is at least 1 second")
+            result = {"ok": True, "state": set_status_override(args.dir, None if args.clear else args.text, age)}
         elif args.command == "handoff":
             result = {"ok": True, "item": _handoff_command(args)}
         elif args.command == "focus":

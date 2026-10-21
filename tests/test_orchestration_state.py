@@ -2059,6 +2059,92 @@ class LaneWriterTests(unittest.TestCase):
         self.assertNotIn("pending", accepted["item"])
 
 
+class StatusTests(unittest.TestCase):
+    """The status line derives from the record unless the lead's override is fresh; an empty lane focus derives too."""
+
+    NOW = "2026-10-21T12:00:00Z"
+
+    def record(self, *, now: dict | None = None, queue: list[dict] | None = None, lanes: list[dict] | None = None,
+               override: dict | None = None) -> dict:
+        meta = {"headline": "Epic", "checking": {"now": now, "next": []}}
+        if override is not None:
+            meta["statusOverride"] = override
+        return {"meta": meta, "queue": queue or [], "lanes": lanes or [], "planned": []}
+
+    def test_an_idle_record_says_nothing_is_in_flight(self) -> None:
+        self.assertEqual(state_tool.delivery_status(self.record(), [], at=self.NOW),
+                         {"text": "Nothing in flight", "source": "derived"})
+
+    def test_a_busy_record_names_the_check_the_last_landing_the_blocked_lanes_and_what_is_next(self) -> None:
+        now = {"subject": "work-a", "title": "Batch of 2: work-a, work-b", "startedAt": "2026-10-21T11:50:00Z",
+               "steps": [{"label": "unit", "state": "passed"}, {"label": "lint", "state": "running"}]}
+        record = self.record(
+            now=now,
+            queue=[queue_item("work-a", stage="checking"), queue_item("work-b", order=2, stage="checking"),
+                   queue_item("work-c", order=3), queue_item("work-d", order=4, pending=True),
+                   queue_item("work-e", order=5)],
+            lanes=[lane("lane-1"), lane("lane-2", state="blocked", waitingOn="lead"), lane("lane-3", state="blocked")],
+        )
+        journal = [entry(1, "2026-10-21T11:00:00Z", "candidate.merged", "work-0"),
+                   entry(2, "2026-10-21T11:40:00Z", "candidate.merged", "work-z")]
+        self.assertEqual(state_tool.delivery_status(record, journal, at=self.NOW)["text"],
+                         "Checking Batch of 2: work-a, work-b, 1 of 2 checks done · last landed work-z at "
+                         "2026-10-21T11:40:00Z · blocked: lane-2 (waiting on lead), lane-3 · next: work-c, then 1 more")
+
+    def test_the_status_moves_with_the_queue(self) -> None:
+        record = self.record(queue=[queue_item("work-a", stage="merged"), queue_item("work-c", order=2)])
+        journal = [entry(1, "2026-10-21T11:40:00Z", "candidate.merged", "work-a")]
+        self.assertEqual(state_tool.delivery_status(record, journal, at=self.NOW)["text"],
+                         "last landed work-a at 2026-10-21T11:40:00Z · next: work-c")
+
+    def test_a_fresh_override_replaces_the_derived_status_and_an_expired_one_is_ignored(self) -> None:
+        override = {"text": "Release candidate cut; holding merges", "setAt": "2026-10-21T11:00:00Z",
+                    "expiresAt": "2026-10-21T13:00:00Z"}
+        self.assertEqual(state_tool.delivery_status(self.record(override=override), [], at=self.NOW),
+                         {"text": "Release candidate cut; holding merges", "source": "override"})
+        expired = {**override, "expiresAt": "2026-10-21T11:59:59Z"}
+        self.assertEqual(state_tool.delivery_status(self.record(override=expired), [], at=self.NOW),
+                         {"text": "Nothing in flight", "source": "derived"})
+
+    def test_an_empty_lane_focus_derives_from_its_work(self) -> None:
+        record = self.record(
+            queue=[queue_item("work-a", lane="lane-1", stage="merged"),
+                   queue_item("work-c", order=2, lane="lane-1", stage="checking", reportedRounds=3)],
+            lanes=[lane("lane-1"), lane("lane-2", focus="Writing the guide"), lane("lane-3")],
+        )
+        record["planned"] = [planned("work-p", "lane-3")]
+        self.assertEqual(state_tool.lane_focus(record), {
+            "lane-1": "work-c: checking, 3 review rounds",
+            "lane-3": "work-p: review",
+        })
+
+    def test_the_lead_sets_an_override_that_expires(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        directory = Path(temporary.name) / "state"
+        state_tool.init(directory, "Epic")
+        code, set_override = run_tool(directory, "headline", "--text", "Holding for the release", "--max-age", "600")
+        self.assertEqual(code, 0, set_override)
+        override = set_override["state"]["meta"]["statusOverride"]
+        self.assertEqual(state_tool._parse_time(override["expiresAt"]) - state_tool._parse_time(override["setAt"]),
+                         datetime.timedelta(seconds=600))
+        self.assertEqual(state_tool.show(directory)["status"], {"text": "Holding for the release", "source": "override"})
+        binding = Path(temporary.name) / "binding.json"
+        binding.write_text(json.dumps({"state": {"publishers": [], "statusOverrideMaxAgeSeconds": 60}}))
+        code, bound = run_tool(directory, "headline", "--text", "Shorter", "--binding", str(binding))
+        bound_override = bound["state"]["meta"]["statusOverride"]
+        self.assertEqual(state_tool._parse_time(bound_override["expiresAt"]) - state_tool._parse_time(bound_override["setAt"]),
+                         datetime.timedelta(seconds=60))
+        code, cleared = run_tool(directory, "headline", "--clear")
+        self.assertIsNone(cleared["state"]["meta"]["statusOverride"])
+        self.assertEqual(state_tool.show(directory)["status"]["source"], "derived")
+        # A runner never sets the override; it is the lead's.
+        version = state_tool.read_state(directory)["version"]
+        with self.assertRaises(state_tool.StateError):
+            state_tool.patch(directory, writer="runner", version=version,
+                             assignments={"/meta/statusOverride": {"text": "x", "setAt": self.NOW, "expiresAt": self.NOW}})
+
+
 class PublicationTests(unittest.TestCase):
     """What was published, so an unpublished view is visible."""
 
@@ -2171,8 +2257,8 @@ class PublicationTests(unittest.TestCase):
         state_tool.append_journal(self.directory, kind="decision.recorded", summary="Decision 4")
         code, shown = run_tool(self.directory, "show")
         self.assertTrue(shown["publication"]["outboxLags"], "a journal entry the outbox lacks is a lag")
-        # What renderers read: the state, the journal, and the stats and estimates folded from them.
-        self.assertEqual(sorted(state_tool.show(self.directory)), ["estimates", "journal", "state", "stats"])
+        # What renderers read: the state, the journal, and the stats, estimates, status and focus folded from them.
+        self.assertEqual(sorted(state_tool.show(self.directory)), ["estimates", "focus", "journal", "state", "stats", "status"])
 
 
 class SkipGuardTests(unittest.TestCase):
