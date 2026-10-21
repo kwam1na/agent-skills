@@ -242,7 +242,7 @@ def dependency_problems(items: list[tuple[str, list[str]]], parent: str | None) 
 
     def found(problem: str) -> None:
         # Past the limit a problem is only counted, so a dense graph never
-        # builds more text than the refusal shows.
+        # keeps more text than the refusal shows.
         nonlocal unnamed
         if len(problems) < DEPENDENCY_PROBLEM_LIMIT:
             problems.append(problem)
@@ -258,10 +258,10 @@ def dependency_problems(items: list[tuple[str, list[str]]], parent: str | None) 
         if reference in blockers:
             found(f"{reference} blocks itself")
         named: set[str] = set()
-        repeated: list[str] = []
+        repeated: dict[str, None] = {}
         for blocker in blockers:
-            if blocker in named and blocker not in repeated:
-                repeated.append(blocker)
+            if blocker in named:
+                repeated[blocker] = None
             named.add(blocker)
         for blocker in repeated:
             found(f"{reference} names its blocker {blocker} more than once")

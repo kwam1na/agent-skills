@@ -243,7 +243,9 @@ in this order:
    itself. Blockers are the tracker's: `blockedBy` on a forge item is
    ignored, never merged with the tracker's. A tracker snapshot's blockers
    must form a dependency list under the record's `meta.trackerParent`, by
-   the same rules as `list-work`, or the snapshot is refused.
+   the same rules as `list-work`, or the snapshot is refused. `reconcile`
+   also checks all its tracker snapshots together, so a cycle that runs
+   across two of them is refused too.
    - **Tracker, with a bound command.** When the binding declares
      `state.trackerSnapshot`, `{argv, timeoutSeconds?}`, run it through the
      state tool. The repository's command prints the snapshot for the record's
