@@ -565,7 +565,7 @@ substitutes inside a longer string:
 | --- | --- |
 | `schemaVersion` | `orchestration-binding/1`. |
 | `base` | `{remote, ref}`: the branch every candidate merges into. It must match the runner's `--remote` and `--base`. |
-| `workRoot` | The directory for the runner's temporary checkouts, relative to the checkout's top level unless absolute. The runner deletes what it finds there, so it checks the path against git's own view, never the current directory: `--repo` must be a checkout's top level; `workRoot` must not contain any checkout git lists, the git directory or the common git directory; inside a git directory it sits beside git's own folders there (`objects`, `refs`, `reftable`, `worktrees`, `hooks`, `info`, `logs`, `modules`, `lfs`, `rr-cache`, `branches`, `remotes`, `rebase-merge`, `rebase-apply`, `sequencer`), never in one; inside any checkout it holds no tracked file, sits in no submodule, and is ignored there; `checkouts` and `empty-hooks` under it are never symlinks. Paths are compared without case or Unicode normal form. The runner marks each checkout it adds, so a killed run's leftovers under `workRoot/checkouts` are pruned at the next start; an unmarked worktree there is refused until its owner removes it with `git worktree remove`. Each refusal is `binding_invalid`, naming the rule. |
+| `workRoot` | The directory for the runner's temporary checkouts, relative to the checkout's top level unless absolute. The runner deletes what it finds there, so it checks the path against git's own view, never the current directory: `--repo` must be a checkout's top level; `workRoot` must not contain any checkout git lists, the git directory or the common git directory; inside a git directory it sits beside git's own folders there (`objects`, `refs`, `reftable`, `worktrees`, `hooks`, `info`, `logs`, `modules`, `lfs`, `rr-cache`, `branches`, `remotes`, `rebase-merge`, `rebase-apply`, `sequencer`), never in one; inside any checkout it holds no tracked file, sits in no submodule, and is ignored there; `checkouts` and `empty-hooks` under it are never symlinks or junctions. Paths are compared without case or Unicode normal form. The runner marks each checkout it adds, so a killed run's leftovers under `workRoot/checkouts` are pruned at the next start; an unmarked worktree there is refused until its owner removes it with `git worktree remove`. Each refusal is `binding_invalid`, naming the rule. |
 | `candidate` | An argv that resolves a candidate reference to `{branch, head}` as JSON. |
 | `prepare` | An argv list run in every fresh checkout, such as installing dependencies or creating a ref the checks need from `{baseHead}`. |
 | `hooks` | `bypass` or `run`. See "Git hooks" below. |
@@ -580,7 +580,7 @@ substitutes inside a longer string:
 | `checkTimeoutCeiling` | The maximum any check may ask for. |
 | `parallelChecks` | Optional. How many checks marked `parallelSafe` may run at once; 1 when absent. A check without `parallelSafe` always runs alone. |
 | `batch` | Optional. `{culpritSearch}`: how `batch` finds the member that failed a batch's checks, `bisect` (the default, fewest check runs) or `serial` (each prefix in order). |
-| `environment` | Variables set for every argv the runner runs. |
+| `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match; the runner also drops them from its own environment. |
 | `ready` | An argv run before merging; a non-zero exit stops with `ready_refused`. |
 | `merge` | An argv that must use `{expectedHead}`. A binding whose `merge` lacks it is invalid. |
 | `release` | Ordered targets, each with an `id`, `argv`, `stopsOnFailure` and `requiresApproval`, and an optional `timeoutSeconds`. |
@@ -627,6 +627,15 @@ level, the repository's own included. Settings outside this set, and
 `.gitattributes`, still apply, and the argv the binding declares runs with the
 user's full configuration apart from the hooks setting above. Under
 `hooks: "run"`, a global `core.hooksPath` still chooses which hooks run.
+
+The runner's own git reads the global and system configuration of the user
+who started it: `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`,
+`GIT_CONFIG_SYSTEM` and `GIT_CONFIG_NOSYSTEM` come from the runner's own
+environment, never from the binding's `environment`. A binding can therefore
+give its declared argv another home or configuration file without changing
+the sign-in helpers and transport settings the runner fetches and pushes with.
+The pins above already cover the ignore and attribute files a home could
+supply.
 
 ### The affected-checks provider
 

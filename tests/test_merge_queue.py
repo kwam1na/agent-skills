@@ -1401,10 +1401,117 @@ class WorkRootSafetyTests(MergeQueueTestCase):
         self.assertRefused(self.run_queue(adopter, "feature"), "tracked")
         self.assertTrue(precious.exists())
 
+    def test_pathspec_settings_in_the_bindings_environment_are_refused(self) -> None:
+        # They change how git reads every path the workRoot checks name.
+        for variable in ("GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"):
+            with self.subTest(variable):
+                self.fresh()
+                adopter = self.environment_adopter({variable: "1"}, {"workRoot": ".merge-queue"})
+                self.exclude(adopter, ".merge-queue/")
+                with self.assertRaises(queue.Stop) as stopped:
+                    adopter.runner().load()
+                self.assertEqual(stopped.exception.reason, "binding_invalid")
+                self.assertIn(variable, stopped.exception.detail)
+                self.assertIn("pathspec", stopped.exception.detail)
+
+    def test_the_operators_pathspec_settings_never_reach_the_runners_own_git(self) -> None:
+        # Literal pathspecs would turn the ":(icase)" tracked-file check into a
+        # search for a file literally named so, and let a tracked folder through.
+        adopter = self.adopter({"workRoot": "tools"})
+        (adopter.operator / ".gitignore").write_text("tools/\n")
+        with mock.patch.dict(os.environ, {"GIT_LITERAL_PATHSPECS": "1", "GIT_ICASE_PATHSPECS": "0"}):
+            with self.assertRaises(queue.Stop) as stopped:
+                adopter.runner().load()
+        self.assertEqual(stopped.exception.reason, "binding_invalid")
+        self.assertIn("tracked", stopped.exception.detail)
+        self.assertTrue((adopter.operator / "tools" / "check.py").exists())
+
+    def test_the_runners_own_git_keeps_the_operators_home_and_global_config(self) -> None:
+        adopter = self.adopter()
+        runner = adopter.runner()
+        runner.binding = {"environment": {
+            "HOME": str(self.directory / "binding-home"), "XDG_CONFIG_HOME": str(self.directory / "binding-xdg"),
+            "GIT_CONFIG_GLOBAL": str(self.directory / "binding-global"), "GIT_CONFIG_SYSTEM": str(self.directory / "binding-system"),
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }}
+        seen: dict[str, dict] = {}
+        original = queue.run_process
+
+        def capture(argv, cwd, env, **options):
+            seen["env"] = env
+            return original(["git", "--version"], cwd=cwd, env=env)
+
+        operator = {"HOME": str(self.directory / "operator-home"), "GIT_CONFIG_GLOBAL": str(self.directory / "operator-global")}
+        with mock.patch.dict(os.environ, operator), mock.patch.object(queue, "run_process", side_effect=capture):
+            runner.git("status")
+        for name in ("HOME", "GIT_CONFIG_GLOBAL"):
+            self.assertEqual(seen["env"].get(name), operator[name], name)
+        for name in ("XDG_CONFIG_HOME", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM"):
+            self.assertEqual(seen["env"].get(name), os.environ.get(name), name)
+        # A declared argv still runs with the binding's own values.
+        declared = runner.environment()
+        self.assertEqual(declared["HOME"], str(self.directory / "binding-home"))
+        self.assertEqual(declared["GIT_CONFIG_GLOBAL"], str(self.directory / "binding-global"))
+
+    def test_a_windows_junction_counts_as_a_link(self) -> None:
+        folder = self.directory / "plain"
+        folder.mkdir()
+        self.assertFalse(queue.is_link(folder))
+        # A junction is a reparse point that is not a symlink.
+        reparse = type("Info", (), {"st_file_attributes": 0x400, "st_mode": 0o040755})()
+        with mock.patch.object(queue.os, "lstat", return_value=reparse):
+            self.assertTrue(queue.is_link(folder))
+        self.assertFalse(queue.is_link(self.directory / "missing"))
+
+    def test_a_junction_at_a_runner_folder_under_work_root_is_refused(self) -> None:
+        adopter = self.adopter({"workRoot": ".merge-queue"})
+        (adopter.operator / ".gitignore").write_text(".merge-queue/\n")
+        (adopter.operator / ".merge-queue" / "empty-hooks").mkdir(parents=True)
+        real = queue.is_link
+        with mock.patch.object(queue, "is_link", side_effect=lambda path: path.name == "empty-hooks" or real(path)):
+            with self.assertRaises(queue.Stop) as stopped:
+                adopter.runner().load()
+        self.assertEqual(stopped.exception.reason, "binding_invalid")
+        self.assertIn("empty-hooks", stopped.exception.detail)
+        self.assertIn("junction", stopped.exception.detail)
+
+    def test_a_case_variant_of_a_submodule_path_is_refused(self) -> None:
+        if not case_insensitive_filesystem(self.directory):
+            self.skipTest("the filesystem distinguishes case")
+        adopter = self.adopter({"workRoot": "VENDOR/Library/build"})
+        library = self.directory / "library"
+        Adopter.write(library, "build/checkouts/keep.txt", "the submodule's own file\n")
+        run("init", "--quiet", str(library), cwd=self.directory)
+        run("add", "--all", cwd=library)
+        run("commit", "--quiet", "-m", "library", cwd=library)
+        run("-c", "protocol.file.allow=always", "submodule", "add", "--quiet", str(library), "vendor/library",
+            cwd=adopter.operator)
+        (adopter.operator / ".gitignore").write_text("build/\n")
+        self.candidate(adopter)
+        self.assertRefused(self.run_queue(adopter, "feature"), "submodule")
+        self.assertTrue((adopter.operator / "vendor" / "library" / "build" / "checkouts" / "keep.txt").exists())
+
+    def test_a_leftover_checkout_removed_between_runs_does_not_block_the_next(self) -> None:
+        adopter = self.adopter({"workRoot": ".merge-queue"})
+        self.exclude(adopter, ".merge-queue/")
+        self.candidate(adopter)
+        runner = adopter.runner()
+        base_head = runner.load()
+        runner.start()
+        leftover = runner.checkout(base_head, "base", prepare=False)
+        # Someone removed the folder by hand; git still lists it, now prunable.
+        shutil.rmtree(leftover)
+        self.assertTrue(any(str(leftover) in line for line in
+                            run("worktree", "list", "--porcelain", cwd=adopter.operator).splitlines()))
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertFalse(any(str(leftover) in line for line in
+                             run("worktree", "list", "--porcelain", cwd=adopter.operator).splitlines()))
+
     def test_the_schema_states_every_work_root_rule(self) -> None:
         description = schema("orchestration-binding")["properties"]["workRoot"]["description"]
         for phrase in (
-            "top level", "any checkout of the repository", "git's own folders", "tracked", "ignored", "submodule",
+            "top level", "any checkout of the repository", "git's own folders", "tracked", "ignored", "submodule", "junction",
             "marks", "symlink",
         ):
             self.assertIn(phrase, description)

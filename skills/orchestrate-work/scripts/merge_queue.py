@@ -27,6 +27,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -112,6 +113,16 @@ def folded(path: Path) -> PurePath:
 
 def within(path: Path, parent: Path) -> bool:
     return folded(path).is_relative_to(folded(parent))
+
+
+def is_link(path: Path) -> bool:
+    """Whether the path is a symlink or a Windows junction, either of which leads somewhere else."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    # A junction is a reparse point that is not a symlink.
+    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT)
 # How long a killed process's output is drained before the runner stops waiting.
 DRAIN_SECONDS = 5
 # Inherited variables that would point git somewhere other than the runner's checkouts.
@@ -120,6 +131,13 @@ GIT_LOCATION_VARIABLES = frozenset({
     "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_PREFIX", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
     "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
 })
+# Variables that change how git reads a pathspec; under any of them the workRoot checks match the wrong paths.
+GIT_PATHSPEC_VARIABLES = frozenset({
+    "GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS",
+})
+# Where the runner's own git finds the user's global and system configuration: always the operator's.
+GIT_CONFIG_HOME_VARIABLES = ("HOME", "XDG_CONFIG_HOME", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM")
+FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 
 
 def now() -> str:
@@ -211,6 +229,8 @@ def binding_errors(binding: object) -> list[str]:
             match = PLACEHOLDER.match(element)
             if match and match[1] not in PLACEHOLDERS:
                 errors.append(f"{where}: unknown placeholder {element}")
+    for variable in sorted(GIT_PATHSPEC_VARIABLES & set(binding["environment"])):
+        errors.append(f"/environment: {variable} changes how git reads a pathspec and must not be set")
     if "{expectedHead}" not in binding["merge"]:
         errors.append("/merge: the merge argv must use {expectedHead} as a whole element")
     if binding["checkTimeoutSeconds"] > binding["checkTimeoutCeiling"]:
@@ -515,7 +535,8 @@ class Runner:
     def environment(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         env = {
             key: value for key, value in os.environ.items()
-            if key not in GIT_LOCATION_VARIABLES and not re.match(r"GIT_CONFIG_(KEY|VALUE)_\d+\Z", key)
+            if key not in GIT_LOCATION_VARIABLES and key not in GIT_PATHSPEC_VARIABLES
+            and not re.match(r"GIT_CONFIG_(KEY|VALUE)_\d+\Z", key)
         }
         env.update(self.binding.get("environment", {}))
         if extra:
@@ -545,6 +566,12 @@ class Runner:
         # The binding's environment never moves the runner's own git to another
         # repository, index or object store; the hooks setting is passed above.
         env = {key: value for key, value in self.environment().items() if key not in GIT_LOCATION_VARIABLES}
+        # Nor does it choose the global or system configuration the pins sit on.
+        for name in GIT_CONFIG_HOME_VARIABLES:
+            if name in os.environ:
+                env[name] = os.environ[name]
+            else:
+                env.pop(name, None)
         result = run_process([*prefix, *args], cwd=cwd or self.repository, env=env, stdin=stdin)
         if check and result.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
@@ -923,8 +950,8 @@ class Runner:
                 raise Stop("binding_invalid", f"a workRoot inside the checkout at {path} must be ignored there")
         for name in ("checkouts", "empty-hooks"):
             # The runner empties these folders; through a symlink it would empty the target.
-            if (work / name).is_symlink():
-                raise Stop("binding_invalid", f"workRoot/{name} must not be a symlink")
+            if is_link(work / name):
+                raise Stop("binding_invalid", f"workRoot/{name} must not be a symlink or junction")
 
     def context(self, subject: str | None, base_head: str) -> Context:
         values = {"base": self.base, "baseHead": base_head, "workRoot": str(self.work_root)}
