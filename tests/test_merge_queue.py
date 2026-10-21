@@ -228,6 +228,9 @@ tree = git("rev-parse", expected + "^{tree}")
 if os.environ.get("MQ_MERGE") == "unverified":
     tree = git("rev-parse", base + "^{tree}")
 parents = ["-p", expected, "-p", base] if os.environ.get("MQ_MERGE") == "swapped" else ["-p", base, "-p", expected]
+if os.environ.get("MQ_MERGE") == "squash":
+    # One new commit on the base with the candidate's tree, as a squash merge makes.
+    parents = ["-p", base]
 commit = git("commit-tree", tree, *parents, "-m", "Merge " + branch)
 # The forge is the adopter's own tool: it, not the runner, owns its push settings.
 git("-c", "push.gpgSign=false", "push", "--quiet", "--force-with-lease=refs/heads/main:" + base, remote, commit + ":refs/heads/main")
@@ -1821,8 +1824,9 @@ class BatchTests(MergeQueueTestCase):
         self.assertEqual(documents["first"]["outcome"], "merged")
         self.assertEqual(documents["second"]["stop"]["reason"], "batch_tree_mismatch")
         self.assertTrue(documents["second"]["stop"]["queueStopped"])
-        # Nothing that was not checked landed: the base holds the push, not the second candidate.
+        # The second candidate did not land: the base holds the push on top of the first.
         self.assertEqual(adopter.show(adopter.tip("main"), "src/app.txt"), "app one")
+        self.assertIn("checked only as part of the whole batch", " ".join(documents["second"]["notes"]))
         self.assertEqual(adopter.item("second")["stage"], "queued")
         self.assertEqual(adopter.item("third")["stage"], "queued")
 
@@ -1878,6 +1882,94 @@ class BatchTests(MergeQueueTestCase):
                     self.assertEqual(item["stage"], "checking")
                     self.assertEqual([(check["id"], check["state"]) for check in item["checks"]], steps)
 
+    def test_members_landing_after_a_culprit_search_report_the_passing_prefixs_checks(self) -> None:
+        adopter = self.adopter()
+        subjects = self.trio(adopter, failing="second")
+        results = self.batch(adopter, *subjects)
+        first = next(result.document() for result in results if result.document()["candidate"] == "first")
+        self.assertEqual(first["outcome"], "merged")
+        self.assertTrue(first["checks"])
+        self.assertEqual({check["state"] for check in first["checks"]}, {"passed"})
+
+    def test_a_broken_base_found_on_the_first_member_reports_every_member(self) -> None:
+        adopter = self.adopter()
+        # The unit check fails on the base itself, before any member joins.
+        adopter.advance_base({"src/app.txt": "FAIL\n"})
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="third")
+        results = self.batch(adopter, "first", "third")
+        documents = {result.document()["candidate"]: result.document() for result in results}
+        self.assertEqual(set(documents), {"first", "third"})
+        self.assertEqual(documents["first"]["stop"]["reason"], "base_broken")
+        self.assertTrue(documents["first"]["stop"]["queueStopped"])
+        self.assertEqual(documents["third"]["outcome"], "stopped")
+        self.assertIn("base_broken", documents["third"]["stop"]["detail"])
+        self.assertEqual(adopter.item("third")["stage"], "queued")
+        self.assertEqual(adopter.item("first")["stage"], "stopped")
+
+    def test_a_stacked_pair_lands_through_a_squash_merging_forge(self) -> None:
+        adopter = self.environment_adopter({"MQ_MERGE": "squash"})
+        lower = adopter.lane_commit("lower", {"src/lib.txt": "lib two\n"})
+        adopter.enqueue("lower", lower)
+        # The upper candidate is built on the lower one's branch, so it carries the lower one's commit.
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        upper = adopter.lane_commit("upper", {"src/extra.txt": "extra\n"}, start="origin/lower")
+        adopter.enqueue("upper", upper)
+        results = self.batch(adopter, "lower", "upper")
+        self.assertEqual(self.outcomes(results), {"lower": "merged", "upper": "merged"})
+        main = adopter.tip("main")
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        # Squash merges: each landing is one commit on the base, with exactly the recorded tree.
+        self.assertEqual(run("rev-list", "--count", f"{results[0].document()['mergedHead']}..{main}", cwd=adopter.lane), "1")
+        self.assertEqual(adopter.show(main, "src/lib.txt"), "lib two")
+        self.assertEqual(adopter.show(main, "src/extra.txt"), "extra")
+
+    def test_placeholders_a_sync_or_check_provides_have_values_in_a_batch(self) -> None:
+        # The same binding works under run: prepare names the branch, a check names the head it checks.
+        prepare = [[PY, "-c", "import sys; sys.exit(0 if sys.argv[1] and sys.argv[2] else 1)", "{branch}", "{head}"]]
+        named = check_entry("named", "--named", "{branch}", "{head}", "{expectedHead}")
+        named["argv"] = [PY, "-c", "import sys; sys.exit(0 if all(sys.argv[1:]) else 1)", "{branch}", "{head}", "{expectedHead}"]
+        adopter = self.adopter({"prepare": prepare, "alwaysRun": [named]})
+        subjects = self.trio(adopter)
+        results = self.batch(adopter, *subjects)
+        self.assertEqual(self.outcomes(results), {name: "merged" for name in subjects},
+                         [result.document()["stop"] for result in results])
+
+    def test_a_partial_landing_stops_the_queue(self) -> None:
+        # The forge refuses the second merge, after the first landed an intermediate tree.
+        adopter = self.adopter()
+        subjects = self.trio(adopter)
+
+        def refuse_second(runner, subject) -> None:
+            if subject == "second":
+                os.environ["MQ_MERGE"] = "refuse"
+
+        self.addCleanup(os.environ.pop, "MQ_MERGE", None)
+        results = self.batch(adopter, *subjects, seams={"before_batch_landing": refuse_second})
+        documents = {result.document()["candidate"]: result.document() for result in results}
+        self.assertEqual(documents["first"]["outcome"], "merged")
+        self.assertEqual(documents["second"]["stop"]["reason"], "merge_refused")
+        self.assertTrue(documents["second"]["stop"]["queueStopped"])
+        self.assertTrue(documents["third"]["stop"]["queueStopped"])
+        self.assertEqual(adopter.item("third")["stage"], "queued")
+
+    def test_members_resolve_from_the_base_not_the_tree_built_so_far(self) -> None:
+        adopter = self.adopter()
+        subjects = self.trio(adopter)
+        real = queue.Runner.resolve
+        seen: list[tuple[str, str]] = []
+
+        def recording(runner, subject, context, cwd):
+            seen.append((runner.tree("HEAD", cwd=cwd), context.element("{baseHead}")))
+            return real(runner, subject, context, cwd)
+
+        base_head = adopter.tip("main")
+        with mock.patch.object(queue.Runner, "resolve", recording):
+            self.batch(adopter, *subjects)
+        base_tree = run("rev-parse", f"{base_head}^{{tree}}", cwd=adopter.operator)
+        build = seen[:3]
+        self.assertEqual(build, [(base_tree, base_head)] * 3)
+
     def test_a_batch_needs_two_candidates(self) -> None:
         adopter = self.adopter()
         self.candidate(adopter, name="only")
@@ -1925,6 +2017,23 @@ class ParallelCheckTests(MergeQueueTestCase):
         self.run_queue(adopter, "feature")
         spans = self.spans(adopter)
         self.assertFalse(self.overlap(spans["solo"], spans["p1"]), spans)
+
+    def test_at_the_default_limit_checks_run_on_the_runners_own_thread(self) -> None:
+        # So an interrupt reaches the check at once, as before parallel checks existed.
+        import threading
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.run_one
+        threads: list[bool] = []
+
+        def recording(runner, check, checkout, context):
+            threads.append(threading.current_thread() is threading.main_thread())
+            return real(runner, check, checkout, context)
+
+        with mock.patch.object(queue.Runner, "run_one", recording):
+            self.run_queue(adopter, "feature")
+        self.assertTrue(threads)
+        self.assertTrue(all(threads), threads)
 
     def test_the_limit_defaults_to_one(self) -> None:
         checks = [self.timed("p1", True), self.timed("p2", True)]

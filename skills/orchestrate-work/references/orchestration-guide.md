@@ -704,9 +704,19 @@ for every member.
   `queued`. The runner then commits the member's recorded tree, with the
   member's head and the base as parents, pushes it to the member's branch,
   and merges it through `ready` and `merge`, which must land exactly that
-  tree on that base. Nothing the batch did not check can land, even when a
-  post-sync step's output depends on commit ids. Post-sync steps see the
-  tree built so far as `{baseHead}`.
+  tree on that base. Every tree that lands is one the batch built, even when
+  a post-sync step's output depends on commit ids, and the tree after the
+  last member is the one the batch checked. The trees in between were
+  checked only as part of the whole: when a landing stops after another
+  member landed, the base holds such a tree, so the stop also stops the queue
+  and its result says up to which member. Run the full health check before
+  anything else merges.
+- **Placeholders.** Each member resolves from a checkout of the base, with
+  the base head as `{baseHead}`, as a sync does. Its post-sync steps and lead
+  inputs see the tree built so far as `{baseHead}`. `prepare` runs once in the
+  batch's checkout of the base, with the base branch and head as `{branch}`
+  and `{head}`. The batch's checks see the last member's branch as
+  `{branch}`, and the batch's commit as `{head}` and `{expectedHead}`.
 - **A failing batch** merges nothing at first. The runner checks prefixes of
   the batch, by bisection or in order as `batch.culpritSearch` says, until it
   finds the first member whose arrival makes the checks fail, and stops it
