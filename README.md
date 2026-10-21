@@ -273,6 +273,32 @@ only PIDs still running through the direct child handle; when tree liveness
 cannot be observed, it reports `unknown` rather than inferring survivors from a
 cleanup exception.
 
+On POSIX the launcher also stops descendants that left the process group, which
+it knows by pid and start time. It finds them by ancestry, or by a per-launch
+`AGENT_SKILLS_LAUNCH_<key>` variable in their environment. On macOS, which
+discloses no environment for Apple system binaries such as `/bin/sh` and
+`/bin/sleep`, it also uses three more signals:
+
+- a fork watcher that sees each child as it is forked;
+- an inherited lifeline pipe;
+- the process group of a descendant that has exited.
+
+None of these macOS signals applies on Linux. Cleanup never stops pid 0 or 1,
+the launcher or any of its ancestors, another user's process on its own, or a
+process started before the run. A candidate that breaks that rule is never
+signalled, and the cancellation reports
+`product.cancellation_incomplete` with `cleanup=escaped-descendants-refused`.
+
+Accepted limits:
+
+- The fork watcher is best effort. A descendant can escape and be orphaned
+  between two observations, with no readable marker and no inherited lifeline,
+  before the watcher sees its fork. Such a descendant is not found.
+- Recognising a job by the group of a descendant that has exited relies on no
+  pid being reused within the moment between that exit and the watcher seeing
+  it. macOS allocates pids in sequence, so such a reuse is practically
+  impossible.
+
 Mutation is an explicit repository-maintenance action. `apply` is the product
 installer entry point: it installs into an absent repository, updates a current
 generation, and returns a no-op for the same exact generation without requiring
