@@ -1366,13 +1366,14 @@ class LiveInProcessTests(DeliveryStateFixture):
             except BaseException as error:  # noqa: BLE001 - what escaped is the result
                 outcome.append(error)
 
-        with mock.patch.object(render_state, "_unwinding", True), \
+        # Held back, as while the main thread spawns: a helper's resume must leave it so.
+        with mock.patch.object(render_state, "_unwinding", False), \
                 mock.patch.object(render_state, "_received", [signal.SIGINT]):
             helper = threading.Thread(target=resume)
             helper.start()
             helper.join(5)
             self.assertEqual(outcome, [None], "only the main thread unwinds")
-            self.assertTrue(render_state._unwinding)
+            self.assertFalse(render_state._unwinding)
 
 
 class ChangeNotificationTests(DeliveryStateFixture):
