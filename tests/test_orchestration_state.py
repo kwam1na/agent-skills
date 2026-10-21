@@ -1355,8 +1355,10 @@ def bullets_after(text: str, lead_in: str) -> list[str]:
 
 
 # Files the skill text names that live in an adopter's repository or are
-# written as views, not shipped with the skill.
-ADOPTER_FILES = frozenset({".agents/orchestration.json", "delivery.md", "delivery.html"})
+# written into its state directory, as views, the outbox or the
+# acknowledgement, not shipped with the skill.
+ADOPTER_FILES = frozenset({".agents/orchestration.json", "delivery.md", "delivery.html", "outbox/outbox.json",
+                           "published.json"})
 
 
 class SkillTextTests(unittest.TestCase):
