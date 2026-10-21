@@ -19,6 +19,7 @@ import sys
 sys.dont_write_bytecode = True
 
 import argparse
+import concurrent.futures
 import contextlib
 import datetime
 import json
@@ -637,17 +638,18 @@ class Runner:
             raise delivery_state.StateError("version_stale", "the state kept changing under the runner")
         self.render()
 
-    def write_progress(self, subject: str, states: list[tuple[str, str]]) -> None:
-        """Show the checks' live states in the checking panel and the queue row, in one write.
+    def write_progress(self, subjects: list[str], states: list[tuple[str, str]]) -> None:
+        """Show the checks' live states in the checking panel and the queue rows, in one write.
 
         Written before a check starts and after it ends, so both views name the
-        check that is running and never disagree.
+        check that is running and never disagree. Every member of a batch shows
+        the batch's checks.
         """
 
         def build(current: dict) -> tuple[dict, dict]:
             queue = [dict(item) for item in current["queue"]]
             for item in queue:
-                if item["subject"] == subject:
+                if item["subject"] in subjects:
                     item["checks"] = [{"id": name, "state": state} for name, state in states]
             steps = [{"label": name, "state": state} for name, state in states]
             return {"queue": queue}, {"/meta/checking/now/steps": steps}
@@ -1101,8 +1103,8 @@ class Runner:
             if changes:
                 raise Stop("no_checks", "nothing would check this candidate's changes")
             result.notes.append("the candidate changes nothing, so no check was selected")
-        self.write_progress(subject, [(check["id"], "pending") for check in checks])
-        outcomes = self.run_checks(subject, checks, checkout, context.with_values(treeSha=self.tree(synced)), result)
+        self.write_progress([subject], [(check["id"], "pending") for check in checks])
+        outcomes = self.run_checks([subject], checks, checkout, context.with_values(treeSha=self.tree(synced)), result)
         self.assert_clean(checkout, "the checkout after the checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
         if failed:
@@ -1241,33 +1243,57 @@ class Runner:
         profile = self.binding["profiles"].get(check.get("environmentProfile", ""), {"environment": {}})
         return self.run_argv(check["argv"], cwd, context, timeout, extra_env=profile["environment"])
 
-    def run_checks(self, subject: str, checks: list[dict], checkout: Path, context: Context, result: Result) -> dict[str, str]:
+    def run_checks(self, subjects: list[str], checks: list[dict], checkout: Path, context: Context, result: Result) -> dict[str, str]:
         outcomes: dict[str, str] = {}
 
-        def show(running: str | None = None) -> None:
+        def show(running: set[str] = frozenset()) -> None:
             states = [
-                (item["id"], "running" if item["id"] == running else outcomes.get(item["id"], "pending"))
+                (item["id"], "running" if item["id"] in running else outcomes.get(item["id"], "pending"))
                 for item in checks
             ]
-            self.write_progress(subject, states)
+            self.write_progress(subjects, states)
 
-        for check in checks:
-            if any(outcomes.get(name) != "passed" for name in check["prerequisites"]):
-                outcomes[check["id"]] = "skipped"
-                result.checks.append({"id": check["id"], "state": "skipped", "exitCode": None, "seconds": 0})
-                show()
-                continue
-            # Live state is written before the work starts, not after it.
-            show(running=check["id"])
-            completed = self.run_one(check, checkout, context)
-            assert completed is not None
-            state = "timed_out" if completed.timed_out else "passed" if completed.returncode == 0 else "failed"
-            outcomes[check["id"]] = state
-            result.checks.append({
-                "id": check["id"], "state": state, "exitCode": completed.returncode,
-                "seconds": round(completed.seconds, 3),
-            })
-            show()
+        limit = self.binding.get("parallelChecks", 1)
+        pending = list(checks)
+        running: dict[concurrent.futures.Future, dict] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=limit) as pool:
+            while pending or running:
+                # Start checks in order; the first one that cannot start yet holds back the rest.
+                while pending:
+                    check = pending[0]
+                    if any(name not in outcomes for name in check["prerequisites"]):
+                        break
+                    if any(outcomes[name] != "passed" for name in check["prerequisites"]):
+                        pending.pop(0)
+                        outcomes[check["id"]] = "skipped"
+                        result.checks.append({"id": check["id"], "state": "skipped", "exitCode": None, "seconds": 0})
+                        show(running={item["id"] for item in running.values()})
+                        continue
+                    alone = not check.get("parallelSafe") or limit == 1
+                    if running and (alone or len(running) >= limit or any(
+                        not item.get("parallelSafe") for item in running.values()
+                    )):
+                        break
+                    pending.pop(0)
+                    # Live state is written before the work starts, not after it.
+                    show(running={check["id"], *(item["id"] for item in running.values())})
+                    running[pool.submit(self.run_one, check, checkout, context)] = check
+                    if alone:
+                        break
+                if not running:
+                    continue
+                done, _ = concurrent.futures.wait(running, return_when=concurrent.futures.FIRST_COMPLETED)
+                for future in done:
+                    check = running.pop(future)
+                    completed = future.result()
+                    assert completed is not None
+                    state = "timed_out" if completed.timed_out else "passed" if completed.returncode == 0 else "failed"
+                    outcomes[check["id"]] = state
+                    result.checks.append({
+                        "id": check["id"], "state": state, "exitCode": completed.returncode,
+                        "seconds": round(completed.seconds, 3),
+                    })
+                show(running={item["id"] for item in running.values()})
         return outcomes
 
     def classify(self, failed: list[dict], selected: list[dict], checkout: Path, base_head: str, changes: list[dict], context: Context, result: Result) -> None:

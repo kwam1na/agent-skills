@@ -656,6 +656,10 @@
           "timeoutSeconds": {
             "type": "integer",
             "minimum": 1
+          },
+          "parallelSafe": {
+            "description": "true lets the runner run this check at the same time as other parallelSafe checks, up to the binding's parallelChecks. A check without it runs alone.",
+            "type": "boolean"
           }
         }
       },
@@ -751,7 +755,8 @@
           "check",
           "merge",
           "run",
-          "release"
+          "release",
+          "batch"
         ]
       },
       "candidate": {
@@ -1082,6 +1087,7 @@
           "ready_refused",
           "merge_refused",
           "merged_unverified",
+          "batch_tree_mismatch",
           "binding_invalid",
           "candidate_unknown",
           "candidate_unresolved",
@@ -1492,6 +1498,28 @@
             }
           }
         }
+      },
+      "parallelChecks": {
+        "description": "How many parallelSafe checks may run at once. Optional; 1 when absent, so every check runs alone.",
+        "type": "integer",
+        "minimum": 1
+      },
+      "batch": {
+        "description": "How the batch subcommand finds the candidate that failed a batch's checks. Optional.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "culpritSearch"
+        ],
+        "properties": {
+          "culpritSearch": {
+            "description": "bisect checks the fewest prefixes of the batch; serial checks each prefix in order. bisect when absent.",
+            "enum": [
+              "bisect",
+              "serial"
+            ]
+          }
+        }
       }
     },
     "$defs": {
@@ -1579,6 +1607,10 @@
           "timeoutSeconds": {
             "type": "integer",
             "minimum": 1
+          },
+          "parallelSafe": {
+            "description": "true lets the runner run this check at the same time as other parallelSafe checks, up to the binding's parallelChecks. A check without it runs alone.",
+            "type": "boolean"
           }
         }
       }

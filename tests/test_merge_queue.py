@@ -1715,6 +1715,224 @@ class LiveCheckStateTests(MergeQueueTestCase):
         self.assertEqual(finished, {"a", "b", "c", "d"})
 
 
+class BatchTests(MergeQueueTestCase):
+    """Several candidates are checked once as one combined tree, then land in order, each tree-verified."""
+
+    def trio(self, adopter: Adopter, failing: str | None = None) -> list[str]:
+        """Three candidates touching different files; the provider's unit check scans src/app.txt."""
+        files = {
+            "first": {"src/lib.txt": "lib two\n"},
+            "second": {"src/app.txt": "FAIL\n" if failing == "second" else "app two\n"},
+            "third": {"src/extra.txt": "FAIL\n" if failing == "third" else "extra\n"},
+        }
+        if failing == "third":
+            # The unit check scans src/app.txt, so the third candidate fails a check of its own.
+            files["third"]["tests/test_third.txt"] = "FAIL\n"
+        for name, changes in files.items():
+            self.candidate(adopter, changes, name=name)
+        return list(files)
+
+    def batch(self, adopter: Adopter, *subjects: str, **options: object) -> list:
+        return adopter.runner(**options).run_command("batch", list(subjects))
+
+    def landed_trees(self, adopter: Adopter) -> list[str]:
+        """The tree of each first-parent commit the base gained, oldest first."""
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        commits = run("rev-list", "--first-parent", "--reverse", "origin/main", cwd=adopter.lane).split()
+        return [run("rev-parse", f"{commit}^{{tree}}", cwd=adopter.lane) for commit in commits]
+
+    def check_runs(self, adopter: Adopter, name: str) -> int:
+        return sum(1 for line in adopter.log_lines() if line.split()[:2] == ["check", name])
+
+    def outcomes(self, results: list) -> dict[str, str]:
+        return {result.document()["candidate"]: result.document()["outcome"] for result in results}
+
+    def test_a_green_batch_runs_its_checks_once_and_lands_every_member_tree_verified(self) -> None:
+        adopter = self.adopter()
+        subjects = self.trio(adopter)
+        before = len(self.landed_trees(adopter))
+        results = self.batch(adopter, *subjects)
+        self.assertEqual(self.outcomes(results), {name: "merged" for name in subjects})
+        self.assertEqual(self.check_runs(adopter, "always"), 1)
+        self.assertEqual(self.check_runs(adopter, "unit"), 1)
+        for name in subjects:
+            self.assertEqual(adopter.item(name)["stage"], "merged")
+        # Each landing is a merge whose tree is the tree recorded for that step of the build.
+        landed = self.landed_trees(adopter)[before:]
+        self.assertEqual(len(landed), 3)
+        recorded = [result.document()["syncedHead"] for result in results]
+        self.assertEqual(landed, [run("rev-parse", f"{head}^{{tree}}", cwd=adopter.lane) for head in recorded])
+        final = adopter.tip("main")
+        self.assertEqual(adopter.show(final, "src/lib.txt"), "lib two")
+        self.assertEqual(adopter.show(final, "src/app.txt"), "app two")
+        self.assertEqual(adopter.show(final, "src/extra.txt"), "extra")
+        # The regenerated file covers all three members, as the combined tree was checked.
+        self.assertEqual(adopter.show(final, "gen/generated.txt"), "app two\nextra\nlib two")
+        kinds = [(entry["kind"], entry.get("subject")) for entry in state_tool.read_journal(adopter.state)]
+        self.assertEqual([subject for kind, subject in kinds if kind == "candidate.merged"], subjects)
+
+    def test_a_failing_member_is_found_stopped_and_the_others_still_land(self) -> None:
+        for search in ("bisect", "serial"):
+            with self.subTest(search):
+                self.fresh()
+                adopter = self.adopter({"batch": {"culpritSearch": search}})
+                subjects = self.trio(adopter, failing="second")
+                results = self.batch(adopter, *subjects)
+                documents = [result.document() for result in results]
+                final = {document["candidate"]: document for document in documents}
+                self.assertEqual(final["second"]["outcome"], "stopped")
+                self.assertEqual(final["second"]["stop"]["reason"], "check_failed")
+                self.assertEqual(adopter.item("first")["stage"], "merged")
+                self.assertEqual(adopter.item("second")["stage"], "stopped")
+                self.assertEqual(adopter.item("third")["stage"], "merged")
+                main = adopter.tip("main")
+                self.assertEqual(adopter.show(main, "src/app.txt"), "app one")
+                self.assertEqual(adopter.show(main, "src/extra.txt"), "extra")
+                culprit = [entry for entry in state_tool.read_journal(adopter.state)
+                           if entry["kind"] == "candidate.stopped" and entry.get("subject") == "second"]
+                self.assertTrue(culprit and "culprit" in culprit[-1]["summary"], culprit)
+
+    def test_bisection_checks_fewer_prefixes_than_the_serial_search(self) -> None:
+        runs = {}
+        for search in ("bisect", "serial"):
+            self.fresh()
+            adopter = self.adopter({"batch": {"culpritSearch": search}})
+            for name, changes in (
+                ("one", {"src/one.txt": "one\n"}), ("two", {"src/two.txt": "two\n"}),
+                ("three", {"src/three.txt": "three\n"}), ("four", {"src/app.txt": "FAIL\n"}),
+            ):
+                self.candidate(adopter, changes, name=name)
+            self.batch(adopter, "one", "two", "three", "four")
+            self.assertEqual(adopter.item("four")["stage"], "stopped")
+            runs[search] = self.check_runs(adopter, "unit")
+        # The batch, then prefixes: serial checks 1, 2, 3; bisection checks 2, 3.
+        self.assertEqual(runs, {"serial": 4, "bisect": 3})
+
+    def test_a_base_push_between_build_and_landing_stops_the_batch(self) -> None:
+        adopter = self.adopter()
+        subjects = self.trio(adopter)
+
+        def push_base(runner, subject) -> None:
+            if subject == "second":
+                adopter.advance_base({"src/other.txt": "other\n"})
+
+        results = self.batch(adopter, *subjects, seams={"before_batch_landing": push_base})
+        documents = {result.document()["candidate"]: result.document() for result in results}
+        self.assertEqual(documents["first"]["outcome"], "merged")
+        self.assertEqual(documents["second"]["stop"]["reason"], "batch_tree_mismatch")
+        self.assertTrue(documents["second"]["stop"]["queueStopped"])
+        # Nothing that was not checked landed: the base holds the push, not the second candidate.
+        self.assertEqual(adopter.show(adopter.tip("main"), "src/app.txt"), "app one")
+        self.assertEqual(adopter.item("second")["stage"], "queued")
+        self.assertEqual(adopter.item("third")["stage"], "queued")
+
+    def test_a_conflict_in_derived_paths_is_regenerated_and_one_in_source_drops_the_member(self) -> None:
+        adopter = self.adopter()
+        # Both carry their own stale gen/generated.txt, so their trees conflict there only.
+        self.candidate(adopter, {"src/app.txt": "app two\n", "gen/generated.txt": "app two\nlib one\n"}, name="first")
+        self.candidate(adopter, {"src/lib.txt": "lib two\n", "gen/generated.txt": "app one\nlib two\n"}, name="second")
+        # This one conflicts with the first in a source file.
+        self.candidate(adopter, {"src/app.txt": "app three\n"}, name="third")
+        results = self.batch(adopter, "first", "second", "third")
+        documents = {result.document()["candidate"]: result.document() for result in results}
+        self.assertEqual(documents["third"]["stop"]["reason"], "source_conflict")
+        self.assertEqual(adopter.item("third")["stage"], "stopped")
+        self.assertEqual(documents["first"]["outcome"], "merged")
+        self.assertEqual(documents["second"]["outcome"], "merged")
+        self.assertEqual(adopter.show(adopter.tip("main"), "gen/generated.txt"), "app two\nlib two")
+
+    def test_a_derived_conflict_without_a_declared_regenerator_drops_the_member(self) -> None:
+        adopter = self.adopter({"regenerable": {"paths": [], "regenerators": []}})
+        self.candidate(adopter, {"src/app.txt": "app two\n", "gen/generated.txt": "app two\nlib one\n"}, name="first")
+        self.candidate(adopter, {"src/lib.txt": "lib two\n", "gen/generated.txt": "app one\nlib two\n"}, name="second")
+        results = self.batch(adopter, "first", "second")
+        documents = {result.document()["candidate"]: result.document() for result in results}
+        self.assertEqual(documents["second"]["stop"]["reason"], "source_conflict")
+        self.assertEqual(documents["first"]["outcome"], "merged")
+
+    def test_the_views_name_the_batch_and_every_member_mirrors_its_checks(self) -> None:
+        adopter = self.adopter()
+        subjects = self.trio(adopter)
+        real = state_tool.patch
+        seen: list[dict] = []
+
+        def recording(directory, **kwargs):
+            written = real(directory, **kwargs)
+            now = written["meta"]["checking"]["now"]
+            if now is not None and any(step["state"] == "running" for step in now["steps"]):
+                seen.append(copy.deepcopy(written))
+            return written
+
+        with mock.patch.object(queue.delivery_state, "patch", recording):
+            self.batch(adopter, *subjects)
+        live = [state for state in seen if any(step["label"] == "unit" for step in state["meta"]["checking"]["now"]["steps"])]
+        self.assertTrue(live)
+        for state in live:
+            now = state["meta"]["checking"]["now"]
+            self.assertIn("first, second, third", now["title"])
+            steps = [(step["label"], step["state"]) for step in now["steps"]]
+            for item in state["queue"]:
+                if item["subject"] in subjects:
+                    self.assertEqual(item["stage"], "checking")
+                    self.assertEqual([(check["id"], check["state"]) for check in item["checks"]], steps)
+
+    def test_a_batch_needs_two_candidates(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, name="only")
+        results = self.batch(adopter, "only")
+        self.assertEqual(results[-1].document()["stop"]["reason"], "binding_invalid")
+        self.assertEqual(results[-1].document()["outcome"], "refused")
+
+
+class ParallelCheckTests(MergeQueueTestCase):
+    """Checks marked parallelSafe run together, up to the binding's limit; the others run alone."""
+
+    def timed(self, cid: str, parallel: bool) -> dict:
+        argv = [PY, "-c", (
+            "import json, os, sys, time; start = time.time(); time.sleep(1.5); "
+            "open(os.environ['MQ_LOG'] + '.times', 'a').write(json.dumps([sys.argv[1], start, time.time()]) + '\\n')"
+        ), cid]
+        entry = {"id": cid, "argv": argv, "cwd": ".", "reasons": [cid], "prerequisites": []}
+        if parallel:
+            entry["parallelSafe"] = True
+        return entry
+
+    def spans(self, adopter: Adopter) -> dict[str, tuple[float, float]]:
+        lines = Path(str(adopter.log) + ".times").read_text().splitlines()
+        return {name: (start, end) for name, start, end in map(json.loads, lines)}
+
+    @staticmethod
+    def overlap(first: tuple[float, float], second: tuple[float, float]) -> bool:
+        return first[0] < second[1] and second[0] < first[1]
+
+    def test_parallel_safe_checks_overlap_and_the_others_run_alone(self) -> None:
+        checks = [self.timed("p1", True), self.timed("p2", True), self.timed("solo", False)]
+        adopter = self.adopter({"alwaysRun": checks, "parallelChecks": 2})
+        self.candidate(adopter)
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        spans = self.spans(adopter)
+        self.assertTrue(self.overlap(spans["p1"], spans["p2"]), spans)
+        self.assertFalse(self.overlap(spans["solo"], spans["p1"]), spans)
+        self.assertFalse(self.overlap(spans["solo"], spans["p2"]), spans)
+
+    def test_the_limit_defaults_to_one(self) -> None:
+        checks = [self.timed("p1", True), self.timed("p2", True)]
+        adopter = self.adopter({"alwaysRun": checks})
+        self.candidate(adopter)
+        self.run_queue(adopter, "feature")
+        spans = self.spans(adopter)
+        self.assertFalse(self.overlap(spans["p1"], spans["p2"]), spans)
+
+    def test_prerequisites_still_order_parallel_checks(self) -> None:
+        later = {**self.timed("later", True), "prerequisites": ["first"]}
+        adopter = self.adopter({"alwaysRun": [self.timed("first", True), later], "parallelChecks": 2})
+        self.candidate(adopter)
+        self.run_queue(adopter, "feature")
+        spans = self.spans(adopter)
+        self.assertLessEqual(spans["first"][1], spans["later"][0])
+
+
 class InterruptedRunTests(MergeQueueTestCase):
     """A run killed outright leaves live state behind; the next run to take the queue lock clears it first."""
 
