@@ -1836,7 +1836,8 @@ class QueueEstimateTests(unittest.TestCase):
         state = self.state(
             queue_item("work-a", stage="checking"), queue_item("work-b", order=2, stage="checking"),
             queue_item("work-c", order=3), queue_item("work-d", order=4), queue_item("work-e", order=5),
-            now=batch, runs=[500, 600, 600, 700, 9000],
+            # Only the last five runs count: the oldest, 50000s, is left out of the median.
+            now=batch, runs=[50000, 500, 600, 600, 700, 9000],
         )
         estimates = state_tool.queue_estimates(state, at=self.NOW)
         # The median run is 600s; the batch has run 100s, so 500s remain, once for both of its members.

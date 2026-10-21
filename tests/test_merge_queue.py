@@ -2281,7 +2281,8 @@ class CheckVisibilityTests(MergeQueueTestCase):
 
     def test_a_passing_run_adds_to_the_history_and_keeps_the_last_five(self) -> None:
         adopter = self.visible_adopter([check_entry("always")])
-        self.seed_history(adopter, {"checks": {"always": {"seconds": [1, 2, 3, 4, 5], "flakes": 2}}, "runs": [9] * 5})
+        self.seed_history(adopter, {"checks": {"always": {"seconds": [1, 2, 3, 4, 5], "flakes": 2}},
+                                    "runs": [900, 800, 700, 600, 500]})
         self.candidate(adopter)
         self.run_queue(adopter, "feature")
         history = state_tool.read_state(adopter.state)["meta"]["checkHistory"]
@@ -2289,8 +2290,9 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertEqual(len(history["checks"]["always"]["seconds"]), 5)
         self.assertEqual(history["checks"]["always"]["flakes"], 2)
         self.assertIn("unit", history["checks"])
-        self.assertEqual(len(history["runs"]), 5)
-        self.assertEqual(history["runs"][:4], [9] * 4)
+        # The oldest run drops out and this one, a few seconds long, joins.
+        self.assertEqual(history["runs"][:4], [800, 700, 600, 500])
+        self.assertLess(history["runs"][4], 500)
 
     def test_a_failed_check_records_its_failing_tests_and_log_everywhere(self) -> None:
         adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha", "test_beta")])
@@ -2361,6 +2363,14 @@ class CheckVisibilityTests(MergeQueueTestCase):
         results = self.run_queue(adopter, "feature")
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
         self.assertEqual(len(self.journal(adopter, "check.retried")), 1)
+
+    def test_output_the_pattern_cannot_read_never_matches_a_test_pattern_flake(self) -> None:
+        # No failure pattern, so no failing ids: a flake that names tests cannot vouch for this failure.
+        flakes = [{"check": "suite", "tests": [".*"], "ref": "FLAKE-1"}]
+        adopter = self.adopter({"alwaysRun": [check_entry("suite", "--flaky-once", "test_x")], "flakes": flakes})
+        self.candidate(adopter)
+        self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        self.assertEqual(self.journal(adopter, "check.retried"), [])
 
     def test_a_flake_declaration_for_another_check_does_not_retry_this_one(self) -> None:
         flakes = [{"check": "other", "ref": "FLAKE-1"}]
