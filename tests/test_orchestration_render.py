@@ -686,6 +686,11 @@ class HostPublisherTests(DeliveryStateFixture):
         self.assertTrue(retired["retired"]["unreadable"])
         self.assertFalse((self.state_dir / "outbox").exists())
 
+    def test_a_state_configuration_may_declare_a_tracker_snapshot_command(self) -> None:
+        config = json.dumps({**json.loads(self.config([], [])),
+                             "trackerSnapshot": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30}})
+        self.assertEqual(wrapper(self.state_dir, "--state-config", config)[0], 0)
+
     def test_one_host_publisher_and_a_whole_max_age_per_configuration(self) -> None:
         two = [{"id": "live", "kind": "host"}, {"id": "mirror", "kind": "host"}]
         code, result = wrapper(self.state_dir, "--state-config", self.config([], two))

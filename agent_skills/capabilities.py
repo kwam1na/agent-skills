@@ -19,6 +19,7 @@ class TrackerOperation(str, Enum):
     UPDATE_STATUS = "update-status"
     ATTACH_EVIDENCE = "attach-evidence"
     CLOSE_OR_HANDOFF = "close-or-handoff"
+    LIST_WORK = "list-work"
 
 
 class OutcomeKind(str, Enum):
@@ -40,6 +41,10 @@ MUTATING_OPERATIONS = frozenset(
         TrackerOperation.CLOSE_OR_HANDOFF,
     }
 )
+
+
+# The normalized state types a listed work item carries.
+WORK_STATE_TYPES = ("backlog", "started", "completed", "canceled")
 
 
 @dataclass(frozen=True)
@@ -150,6 +155,10 @@ def _normalize_outcome(request: TrackerRequest, value: object) -> AdapterOutcome
                 request.operation,
                 "Return success data as a mapping.",
             )
+        if request.operation is TrackerOperation.LIST_WORK:
+            problem = _work_list_problem(value.data, request.payload.get("parentReference"))
+            if problem:
+                return _malformed(request.operation, problem)
         return value
     if not isinstance(value.action, str) or not value.action.strip():
         return _malformed(
@@ -175,6 +184,47 @@ def _normalize_outcome(request: TrackerRequest, value: object) -> AdapterOutcome
     return value
 
 
+def _work_list_problem(data: Mapping[str, object], requested: object = None) -> str | None:
+    """Why a list-work result is not the normalized shape, or None."""
+    if set(data) - {"parentReference", "workItems", "auditReference"}:
+        return "Return only the parent reference, the work items and an audit reference."
+    if not isinstance(data.get("parentReference"), str) or not data["parentReference"]:
+        return "Return the parent reference the work was listed under."
+    if requested is not None and data["parentReference"] != requested:
+        return "Return the work of the parent that was asked for."
+    items = data.get("workItems")
+    if not isinstance(items, list):
+        return "Return the listed work as a list of work items."
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, Mapping) or set(item) - {"workReference", "title", "stateType", "blockedBy"}:
+            return "Return each work item with only its reference, title, state type and blockers."
+        reference = item.get("workReference")
+        if not isinstance(reference, str) or not reference or reference in seen:
+            return "Return each work item once, with a reference."
+        seen.add(reference)
+        if not isinstance(item.get("title"), str):
+            return "Return each work item's title."
+        if item.get("stateType") not in WORK_STATE_TYPES:
+            return "Return each work item's state type as backlog, started, completed or canceled."
+        blockers = item.get("blockedBy", [])
+        if not isinstance(blockers, list) or not all(isinstance(entry, str) and entry for entry in blockers):
+            return "Return each work item's blockers as a list of references."
+    return None
+
+
+def work_snapshot(data: Mapping[str, object], taken_at: str) -> dict[str, object]:
+    """A list-work success written as a work-snapshot/1 document from the tracker."""
+    items = []
+    for item in data["workItems"]:  # type: ignore[union-attr]
+        entry: dict[str, object] = {"subject": item["workReference"], "title": item["title"],
+                                    "state": item["stateType"]}
+        if item.get("blockedBy"):
+            entry["blockedBy"] = list(item["blockedBy"])
+        items.append(entry)
+    return {"takenAt": taken_at, "source": "tracker", "items": items}
+
+
 def execute_tracker_operation(
     state: CapabilityState,
     request: TrackerRequest,
@@ -193,5 +243,12 @@ def execute_tracker_operation(
         return _malformed(
             request.operation,
             "Provide a stable idempotency key before the mutation.",
+        )
+    if request.operation is TrackerOperation.LIST_WORK and not (
+        isinstance(request.payload.get("parentReference"), str) and request.payload["parentReference"].strip()
+    ):
+        return _malformed(
+            request.operation,
+            "Name the parent reference whose work to list.",
         )
     return _normalize_outcome(request, adapter.execute(request))
