@@ -7,8 +7,6 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from tests.dependency_cases import CASES, CYCLES, ONCE
-
 from agent_skills.capabilities import (
     AdapterOutcome,
     CapabilityState,
@@ -316,6 +314,9 @@ class ListWorkTests(unittest.TestCase):
                 self.assertTrue(outcome.action)
 
     def test_every_dependency_shape_is_checked_and_a_refusal_names_the_items(self) -> None:
+        # Imported here: the archive qualification runs this module with only its own listed files.
+        from tests.dependency_cases import CASES, CYCLES, ONCE
+
         for name, (parent, items, named) in CASES.items():
             with self.subTest(name):
                 work = [{"workReference": reference, "title": reference, "stateType": "backlog", "blockedBy": blockers}
