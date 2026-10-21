@@ -65,6 +65,12 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " pin in the corpus to a heading",
         "qualification records re-earned against the candidate's release, not"
         " restamped",
+        "Refresh output digests with the provenance writer rather than by hand",
+        "When a rebase or merge conflicts only in `provenance.lock.json`, take"
+        " either side of the lock, run the writer, then validate the registry"
+        " before continuing",
+        "The writer never adds or removes an output, so when one side added or"
+        " removed a listed output, take that side",
     ),
     "README.md": (
         "`auditReferences` uses the same order as `entities`: primary first,"
