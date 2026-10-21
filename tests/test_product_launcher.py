@@ -12,17 +12,88 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import Mock, patch
+import uuid
+from unittest.mock import Mock, call, patch
 
 from agent_skills.cli import main
 from agent_skills.product import (
     CancellationIncompleteError,
+    _DescendantTracker,
+    _LAUNCH_MARKER,
+    _Process,
+    _darwin_environment,
+    _darwin_process_table,
     _observed_child_liveness,
+    _proc_environment,
+    _proc_process_table,
+    _process_table,
+    _ps_process_table,
     _run_command,
+    _started_before,
+    _stop_escaped_descendants,
+    _stop_posix_group,
     _wait_for_posix_group,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+# Every fixture process inherits this variable, even one that leaves its
+# process group or session, so teardown can find whatever a test left behind.
+FIXTURE_MARKER = "AGENT_SKILLS_LAUNCHER_FIXTURE"
+
+
+def _fixture_processes(token: str) -> list[int]:
+    """Running processes that carry this test's fixture marker.
+
+    macOS discloses no environment for Apple system binaries (/bin/sh and the
+    like), so fixtures must run Python, as they all do, to be seen here.
+    """
+    marker = f"{FIXTURE_MARKER}={token}"
+    found = []
+    proc = Path("/proc")
+    if (proc / "self" / "environ").is_file():
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                environ = (entry / "environ").read_bytes().split(b"\0")
+                state = (entry / "stat").read_text().rsplit(")", 1)[1].split()[0]
+            except (OSError, IndexError):
+                continue
+            if marker.encode() in environ and state != "Z":
+                found.append(int(entry.name))
+    else:
+        # BSD ps prints each process's environment after its arguments.
+        listing = subprocess.run(["ps", "-A", "-E", "-ww", "-o", "pid=,stat=,command="],
+                                 capture_output=True, text=True, check=True).stdout
+        for line in listing.splitlines():
+            fields = line.split()
+            if len(fields) > 2 and marker in fields[2:] and not fields[1].startswith("Z"):
+                found.append(int(fields[0]))
+    return sorted(pid for pid in found if pid != os.getpid())
+
+
+def _reap_fixtures(token: str, settle: float = 2) -> list[int]:
+    """Kill this test's surviving fixture processes; return those that survived.
+
+    Processes still exiting when the test ends get ``settle`` seconds to go on
+    their own, so only real survivors are reported.
+    """
+    deadline = time.monotonic() + settle
+    survivors = _fixture_processes(token)
+    while survivors and time.monotonic() < deadline:
+        time.sleep(0.05)
+        survivors = _fixture_processes(token)
+    for pid in survivors:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + 5
+    while _fixture_processes(token) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return survivors
+
+
 def _await_pid(path: Path, seconds: float = 5) -> int | None:
     """The pid a worker wrote, once the whole number is there.
 
@@ -44,6 +115,20 @@ POSIX_SIGNALS = (signal.SIGINT, signal.SIGTERM) + tuple(
 
 
 class ProductLauncherTests(unittest.TestCase):
+    def fixture_env(self) -> dict[str, str]:
+        """An environment that marks this test's processes; teardown reaps them.
+
+        A fixture process still running after the test is a leak, and fails it.
+        """
+        token = uuid.uuid4().hex
+        self.addCleanup(self._assert_no_fixture_survives, token)
+        return dict(os.environ, **{FIXTURE_MARKER: token})
+
+    def _assert_no_fixture_survives(self, token: str) -> None:
+        survivors = _reap_fixtures(token)
+        if survivors:
+            self.fail(f"fixture processes outlived the test and were killed: {survivors}")
+
     def test_harness_help_reaches_runtime(self) -> None:
         for arguments in (["--help"], ["-h"], ["gate", "--help"]):
             with self.subTest(arguments=arguments), patch("agent_skills.cli.run_runtime", return_value=17) as runtime:
@@ -318,6 +403,12 @@ class ProductLauncherTests(unittest.TestCase):
         with patch("agent_skills.product.os.killpg", side_effect=PermissionError):
             # A group that stays unsignallable is not drained, and is never an error.
             self.assertFalse(_wait_for_posix_group(child, 0.12))
+        # While it drains, the tree is observed on every tick.
+        observe = Mock()
+        with patch("agent_skills.product.os.killpg",
+                   side_effect=[PermissionError, PermissionError, ProcessLookupError]):
+            self.assertTrue(_wait_for_posix_group(child, 5, observe))
+        self.assertEqual(observe.call_count, 3)
 
     def _cancel_with_group(self, kill_group, drains):
         handlers = {}
@@ -450,7 +541,7 @@ raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))
             launcher = subprocess.Popen(
                 [sys.executable, "-B", "-c", program, str(root)], cwd=ROOT,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                start_new_session=True,
+                start_new_session=True, env=self.fixture_env(),
             )
             worker_pid = None
             try:
@@ -552,7 +643,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                     launcher = subprocess.Popen([sys.executable, "-c",
                         "from pathlib import Path; from agent_skills.product import _run_command; import sys; "
                         "raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))", str(root)],
-                        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                        env=self.fixture_env())
                     worker_pid = None
                     try:
                         worker_pid = _await_pid(root / "worker.pid")
@@ -582,6 +674,485 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                                 os.kill(worker_pid, signal.SIGKILL)
                             except ProcessLookupError:
                                 pass
+
+    @unittest.skipUnless(os.name == "posix", "POSIX sessions and process groups")
+    def test_a_descendant_that_leaves_the_group_is_stopped_with_it(self) -> None:
+        escapes = {
+            "setsid": "os.setsid()",
+            "setpgid": "os.setpgid(0, 0)",
+            # A classic daemon: the intermediate exits at once, so no ancestry
+            # is left to see; only the inherited launch marker finds it.
+            "double-fork": "if os.fork(): os._exit(0)\nos.setsid()\nif os.fork(): os._exit(0)",
+        }
+        resist = "".join(f"signal.signal(signal.{sig.name}, signal.SIG_IGN)\n" for sig in POSIX_SIGNALS)
+        for (mode, escape), during in [(item, during) for item in escapes.items() for during in (False, True)]:
+            with self.subTest(mode=mode, during=during), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                escaped = escape + "\n" + resist + "Path('escaped.pid').write_text(str(os.getpid()))\n"
+                if during:
+                    # It leaves the group only when the cancellation reaches it.
+                    indented = "".join(f"    {line}\n" for line in escaped.splitlines())
+                    body = (
+                        "def received(signum, _frame):\n"
+                        + "".join(f"    signal.signal(signal.{sig.name}, signal.SIG_IGN)\n" for sig in POSIX_SIGNALS)
+                        + "    try:\n" + "".join(f"    {line}" for line in indented.splitlines(True))
+                        + "    except OSError: pass\n"
+                        + "    while True: time.sleep(1)\n"
+                        + "".join(f"signal.signal(signal.{sig.name}, received)\n" for sig in POSIX_SIGNALS)
+                    )
+                else:
+                    body = escaped
+                (root / "escapee.py").write_text(
+                    "import os, signal, time\nfrom pathlib import Path\n" + body
+                    + "Path('ready').write_text('1')\nwhile True: time.sleep(1)\n"
+                )
+                # The parent outlives an escapee that exits as it daemonizes, so
+                # the launched command is still running when it is cancelled.
+                (root / "parent.py").write_text(
+                    "import subprocess, sys, time\nsubprocess.run([sys.executable, 'escapee.py'])\n"
+                    "while True: time.sleep(1)\n"
+                )
+                env = self.fixture_env()
+                launcher = subprocess.Popen([sys.executable, "-c",
+                    "from pathlib import Path; from agent_skills.product import _run_command; import sys; "
+                    "raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))", str(root)],
+                    cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                    env=env)
+                try:
+                    deadline = time.monotonic() + 5
+                    while not (root / "ready").exists() and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertTrue((root / "ready").exists(), "the escapee never started")
+                    if not during:
+                        self.assertIsNotNone(_await_pid(root / "escaped.pid"), "nothing escaped")
+                    # Let the launcher observe the tree at least once.
+                    time.sleep(0.5)
+                    launcher.send_signal(signal.SIGTERM)
+                    self.assertEqual(launcher.wait(timeout=20), 128 + signal.SIGTERM)
+                    self.assertEqual(_fixture_processes(env[FIXTURE_MARKER]), [],
+                                     f"a {mode} escapee outlived a clean cancellation")
+                finally:
+                    if launcher.poll() is None:
+                        launcher.kill()
+                        launcher.wait()
+
+    def test_an_escaped_descendant_that_cannot_be_stopped_is_reported_by_pid(self) -> None:
+        child = Mock(pid=12345)
+        child.poll.return_value = 0
+        tracker = Mock()
+        tracker.escaped.return_value = (777,)
+        clock = iter(range(1000))
+        for signalled, first in (((), signal.SIGTERM), ((777,), None)):
+            with self.subTest(signalled=signalled), \
+                 patch("agent_skills.product.os.kill") as kill, \
+                 patch("agent_skills.product.time.sleep"), \
+                 patch("agent_skills.product.time.monotonic", side_effect=lambda: next(clock) * 0.5):
+                with self.assertRaises(CancellationIncompleteError) as raised:
+                    _stop_escaped_descendants(child, tracker, signal.SIGTERM, signalled)
+            sent = [call.args for call in kill.call_args_list]
+            # The cancellation signal once, unless it was already forwarded, then SIGKILL.
+            self.assertEqual(sent, ([(777, first)] if first else []) + [(777, signal.SIGKILL)])
+            self.assertEqual(raised.exception.cleanup, "escaped-descendants-survived")
+            self.assertEqual(raised.exception.surviving_pids, (777,))
+            self.assertEqual(raised.exception.liveness, "confirmed")
+            self.assertIn("survivingPids=777", str(raised.exception))
+        tracker.escaped.return_value = ()
+        with patch("agent_skills.product.os.kill") as kill:
+            _stop_escaped_descendants(child, tracker, signal.SIGTERM)
+        kill.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_a_group_holding_a_member_nothing_may_signal_is_partially_stopped(self) -> None:
+        # Another user's member: SIGKILL reaches the launcher's own members, so
+        # it succeeds, but the group probe keeps answering EPERM.
+        handlers = {}
+        child = Mock(pid=12345)
+        child.poll.return_value = -9
+
+        def register(sig, handler):
+            handlers[sig] = handler
+            return signal.SIG_DFL
+
+        def wait(*, timeout):
+            if timeout == 0.1:
+                handlers[signal.SIGTERM](signal.SIGTERM, None)
+                raise subprocess.TimeoutExpired("worker", timeout)
+            return -9
+
+        def kill_group(pid, forwarded):
+            if forwarded == 0:
+                raise PermissionError("a member owned by another user")
+
+        child.wait.side_effect = wait
+        clock = iter(range(1000))
+        with patch("agent_skills.product.signal.signal", side_effect=register), \
+             patch("agent_skills.product.subprocess.Popen", return_value=child), \
+             patch("agent_skills.product.os.killpg", side_effect=kill_group) as killpg, \
+             patch("agent_skills.product.time.sleep"), \
+             patch("agent_skills.product.time.monotonic", side_effect=lambda: next(clock) * 0.5), \
+             patch("agent_skills.product._DescendantTracker.group_members", return_value=(12346,)):
+            with self.assertRaises(CancellationIncompleteError) as raised:
+                _run_command(["worker"], ROOT)
+        self.assertIn(call(12345, signal.SIGKILL), killpg.call_args_list)
+        self.assertEqual(raised.exception.cleanup, "group-partially-stopped")
+        # The members it still sees are named; the one it cannot see is not invented.
+        self.assertEqual(raised.exception.surviving_pids, (12346,))
+        self.assertEqual(handlers, {sig: signal.SIG_DFL for sig in POSIX_SIGNALS})
+
+    def test_the_tracker_remembers_descendants_by_pid_and_start_after_they_leave(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        tables = []
+        tracker = _DescendantTracker(child, table=lambda: tables[-1])
+        # A process that is not this launcher's child is never tracked.
+        tables.append({100: _Process(1, 100, 501, "t0", False), 101: _Process(100, 300, 501, "t1", False)})
+        tracker.observe()
+        self.assertEqual(tracker.escaped(), ())
+        tables.append({
+            100: _Process(me, 100, 501, "t0", False),
+            101: _Process(100, 100, 501, "t1", False),   # the parent's worker, in the group
+            102: _Process(101, 100, 501, "t2", False),   # a grandchild, still in the group
+            900: _Process(1, 900, 501, "t9", False),     # unrelated
+        })
+        tracker.observe()
+        self.assertEqual(tracker.escaped(), ())
+        self.assertEqual(tracker.group_members(), (100, 101, 102))
+        # The worker exits; its child calls setsid() and is reparented to init.
+        tables.append({
+            100: _Process(me, 100, 501, "t0", False),
+            102: _Process(1, 102, 501, "t2", False),
+            103: _Process(102, 102, 501, "t3", False),   # born after it escaped
+            900: _Process(1, 900, 501, "t9", False),
+        })
+        self.assertEqual(tracker.escaped(), (102, 103))
+        # A reused pid is someone else, and a zombie is not running.
+        tables.append({
+            100: _Process(me, 100, 501, "t0", False),
+            102: _Process(1, 102, 501, "other", False),
+            103: _Process(1, 103, 501, "t3", True),
+        })
+        self.assertEqual(tracker.escaped(), ())
+        # Behind an unreadable table, descendants it knew may still be running.
+        tables.append(None)
+        self.assertIsNone(tracker.escaped())
+
+    def test_the_tracker_observes_every_third_wait_tick(self) -> None:
+        reads = []
+        child = Mock(pid=100)
+        tracker = _DescendantTracker(child, table=lambda: reads.append(1) or {})
+        for _ in range(7):
+            tracker.observe(throttle=True)
+        self.assertEqual(len(reads), 3)
+
+    def test_process_tables_read_parent_group_owner_start_and_zombies(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            proc = Path(directory)
+            for pid, stat in (
+                ("41", "41 (worker) S 7 41 41 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 5551 0 0"),
+                ("42", "42 (odd) name)) Z 41 41 41 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 5552 0 0"),
+            ):
+                (proc / pid).mkdir()
+                (proc / pid / "stat").write_text(stat)
+            (proc / "self").mkdir()  # Not a pid: skipped.
+            table = _proc_process_table(proc)
+        owner = os.getuid() if hasattr(os, "getuid") else 0
+        self.assertEqual(table, {
+            41: _Process(7, 41, owner, 5551, False),
+            42: _Process(41, 41, owner, 5552, True),
+        })
+        listing = " 41  7 41 501 S    Wed Oct 21 01:20:50 2026\n 42 41 41 501 Z+   Wed Oct 21 01:20:51 2026\n"
+        with patch("agent_skills.product.subprocess.run", return_value=Mock(stdout=listing)):
+            self.assertEqual(_ps_process_table(), {
+                41: _Process(7, 41, 501, "Wed Oct 21 01:20:50 2026", False),
+                42: _Process(41, 41, 501, "Wed Oct 21 01:20:51 2026", True),
+            })
+        with patch("agent_skills.product._darwin_process_table", side_effect=OSError("libproc unavailable")), \
+             patch("agent_skills.product._proc_process_table", side_effect=OSError("no proc")), \
+             patch("agent_skills.product._ps_process_table", side_effect=OSError("no ps")):
+            self.assertIsNone(_process_table())
+
+    @unittest.skipUnless(sys.platform == "darwin", "libproc")
+    def test_the_macos_process_table_matches_this_process(self) -> None:
+        table = _darwin_process_table()
+        mine = table[os.getpid()]
+        self.assertEqual((mine.ppid, mine.pgid, mine.uid, mine.zombie),
+                         (os.getppid(), os.getpgid(0), os.getuid(), False))
+        self.assertEqual(_darwin_process_table()[os.getpid()].started, mine.started)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process groups")
+    def test_teardown_finds_and_reaps_a_fixture_tree_a_killed_launcher_left(self) -> None:
+        # The leak behind orphaned fixture trees: a launcher killed
+        # outright cannot stop its child's group, which then outlives the test.
+        token = uuid.uuid4().hex
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "worker.py").write_text(
+                "import os, time\nfrom pathlib import Path\n"
+                "Path('worker.pid').write_text(str(os.getpid()))\nwhile True: time.sleep(1)\n"
+            )
+            (root / "parent.py").write_text("import subprocess, sys\nsubprocess.run([sys.executable, 'worker.py'])\n")
+            launcher = subprocess.Popen([sys.executable, "-c",
+                "from pathlib import Path; from agent_skills.product import _run_command; import sys; "
+                "raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))", str(root)],
+                cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                env=dict(os.environ, **{FIXTURE_MARKER: token}))
+            left = []
+            try:
+                worker = _await_pid(root / "worker.pid")
+                self.assertIsNotNone(worker, "worker never wrote its pid")
+                launcher.kill()
+                launcher.wait()
+                left = _fixture_processes(token)
+                self.assertIn(worker, left)
+                self.assertEqual(len(left), 2, left)  # parent.py and worker.py
+            finally:
+                if launcher.poll() is None:
+                    launcher.kill()
+                    launcher.wait()
+                reaped = _reap_fixtures(token, settle=0)
+            self.assertEqual(reaped, left)
+            self.assertEqual(_fixture_processes(token), [])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_known_escapees_are_killed_with_the_group_so_a_member_they_hold_can_drain(self) -> None:
+        child = Mock(pid=12345)
+        child.wait.return_value = -9
+        tracker = Mock()
+        tracker.escaped.return_value = (777,)
+        events = []
+        with patch("agent_skills.product._wait_for_posix_group",
+                   side_effect=lambda *args: events.append("drain?") or len(events) > 1), \
+             patch("agent_skills.product.os.killpg", side_effect=lambda pid, sig: events.append(("killpg", sig))), \
+             patch("agent_skills.product.os.kill", side_effect=lambda pid, sig: events.append(("kill", pid, sig))):
+            _stop_posix_group(child, signal.SIGTERM, tracker)
+        self.assertEqual(events, ["drain?", ("kill", 777, signal.SIGKILL), ("killpg", signal.SIGKILL), "drain?"])
+
+    def test_known_escapees_behind_an_unreadable_table_are_never_reported_stopped(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        child.poll.return_value = 0
+        tables = [{100: _Process(me, 100, 501, "t0", False), 102: _Process(100, 102, 501, "t2", False)}]
+        tracker = _DescendantTracker(child, table=lambda: tables[-1])
+        self.assertEqual(tracker.escaped(), (102,))
+        tables.append(None)
+        self.assertIsNone(tracker.escaped())
+        clock = iter(range(1000))
+        with patch("agent_skills.product.os.kill"), patch("agent_skills.product.time.sleep"), \
+             patch("agent_skills.product.time.monotonic", side_effect=lambda: next(clock) * 0.5):
+            with self.assertRaises(CancellationIncompleteError) as raised:
+                _stop_escaped_descendants(child, tracker, signal.SIGTERM)
+        self.assertEqual(raised.exception.cleanup, "escaped-descendants-unobservable")
+        self.assertEqual(raised.exception.surviving_pids, ())
+        # A table never read knows of no escapee, and changes nothing.
+        unread = _DescendantTracker(child, table=lambda: None)
+        self.assertEqual(unread.escaped(), ())
+        # Known only from the periodic observation, never from escaped(), an
+        # escapee behind a table that cannot be read at cancellation is still
+        # not reported as none.
+        tables = [{100: _Process(me, 100, 501, "t0", False), 102: _Process(100, 102, 501, "t2", False)}]
+        observed = _DescendantTracker(child, table=lambda: tables[-1])
+        observed.observe(throttle=True)
+        tables.append(None)
+        self.assertIsNone(observed.escaped())
+        # A child with no descendant yet has nothing to hide.
+        tables = [{100: _Process(me, 100, 501, "t0", False)}, None]
+        alone = _DescendantTracker(child, table=lambda: tables.pop(0))
+        alone.observe()
+        self.assertEqual(alone.escaped(), ())
+
+    def test_start_stamps_order_with_slack_for_a_wall_clock_step(self) -> None:
+        # macOS: wall-clock (seconds, microseconds), with an hour of slack.
+        self.assertFalse(_started_before((1000, 0), (1000, 5)))
+        self.assertFalse(_started_before((1000 - 3599, 0), (1000, 0)))
+        self.assertTrue(_started_before((1000 - 3601, 0), (1000, 0)))
+        # Linux: ticks since boot, exact.
+        self.assertTrue(_started_before(4, 5))
+        self.assertFalse(_started_before(5, 5))
+        # Stamps that do not order are never before.
+        self.assertFalse(_started_before("Wed Oct 21 01:20:50 2026", "Wed Oct 21 01:20:51 2026"))
+
+    def test_a_table_unreadable_for_a_moment_is_read_again_before_anything_is_reported(self) -> None:
+        child = Mock(pid=12345)
+        child.poll.return_value = 0
+        for reads, sent in (([None, ()], []),
+                            ([None, (777,), ()], [(777, signal.SIGTERM)])):
+            tracker = Mock()
+            tracker.escaped.side_effect = reads
+            clock = iter(range(1000))
+            with self.subTest(reads=reads), \
+                 patch("agent_skills.product.os.kill") as kill, \
+                 patch("agent_skills.product.time.sleep"), \
+                 patch("agent_skills.product.time.monotonic", side_effect=lambda: next(clock) * 0.5):
+                _stop_escaped_descendants(child, tracker, signal.SIGTERM)
+            # An escapee first seen once the table reads again still gets the signal.
+            self.assertEqual([call.args for call in kill.call_args_list], sent)
+
+    def test_a_reused_child_pid_never_adopts_someone_elses_processes(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        tables = [{100: _Process(me, 100, 501, "t0", False)}]
+        tracker = _DescendantTracker(child, table=lambda: tables[-1])
+        tracker.observe()
+        # The child is reaped and pid 100 now leads an unrelated group.
+        tables.append({100: _Process(1, 100, 501, "other", False), 555: _Process(100, 100, 501, "t5", False)})
+        self.assertEqual(tracker.escaped(), ())
+        self.assertEqual(tracker.group_members(), ())
+
+    def test_a_group_member_seen_only_by_its_group_is_tracked(self) -> None:
+        # Re-parented to init before the first observation, still in the group.
+        me = os.getpid()
+        child = Mock(pid=100)
+        tables = [{100: _Process(me, 100, 501, "t0", False), 104: _Process(1, 100, 501, "t4", False)}]
+        tracker = _DescendantTracker(child, table=lambda: tables[-1])
+        tracker.observe()
+        tables.append({100: _Process(me, 100, 501, "t0", False), 104: _Process(1, 104, 501, "t4", False)})
+        self.assertEqual(tracker.escaped(), (104,))
+
+    def test_the_marker_sweep_adopts_marked_processes_started_since_the_child(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        marker = b"AGENT_SKILLS_LAUNCH=abc"
+        environments = {200: [b"HOME=/", marker], 201: [marker], 202: [b"HOME=/"], me: [marker]}
+        read = []
+
+        def environment(pid):
+            read.append(pid)
+            return environments.get(pid)
+
+        table = {
+            100: _Process(me, 100, 501, 10, False),
+            200: _Process(1, 200, 501, 12, False),   # a double-fork daemon, marked
+            201: _Process(1, 201, 501, 5, False),    # started before the child: never read
+            202: _Process(1, 202, 501, 13, False),   # unmarked
+            203: _Process(1, 203, 501, 14, True),    # a zombie
+            me: _Process(1, me, 501, 11, False),     # the launcher itself
+        }
+        tracker = _DescendantTracker(child, table=lambda: table, marker=marker, environment=environment)
+        self.assertEqual(tracker.escaped(), (200,))
+        self.assertEqual(sorted(read), [200, 202])
+        # A process that did not match is read once, not on every sweep.
+        read.clear()
+        self.assertEqual(tracker.escaped(), (200,))
+        self.assertEqual(read, [])
+        # A child reaped before the tracker ever confirmed it: the launch key is
+        # unique, so the sweep still adopts what carries it, reading everything.
+        read.clear()
+        early = dict(table)
+        del early[100]
+        unconfirmed = _DescendantTracker(child, table=lambda: early, marker=marker, environment=environment)
+        self.assertEqual(unconfirmed.escaped(), (200, 201))
+        self.assertEqual(sorted(read), [200, 201, 202])
+        # Without a marker nothing is read.
+        read.clear()
+        self.assertEqual(_DescendantTracker(child, table=lambda: table, environment=environment).escaped(), ())
+        self.assertEqual(read, [])
+
+    def test_process_environments_are_read_where_the_platform_exposes_them(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            proc = Path(directory)
+            (proc / "41").mkdir()
+            (proc / "41" / "environ").write_bytes(b"A=1\0AGENT_SKILLS_LAUNCH=x\0")
+            self.assertEqual(_proc_environment(41, proc), [b"A=1", b"AGENT_SKILLS_LAUNCH=x", b""])
+            self.assertIsNone(_proc_environment(42, proc))
+        if sys.platform == "darwin":
+            probe = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"],
+                                     env=dict(os.environ, LAUNCHER_PROBE="seen"))
+            try:
+                deadline = time.monotonic() + 5
+                found = None
+                while time.monotonic() < deadline:
+                    found = _darwin_environment(probe.pid)
+                    if found and b"LAUNCHER_PROBE=seen" in found:
+                        break
+                    time.sleep(0.05)
+                self.assertIn(b"LAUNCHER_PROBE=seen", found)
+            finally:
+                probe.kill()
+                probe.wait()
+            self.assertIsNone(_darwin_environment(1))  # another user's process
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_the_tree_is_observed_at_spawn_and_while_the_command_runs(self) -> None:
+        child = Mock(pid=12345)
+        ticks = iter([subprocess.TimeoutExpired("worker", 0.1)] * 4 + [0])
+
+        def wait(*, timeout):
+            outcome = next(ticks)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        child.wait.side_effect = wait
+        tracker = Mock()
+        with patch("agent_skills.product.subprocess.Popen", return_value=child), \
+             patch("agent_skills.product._DescendantTracker", return_value=tracker):
+            self.assertEqual(_run_command(["worker"], ROOT), 0)
+        # Once right after spawn, then once per wait tick (throttled inside).
+        self.assertEqual(tracker.observe.call_args_list, [call()] + [call(throttle=True)] * 4)
+
+    def test_the_launched_command_carries_a_fresh_launch_marker(self) -> None:
+        child = Mock(pid=12345)
+        child.wait.return_value = 0
+        with patch("agent_skills.product.subprocess.Popen", return_value=child) as popen:
+            self.assertEqual(_run_command(["worker"], ROOT), 0)
+            _run_command(["worker"], ROOT)
+        if os.name == "posix":
+            keys = [{key for key in call.kwargs["env"] if key.startswith(_LAUNCH_MARKER + "_")}
+                    for call in popen.call_args_list]
+            # Each launch adds a key of its own, beside any the caller carries.
+            self.assertEqual([len(found) for found in keys], [1, 1])
+            self.assertNotEqual(keys[0], keys[1])
+            self.assertTrue(all(len(key) == len(_LAUNCH_MARKER) + 33 for found in keys for key in found))
+            outer = f"{_LAUNCH_MARKER}_{'0' * 32}"
+            with patch.dict(os.environ, {outer: "1"}), \
+                 patch("agent_skills.product.subprocess.Popen", return_value=child) as nested:
+                _run_command(["worker"], ROOT)
+            self.assertEqual(nested.call_args.kwargs["env"][outer], "1")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_escapees_get_the_signal_before_the_group_stops_and_sigkill_when_it_fails(self) -> None:
+        handlers = {}
+        child = Mock(pid=12345)
+        events = []
+
+        def register(sig, handler):
+            handlers[sig] = handler
+            return signal.SIG_DFL
+
+        def wait(*, timeout):
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+            raise subprocess.TimeoutExpired("worker", timeout)
+
+        child.wait.side_effect = wait
+        tracker = Mock()
+        tracker.escaped.return_value = (777,)
+        failure = CancellationIncompleteError(
+            signal_number=signal.SIGTERM, platform="posix", cleanup="sigkill-failed",
+            target_pid=12345, target_state="running", liveness="confirmed", surviving_pids=(12345,))
+        def stop_group(*_args):
+            events.append("group")
+            if group_stop is not None:
+                raise group_stop
+
+        for group_stop, expected in ((None, [("kill", 777, signal.SIGTERM), "group", "escapees"]),
+                                     (failure, [("kill", 777, signal.SIGTERM), "group", ("kill", 777, signal.SIGKILL)])):
+            events.clear()
+            with self.subTest(group_fails=group_stop is not None), \
+                 patch("agent_skills.product.signal.signal", side_effect=register), \
+                 patch("agent_skills.product.subprocess.Popen", return_value=child), \
+                 patch("agent_skills.product._DescendantTracker", return_value=tracker), \
+                 patch("agent_skills.product.os.killpg"), \
+                 patch("agent_skills.product.os.kill", side_effect=lambda pid, sig: events.append(("kill", pid, sig))), \
+                 patch("agent_skills.product._stop_posix_group", side_effect=stop_group), \
+                 patch("agent_skills.product._stop_escaped_descendants",
+                       side_effect=lambda *args: events.append("escapees")):
+                if group_stop is None:
+                    self.assertEqual(_run_command(["worker"], ROOT), 128 + signal.SIGTERM)
+                else:
+                    with self.assertRaises(CancellationIncompleteError) as raised:
+                        _run_command(["worker"], ROOT)
+                    self.assertIs(raised.exception, failure)
+            self.assertEqual(events, expected)
 
 
 if __name__ == "__main__":
