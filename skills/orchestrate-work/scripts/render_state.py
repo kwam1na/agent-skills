@@ -835,7 +835,7 @@ def parse_config(config: object) -> tuple[list[dict], list[dict]]:
     """The renderers and publishers a ``state`` configuration declares."""
     if not isinstance(config, dict):
         raise ConfigError("the state configuration must be an object")
-    allowed = {"directory", "renderers", "publishers", "snapshotMaxAgeSeconds", "trackerSnapshot"}
+    allowed = {"directory", "renderers", "publishers", "snapshotMaxAgeSeconds", "trackerSnapshot", "workHints"}
     unknown = sorted(set(config) - allowed)
     if unknown:
         raise ConfigError(f"unknown state configuration fields: {', '.join(unknown)}")

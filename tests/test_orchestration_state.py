@@ -3073,6 +3073,7 @@ class NextTests(unittest.TestCase):
         state_tool.init(self.directory, "Epic underway")
         version = state_tool.show(self.directory)["state"]["version"]
         state_tool.patch(self.directory, writer="lead", version=version, changes={
+            "meta": {"trackerParent": "epic-7"},
             "lanes": [lane("lane-1", state="idle"), lane("lane-2"), lane("lane-3", state="done")],
             # lane-2 is working on src/shared.py; lane-1 once landed src/mine.py; lane-3 is done.
             "planned": [{"subject": "busy", "title": "Busy", "lane": "lane-2", "stage": "planned"},
@@ -3213,9 +3214,141 @@ class NextTests(unittest.TestCase):
                                          "--hints", self.write("bad.json", bad))
                 self.assertEqual((code, refused["code"]), (1, "hints_invalid"), refused)
 
+    def hints_binding(self, document: object, *, exit_code: int = 0) -> str:
+        tool = self.root / "hints tool.py"
+        tool.write_text(textwrap.dedent(f"""
+            import json, sys
+            print(json.dumps({document!r}))
+            sys.exit({exit_code})
+        """), encoding="utf-8")
+        return self.write("binding.json", {"state": {"directory": "state", "renderers": [], "publishers": [],
+                                                     "workHints": {"argv": [sys.executable, "-B", str(tool), "{parent}"],
+                                                                   "timeoutSeconds": 20}}})
+
+    def test_the_binding_s_command_produces_the_hints(self) -> None:
+        snapshot = self.snapshot([{"subject": "fix-a", "state": "backlog"}, {"subject": "fix-b", "state": "backlog"}])
+        binding = self.hints_binding({"items": {"fix-a": {"files": ["src/shared.py"], "priority": 2},
+                                                "fix-b": {"files": ["docs/b.md"], "priority": 2},
+                                                "busy": {"files": ["src/shared.py"]}}})
+        code, result = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot", snapshot,
+                                "--binding", binding, "--limit", "20")
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["hints"], "command")
+        order = [item["subject"] for item in result["next"]]
+        self.assertLess(order.index("fix-b"), order.index("fix-a"), "the command's files were used")
+
+    def test_a_hints_file_is_the_fallback_when_the_command_fails(self) -> None:
+        snapshot = self.snapshot([{"subject": "fix-a", "state": "backlog"}])
+        binding = self.hints_binding({"items": {}}, exit_code=3)
+        hints = self.hints({"fix-a": {"files": ["docs/a.md"], "priority": 1}})
+        code, result = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot", snapshot,
+                                "--binding", binding, "--hints", hints, "--limit", "20")
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["hints"], "file")
+        self.assertIn("exited with 3", result["hintsNote"])
+        self.assertIn("priority 1", next(item for item in result["next"] if item["subject"] == "fix-a")["reason"])
+        for document in ("not json", {"items": {"fix-a": {"priority": 7}}}):
+            with self.subTest(document=document):
+                tool = self.root / "hints tool.py"
+                tool.write_text(f"print({json.dumps(document) if isinstance(document, dict) else document!r})\n",
+                                encoding="utf-8")
+                code, result = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot", snapshot,
+                                        "--binding", binding, "--hints", hints)
+                self.assertEqual((code, result["hints"]), (0, "file"), result)
+                self.assertTrue(result["hintsNote"])
+        code, result = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot", snapshot,
+                                "--binding", binding)
+        self.assertEqual((code, result["hints"]), (0, "none"), result)
+
+    def test_queued_work_collides_on_its_changed_files_and_the_reason_says_so(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version,
+                         changes={"queue": [*state_tool.show(self.directory)["state"]["queue"],
+                                            queue_item("in-flight", lane="lane-2", order=4)]})
+        snapshot = self.snapshot([{"subject": "fix-a", "state": "backlog"}, {"subject": "fix-b", "state": "backlog"}])
+        hints = {"in-flight": {"files": ["src/"], "changedFiles": ["src/engine.py"]},
+                 "fix-a": {"files": ["src/shared.py"]}, "fix-b": {"files": ["src/engine.py"]}}
+        ranked = {item["subject"]: item for item in self.ranked(snapshot, self.hints(hints))}
+        # The declared folder would catch both; the change touches only src/engine.py.
+        self.assertEqual(ranked["fix-a"]["collidesWith"], [], "src/shared.py is outside what in-flight changed")
+        self.assertEqual(ranked["fix-b"]["collidesWith"], ["lane-2"])
+        self.assertIn("src/engine.py", ranked["fix-b"]["reason"])
+        self.assertIn("changed files", ranked["fix-b"]["reason"])
+        # Planned work with no change yet collides on what it declares, and says so.
+        hints["busy"] = {"files": ["src/shared.py"]}
+        ranked = {item["subject"]: item for item in self.ranked(snapshot, self.hints(hints))}
+        self.assertEqual(ranked["fix-a"]["collidesWith"], ["lane-2"])
+        self.assertIn("declared files", ranked["fix-a"]["reason"])
+
+    def test_the_binding_and_the_render_wrapper_take_a_work_hints_block(self) -> None:
+        schema = state_tool.load_schema("orchestration-binding/1")
+        member = {**schema["properties"]["state"], "$defs": schema["$defs"]}
+        block = {"argv": ["tool", "{parent}"], "timeoutSeconds": 30}
+        base = {"directory": "s", "renderers": [], "publishers": []}
+        self.assertEqual(state_tool.validate({**base, "workHints": block}, member), [])
+        self.assertTrue(state_tool.validate({**base, "workHints": {"argv": ["tool"], "extra": 1}}, member))
+        _load("render_state").parse_config({**base, "workHints": block})
+        for bad in ({"argv": []}, {"argv": ["tool"], "timeoutSeconds": 0}, {"argv": ["tool"], "extra": 1}):
+            with self.subTest(bad=bad):
+                code, refused = run_tool(self.directory, "next", "--lane", "lane-1",
+                                         "--snapshot", self.snapshot([]),
+                                         "--binding", self.write("bad binding.json",
+                                                                 {"state": {**base, "workHints": bad}}))
+                self.assertEqual((code, refused["code"]), (1, "binding_invalid"), refused)
+
+    def test_a_follow_up_is_the_tracker_s_item_named_by_its_reference(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"followups": [
+            {"id": "fu-1", "title": "Blocked in the tracker", "reference": "TRK-9"},
+            {"id": "fu-2", "title": "Done in the tracker", "reference": "TRK-8"},
+            {"id": "fu-3", "title": "Free", "reference": None},
+        ]})
+        snapshot = self.snapshot([{"subject": "TRK-9", "state": "backlog", "blockedBy": ["TRK-1"]},
+                                  {"subject": "TRK-1", "state": "started"},
+                                  {"subject": "TRK-8", "state": "completed"},
+                                  {"subject": "fu-3", "state": "backlog"}])
+        ranked = self.ranked(snapshot, self.hints({"TRK-9": {"priority": 1}, "fu-3": {"priority": 4}}))
+        order = [item["subject"] for item in ranked]
+        self.assertNotIn("TRK-8", order, "completed in the tracker")
+        self.assertLess(order.index("fu-3"), order.index("TRK-9"), "a blocked follow-up is never ahead")
+        blocked = next(item for item in ranked if item["subject"] == "TRK-9")
+        self.assertTrue(blocked["blocked"])
+        self.assertIn("priority 1", blocked["reason"], "hints are keyed by the reference")
+
+    def test_the_lane_s_own_work_in_review_is_not_next_and_never_owns_itself(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state = state_tool.show(self.directory)["state"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"planned": [
+            *state["planned"],
+            {"subject": "mine-review", "title": "In review", "lane": "lane-1", "stage": "review"},
+            {"subject": "mine-next", "title": "Planned for me", "lane": "lane-1", "stage": "planned"},
+        ]})
+        snapshot = self.snapshot([{"subject": "mine-review", "state": "started"},
+                                  {"subject": "mine-next", "state": "backlog"}])
+        ranked = self.ranked(snapshot, self.hints({"mine-next": {"files": ["lib/next.py"]},
+                                                   "mine-review": {"files": ["lib/review.py"]}}))
+        order = [item["subject"] for item in ranked]
+        self.assertNotIn("mine-review", order)
+        mine = next(item for item in ranked if item["subject"] == "mine-next")
+        self.assertFalse(mine["owned"], "its own files are not a sign the lane worked on them")
+
+    def test_a_glob_collides_with_a_folder_or_a_glob_that_can_name_the_same_file(self) -> None:
+        overlap = state_tool._overlap
+        for first, second in (("src/**/x.py", "src/"), ("src/*.md", "src/docs/"), ("src/*.py", "src/a*.py"),
+                              ("**/x.py", "src/"), ("src/a.py", "src/*.py"), ("src/", "src/a/b.py")):
+            with self.subTest(first=first, second=second):
+                self.assertTrue(overlap(first, second))
+                self.assertTrue(overlap(second, first))
+        for first, second in (("docs/*.md", "src/"), ("src/a.py", "src/b.py"), ("lib/*.py", "src/*.py"),
+                              ("src/a.py", "docs/*.md")):
+            with self.subTest(first=first, second=second):
+                self.assertFalse(overlap(first, second))
+                self.assertFalse(overlap(second, first))
+
     def test_the_hints_schema_is_one_of_the_skill_s_schemas(self) -> None:
         schema = state_tool.load_schema("work-hints/1")
-        self.assertEqual(state_tool.validate({"items": {"x": {"files": ["a/b.py", "c/"], "priority": 1}}}, schema), [])
+        self.assertEqual(state_tool.validate({"items": {"x": {"files": ["a/b.py", "c/"], "priority": 1,
+                                                               "changedFiles": ["a/b.py"]}}}, schema), [])
         self.assertTrue(state_tool.validate({"items": {"x": {"priority": 0}}}, schema))
 
 
