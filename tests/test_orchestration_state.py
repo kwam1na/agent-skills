@@ -669,7 +669,8 @@ class StateToolTests(unittest.TestCase):
                 self.lead(1, {"meta": {"headline": "Never lands"}})
         self.assertEqual(self.state_bytes(), before)
         self.assertEqual(sorted(path.name for path in self.directory.iterdir()),
-                         sorted([state_tool.STATE_FILE, state_tool.JOURNAL_FILE, state_tool.STATE_LOCK]))
+                         sorted([state_tool.STATE_FILE, state_tool.JOURNAL_FILE, state_tool.STATE_LOCK,
+                             state_tool.CHANGES_FILE]))
 
     def test_tools_write_no_bytecode_beside_the_scripts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -704,7 +705,8 @@ GUARD_CALLS = {
         ("skip_if_pending", ["core", "linear"]), ("pending", ["profile"]), ("skip_if_pending", ["core", "linear"]),
     ],
     "tests/test_bootstrap_qualification.py": [
-        ("pending", ["bootstrap"]), ("skip_if_pending", ["bootstrap"]), ("skip_if_pending", ["bootstrap"]),
+        ("skip_if_pending", ["bootstrap"]), ("pending", ["bootstrap"]), ("skip_if_pending", ["bootstrap"]),
+        ("skip_if_pending", ["bootstrap"]),
     ],
 }
 
@@ -1763,7 +1765,7 @@ class TrackerSnapshotTests(unittest.TestCase):
         (self.directory / "outbox").mkdir()
         before = {name: (self.directory / name).read_bytes() for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE)}
         for name in ("state.json", "journal.jsonl", "STATE.JSON", "outbox/outbox.json", "published.json",
-                     "recovery.json", "recovery.json.invalid.2", "queue.lock"):
+                     "recovery.json", "recovery.json.invalid.2", "queue.lock", "changes.jsonl"):
             with self.subTest(name=name):
                 code, refused = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(),
                                          "--output", str(self.directory / name))
@@ -2770,7 +2772,7 @@ def bullets_after(text: str, lead_in: str) -> list[str]:
 # written into its state directory, as views, the outbox or the
 # acknowledgement, not shipped with the skill.
 ADOPTER_FILES = frozenset({".agents/orchestration.json", "delivery.md", "delivery.html", "outbox/outbox.json",
-                           "published.json", "recovery.json"})
+                           "published.json", "recovery.json", "changes.jsonl"})
 
 
 class SkillTextTests(unittest.TestCase):

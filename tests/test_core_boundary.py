@@ -5,6 +5,8 @@ import re
 import unittest
 from pathlib import Path
 
+from agent_skills.validate import LEAKAGE_PATTERNS
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE_RUNTIME_PATHS = (
@@ -36,9 +38,8 @@ CORE_SKILL_PATHS = (
     "skills/plan-work/SKILL.md",
     "skills/review-work/SKILL.md",
 )
-FORBIDDEN = re.compile(
-    r"\b(?:linear|mcp|https?|sdk|oauth|credentials?)\b", re.IGNORECASE
-)
+# The same rule the corpus validator applies, so the two never drift apart.
+FORBIDDEN = dict(LEAKAGE_PATTERNS)["provider-boundary"]
 
 
 class CoreBoundaryTests(unittest.TestCase):
@@ -133,6 +134,28 @@ class CoreBoundaryTests(unittest.TestCase):
             with self.subTest(path=relative):
                 self.assertIsNone(names.search(text))
                 self.assertIsNone(identifiers.search(text))
+
+class ProviderBoundaryRuleTests(unittest.TestCase):
+    """The provider rule allows exactly three forms of http, and nothing else."""
+
+    def test_the_three_allowed_forms_pass(self) -> None:
+        for text in ("import http.server", "class Server(http.server.ThreadingHTTPServer):",
+                     'protocol_version = "HTTP/1.1"', "open http://127.0.0.1:8080/ in a browser",
+                     "http://localhost", "http://localhost:3000/events?x=1", "http://[::1]:9/"):
+            with self.subTest(text=text):
+                self.assertIsNone(FORBIDDEN.search(text))
+
+    def test_everything_else_still_matches(self) -> None:
+        for text in ("http://example.com", "http://localhost.example.com/", "http://127.0.0.1.example/",
+                     "http://10.0.0.1:80/", "an http request", "http/2", "HTTP/1.0",
+                     "https://localhost", "https://127.0.0.1:8080/", "https://example.com",
+                     "http://localhost@evil.com/", "http://127.0.0.1@example.com", "http://localhost:80@evil.com",
+                     "http://[::1]@evil.com", "http://localhost#@evil.com",
+                     "import http.client", "from http import cookies", "http.cookies",
+                     "linear", "mcp", "sdk", "oauth", "credentials", "credential"):
+            with self.subTest(text=text):
+                self.assertIsNotNone(FORBIDDEN.search(text))
+
 
 if __name__ == "__main__":
     unittest.main()

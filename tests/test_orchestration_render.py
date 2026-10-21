@@ -3,17 +3,23 @@ from __future__ import annotations
 import contextlib
 import copy
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -596,11 +602,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
-    "delivery.html": "be2c263e7209d1e018b02b4def52021f68cdf2c7ab4bc0aef08d2695b037215a",
+    "delivery.html": "5270813a2e0024d0ab785dc39e57518fe147b2bf577dad47c0a5dfb80da9aac5",
 }
 PINNED_VIEWS = {
     "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
-    "delivery.html": "d147718f7b633f522eb061b2cea86cbe74b1f45615a1fe288d92623714671dad",
+    "delivery.html": "c4bc2019a03d300f7de7d9a9cc8921a2fae55c18499b6948f85a524de51fb33a",
 }
 
 
@@ -792,7 +798,8 @@ class HostPublisherTests(DeliveryStateFixture):
             with self.subTest(publisher=publisher):
                 code, result = wrapper(self.state_dir, "--state-config", self.config([], [publisher]))
                 self.assertEqual((code, result["code"]), (2, "config_invalid"), result)
-        for output in ("outbox/outbox.json", "published.json", "OUTBOX/x.md", "recovery.json", "Recovery.JSON", "recovery.json.invalid",
+        for output in ("outbox/outbox.json", "published.json", "OUTBOX/x.md", "recovery.json", "Recovery.JSON",
+                       "changes.jsonl", "Changes.JSONL", "recovery.json.invalid",
                        "recovery.json.invalid.2"):
             with self.subTest(output=output):
                 renderer = [{"id": "sneaky", "builtin": "markdown", "output": output}]
@@ -920,6 +927,374 @@ class CheckVisibilityViewTests(unittest.TestCase):
         view = render_state.render_markdown(document)
         self.assertNotIn("expected", view)
         self.assertNotIn("position", view)
+
+
+class LiveClient:
+    """A page's view of the live command: its document and its event stream, read as a browser would."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self.events: list[dict] = []
+        self.lock = threading.Lock()
+        self.response = None
+
+    def get(self, path: str, host: str | None = None) -> tuple[int, bytes]:
+        request = urllib.request.Request(self.url + path, headers={"Host": host} if host else {})
+        try:
+            with urllib.request.urlopen(request, timeout=5) as answer:
+                return answer.status, answer.read()
+        except urllib.error.HTTPError as error:
+            return error.code, error.read()
+
+    def listen(self) -> None:
+        address = urllib.parse.urlsplit(self.url)
+        self.connection = http.client.HTTPConnection(address.hostname, address.port, timeout=30)
+        self.connection.request("GET", "/events")
+        self.response = self.connection.getresponse()
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self) -> None:
+        event = None
+        with contextlib.suppress(Exception):
+            for raw in self.response:
+                line = raw.decode("utf-8").rstrip("\n")
+                if line.startswith("event: "):
+                    event = line[len("event: "):]
+                elif line.startswith("data: ") and event == "document":
+                    with self.lock:
+                        self.events.append(json.loads(line[len("data: "):]))
+                elif not line:
+                    event = None
+
+    def close(self) -> None:
+        """Hang up at once, as a closed tab does."""
+        if self.response is not None:
+            with contextlib.suppress(Exception):
+                self.connection.sock.shutdown(socket.SHUT_RDWR)
+            with contextlib.suppress(Exception):
+                self.connection.close()
+
+    def latest(self) -> dict | None:
+        with self.lock:
+            return self.events[-1] if self.events else None
+
+    def wait_for(self, check, seconds: float = 3.0) -> dict | None:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            latest = self.latest()
+            if latest is not None and check(latest):
+                return latest
+            time.sleep(0.05)
+        return None
+
+
+class LiveTests(DeliveryStateFixture):
+    """`live` re-renders on every write and pushes the latest record to open pages."""
+
+    def start(self, *extra: str) -> tuple[subprocess.Popen, str]:
+        process = subprocess.Popen([sys.executable, "-B", str(WRAPPER), "live", "--dir", str(self.state_dir), *extra],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.addCleanup(self.stop, process)
+        line = process.stdout.readline()
+        announced = json.loads(line)
+        self.assertTrue(announced["ok"], announced)
+        return process, f"http://{announced['live']}/"
+
+    def stop(self, process: subprocess.Popen) -> None:
+        if process.poll() is None:
+            process.kill()
+            process.wait(5)
+        for stream in (process.stdout, process.stderr):
+            with contextlib.suppress(Exception):
+                stream.close()
+
+    def client(self, url: str) -> LiveClient:
+        client = LiveClient(url)
+        self.addCleanup(client.close)
+        return client
+
+    def test_a_journal_write_reaches_an_open_page_within_three_seconds(self) -> None:
+        _, url = self.start()
+        client = self.client(url)
+        client.listen()
+        first = client.wait_for(lambda doc: True)
+        self.assertIsNotNone(first, "a page that connects gets the record at once")
+        written = time.monotonic()
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Reached the page")
+        seen = client.wait_for(lambda doc: doc["journal"] and doc["journal"][-1]["summary"] == "Reached the page")
+        self.assertIsNotNone(seen)
+        self.assertLess(time.monotonic() - written, 3.0)
+        self.assertEqual(set(seen), {"state", "journal", "stats", "estimates", "status", "focus"})
+        status, page = client.get("")
+        self.assertEqual(status, 200)
+        self.assertIn(b"EventSource(\"/events\")", page)
+        self.assertIn(b'id="live-status"', page)
+        status, document = client.get("document")
+        self.assertEqual(json.loads(document)["journal"][-1]["summary"], "Reached the page")
+
+    def test_a_burst_of_writes_ends_at_the_final_version_with_nothing_lost_or_doubled(self) -> None:
+        _, url = self.start()
+        client = self.client(url)
+        client.listen()
+        client.wait_for(lambda doc: True)
+        before = len(client.events)
+        threads = [threading.Thread(target=state_tool, args=(self.state_dir, "journal", "--kind", "decision.recorded",
+                                                             "--summary", f"Burst {n}")) for n in range(10)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        final = state_tool(self.state_dir, "show")
+        seen = client.wait_for(lambda doc: len(doc["journal"]) == len(final["journal"]), seconds=5)
+        self.assertIsNotNone(seen)
+        summaries = [entry["summary"] for entry in seen["journal"]]
+        self.assertEqual(sorted(summary for summary in summaries if summary.startswith("Burst")),
+                         sorted(f"Burst {n}" for n in range(10)))
+        self.assertEqual(len(summaries), len(set(entry["id"] for entry in seen["journal"])))
+        self.assertEqual(seen["state"]["version"], final["state"]["version"])
+        self.assertLessEqual(len(client.events) - before, 10, "never more events than writes")
+        documents = [json.dumps(event, sort_keys=True) for event in client.events]
+        self.assertEqual(len(documents), len(set(documents)), "no page update repeats another")
+
+    def test_a_write_that_does_not_change_the_record_sends_nothing(self) -> None:
+        _, url = self.start()
+        client = self.client(url)
+        client.listen()
+        shown = client.wait_for(lambda doc: True)
+        state_tool(self.state_dir, "ack", "--version", str(shown["state"]["version"]),
+                   "--through", str(shown["journal"][-1]["id"] if shown["journal"] else 0))
+        time.sleep(1.0)
+        self.assertEqual(len(client.events), 1, "an acknowledgement changes no page")
+
+    def test_a_record_replaced_at_the_same_version_still_reaches_the_page(self) -> None:
+        _, url = self.start()
+        client = self.client(url)
+        client.listen()
+        first = client.wait_for(lambda doc: True)
+        state = json.loads((self.state_dir / "state.json").read_text(encoding="utf-8"))
+        state["meta"]["headline"] = "Replaced in place"
+        (self.state_dir / "state.json").write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        seen = client.wait_for(lambda doc: doc["state"]["meta"]["headline"] == "Replaced in place")
+        self.assertIsNotNone(seen)
+        self.assertEqual(seen["state"]["version"], first["state"]["version"])
+
+    def test_live_renders_views_but_runs_no_publisher(self) -> None:
+        marker = self.root / "published marks"
+        publisher = {"id": "store", "argv": python_argv(
+            f"import sys\nopen({str(marker)!r}, 'a').write('x')\nsys.stdin.buffer.read()\n", self.tools, "store")}
+        renderer = {"id": "summary", "builtin": "markdown", "output": "delivery.md"}
+        _, url = self.start("--state-config", self.config([renderer], [publisher]))
+        client = self.client(url)
+        client.listen()
+        client.wait_for(lambda doc: True)
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Rendered, not published")
+        client.wait_for(lambda doc: doc["journal"][-1]["summary"] == "Rendered, not published")
+        deadline = time.monotonic() + 3
+        while "Rendered, not published" not in (self.state_dir / "delivery.md").read_text(encoding="utf-8") \
+                and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertIn("Rendered, not published", (self.state_dir / "delivery.md").read_text(encoding="utf-8"))
+        self.assertFalse(marker.exists(), "the live view never publishes")
+
+    def test_a_page_that_reconnects_gets_the_latest_at_once(self) -> None:
+        _, url = self.start()
+        first = self.client(url)
+        first.listen()
+        first.wait_for(lambda doc: True)
+        first.close()
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "While away")
+        time.sleep(0.6)
+        second = self.client(url)
+        second.listen()
+        seen = second.wait_for(lambda doc: True, seconds=2)
+        self.assertEqual(seen["journal"][-1]["summary"], "While away")
+
+    def test_a_half_written_record_is_never_served_and_never_stops_the_server(self) -> None:
+        process, url = self.start()
+        client = self.client(url)
+        good = json.loads(client.get("document")[1])
+        state_file = self.state_dir / "state.json"
+        whole = state_file.read_bytes()
+        state_file.write_bytes(whole[: len(whole) // 2])
+        time.sleep(0.8)
+        self.assertIsNone(process.poll())
+        self.assertEqual(json.loads(client.get("document")[1]), good, "the last valid record stands")
+        state_file.write_bytes(whole)
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Recovered")
+        client.listen()
+        self.assertIsNotNone(client.wait_for(lambda doc: doc["journal"][-1]["summary"] == "Recovered"))
+
+    def test_it_serves_only_its_own_host_and_binds_to_this_machine_by_default(self) -> None:
+        _, url = self.start()
+        self.assertTrue(url.startswith("http://127.0.0.1:"), url)
+        client = self.client(url)
+        port = url.rsplit(":", 1)[1].rstrip("/")
+        self.assertEqual(client.get("document", host=f"localhost:{port}")[0], 200)
+        # Any loopback name on its own port: the whole loopback family, alike.
+        for host in (f"LOCALHOST:{port}", f"127.0.0.1:{port}", f"127.0.0.2:{port}", f"127.255.255.254:{port}",
+                     f"[::1]:{port}", f"[::ffff:127.0.0.1]:{port}", f"[::FFFF:7f00:1]:{port}"):
+            with self.subTest(host=host):
+                self.assertEqual(client.get("document", host=host)[0], 200)
+        for host in ("evil.example", f"evil.example:{port}", "127.0.0.1:1", "127.0.0.1", f"localhost.:{port}",
+                     f"10.0.0.1:{port}", f"[::2]:{port}", f"[::ffff:10.0.0.1]:{port}", f"128.0.0.1:{port}",
+                     f"localhost.evil.example:{port}", f"[::1]{port}", f":{port}"):
+            with self.subTest(host=host):
+                self.assertEqual(client.get("document", host=host)[0], 403)
+        for name in ("state.json", "journal.jsonl", "changes.jsonl", "published.json", "view/state.json",
+                     "view/journal.jsonl"):
+            with self.subTest(name=name):
+                self.assertEqual(client.get(name)[0], 404, "the record's files are never served")
+
+    def test_an_interrupt_ends_it_non_zero_with_no_process_left(self) -> None:
+        process, url = self.start()
+        client = self.client(url)
+        client.listen()
+        client.wait_for(lambda doc: True)
+        process.send_signal(signal.SIGINT)
+        self.assertEqual(process.wait(10), 128 + signal.SIGINT)
+        result = json.loads(process.stdout.read())
+        self.assertEqual((result["code"], result["signal"]), ("interrupted", "SIGINT"))
+        with self.assertRaises(OSError):
+            urllib.request.urlopen(url + "document", timeout=2)
+
+    def test_an_unreadable_record_never_stops_the_watcher(self) -> None:
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("permissions do not bind the superuser")
+        process, url = self.start()
+        client = self.client(url)
+        client.listen()
+        client.wait_for(lambda doc: True)
+        state_file = self.state_dir / "state.json"
+        state_file.chmod(0)
+        time.sleep(0.8)
+        state_file.chmod(0o644)
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "After a bad read")
+        self.assertIsNotNone(client.wait_for(lambda doc: doc["journal"][-1]["summary"] == "After a bad read"))
+        self.assertIsNone(process.poll())
+
+    def test_a_slow_view_never_holds_back_the_page(self) -> None:
+        slow = {"id": "slow", "argv": python_argv("import sys, time\ntime.sleep(6)\nsys.stdout.write('x')\n",
+                                                   self.tools, "slow"), "output": "slow.txt", "timeoutSeconds": 30}
+        _, url = self.start("--state-config", self.config([slow]))
+        client = self.client(url)
+        client.listen()
+        client.wait_for(lambda doc: True, seconds=10)
+        written = time.monotonic()
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Not held back")
+        self.assertIsNotNone(client.wait_for(lambda doc: doc["journal"][-1]["summary"] == "Not held back"))
+        self.assertLess(time.monotonic() - written, 3.0)
+
+    def test_an_opted_in_view_is_served_live_and_others_are_not(self) -> None:
+        opted = {"id": "own", "argv": python_argv(
+            "import sys\nsys.stdout.write('<html><head><meta name=\"delivery-state-live\"></head><body>own</body></html>')\n",
+            self.tools, "own"), "output": "own.html"}
+        plain = {"id": "plain", "argv": python_argv("import sys\nsys.stdout.write('<html>plain</html>')\n",
+                                                    self.tools, "plain"), "output": "plain.html"}
+        _, url = self.start("--state-config", self.config([opted, plain]))
+        client = self.client(url)
+        deadline = time.monotonic() + 5
+        status, page = client.get("view/own.html")
+        while status != 200 and time.monotonic() < deadline:
+            time.sleep(0.2)
+            status, page = client.get("view/own.html")
+        self.assertEqual(status, 200)
+        # Its adapter reaches the stream from wherever the view is served.
+        self.assertIn(b'EventSource("/events")', page)
+        self.assertIn(b'fetch("/document")', page)
+        self.assertEqual(client.get("view/plain.html")[0], 404)
+        self.assertEqual(client.get("view/../state.json")[0], 404)
+
+    def test_a_wildcard_bind_is_refused_before_anything_listens(self) -> None:
+        for host in ("0.0.0.0", "::", "0:0:0:0:0:0:0:0", "::ffff:0.0.0.0", "", " ", "0"):
+            with self.subTest(host=host):
+                result = run([sys.executable, "-B", str(WRAPPER), "live", "--dir", str(self.state_dir),
+                              "--host", host])
+                self.assertEqual(result.returncode, 2)
+                refused = json.loads(result.stdout)
+                self.assertEqual((refused["ok"], refused["code"]), (False, "live_refused"))
+                self.assertEqual(refused["error"], "the live view serves this machine only; bind a loopback address")
+
+    def test_a_bind_named_localhost_takes_any_loopback_name(self) -> None:
+        _, url = self.start("--host", "localhost")
+        self.assertTrue(url.startswith("http://localhost:"), url)
+        port = url.rsplit(":", 1)[1].rstrip("/")
+        client = self.client(f"http://127.0.0.1:{port}/")
+        self.assertEqual(client.get("document")[0], 200)
+        self.assertEqual(client.get("document", host=f"evil.example:{port}")[0], 403)
+
+    def test_an_ipv6_loopback_host_is_served(self) -> None:
+        if not socket.has_ipv6:
+            self.skipTest("no IPv6 on this machine")
+        try:
+            probe = socket.socket(socket.AF_INET6)
+            probe.bind(("::1", 0))
+            probe.close()
+        except OSError:
+            self.skipTest("no IPv6 loopback on this machine")
+        _, url = self.start("--host", "::1")
+        self.assertTrue(url.startswith("http://[::1]:"), url)
+        self.assertEqual(self.client(url).get("document")[0], 200)
+
+    def test_a_bad_configuration_or_record_never_starts_the_server(self) -> None:
+        result = run([sys.executable, "-B", str(WRAPPER), "live", "--dir", str(self.state_dir), "--state-config",
+                      json.dumps({"renderers": [{"id": "x", "output": "state.json", "builtin": "markdown"}]})])
+        self.assertEqual((result.returncode, json.loads(result.stdout)["code"]), (2, "config_invalid"))
+        result = run([sys.executable, "-B", str(WRAPPER), "live", "--dir", str(self.root / "nothing here")])
+        self.assertEqual(result.returncode, 2)
+
+
+class ChangeNotificationTests(DeliveryStateFixture):
+    """Every successful write through the state tool records exactly one change."""
+
+    def changes(self) -> list[dict]:
+        path = self.state_dir / "changes.jsonl"
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
+
+    def test_each_write_by_any_writer_records_one_change(self) -> None:
+        before = len(self.changes())
+        version = state_tool(self.state_dir, "show")["state"]["version"]
+        state_tool(self.state_dir, "patch", "--writer", "lead", "--version", str(version),
+                   "--patch", json.dumps({"meta": {"headline": "Changed"}}))
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "A lane's entry", "--lane", "lane-1")
+        shown = state_tool(self.state_dir, "show")
+        state_tool(self.state_dir, "ack", "--version", str(shown["state"]["version"]),
+                   "--through", str(shown["journal"][-1]["id"]))
+        changes = self.changes()[before:]
+        self.assertEqual([change["change"] for change in changes], ["patch", "journal", "ack"])
+        self.assertEqual(changes[0]["version"], version + 1)
+        self.assertEqual(changes[1]["journal"], shown["journal"][-1]["id"])
+        # A refused write records nothing.
+        result = run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(self.state_dir), "patch", "--writer", "lead",
+                      "--version", "1", "--patch", "{}"])
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(len(self.changes()), before + 3)
+
+    def test_retiring_an_outbox_records_a_change_and_a_refused_patch_records_none(self) -> None:
+        wrapper(self.state_dir, "--state-config", self.config([], [{"id": "live", "kind": "host"}]))
+        before = len(self.changes())
+        state_tool(self.state_dir, "outbox", "--retire", "live")
+        self.assertEqual([change["change"] for change in self.changes()[before:]], ["outbox"])
+        version = state_tool(self.state_dir, "show")["state"]["version"]
+        result = run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(self.state_dir), "patch", "--writer", "lead",
+                      "--version", str(version), "--patch", json.dumps({"meta": {"headline": 3}})])
+        self.assertEqual(json.loads(result.stdout)["code"], "patch_invalid")
+        self.assertEqual(len(self.changes()), before + 1, "a refused write records no change")
+
+    def test_each_write_the_tool_makes_for_a_lane_records_one_change(self) -> None:
+        # A hand-off writes the record, then journals it: one change each.
+        before = len(self.changes())
+        state_tool(self.state_dir, "handoff", "--lane", "lane-1", "--subject", "change-1", "--head", "d" * 40,
+                   "--change-request", "cr 9")
+        changes = self.changes()[before:]
+        self.assertEqual([change["change"] for change in changes], ["patch", "journal"])
+        self.assertEqual(changes[0]["version"], state_tool(self.state_dir, "show")["state"]["version"])
+
+    def test_a_notification_that_cannot_be_written_never_fails_the_write(self) -> None:
+        path = self.state_dir / "changes.jsonl"
+        path.unlink(missing_ok=True)
+        path.mkdir()
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Still written")
+        self.assertEqual(state_tool(self.state_dir, "show")["journal"][-1]["summary"], "Still written")
 
 
 class WrapperTests(DeliveryStateFixture):
@@ -1093,7 +1468,8 @@ class WrapperTests(DeliveryStateFixture):
                 code, result = wrapper(self.state_dir, "--state-config", self.config(renderers))
                 self.assertEqual(code, 2, result)
                 self.assertEqual(result["code"], "config_invalid")
-        self.assertEqual(sorted(path.name for path in self.state_dir.iterdir() if not path.name.endswith(".lock")), ["journal.jsonl", "state.json"])
+        self.assertEqual(sorted(path.name for path in self.state_dir.iterdir() if not path.name.endswith(".lock")),
+                         ["changes.jsonl", "journal.jsonl", "state.json"])
 
     def test_a_view_is_never_written_through_a_link(self) -> None:
         outside = self.root / "outside"
@@ -1354,7 +1730,9 @@ function node(tag) {
   created.push(el);
   return el;
 }
-const byId = { "delivery-state": { textContent: embedded }, app: node("main") };
+const indicator = node("p");
+indicator.hidden = true;  // as the page's own markup starts it
+const byId = { "delivery-state": { textContent: embedded }, app: node("main"), "live-status": indicator };
 if (scenario.now) { Date.now = () => Date.parse(scenario.now); }
 globalThis.document = {
   getElementById: (id) => byId[id] || null,
@@ -1380,15 +1758,18 @@ if (scenario.adapter) {
     subscribe: adapter.subscribeThrows
       ? (cb) => { if (scenario.pushDuringSubscribe) { cb(scenario.pushDuringSubscribe); } throw new Error("cannot subscribe"); }
       : adapter.subscribe ? (cb) => { globalThis.__push = cb; return () => {}; } : undefined,
+    onStatus: adapter.status ? (cb) => { globalThis.__status = cb; } : undefined,
   };
 }
 new Function(program)();
 setTimeout(async () => {
   if (scenario.push && globalThis.__push) { globalThis.__push(scenario.push); }
+  if (scenario.status !== undefined && globalThis.__status) { globalThis.__status(scenario.status); }
   await wait(10 + ((scenario.adapter && scenario.adapter.readDelayMs) || 0));
   const tags = [...new Set(created.map((e) => e.tagName))].sort();
   process.stdout.write(JSON.stringify({ text: byId.app.textContent, tags,
-    source: byId.app.attributes["data-source"] || null }));
+    source: byId.app.attributes["data-source"] || null,
+    status: byId["live-status"].hidden ? null : byId["live-status"].textContent }));
 }, 10);
 """
 
@@ -1405,6 +1786,9 @@ setTimeout(async () => {
         result = run(["node", str(shim), str(page), str(scenario_path)])
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
+
+    def embed_of(self, page: str) -> str:
+        return re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S).group(1)
 
     def live_document(self, headline: str, schema_version: str = "delivery-state/1") -> dict:
         document = copy.deepcopy(self.document)
@@ -1527,6 +1911,21 @@ setTimeout(async () => {
         shown = self.run_page({"adapter": {"document": live}})
         self.assertEqual(shown["source"], "live")
         self.assertIn("Nothing planned outside the queue.", shown["text"])
+
+    def test_a_live_store_s_connection_shows_quietly(self) -> None:
+        live = {"document": self.live_document("Live"), "subscribe": True, "status": True}
+        self.assertEqual(self.run_page({"adapter": live, "status": True})["status"], "Live")
+        down = self.run_page({"adapter": live, "status": False})["status"]
+        self.assertTrue(down.startswith("Disconnected"), down)
+        self.assertIsNone(self.run_page({})["status"], "a page with no live store shows no indicator")
+
+    def test_the_live_page_loads_nothing_but_its_own_server(self) -> None:
+        page = render_state.render_static_page(json.loads(json.dumps(self.document)), live=True).lower()
+        self.assertIn('eventsource("/events")', page)
+        self.assertIn('fetch("/document")', page)
+        for construct in ("src=", "href=", "url(", "@import", "<link", "//", "innerhtml", "document.write"):
+            with self.subTest(construct):
+                self.assertNotIn(construct, page.replace(self.embed_of(page), ""))
 
     def test_a_hostile_live_answer_falls_back_without_an_unhandled_error(self) -> None:
         shown = self.run_page({"adapter": {"throwingGetter": True}})

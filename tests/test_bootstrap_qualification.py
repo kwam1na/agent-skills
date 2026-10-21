@@ -24,6 +24,9 @@ def load_runner():
 
 class BootstrapQualificationTests(unittest.TestCase):
     def test_current_bootstrap_product_replays_and_matches_source(self) -> None:
+        # The retained record's driver digest covers the corpus validator, whose
+        # provider rule changed; it is re-earned with the pending bootstrap set.
+        skip_if_pending(self, "bootstrap")
         product = ROOT / "qualifications/product/bootstrap-concurrent-delivery-v1"
         archive = product.with_suffix(".zip")
         metadata = product.with_suffix(".release.json")
