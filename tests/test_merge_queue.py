@@ -408,18 +408,32 @@ class Adopter:
         run("push", "--quiet", "origin", "base-work:main", cwd=self.lane)
         return run("rev-parse", "HEAD", cwd=self.lane)
 
+    def lead_write(self, write: Callable[[dict], dict]) -> None:
+        """Write as the lead, as a real lead does while a runner may write too: read again and retry a stale version."""
+        for _ in range(20):
+            try:
+                write(state_tool.read_state(self.state))
+                return
+            except state_tool.StateError as error:
+                if error.code != "version_stale":
+                    raise
+        raise AssertionError("the record kept moving under the lead's write")
+
     def enqueue(self, subject: str, head: str, lead_inputs: list[str] | None = None) -> None:
-        state = state_tool.read_state(self.state)
-        item = {
-            "order": len(state["queue"]) + 1, "subject": subject, "title": f"Candidate {subject}",
-            "lane": "lane-1", "stage": "queued", "head": head, "syncedHead": None,
-            "leadInputs": lead_inputs or [], "reportedRounds": 2, "runId": None, "checks": [],
-        }
-        state_tool.patch(self.state, writer="lead", version=state["version"], changes={"queue": [*state["queue"], item]})
+        def write(state: dict) -> dict:
+            item = {
+                "order": len(state["queue"]) + 1, "subject": subject, "title": f"Candidate {subject}",
+                "lane": "lane-1", "stage": "queued", "head": head, "syncedHead": None,
+                "leadInputs": lead_inputs or [], "reportedRounds": 2, "runId": None, "checks": [],
+            }
+            return state_tool.patch(self.state, writer="lead", version=state["version"],
+                                    changes={"queue": [*state["queue"], item]})
+
+        self.lead_write(write)
 
     def lead_set(self, subject: str, **fields: object) -> None:
-        state = state_tool.read_state(self.state)
-        state_tool.patch(self.state, writer="lead", version=state["version"], selector=f"queue[subject={subject}]", changes=fields)
+        self.lead_write(lambda state: state_tool.patch(self.state, writer="lead", version=state["version"],
+                                                       selector=f"queue[subject={subject}]", changes=fields))
 
     def grant(self, lease: str, holder: str = "lead") -> None:
         state = state_tool.read_state(self.state)
@@ -471,6 +485,31 @@ class MergeQueueTestCase(unittest.TestCase):
         self.assertIn(last["outcome"], ("stopped", "refused"), last)
         self.assertEqual(last["stop"]["reason"], reason, last["stop"])
         return last
+
+
+class LeadWriteTests(MergeQueueTestCase):
+    """A lead's write while serve runs reads the record again when the runner wrote first, as a real lead does."""
+
+    def test_the_lead_writes_again_when_the_runner_wrote_between_its_read_and_its_write(self) -> None:
+        adopter = self.adopter()
+        head = adopter.lane_commit("feature", {"src/app.txt": "app two\n"})
+        real = state_tool.read_state
+        raced: list[bool] = []
+
+        def runner_writes_after_the_read(directory: Path) -> dict:
+            state = real(directory)
+            if not raced:
+                raced.append(True)
+                # serve records something between the lead's read and its write.
+                state_tool.patch(directory, writer="runner", version=state["version"],
+                                 assignments={"/meta/baseHead": "c" * 40})
+            return state
+
+        with mock.patch.object(state_tool, "read_state", runner_writes_after_the_read):
+            adopter.enqueue("feature", head)
+        self.assertEqual(raced, [True])
+        self.assertEqual(adopter.item("feature")["head"], head)
+        self.assertEqual(state_tool.read_state(adopter.state)["meta"]["baseHead"], "c" * 40, "the runner's write stands")
 
 
 class CandidatePinningTests(MergeQueueTestCase):

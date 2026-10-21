@@ -243,9 +243,35 @@ after each runner result.
 ## Keeping the live view current
 
 Keeping the view current is the lead's job, never the operator's: the
-operator should never have to ask whether it is up to date. At every event,
-such as a hand-off, a merge, a decision or a tracker change, run the sync loop
-in this order:
+operator should never have to ask whether it is up to date.
+
+**The live view.** At the start of a delivery, start the live view and give
+the operator the address it prints:
+
+```bash
+python3 -B scripts/render_state.py live --dir <state directory> --binding .agents/orchestration.json
+```
+
+- Every successful write through the state tool, by the lead, the runner or a
+  lane, appends one line to `changes.jsonl` in the state directory; a write
+  never fails because of it. `live` waits on that log, pushes the record to
+  every open page, then re-renders the configured views, so a page shows each
+  change within seconds, with no reload and no publish step. It runs no
+  publisher: those run only when the lead renders.
+- It serves the built-in static page in its live mode, with a quiet live or
+  disconnected indicator, and any HTML view whose head carries
+  `<meta name="delivery-state-live">`. A record caught half-written is never
+  served: the last valid one stands until the next one reads cleanly.
+- It listens on this machine's loopback address only, unless `--host` names
+  another; a wildcard such as `0.0.0.0` is refused, since the live view serves
+  this machine only. It answers only requests for its own host and port. `--port 0`,
+  the default, picks a free port. Ctrl-C stops it, non-zero, with nothing left
+  running.
+- Host-published views, the outbox below, become mirrors for sharing; the
+  live view is the one to watch.
+
+At every event, such as a hand-off, a merge, a decision or a tracker change,
+run the sync loop in this order:
 
 1. **Snapshot.** List the epic's work and write it as `work-snapshot/1` files
    (in `references/schemas.json`): `{takenAt, source, items}`, where `source`
@@ -254,7 +280,11 @@ in this order:
    `started`, `completed` or `canceled`; a forge state is `open`, `draft`,
    `merged` or `closed`. The state tool never calls a forge or a tracker
    itself. Blockers are the tracker's: `blockedBy` on a forge item is
-   ignored, never merged with the tracker's.
+   ignored, never merged with the tracker's. A tracker snapshot's blockers
+   must form a dependency list under the record's `meta.trackerParent`, by
+   the same rules as `list-work`, or the snapshot is refused. `reconcile`
+   also checks all its tracker snapshots together, so a cycle that runs
+   across two of them is refused too.
    - **Tracker, with a bound command.** When the binding declares
      `state.trackerSnapshot`, `{argv, timeoutSeconds?}`, run it through the
      state tool. The repository's command prints the snapshot for the record's

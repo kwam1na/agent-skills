@@ -236,6 +236,9 @@ decision. Lanes post on their own tickets at the points the lane brief names.
 
 ### 5. Publish
 
+- Start the live view at the beginning of the delivery and point the
+  operator at its address; it re-renders on every record write, so it is
+  never stale.
 - After every runner result and every lead write, render the views with
   `render_state.py`. When the host stores the live document with its own
   tool, follow the publishing step.

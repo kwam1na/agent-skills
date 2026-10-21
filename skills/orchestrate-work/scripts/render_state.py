@@ -91,9 +91,12 @@ if __name__ == "__main__":
 import argparse
 import contextlib
 import datetime
+import http.server
+import ipaddress
 import json
 import os
 import re
+import socket
 import subprocess
 import tempfile
 import threading
@@ -101,12 +104,13 @@ import time
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from delivery_state import (  # noqa: E402
-    JOURNAL_FILE, OUTBOX_DIRECTORY, OUTBOX_FILE, PUBLISHED_FILE, QUEUE_LOCK, RECOVERY_FILE, RECOVERY_QUARANTINE, STATE_FILE, STATE_LOCK,
-    StateError,
+    CHANGES_FILE, JOURNAL_FILE, OUTBOX_DIRECTORY, OUTBOX_FILE, PUBLISHED_FILE, QUEUE_LOCK, RECOVERY_FILE,
+    RECOVERY_QUARANTINE, STATE_FILE, STATE_LOCK, StateError,
     dumps, read_published, show,
 )
 
@@ -116,8 +120,8 @@ DEFAULT_RENDERERS = (
     {"id": "static-page", "builtin": "static-page", "output": "delivery.html"},
 )
 # The files the state tool and the runner own; no view may replace them.
-RESERVED = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE, OUTBOX_DIRECTORY, RECOVERY_FILE,
-            RECOVERY_QUARANTINE)
+RESERVED = (STATE_FILE, JOURNAL_FILE, CHANGES_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE, OUTBOX_DIRECTORY,
+            RECOVERY_FILE, RECOVERY_QUARANTINE)
 DEFAULT_TIMEOUT_SECONDS = 60
 MAX_TIMEOUT_SECONDS = 600
 # How much of a failing command's stderr the result keeps, in characters, and
@@ -414,6 +418,8 @@ li { border-top: 1px solid var(--line); padding: 10px 0; }
 .note { background: var(--soft); border-radius: 6px; padding: 8px 12px; margin: 16px 0 0; font-size: 13px; }
 .tag { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; margin-left: 8px; font-size: 12px; }
 .steps li { border: 0; padding: 2px 0 2px 16px; }
+.status { position: fixed; top: 8px; right: 12px; margin: 0; font-size: 12px; color: var(--muted); }
+.status.down { color: var(--ink); }
 """.strip()
 
 # The page's program. It never parses markup: every value reaches the page
@@ -648,6 +654,15 @@ _PAGE_PROGRAM = """
 
   draw(embedded, "embedded");
   var store = globalThis.deliveryStateStore;
+  /* A live store says whether its stream is connected; the page says so quietly. */
+  var indicator = document.getElementById("live-status");
+  if (isObject(store) && typeof store.onStatus === "function" && indicator) {
+    store.onStatus(function (connected) {
+      indicator.hidden = false;
+      indicator.className = connected ? "status live" : "status down";
+      indicator.textContent = connected ? "Live" : "Disconnected: showing the last state received";
+    });
+  }
   if (isObject(store) && typeof store.read === "function") {
     /* A pushed update is newer than whatever read() returns, so once one is
        shown the read's answer is ignored. */
@@ -682,7 +697,33 @@ def _page_embed(document: object) -> str:
     return text
 
 
-def render_static_page(document: dict) -> str:
+# The live adapter: the same page, fed by the live command's event stream. It
+# loads nothing from anywhere but the server that served the page.
+_LIVE_ADAPTER = """
+(function () {
+  "use strict";
+  var listeners = [];
+  var statuses = [];
+  function status(connected) { statuses.forEach(function (fn) { fn(connected); }); }
+  var source = new EventSource("/events");
+  source.addEventListener("document", function (event) {
+    var doc;
+    try { doc = JSON.parse(event.data); } catch (error) { return; }
+    status(true);
+    listeners.forEach(function (fn) { fn(doc); });
+  });
+  source.addEventListener("error", function () { status(false); });
+  globalThis.deliveryStateStore = {
+    read: function () { return fetch("/document").then(function (answer) { return answer.json(); }); },
+    subscribe: function (fn) { listeners.push(fn); },
+    onStatus: function (fn) { statuses.push(fn); }
+  };
+})();
+""".strip()
+
+
+def render_static_page(document: dict, *, live: bool = False) -> str:
+    adapter = f"<script>\n{_LIVE_ADAPTER}\n</script>\n" if live else ""
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'
@@ -694,7 +735,9 @@ def render_static_page(document: dict) -> str:
         "</head>\n"
         "<body>\n"
         '<main id="app" data-source="embedded"></main>\n'
+        '<p id="live-status" class="status" hidden></p>\n'
         f'<script type="application/json" id="delivery-state">{_page_embed(document)}</script>\n'
+        f"{adapter}"
         f"<script>\n{_PAGE_PROGRAM}\n</script>\n"
         "</body>\n"
         "</html>\n"
@@ -930,14 +973,22 @@ def _on_signal(number: int, frame: object) -> None:
 
 
 def _defer() -> None:
-    """Hold unwinding back while a step that cannot be interrupted runs."""
+    """Hold unwinding back while a step that cannot be interrupted runs.
+
+    Only on the main thread, where signals land: a helper thread's step must
+    never stop the main thread from unwinding. A helper thread learns of a
+    signal from the recorded one, when it next waits.
+    """
     global _unwinding
-    _unwinding = False
+    if threading.current_thread() is threading.main_thread():
+        _unwinding = False
 
 
 def _resume() -> None:
     """Unwind now if a signal arrived while unwinding was held back."""
     global _unwinding
+    if threading.current_thread() is not threading.main_thread():
+        return
     _unwinding = True
     if _received:
         _unwinding = False
@@ -1221,7 +1272,331 @@ def _let_handlers_run() -> None:
         pass
 
 
+# ---------------------------------------------------------------------------
+# The live view: re-render on every record write, and push to open pages
+
+LIVE_POLL_SECONDS = 0.25
+LIVE_KEEPALIVE_SECONDS = 15.0
+# An HTML view opts in to the live stream with this in its head.
+LIVE_OPT_IN = '<meta name="delivery-state-live">'
+
+
+class LiveView:
+    """The latest valid document, re-read and re-rendered when the record changes."""
+
+    def __init__(self, directory: Path, config: object) -> None:
+        self.directory = Path(directory)
+        self.config = config
+        self.changed = threading.Condition()
+        self.generation = 0
+        self.document: dict | None = None
+        self.encoded = b""
+        self.fingerprint: tuple | None = None
+        self.stopping = threading.Event()
+
+    def watch_key(self) -> tuple:
+        keys = []
+        for name in (CHANGES_FILE, STATE_FILE, JOURNAL_FILE):
+            try:
+                stat = (self.directory / name).stat()
+                keys.append((stat.st_size, stat.st_mtime_ns))
+            except OSError:
+                keys.append(None)
+        return tuple(keys)
+
+    def read(self) -> dict | None:
+        """The record, or None while it cannot be read: half-written, unreadable, or not yet there."""
+        try:
+            return show(self.directory)
+        except (StateError, OSError, ValueError):
+            return None
+
+    def refresh(self) -> bool | None:
+        """Publish the record if it moved, then re-render the views; None when it could not be read."""
+        shown = self.read()
+        if shown is None:
+            return None
+        encoded = json.dumps(shown, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
+        # The whole document, so a record replaced at the same version still counts as moved.
+        fingerprint = encoded
+        if fingerprint == self.fingerprint:
+            return False
+        # Pages first: they need only the record, never the rendered files, so
+        # no slow view delays them.
+        with self.changed:
+            self.document, self.encoded, self.fingerprint = shown, encoded, fingerprint
+            self.generation += 1
+            self.changed.notify_all()
+        with contextlib.suppress(Exception):
+            render(self.directory, _views_only(self.config))
+        return True
+
+    def watch(self) -> None:
+        seen = None
+        try:
+            while not self.stopping.wait(LIVE_POLL_SECONDS):
+                key = self.watch_key()
+                if key == seen:
+                    continue
+                try:
+                    # Settled only once the record read cleanly; otherwise look again next tick.
+                    if self.refresh() is not None:
+                        seen = key
+                except Exception:  # noqa: BLE001 - the watcher outlives any one bad read
+                    continue
+        except BaseException:
+            # Interrupted: stop serving with it, rather than leave pages on a dead stream.
+            self.stop()
+            raise
+
+    def stop(self) -> None:
+        self.stopping.set()
+        with self.changed:
+            self.changed.notify_all()
+
+
+def _live_handler(view: LiveView, accepts: Callable[[str], bool]) -> type:
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - the base class's name
+            return
+
+        def _plain(self, code: int, body: bytes, kind: str = "text/plain; charset=utf-8") -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self) -> None:  # noqa: N802 - the base class's name
+            # The record is only for pages on the host and port it serves: a
+            # page from anywhere else that renamed itself to reach it is refused.
+            if not accepts(self.headers.get("Host") or ""):
+                self._plain(403, b"refused: this view serves only its own host and port\n")
+                return
+            path = self.path.split("?", 1)[0]
+            if path in ("/", "/index.html"):
+                with view.changed:
+                    document = view.document
+                if document is None:
+                    self._plain(503, b"the record is not readable yet\n")
+                    return
+                page = render_static_page(document, live=True).encode("utf-8")
+                self._plain(200, page, "text/html; charset=utf-8")
+            elif path == "/document":
+                with view.changed:
+                    encoded = view.encoded
+                self._plain(200 if encoded else 503, encoded or b"{}", "application/json")
+            elif path == "/events":
+                self._events()
+            elif path.startswith("/view/"):
+                self._view(path[len("/view/"):])
+            else:
+                self._plain(404, b"not found\n")
+
+        def _view(self, name: str) -> None:
+            outputs = {renderer["output"] for renderer in _live_renderers(view.config)}
+            if name not in outputs or not name.endswith(".html"):
+                self._plain(404, b"not found\n")
+                return
+            try:
+                page = (view.directory / name).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                self._plain(503, b"the view is not rendered yet\n")
+                return
+            if LIVE_OPT_IN not in page:
+                self._plain(404, b"this view does not opt in to the live stream\n")
+                return
+            page = page.replace(LIVE_OPT_IN, LIVE_OPT_IN + f"\n<script>\n{_LIVE_ADAPTER}\n</script>", 1)
+            self._plain(200, page.encode("utf-8"), "text/html; charset=utf-8")
+
+        def _events(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            sent = -1
+            try:
+                while not view.stopping.is_set():
+                    with view.changed:
+                        if view.generation == sent:
+                            view.changed.wait(LIVE_KEEPALIVE_SECONDS)
+                        generation, encoded = view.generation, view.encoded
+                    if view.stopping.is_set():
+                        break
+                    if generation != sent and encoded:
+                        # Only the latest is sent: a burst of writes reaches a page as one update.
+                        self.wfile.write(b"event: document\ndata: " + encoded + b"\n\n")
+                        sent = generation
+                    else:
+                        self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return
+
+    return Handler
+
+
+def _views_only(config: object) -> object:
+    """The configuration with no publishers: the live view re-renders views, and publishing stays the lead's."""
+    if config is None:
+        return {"renderers": [dict(entry) for entry in DEFAULT_RENDERERS], "publishers": []}
+    return {**config, "publishers": []} if isinstance(config, dict) else config
+
+
+def _live_renderers(config: object) -> list[dict]:
+    try:
+        renderers, _ = parse_config(config)
+    except ConfigError:
+        return []
+    return renderers
+
+
+class _LiveServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    block_on_close = False
+
+
+class _LiveServer6(_LiveServer):
+    address_family = socket.AF_INET6
+
+
+def _is_loopback(name: str) -> bool:
+    """Whether a host names this machine's loopback: localhost, 127.0.0.0/8, ::1, or ::ffff:127.x."""
+    if name.lower() == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    if address.version == 6 and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return address.is_loopback
+
+
+def _is_wildcard(name: str) -> bool:
+    """Whether a host would listen on every address: empty, or naming or resolving to an unspecified one."""
+    if not name.strip():
+        return True
+    try:
+        return ipaddress.ip_address(name).is_unspecified
+    except ValueError:
+        pass
+    try:
+        found = socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):
+        return False  # the bind then fails on its own
+    return any(ipaddress.ip_address(entry[4][0].split("%")[0]).is_unspecified for entry in found)
+
+
+def _split_host(header: str) -> tuple[str, str] | None:
+    """A Host header's host and port, or None when it has no port."""
+    if header.startswith("["):
+        host, _, rest = header[1:].partition("]")
+        return (host, rest[1:]) if rest.startswith(":") else None
+    host, colon, port = header.rpartition(":")
+    return (host, port) if colon and host else None
+
+
+def _live_hosts(host: str, port: int) -> Callable[[str], bool]:
+    """Which Host headers a request may carry.
+
+    The bound host and port; for a loopback bind, any loopback name on that
+    port, so a page opened as localhost or 127.0.0.1 is served alike.
+    """
+    bound_loopback = _is_loopback(host)
+
+    def accepts(header: str) -> bool:
+        parts = _split_host(header.strip())
+        if parts is None or parts[1] != str(port):
+            return False
+        name = parts[0]
+        return name.lower() == host.lower() or (bound_loopback and _is_loopback(name))
+
+    return accepts
+
+
+def serve_live(directory: Path, config: object, *, host: str, port: int, announce: Callable[[str], None]) -> None:
+    """Serve the live view until interrupted. Renders on every record change; never writes the record."""
+    view = LiveView(directory, config)
+    view.refresh()
+    server = (_LiveServer6 if ":" in host else _LiveServer)((host, port), _live_handler(view, lambda header: False))
+    if _is_wildcard(str(server.server_address[0])):
+        # A name that only resolved to every address once bound: never serve on it.
+        server.server_close()
+        raise OSError("the live view serves this machine only; bind a loopback address")
+    bound = server.server_address[1]
+    shown_host = f"[{host}]" if ":" in host else host
+    server.RequestHandlerClass = _live_handler(view, _live_hosts(host, bound))
+    watcher = threading.Thread(target=view.watch, name="live-watch", daemon=True)
+    serving = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2}, name="live-serve",
+                               daemon=True)
+    watcher.start()
+    serving.start()
+    try:
+        # The address alone: a browser opens it as it is.
+        announce(f"{shown_host}:{bound}")
+        while serving.is_alive() and not view.stopping.is_set():
+            serving.join(0.5)
+            # A signal whose raise was swallowed is still recorded: unwind on it.
+            if _received:
+                raise Interrupted(_received[0])
+    finally:
+        view.stop()
+        server.shutdown()
+        server.server_close()
+        # A view command the watcher started is stopped by it, on the recorded signal, within a wait slice.
+        watcher.join(5)
+
+
+def _live_from_args(argv: list[str]) -> tuple[int, dict]:
+    parser = argparse.ArgumentParser(prog="render_state.py live",
+                                     description="serve the delivery's views live, re-rendered on every write")
+    parser.add_argument("--dir", type=Path, required=True, help="the state directory")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--binding", type=Path, help="a binding file; its state member is read")
+    source.add_argument("--state-config", help="the state configuration as JSON, or - to read it from stdin")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="the address to listen on; anything but this machine's loopback must be named")
+    parser.add_argument("--port", type=int, default=0, help="the port; 0 picks a free one")
+    args = parser.parse_args(argv)
+    if _is_wildcard(args.host):
+        # Every address at once would put the record in front of the network;
+        # hosting it beyond this machine is the adopter's to arrange.
+        return 2, {"ok": False, "code": "live_refused",
+                   "error": "the live view serves this machine only; bind a loopback address"}
+    try:
+        config = _load_config(args)
+        parse_config(config)
+    except ConfigError as error:
+        return 2, {"ok": False, "code": "config_invalid", "error": str(error)}
+    try:
+        show(args.dir)
+    except StateError as error:
+        return 2, {"ok": False, "code": error.code, "error": str(error)}
+
+    def announce(address: str) -> None:
+        line = json.dumps({"ok": True, "live": address}, ensure_ascii=True, separators=(",", ":")) + "\n"
+        sys.stdout.buffer.write(line.encode("ascii"))
+        sys.stdout.flush()
+
+    try:
+        serve_live(args.dir, config, host=args.host, port=args.port, announce=announce)
+    except OSError as error:
+        return 2, {"ok": False, "code": "live_unavailable",
+                   "error": f"cannot listen on {args.host}:{args.port}: {error.strerror or error}"}
+    return 0, {"ok": True, "live": "stopped"}
+
+
 def _render_from_args(argv: list[str] | None) -> tuple[int, dict]:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["live"]:
+        return _live_from_args(argv[1:])
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", type=Path, required=True, help="the state directory")
     source = parser.add_mutually_exclusive_group()

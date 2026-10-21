@@ -8,16 +8,23 @@ the state tool, the merge-queue runner, and the renderer wrapper.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
+import http.client
 import importlib.util
 import json
 import os
 import re
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+import urllib.parse
 from pathlib import Path
 
 from agent_skills.validate import LEAKAGE_PATTERNS
@@ -774,6 +781,71 @@ class FixtureAdopterTests(unittest.TestCase):
         pending = json.loads(outbox_path.read_text(encoding="utf-8"))["journal"]
         self.assertEqual([(entry["id"], entry["kind"]) for entry in pending], [(last + 1, "delivery.closed")])
 
+
+class FixtureAdopterLiveViewTests(unittest.TestCase):
+    """The adopter's lead starts the live view once; every later write reaches an open page by itself."""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="orchestration adopter live ")).resolve()
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def test_a_journal_write_reaches_an_open_page_and_the_views_are_re_rendered(self) -> None:
+        adopter = FixtureAdopter(self.root)
+        adopter.state_tool("init", "--headline", "Fixture epic")
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(WRAPPER), "live", "--dir", str(adopter.state), "--binding",
+             str(adopter.operator / ".agents/orchestration.json")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=adopter.environment, cwd=adopter.root)
+
+        def stop() -> None:
+            if process.poll() is None:
+                process.send_signal(signal.SIGINT)
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.wait(10)
+            if process.poll() is None:
+                process.kill()
+            for stream in (process.stdout, process.stderr):
+                stream.close()
+
+        self.addCleanup(stop)
+        address = urllib.parse.urlsplit(f"http://{json.loads(process.stdout.readline())['live']}/")
+        connection = http.client.HTTPConnection(address.hostname, address.port, timeout=10)
+        self.addCleanup(connection.close)
+        connection.request("GET", "/events")
+        stream = connection.getresponse()
+        documents: list[dict] = []
+
+        def read() -> None:
+            with contextlib.suppress(Exception):
+                for raw in stream:
+                    line = raw.decode("utf-8")
+                    if line.startswith("data: "):
+                        documents.append(json.loads(line[len("data: "):]))
+
+        threading.Thread(target=read, daemon=True).start()
+        deadline = time.monotonic() + 3
+        while not documents and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(documents, "the page got the record as it connected")
+
+        written = time.monotonic()
+        adopter.journal("decision.recorded", "The live view follows the record")
+        while time.monotonic() < written + 3:
+            if documents and documents[-1]["journal"] and \
+                    documents[-1]["journal"][-1]["summary"] == "The live view follows the record":
+                break
+            time.sleep(0.05)
+        else:
+            self.fail("the write did not reach the open page within 3 s")
+        # The configured views are rendered again, just after the page is told, with no render step of the lead's.
+        deadline = time.monotonic() + 5
+        while text("The live view follows the record") not in adopter.view() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertIn(text("The live view follows the record"), adopter.view())
+        with contextlib.suppress(Exception):
+            connection.sock.shutdown(socket.SHUT_RDWR)
+        process.send_signal(signal.SIGINT)
+        self.assertEqual(process.wait(10), 128 + signal.SIGINT)
 
 # Defaults a tool must never assume about its adopter: a remote or branch
 # name, a package runner, a forge command line, or skipping a repository's

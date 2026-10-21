@@ -54,8 +54,14 @@ LEAKAGE_PATTERNS = (
     ("project-url", re.compile(r"https?://linear\.app/v26-labs/", re.IGNORECASE)),
     (
         "provider-boundary",
+        # A provider reference never belongs in a core file. Three forms of the
+        # word http are not provider references and are allowed: the standard
+        # library's http.server module, the HTTP/1.1 status line, and a URL to
+        # this machine's own loopback address. https has no exception.
         re.compile(
-            r"\b(?:linear|mcp|https?|sdk|oauth|credentials?)\b",
+            r"\b(?:linear|mcp|https|sdk|oauth|credentials?)\b"
+            r"|\bhttp\b(?!\.server\b)(?!/1\.1\b)"
+            r"(?!://(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?=[/?\s\"'`)>]|$))",
             re.IGNORECASE,
         ),
     ),
