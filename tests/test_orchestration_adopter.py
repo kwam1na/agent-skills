@@ -603,6 +603,50 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertIn(text("test_launcher_cancel"), view)
         self.assertIn(text("check.retried"), view)
 
+    def test_lanes_hand_off_through_the_tool_and_serve_lands_everything_without_the_lead(self) -> None:
+        adopter = FixtureAdopter(self.root)
+        adopter.state_tool("init", "--headline", "Fixture lighter loop")
+        # The lead's part is judgement: it assigns the lanes and plans their work, and writes nothing after.
+        since = "2026-10-21T09:00:00Z"
+        adopter.lead_patch({
+            "lanes": [{"id": f"lane-{n}", "title": subject, "focus": "", "state": "assigned", "waitingOn": None,
+                       "since": since} for n, subject in enumerate(("alpha-copy", "beta-copy"), start=1)],
+            "planned": [{"subject": subject, "title": f"Candidate {subject}", "lane": f"lane-{n}", "stage": "planned"}
+                        for n, subject in enumerate(("alpha-copy", "beta-copy"), start=1)],
+        })
+        lead_writes = adopter.show()["state"]["version"]
+        # Each lane works, says so, records its review rounds, and hands its work off, all through the tool.
+        for n, (subject, files) in enumerate((("alpha-copy", {"src/alpha.txt": "alpha two\n"}),
+                                             ("beta-copy", {"src/beta.txt": "beta two\n"})), start=1):
+            lane = f"lane-{n}"
+            adopter.state_tool("focus", "--lane", lane, "--text", f"Building {subject}", "--state", "working")
+            head = adopter.lane_change(subject, files)
+            adopter.state_tool("journal", "--writer", "lane", "--lane", lane, "--subject", subject, "--kind",
+                               "review.round", "--review", json.dumps({
+                                   "round": 1, "startedAt": "2026-10-21T09:10:00Z", "finishedAt": "2026-10-21T09:20:00Z",
+                                   "verdicts": {"outcome": "approve", "adversarial": "approve"},
+                                   "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 1}}))
+            adopter.state_tool("handoff", "--lane", lane, "--subject", subject, "--head", head,
+                               "--change-request", f"change request {n}", "--rounds", "1")
+        shown = adopter.show()
+        self.assertEqual([item["stage"] for item in shown["state"]["queue"]], ["queued", "queued"])
+        self.assertEqual(shown["status"]["text"], "next: alpha-copy, then 1 more")
+        # The runner serves the queue: both land as one batch, with no lead action.
+        results = adopter.queue("serve", "--until-idle", "--poll", "0.1", expect=0)
+        self.assertEqual([(result["subcommand"], result["candidate"], result["outcome"]) for result in results],
+                         [("batch", "alpha-copy", "merged"), ("batch", "beta-copy", "merged")])
+        final = adopter.show()
+        self.assertEqual([item["stage"] for item in final["state"]["queue"]], ["merged", "merged"])
+        self.assertTrue(final["status"]["text"].startswith("last landed beta-copy at "))
+        # Every journal entry after the plan came from a lane, the tool on a lane's behalf, or the runner.
+        kinds = [entry["kind"] for entry in final["journal"]]
+        self.assertEqual(kinds.count("candidate.handed"), 2)
+        self.assertEqual(kinds.count("review.round"), 2)
+        self.assertEqual(kinds.count("candidate.merged"), 2)
+        self.assertNotIn("decision.recorded", kinds)
+        self.assertGreater(final["state"]["version"], lead_writes)
+        self.assertIn("Status: last landed beta-copy", adopter.view())
+
     def test_a_batch_of_two_is_checked_once_and_lands_tree_verified(self) -> None:
         adopter = FixtureAdopter(self.root)
         adopter.state_tool("init", "--headline", "Fixture batch")

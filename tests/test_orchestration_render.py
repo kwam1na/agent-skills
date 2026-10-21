@@ -595,12 +595,12 @@ EMPTY_STATE = {
     "extensions": {},
 }
 PINNED_EMPTY_VIEWS = {
-    "delivery.md": "ee0fc476dfb0eb093a6a12a52fe0745943942be5ca9cf0158fc98e4167b61422",
-    "delivery.html": "fcb71d21e1ee7d6441c024671e6ca6ff22149a45b9697b389d07f4439e123208",
+    "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
+    "delivery.html": "be2c263e7209d1e018b02b4def52021f68cdf2c7ab4bc0aef08d2695b037215a",
 }
 PINNED_VIEWS = {
-    "delivery.md": "6cc957b383a306c8d5b57741020d79bde2b774bcae61a08b88f31d0828be7ad3",
-    "delivery.html": "fe8679a7088f7d21107d329cf246f8f298c68957c4fd3644e1286481e8921cda",
+    "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
+    "delivery.html": "d147718f7b633f522eb061b2cea86cbe74b1f45615a1fe288d92623714671dad",
 }
 
 
@@ -864,6 +864,34 @@ VISIBILITY_LINES = (
 )
 
 
+def status_document(source: str = "derived") -> dict:
+    """The fixed state with a status line and a derived focus for a lane that wrote none of its own."""
+    state = copy.deepcopy(FIXED_STATE)
+    state["lanes"][1]["focus"] = ""
+    return {"state": state, "journal": FIXED_JOURNAL,
+            "status": {"text": "Checking Change one · next: change-2", "source": source,
+                       **({"expiresAt": "2026-10-20T16:00:00Z"} if source == "override" else {})},
+            "focus": {"lane-2": "change-2: queued, 1 review round"}}
+
+
+class StatusViewTests(unittest.TestCase):
+    """Both views show the status line under the name, and a lane's derived focus when it wrote none."""
+
+    def test_the_markdown_view_shows_the_status_and_a_derived_focus(self) -> None:
+        view = render_state.render_markdown(status_document())
+        self.assertIn("\nStatus: Checking Change one · next: change-2\n", view)
+        self.assertIn(render_state._markdown_text("change-2: queued, 1 review round") + " (derived)", view)
+
+    def test_an_override_says_it_is_the_leads(self) -> None:
+        view = render_state.render_markdown(status_document("override"))
+        self.assertIn("\nStatus: Checking Change one · next: change-2 (set by the lead, until 2026-10-20T16:00:00Z)\n", view)
+
+    def test_a_document_without_a_status_renders_as_before(self) -> None:
+        view = render_state.render_markdown({"state": FIXED_STATE, "journal": FIXED_JOURNAL})
+        self.assertNotIn("Status:", view)
+        self.assertNotIn("(derived)", view)
+
+
 class CheckVisibilityViewTests(unittest.TestCase):
     """Both views show elapsed against expected, failing tests with their log, and queue estimates."""
 
@@ -967,7 +995,7 @@ class WrapperTests(DeliveryStateFixture):
         self.assertEqual(code, 0, result)
         received = json.loads((self.state_dir / "echo.json").read_bytes().decode("utf-8"))
         self.assertEqual(received, self.document)
-        self.assertEqual(set(received), {"state", "journal", "stats", "estimates"})
+        self.assertEqual(set(received), {"state", "journal", "stats", "estimates", "status", "focus"})
 
     def test_extensions_reach_renderers_unchanged(self) -> None:
         wrapper(self.state_dir, "--state-config", self.config([self.capture_renderer("echo")]))
@@ -1421,6 +1449,12 @@ setTimeout(async () => {
         shown = self.run_page({"now": "2026-10-20T12:05:00Z"}, visibility_document())
         self.assertIn("unit: running · 6m 40s of an expected 10m 00s", shown["text"])
         self.assertIn("docs: running · 6m 00s, no expected time yet", shown["text"])
+
+    def test_the_page_shows_the_status_and_a_derived_focus(self) -> None:
+        shown = self.run_page({}, status_document("override"))
+        self.assertIn("Status: Checking Change one · next: change-2 (set by the lead, until 2026-10-20T16:00:00Z)",
+                      shown["text"])
+        self.assertIn("change-2: queued, 1 review round (derived)", shown["text"])
 
     def test_without_an_adapter_the_embedded_state_is_shown(self) -> None:
         shown = self.run_page({})
