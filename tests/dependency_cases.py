@@ -26,9 +26,11 @@ CASES: dict[str, tuple[str, list[tuple[str, list[str]]], tuple[str, ...] | None]
                                        ("cycle", "b -> c -> b")),
     "many cycles": (PARENT, [(f"n{i}", [f"n{j}" for j in range(30) if j != i]) for i in range(30)],
                     ("cycle", "more")),
+    "a long cycle": (PARENT, [(f"n{i}", [f"n{(i + 1) % 9}"]) for i in range(9)],
+                     ("n0 -> n1 -> n2 -> n3 -> n4 -> ... 4 more -> n0",)),
 }
 
 CYCLES = {"a two-item cycle": 1, "a three-item cycle": 1, "a cycle beside valid work": 1,
-          "two items that reach one cycle": 1, "many cycles": 10}
+          "two items that reach one cycle": 1, "many cycles": 10, "a long cycle": 1}
 # How often a refusal names one problem, where a case pins it.
 ONCE = {"a blocker named three times": "more than once"}

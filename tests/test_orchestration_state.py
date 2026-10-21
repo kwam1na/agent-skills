@@ -1852,11 +1852,20 @@ class TrackerSnapshotTests(unittest.TestCase):
                 if name in DEPENDENCY_ONCE:
                     self.assertEqual(str(refused.exception).count(DEPENDENCY_ONCE[name]), 1)
 
-    def test_a_long_chain_is_checked_quickly(self) -> None:
-        chain = [(f"n{index}", [f"n{index - 1}"] if index else []) for index in range(100_000)]
+    def test_a_long_or_dense_graph_is_checked_quickly_in_little_text(self) -> None:
+        # Each item is blocked by the next, so the search walks one path through all of them.
+        size = 100_000
+        chain = [(f"n{index}", [f"n{index + 1}"] if index + 1 < size else []) for index in range(size)]
         started = time.monotonic()
         self.assertEqual(state_tool.dependency_problems(chain, "epic-7"), [])
+        # The last item blocked by every other: as many cycles as items, each through all of them.
+        dense = chain[:-1] + [(f"n{size - 1}", [f"n{index}" for index in range(size - 1)])]
+        problems = state_tool.dependency_problems(dense, "epic-7")
         self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(len(problems), state_tool.DEPENDENCY_PROBLEM_LIMIT + 1)
+        self.assertEqual(problems[-1], f"and {size - 1 - state_tool.DEPENDENCY_PROBLEM_LIMIT} more")
+        self.assertLess(len("; ".join(problems)), 2000, "a long cycle is shortened")
+        self.assertIn("... ", problems[0])
 
     def test_the_command_s_snapshot_and_reconcile_check_dependencies_against_the_record_s_parent(self) -> None:
         # The command prints an item its parent blocks; the parent is the record's.
@@ -1894,6 +1903,15 @@ class TrackerSnapshotTests(unittest.TestCase):
         self.assertEqual((code, refused.get("code")), (1, "snapshot_invalid"), refused)
         self.assertIn("a -> b -> a", refused["error"])
         self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
+
+    def test_reconcile_leaves_forge_blockers_out_of_the_combined_check(self) -> None:
+        tracker, forge = self.root / "tracker.json", self.root / "forge.json"
+        tracker.write_text(json.dumps({"takenAt": taken(), "source": "tracker", "items": [
+            {"subject": "a", "state": "backlog"}]}), encoding="utf-8")
+        forge.write_text(json.dumps({"takenAt": taken(), "source": "forge", "items": [
+            {"subject": "b", "state": "open", "blockedBy": ["b", "a"]}]}), encoding="utf-8")
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", str(tracker), "--snapshot", str(forge))
+        self.assertEqual(code, 0, result)
 
     def test_a_forge_snapshot_s_blockers_are_not_checked_since_they_are_ignored(self) -> None:
         snapshot = {"takenAt": taken(), "source": "forge", "items": [

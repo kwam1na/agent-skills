@@ -910,7 +910,8 @@ def dependency_problems(items: list[tuple[str, list[str]]], parent: str | None) 
     be blocked by the parent, block itself, name a blocker more than once, or
     wait on itself through other items. A blocker outside the items is
     allowed. At most ``DEPENDENCY_PROBLEM_LIMIT`` problems are named, then how
-    many more there are.
+    many more there are; a long cycle is named by its first items and the one
+    it returns to.
 
     Two identical copies exist, because the delivery state tool must run on
     its own: one in agent_skills/capabilities.py for list-work results, one in
@@ -919,21 +920,33 @@ def dependency_problems(items: list[tuple[str, list[str]]], parent: str | None) 
     edit both together.
     """
     problems: list[str] = []
+    unnamed = 0
+
+    def found(problem: str) -> None:
+        # Past the limit a problem is only counted, so a dense graph never
+        # builds more text than the refusal shows.
+        nonlocal unnamed
+        if len(problems) < DEPENDENCY_PROBLEM_LIMIT:
+            problems.append(problem)
+        else:
+            unnamed += 1
+
     blockers_of: dict[str, list[str]] = {}
     for reference, blockers in items:
         if parent is not None and reference == parent:
-            problems.append(f"{reference} is the parent itself")
+            found(f"{reference} is the parent itself")
         if parent is not None and parent in blockers:
-            problems.append(f"{reference} is blocked by its own parent {parent}")
+            found(f"{reference} is blocked by its own parent {parent}")
         if reference in blockers:
-            problems.append(f"{reference} blocks itself")
+            found(f"{reference} blocks itself")
         named: set[str] = set()
         repeated: list[str] = []
         for blocker in blockers:
             if blocker in named and blocker not in repeated:
                 repeated.append(blocker)
             named.add(blocker)
-        problems += [f"{reference} names its blocker {blocker} more than once" for blocker in repeated]
+        for blocker in repeated:
+            found(f"{reference} names its blocker {blocker} more than once")
         blockers_of[reference] = [blocker for blocker in dict.fromkeys(blockers) if blocker != reference]
     # A cycle through other items, found without recursion in one pass over
     # the items and blockers: each is reported once, from the item it is first
@@ -950,8 +963,11 @@ def dependency_problems(items: list[tuple[str, list[str]]], parent: str | None) 
                 if blocker not in blockers_of or blocker in finished:
                     continue
                 if blocker in position:
-                    cycle = path[position[blocker]:] + [blocker]
-                    problems.append("the blockers form a cycle, each blocked by the next: " + " -> ".join(cycle))
+                    length = len(path) - position[blocker]
+                    shown = path[position[blocker]:position[blocker] + min(length, 5)]
+                    if length > 5:
+                        shown.append(f"... {length - 5} more")
+                    found("the blockers form a cycle, each blocked by the next: " + " -> ".join(shown + [blocker]))
                     continue
                 position[blocker] = len(path)
                 path.append(blocker)
@@ -962,8 +978,8 @@ def dependency_problems(items: list[tuple[str, list[str]]], parent: str | None) 
                 done = path.pop()
                 del position[done]
                 finished.add(done)
-    if len(problems) > DEPENDENCY_PROBLEM_LIMIT:
-        problems = problems[:DEPENDENCY_PROBLEM_LIMIT] + [f"and {len(problems) - DEPENDENCY_PROBLEM_LIMIT} more"]
+    if unnamed:
+        problems.append(f"and {unnamed} more")
     return problems
 
 
@@ -1110,10 +1126,6 @@ def reconcile(
         raise StateError("snapshot_invalid", "give at least one --snapshot")
     parent = read_state(directory)["meta"].get("trackerParent")
     snapshots = [read_snapshot(Path(path), max_age, parent=parent) for path in snapshot_paths]
-    # Each snapshot was checked alone; a cycle can still run across two of them.
-    together = [(item["subject"], item.get("blockedBy", [])) for snapshot in snapshots
-                if snapshot["source"] == "tracker" for item in snapshot["items"]]
-    problems = dependency_problems(together, parent)
     seen: dict[tuple[str, str], str] = {}
     for path, snapshot in zip(snapshot_paths, snapshots):
         for item in snapshot["items"]:
@@ -1122,12 +1134,11 @@ def reconcile(
                 raise StateError("snapshot_invalid", f"{item['subject']} is in two {snapshot['source']} snapshots, "
                                                      f"{seen[key]} and {Path(path).name}: give one view of each")
             seen[key] = Path(path).name
+    # Each snapshot was checked alone; a cycle can still run across two of them.
+    problems = dependency_problems([(item["subject"], item.get("blockedBy", [])) for snapshot in snapshots
+                                    if snapshot["source"] == "tracker" for item in snapshot["items"]], parent)
     if problems:
         raise StateError("snapshot_invalid", "the tracker snapshots together: " + "; ".join(problems))
-    for path, snapshot in zip(snapshot_paths, snapshots):
-        for item in snapshot["items"]:
-            key = (snapshot["source"], item["subject"])
-            seen[key] = Path(path).name
     finished: list[dict] = []
     held: list[dict] = []
     _finish_recovery(directory, finished, held)
