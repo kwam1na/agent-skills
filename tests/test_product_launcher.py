@@ -1055,6 +1055,25 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                 probe.wait()
             self.assertIsNone(_darwin_environment(1))  # another user's process
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_the_tree_is_observed_at_spawn_and_while_the_command_runs(self) -> None:
+        child = Mock(pid=12345)
+        ticks = iter([subprocess.TimeoutExpired("worker", 0.1)] * 4 + [0])
+
+        def wait(*, timeout):
+            outcome = next(ticks)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        child.wait.side_effect = wait
+        tracker = Mock()
+        with patch("agent_skills.product.subprocess.Popen", return_value=child), \
+             patch("agent_skills.product._DescendantTracker", return_value=tracker):
+            self.assertEqual(_run_command(["worker"], ROOT), 0)
+        # Once right after spawn, then once per wait tick (throttled inside).
+        self.assertEqual(tracker.observe.call_args_list, [call()] + [call(throttle=True)] * 4)
+
     def test_the_launched_command_carries_a_fresh_launch_marker(self) -> None:
         child = Mock(pid=12345)
         child.wait.return_value = 0
