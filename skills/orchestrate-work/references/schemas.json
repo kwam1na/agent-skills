@@ -224,6 +224,109 @@
           "handoffsNeedAcceptance": {
             "description": "Set by the lead. true makes every lane hand-off wait as pending until the lead accepts it; absent or false, a hand-off is accepted as it is made.",
             "type": "boolean"
+          },
+          "sources": {
+            "description": "Written by serve's refresh: per source, whether the record observes it, has a stale read of it (and when it was last read), or does not observe it because the binding declares no command. Changes only when a source's status does.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "tracker": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "since"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "observed",
+                      "stale",
+                      "not_observed"
+                    ]
+                  },
+                  "since": {
+                    "$ref": "#/$defs/timestamp"
+                  },
+                  "lastReadAt": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/$defs/timestamp"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "forge": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "since"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "observed",
+                      "stale",
+                      "not_observed"
+                    ]
+                  },
+                  "since": {
+                    "$ref": "#/$defs/timestamp"
+                  },
+                  "lastReadAt": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/$defs/timestamp"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          },
+          "sourceReports": {
+            "description": "Written by serve's refresh: what the last applied reconcile could not settle and left for the lead, such as a change request closed without merging. Replaced only by the next applied reconcile.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "subject",
+                "note"
+              ],
+              "properties": {
+                "subject": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/$defs/name"
+                    }
+                  ]
+                },
+                "note": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
           }
         }
       },
@@ -1731,6 +1834,32 @@
                 "minimum": 1
               }
             }
+          },
+          "forgeSnapshot": {
+            "description": "Optional: the repository's command that prints a work-snapshot/1 forge snapshot of the delivery's change requests, for forge-snapshot and serve's refresh to run. {parent} in argv is the record's meta.trackerParent.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "argv"
+            ],
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "refreshSeconds": {
+            "description": "Optional. How often serve reads the declared forge and tracker snapshots and reconciles them, in seconds, at most 86400; 180 when absent, and 0 turns it off.",
+            "type": "integer",
+            "minimum": 0
           },
           "statusOverrideMaxAgeSeconds": {
             "description": "Optional. How long a lead's status override lasts before the derived status line returns; 14400 when absent.",

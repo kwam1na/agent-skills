@@ -2113,7 +2113,8 @@ def _refused_stop(subject: str, head: str | None) -> Callable[[dict], tuple[dict
     return build
 
 
-def _setup_stop(repository: Path, state_directory: Path, *, remote: str, base: str, lead: str) -> Result:
+def _setup_stop(repository: Path, state_directory: Path, *, remote: str, base: str,
+                lead: str) -> tuple[Result, dict | None]:
     """Read the binding from the base and check the checkout once, under the queue lock, before serving anything."""
     runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead)
 
@@ -2121,11 +2122,29 @@ def _setup_stop(repository: Path, state_directory: Path, *, remote: str, base: s
         with runner.locked():
             result.baseHead = runner.load()
             result.base = base
+        # A refresh setting the tool cannot use would fail on every interval: refuse it here, once.
+        member = (runner.binding or {}).get("state", {})
+        try:
+            delivery_state.refresh_interval(member)
+            for source in delivery_state.SNAPSHOT_SOURCES:
+                delivery_state.snapshot_config(member, source)
+        except delivery_state.StateError as error:
+            raise Stop("binding_invalid", str(error)) from None
 
     try:
-        return runner.invoke("serve", None, check)
+        result = runner.invoke("serve", None, check)
     finally:
         shutil.rmtree(runner._bootstrap_hooks, ignore_errors=True)
+    return result, runner.binding
+
+
+def _refresh(repository: Path, state_directory: Path, member: dict) -> None:
+    """Read the declared forge and tracker snapshots and reconcile them; a failure is reported, never fatal."""
+    try:
+        delivery_state.refresh_sources(state_directory, member, cwd=repository)
+    except (delivery_state.StateError, OSError) as error:
+        # Each source's own failures are recorded on the record; this is the refresh itself failing.
+        print(f"serve: the refresh of the forge and tracker failed: {error}", file=sys.stderr, flush=True)
 
 
 def serve(
@@ -2140,6 +2159,7 @@ def serve(
     seams: dict[str, Seam] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     on_result: Callable[[Result], None] | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> list[Result]:
     """Take what is queued, in order, whenever the merge slot is free.
 
@@ -2149,8 +2169,11 @@ def serve(
     until the lead journals base.repaired; a stopped candidate waits for its
     lane to hand it off again, and so does a refused one, which serve would
     otherwise take again every turn. A checkout or binding the runner cannot
-    use ends serve before it takes anything, with that one result. Each turn takes the queue lock afresh, so
-    a serve killed outright is cleared by the next one's recovery. With
+    use ends serve before it takes anything, with that one result. Each turn
+    takes the queue lock afresh, so a serve killed outright is cleared by the
+    next one's recovery. Between turns, on the binding's state.refreshSeconds,
+    serve reads the declared forge and tracker snapshots and reconciles them,
+    whether or not it is held; a run in progress delays the read. With
     until_idle, serving ends once nothing more can be taken and returns every
     result; without it, serving never returns, so each result goes to
     on_result as it is written and none is kept.
@@ -2158,7 +2181,7 @@ def serve(
     results: list[Result] = []
     while True:
         # A wrong checkout or binding would refuse every candidate in turn: find it once, before taking any.
-        setup = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+        setup, binding = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
         if setup.stop is None:
             break
         if setup.stop["reason"] != "queue_locked":
@@ -2169,9 +2192,21 @@ def serve(
         if until_idle:
             return results
         sleep(poll)
+    member = (binding or {}).get("state", {})
+    interval = delivery_state.refresh_interval(member)
+    due = clock()
+
+    def pause() -> None:
+        # An idle wait ends when the next read of the sources is due, so it is never late by a poll.
+        sleep(poll if not interval else max(0.0, min(poll, due - clock())))
+
     while True:
         # A killed serve or run leaves live state behind; clear it first, even when nothing is queued.
         Runner(repository, state_directory, remote=remote, base=base, lead=lead).recover()
+        if interval and clock() >= due:
+            # Before the queue is read, so a merge the forge reports is never taken again.
+            _refresh(repository, state_directory, member)
+            due = clock() + interval
         state = delivery_state.read_state(state_directory)
         journal = delivery_state.read_journal(state_directory)
         waiting = [
@@ -2181,7 +2216,7 @@ def serve(
         if state["meta"].get("hold") or delivery_state.base_awaits_repair(journal) or not waiting:
             if until_idle:
                 return results
-            sleep(poll)
+            pause()
             continue
         heads = {item["subject"]: item["head"] for item in state["queue"]}
         runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams)
@@ -2190,7 +2225,7 @@ def serve(
             # Another runner holds the queue: nothing was attempted, so nothing is recorded.
             if until_idle:
                 return results
-            sleep(poll)
+            pause()
             continue
         for result in taken:
             write_result(state_directory, result)
@@ -2211,7 +2246,7 @@ def serve(
             # Nothing it took left queued (another runner held the lock): wait rather than spin.
             if until_idle:
                 return results
-            sleep(poll)
+            pause()
 
 
 def main(argv: list[str] | None = None) -> int:

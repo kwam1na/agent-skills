@@ -1997,6 +1997,306 @@ class TrackerSnapshotTests(unittest.TestCase):
         self.assertEqual(result["taken"], True)
 
 
+SOURCE_TOOL = """
+import datetime, json, sys, time
+source, world = sys.argv[1], sys.argv[2]
+with open(world + ".runs", "a") as runs:
+    runs.write("run\\n")
+seen = json.load(open(world))
+if seen["mode"] == "fail":
+    print("refused", file=sys.stderr); sys.exit(3)
+if seen["mode"] == "sleep":
+    time.sleep(5)
+taken = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+print(json.dumps({"takenAt": taken, "source": seen.get("source", source), "items": seen["items"]}))
+"""
+
+
+class SourceRefreshTests(unittest.TestCase):
+    """serve's refresh: each declared snapshot command runs, what it took is reconciled, and each source's status is kept."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.directory = self.root / "state"
+        state_tool.init(self.directory, "Epic underway")
+        self.tool = self.root / "source tool.py"
+        self.tool.write_text(SOURCE_TOOL, encoding="utf-8")
+        self.worlds = {source: self.root / f"{source} world.json" for source in ("tracker", "forge")}
+        for source in self.worlds:
+            self.world(source, [])
+
+    def world(self, which: str, items: list[dict], mode: str = "ok", **extra: object) -> None:
+        self.worlds[which].write_text(json.dumps({"mode": mode, "items": items, **extra}), encoding="utf-8")
+
+    def runs(self, source: str) -> int:
+        path = Path(str(self.worlds[source]) + ".runs")
+        return len(path.read_text().splitlines()) if path.exists() else 0
+
+    def member(self, *sources: str, **extra: object) -> dict:
+        member = {"directory": "state", "renderers": [], "publishers": [], **extra}
+        for source in sources:
+            member[f"{source}Snapshot"] = {"argv": [sys.executable, "-B", str(self.tool), source, str(self.worlds[source])],
+                                           "timeoutSeconds": 2}
+        return member
+
+    def refresh(self, *sources: str, **extra: object) -> dict:
+        return state_tool.refresh_sources(self.directory, self.member(*sources, **extra))
+
+    def sources(self) -> dict | None:
+        return state_tool.read_state(self.directory)["meta"].get("sources")
+
+    def footprint(self) -> tuple:
+        return state_tool.read_state(self.directory)["version"], len(state_tool.read_journal(self.directory))
+
+    def notes(self, source: str) -> list[str]:
+        return [entry["summary"] for entry in state_tool.read_journal(self.directory)
+                if entry["summary"].startswith(f"{source}-snapshot:")]
+
+    def queue(self, *items: dict) -> None:
+        version = state_tool.read_state(self.directory)["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"queue": list(items)})
+
+    def test_both_sources_are_reconciled_and_an_unchanged_refresh_writes_nothing(self) -> None:
+        self.queue(queue_item("work-a"))
+        self.world("tracker", [{"subject": "work-t", "title": "Ticket", "state": "started"}])
+        self.world("forge", [{"subject": "work-a", "state": "merged", "head": HEAD_A}])
+        self.refresh("tracker", "forge")
+        state = state_tool.read_state(self.directory)
+        self.assertEqual([entry["subject"] for entry in state["planned"]], ["work-t"])
+        self.assertEqual(next(item for item in state["queue"] if item["subject"] == "work-a")["stage"], "merged")
+        self.assertEqual({source: entry["status"] for source, entry in self.sources().items()},
+                         {"tracker": "observed", "forge": "observed"})
+        before = self.footprint()
+        self.refresh("tracker", "forge")
+        self.assertEqual(self.footprint(), before, "nothing changed: no record write and no journal entry")
+        self.assertEqual((self.runs("tracker"), self.runs("forge")), (2, 2))
+
+    def test_a_failing_source_is_noted_once_keeps_its_last_snapshot_and_recovers(self) -> None:
+        self.world("tracker", [{"subject": "work-t", "title": "Ticket", "state": "backlog"}])
+        self.refresh("tracker", "forge")
+        kept = json.loads((self.directory / "snapshots" / "tracker.json").read_text(encoding="utf-8"))
+        self.world("tracker", [], mode="fail")
+        self.world("forge", [{"subject": "work-t", "state": "open"}])
+        self.refresh("tracker", "forge")
+        tracker = self.sources()["tracker"]
+        self.assertEqual((tracker["status"], tracker["lastReadAt"]), ("stale", kept["takenAt"]))
+        self.assertIn("exited with 3", tracker["reason"])
+        self.assertEqual(self.sources()["forge"]["status"], "observed", "the other source is still read")
+        self.assertEqual(json.loads((self.directory / "snapshots" / "tracker.json").read_text(encoding="utf-8")), kept)
+        self.assertEqual(self.notes("tracker"), ["tracker-snapshot: the command exited with 3; the last snapshot stands"])
+        before = self.footprint()
+        self.refresh("tracker", "forge")
+        self.assertEqual(self.footprint(), before, "the same outage is recorded once")
+        self.world("tracker", [{"subject": "work-t", "title": "Ticket", "state": "backlog"}])
+        self.refresh("tracker", "forge")
+        self.assertEqual(self.sources()["tracker"]["status"], "observed")
+        self.assertNotIn("lastReadAt", self.sources()["tracker"])
+        self.assertEqual(self.notes("tracker")[-1], "tracker-snapshot: taken again")
+
+    def test_a_source_that_never_answered_was_never_read(self) -> None:
+        self.world("forge", [], mode="sleep")
+        self.refresh("forge")
+        forge = self.sources()["forge"]
+        self.assertEqual((forge["status"], forge["lastReadAt"]), ("stale", None))
+        self.assertIn("timed out", forge["reason"])
+
+    def test_only_declared_sources_are_read_and_the_rest_are_reported_as_not_observed(self) -> None:
+        for declared, expected in ((("tracker",), {"tracker": "observed", "forge": "not_observed"}),
+                                   (("forge",), {"tracker": "not_observed", "forge": "observed"}),
+                                   ((), {"tracker": "not_observed", "forge": "not_observed"})):
+            with self.subTest(declared=declared):
+                self.refresh(*declared)
+                self.assertEqual({source: entry["status"] for source, entry in self.sources().items()}, expected)
+                before = self.footprint()
+                self.refresh(*declared)
+                self.assertEqual(self.footprint(), before)
+
+    def test_a_snapshot_from_the_wrong_source_is_refused_as_that_source(self) -> None:
+        self.world("forge", [{"subject": "work-t", "state": "started"}], source="tracker")
+        self.refresh("forge")
+        self.assertEqual(self.sources()["forge"]["status"], "stale")
+        self.assertEqual(self.notes("forge"), ["forge-snapshot: the command's snapshot is not a valid forge snapshot; "
+                                               "the last snapshot stands"])
+
+    def test_a_snapshot_reconcile_refuses_marks_its_source_stale_rather_than_failing(self) -> None:
+        self.world("tracker", [{"subject": "work-t", "state": "started"}])
+        refused = state_tool.StateError("version_stale", "the record kept changing")
+        with mock.patch.object(state_tool, "reconcile", side_effect=refused):
+            result = self.refresh("tracker", "forge")
+        self.assertTrue(result["ok"])
+        for source in ("tracker", "forge"):
+            self.assertEqual(self.sources()[source]["status"], "stale")
+            self.assertIn("the record kept changing", self.sources()[source]["reason"])
+
+    def test_the_forge_snapshot_command_line_mirrors_the_tracker_one(self) -> None:
+        self.world("forge", [{"subject": "work-a", "state": "open"}])
+        binding = self.root / "binding.json"
+        binding.write_text(json.dumps({"state": self.member("forge")}), encoding="utf-8")
+        output = self.root / "forge.json"
+        code, result = run_tool(self.directory, "forge-snapshot", "--binding", str(binding), "--output", str(output))
+        self.assertEqual((code, result["taken"]), (0, True), result)
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["source"], "forge")
+        for block in ({"argv": []}, {"argv": ["x"], "timeoutSeconds": 0}, {"argv": ["x"], "retries": 2}):
+            with self.subTest(block=block):
+                binding.write_text(json.dumps({"state": {"directory": "state", "renderers": [], "publishers": [],
+                                                         "forgeSnapshot": block}}), encoding="utf-8")
+                code, refused = run_tool(self.directory, "forge-snapshot", "--binding", str(binding),
+                                         "--output", str(output))
+                self.assertEqual((code, refused["code"]), (1, "binding_invalid"))
+
+    def test_the_binding_declares_the_forge_command_and_the_interval(self) -> None:
+        schema = state_tool.load_schema("orchestration-binding/1")
+        member = {**schema["properties"]["state"], "$defs": schema["$defs"]}
+        good = {"directory": "s", "renderers": [], "publishers": [], "refreshSeconds": 0,
+                "forgeSnapshot": {"argv": ["tool"], "timeoutSeconds": 30}}
+        self.assertEqual(state_tool.validate(good, member), [])
+        self.assertTrue(state_tool.validate({**good, "refreshSeconds": -1}, member))
+        self.assertEqual(state_tool.refresh_interval({}), 180)
+        self.assertEqual(state_tool.refresh_interval({"refreshSeconds": 0}), 0)
+        for bad in (-1, True, "60", 1.5):
+            with self.subTest(bad=bad):
+                path = self.root / "bad.json"
+                path.write_text(json.dumps({"state": {"directory": "state", "renderers": [], "publishers": [],
+                                                      "refreshSeconds": bad}}), encoding="utf-8")
+                with self.assertRaises(state_tool.StateError) as caught:
+                    state_tool.binding_state(path)
+                self.assertEqual(caught.exception.code, "binding_invalid")
+
+    def test_only_the_runner_writes_the_sources(self) -> None:
+        version = state_tool.read_state(self.directory)["version"]
+        with self.assertRaises(state_tool.StateError) as caught:
+            state_tool.patch(self.directory, writer="lead", version=version,
+                             changes={"meta": {"sources": {"tracker": {"status": "not_observed", "since": taken(0)}}}})
+        self.assertEqual(caught.exception.code, "field_not_owned")
+
+    def test_what_reconcile_leaves_for_the_lead_reaches_the_record_and_changes_only_when_it_does(self) -> None:
+        self.queue(queue_item("work-a"))
+        version = state_tool.read_state(self.directory)["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"planned": [planned("work-p")]})
+        self.world("tracker", [{"subject": "work-p", "state": "canceled"}])
+        self.world("forge", [{"subject": "work-a", "state": "closed"}])
+        self.refresh("tracker", "forge")
+        reports = [{"subject": "work-a", "note": "its change request closed without merging"},
+                   {"subject": "work-p", "note": "canceled in the tracker but still planned in the record"}]
+        self.assertEqual(state_tool.read_state(self.directory)["meta"]["sourceReports"], reports)
+        self.assertEqual(state_tool.show(self.directory)["status"]["text"],
+                         "next: work-a · for the lead: work-a: its change request closed without merging, then 1 more")
+        before = self.footprint()
+        self.refresh("tracker", "forge")
+        self.assertEqual(self.footprint(), before, "the same reports are not written again")
+        # The same reports in another order are the same reports.
+        self.queue(queue_item("work-a"), queue_item("work-b", order=2))
+        self.world("forge", [{"subject": "work-a", "state": "closed"}, {"subject": "work-b", "state": "closed"}])
+        self.refresh("tracker", "forge")
+        before = self.footprint()
+        self.world("forge", [{"subject": "work-b", "state": "closed"}, {"subject": "work-a", "state": "closed"}])
+        self.refresh("tracker", "forge")
+        self.assertEqual(self.footprint(), before)
+        self.world("tracker", [])
+        self.world("forge", [])
+        self.refresh("tracker", "forge")
+        self.assertEqual(state_tool.read_state(self.directory)["meta"]["sourceReports"], [])
+
+    def test_a_failed_source_s_last_fresh_read_still_counts_for_the_reports(self) -> None:
+        self.queue(queue_item("work-a"))
+        self.world("forge", [{"subject": "work-a", "state": "closed"}])
+        self.refresh("tracker", "forge")
+        self.world("forge", [], mode="fail")
+        self.refresh("tracker", "forge")
+        self.assertEqual([report["subject"] for report in state_tool.read_state(self.directory)["meta"]["sourceReports"]],
+                         ["work-a"], "a forge outage does not clear what the forge last said")
+        self.world("tracker", [], mode="fail")
+        self.refresh("tracker", "forge")
+        self.assertEqual([report["subject"] for report in state_tool.read_state(self.directory)["meta"]["sourceReports"]],
+                         ["work-a"], "nothing was reconciled, so the reports stand")
+
+    def test_a_block_the_tool_cannot_run_marks_only_its_own_source_stale(self) -> None:
+        self.world("tracker", [{"subject": "work-t", "title": "Ticket", "state": "started"}])
+        member = self.member("tracker")
+        member["forgeSnapshot"] = {"argv": ["tool"], "timeoutSeconds": 900}
+        result = state_tool.refresh_sources(self.directory, member)
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.sources()["tracker"]["status"], "observed")
+        self.assertEqual([entry["subject"] for entry in state_tool.read_state(self.directory)["planned"]], ["work-t"])
+        self.assertEqual(self.sources()["forge"]["status"], "stale")
+        self.assertIn("forgeSnapshot", self.sources()["forge"]["reason"])
+
+    def test_a_block_that_turns_bad_leaves_its_source_s_last_read_counting(self) -> None:
+        self.queue(queue_item("work-a"))
+        self.world("forge", [{"subject": "work-a", "state": "closed"}])
+        self.refresh("tracker", "forge")
+        member = self.member("tracker", "forge")
+        member["forgeSnapshot"]["timeoutSeconds"] = 900
+        state_tool.refresh_sources(self.directory, member)
+        self.assertEqual([report["subject"] for report in state_tool.read_state(self.directory)["meta"]["sourceReports"]],
+                         ["work-a"])
+
+    def test_a_command_s_error_output_is_kept_only_as_a_tail(self) -> None:
+        import tracemalloc
+        tracemalloc.start()
+        self.addCleanup(tracemalloc.stop)
+        code, _, detail = state_tool._run_bounded(
+            [sys.executable, "-c", "import sys\nfor _ in range(800): sys.stderr.write('e' * 65536)\nsys.exit(4)"], 30, 1024)
+        _, peak = tracemalloc.get_traced_memory()
+        self.assertEqual(code, 4)
+        self.assertLessEqual(len(detail), 300)
+        self.assertLess(peak, 8 * 1024 * 1024, "50 MiB on stderr is never held whole")
+
+    def test_a_reconcile_that_keeps_refusing_keeps_the_last_applied_read_and_writes_once(self) -> None:
+        self.refresh("tracker")
+        applied = json.loads((self.directory / "snapshots" / "tracker.json").read_text(encoding="utf-8"))["takenAt"]
+        refused = state_tool.StateError("version_stale", "the record kept changing")
+        with mock.patch.object(state_tool, "reconcile", side_effect=refused):
+            time.sleep(1.1)
+            self.refresh("tracker")
+            self.assertEqual(self.sources()["tracker"]["lastReadAt"], applied, "a refused read was never applied")
+            before = self.footprint()
+            time.sleep(1.1)
+            self.refresh("tracker")
+            self.assertEqual(self.footprint(), before)
+
+    def test_an_unchanged_read_after_an_outage_ended_writes_nothing(self) -> None:
+        self.world("tracker", [], mode="fail")
+        self.refresh("tracker")
+        self.world("tracker", [])
+        self.refresh("tracker")
+        before = self.footprint()
+        self.refresh("tracker")
+        self.assertEqual(self.footprint(), before)
+
+    def test_the_interval_has_a_ceiling(self) -> None:
+        for bad in (86401, 10 ** 400):
+            with self.subTest(bad=bad):
+                with self.assertRaises(state_tool.StateError) as caught:
+                    state_tool.refresh_interval({"refreshSeconds": bad})
+                self.assertEqual(caught.exception.code, "binding_invalid")
+        self.assertEqual(state_tool.refresh_interval({"refreshSeconds": 86400}), 86400)
+
+    def test_a_command_that_never_stops_printing_is_stopped_at_the_limit(self) -> None:
+        import tracemalloc
+        tracemalloc.start()
+        self.addCleanup(tracemalloc.stop)
+        started = time.monotonic()
+        code, out, reason = state_tool._run_bounded(
+            # Far past the limit, yet finite: a reader that ignored the limit could not take the machine with it.
+            [sys.executable, "-c", "import sys\nfor _ in range(4096): sys.stdout.write('x' * 65536)"], 30, 1_000_000)
+        self.assertEqual((code, out), (None, b""))
+        self.assertIn("printed more than 1000000 bytes", reason)
+        self.assertLess(time.monotonic() - started, 15, "stopped at the limit, not at the timeout")
+        self.assertLess(tracemalloc.get_traced_memory()[1], 8 * 1024 * 1024, "never held past the limit")
+
+    def test_the_status_says_when_a_stale_source_was_last_read(self) -> None:
+        record = {"meta": {"headline": "Epic", "checking": {"now": None, "next": []}, "sources": {
+            "tracker": {"status": "stale", "since": "2026-10-21T11:00:00Z", "lastReadAt": "2026-10-21T10:57:00Z",
+                        "reason": "the command exited with 3"},
+            "forge": {"status": "stale", "since": "2026-10-21T11:00:00Z", "lastReadAt": None, "reason": "timed out"},
+        }}, "queue": [], "lanes": [], "planned": []}
+        self.assertEqual(state_tool.delivery_status(record, [], at="2026-10-21T12:00:00Z")["text"],
+                         "tracker last read at 2026-10-21T10:57:00Z · forge never read")
+
+
 class QueueEstimateTests(unittest.TestCase):
     """Waiting candidates get a position and an estimated start, folded from the record's check history."""
 
