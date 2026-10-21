@@ -21,11 +21,13 @@ from agent_skills.product import (
     _DescendantTracker,
     _LAUNCH_MARKER,
     _Process,
+    _Stamp,
     _darwin_environment,
     _ForkWatcher,
     _darwin_pipes,
     _darwin_process,
     _darwin_process_table,
+    _libproc,
     _lifeline_handle,
     _observed_child_liveness,
     _proc_environment,
@@ -1164,6 +1166,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             self.assertEqual(tracker.escaped(), (200,))
             self.assertEqual(tracker.refused(), (1, 300, parent, grandparent))
             self.assertEqual(tracker.preview(), {
+                "identity": "start-time",
                 "group": 100,
                 "escaped": [[200, "marker"]],
                 "refused": [[1, "init"], [300, "other-user"], [parent, "caller"], [grandparent, "caller"]],
@@ -1651,6 +1654,112 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         for fd in (read_end, write_end):
             with self.assertRaises(OSError):
                 os.fstat(fd)
+
+    def test_macos_unique_ids_order_and_identify_processes_exactly(self) -> None:
+        # The kernel's unique id orders processes whatever the wall clock says.
+        self.assertTrue(_precedes(_Stamp(20, 0, 5), _Stamp(10, 0, 6)))
+        self.assertFalse(_precedes(_Stamp(10, 0, 6), _Stamp(20, 0, 5)))
+        # No hour of slack is needed: a process forked later is never before,
+        # even two hours earlier by a clock stepped back, and one forked earlier
+        # always is.
+        self.assertFalse(_started_before(_Stamp(1000, 0, 9), _Stamp(8200, 0, 8)))
+        self.assertTrue(_started_before(_Stamp(8200, 0, 8), _Stamp(1000, 0, 9)))
+        # Against a stamp without one (an exit seen), the clock decides.
+        self.assertTrue(_precedes(_Stamp(14, 0, 99), (15, 0)))
+        self.assertFalse(_precedes(_Stamp(15, 0, 1), (15, 0)))
+
+    def test_a_pid_reused_by_a_process_with_a_new_unique_id_is_never_selected(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        table = {
+            100: _Process(me, 100, UID, _Stamp(10, 0, 40), False, 30),
+            300: _Process(100, 100, UID, _Stamp(11, 0, 50), False, 40),   # a group member
+            301: _Process(100, 301, UID, _Stamp(11, 0, 51), False, 40),   # escaped
+        }
+        with patch("agent_skills.product.os.kill", side_effect=AssertionError("signalled")), \
+             patch("agent_skills.product.os.killpg", side_effect=AssertionError("signalled")):
+            tracker = _DescendantTracker(child, table=lambda: dict(table))
+            tracker.observe()
+            self.assertEqual(tracker.escaped(), (301,))
+            self.assertEqual(tracker.group_members(), (100, 300))
+            # Both pids now name unrelated processes, with the very same wall-clock
+            # start and a new unique id each: neither is selected.
+            table[300] = _Process(1, 300, UID, _Stamp(11, 0, 77), False, 1)
+            table[301] = _Process(1, 301, UID, _Stamp(11, 0, 78), False, 1)
+            self.assertEqual(tracker.escaped(), ())
+            self.assertEqual(tracker.group_members(), (100,))
+            # A later descendant that reuses a known pid is learned afresh.
+            table[301] = _Process(100, 301, UID, _Stamp(12, 0, 79), False, 40)
+            self.assertEqual(tracker.escaped(), (301,))
+            self.assertEqual(tracker.preview()["identity"], "unique-id")
+
+    def test_a_process_forked_by_a_known_descendant_is_found_after_it_is_reparented(self) -> None:
+        # Its parent's unique id survives reparenting to init, so a daemon whose
+        # parent exited between two observations is still known as the run's.
+        me = os.getpid()
+        child = Mock(pid=100)
+        table = {
+            100: _Process(me, 100, UID, _Stamp(10, 0, 40), False, 30),
+            300: _Process(100, 100, UID, _Stamp(11, 0, 50), False, 40),
+        }
+        tracker = _DescendantTracker(child, table=lambda: dict(table))
+        tracker.observe()
+        del table[300]
+        table.update({
+            310: _Process(1, 310, UID, _Stamp(12, 0, 60), False, 50),    # forked by 300
+            311: _Process(1, 311, UID, _Stamp(12, 0, 61), False, 999),   # forked by a stranger
+            312: _Process(1, 312, UID, _Stamp(12, 0, 62), False, 40),    # forked by the child
+        })
+        self.assertEqual(tracker.escaped(), (310, 312))
+        self.assertEqual(tracker.preview()["escaped"], [[310, "descendant"], [312, "descendant"]])
+        # The fork watcher's parent is checked by unique id, not by pid alone.
+        table[300] = _Process(100, 100, UID, _Stamp(11, 0, 50), False, 40)
+        processes = {300: table[300], 320: _Process(300, 320, UID, _Stamp(13, 0, 70), False, 51)}
+        with patch("agent_skills.product._darwin_process", side_effect=processes.get):
+            self.assertFalse(tracker.adopt(320, 300))
+            processes[320] = _Process(300, 320, UID, _Stamp(13, 0, 70), False, 50)
+            self.assertTrue(tracker.adopt(320, 300))
+
+    def test_a_marker_match_forked_before_the_child_is_refused_by_unique_id_whatever_the_clock(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        marker = b"AGENT_SKILLS_LAUNCH_k=1"
+        table = {
+            100: _Process(me, 100, UID, _Stamp(10, 0, 40), False, 30),
+            200: _Process(1, 200, UID, _Stamp(99, 0, 39), False, 1),    # later clock, earlier fork
+            201: _Process(1, 201, UID, _Stamp(5, 0, 41), False, 7),     # clock stepped back, later fork
+        }
+        read = []
+        tracker = _DescendantTracker(child, table=lambda: dict(table), marker=marker,
+                                     environment=lambda pid: read.append(pid) or [marker])
+        self.assertEqual(tracker.escaped(), (201,))
+        # Forked before the child, it is not even a candidate.
+        self.assertEqual(read, [201])
+        self.assertEqual(tracker.refused(), ())
+        self.assertEqual(tracker.preview()["escaped"], [[201, "marker"]])
+
+    @unittest.skipUnless(sys.platform == "darwin", "libproc")
+    def test_the_macos_process_reader_returns_unique_ids_and_the_parents(self) -> None:
+        me = _darwin_process(os.getpid())
+        self.assertIsInstance(me.started, _Stamp)
+        probe = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
+        try:
+            found = _darwin_process(probe.pid)
+            self.assertEqual(found.parent_unique, me.started.unique)
+            self.assertGreater(found.started.unique, me.started.unique)
+        finally:
+            probe.kill()
+            probe.wait()
+        self.assertIsInstance(_darwin_process_table()[os.getpid()].started, _Stamp)
+        # Where the unique id cannot be read, the start stamp alone remains.
+        real = _libproc()
+        fallback = Mock(wraps=real)
+        fallback.proc_pidinfo.side_effect = lambda pid, flavor, *rest: (
+            0 if flavor == 18 else real.proc_pidinfo(pid, flavor, *rest))
+        with patch("agent_skills.product._libproc", return_value=fallback):
+            plain = _darwin_process(os.getpid())
+        self.assertEqual(plain.started, tuple(me.started[:2]))
+        self.assertIsNone(plain.parent_unique)
 
     def test_process_environments_are_read_where_the_platform_exposes_them(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

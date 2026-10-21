@@ -89,14 +89,27 @@ def _incomplete_cancellation(
 _LAUNCH_MARKER = "AGENT_SKILLS_LAUNCH"
 
 
+class _Stamp(NamedTuple):
+    """A macOS process start: wall-clock seconds and microseconds, and the
+    kernel's unique id, which is never reused while the system is up and
+    grows with every process created."""
+    seconds: int
+    micros: int
+    unique: int
+
+
 class _Process(NamedTuple):
     ppid: int
     pgid: int
     uid: int
-    # Opaque, compared only for equality: the same pid with a different start
-    # is a different process.
+    # Compared for equality: the same pid with a different start is a
+    # different process. A ``_Stamp`` on macOS, so a reused pid differs
+    # even within the clock's resolution.
     started: object
     zombie: bool
+    # The unique id of the process that forked this one (macOS), which
+    # reparenting does not change; None where it cannot be read.
+    parent_unique: int | None = None
 
 
 _LIBPROC: list = []
@@ -116,21 +129,34 @@ def _libproc():
 
 
 def _darwin_process(pid: int, info=None) -> _Process | None:
-    """One process from PROC_PIDTBSDINFO, or None when it cannot be read."""
+    """One process from libproc, or None when it cannot be read.
+
+    PROC_PIDT_BSDINFOWITHUNIQID adds the process's unique id and its
+    parent's to PROC_PIDTBSDINFO; where it cannot be read, the start stamp
+    alone identifies the process.
+    """
     import ctypes
 
     # struct proc_bsdinfo: pbi_status at 4, pbi_ppid and pbi_uid at 16,
-    # pbi_pgid at 100, pbi_start_tvsec and _tvusec at 120.
-    size = 136
-    info = info if info is not None else ctypes.create_string_buffer(size)
-    if pid <= 0 or _libproc().proc_pidinfo(pid, 3, 0, info, size) != size:
+    # pbi_pgid at 100, pbi_start_tvsec and _tvusec at 120; then
+    # proc_uniqidentifierinfo: p_uuid, then p_uniqueid at 152 and
+    # p_puniqueid at 160.
+    info = info if info is not None else ctypes.create_string_buffer(192)
+    if pid <= 0:
+        return None
+    libproc = _libproc()
+    unique = parent_unique = None
+    if libproc.proc_pidinfo(pid, 18, 0, info, 192) == 192:  # PROC_PIDT_BSDINFOWITHUNIQID
+        unique, parent_unique = struct.unpack_from("QQ", info.raw, 152)
+    elif libproc.proc_pidinfo(pid, 3, 0, info, 136) != 136:  # PROC_PIDTBSDINFO
         return None
     raw = info.raw
     (status,) = struct.unpack_from("I", raw, 4)
     ppid, uid = struct.unpack_from("II", raw, 16)
     (pgid,) = struct.unpack_from("I", raw, 100)
-    started = struct.unpack_from("QQ", raw, 120)
-    return _Process(ppid, pgid, uid, started, status == 5)  # SZOMB
+    seconds, micros = struct.unpack_from("QQ", raw, 120)
+    started = (seconds, micros) if unique is None else _Stamp(seconds, micros, unique)
+    return _Process(ppid, pgid, uid, started, status == 5, parent_unique)  # SZOMB
 
 
 def _darwin_children(pid: int) -> list[int]:
@@ -165,7 +191,7 @@ def _darwin_process_table() -> dict[int, _Process]:
         if count < len(pids):
             break
         capacity = count * 2
-    info = ctypes.create_string_buffer(136)
+    info = ctypes.create_string_buffer(192)
     table = {}
     for pid in pids[:count]:
         process = _darwin_process(pid, info)
@@ -433,8 +459,11 @@ def _started_before(started: object, reference: object) -> bool:
     macOS start stamps are wall-clock (seconds, microseconds), so an hour of
     slack keeps a clock stepped back during a run from hiding descendants.
     Linux stamps count ticks since boot. Stamps that do not order (ps text)
-    are never before.
+    are never before. Two macOS stamps with unique ids order exactly by
+    them, whatever the clock did.
     """
+    if isinstance(started, _Stamp) and isinstance(reference, _Stamp):
+        return started.unique < reference.unique
     if isinstance(started, tuple) and isinstance(reference, tuple):
         return started[0] < reference[0] - 3600
     if isinstance(started, int) and isinstance(reference, int):
@@ -449,9 +478,14 @@ def _wall_stamp() -> tuple[int, int]:
 
 
 def _precedes(started: object, reference: object) -> bool:
-    """Whether a start stamp is exactly earlier than the reference, with no slack."""
+    """Whether a start stamp is exactly earlier than the reference, with no slack.
+
+    By unique id where both have one; otherwise by the clock.
+    """
+    if isinstance(started, _Stamp) and isinstance(reference, _Stamp):
+        return started.unique < reference.unique
     if isinstance(started, tuple) and isinstance(reference, tuple):
-        return started < reference
+        return tuple(started[:2]) < tuple(reference[:2])
     if isinstance(started, int) and isinstance(reference, int):
         return started < reference
     return False
@@ -489,7 +523,9 @@ class _DescendantTracker:
     ``marker`` or ``lifeline`` match that started before the child, or,
     while the child is unconfirmed, before the launcher itself, nor any
     other that started more than an hour before the child (see
-    ``_refusal``). Pid and start are matched at each table read. A refused
+    ``_refusal``). On macOS, where each process's unique id is read, "before"
+    is exact by that id, with no slack, and a descendant is also known by its
+    parent's unique id after it is reparented. Pid and start are matched at each table read. A refused
     candidate is remembered and never signalled, and while one is still
     running cancellation reports itself incomplete.
     """
@@ -512,6 +548,9 @@ class _DescendantTracker:
         self._watcher = None
         self._lock = threading.RLock()
         self._known: dict[int, object] = {}
+        # The unique id of every process ever learned, the child's included,
+        # so one forked by a descendant since gone is still recognised.
+        self._uniques: set[int] = set()
         self._why: dict[int, str] = {}
         # Known processes the fork watcher saw exit: pid -> (start, seen at).
         self._ends: dict[int, tuple[object, object]] = {}
@@ -548,6 +587,8 @@ class _DescendantTracker:
                 return table
             self._confirmed = True
             self._root_started = root.started
+            if isinstance(root.started, _Stamp):
+                self._uniques.add(root.started.unique)
             if self._watcher_factory is not None:
                 try:
                     watcher = self._watcher_factory(self.adopt, self.ended)
@@ -567,11 +608,13 @@ class _DescendantTracker:
         if root_present:
             seeds.add(self._root)
         for pid, process in table.items():
-            if pid in self._known or process.zombie or (pid, process.started) in self._refused:
+            if self._known.get(pid) == process.started or process.zombie \
+                    or (pid, process.started) in self._refused:
                 continue
             if root_present and process.pgid == self._root:
                 self._learn(pid, process, "group", table)
-            elif self._descends(pid, table, seeds) or self._in_known_group(process, table):
+            elif process.parent_unique in self._uniques or self._descends(pid, table, seeds) \
+                    or self._in_known_group(process, table):
                 self._learn(pid, process, "descendant", table)
         return table
 
@@ -583,11 +626,12 @@ class _DescendantTracker:
         group named by a known descendant's pid, started after that
         descendant and while it was still there (it is now, or the fork
         watcher saw it exit later), joined that descendant's group, in a
-        session the run created. This finds a job a short-lived shell left
-        behind (``nohup sleep &``) after the shell exited. The exit is bounded
-        by when the watcher received it, so this relies on no pid being
-        reused within that instant. It applies only where the fork watcher
-        runs (macOS).
+        session the run created. This finds a job left in a short-lived
+        shell's group after the shell exited, when the process that forked
+        the job was never seen (a job whose parent was seen is found by its
+        parent's unique id instead). The exit is bounded by when the watcher
+        received it, so this relies on no pid being reused within that
+        instant. It applies only where the fork watcher runs (macOS).
         """
         if self._watcher_factory is None:
             return False
@@ -660,6 +704,8 @@ class _DescendantTracker:
             return False
         self._known[pid] = process.started
         self._why[pid] = why
+        if isinstance(process.started, _Stamp):
+            self._uniques.add(process.started.unique)
         if self._watcher is not None:
             self._watcher.watch(pid, process.started)
         return True
@@ -681,6 +727,8 @@ class _DescendantTracker:
             current = _darwin_process(parent)
             if vouched is None or current is None or current.started != vouched:
                 return False
+            if isinstance(vouched, _Stamp) and process.parent_unique not in (None, vouched.unique):
+                return False  # Forked by another process that held that pid.
             if self._known.get(pid) == process.started:
                 return True
             if (pid, process.started) in self._refused:
@@ -801,7 +849,11 @@ class _DescendantTracker:
         """
         with self._lock:
             escaped = self.escaped()
+            reference = self._root_started if self._root_started is not None else self._floor
             return {
+                # How processes were told apart: the kernel's unique id, or,
+                # where it cannot be read, the start stamp.
+                "identity": "unique-id" if isinstance(reference, _Stamp) else "start-time",
                 "group": self._root if self._root_present else None,
                 "escaped": None if escaped is None else [[pid, self._why[pid]] for pid in escaped],
                 # Behind an unreadable table every refusal still counts.
