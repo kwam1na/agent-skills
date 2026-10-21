@@ -305,11 +305,11 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "5ece2dee0ec55602c9e6b15e2786373d2ee142c9c23edd349cc89d8e50c9e9cc"
+          "sha256": "d606e0753966114f3fe21591cfec8efc9fb0aac0a37c57bb9badf5a06131360d"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "4c1d6dc04c3fe388b926f3b2125474a95481b328c01f9a480624f15e108af607"
+          "sha256": "772f651f2785b1682702b2021d6249676d42f67a4605b78a2d44a9b08bd23226"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -321,7 +321,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "5c1816e2c7a460c8903d850cb5b2c5065c9b49def06327190a460f7eeed30155"
+          "sha256": "eca4cc58a0742528ea2ad0af5c11dc8c6b1f069c2e3296db259edd7d6a5e37b3"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",

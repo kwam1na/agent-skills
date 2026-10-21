@@ -42,6 +42,7 @@ from typing import Callable, Iterable, Iterator
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import delivery_state  # noqa: E402
+import render_state  # noqa: E402
 from delivery_state import load_schema, validate  # noqa: E402
 
 
@@ -982,8 +983,33 @@ class Runner:
 
         A failing wrapper, renderer or publisher is recorded in the result's
         notes and never fails the runner.
+
+        When the binding declares no renderer and no publisher, the wrapper
+        would write nothing: no view, no outbox, and nothing of the record,
+        the journal or the change log, which only the state tool writes. All it
+        would do is check the configuration and read the record, so those two
+        are done here instead, without starting a process, and a failure of
+        either is noted just as the wrapper's would be.
         """
         if not self.binding or not RENDER_WRAPPER.exists():
+            return
+        code = None
+        try:
+            renderers, publishers = render_state.parse_config(self.binding["state"])
+        except render_state.ConfigError:
+            code = 2  # The wrapper refuses it as config_invalid, whatever it declares.
+        else:
+            if not renderers and not publishers:
+                try:
+                    delivery_state.show(self.state_directory)
+                except delivery_state.StateError:
+                    code = 2
+                except Exception:  # The wrapper would have ended on it, exiting 1.
+                    code = 1
+                else:
+                    return
+        if code is not None:
+            self.note_render(f"exited {code}")
             return
         completed = run_process(
             [*self.renderer, str(RENDER_WRAPPER), "--dir", str(self.state_directory),
@@ -991,10 +1017,12 @@ class Runner:
             cwd=self.repository, env=self.environment(), timeout=RENDER_TIMEOUT_SECONDS,
         )
         if completed.returncode != 0:
-            what = "timed out" if completed.timed_out else f"exited {completed.returncode}"
-            note = f"rendering the state {what}"
-            if note not in self.notes:
-                self.notes.append(note)
+            self.note_render("timed out" if completed.timed_out else f"exited {completed.returncode}")
+
+    def note_render(self, what: str) -> None:
+        note = f"rendering the state {what}"
+        if note not in self.notes:
+            self.notes.append(note)
 
     def seam(self, name: str, subject: str) -> None:
         if name in self.seams:

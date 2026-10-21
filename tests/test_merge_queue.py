@@ -3390,12 +3390,97 @@ class RenderingTests(MergeQueueTestCase):
         self.assertIn("Candidate feature", (adopter.state / "views" / "summary.md").read_text(encoding="utf-8"))
 
     def test_a_failing_wrapper_is_noted_and_never_fails_the_runner(self) -> None:
-        adopter = self.adopter()
+        adopter = self.adopter({"state": {
+            "directory": "state", "renderers": [{"id": "page", "builtin": "static-page", "output": "view/index.html"}],
+            "publishers": [],
+        }})
         self.wrapper(1)
         self.candidate(adopter)
         results = self.run_queue(adopter, "feature")
         self.assertEqual(results[-1].document()["outcome"], "merged")
         self.assertIn("rendering the state exited 1", results[-1].document()["notes"])
+
+    def wrapper_runs(self) -> tuple[object, list[list[str]]]:
+        """Count the render wrapper processes the runner starts, and still start them."""
+        original = queue.run_process
+        started: list[list[str]] = []
+
+        def counting(argv, **options):
+            if str(queue.RENDER_WRAPPER) in argv:
+                started.append(list(argv))
+            return original(argv, **options)
+
+        return mock.patch.object(queue, "run_process", side_effect=counting), started
+
+    def record_bytes(self, adopter: Adopter) -> dict[str, bytes]:
+        return {name: (adopter.state / name).read_bytes()
+                for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE, state_tool.CHANGES_FILE)
+                if (adopter.state / name).exists()}
+
+    def test_with_no_views_a_whole_run_starts_no_wrapper_and_leaves_the_same_record(self) -> None:
+        adopter = self.adopter()
+        self.assertEqual((adopter.binding["state"]["renderers"], adopter.binding["state"]["publishers"]), ([], []))
+        self.candidate(adopter)
+        counting, started = self.wrapper_runs()
+        with counting:
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
+        self.assertEqual(started, [])
+        self.assertEqual(results[-1].document()["notes"], [])
+        # The wrapper itself, given the same configuration, writes nothing: no view,
+        # no outbox, and not a byte of the record, the journal or the change log.
+        self.assertTrue(self.record_bytes(adopter))
+        before = self.record_bytes(adopter)
+        listed = sorted(path.name for path in adopter.state.iterdir())
+        done = subprocess.run([PY, "-B", str(queue.RENDER_WRAPPER), "--dir", str(adopter.state),
+                               "--state-config", json.dumps(adopter.binding["state"])],
+                              capture_output=True, check=False)
+        self.assertEqual(done.returncode, 0, done.stdout)
+        self.assertEqual(json.loads(done.stdout), {"ok": True, "publishers": [], "renderers": []})
+        self.assertEqual(self.record_bytes(adopter), before)
+        self.assertEqual(sorted(path.name for path in adopter.state.iterdir()), listed)
+
+    def test_a_declared_renderer_or_publisher_still_starts_the_wrapper(self) -> None:
+        for name, state in (
+            ("a renderer", {"directory": "state", "publishers": [],
+                            "renderers": [{"id": "summary", "builtin": "markdown", "output": "views/summary.md"}]}),
+            ("a publisher only", {"directory": "state", "renderers": [],
+                                  "publishers": [{"id": "store", "argv": [PY, "-c", "pass"]}]}),
+        ):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.adopter({"state": state})
+                self.candidate(adopter)
+                counting, started = self.wrapper_runs()
+                with counting:
+                    results = self.run_queue(adopter, "feature")
+                self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
+                self.assertGreater(len(started), 3)
+                self.assertTrue(all(json.loads(argv[argv.index("--state-config") + 1]) == state for argv in started))
+                self.assertEqual(results[-1].document()["notes"], [])
+
+    def test_with_no_views_what_the_wrapper_checks_is_still_checked_in_process(self) -> None:
+        adopter = self.adopter()
+        runner = adopter.runner()
+        runner.binding = copy.deepcopy(adopter.binding)
+        counting, started = self.wrapper_runs()
+        with counting:
+            # A record that cannot be read is noted as the wrapper's refusal was.
+            with mock.patch.object(queue.delivery_state, "show",
+                                   side_effect=state_tool.StateError("state_invalid", "unreadable")):
+                runner.render()
+            self.assertEqual(runner.notes, ["rendering the state exited 2"])
+            # So is a configuration the wrapper refuses, which declares nothing it could render.
+            runner.notes = []
+            runner.binding["state"] = {"directory": "state", "renderers": [], "publishers": [], "colour": "blue"}
+            runner.render()
+            self.assertEqual(runner.notes, ["rendering the state exited 2"])
+            # A readable record and a sound configuration leave nothing to note.
+            runner.notes = []
+            runner.binding = copy.deepcopy(adopter.binding)
+            runner.render()
+            self.assertEqual(runner.notes, [])
+        self.assertEqual(started, [])
 
     def test_the_state_member_takes_the_wrappers_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
