@@ -173,6 +173,8 @@ def _load_wrapper():
 
 
 render_state = _load_wrapper()
+# The state tool, as the wrapper imported it.
+delivery_state = sys.modules["delivery_state"]
 
 # A command that starts a child holding its {held} open, then exits straight
 # away. The child outlives it by far more than any test waits, and records its
@@ -991,9 +993,10 @@ class LiveClient:
 class LiveTests(DeliveryStateFixture):
     """`live` re-renders on every write and pushes the latest record to open pages."""
 
-    def start(self, *extra: str) -> tuple[subprocess.Popen, str]:
+    def start(self, *extra: str, env: dict | None = None) -> tuple[subprocess.Popen, str]:
         process = subprocess.Popen([sys.executable, "-B", str(WRAPPER), "live", "--dir", str(self.state_dir), *extra],
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   env={**os.environ, **env} if env else None)
         self.addCleanup(self.stop, process)
         line = process.stdout.readline()
         announced = json.loads(line)
@@ -1242,6 +1245,136 @@ class LiveTests(DeliveryStateFixture):
         result = run([sys.executable, "-B", str(WRAPPER), "live", "--dir", str(self.root / "nothing here")])
         self.assertEqual(result.returncode, 2)
 
+    def test_a_signal_recorded_on_the_watcher_s_start_still_ends_it(self) -> None:
+        # Recorded, never raised: only the serving loop's own check can end it.
+        process, url = self.start(env={SEAM: "watch-start:SIGINT!"})
+        self.assertEqual(process.wait(10), 128 + signal.SIGINT)
+        result = json.loads(process.stdout.read())
+        self.assertEqual((result["code"], result["signal"]), ("interrupted", "SIGINT"))
+
+    def test_a_page_that_reconnects_after_the_change_log_was_trimmed_still_converges(self) -> None:
+        path = self.state_dir / "changes.jsonl"
+        limit = delivery_state.CHANGES_LIMIT_BYTES
+        line = json.dumps({"at": "2026-10-21T00:00:00Z", "change": "journal", "journal": 1, "version": 1}) + "\n"
+        path.write_text(line * (2 * limit // len(line)), encoding="utf-8")
+        _, url = self.start()
+        first = self.client(url)
+        first.listen()
+        first.wait_for(lambda doc: True)
+        for n in range(3):
+            state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", f"Long run {n}")
+        self.assertIsNotNone(first.wait_for(lambda doc: doc["journal"][-1]["summary"] == "Long run 2"))
+        self.assertLessEqual(path.stat().st_size, limit)
+        first.close()
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Away past the trim")
+        time.sleep(0.6)
+        second = self.client(url)
+        second.listen()
+        seen = second.wait_for(lambda doc: True, seconds=2)
+        shown = {key: value for key, value in state_tool(self.state_dir, "show").items() if key != "publication"}
+        self.assertEqual(seen, shown, "a page that comes back gets the whole current record")
+
+    def test_a_non_loopback_bind_answers_only_its_own_name(self) -> None:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # Picks the address a route out would use; nothing is sent.
+            probe.connect(("192.0.2.1", 9))
+            address = probe.getsockname()[0]
+        except OSError:
+            self.skipTest("no address beyond loopback on this machine")
+        finally:
+            probe.close()
+        if render_state._is_loopback(address) or render_state._is_wildcard(address):
+            self.skipTest("no address beyond loopback on this machine")
+        _, url = self.start("--host", address)
+        self.assertTrue(url.startswith(f"http://{address}:"), url)
+        port = url.rsplit(":", 1)[1].rstrip("/")
+        client = self.client(url)
+        self.assertEqual(client.get("document")[0], 200)
+        for host in (f"localhost:{port}", f"127.0.0.1:{port}", f"[::1]:{port}", f"evil.example:{port}"):
+            with self.subTest(host=host):
+                self.assertEqual(client.get("document", host=host)[0], 403)
+
+
+class LiveInProcessTests(DeliveryStateFixture):
+    """The live view's parts, driven in this process where a test can step them exactly."""
+
+    def test_a_non_loopback_bind_refuses_every_other_name(self) -> None:
+        accepts = render_state._live_hosts("192.0.2.10", 8000)
+        self.assertTrue(accepts("192.0.2.10:8000"))
+        for header in ("localhost:8000", "127.0.0.1:8000", "[::1]:8000", "[::ffff:127.0.0.1]:8000",
+                       "192.0.2.10:8001", "192.0.2.10", "evil.example:8000"):
+            with self.subTest(header=header):
+                self.assertFalse(accepts(header))
+
+    def test_a_jump_of_several_generations_sends_the_latest_once(self) -> None:
+        view = render_state.LiveView(self.state_dir, None)
+        view.refresh()
+        server = render_state._LiveServer(("127.0.0.1", 0), render_state._live_handler(view, lambda header: True))
+        serving = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+        serving.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(view.stop)
+        client = LiveClient(f"http://127.0.0.1:{server.server_address[1]}/")
+        self.addCleanup(client.close)
+        # Quiet spells come often here; each must send a keepalive, never the document again.
+        keepalive = mock.patch.object(render_state, "LIVE_KEEPALIVE_SECONDS", 0.1)
+        keepalive.start()
+        self.addCleanup(keepalive.stop)
+        client.listen()
+        self.assertIsNotNone(client.wait_for(lambda doc: True))
+        latest = copy.deepcopy(view.document)
+        latest["state"]["meta"]["headline"] = "Several writes later"
+        with view.changed:
+            view.document = latest
+            view.encoded = json.dumps(latest, sort_keys=True).encode("ascii")
+            view.generation += 5
+            view.changed.notify_all()
+        self.assertIsNotNone(client.wait_for(lambda doc: doc["state"]["meta"]["headline"] == "Several writes later"))
+        time.sleep(0.5)
+        self.assertEqual(len(client.events), 2, "a page missing several generations gets only the latest, once")
+
+    def test_a_view_rendered_on_a_helper_thread_never_holds_back_unwinding(self) -> None:
+        # Signals land on the main thread; a helper thread's command must not
+        # stop that thread from unwinding, even for the instant it spawns.
+        view = render_state.LiveView(self.state_dir, json.loads(self.config([self.capture_renderer("echo")])))
+        seam = render_state._seam
+        spawning: list[bool] = []
+
+        def watching(point: str) -> None:
+            # Inside the window between the command's spawn and its being known.
+            if point == "spawning":
+                spawning.append(render_state._unwinding)
+            seam(point)
+
+        with mock.patch.object(render_state, "_unwinding", True), mock.patch.object(render_state, "_seam", watching):
+            watcher = threading.Thread(target=view.refresh)
+            watcher.start()
+            watcher.join(10)
+            self.assertTrue((self.state_dir / "echo.json").exists(), "the view command ran on the helper thread")
+            self.assertEqual(spawning, [True], "the main thread could unwind while the command spawned")
+            self.assertTrue(render_state._unwinding)
+
+    def test_a_helper_thread_that_resumes_after_a_signal_neither_raises_nor_unwinds(self) -> None:
+        outcome: list[object] = []
+
+        def resume() -> None:
+            try:
+                render_state._resume()
+                outcome.append(None)
+            except BaseException as error:  # noqa: BLE001 - what escaped is the result
+                outcome.append(error)
+
+        # Held back, as while the main thread spawns: a helper's resume must leave it so.
+        with mock.patch.object(render_state, "_unwinding", False), \
+                mock.patch.object(render_state, "_received", [signal.SIGINT]):
+            helper = threading.Thread(target=resume)
+            helper.start()
+            helper.join(5)
+            self.assertEqual(outcome, [None], "only the main thread unwinds")
+            self.assertFalse(render_state._unwinding)
+
 
 class ChangeNotificationTests(DeliveryStateFixture):
     """Every successful write through the state tool records exactly one change."""
@@ -1288,6 +1421,39 @@ class ChangeNotificationTests(DeliveryStateFixture):
         changes = self.changes()[before:]
         self.assertEqual([change["change"] for change in changes], ["patch", "journal"])
         self.assertEqual(changes[0]["version"], state_tool(self.state_dir, "show")["state"]["version"])
+
+    def test_a_forced_retire_of_an_unreadable_outbox_records_a_change(self) -> None:
+        outbox = self.state_dir / "outbox"
+        outbox.mkdir(exist_ok=True)
+        (outbox / "outbox.json").write_text("{not json", encoding="utf-8")
+        before = len(self.changes())
+        retired = state_tool(self.state_dir, "outbox", "--retire", "live", "--force")
+        self.assertTrue(retired["retired"]["unreadable"], retired)
+        self.assertEqual([change["change"] for change in self.changes()[before:]], ["outbox"])
+
+    def test_the_change_log_stays_within_its_cap_and_keeps_the_latest_changes(self) -> None:
+        path = self.state_dir / "changes.jsonl"
+        limit = delivery_state.CHANGES_LIMIT_BYTES
+        seeded = [json.dumps({"at": "2026-10-21T00:00:00Z", "change": "journal", "journal": n, "version": 1},
+                             sort_keys=True, separators=(",", ":")) for n in range(2 * limit // 60)]
+        path.write_text("\n".join(seeded) + "\n", encoding="utf-8")
+        self.assertGreater(path.stat().st_size, limit)
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Past the cap")
+        self.assertLessEqual(path.stat().st_size, limit)
+        changes = self.changes()
+        latest = state_tool(self.state_dir, "show")["journal"][-1]["id"]
+        self.assertEqual((changes[-1]["change"], changes[-1]["journal"]), ("journal", latest))
+        kept = [change["journal"] for change in changes[:-1]]
+        self.assertGreater(len(kept), 100, "enough history is kept")
+        self.assertEqual(kept, list(range(len(seeded) - len(kept), len(seeded))), "the latest changes, in order")
+        self.assertLessEqual(path.stat().st_size, limit // 2, "a trim keeps its latest half, so it is rare")
+        trimmed = path.stat()
+        # It keeps appending after a trim, and stays within its cap however long the run.
+        for n in range(3):
+            state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", f"After {n}")
+        self.assertEqual([change["change"] for change in self.changes()[-3:]], ["journal"] * 3)
+        self.assertEqual(path.stat().st_ino, trimmed.st_ino, "below the cap, a write only appends")
+        self.assertGreater(path.stat().st_size, trimmed.st_size)
 
     def test_a_notification_that_cannot_be_written_never_fails_the_write(self) -> None:
         path = self.state_dir / "changes.jsonl"

@@ -1334,6 +1334,7 @@ class LiveView:
     def watch(self) -> None:
         seen = None
         try:
+            _seam("watch-start")
             while not self.stopping.wait(LIVE_POLL_SECONDS):
                 key = self.watch_key()
                 if key == seen:

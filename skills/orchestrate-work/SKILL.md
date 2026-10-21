@@ -254,7 +254,8 @@ python3 -B scripts/render_state.py live --dir <state directory> --binding .agent
 
 - Every successful write through the state tool, by the lead, the runner or a
   lane, appends one line to `changes.jsonl` in the state directory; a write
-  never fails because of it. `live` waits on that log, pushes the record to
+  never fails because of it. The log keeps only its latest lines once it
+  passes 64 KiB. `live` waits on that log, pushes the record to
   every open page, then re-renders the configured views, so a page shows each
   change within seconds, with no reload and no publish step. It runs no
   publisher: those run only when the lead renders.

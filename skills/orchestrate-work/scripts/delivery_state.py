@@ -54,6 +54,10 @@ QUEUE_LOCK = "queue.lock"
 PUBLISHED_FILE = "published.json"
 # One line per successful write, for a live view to wait on: never read as the record.
 CHANGES_FILE = "changes.jsonl"
+# The change log is trimmed to its latest half once past this; a live view
+# needs only to see that it moved, and a page that reconnects gets the whole
+# record, so no history is needed to catch up.
+CHANGES_LIMIT_BYTES = 64 * 1024
 # A recovery in progress: written before a missed merge is recorded, removed
 # once its journal entry is appended, and finished by the next reconcile.
 RECOVERY_FILE = "recovery.json"
@@ -342,9 +346,21 @@ def _note_change(directory: Path, change: str, *, version: int | None = None, jo
     """
     line = json.dumps({"at": now(), "change": change, "journal": journal, "version": version},
                       ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
+    path = directory / CHANGES_FILE
     with contextlib.suppress(OSError):
-        with open(directory / CHANGES_FILE, "ab") as stream:
+        with open(path, "ab") as stream:
             stream.write(line.encode("ascii"))
+            size = stream.tell()
+        if size > CHANGES_LIMIT_BYTES:
+            lines = path.read_bytes().splitlines(keepends=True)
+            kept: list[bytes] = []
+            total = 0
+            for entry in reversed(lines):
+                if total + len(entry) > CHANGES_LIMIT_BYTES // 2:
+                    break
+                kept.append(entry)
+                total += len(entry)
+            _write_atomically(path, b"".join(reversed(kept)).decode("ascii", errors="replace"))
 
 
 def _write_atomically(path: Path, text: str) -> None:
