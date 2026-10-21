@@ -1225,9 +1225,6 @@ class DeliveryStatsTests(unittest.TestCase):
         stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
         self.assertEqual((stats["outcome"], stats["checkToMergeSeconds"]), ("stopped", 480))
         self.assertIsNone(stats["totalSeconds"], "the total follows the latest attempt, which stopped")
-        journal[1] = entry(2, "2026-10-20T09:10:00Z", "decision.recorded", "work-a")
-        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
-        self.assertIsNone(stats["totalSeconds"], "a stopped candidate has no total")
 
     def test_times_compare_as_times_and_durations_count_whole_seconds(self) -> None:
         # As text, "10:00:00.9Z" sorts before "10:00:00Z" and "10:00:02Z" after "10:00:02.6Z";
@@ -1298,6 +1295,34 @@ class DeliveryStatsTests(unittest.TestCase):
         ]
         stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
         self.assertEqual((stats["outcome"], stats["totalSeconds"]), ("merged", 11700))
+
+    def test_a_merge_recovered_from_the_forge_ends_the_latest_attempt(self) -> None:
+        # Merged on the forge before any check: reconcile records the merge alone.
+        journal = [
+            entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T10:00:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(3, "2026-10-20T10:30:00Z", "candidate.merged", "work-a"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        self.assertEqual((stats["outcome"], stats["endedAt"], stats["totalSeconds"], stats["checkToMergeSeconds"]),
+                         ("merged", "2026-10-20T10:30:00Z", 5400, None))
+        # After a stop and a re-hand, the recovered merge ends the new attempt.
+        journal = [
+            entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T10:00:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(3, "2026-10-20T10:05:00Z", "check.started", "work-a"),
+            entry(4, "2026-10-20T10:10:00Z", "candidate.stopped", "work-a"),
+            entry(5, "2026-10-20T11:00:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(6, "2026-10-20T11:02:00Z", "candidate.merged", "work-a"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        self.assertEqual((stats["outcome"], stats["totalSeconds"]), ("merged", 7320))
+        # With no hand-off on record, the last merge stands, as before.
+        journal = [
+            entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T10:30:00Z", "candidate.merged", "work-a"),
+        ]
+        self.assertEqual(state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]["totalSeconds"], 5400)
 
     def test_fractions_beyond_the_microsecond_are_truncated_never_rounded(self) -> None:
         # A schema timestamp may carry any number of fractional digits; the

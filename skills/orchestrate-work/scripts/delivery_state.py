@@ -750,9 +750,16 @@ def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> d
                     None)
         if last is not None and last["kind"] == "candidate.stopped":
             ended, outcome = last, "stopped"
-    # The total belongs to the latest attempt: a merge that a later hand-off
-    # and stop superseded is not this candidate's total.
-    merged = ended if outcome == "merged" else None
+    # The total belongs to the latest attempt: its first merge after the last
+    # hand-off, checked or not (a merge recovered from the forge has no check).
+    # A merge that a later hand-off superseded is not this candidate's total.
+    # With no hand-off on record, the last merge stands, as it always has.
+    if handed is not None:
+        merged = next((entry for entry in after_handing if entry["kind"] == "candidate.merged"), None)
+    else:
+        merged = next((entry for entry in reversed(own) if entry["kind"] == "candidate.merged"), None)
+    if ended is None and merged is not None and handed is not None:
+        ended, outcome = merged, "merged"
 
     def at(entry: dict | None) -> str | None:
         return entry["at"] if entry else None
@@ -790,8 +797,11 @@ def delivery_stats(state: dict, journal: list[dict]) -> dict:
     events are missing is null, never zero: an older candidate with no
     assignment entry has no build time. With no journaled rounds, the round
     count is the lane's reported one. A candidate handed again follows its
-    latest attempt: its hand-off, check, end and total are that attempt's,
-    while its assignment, rounds and findings cover every attempt.
+    latest attempt: its hand-off, check and end are that attempt's, and its
+    total runs from the assignment to that attempt's merge, null unless that
+    attempt merged; a merge recovered from the forge, with no check, counts.
+    Its assignment, build and review times, rounds and findings cover every
+    attempt.
     """
     by_subject: dict[str, list[dict]] = {}
     by_lane: dict[str, list[dict]] = {}
@@ -819,7 +829,9 @@ def _parse_time(text: str, *, exact: bool = False) -> datetime.datetime:
     """A schema timestamp as UTC; ``exact`` keeps its fraction of a second, to the microsecond.
 
     Digits beyond the sixth are dropped, never rounded, so a time never moves
-    later than it was written. Durations are whole seconds in any case.
+    later than it was written. Durations are whole seconds in any case, so two
+    times less than a microsecond apart compare as equal, even when the later
+    one was written first.
     """
     whole, _, fraction = text.rstrip("Z").partition(".")
     moment = datetime.datetime.strptime(whole, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
