@@ -313,11 +313,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "a06d74a799dcfe7ce1598e94b48ef30ee8b961b95f21e37683f6da87c18666d2"
+          "sha256": "bb09653dfda896e9c45e0c3f4f6c1a0a26b1a29ec6a185a062764f7e704bc3c1"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "e7410e88af76375329df4bd781fc79c559a79465ec4bb3f75c1b0cd94383b518"
+          "sha256": "12d428c04781f13eb91a83a0898486840af9182afa9c635760d1072675b21876"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",

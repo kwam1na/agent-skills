@@ -166,6 +166,60 @@
                 }
               }
             }
+          },
+          "hold": {
+            "description": "Set by the lead to pause the runner's serve mode; absent or null lets it run.",
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason",
+                  "since"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "since": {
+                    "$ref": "#/$defs/timestamp"
+                  }
+                }
+              }
+            ]
+          },
+          "statusOverride": {
+            "description": "Set by the lead. A status line shown instead of the derived one until expiresAt; ignored after it.",
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "text",
+                  "setAt",
+                  "expiresAt"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "setAt": {
+                    "$ref": "#/$defs/timestamp"
+                  },
+                  "expiresAt": {
+                    "$ref": "#/$defs/timestamp"
+                  }
+                }
+              }
+            ]
           }
         }
       },
@@ -339,6 +393,10 @@
             },
             "changeRequest": {
               "$ref": "#/$defs/name"
+            },
+            "pending": {
+              "description": "Set by a lane's hand-off when the binding needs the lead to accept it; the runner takes the candidate once the lead accepts. Absent otherwise.",
+              "const": true
             }
           }
         }
@@ -1668,6 +1726,15 @@
                 "minimum": 1
               }
             }
+          },
+          "handoffsNeedAcceptance": {
+            "description": "Optional. true makes every lane hand-off wait for the lead to accept it before the runner takes it.",
+            "type": "boolean"
+          },
+          "statusOverrideMaxAgeSeconds": {
+            "description": "Optional. How long a lead's status override lasts before the derived status line returns; 14400 when absent.",
+            "type": "integer",
+            "minimum": 1
           }
         }
       },
