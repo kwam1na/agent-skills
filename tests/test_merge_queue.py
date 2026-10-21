@@ -3509,7 +3509,27 @@ class ReusedCheckTests(MergeQueueTestCase):
         adopter = self.reusing()
         head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
         self.hand_off(adopter, "feature", head)
-        results = self.run_queue(adopter, "feature")
+        # The full check's usual duration is known, but a reused run has none to show.
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="runner", version=current["version"], assignments={
+            "/meta/checkHistory": {"checks": {"full": {"seconds": [50, 60], "flakes": 0}}, "runs": []}})
+        real = state_tool.patch
+        panels: list[list[dict]] = []
+
+        def recording(directory, **kwargs):
+            written = real(directory, **kwargs)
+            now = written["meta"]["checking"]["now"]
+            if kwargs.get("writer") == "runner" and now is not None:
+                panels.append(copy.deepcopy(now["steps"]))
+            return written
+
+        with mock.patch.object(queue.delivery_state, "patch", recording):
+            results = self.run_queue(adopter, "feature")
+        for document in (result.document() for result in results):
+            Draft202012Validator(schema("merge-queue-result")).validate(document)
+        shown = [step for steps in panels for step in steps if step["label"] == "full" and step["state"] == "reused"]
+        self.assertTrue(shown)
+        self.assertTrue(all(step["reusedFrom"] == head and "expectedSeconds" not in step for step in shown), shown)
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
         # The quick checks still run; the full one does not.
         self.assertEqual((self.runs(adopter, "full"), self.runs(adopter, "always")), (0, 1))
@@ -3519,7 +3539,7 @@ class ReusedCheckTests(MergeQueueTestCase):
         self.assertEqual(reused["reusedFrom"], {"subject": "feature", "head": head,
                                                 "tree": run("rev-parse", f"{head}^{{tree}}", cwd=adopter.lane)})
         [row] = [check for check in adopter.item("feature")["checks"] if check["id"] == "full"]
-        self.assertEqual((row["state"], row["reusedFrom"]), ("reused", head))
+        self.assertEqual(row, {"id": "full", "state": "reused", "reusedFrom": head})
         [journaled] = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "check.reused"]
         self.assertIn(f"reused from the lane's run at {head}", journaled["summary"])
         # The merge is still pinned to the synced head, whose tree is the one the lane checked.
@@ -3528,7 +3548,7 @@ class ReusedCheckTests(MergeQueueTestCase):
                          reused["reusedFrom"]["tree"])
         # A reused check adds nothing to the check history, and a run that reused one is not a whole run.
         history = state_tool.read_state(adopter.state)["meta"]["checkHistory"]
-        self.assertNotIn("full", history["checks"])
+        self.assertEqual(history["checks"]["full"]["seconds"], [50, 60])
         self.assertEqual(history["runs"], [])
 
     def test_any_difference_in_tree_definition_or_result_runs_the_check(self) -> None:
@@ -3639,6 +3659,35 @@ class ReusedCheckTests(MergeQueueTestCase):
         self.assertEqual(runner.reusable([("feature", own)], [full, report], tree), {})
         self.assertIn("another check needs its output", runner.notes[0])
 
+    def test_a_batch_whose_combined_tree_is_the_last_members_checked_tree_reuses_its_run(self) -> None:
+        adopter = self.reusing()
+        first = adopter.lane_commit("first", {"tests/test_first.txt": "ok\n"})
+        # The second member is built on the first, so the batch's combined tree is the second's own.
+        second = adopter.lane_commit("second", {"tests/test_second.txt": "ok\n"}, start="origin/first")
+        self.hand_off(adopter, "first", first)
+        self.hand_off(adopter, "second", second)
+        results = adopter.runner().run_command("batch", ["first", "second"])
+        self.assertEqual({result.document()["outcome"] for result in results}, {"merged"},
+                         [result.document() for result in results])
+        self.assertEqual(self.runs(adopter, "full"), 0)
+        entries = [check for result in results for check in result.document()["checks"] if check["id"] == "full"]
+        self.assertTrue(entries)
+        self.assertTrue(all(entry["state"] == "reused" and entry["reusedFrom"]["subject"] == "second" for entry in entries))
+        journaled = [entry["subject"] for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "check.reused"]
+        self.assertEqual(sorted(journaled), ["first", "second"])
+
+    def test_a_reusable_check_whose_own_prerequisite_fails_is_skipped_not_reused(self) -> None:
+        adopter = self.reusing(alwaysRun=[check_entry("always", "--always-fail"),
+                                          check_entry("full", prerequisites=["always"])])
+        head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
+        self.hand_off(adopter, "feature", head)
+        results = self.run_queue(adopter, "feature")
+        # The prerequisite fails on the base too, so the queue stops as broken; the reusable check never stood in.
+        self.assertStopped(results, "base_broken")
+        states = {check["id"]: check["state"] for check in self.check_document(results)["checks"]}
+        self.assertEqual((states["always"], states["full"]), ("failed", "skipped"))
+        self.assertEqual([entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "check.reused"], [])
+
     def test_a_batch_reuses_only_when_the_combined_tree_is_a_members_checked_tree(self) -> None:
         adopter = self.reusing()
         first = adopter.lane_commit("first", {"tests/test_first.txt": "ok\n"})
@@ -3731,6 +3780,7 @@ class ReusedCheckTests(MergeQueueTestCase):
                                                            b["profiles"]["default"]["environment"].update(X="1")),
             "the binding's environment": lambda check, b: b["environment"].update(MQ_EXTRA="1"),
             "the prepare steps": lambda check, b: b["prepare"].append([PY, "-c", "pass"]),
+            "the hooks": lambda check, b: b.update(hooks="run"),
         }
         seen = {digest}
         for name, change in changes.items():

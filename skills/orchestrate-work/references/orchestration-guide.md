@@ -829,7 +829,7 @@ passed on. A lane names such a run in its hand-off with `--evidence`, which
 `merge_queue.py evidence` prints: the check, the head it ran on, that head's
 tree, a digest of the check's definition (its argv before placeholders are
 filled in, cwd, prerequisites, timeout, its profile's and the binding's
-environment, and the binding's `prepare` steps, as the binding in that head's
+environment, and the binding's `prepare` steps and `hooks`, as the binding in that head's
 own tree has them), and the result. After syncing, the runner reuses the run,
 and does not run the check, only when all of these hold:
 

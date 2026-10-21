@@ -2609,6 +2609,8 @@ class LaneWriterTests(unittest.TestCase):
             "an unknown result": self.evidence(result="flaky"),
             "an unknown field": self.evidence(note="trust me"),
             "a bare definition": self.evidence(definition="d" * 64),
+            "a short tree": self.evidence(tree="abc"),
+            "an empty check": self.evidence(check=""),
             "the same check twice": None,
         }
         for name, entry in cases.items():
@@ -2617,6 +2619,10 @@ class LaneWriterTests(unittest.TestCase):
                 self.assertEqual(self.refused(lambda: state_tool.handoff(
                     self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr",
                     evidence=evidence)), "handoff_invalid")
+        with self.subTest("not a list"):
+            self.assertEqual(self.refused(lambda: state_tool.handoff(
+                self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr",
+                evidence=self.evidence())), "handoff_invalid")
 
     def test_suite_evidence_is_written_only_by_a_hand_off(self) -> None:
         state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr",
@@ -2643,6 +2649,10 @@ class LaneWriterTests(unittest.TestCase):
         state = state_tool.read_state(self.directory)
         new_item = {**queue_item("work-n", lane="lane-1", order=3), "evidence": forged}
         self.assertEqual(self.refused(lambda: self.lead({"queue": [*state["queue"], new_item]})), "field_not_owned")
+        without = copy.deepcopy(state["queue"])
+        for item in without:
+            item.pop("evidence", None)
+        self.assertEqual(self.refused(lambda: self.lead({"queue": without})), "field_not_owned")
         # The lead's own writes to a queue item that carries evidence still go through.
         self.lead({"leadInputs": ["api"]}, selector="queue[subject=work-a]")
 
@@ -2722,9 +2732,11 @@ class LaneWriterTests(unittest.TestCase):
         self.assertEqual(handed["item"]["stage"], "queued")
         code, evidenced = run_tool(self.directory, "handoff", "--lane", "lane-2", "--subject", "work-b",
                                    "--head", "c" * 40, "--change-request", "cr 10",
-                                   "--evidence", json.dumps(self.evidence(head="c" * 40)))
+                                   "--evidence", json.dumps(self.evidence(head="c" * 40)),
+                                   "--evidence", json.dumps(self.evidence(check="lint", head="c" * 40)))
         self.assertEqual(code, 0, evidenced)
-        self.assertEqual([entry["head"] for entry in evidenced["item"]["evidence"]], ["c" * 40])
+        self.assertEqual([(entry["check"], entry["head"]) for entry in evidenced["item"]["evidence"]],
+                         [("full", "c" * 40), ("lint", "c" * 40)])
         state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-b]",
                          assignments={"/stage": "stopped"})
         code, refused = run_tool(self.directory, "handoff", "--lane", "lane-2", "--subject", "work-b",
@@ -2807,6 +2819,13 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(state_tool.delivery_status(record, journal, at=self.NOW)["text"],
                          "Checking Batch of 2: work-a, work-b, 1 of 2 checks done · last landed work-z at "
                          "2026-10-21T11:40:00Z · blocked: lane-2 (waiting on lead), lane-3 · next: work-c, then 1 more")
+
+    def test_a_reused_check_counts_as_done(self) -> None:
+        now = {"subject": "work-a", "title": "Work A", "startedAt": "2026-10-21T11:50:00Z",
+               "steps": [{"label": "full", "state": "reused", "reusedFrom": "a" * 40},
+                         {"label": "lint", "state": "running"}]}
+        record = self.record(now=now, queue=[queue_item("work-a", stage="checking")])
+        self.assertIn("Checking Work A, 1 of 2 checks done", state_tool.delivery_status(record, [], at=self.NOW)["text"])
 
     def test_the_status_moves_with_the_queue(self) -> None:
         record = self.record(queue=[queue_item("work-a", stage="merged"), queue_item("work-c", order=2)])

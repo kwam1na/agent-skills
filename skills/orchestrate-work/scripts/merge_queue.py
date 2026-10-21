@@ -333,8 +333,9 @@ def check_definition(check: dict, binding: dict) -> str:
         "environmentProfile": profile,
         "profileEnvironment": binding["profiles"].get(profile, {"environment": {}})["environment"] if profile else {},
         "environment": binding["environment"],
-        # Every check runs in a checkout the prepare steps set up.
+        # Every check runs in a checkout the prepare steps set up, with or without its hooks.
         "prepare": binding["prepare"],
+        "hooks": binding["hooks"],
     }
     text = json.dumps(described, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return "sha256:" + hashlib.sha256(text.encode("ascii")).hexdigest()
@@ -1623,7 +1624,7 @@ class Runner:
                     check = pending[0]
                     if any(name not in outcomes for name in check["prerequisites"]):
                         break
-                    if any(outcomes[name] not in ("passed", "reused") for name in check["prerequisites"]):
+                    if any(outcomes[name] != "passed" for name in check["prerequisites"]):
                         pending.pop(0)
                         outcomes[check["id"]] = "skipped"
                         records[check["id"]]["state"] = "skipped"
@@ -1632,6 +1633,7 @@ class Runner:
                         continue
                     if check["id"] in reused:
                         # The tree is the one the lane checked and passed: its run stands, on the record.
+                        # Nothing selected builds on it (see reusable), so no prerequisite waits on it.
                         pending.pop(0)
                         source = reused[check["id"]]
                         outcomes[check["id"]] = "reused"
