@@ -2828,14 +2828,37 @@ class ServeTests(MergeQueueTestCase):
     def test_serve_refuses_to_start_on_a_wrong_checkout_and_stops_nothing(self) -> None:
         adopter = self.adopter()
         self.candidate(adopter)
-        results = queue.serve(adopter.operator / "src", adopter.state, remote="origin", base="main", until_idle=True)
+        made: list = []
+        real = queue.Runner.__init__
+
+        def recorded(runner, *args, **kwargs) -> None:
+            real(runner, *args, **kwargs)
+            made.append(runner)
+
+        with mock.patch.object(queue.Runner, "__init__", recorded):
+            results = queue.serve(adopter.operator / "src", adopter.state, remote="origin", base="main",
+                                  until_idle=True)
+        # The check leaves no hooks folder behind: serve starts often, and every start makes one.
+        self.assertTrue(made)
+        self.assertEqual([runner._bootstrap_hooks for runner in made if runner._bootstrap_hooks.exists()], [])
         self.assertEqual([(document["subcommand"], document["candidate"], document["outcome"], document["stop"]["reason"])
                           for document in (result.document() for result in results)],
                          [("serve", None, "refused", "binding_invalid")])
         self.assertIn("top level of a checkout", results[0].document()["stop"]["detail"])
+        [written] = list((adopter.state / "results").glob("*.json"))
+        self.assertTrue(written.name.endswith("-serve-setup.json"), written.name)
         # Nothing was taken: the queued candidate stays queued, with nothing journaled against it.
         self.assertEqual(adopter.item("feature")["stage"], "queued")
         self.assertNotIn("candidate.stopped", [entry["kind"] for entry in state_tool.read_journal(adopter.state)])
+
+    def test_the_startup_check_waits_for_the_queue_lock(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        # Under the lock another runner holds, the check does not run: nothing is refused or written.
+        with state_tool.file_lock(adopter.state / state_tool.QUEUE_LOCK):
+            self.assertEqual(queue.serve(adopter.operator / "src", adopter.state, remote="origin", base="main",
+                                         until_idle=True), [])
+        self.assertFalse((adopter.state / "results").exists() and any((adopter.state / "results").iterdir()))
 
     def test_the_serve_command_ends_at_startup_when_its_base_cannot_be_read(self) -> None:
         adopter = self.adopter()

@@ -2088,7 +2088,9 @@ def write_result(state_directory: Path, result: Result) -> dict:
     directory = state_directory / "results"
     directory.mkdir(parents=True, exist_ok=True)
     stamp = document["finishedAt"].replace(":", "").replace("-", "").replace(".", "")
-    name = f"{stamp}-{document['subcommand']}-{re.sub(r'[^A-Za-z0-9_.-]', '_', document['candidate'] or 'release')}.json"
+    # A result about no candidate is named for what it covers: a release, or serve's setup.
+    about = document["candidate"] or ("release" if document["subcommand"] == "release" else "setup")
+    name = f"{stamp}-{document['subcommand']}-{re.sub(r'[^A-Za-z0-9_.-]', '_', about)}.json"
     # UTF-8 bytes with "\n" line endings on every platform.
     (directory / name).write_bytes(delivery_state.dumps(document).encode("utf-8"))
     return document
@@ -2120,7 +2122,10 @@ def _setup_stop(repository: Path, state_directory: Path, *, remote: str, base: s
             result.baseHead = runner.load()
             result.base = base
 
-    return runner.invoke("serve", None, check)
+    try:
+        return runner.invoke("serve", None, check)
+    finally:
+        shutil.rmtree(runner._bootstrap_hooks, ignore_errors=True)
 
 
 def serve(
