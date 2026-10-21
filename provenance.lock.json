@@ -321,7 +321,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "bb0cbd8e22027fa0da95fc347375e04d10ff4014962083dbe66b25a56d04ff3e"
+          "sha256": "fb5f78cdc5fc7df9a1504d6f9cb1dfaf5627cc8328fd37f4537894d9bcb83dc7"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",

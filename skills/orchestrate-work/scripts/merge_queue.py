@@ -2442,13 +2442,13 @@ def serve(
             pause()
             continue
         # A setup that broke since the last turn would refuse every candidate in turn: hold instead, taking none.
-        checked = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+        checked, _ = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
         if checked.stop is not None:
             if checked.stop["reason"] != "queue_locked":
                 hold_for_setup(state_directory, checked.stop["detail"])
             if until_idle:
                 return results
-            sleep(poll)
+            pause()
             continue
         heads = {item["subject"]: item["head"] for item in state["queue"]}
         runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams)
@@ -2465,7 +2465,7 @@ def serve(
         cause_known, broken = True, None
         if troubled:
             # A stop or refusal names its code, not its cause: the setup check says whether the setup broke this turn.
-            again = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+            again, _ = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
             if again.stop is not None:
                 cause_known = again.stop["reason"] != "queue_locked"
                 broken = again if cause_known else None
