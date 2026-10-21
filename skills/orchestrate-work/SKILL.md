@@ -183,10 +183,12 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   approved candidates wait; a lone candidate goes through `run`.
 - `serve [--poll <seconds>] [--until-idle]` takes whatever is queued, in
   order, whenever the merge slot is free: a batch when two or more wait, one
-  alone otherwise. The lead starts it once. `meta.hold` pauses it, and so does
-  a queue-stopping stop until the lead journals `base.repaired`; a candidate
-  waiting for the lead to accept its hand-off is left alone, and a killed
-  `serve` is cleared by the next one.
+  alone otherwise. The lead starts it once. `meta.hold` pauses it from its
+  next turn, and so does a queue-stopping stop until the lead journals
+  `base.repaired`; a candidate waiting for the lead to accept its hand-off is
+  left alone, a refused one stops, and a killed `serve` is cleared by the next
+  one. It prints each result document on a line of its own as it writes it,
+  and `state/results` keeps them all; `--until-idle` prints them together.
 - `release <ref> [--approved-by <text>]` runs the binding's release targets on
   the base tip or an ancestor of it.
 

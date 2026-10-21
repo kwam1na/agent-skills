@@ -2075,6 +2075,33 @@ class LaneWriterTests(unittest.TestCase):
         self.assertEqual(code, 0, accepted)
         self.assertNotIn("pending", accepted["item"])
 
+    def test_a_lane_clears_its_own_waiting_on(self) -> None:
+        code, blocked = run_tool(self.directory, "focus", "--lane", "lane-1", "--text", "Blocked on the lead",
+                                 "--state", "blocked", "--waiting-on", "lead")
+        self.assertEqual(code, 0, blocked)
+        code, cleared = run_tool(self.directory, "focus", "--lane", "lane-1", "--text", "Unblocked",
+                                 "--state", "working", "--waiting-on", "")
+        self.assertEqual(code, 0, cleared)
+        own = next(entry for entry in cleared["state"]["lanes"] if entry["id"] == "lane-1")
+        self.assertEqual((own["focus"], own["state"], own["waitingOn"]), ("Unblocked", "working", None))
+
+    def test_a_candidate_handed_off_again_starts_afresh(self) -> None:
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-q]",
+                         assignments={"/stage": "stopped", "/syncedHead": "c" * 40,
+                                      "/checks": [{"id": "unit", "state": "failed"}]})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-q", head="b" * 40, change_request="cr 2")
+        item = next(entry for entry in state_tool.read_state(self.directory)["queue"] if entry["subject"] == "work-q")
+        self.assertEqual((item["syncedHead"], item["checks"], item["changeRequest"]), (None, [], "cr 2"))
+
+    def test_a_rejected_hand_off_returns_its_lane_to_work_with_its_change_request(self) -> None:
+        self.lead({"meta": {"handoffsNeedAcceptance": True}})
+        state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr 7")
+        back = state_tool.reject_handoff(self.directory, "work-b", "no")
+        state = state_tool.read_state(self.directory)
+        self.assertEqual(state["planned"][-1], back)
+        self.assertEqual(back["changeRequest"], "cr 7")
+        self.assertEqual(next(entry for entry in state["lanes"] if entry["id"] == "lane-2")["state"], "working")
+
 
 class StatusTests(unittest.TestCase):
     """The status line derives from the record unless the lead's override is fresh; an empty lane focus derives too."""
@@ -2149,6 +2176,50 @@ class StatusTests(unittest.TestCase):
             "lane-1": "work-c: checking, 3 review rounds",
             "lane-3": "work-p: review",
         })
+
+    def test_a_derived_focus_follows_the_lanes_latest_unmerged_work(self) -> None:
+        record = self.record(
+            queue=[queue_item("work-a", lane="lane-1", order=3, stage="merged"),
+                   queue_item("work-b", lane="lane-1", order=1, stage="stopped", reportedRounds=1),
+                   queue_item("work-c", lane="lane-1", order=2, reportedRounds=2)],
+            lanes=[lane("lane-1"), lane("lane-3")],
+        )
+        record["planned"] = [planned("work-p", "lane-3"), planned("work-r", "lane-3")]
+        self.assertEqual(state_tool.lane_focus(record), {
+            "lane-1": "work-c: queued, 2 review rounds",
+            "lane-3": "work-r: review",
+        })
+
+    def test_an_override_has_expired_at_its_expiry(self) -> None:
+        override = {"text": "Holding", "setAt": "2026-10-21T11:00:00Z", "expiresAt": self.NOW}
+        self.assertEqual(state_tool.delivery_status(self.record(override=override), [], at=self.NOW)["source"],
+                         "derived")
+
+    def test_the_check_count_leaves_out_selection_and_counts_every_finished_step(self) -> None:
+        steps = [{"label": "selecting checks", "state": "passed"}, {"label": "unit", "state": "passed"},
+                 {"label": "lint", "state": "failed"}, {"label": "docs", "state": "skipped"},
+                 {"label": "e2e", "state": "timed_out"}, {"label": "build", "state": "running"}]
+        now = {"subject": "work-a", "title": "work-a", "startedAt": "2026-10-21T11:50:00Z", "steps": steps}
+        record = self.record(now=now, queue=[queue_item("work-a", stage="checking")])
+        self.assertEqual(state_tool.delivery_status(record, [], at=self.NOW)["text"],
+                         "Checking work-a, 4 of 5 checks done")
+
+    def test_the_headline_refuses_an_expiry_it_cannot_keep(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        directory = Path(temporary.name) / "state"
+        state_tool.init(directory, "Epic")
+        for age in ("0", "-5", "100000000000000"):
+            with self.subTest(age):
+                code, refused = run_tool(directory, "headline", "--text", "hi", "--max-age", age)
+                self.assertEqual((code, refused["code"]), (1, "patch_invalid"))
+        binding = Path(temporary.name) / "binding.json"
+        for bound in ("60", 0, True):
+            with self.subTest(bound=bound):
+                binding.write_text(json.dumps({"state": {"publishers": [], "statusOverrideMaxAgeSeconds": bound}}))
+                code, refused = run_tool(directory, "headline", "--text", "hi", "--binding", str(binding))
+                self.assertEqual((code, refused["code"]), (1, "binding_invalid"))
+        self.assertIsNone(state_tool.read_state(directory)["meta"].get("statusOverride"))
 
     def test_the_lead_sets_an_override_that_expires(self) -> None:
         temporary = tempfile.TemporaryDirectory()

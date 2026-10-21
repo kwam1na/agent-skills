@@ -744,11 +744,11 @@ def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None
     changes: dict = {"focus": text}
     if state is not None:
         changes["state"] = state
-    if waiting_on is not ...:
-        changes["waitingOn"] = waiting_on
+    # waitingOn is set exactly: a merge patch would read None as removing it, and the record requires it.
+    assignments = {} if waiting_on is ... else {"/waitingOn": waiting_on}
     current = read_state(directory)
     return patch(directory, writer="lane", lane=lane, version=current["version"], changes=changes,
-                 selector=f"lanes[id={lane}]")
+                 selector=f"lanes[id={lane}]", assignments=assignments)
 
 
 def patch(
@@ -1092,7 +1092,10 @@ def set_status_override(directory: Path, text: str | None, max_age: int) -> dict
             state["meta"]["statusOverride"] = None
             return
         set_at = now()
-        expires = _parse_time(set_at, exact=True) + datetime.timedelta(seconds=max_age)
+        try:
+            expires = _parse_time(set_at, exact=True) + datetime.timedelta(seconds=max_age)
+        except OverflowError:
+            raise StateError("patch_invalid", f"an override cannot last {max_age} seconds") from None
         state["meta"]["statusOverride"] = {
             "text": text, "setAt": set_at, "expiresAt": expires.isoformat().replace("+00:00", "Z"),
         }
@@ -1545,9 +1548,10 @@ def binding_state(path: Path) -> dict:
     member = binding.get("state") if isinstance(binding, dict) else None
     if not isinstance(member, dict) or not isinstance(member.get("publishers", []), list):
         raise StateError("binding_invalid", f"{Path(path).name} has no state member with a publishers list")
-    age = member.get("snapshotMaxAgeSeconds")
-    if age is not None and (not isinstance(age, int) or isinstance(age, bool) or age < 1):
-        raise StateError("binding_invalid", "state.snapshotMaxAgeSeconds is a whole number of seconds, at least 1")
+    for name in ("snapshotMaxAgeSeconds", "statusOverrideMaxAgeSeconds"):
+        age = member.get(name)
+        if age is not None and (not isinstance(age, int) or isinstance(age, bool) or age < 1):
+            raise StateError("binding_invalid", f"state.{name} is a whole number of seconds, at least 1")
     return member
 
 

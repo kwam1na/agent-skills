@@ -170,9 +170,13 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   queued, in order, whenever the merge slot is free, as one batch when two or
   more wait and alone otherwise, retrying a declared flake once. Set
   `meta.hold` (`{reason, since}`) to pause it, as before a release, and clear
-  it to resume. A stop that stops the queue journals `base.broken`; `serve`
-  takes nothing more until you confirm the base and journal `base.repaired`.
-  A stopped candidate waits for its lane to hand it off again.
+  it to resume. The hold takes effect at serve's next turn: a batch already
+  being checked still lands, so release only once `meta.checking.now` is
+  empty. A stop that stops the queue journals `base.broken`; `serve` takes
+  nothing more until you confirm the base and journal `base.repaired`. A
+  stopped candidate waits for its lane to hand it off again; under `serve`, so
+  does one the runner refuses, such as one with a lead input the binding does
+  not declare.
 - Leave the status line to the record: the views derive it from what is being
   checked, what landed last, which lanes are blocked and what is next. Set a
   status of your own with `headline --text`, only for what the record cannot

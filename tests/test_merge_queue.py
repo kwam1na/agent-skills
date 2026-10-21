@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -2754,6 +2755,68 @@ class ServeTests(MergeQueueTestCase):
             self.assertEqual(self.serve(adopter), [])
         self.assertEqual(list((adopter.state / "results").glob("*.json")), [])
         self.assertEqual(adopter.item("feature")["stage"], "queued")
+
+    def test_a_refused_candidate_stops_once_and_is_not_taken_again(self) -> None:
+        adopter = self.adopter()
+        # A lead input the binding does not declare: the runner refuses the candidate before doing anything.
+        adopter.enqueue("first", adopter.lane_commit("first", {"src/lib.txt": "lib two\n"}), lead_inputs=["nope"])
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        polls: list[float] = []
+
+        def sleep(seconds: float) -> None:
+            polls.append(seconds)
+            if len(polls) == 3:
+                raise InterruptedError
+
+        with self.assertRaises(InterruptedError):
+            queue.serve(adopter.operator, adopter.state, remote="origin", base="main", poll=0, sleep=sleep)
+        self.assertEqual(adopter.item("second")["stage"], "merged")
+        # It stops, as any stop does, and waits for its lane to hand it off again: idle polls retake nothing.
+        self.assertEqual(adopter.item("first")["stage"], "stopped")
+        documents = [json.loads(path.read_text()) for path in (adopter.state / "results").glob("*.json")]
+        self.assertEqual([document["stop"]["reason"] for document in documents if document["candidate"] == "first"],
+                         ["binding_invalid"])
+        stops = [entry for entry in state_tool.read_journal(adopter.state)
+                 if entry["kind"] == "candidate.stopped" and entry["subject"] == "first"]
+        self.assertEqual(len(stops), 1)
+
+    def test_a_long_serve_reports_each_result_as_it_is_written(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        reported: list = []
+
+        def sleep(seconds: float) -> None:
+            raise InterruptedError
+
+        with self.assertRaises(InterruptedError):
+            queue.serve(adopter.operator, adopter.state, remote="origin", base="main", poll=0, sleep=sleep,
+                        on_result=reported.append)
+        self.assertEqual(self.outcomes(reported)[-1], ("merge", "feature", "merged"))
+
+    def test_the_serve_command_prints_each_result_and_exits_cleanly_when_stopped(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        serving = subprocess.Popen(
+            [PY, "-B", str(SCRIPTS / "merge_queue.py"), "--repo", str(adopter.operator), "--state", str(adopter.state),
+             "--remote", "origin", "--base", "main", "serve", "--poll", "0.2"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.addCleanup(lambda: serving.poll() is None and serving.kill())
+        # A serve that never prints would hold the read open forever: kill it, so the test fails instead.
+        deadline = threading.Timer(120, serving.kill)
+        deadline.start()
+        self.addCleanup(deadline.cancel)
+        printed = []
+        # One document a line, as each is written; a serve that ends early ends the read.
+        for line in serving.stdout:  # type: ignore[union-attr]
+            printed.append(json.loads(line))
+            if printed[-1]["outcome"] == "merged":
+                break
+        serving.terminate()
+        _, errors = serving.communicate(timeout=60)
+        self.assertEqual(serving.returncode, 0, errors.decode("utf-8", "replace"))
+        self.assertEqual(printed[-1]["candidate"], "feature")
+        self.assertEqual(printed[-1]["outcome"], "merged")
 
     def test_every_queue_stopping_stop_is_journaled_as_a_broken_base(self) -> None:
         adopter = self.adopter()

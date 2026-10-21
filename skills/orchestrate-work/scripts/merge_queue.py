@@ -2110,6 +2110,7 @@ def serve(
     poll: float = 30.0,
     seams: dict[str, Seam] | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    on_result: Callable[[Result], None] | None = None,
 ) -> list[Result]:
     """Take what is queued, in order, whenever the merge slot is free.
 
@@ -2117,9 +2118,12 @@ def serve(
     candidate waiting for the lead to accept its hand-off is left alone. The
     lead's meta.hold pauses serving, and so does a stop that stopped the queue
     until the lead journals base.repaired; a stopped candidate waits for its
-    lane to hand it off again. Each turn takes the queue lock afresh, so a
-    serve killed outright is cleared by the next one's recovery. With
-    until_idle, serving ends once nothing more can be taken.
+    lane to hand it off again, and so does a refused one, which serve would
+    otherwise take again every turn. Each turn takes the queue lock afresh, so
+    a serve killed outright is cleared by the next one's recovery. With
+    until_idle, serving ends once nothing more can be taken and returns every
+    result; without it, serving never returns, so each result goes to
+    on_result as it is written and none is kept.
     """
     results: list[Result] = []
     while True:
@@ -2146,7 +2150,15 @@ def serve(
             continue
         for result in taken:
             write_result(state_directory, result)
-        results += taken
+            if result.outcome == "refused" and result.candidate is not None and result.stop["reason"] != "queue_locked":
+                # A refusal leaves the candidate queued as it was; serve stops it, journaled once, as any stop.
+                with contextlib.suppress(Stop, delivery_state.StateError):
+                    if runner.item(result.candidate)["stage"] == "queued":
+                        runner.set_item(result.candidate, stage="stopped")
+            if on_result is not None:
+                on_result(result)
+        if until_idle:
+            results += taken
         after = delivery_state.read_state(state_directory)
         moved = any(item["subject"] in waiting and item["stage"] != "queued" for item in after["queue"])
         if not moved:
@@ -2176,9 +2188,26 @@ def main(argv: list[str] | None = None) -> int:
     release.add_argument("ref")
     release.add_argument("--approved-by", help="records an approval the operator already gave")
     args = parser.parse_args(argv)
+    if args.command == "serve" and not args.until_idle:
+        # Serving until stopped: one document a line as each is written; state/results keeps them all.
+        def report(result: Result) -> None:
+            sys.stdout.buffer.write(json.dumps(result.document(), ensure_ascii=True, sort_keys=True).encode("ascii") + b"\n")
+            sys.stdout.buffer.flush()
+
+        def interrupt(signum: int, frame: object) -> None:
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGTERM, interrupt)
+        try:
+            serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead, poll=args.poll,
+                  on_result=report)
+        except KeyboardInterrupt:
+            # A stop mid-turn leaves live state the next serve or run clears first.
+            pass
+        return 0
     if args.command == "serve":
         served = serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
-                       until_idle=args.until_idle, poll=args.poll)
+                       until_idle=True, poll=args.poll)
         documents = [result.document() for result in served]
         sys.stdout.buffer.write(ascii_json(documents))
         sys.stdout.buffer.flush()
