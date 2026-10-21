@@ -1371,18 +1371,23 @@ def _stop_group(process: subprocess.Popen) -> None:
             os.killpg(process.pid, signal.SIGKILL)
 
 
-def _read_into(stream, buffer: bytearray, cap: int, keep_tail: bool, over: threading.Event) -> None:
+def _read_into(stream, buffer: bytearray, cap: int, keep_tail: bool, over: threading.Event,
+               frozen: threading.Event, lock: threading.Lock) -> None:
     """Read ``stream`` to its end into ``buffer``: past ``cap`` stop and flag it, or keep only the last ``cap`` bytes.
 
     The thread holds the stream itself, never a bare descriptor, so the
-    descriptor cannot be closed and reused under it.
+    descriptor cannot be closed and reused under it. Once ``frozen`` is set
+    nothing more is added, so the caller can copy the buffer.
     """
     with contextlib.suppress(OSError, ValueError):
         while True:
             data = os.read(stream.fileno(), 65536)
             if not data:
                 return
-            buffer.extend(data)
+            with lock:
+                if frozen.is_set():
+                    return
+                buffer.extend(data)
             if len(buffer) > cap:
                 if not keep_tail:
                     over.set()
@@ -1404,10 +1409,11 @@ def _run_bounded(argv: list[str], timeout: int, limit: int) -> tuple[int | None,
                                       else {"start_new_session": True}))
     except OSError as error:
         return None, b"", f"could not start: {error.strerror or error}"
-    out, err, over = bytearray(), bytearray(), threading.Event()
+    out, err, over, frozen, lock = bytearray(), bytearray(), threading.Event(), threading.Event(), threading.Lock()
     readers = [
-        threading.Thread(target=_read_into, args=(process.stdout, out, limit, False, over), daemon=True),
-        threading.Thread(target=_read_into, args=(process.stderr, err, 64 * 1024, True, over), daemon=True),
+        threading.Thread(target=_read_into, args=(process.stdout, out, limit, False, over, frozen, lock), daemon=True),
+        threading.Thread(target=_read_into, args=(process.stderr, err, 64 * 1024, True, over, frozen, lock),
+                         daemon=True),
     ]
     for reader in readers:
         reader.start()
@@ -1436,10 +1442,14 @@ def _run_bounded(argv: list[str], timeout: int, limit: int) -> tuple[int | None,
         reader.join(max(0.0, drained - time.monotonic()))
         if not reader.is_alive():
             stream.close()
-    if over.is_set() or len(out) > limit:
+    # A reader still waiting on a left-behind child adds nothing from here on.
+    with lock:
+        frozen.set()
+        output, errors = bytes(out), bytes(err)
+    if over.is_set() or len(output) > limit:
         return None, b"", f"printed more than {limit} bytes"
-    detail = bytes(err).decode("utf-8", errors="replace").strip()[-300:]
-    return process.returncode, bytes(out), detail or f"exited with {process.returncode}"
+    detail = errors.decode("utf-8", errors="replace").strip()[-300:]
+    return process.returncode, output, detail or f"exited with {process.returncode}"
 
 
 # The state directory's own files: a snapshot is never written over one of them.

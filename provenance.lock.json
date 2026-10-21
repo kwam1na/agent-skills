@@ -247,7 +247,7 @@
       "outputs": [
         {
           "path": "skills/linear-tracker-adapter/SKILL.md",
-          "sha256": "94f290e72021841c307edc1901418b1935467de89fab7bc1feb4024e65cdf7c8"
+          "sha256": "9f3aa50e21c53837c9a4f00a43bc4b60c08e66bfe8245d8d5db5ead1d8bb4eab"
         },
         {
           "path": "skills/linear-tracker-adapter/references/adapter-contract.json",
@@ -309,7 +309,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "828e2fcab7e235c2c91889b8d32bdab3fba97ff7c585b3ffa1a476d00d61f5e1"
+          "sha256": "54b44c964ce45ff04dd96ab4566484f4d63d7b494e0c67d0e9f2185c054afa40"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -317,7 +317,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "ef28416a9277e0d2a321ca69b4e44e2f3460e90c0b04c7086a21e73aa664fd20"
+          "sha256": "5a846596bcfbe9c73690cb5bcc43b1ac9ff995cf6bcdc4532cb7b39b1b6c8577"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",

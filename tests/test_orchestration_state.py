@@ -1646,6 +1646,8 @@ class TrackerSnapshotTests(unittest.TestCase):
                 sys.stdout.write("x" * (17 * 1024 * 1024)); sys.exit(0)
             if mode == "sleep":
                 time.sleep(5)
+            if mode == "noisy":
+                sys.stderr.write("warning\\n" * 30000); sys.stderr.flush()
             if mode == "holder":
                 # A detached child that inherits stdout and stderr and outlives the command.
                 import os, subprocess
@@ -1811,6 +1813,23 @@ class TrackerSnapshotTests(unittest.TestCase):
         self.assertEqual((result["taken"], result.get("items")), (True, 2), result)
         self.assertLess(elapsed, 15, "reading stopped at the command's exit, not at the child's")
         self.assertTrue(pid_file.exists(), "the child really was holding the output")
+
+    def test_a_command_s_long_warnings_on_stderr_do_not_cost_its_snapshot(self) -> None:
+        result = self.snap("noisy")
+        self.assertEqual((result["taken"], result.get("items")), (True, 2), result)
+
+    def test_output_still_unread_when_the_command_exits_is_read_in_the_drain(self) -> None:
+        # Readers that lag behind the exit still collect what was written before it.
+        read = state_tool._read_into
+
+        def late(*args: object) -> None:
+            time.sleep(0.5)
+            read(*args)
+
+        argv = [sys.executable, "-c", "print('x' * 1000)"]
+        with mock.patch.object(state_tool, "_read_into", side_effect=late):
+            code, out, _ = state_tool._run_bounded(argv, 10, 4096)
+        self.assertEqual((code, out.strip()), (0, b"x" * 1000))
 
     def test_a_command_that_runs_too_long_is_stopped(self) -> None:
         result = self.snap("sleep", timeoutSeconds=1)

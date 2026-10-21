@@ -57,6 +57,8 @@ Map the neutral operations directly:
   type folds into the normalized four: `triage`, `backlog` and `unstarted`
   become `backlog`, and `started`, `completed` and `canceled` stay as they are.
   A type outside these six makes the result `malformed`, never a guess.
+  Each item names each of its blockers once, never itself, even when the
+  tracker lists a relation from both of its ends.
 - Reconciliation after an uncertain mutation uses reconciliation only.
 
 Do not substitute another provider operation or access path. Retain the resolved
