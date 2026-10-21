@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import unittest
 from pathlib import Path
@@ -311,6 +312,40 @@ class ListWorkTests(unittest.TestCase):
                 outcome = execute_tracker_operation(CapabilityState.CONFIGURED, self.request(), adapter)
                 self.assertEqual(outcome.kind, OutcomeKind.MALFORMED)
                 self.assertTrue(outcome.action)
+
+    def test_every_dependency_shape_is_checked_and_a_refusal_names_the_items(self) -> None:
+        # Imported here: the archive qualification runs this module with only its own listed files.
+        from tests.dependency_cases import CASES, CYCLES, ONCE
+
+        for name, (parent, items, named) in CASES.items():
+            with self.subTest(name):
+                work = [{"workReference": reference, "title": reference, "stateType": "backlog", "blockedBy": blockers}
+                        for reference, blockers in items]
+                data = {"parentReference": parent, "workItems": work}
+                adapter = InMemoryTrackerAdapter(
+                    scripted={TrackerOperation.LIST_WORK: [AdapterOutcome.success(TrackerOperation.LIST_WORK, data)]})
+                outcome = execute_tracker_operation(CapabilityState.CONFIGURED, self.request(parent), adapter)
+                if named is None:
+                    self.assertEqual(outcome.kind, OutcomeKind.SUCCESS, outcome.action)
+                    continue
+                self.assertEqual(outcome.kind, OutcomeKind.MALFORMED)
+                for text in named:
+                    self.assertIn(text, outcome.action)
+                self.assertEqual(outcome.action.count("cycle"), CYCLES.get(name, 0), outcome.action)
+                if name in ONCE:
+                    self.assertEqual(outcome.action.count(ONCE[name]), 1, outcome.action)
+
+    def test_the_state_tool_checks_dependencies_with_the_same_validator(self) -> None:
+        # The skill's state tool cannot import the product, so it keeps a copy; the copy must not drift.
+        def validator(path: Path) -> str:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            found = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "dependency_problems"]
+            self.assertEqual(len(found), 1, path)
+            return ast.dump(found[0])
+
+        root = Path(__file__).resolve().parents[1]
+        self.assertEqual(validator(root / "agent_skills" / "capabilities.py"),
+                         validator(root / "skills" / "orchestrate-work" / "scripts" / "delivery_state.py"))
 
     def test_without_the_capability_the_listing_is_unavailable_or_unsupported(self) -> None:
         for state in (CapabilityState.ABSENT, CapabilityState.AVAILABLE, CapabilityState.BLOCKED):
