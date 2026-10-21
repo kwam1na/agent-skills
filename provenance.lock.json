@@ -305,27 +305,27 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "09dd428362294f135306e3c44032f4678fbf4261dbe889156da4aaa6b7141229"
+          "sha256": "fc8231af447b5c05d597b615753308b560ce909168b36419506a84491c090725"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "a1d53b8ac1c71df80ea920a93ddb57f876975ae1f7f2fb98dd466e621abc75b9"
+          "sha256": "15362c78d4fd4662a5c05803aa757589221471bc649d62b3ad75d9c37689cafa"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "77917625611e14f68934deae3a1bbabcda752ef90188a81b00a40eb08af53769"
+          "sha256": "1ed45d324fe14f169351a295339121ae63e75eab8527fa556f819a6092146671"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "71152b7576a9748cf1fc962124b6c98f602a981b1c01b9da3a41c1178909b79a"
+          "sha256": "6df5311f5e2a05d709c8e7a7af346e35fecd6ade67eabc080fd070caf3902e73"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "669d571b876e6ee9c46d4dce5d4149fed9c399ad105d0df2e333d2169b46549f"
+          "sha256": "9fe407a0192002dc4cd7b3614464591420d8b65ad699616e9780bbe3d4b1ce79"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "4f8c0ecd297601c48749d9eea91fbccf05abefb07d09ed078b18d35ec4f24b53"
+          "sha256": "9c7fd04212e0164845c2b9c8e042a57edc43dd7e3dd79de562bed3806f062eb3"
         }
       ],
       "owner": "delivery-agent/user-delegated",

@@ -83,6 +83,7 @@ proceeds and the lead notes the gap in its close-out.
 | Journal kind | Tracker update |
 | --- | --- |
 | `lane.assigned` | On the ticket: it moves to started, naming the lane and what it delivers. |
+| `review.round` | None: the lane posts each round on its own ticket, as its brief says. |
 | `candidate.handed` | On the ticket: the hand-off checked as a claim and queued, with its change request, reviewed head and review rounds. |
 | `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. |
 | `check.finished` | None: its outcome posts with `candidate.merged` or `candidate.stopped`. |
@@ -138,6 +139,9 @@ decision. Lanes post on their own tickets at the points the lane brief names.
 
 ### 4. Run the queue
 
+- Journal a `review.round` for each round a lane reports in its hand-off
+  when the lane could not write to the record itself, with the times,
+  verdicts and findings it gives, so its stop's stats are complete.
 - Check each hand-off as a claim (the coordination protocol) before queueing
   it. Never hold approved work: an approved candidate enters the queue at
   once, not batched behind unrelated work or held for a convenient moment.
@@ -329,6 +333,20 @@ Post on your own ticket, with your host's tracker tools:
 
 One attempt each, never a gate. With no tracker tools, carry on and say so
 in your hand-off.
+
+**Review rounds**
+
+At the end of each review round, alongside its tracker post, record the round
+in the delivery record:
+
+```bash
+python3 -B <skill>/scripts/delivery_state.py --dir <state> journal --kind review.round --subject <subject> --lane <lane> --review '{"round": <n>, "startedAt": "<dispatched>", "finishedAt": "<last verdict>", "verdicts": {"<lens>": "approve"}, "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}'
+```
+
+One attempt, never a gate. When you cannot write to the record, give each
+round in your hand-off as
+`round <n>: <startedAt> → <finishedAt>, <verdict per lens>, findings P0/P1/P2/P3`,
+and the lead records it.
 
 **Questions**
 

@@ -260,6 +260,14 @@ class FixtureAdopterTests(unittest.TestCase):
             # Changes the same source line as the clean candidate: a source conflict once it merges.
             "alpha-rewrite": adopter.lane_change("alpha-rewrite", {"src/alpha.txt": "alpha rewritten\n"}),
         }
+        # The first lane records its two review rounds as it goes.
+        for number, verdict, findings in ((1, "changes", {"P0": 0, "P1": 1, "P2": 0, "P3": 1}),
+                                          (2, "approve", {"P0": 0, "P1": 0, "P2": 0, "P3": 1})):
+            moment = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            adopter.state_tool("journal", "--kind", "review.round", "--subject", "alpha-copy", "--lane", "lane-1",
+                               "--review", json.dumps({"round": number, "startedAt": moment, "finishedAt": moment,
+                                                       "verdicts": {"outcome": verdict, "adversarial": verdict},
+                                                       "findings": findings}))
         queue = [{
             "order": n, "subject": subject, "title": f"Candidate {subject}", "lane": f"lane-{n}", "stage": "queued",
             "head": heads[subject], "syncedHead": None, "leadInputs": [], "reportedRounds": 1, "runId": None,
@@ -360,8 +368,11 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual(len(snapshots), 1)
         during = snapshots[0].read_text(encoding="utf-8")
         self.assertIn(f"- Now: {text('beta-copy')}", during)
-        rows = during.split(f"- 2\\. {text('beta-copy')}: ", 1)[1].split("\n", 2)
+        rows = during.split(f"- 2\\. {text('beta-copy')}: ", 1)[1].split("\n", 3)
         self.assertIn(", checking · lane", rows[0])
+        # Its stats, while it is still being checked: the wait is known, the merge not yet.
+        self.assertRegex(rows[1], r"^  - stats: .* · wait \d+[smhd](?: \d+[smhd])? · check to merge unknown · total unknown$")
+        del rows[1]
         # The runner marks a check running as it starts, so the fallback reads as running.
         self.assertEqual(rows[1], f"  - {text('full')}: running")
         view = adopter.view()
@@ -443,6 +454,21 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual(json.loads(embedded.group(1)), final)
         self.assertEqual(adopter.view(), render_state.render_markdown(final))
 
+        # Each stop's stats: the recorded rounds for the first, the lanes' reports for the others.
+        stats = final["stats"]
+        self.assertEqual((stats["alpha-copy"]["rounds"], stats["alpha-copy"]["roundsSource"],
+                          stats["alpha-copy"]["findings"]), (2, "journal", {"P0": 0, "P1": 1, "P2": 0, "P3": 2}))
+        self.assertEqual((stats["beta-copy"]["rounds"], stats["beta-copy"]["roundsSource"]), (1, "reported"))
+        for subject in SUBJECTS:
+            with self.subTest(subject=subject):
+                for key in ("buildSeconds", "waitSeconds", "checkToMergeSeconds", "totalSeconds"):
+                    if subject != "alpha-copy" and key == "buildSeconds":
+                        self.assertIsNone(stats[subject][key], "no recorded round, so no build time")
+                    else:
+                        self.assertIsInstance(stats[subject][key], int, key)
+                self.assertEqual(stats[subject]["outcome"], "merged")
+        self.assertIn("2 rounds, findings P0/P1/P2/P3 0/1/0/2", adopter.view())
+
         # The final state: three merged candidates, the released head, and the journal's story.
         state = final["state"]
         self.assertEqual([(item["subject"], item["stage"]) for item in state["queue"]],
@@ -452,6 +478,7 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertIsNone(state["meta"]["checking"]["now"])
         self.assertEqual([entry["kind"] for entry in final["journal"]], [
             "lane.assigned", "lane.assigned", "lane.assigned",
+            "review.round", "review.round",
             "candidate.handed", "candidate.handed", "candidate.handed",
             # S3: checked, stopped at merge by the moved base, then re-checked and merged.
             "check.started", "check.finished", "candidate.stopped",

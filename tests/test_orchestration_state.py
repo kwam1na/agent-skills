@@ -457,6 +457,18 @@ class StateToolTests(unittest.TestCase):
         code, refused = run_tool(self.directory, "validate")
         self.assertEqual((code, refused["code"]), (1, "journal_invalid"))
 
+    def test_a_journal_entry_dated_on_a_day_that_does_not_exist_is_invalid_not_a_crash(self) -> None:
+        state_tool.append_journal(self.directory, kind="decision.recorded", summary="One")
+        journal = self.directory / state_tool.JOURNAL_FILE
+        entry = json.loads(journal.read_text(encoding="utf-8"))
+        entry["at"] = "2026-02-30T08:00:00Z"
+        journal.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+        for command in ("validate", "show"):
+            with self.subTest(command=command):
+                code, refused = run_tool(self.directory, command)
+                self.assertEqual((code, refused["code"]), (1, "journal_invalid"))
+                self.assertIn("not a real time", refused["error"])
+
     def test_seam_refuses_a_stale_patch_while_a_concurrent_journal_append_succeeds(self) -> None:
         appended: list[dict] = []
 
@@ -999,6 +1011,284 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(patched["planned"][0]["stage"], "review")
 
 
+def review(round_number: int, started: str, finished: str, *, verdicts: dict | None = None,
+           findings: tuple[int, int, int, int] = (0, 0, 0, 0)) -> dict:
+    return {"round": round_number, "startedAt": started, "finishedAt": finished,
+            "verdicts": verdicts if verdicts is not None else {"outcome": "approve", "adversarial": "approve"},
+            "findings": dict(zip(("P0", "P1", "P2", "P3"), findings))}
+
+
+class ReviewRoundTests(unittest.TestCase):
+    """A review round is journaled by the lead or a lane, checked, and never by the runner."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name) / "state"
+        state_tool.init(self.directory, "Epic underway")
+
+    def journal(self) -> list[dict]:
+        return state_tool.show(self.directory)["journal"]
+
+    def test_a_round_is_journaled_with_its_review_and_a_written_summary(self) -> None:
+        payload = review(1, "2026-10-20T10:00:00Z", "2026-10-20T10:20:00.5Z",
+                         verdicts={"outcome": "approve", "adversarial": "changes"}, findings=(0, 1, 2, 3))
+        code, result = run_tool(self.directory, "journal", "--kind", "review.round", "--subject", "work-a",
+                                "--lane", "lane-1", "--review", json.dumps(payload))
+        self.assertEqual(code, 0, result)
+        entry = self.journal()[-1]
+        self.assertEqual((entry["kind"], entry["subject"], entry["review"]), ("review.round", "work-a", payload))
+        self.assertEqual(entry["summary"], "Round 1: adversarial changes, outcome approve; findings 0/1/2/3")
+        code, result = run_tool(self.directory, "journal", "--kind", "review.round", "--subject", "work-a",
+                                "--review", "-", "--summary", "Round two, from the hand-off",
+                                stdin=json.dumps(review(2, "2026-10-20T11:00:00Z", "2026-10-20T11:00:00Z")))
+        self.assertEqual((code, self.journal()[-1]["summary"]), (0, "Round two, from the hand-off"))
+        code, result = run_tool(self.directory, "journal", "--kind", "review.round", "--subject", "work-a", "--review",
+                                json.dumps({**review(3, "2026-10-20T12:00:00Z", "2026-10-20T12:01:00Z"), "round": 3.0}))
+        self.assertEqual((code, self.journal()[-1]["summary"][:8]), (0, "Round 3:"))
+
+    def test_a_missing_review_is_named(self) -> None:
+        code, refused = run_tool(self.directory, "journal", "--kind", "review.round", "--subject", "w", "--review", "null")
+        self.assertEqual(refused["code"], "entry_invalid")
+        self.assertIn("--review", refused["error"])
+
+    def test_a_malformed_round_is_refused_and_nothing_is_written(self) -> None:
+        good = review(1, "2026-10-20T10:00:00Z", "2026-10-20T10:20:00Z")
+        before = (self.directory / state_tool.JOURNAL_FILE).read_bytes()
+        cases = {
+            "a verdict that is not approve or changes": ["--subject", "w", "--review",
+                                                         json.dumps({**good, "verdicts": {"outcome": "maybe"}})],
+            "finished before it started": ["--subject", "w", "--review", json.dumps(
+                {**good, "startedAt": "2026-10-20T10:20:00.2Z", "finishedAt": "2026-10-20T10:20:00.1Z"})],
+            "no candidate": ["--review", json.dumps(good)],
+            "no verdict": ["--subject", "w", "--review", json.dumps({**good, "verdicts": {}})],
+            "no review": ["--subject", "w", "--summary", "A round"],
+            "a severity the schema does not know": ["--subject", "w", "--review", json.dumps(
+                {**good, "findings": {**good["findings"], "P4": 1}})],
+            "round zero": ["--subject", "w", "--review", json.dumps({**good, "round": 0})],
+            "a negative count": ["--subject", "w", "--review", json.dumps(
+                {**good, "findings": {**good["findings"], "P1": -1}})],
+            "not JSON": ["--subject", "w", "--review", "{round"],
+            "a date that does not exist": ["--subject", "w", "--review", json.dumps(
+                {**good, "startedAt": "2026-13-45T00:10:00Z"})],
+            "a null review": ["--subject", "w", "--review", "null"],
+            "not an object": ["--subject", "w", "--review", "[1]"],
+        }
+        for name, args in cases.items():
+            with self.subTest(name):
+                code, refused = run_tool(self.directory, "journal", "--kind", "review.round", *args)
+                self.assertEqual((code, refused["code"]), (1, "entry_invalid"), refused)
+        code, refused = run_tool(self.directory, "journal", "--kind", "decision.recorded", "--summary", "x",
+                                 "--review", json.dumps(good))
+        self.assertEqual((code, refused["code"]), (1, "entry_invalid"), "only a review round carries a review")
+        code, refused = run_tool(self.directory, "journal", "--kind", "decision.recorded")
+        self.assertEqual((code, refused["code"]), (1, "entry_invalid"), "other kinds still need a summary")
+        self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), before)
+
+    def test_the_runner_never_writes_a_review_round(self) -> None:
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.append_journal(self.directory, kind="review.round", summary="Round 1", subject="w",
+                                      review=review(1, "2026-10-20T10:00:00Z", "2026-10-20T10:01:00Z"), writer="runner")
+        self.assertEqual(refused.exception.code, "kind_not_owned")
+        self.assertEqual(self.journal(), [])
+        # The runner's other entries are unaffected, and say they are the runner's.
+        state_tool.append_journal(self.directory, kind="check.started", summary="Checking", subject="w", writer="runner")
+        self.assertEqual(self.journal()[-1]["kind"], "check.started")
+        source = (SKILL / "scripts" / "merge_queue.py").read_text(encoding="utf-8")
+        self.assertIn('writer="runner"', source[source.index("def journal(self"):source.index("def checking(self")])
+
+
+def entry(number: int, at: str, kind: str, subject: str | None = None, lane: str | None = None, **fields: object) -> dict:
+    return {"id": number, "at": at, "kind": kind, "lane": lane, "subject": subject, "summary": kind, **fields}
+
+
+class DeliveryStatsTests(unittest.TestCase):
+    """Per-stop stats are a pure fold of the record, with unknowns left unknown."""
+
+    def state(self, *items: dict, planned: list[dict] | None = None) -> dict:
+        document = {"queue": list(items)}
+        if planned is not None:
+            document["planned"] = planned
+        return document
+
+    def test_a_full_lifecycle_folds_to_exact_durations(self) -> None:
+        journal = [
+            entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T09:50:00Z", "review.round", "work-a", "lane-1", review=review(
+                1, "2026-10-20T09:30:00Z", "2026-10-20T09:50:00Z",
+                verdicts={"outcome": "changes", "adversarial": "changes"}, findings=(0, 1, 2, 3))),
+            entry(3, "2026-10-20T10:10:00Z", "review.round", "work-a", "lane-1", review=review(
+                2, "2026-10-20T10:00:00Z", "2026-10-20T10:10:00Z", findings=(0, 0, 1, 0))),
+            entry(4, "2026-10-20T10:15:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(5, "2026-10-20T10:20:00Z", "check.started", "work-a", "lane-1"),
+            entry(6, "2026-10-20T10:30:00Z", "check.finished", "work-a", "lane-1"),
+            entry(7, "2026-10-20T10:35:00Z", "candidate.merged", "work-a", "lane-1"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a", reportedRounds=5)), journal)
+        self.assertEqual(stats, {"work-a": {
+            "assignedAt": "2026-10-20T09:00:00Z", "handedAt": "2026-10-20T10:15:00Z",
+            "checkStartedAt": "2026-10-20T10:20:00Z", "endedAt": "2026-10-20T10:35:00Z", "outcome": "merged",
+            "buildSeconds": 1800, "reviewSeconds": 2400, "waitSeconds": 300, "checkToMergeSeconds": 900,
+            "totalSeconds": 5700, "rounds": 2, "roundsSource": "journal",
+            "findings": {"P0": 0, "P1": 1, "P2": 3, "P3": 3},
+            "lastVerdicts": {"outcome": "approve", "adversarial": "approve"},
+        }})
+
+    def test_missing_events_are_unknown_never_zero_and_rounds_fall_back_to_the_report(self) -> None:
+        journal = [
+            entry(1, "2026-10-20T10:15:00Z", "candidate.handed", "work-old"),
+            entry(2, "2026-10-20T10:20:00Z", "check.started", "work-old"),
+            entry(3, "2026-10-20T10:21:30Z", "candidate.stopped", "work-old"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-old", lane=None, reportedRounds=3),
+                                                     queue_item("work-new", order=2, lane=None, reportedRounds=None)), journal)
+        old = stats["work-old"]
+        self.assertEqual((old["assignedAt"], old["buildSeconds"], old["reviewSeconds"], old["totalSeconds"]),
+                         (None, None, None, None))
+        self.assertEqual((old["waitSeconds"], old["checkToMergeSeconds"], old["outcome"]), (300, 90, "stopped"))
+        self.assertEqual((old["rounds"], old["roundsSource"], old["findings"], old["lastVerdicts"]),
+                         (3, "reported", None, None))
+        new = stats["work-new"]
+        self.assertTrue(all(new[key] is None for key in new), new)
+
+    def test_a_lane_assignment_counts_for_the_work_it_led_to_and_a_re_hand_restarts_the_wait(self) -> None:
+        journal = [
+            entry(1, "2026-10-20T08:00:00Z", "lane.assigned", None, "lane-1"),
+            entry(2, "2026-10-20T09:00:00Z", "lane.assigned", None, "lane-1"),
+            entry(3, "2026-10-20T10:00:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(4, "2026-10-20T10:05:00Z", "candidate.stopped", "work-a", "lane-1"),
+            entry(5, "2026-10-20T10:30:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(6, "2026-10-20T10:31:00Z", "check.started", "work-a", "lane-1"),
+            entry(7, "2026-10-20T10:40:00Z", "candidate.stopped", "work-a", "lane-1"),
+            entry(8, "2026-10-20T10:41:00Z", "check.started", "work-a", "lane-1"),
+            entry(9, "2026-10-20T10:50:00Z", "candidate.merged", "work-a", "lane-1"),
+            entry(10, "2026-10-20T11:00:00Z", "lane.assigned", None, "lane-1"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        # The lane's last assignment before its first event, not a later one.
+        self.assertEqual(stats["assignedAt"], "2026-10-20T09:00:00Z")
+        self.assertEqual((stats["waitSeconds"], stats["checkToMergeSeconds"], stats["outcome"]), (60, 1140, "merged"))
+        self.assertEqual(stats["totalSeconds"], 6600)
+
+    def test_a_reused_lane_never_lends_one_candidate_s_assignment_to_the_next(self) -> None:
+        journal = [
+            entry(1, "2026-10-20T08:00:00Z", "lane.assigned", None, "lane-1"),
+            entry(2, "2026-10-20T08:30:00Z", "lane.assigned", "work-b", "lane-1"),
+            entry(3, "2026-10-20T09:00:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(4, "2026-10-20T09:30:00Z", "candidate.merged", "work-a", "lane-1"),
+            entry(5, "2026-10-20T10:00:00Z", "candidate.handed", "work-c", "lane-1"),
+            entry(6, "2026-10-20T10:30:00Z", "lane.assigned", None, "lane-1"),
+            entry(7, "2026-10-20T11:00:00Z", "candidate.handed", "work-d", "lane-1"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a"), queue_item("work-c", order=2),
+                                                     queue_item("work-d", order=3)), journal)
+        # Another candidate's own assignment, and the lane's work on it, both stand between.
+        self.assertIsNone(stats["work-a"]["assignedAt"])
+        self.assertIsNone(stats["work-c"]["assignedAt"], "the lane's earlier assignment led to work-a")
+        self.assertEqual(stats["work-d"]["assignedAt"], "2026-10-20T10:30:00Z")
+        # Handing an earlier candidate over ends what the lane's assignment led to.
+        journal = [
+            entry(1, "2026-10-20T08:00:00Z", "lane.assigned", None, "lane-1"),
+            entry(2, "2026-10-20T09:00:00Z", "candidate.handed", "work-a", "lane-1"),
+            entry(3, "2026-10-20T09:30:00Z", "candidate.merged", "work-a", "lane-1"),
+            entry(4, "2026-10-20T10:00:00Z", "candidate.handed", "work-f", "lane-1"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a"), queue_item("work-f", order=2)), journal)
+        self.assertEqual(stats["work-a"]["assignedAt"], "2026-10-20T08:00:00Z")
+        self.assertIsNone(stats["work-f"]["assignedAt"])
+        # The runner merging an earlier candidate says nothing about the lane's assignment.
+        journal = [
+            entry(1, "2026-10-20T08:00:00Z", "lane.assigned", "work-b", "lane-1"),
+            entry(2, "2026-10-20T08:30:00Z", "lane.assigned", None, "lane-1"),
+            entry(3, "2026-10-20T09:00:00Z", "candidate.merged", "work-b", "lane-1"),
+            entry(4, "2026-10-20T09:30:00Z", "candidate.handed", "work-e", "lane-1"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-e")), journal)
+        self.assertEqual(stats["work-e"]["assignedAt"], "2026-10-20T08:30:00Z")
+
+    def test_a_candidate_re_checked_after_a_stop_is_still_being_checked(self) -> None:
+        journal = [
+            entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T09:10:00Z", "candidate.merged", "work-a"),
+            entry(3, "2026-10-20T09:20:00Z", "check.started", "work-a"),
+            entry(4, "2026-10-20T10:00:00Z", "candidate.handed", "work-a"),
+            entry(5, "2026-10-20T10:01:00Z", "check.started", "work-a"),
+            entry(6, "2026-10-20T10:06:00Z", "candidate.stopped", "work-a"),
+            entry(7, "2026-10-20T10:07:00.5Z", "check.started", "work-a"),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        self.assertEqual((stats["checkStartedAt"], stats["waitSeconds"]), ("2026-10-20T10:01:00Z", 60),
+                         "a check before the last hand-off does not count")
+        self.assertEqual((stats["outcome"], stats["endedAt"], stats["checkToMergeSeconds"]), (None, None, None),
+                         "neither the earlier merge nor the stop ends a check still running")
+        journal.append(entry(8, "2026-10-20T10:09:00.25Z", "candidate.stopped", "work-a"))
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        self.assertEqual((stats["outcome"], stats["checkToMergeSeconds"]), ("stopped", 480))
+        self.assertEqual(stats["totalSeconds"], 600, "the total ends at a merge, here the earlier one")
+        journal[1] = entry(2, "2026-10-20T09:10:00Z", "decision.recorded", "work-a")
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        self.assertIsNone(stats["totalSeconds"], "a stopped candidate has no total")
+
+    def test_times_compare_as_times_and_durations_count_whole_seconds(self) -> None:
+        # As text, "10:00:00.9Z" sorts before "10:00:00Z" and "10:00:02Z" after "10:00:02.6Z";
+        # as times both are the other way round.
+        journal = [
+            entry(1, "2026-10-20T10:00:00Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T10:00:02Z", "review.round", "work-a", review=review(
+                1, "2026-10-20T10:00:00.9Z", "2026-10-20T10:00:01.6Z")),
+            entry(3, "2026-10-20T10:00:03Z", "review.round", "work-a", review=review(
+                2, "2026-10-20T10:00:00Z", "2026-10-20T10:00:01Z")),
+            entry(4, "2026-10-20T10:00:04Z", "review.round", "work-b", review=review(
+                1, "2026-10-20T10:00:00.5Z", "2026-10-20T10:00:02Z")),
+            entry(5, "2026-10-20T10:00:05Z", "review.round", "work-b", review=review(
+                2, "2026-10-20T10:00:01Z", "2026-10-20T10:00:02.6Z")),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a"), queue_item("work-b", order=2)), journal)
+        self.assertEqual((stats["work-a"]["buildSeconds"], stats["work-a"]["reviewSeconds"]), (0, 1),
+                         "1.6 seconds counts as one whole second, never rounded up")
+        self.assertEqual(stats["work-b"]["reviewSeconds"], 2)
+
+    def test_review_time_spans_the_earliest_start_to_the_latest_finish(self) -> None:
+        journal = [
+            entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T10:00:00Z", "review.round", "work-a", review=review(
+                1, "2026-10-20T09:40:00.5Z", "2026-10-20T10:00:00Z")),
+            entry(3, "2026-10-20T10:05:00Z", "review.round", "work-a", review=review(
+                2, "2026-10-20T09:30:00Z", "2026-10-20T09:35:00Z")),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        self.assertEqual((stats["buildSeconds"], stats["reviewSeconds"]), (1800, 1800))
+
+    def test_a_round_recorded_again_replaces_itself_and_backwards_time_is_unknown(self) -> None:
+        journal = [
+            entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+            entry(2, "2026-10-20T10:00:00Z", "review.round", "work-a", review=review(
+                1, "2026-10-20T09:40:00Z", "2026-10-20T10:00:00Z", findings=(1, 1, 1, 1))),
+            entry(3, "2026-10-20T10:05:00Z", "review.round", "work-a", review=review(
+                1, "2026-10-20T08:30:00Z", "2026-10-20T08:45:00Z", findings=(0, 0, 0, 1))),
+        ]
+        stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
+        self.assertEqual((stats["rounds"], stats["findings"]), (1, {"P0": 0, "P1": 0, "P2": 0, "P3": 1}))
+        self.assertEqual((stats["buildSeconds"], stats["reviewSeconds"]), (None, 900),
+                         "a review that started before the assignment has no build time")
+
+    def test_planned_work_has_stats_and_the_fold_is_in_show(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        directory = Path(temporary.name) / "state"
+        state_tool.init(directory, "Epic underway")
+        version = state_tool.show(directory)["state"]["version"]
+        state_tool.patch(directory, writer="lead", version=version, changes={"planned": [
+            {"subject": "work-p", "title": "P", "lane": "lane-2", "stage": "review"}]})
+        state_tool.append_journal(directory, kind="lane.assigned", summary="Assigned", lane="lane-2", subject="work-p")
+        state_tool.append_journal(directory, kind="review.round", summary="Round 1", subject="work-p",
+                                  review=review(1, "2099-01-01T00:00:00Z", "2099-01-01T00:10:00Z"))
+        shown = state_tool.show(directory)
+        self.assertEqual(shown["stats"], state_tool.delivery_stats(shown["state"], shown["journal"]))
+        self.assertEqual((shown["stats"]["work-p"]["rounds"], shown["stats"]["work-p"]["reviewSeconds"]), (1, 600))
+        self.assertIsNone(shown["stats"]["work-p"]["handedAt"])
+
+
 class PublicationTests(unittest.TestCase):
     """What was published, so an unpublished view is visible."""
 
@@ -1108,8 +1398,8 @@ class PublicationTests(unittest.TestCase):
         state_tool.append_journal(self.directory, kind="decision.recorded", summary="Decision 4")
         code, shown = run_tool(self.directory, "show")
         self.assertTrue(shown["publication"]["outboxLags"], "a journal entry the outbox lacks is a lag")
-        # The function renderers read is unchanged: exactly the state and the journal.
-        self.assertEqual(sorted(state_tool.show(self.directory)), ["journal", "state"])
+        # What renderers read: the state, the journal and the stats folded from them.
+        self.assertEqual(sorted(state_tool.show(self.directory)), ["journal", "state", "stats"])
 
 
 class SkipGuardTests(unittest.TestCase):
@@ -1163,7 +1453,7 @@ VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
 }
 JOURNAL_KINDS = [
-    "lane.assigned", "candidate.handed", "check.started", "check.finished",
+    "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
     "candidate.merged", "candidate.stopped", "base.broken", "base.repaired",
     "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed",

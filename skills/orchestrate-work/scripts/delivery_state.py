@@ -56,6 +56,10 @@ SNAPSHOT_CLOCK_SKEW_SECONDS = 60.0
 RECONCILE_ATTEMPTS = 5
 STATE_VERSION = "delivery-state/1"
 WRITERS = ("lead", "runner")
+# A review round is the lead's or a lane's record of its own review; the runner
+# never reviews, so it never writes one.
+REVIEW_KIND = "review.round"
+SEVERITIES = ("P0", "P1", "P2", "P3")
 LOCK_TIMEOUT_SECONDS = 30.0
 
 # Arrays whose elements a patch may select, and the field that names each one.
@@ -357,10 +361,38 @@ def journal_errors(entries: list[object]) -> list[str]:
     schema = load_schema("delivery-journal/1")
     errors = []
     for index, entry in enumerate(entries):
-        errors.extend(f"entry {index + 1}{error}" for error in validate(entry, schema))
+        found = validate(entry, schema)
+        errors.extend(f"entry {index + 1}{error}" for error in found)
         if isinstance(entry, dict) and entry.get("id") != index + 1:
             errors.append(f"entry {index + 1}: ids must run in sequence from 1")
+        if not found and isinstance(entry, dict):
+            try:
+                _parse_time(entry["at"], exact=True)
+            except ValueError:
+                # The pattern admits dates that do not exist; the stats read every time.
+                errors.append(f"entry {index + 1}/at: not a real time")
+            errors.extend(f"entry {index + 1}: {problem}" for problem in _review_problems(entry))
     return errors
+
+
+def _review_problems(entry: dict) -> list[str]:
+    """What the schema cannot say about a review round."""
+    review = entry.get("review")
+    if entry["kind"] != REVIEW_KIND:
+        return [] if review is None else [f"only a {REVIEW_KIND} entry carries a review"]
+    if review is None:
+        return [f"a {REVIEW_KIND} entry carries its review"]
+    problems = []
+    if entry["subject"] is None:
+        problems.append(f"a {REVIEW_KIND} entry names the candidate it reviewed")
+    if not review["verdicts"]:
+        problems.append("a review round has at least one lens verdict")
+    try:
+        if _parse_time(review["finishedAt"], exact=True) < _parse_time(review["startedAt"], exact=True):
+            problems.append("a review round finishes after it starts")
+    except ValueError:
+        problems.append("a review round's startedAt and finishedAt are real times")
+    return problems
 
 
 def read_state(directory: Path) -> dict:
@@ -605,7 +637,12 @@ def append_journal(
     summary: str,
     lane: str | None = None,
     subject: str | None = None,
+    review: dict | None = None,
+    writer: str | None = None,
 ) -> dict:
+    """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset."""
+    if writer == "runner" and kind == REVIEW_KIND:
+        raise StateError("kind_not_owned", f"the runner never writes {REVIEW_KIND}: the lead or the lane records its review")
     with file_lock(directory / STATE_LOCK):
         read_state(directory)
         entries = read_journal(directory)
@@ -617,6 +654,8 @@ def append_journal(
             "subject": subject,
             "summary": summary,
         }
+        if review is not None:
+            entry["review"] = review
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
@@ -633,7 +672,10 @@ def append_journal(
 
 
 def show(directory: Path, *, between_reads: Callable[[], None] | None = None) -> dict:
-    """The validated ``{state, journal}`` pair a renderer reads.
+    """The validated ``{state, journal, stats}`` document a renderer reads.
+
+    ``stats`` is derived, never stored: ``delivery_stats`` folds it from the
+    other two, so every view shows the same numbers.
 
     Both files are read under the short state lock, so the pair always comes
     from the same write. ``between_reads`` runs between the two reads, under
@@ -646,7 +688,114 @@ def show(directory: Path, *, between_reads: Callable[[], None] | None = None) ->
         if between_reads is not None:
             between_reads()
         journal = read_journal(directory)
-    return {"state": state, "journal": journal}
+    return {"state": state, "journal": journal, "stats": delivery_stats(state, journal)}
+
+
+# ---------------------------------------------------------------------------
+# Per-stop delivery stats, folded from the record
+
+
+def _seconds(start: str | None, end: str | None) -> int | None:
+    """Whole seconds from one timestamp to another; unknown when either is, or when time ran backwards."""
+    if start is None or end is None:
+        return None
+    elapsed = (_parse_time(end, exact=True) - _parse_time(start, exact=True)).total_seconds()
+    return None if elapsed < 0 else int(elapsed)
+
+
+def _lane_assignment(subject: str, first_id: int, lane_entries: list[dict]) -> dict | None:
+    """The lane's assignment that led to this candidate, when the assignment did not name it.
+
+    The lane's last assignment naming no candidate, made before this
+    candidate's first event and after the lane was last assigned or handed
+    another one, so a reused lane never lends one candidate's assignment to
+    the next. The runner's entries for an earlier candidate do not count:
+    they say nothing about what the lane was assigned.
+    """
+    found = None
+    for entry in lane_entries:
+        if entry["id"] >= first_id:
+            break
+        if entry["subject"] not in (None, subject) and entry["kind"] in ("lane.assigned", "candidate.handed"):
+            found = None
+        elif entry["kind"] == "lane.assigned":
+            found = entry
+    return found
+
+
+def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> dict:
+    rounds_by_number: dict[int, dict] = {}
+    for entry in own:
+        if entry["kind"] == REVIEW_KIND:
+            rounds_by_number[entry["review"]["round"]] = entry["review"]  # a round recorded again replaces itself
+    rounds = [rounds_by_number[number] for number in sorted(rounds_by_number)]
+
+    assigned = next((entry for entry in own if entry["kind"] == "lane.assigned"), None)
+    if assigned is None and own:
+        assigned = _lane_assignment(item["subject"], own[0]["id"], lane_entries)
+    handed = next((entry for entry in reversed(own) if entry["kind"] == "candidate.handed"), None)
+    after_handing = [entry for entry in own if handed is not None and entry["id"] > handed["id"]]
+    checked = next((entry for entry in after_handing if entry["kind"] == "check.started"), None)
+    after_check = [entry for entry in after_handing if checked is not None and entry["id"] > checked["id"]]
+    ended = next((entry for entry in after_check if entry["kind"] == "candidate.merged"), None)
+    outcome = "merged" if ended else None
+    if ended is None:
+        # A stop ends the stop's run only when no check started after it: a
+        # candidate re-checked after a stop is still being checked.
+        last = next((entry for entry in reversed(after_check) if entry["kind"] in ("candidate.stopped", "check.started")),
+                    None)
+        if last is not None and last["kind"] == "candidate.stopped":
+            ended, outcome = last, "stopped"
+    merged = next((entry for entry in reversed(own) if entry["kind"] == "candidate.merged"), None)
+
+    def at(entry: dict | None) -> str | None:
+        return entry["at"] if entry else None
+
+    first_start = min((review["startedAt"] for review in rounds), key=lambda text: _parse_time(text, exact=True),
+                      default=None)
+    last_finish = max((review["finishedAt"] for review in rounds), key=lambda text: _parse_time(text, exact=True),
+                      default=None)
+    reported = item.get("reportedRounds")
+    findings = None
+    if rounds:
+        findings = {severity: sum(review["findings"][severity] for review in rounds) for severity in SEVERITIES}
+    return {
+        "assignedAt": at(assigned),
+        "handedAt": at(handed),
+        "checkStartedAt": at(checked),
+        "endedAt": at(ended),
+        "outcome": outcome,
+        "buildSeconds": _seconds(at(assigned), first_start),
+        "reviewSeconds": _seconds(first_start, last_finish),
+        "waitSeconds": _seconds(at(handed), at(checked)),
+        "checkToMergeSeconds": _seconds(at(checked), at(ended)),
+        "totalSeconds": _seconds(at(assigned), at(merged)),
+        "rounds": len(rounds) if rounds else reported,
+        "roundsSource": "journal" if rounds else ("reported" if reported is not None else None),
+        "findings": findings,
+        "lastVerdicts": dict(rounds[-1]["verdicts"]) if rounds else None,
+    }
+
+
+def delivery_stats(state: dict, journal: list[dict]) -> dict:
+    """Per-stop stats for every queued and planned candidate, by subject.
+
+    A pure fold of the record, in one pass over the journal. A stat whose
+    events are missing is null, never zero: an older candidate with no
+    assignment entry has no build time. With no journaled rounds, the round
+    count is the lane's reported one.
+    """
+    by_subject: dict[str, list[dict]] = {}
+    by_lane: dict[str, list[dict]] = {}
+    for entry in journal:
+        if entry["subject"] is not None:
+            by_subject.setdefault(entry["subject"], []).append(entry)
+        if entry["lane"] is not None:
+            by_lane.setdefault(entry["lane"], []).append(entry)
+    items = [*state["queue"], *state.get("planned", [])]
+    return {item["subject"]: _candidate_stats(item, by_subject.get(item["subject"], []),
+                                              by_lane.get(item["lane"], []) if item.get("lane") else [])
+            for item in items}
 
 
 # ---------------------------------------------------------------------------
@@ -658,9 +807,13 @@ SNAPSHOT_STATES = {
 }
 
 
-def _parse_time(text: str) -> datetime.datetime:
-    return datetime.datetime.strptime(text.rstrip("Z").split(".")[0], "%Y-%m-%dT%H:%M:%S").replace(
-        tzinfo=datetime.timezone.utc)
+def _parse_time(text: str, *, exact: bool = False) -> datetime.datetime:
+    """A schema timestamp as UTC; ``exact`` keeps its fraction of a second, to the microsecond."""
+    whole, _, fraction = text.rstrip("Z").partition(".")
+    moment = datetime.datetime.strptime(whole, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+    if exact and fraction:
+        moment += datetime.timedelta(microseconds=int(fraction[:6].ljust(6, "0")))
+    return moment
 
 
 def read_snapshot(path: Path, max_age: float) -> dict:
@@ -976,6 +1129,34 @@ def publication(directory: Path, shown: dict) -> dict:
     }
 
 
+def _review_argument(value: str | None) -> dict | None:
+    try:
+        review = _json_argument(value, "--review")
+    except StateError as error:
+        raise StateError("entry_invalid", str(error)) from None
+    if review is not None and not isinstance(review, dict):
+        raise StateError("entry_invalid", "--review is a JSON object")
+    return review
+
+
+def _journal_summary(args: argparse.Namespace, review: dict | None) -> str:
+    if args.summary:
+        return args.summary
+    if args.kind == REVIEW_KIND and review is None:
+        raise StateError("entry_invalid", f"a {REVIEW_KIND} gives its review with --review")
+    if args.kind != REVIEW_KIND:
+        raise StateError("entry_invalid", "give --summary")
+    try:
+        verdicts = ", ".join(f"{lens} {verdict}" for lens, verdict in sorted(review["verdicts"].items()))
+        findings = "/".join(str(review["findings"][severity]) for severity in SEVERITIES)
+        number = review["round"]
+        number = int(number) if isinstance(number, float) and number.is_integer() else number
+        return f"Round {number}: {verdicts}; findings {findings}"
+    except (KeyError, TypeError, AttributeError):
+        # The entry's own checks say what is wrong with it.
+        return f"Round {review.get('round', '?')}"
+
+
 def _json_argument(value: str | None, name: str) -> object:
     if value is None:
         return None
@@ -1011,7 +1192,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     entry = commands.add_parser("journal", help="append one journal entry")
     entry.add_argument("--kind", required=True)
-    entry.add_argument("--summary", required=True)
+    entry.add_argument("--summary", help="required, except on a review.round, whose summary is written for it")
+    entry.add_argument("--review", help="a review.round's review as JSON, or - to read it from stdin")
     entry.add_argument("--lane")
     entry.add_argument("--subject")
     commands.add_parser("show", help="print the validated state and journal, and whether publication lags")
@@ -1046,10 +1228,12 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             }
         elif args.command == "journal":
+            review = _review_argument(args.review)
             result = {
                 "ok": True,
                 "entry": append_journal(
-                    args.dir, kind=args.kind, summary=args.summary, lane=args.lane, subject=args.subject
+                    args.dir, kind=args.kind, summary=_journal_summary(args, review),
+                    lane=args.lane, subject=args.subject, review=review,
                 ),
             }
         elif args.command == "reconcile":
