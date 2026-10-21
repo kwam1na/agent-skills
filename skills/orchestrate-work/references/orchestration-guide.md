@@ -495,8 +495,9 @@ Then restart the queue from the first stopped candidate.
 
 A repository adopts this workflow with one binding file,
 `.agents/orchestration.json`, of format `orchestration-binding/1`, described
-by the skill's `orchestration-binding.json` schema. The runner reads it from
-the tip of the remote base branch named on its command line, never from a
+by the `orchestration-binding/1` schema in the skill's `schemas.json`, beside
+this guide. The runner reads it from the tip of the remote base branch named
+on its command line, never from a
 candidate or the operator's checkout, so a candidate can never change how it
 is itself checked or merged. A binding whose `base` names a different branch
 is refused with `binding_invalid`.
@@ -516,7 +517,7 @@ substitutes inside a longer string:
 | --- | --- |
 | `schemaVersion` | `orchestration-binding/1`. |
 | `base` | `{remote, ref}`: the branch every candidate merges into. It must match the runner's `--remote` and `--base`. |
-| `workRoot` | The directory for the runner's temporary checkouts. |
+| `workRoot` | The directory for the runner's temporary checkouts. A relative path resolves against the directory the runner serves: `--repo`, or the current directory when `--repo` is not given, so run the runner from the repository's top-level directory. The runner deletes what it finds under it, so it refuses each of these with `binding_invalid`: a `workRoot` that is that directory or contains it; the git directory itself, or one of git's own folders there (`objects`, `refs`, `worktrees`, `hooks`, `info`, `logs`, `modules`, `lfs`, `rr-cache`) or a path inside one; and, elsewhere inside that directory, a path that holds tracked files or that the repository does not ignore. These checks see only the checkout the runner runs from. From a linked worktree they do not cover the main checkout's files or the shared git directory, so there give `workRoot` a path outside every checkout. |
 | `candidate` | An argv that resolves a candidate reference to `{branch, head}` as JSON. |
 | `prepare` | An argv list run in every fresh checkout, such as installing dependencies or creating a ref the checks need from `{baseHead}`. |
 | `hooks` | `bypass` or `run`. See "Git hooks" below. |

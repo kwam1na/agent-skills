@@ -945,7 +945,50 @@ def bullets_after(text: str, lead_in: str) -> list[str]:
     return items
 
 
+# Files the skill text names that live in an adopter's repository or are
+# written as views, not shipped with the skill.
+ADOPTER_FILES = frozenset({".agents/orchestration.json", "delivery.md", "delivery.html"})
+
+
 class SkillTextTests(unittest.TestCase):
+    def test_every_file_the_skill_text_names_exists(self) -> None:
+        shipped = {path.relative_to(SKILL).as_posix() for path in SKILL.rglob("*") if path.is_file()}
+        names = {Path(path).name for path in shipped}
+        for path in (SKILL / "SKILL.md", GUIDE):
+            text = path.read_text(encoding="utf-8")
+            # A skill-relative path, inline or in a command, must resolve.
+            for relative in re.findall(r"(?<![\w/.-])(?:<skill>/)?((?:scripts|references)/[\w.-]+\.\w+)", text):
+                with self.subTest(path=path.name, relative=relative):
+                    self.assertIn(relative, shipped)
+            # A file named on its own is a shipped file or a declared adopter file.
+            for name in re.findall(r"`([^`\s/]*\.(?:json|jsonl|py|md|mjs|yaml|html))`", text):
+                with self.subTest(path=path.name, name=name):
+                    self.assertTrue(name in names or name in ADOPTER_FILES, name)
+            for name in re.findall(r"`([^`\s]*/[^`\s]*\.(?:json|jsonl|py|md|mjs|yaml|html))`", text):
+                with self.subTest(path=path.name, name=name):
+                    self.assertTrue(name.removeprefix("<skill>/") in shipped or name in ADOPTER_FILES, name)
+            # A versioned format name is one of the skill's own schemas.
+            schemas = set(json.loads(SCHEMA_FILE.read_text(encoding="utf-8")))
+            for name in re.findall(r"`([a-z][a-z-]*/\d+)`", text):
+                with self.subTest(path=path.name, schema=name):
+                    self.assertIn(name, schemas)
+            # Links to the skill's own references resolve.
+            for target in re.findall(r"\]\(([^)#\s]+)(?:#[^)]*)?\)", text):
+                if "://" in target:
+                    continue
+                with self.subTest(path=path.name, link=target):
+                    self.assertTrue((path.parent / target).is_file(), target)
+
+    def test_the_work_root_row_lists_every_git_folder_the_runner_refuses(self) -> None:
+        runner = _load("merge_queue")
+        row = next(line for line in GUIDE.read_text(encoding="utf-8").splitlines() if line.startswith("| `workRoot` |"))
+        # The parenthesised list after "git's own folders there".
+        folders = re.search(r"git's own folders there \(([^)]*)\)", row)
+        self.assertIsNotNone(folders, row)
+        listed = re.findall(r"`([\w-]+)`", folders.group(1))
+        self.assertEqual(sorted(listed), sorted(runner.GIT_OWN_DIRECTORIES))
+        self.assertEqual(len(listed), len(set(listed)))
+
     def test_every_journal_kind_has_exactly_one_tracker_update_instruction(self) -> None:
         kinds = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))["delivery-journal/1"]["properties"]["kind"]["enum"]
         table = section(GUIDE.read_text(encoding="utf-8"), "### Tracker updates")
