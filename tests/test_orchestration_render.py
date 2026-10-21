@@ -869,7 +869,8 @@ def status_document(source: str = "derived") -> dict:
     state = copy.deepcopy(FIXED_STATE)
     state["lanes"][1]["focus"] = ""
     return {"state": state, "journal": FIXED_JOURNAL,
-            "status": {"text": "Checking Change one · next: change-2", "source": source},
+            "status": {"text": "Checking Change one · next: change-2", "source": source,
+                       **({"expiresAt": "2026-10-20T16:00:00Z"} if source == "override" else {})},
             "focus": {"lane-2": "change-2: queued, 1 review round"}}
 
 
@@ -883,7 +884,7 @@ class StatusViewTests(unittest.TestCase):
 
     def test_an_override_says_it_is_the_leads(self) -> None:
         view = render_state.render_markdown(status_document("override"))
-        self.assertIn("\nStatus: Checking Change one · next: change-2 (set by the lead)\n", view)
+        self.assertIn("\nStatus: Checking Change one · next: change-2 (set by the lead, until 2026-10-20T16:00:00Z)\n", view)
 
     def test_a_document_without_a_status_renders_as_before(self) -> None:
         view = render_state.render_markdown({"state": FIXED_STATE, "journal": FIXED_JOURNAL})
@@ -1451,7 +1452,8 @@ setTimeout(async () => {
 
     def test_the_page_shows_the_status_and_a_derived_focus(self) -> None:
         shown = self.run_page({}, status_document("override"))
-        self.assertIn("Status: Checking Change one · next: change-2 (set by the lead)", shown["text"])
+        self.assertIn("Status: Checking Change one · next: change-2 (set by the lead, until 2026-10-20T16:00:00Z)",
+                      shown["text"])
         self.assertIn("change-2: queued, 1 review round (derived)", shown["text"])
 
     def test_without_an_adapter_the_embedded_state_is_shown(self) -> None:

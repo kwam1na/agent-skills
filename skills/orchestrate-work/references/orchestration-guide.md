@@ -178,7 +178,8 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   status of your own with `headline --text`, only for what the record cannot
   say, such as a release in progress; it expires after the binding's
   `state.statusOverrideMaxAgeSeconds`, four hours by default, so it cannot go
-  stale.
+  stale. The views mark it as set by the lead and say until when, so a manual
+  line never passes for the derived one.
 - Before the run, make sure the lead holds every lease a named lead input
   needs: its holder in `leases[]` must equal the name passed as `--lead`. Get
   it through the lease sequence in the coordination protocol (request,

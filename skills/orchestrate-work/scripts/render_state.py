@@ -292,7 +292,9 @@ def _status_text(status: object) -> str | None:
     """The status line; the page's program writes the same line."""
     if not isinstance(status, dict) or not isinstance(status.get("text"), str):
         return None
-    return f"Status: {status['text']}" + (" (set by the lead)" if status.get("source") == "override" else "")
+    if status.get("source") == "override":
+        return f"Status: {status['text']} (set by the lead, until {status.get('expiresAt')})"
+    return f"Status: {status['text']}"
 
 
 def _status_lines(status: object) -> list[str]:
@@ -532,7 +534,8 @@ _PAGE_PROGRAM = """
       " \\u00b7 base " + show(meta.baseHead) + " \\u00b7 released " + show(meta.releasedHead), "meta"));
     if (note) { parts.push(el("p", note, "note")); }
     if (isObject(doc.status) && typeof doc.status.text === "string") {
-      parts.push(el("p", "Status: " + doc.status.text + (doc.status.source === "override" ? " (set by the lead)" : ""), "status"));
+      parts.push(el("p", "Status: " + doc.status.text +
+        (doc.status.source === "override" ? " (set by the lead, until " + show(doc.status.expiresAt) + ")" : ""), "status"));
     }
 
     parts.push(el("h2", "Checking"));

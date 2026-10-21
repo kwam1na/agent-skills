@@ -1028,7 +1028,8 @@ def delivery_status(state: dict, journal: list[dict], at: str | None = None) -> 
     moment = _parse_time(at or now(), exact=True)
     override = state["meta"].get("statusOverride")
     if override and moment < _parse_time(override["expiresAt"], exact=True):
-        return {"text": override["text"], "source": "override"}
+        # An override says so, and until when, so a stale manual line never passes as derived state.
+        return {"text": override["text"], "source": "override", "expiresAt": override["expiresAt"]}
     parts = []
     current = state["meta"]["checking"]["now"]
     if current is not None:

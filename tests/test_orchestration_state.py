@@ -2101,15 +2101,18 @@ class StatusTests(unittest.TestCase):
         override = {"text": "Release candidate cut; holding merges", "setAt": "2026-10-21T11:00:00Z",
                     "expiresAt": "2026-10-21T13:00:00Z"}
         self.assertEqual(state_tool.delivery_status(self.record(override=override), [], at=self.NOW),
-                         {"text": "Release candidate cut; holding merges", "source": "override"})
+                         {"text": "Release candidate cut; holding merges", "source": "override",
+                          "expiresAt": "2026-10-21T13:00:00Z"})
         expired = {**override, "expiresAt": "2026-10-21T11:59:59Z"}
         self.assertEqual(state_tool.delivery_status(self.record(override=expired), [], at=self.NOW),
                          {"text": "Nothing in flight", "source": "derived"})
 
     def test_an_empty_lane_focus_derives_from_its_work(self) -> None:
         record = self.record(
+            # lane-2 has queued work too, but wrote its own focus: that stays its own.
             queue=[queue_item("work-a", lane="lane-1", stage="merged"),
-                   queue_item("work-c", order=2, lane="lane-1", stage="checking", reportedRounds=3)],
+                   queue_item("work-c", order=2, lane="lane-1", stage="checking", reportedRounds=3),
+                   queue_item("work-g", order=3, lane="lane-2")],
             lanes=[lane("lane-1"), lane("lane-2", focus="Writing the guide"), lane("lane-3")],
         )
         record["planned"] = [planned("work-p", "lane-3")]
@@ -2128,7 +2131,8 @@ class StatusTests(unittest.TestCase):
         override = set_override["state"]["meta"]["statusOverride"]
         self.assertEqual(state_tool._parse_time(override["expiresAt"]) - state_tool._parse_time(override["setAt"]),
                          datetime.timedelta(seconds=600))
-        self.assertEqual(state_tool.show(directory)["status"], {"text": "Holding for the release", "source": "override"})
+        self.assertEqual(state_tool.show(directory)["status"], {"text": "Holding for the release", "source": "override",
+                                                                "expiresAt": override["expiresAt"]})
         binding = Path(temporary.name) / "binding.json"
         binding.write_text(json.dumps({"state": {"publishers": [], "statusOverrideMaxAgeSeconds": 60}}))
         code, bound = run_tool(directory, "headline", "--text", "Shorter", "--binding", str(binding))
