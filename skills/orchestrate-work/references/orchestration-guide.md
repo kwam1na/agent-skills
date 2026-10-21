@@ -46,6 +46,14 @@ it through the state tool, then render the views.
   array in a lead merge patch: every existing element copied exactly from
   that read, including the runner's fields, plus the new element. A copy that
   changes a runner-owned field is refused with `field_not_owned`.
+- **Live state comes before the work.** While a candidate's checks run, the
+  runner names every selected check in `meta.checking.now.steps` and in that
+  queue element's `checks`, in run order. It marks a check `running` before
+  the check starts and records its result when it ends, writing both places in
+  one patch, so the checking panel and the queue row always agree. A check
+  whose prerequisite failed reads `skipped`; one that never started reads
+  `pending`. Whatever acts as the runner should write live state the same way:
+  before the work starts, not after it.
 
 ### Before the repository has the runner
 
