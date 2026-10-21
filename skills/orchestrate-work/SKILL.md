@@ -291,7 +291,13 @@ run the sync loop in this order:
      `meta.trackerParent`, which `{parent}` in its argv names. A command that
      fails, or prints anything but a fresh tracker snapshot, keeps the last
      snapshot and journals why once, and reconcile then refuses that snapshot
-     once it is too old:
+     once it is too old. The command runs in its own process group with a
+     marker for that run in its environment; once it exits, whatever it left
+     in the group or carrying the marker is stopped, never the caller or its
+     parents, pid 1, another user's process or one older than the run, and the
+     result says what was stopped or refused. A child that clears its
+     environment, or whose environment the system hides, such as some system
+     binaries on macOS, cannot be found and survives:
 
      ```bash
      python3 -B scripts/delivery_state.py --dir <state directory> tracker-snapshot --binding .agents/orchestration.json --output <tracker snapshot>
