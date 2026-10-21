@@ -1922,6 +1922,26 @@ class BatchTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("third")["stage"], "queued")
         self.assertEqual(adopter.item("first")["stage"], "stopped")
 
+    def test_members_a_failed_batch_requeues_are_journalled_so_the_stats_end_their_check(self) -> None:
+        adopter = self.adopter()
+        # A broken base stops the first member and sends the other two back to queued.
+        adopter.advance_base({"src/app.txt": "FAIL\n"})
+        for name, changes in (("first", {"src/lib.txt": "lib two\n"}), ("third", {"src/extra.txt": "extra\n"}),
+                              ("fourth", {"src/more.txt": "more\n"})):
+            self.candidate(adopter, changes, name=name)
+            state_tool.append_journal(adopter.state, kind="candidate.handed", summary=f"Handed {name}", subject=name)
+        self.batch(adopter, "first", "third", "fourth")
+        stats = state_tool.delivery_stats(state_tool.read_state(adopter.state), state_tool.read_journal(adopter.state))
+        for name in ("third", "fourth"):
+            with self.subTest(name):
+                self.assertEqual(adopter.item(name)["stage"], "queued")
+                self.assertEqual(stats[name]["outcome"], "stopped", stats[name])
+                self.assertIsNotNone(stats[name]["endedAt"])
+                requeued = [entry for entry in state_tool.read_journal(adopter.state)
+                            if entry["kind"] == "candidate.stopped" and entry.get("subject") == name]
+                self.assertTrue(requeued and "queued again" in requeued[-1]["summary"], requeued)
+                self.assertIn("base_broken", requeued[-1]["summary"])
+
     def test_a_stacked_pair_lands_through_a_squash_merging_forge(self) -> None:
         adopter = self.environment_adopter({"MQ_MERGE": "squash"})
         lower = adopter.lane_commit("lower", {"src/lib.txt": "lib two\n"})

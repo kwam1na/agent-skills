@@ -1587,15 +1587,21 @@ class Runner:
         self.notes = []
 
         def requeue(subjects: list[str], why: Stop, queue_stopped: bool = False) -> None:
-            """Send members back to queued, each with a result saying why nothing of it landed."""
+            """Send members back to queued, each with a result and a journal entry saying why nothing of it landed.
+
+            The entry ends the member's check in the record, so it does not read
+            as still being checked until a later run checks it again.
+            """
             for subject in subjects:
                 if documents[subject].stop is not None:
                     continue
+                detail = f"{subject} did not land and is queued again: {why.reason}: {why.detail}"
                 with contextlib.suppress(Stop, delivery_state.StateError):
                     self.set_item(subject, stage="queued", checks=[])
+                with contextlib.suppress(Stop, delivery_state.StateError, OSError):
+                    self.journal("candidate.stopped", detail, subject)
                 documents[subject].stop = {
-                    "reason": why.reason,
-                    "detail": f"{subject} did not land and is queued again: {why.reason}: {why.detail}",
+                    "reason": why.reason, "detail": detail,
                     "paths": [], "queueStopped": queue_stopped or why.reason in QUEUE_STOPPING,
                 }
 
