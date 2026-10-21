@@ -19,6 +19,7 @@ from agent_skills.product import (
     CancellationIncompleteError,
     _observed_child_liveness,
     _run_command,
+    _wait_for_posix_group,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -289,6 +290,64 @@ class ProductLauncherTests(unittest.TestCase):
              patch("agent_skills.product._wait_for_posix_group", return_value=False):
             self.assertEqual(_run_command(["worker"], ROOT), 128 + signal.SIGTERM)
         self.assertEqual(handlers, {sig: signal.SIG_DFL for sig in POSIX_SIGNALS})
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_a_group_probe_refused_while_its_members_exit_is_polled_until_it_drains(self) -> None:
+        # macOS answers a group whose last members are exiting with EPERM, not
+        # ESRCH: the group is being torn down, not unobservable.
+        child = Mock(pid=12345)
+        with patch("agent_skills.product.os.killpg",
+                   side_effect=[PermissionError, PermissionError, ProcessLookupError]) as killpg:
+            self.assertTrue(_wait_for_posix_group(child, 5))
+        self.assertEqual(killpg.call_count, 3)
+        with patch("agent_skills.product.os.killpg", side_effect=PermissionError):
+            # A group that stays unsignallable is not drained, and is never an error.
+            self.assertFalse(_wait_for_posix_group(child, 0.12))
+
+    def _cancel_with_group(self, kill_group, drains):
+        handlers = {}
+        child = Mock(pid=12345)
+
+        def register(sig, handler):
+            handlers[sig] = handler
+            return signal.SIG_DFL
+
+        def wait(*, timeout):
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+            raise subprocess.TimeoutExpired("worker", timeout)
+
+        child.wait.side_effect = wait
+        child.poll.return_value = None
+        with patch("agent_skills.product.signal.signal", side_effect=register), \
+             patch("agent_skills.product.subprocess.Popen", return_value=child), \
+             patch("agent_skills.product.os.killpg", side_effect=kill_group), \
+             patch("agent_skills.product._wait_for_posix_group", side_effect=drains):
+            try:
+                return _run_command(["worker"], ROOT)
+            finally:
+                self.assertEqual(handlers, {sig: signal.SIG_DFL for sig in POSIX_SIGNALS})
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_a_sigkill_refused_while_members_exit_is_clean_once_the_group_drains(self) -> None:
+        refusal = PermissionError("only exiting members remain")
+
+        def kill_group(pid, forwarded):
+            if forwarded == signal.SIGKILL:
+                raise refusal
+
+        self.assertEqual(self._cancel_with_group(kill_group, [False, True]), 128 + signal.SIGTERM)
+        with self.assertRaises(CancellationIncompleteError) as raised:
+            self._cancel_with_group(kill_group, [False, False])
+        self.assertEqual(raised.exception.cleanup, "sigkill-failed")
+        self.assertIs(raised.exception.__cause__, refusal)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_forwarding_to_a_group_whose_members_are_exiting_does_not_escape_the_handler(self) -> None:
+        def kill_group(pid, forwarded):
+            if forwarded == signal.SIGTERM:
+                raise PermissionError("only exiting members remain")
+
+        self.assertEqual(self._cancel_with_group(kill_group, [True]), 128 + signal.SIGTERM)
 
     @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_posix_post_escalation_timeout_reports_observed_child_only(self) -> None:
