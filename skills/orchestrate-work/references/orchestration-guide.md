@@ -580,7 +580,7 @@ substitutes inside a longer string:
 | `checkTimeoutCeiling` | The maximum any check may ask for. |
 | `parallelChecks` | Optional. How many checks marked `parallelSafe` may run at once; 1 when absent. A check without `parallelSafe` always runs alone. |
 | `batch` | Optional. `{culpritSearch}`: how `batch` finds the member that failed a batch's checks, `bisect` (the default, fewest check runs) or `serial` (each prefix in order). |
-| `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match. The runner drops an inherited setting of them before running git or any declared argv; a profile's environment may still set them for its checks. |
+| `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match; these names are matched without case. The runner drops an inherited setting of them before running git or any declared argv; a profile's environment may still set them for its checks. |
 | `ready` | An argv run before merging; a non-zero exit stops with `ready_refused`. |
 | `merge` | An argv that must use `{expectedHead}`. A binding whose `merge` lacks it is invalid. |
 | `release` | Ordered targets, each with an `id`, `argv`, `stopsOnFailure` and `requiresApproval`, and an optional `timeoutSeconds`. |
