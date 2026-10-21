@@ -265,9 +265,9 @@ in this order:
      marker for that run in its environment; once it exits, whatever it left
      in the group or carrying the marker is stopped, never the caller or its
      parents, pid 1, another user's process or one older than the run, and the
-     result says what was stopped or refused. A child whose environment the
-     system hides, such as some system binaries on macOS, cannot be found and
-     survives:
+     result says what was stopped or refused. A child that clears its
+     environment, or whose environment the system hides, such as some system
+     binaries on macOS, cannot be found and survives:
 
      ```bash
      python3 -B scripts/delivery_state.py --dir <state directory> tracker-snapshot --binding .agents/orchestration.json --output <tracker snapshot>

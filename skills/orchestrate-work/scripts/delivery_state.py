@@ -1623,6 +1623,9 @@ TRACKER_SNAPSHOT_MARKER = "ORCHESTRATE_SNAPSHOT_RUN"
 # How far a process table's start times may run early: a boot time or a start
 # printed in whole seconds.
 START_SLACK_SECONDS = 1
+# How many times cleanup freezes what it found and looks again, so a process
+# still spawning cannot leave children the first look missed.
+CLEANUP_PASSES = 5
 TRACKER_SNAPSHOT_NOTE = "tracker-snapshot:"
 TRACKER_SNAPSHOT_TAKEN = "tracker-snapshot: taken again"
 
@@ -1713,7 +1716,7 @@ def _process_environment(pid: int) -> list[bytes] | None:
     return [entry for entry in raw[raw.find(b"\0"):].split(b"\0") if entry]
 
 
-def _cleanup_selection(group: int, marker: bytes, started: float, table: dict | None,
+def _cleanup_selection(group: int | None, marker: bytes, started: float, table: dict | None,
                        environment: Callable[[int], list[bytes] | None], *, caller: int | None = None) -> dict:
     """What cleanup may stop once the command, the leader of ``group``, has exited.
 
@@ -1723,7 +1726,8 @@ def _cleanup_selection(group: int, marker: bytes, started: float, table: dict | 
     before the run; each of those is refused and named. An unreadable process
     table selects nothing. The command itself is the caller's to reap, never
     signalled. The group may be signalled whole only when none of its members
-    was refused.
+    was refused. With ``group`` None, when the command was reaped elsewhere
+    and its pid no longer holds the group id, only marked processes count.
     """
     selection = {"group": group, "selected": [], "refused": [], "unreadable": table is None, "whole_group": False}
     if table is None:
@@ -1740,7 +1744,7 @@ def _cleanup_selection(group: int, marker: bytes, started: float, table: dict | 
         _, pgid, owner, start = table[pid]
         if pid == group:
             continue
-        in_group = pgid == group
+        in_group = group is not None and pgid == group
         if not in_group and marker not in (environment(pid) or ()):
             continue
         why = ("pid 1 or below" if pid <= 1 else "the caller or its parent" if pid in callers
@@ -1759,6 +1763,9 @@ def _describe_selection(selection: dict) -> str:
     """The selection on one line."""
     if selection["unreadable"]:
         return f"cleanup of group {selection['group']}: the process table is unreadable, nothing stopped"
+    if selection["group"] is None:
+        return (f"cleanup of marked processes only (the command was reaped elsewhere): "
+                f"{len(selection['selected'])} selected {selection['selected']}; {len(selection['refused'])} refused")
     refused = ", ".join(f"{pid} ({why})" for pid, why in selection["refused"])
     return (f"cleanup of group {selection['group']}: {len(selection['selected'])} selected "
             f"{selection['selected']}; {len(selection['refused'])} refused" + (f": {refused}" if refused else ""))
@@ -1798,10 +1805,52 @@ def _exited(process: subprocess.Popen, timeout: float) -> bool:
         queue.close()
 
 
+def _unreaped(pid: int) -> bool:
+    """Whether the exited command is still unreaped, so its pid, and the group id with it, stay reserved.
+
+    Without waitid a reaped pid that was reused at once reads as unreaped.
+    """
+    if hasattr(os, "waitid"):
+        try:
+            return os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+        except ChildProcessError:
+            return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _signal_selected(pids: list[int], group: int | None, marker: bytes, signum: int) -> None:
+    """Signal each pid only if, checked again just before, it is still in the group or still carries the marker.
+
+    Nothing holds a single pid the way the unreaped command holds the group
+    id, so a pid freed and reused between that check and the signal is the
+    one window left.
+    """
+    for pid in pids:
+        with contextlib.suppress(OSError):
+            if (group is not None and os.getpgid(pid) == group) or marker in (_process_environment(pid) or ()):
+                os.kill(pid, signum)
+
+
 def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
                     preview: Callable[[dict], None] | None, cleanup: list | None) -> None:
-    """Stop what the exited, unreaped command left: its group and what carries the run's marker."""
-    selection = _cleanup_selection(process.pid, marker, started, _process_table(), _process_environment)
+    """Stop what the exited command left: its group, while its unreaped pid holds the group id, and marked processes.
+
+    What is selected is first frozen and the table read again, up to
+    ``CLEANUP_PASSES`` times, so a process still spawning cannot leave
+    children the first read missed; then everything frozen is killed.
+    """
+    group = process.pid if _unreaped(process.pid) else None
+
+    def select_now() -> dict:
+        return _cleanup_selection(group, marker, started, _process_table(), _process_environment)
+
+    selection = select_now()
     if cleanup is not None:
         cleanup.append(selection)
     if preview is not None:
@@ -1809,14 +1858,28 @@ def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
         return
     if selection["unreadable"]:
         return
-    if selection["whole_group"]:
+    frozen: list[int] = []
+    whole_group = selection["whole_group"]
+    latest = selection
+    for _ in range(CLEANUP_PASSES):
+        fresh = [pid for pid in latest["selected"] if pid not in frozen]
+        if not fresh:
+            break
+        _signal_selected(fresh, group, marker, signal.SIGSTOP)
+        frozen += fresh
+        latest = select_now()
+        if latest["unreadable"]:
+            break
+        whole_group = whole_group and latest["whole_group"]
+        for refusal in latest["refused"]:
+            if refusal not in selection["refused"]:
+                selection["refused"].append(refusal)
+    if group is not None and whole_group:
         with contextlib.suppress(OSError):
-            os.killpg(process.pid, signal.SIGKILL)
-    for pid in selection["selected"]:
-        # Checked again just before the signal: still in the group, or still carrying the marker.
-        with contextlib.suppress(OSError):
-            if os.getpgid(pid) == process.pid or marker in (_process_environment(pid) or ()):
-                os.kill(pid, signal.SIGKILL)
+            os.killpg(group, signal.SIGKILL)
+    _signal_selected(frozen, group, marker, signal.SIGKILL)
+    selection["selected"] = sorted(frozen)
+    selection["whole_group"] = whole_group
 
 
 def _stop_group(process: subprocess.Popen) -> None:
@@ -1872,9 +1935,11 @@ def _run_bounded(argv: list[str], timeout: int, limit: int, *, preview: Callable
     However the run ends, interrupted included, what the command left running
     is then stopped (``_cleanup_selection``) before the command is reaped, and
     the selection is appended to ``cleanup``. With ``preview`` the selection is
-    passed to it and nothing it names is signalled; a command that overran its
-    limits is still stopped. On Windows only the command's own process group
-    is stopped, and only when it overran.
+    passed to it and nothing it names is signalled. A command still running
+    because it overran or the run was interrupted is stopped first with its
+    whole group, preview or not: the group is the new session the command was
+    started in, which holds only the run's own processes. On Windows only the
+    command itself is stopped, and only when it overran or was interrupted.
     """
     marker = f"{TRACKER_SNAPSHOT_MARKER}={uuid.uuid4().hex}"
     started = time.time()
@@ -1912,7 +1977,8 @@ def _run_bounded(argv: list[str], timeout: int, limit: int, *, preview: Callable
             _exited(process, 5)
         if os.name != "nt":
             _stop_leftovers(process, marker.encode(), started, preview=preview, cleanup=cleanup)
-        process.wait()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=5)
     if overran is not None:
         return None, b"", overran
     # A reader still waiting on a left-behind child adds nothing from here on.

@@ -2356,15 +2356,16 @@ class SnapshotCleanupTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
 
-    def command(self, *, detached: bool) -> tuple[list[str], Path]:
+    def command(self, *, detached: bool, then: str = "") -> tuple[list[str], Path]:
         pid_file = self.root / f"child {len(list(self.root.iterdir()))}.pid"
         script = textwrap.dedent(f"""
-            import subprocess, sys
+            import subprocess, sys, time
             child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                      start_new_session={detached!r})
             open({str(pid_file)!r}, "w").write(str(child.pid))
-            print("done")
+            print("done", flush=True)
+            {then}
         """)
 
         def stop() -> None:
@@ -2392,10 +2393,8 @@ class SnapshotCleanupTests(unittest.TestCase):
         self.assertEqual(len(seen), 1, seen)
         selection = seen[0]
         child = int(pid_file.read_text())
-        self.assertIn(child, selection["selected"], selection)
-        self.assertNotIn(os.getpid(), selection["selected"])
-        self.assertNotIn(1, selection["selected"])
-        self.assertNotIn(os.getppid(), selection["selected"])
+        # Exactly the probe: a wider list would be signalled for real by the run that follows.
+        self.assertEqual((selection["selected"], selection["refused"]), ([child], []), selection)
         self.assertFalse(self.gone_now(child), "a preview stops nothing")
         os.kill(child, signal.SIGKILL)
         self.assertTrue(self.gone(child))
@@ -2437,6 +2436,113 @@ class SnapshotCleanupTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 state_tool._run_bounded(argv, 20, 4096)
         self.assertTrue(self.gone(int(pid_file.read_text())))
+
+    def previewed_overrun(self, argv: list[str], pid_file: Path, run) -> None:
+        seen: list[dict] = []
+        run(argv, preview=seen.append)
+        child = int(pid_file.read_text())
+        self.assertEqual((seen[0]["selected"], seen[0]["refused"]), ([child], []), seen)
+        self.assertFalse(self.gone_now(child), "a preview stops nothing it selected")
+        os.kill(child, signal.SIGKILL)
+
+    def test_a_timed_out_command_s_detached_child_is_stopped_too(self) -> None:
+        def run(argv: list[str], **options: object) -> None:
+            code, _, why = state_tool._run_bounded(argv, 2, 4096, **options)
+            self.assertEqual((code, why), (None, "timed out after 2s"))
+
+        argv, pid_file = self.command(detached=True, then="time.sleep(30)")
+        self.previewed_overrun(argv, pid_file, run)
+        argv, pid_file = self.command(detached=True, then="time.sleep(30)")
+        run(argv)
+        self.assertTrue(self.gone(int(pid_file.read_text())))
+
+    def test_an_interrupt_while_the_command_runs_stops_it_and_what_it_left(self) -> None:
+        real = state_tool._exited
+
+        def run(argv: list[str], **options: object) -> None:
+            calls = []
+
+            def interrupted(process, timeout):
+                calls.append(timeout)
+                if len(calls) == 8:  # the command has been running for a while
+                    raise KeyboardInterrupt
+                return real(process, timeout)
+
+            with mock.patch.object(state_tool, "_exited", side_effect=interrupted):
+                with self.assertRaises(KeyboardInterrupt):
+                    state_tool._run_bounded(argv, 20, 4096, **options)
+
+        argv, pid_file = self.command(detached=True, then="time.sleep(30)")
+        self.previewed_overrun(argv, pid_file, run)
+        argv, pid_file = self.command(detached=True, then="time.sleep(30)")
+        run(argv)
+        self.assertTrue(self.gone(int(pid_file.read_text())))
+
+    def test_a_process_still_spawning_leaves_no_children_behind(self) -> None:
+        pids = self.root / "spawned.pids"
+
+        def stop_recorded() -> None:
+            # Only the processes this test's command recorded.
+            for line in pids.read_text().split() if pids.exists() else ():
+                with contextlib.suppress(OSError, ValueError):
+                    os.kill(int(line), signal.SIGKILL)
+
+        self.addCleanup(stop_recorded)
+        spawner = textwrap.dedent(f"""
+            import os, subprocess, sys, time
+            with open({str(pids)!r}, "a") as out:
+                out.write(f"{{os.getpid()}}\\n"); out.flush()
+                while True:
+                    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"],
+                                             start_new_session=True)
+                    out.write(f"{{child.pid}}\\n"); out.flush()
+                    time.sleep(0.01)
+        """)
+        script = textwrap.dedent(f"""
+            import subprocess, sys, time
+            subprocess.Popen([sys.executable, "-c", {spawner!r}], start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(0.5)
+            print("done")
+        """)
+        seen: list[dict] = []
+        state_tool._run_bounded([sys.executable, "-c", script], 20, 4096, preview=seen.append)
+        recorded = {int(line) for line in pids.read_text().split()}
+        self.assertTrue(seen[0]["selected"], seen)
+        self.assertLessEqual(set(seen[0]["selected"]), recorded, "the preview names only the run's own processes")
+        self.assertEqual(seen[0]["refused"], [])
+        stop_recorded()
+        time.sleep(0.5)
+        stop_recorded()
+        pids.unlink()
+        code, _, _ = state_tool._run_bounded([sys.executable, "-c", script], 20, 4096)
+        self.assertEqual(code, 0)
+        time.sleep(0.5)
+        survivors = [pid for pid in {int(line) for line in pids.read_text().split()} if not self.gone(pid)]
+        self.assertEqual(survivors, [], "nothing the spawner started survives")
+
+    def test_a_pid_that_left_the_group_and_carries_no_marker_is_not_signalled(self) -> None:
+        probe = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+        self.addCleanup(probe.wait)
+        try:
+            state_tool._signal_selected([probe.pid], os.getpid(), b"ORCHESTRATE_SNAPSHOT_RUN=nobody", signal.SIGKILL)
+            time.sleep(0.3)
+            self.assertIsNone(probe.poll(), "checked again before the signal, and spared")
+        finally:
+            probe.kill()
+
+    def test_a_command_reaped_elsewhere_gives_up_its_group(self) -> None:
+        process = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        self.assertTrue(state_tool._exited(process, 10))
+        self.assertTrue(state_tool._unreaped(process.pid))
+        process.wait()
+        self.assertFalse(state_tool._unreaped(process.pid))
+        marker, me, uid = b"RUN=abc", os.getpid(), os.geteuid()
+        table = {me: (1, me, uid, 1.0), 501: (500, 500, uid, 2_000_000.0), 502: (1, 502, uid, 2_000_000.0)}
+        selection = state_tool._cleanup_selection(None, marker, 1_000_000.0, table,
+                                                  lambda pid: [marker] if pid == 502 else [], caller=me)
+        self.assertEqual(selection["selected"], [502], "a group member counts only while the group id is held")
+        self.assertIn("marked processes only", state_tool._describe_selection(selection))
 
     def test_an_unreadable_process_table_stops_nothing_and_says_so(self) -> None:
         argv, pid_file = self.command(detached=False)
@@ -2502,6 +2608,8 @@ class SnapshotCleanupTests(unittest.TestCase):
         }
         carriers = {1, parent, me, 502, 503, 504}
         environment = {pid: [b"PATH=/bin", marker] if pid in carriers else [b"PATH=/bin"] for pid in table}
+        table[506] = (1, 506, uid, started + 3)
+        environment[506] = [b"PATH=/bin", b"RUN=abcd", b"RUN=ab"]  # another run's marker, and prefixes of this one
         selection = state_tool._cleanup_selection(500, marker, started, table, environment.get, caller=me)
         self.assertEqual(selection["selected"], [501, 502], "the command itself has exited and is reaped, not signalled")
         refused = dict(selection["refused"])
