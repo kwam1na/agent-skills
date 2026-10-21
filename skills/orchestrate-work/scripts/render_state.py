@@ -90,6 +90,7 @@ if __name__ == "__main__":
 
 import argparse
 import contextlib
+import datetime
 import json
 import os
 import re
@@ -230,6 +231,50 @@ def _duration(seconds: object) -> str:
     return f"{seconds // 86400}d {seconds // 3600 % 24:02d}h"
 
 
+def _elapsed(start: object, end: object) -> int | None:
+    """Whole seconds between two record timestamps, or None when either is missing."""
+    if not isinstance(start, str) or not isinstance(end, str):
+        return None
+    moments = []
+    for text in (start, end):
+        whole, _, fraction = text.rstrip("Z").partition(".")
+        moment = datetime.datetime.strptime(whole, "%Y-%m-%dT%H:%M:%S")
+        moments.append(moment + datetime.timedelta(microseconds=int(fraction[:6].ljust(6, "0")) if fraction else 0))
+    return max(0, int((moments[1] - moments[0]).total_seconds()))
+
+
+def _step_text(step: dict, as_of: str) -> str:
+    """A check step with its timing, as of the record's last write; the page's program writes the same line."""
+    text = f"{step['label']}: {step['state']}"
+    if "finishedAt" in step and "startedAt" in step:
+        return text + f" · took {_duration(_elapsed(step['startedAt'], step['finishedAt']))}"
+    if step["state"] == "running" and "startedAt" in step:
+        elapsed = _elapsed(step["startedAt"], as_of)
+        expected = step.get("expectedSeconds")
+        if not isinstance(expected, int):
+            return text + f" · {_duration(elapsed)}, no expected time yet"
+        over = ", over the expected time" if elapsed is not None and elapsed > expected else ""
+        return text + f" · {_duration(elapsed)} of an expected {_duration(expected)}{over}"
+    return text
+
+
+def _check_text(check: dict) -> str:
+    """A queue row's check with its failing tests and log; the page's program writes the same line."""
+    text = f"{check['id']}: {check['state']}"
+    if check.get("failures"):
+        text += " · failing " + ", ".join(check["failures"])
+    if check.get("log"):
+        text += f" · log {check['log']}"
+    return text
+
+
+def _estimate_text(estimate: dict) -> str:
+    """A waiting candidate's place in the queue; the page's program writes the same line."""
+    start = estimate.get("expectedStart")
+    when = f"expected to start around {start}" if start else "start time unknown"
+    return f"position {estimate['position']} · {when} (an estimate)"
+
+
 def _stats_text(stats: dict) -> str:
     """One line of a candidate's stats; the page's program writes the same line."""
     rounds = stats.get("rounds")
@@ -262,12 +307,13 @@ def render_markdown(document: dict) -> str:
     if checking["now"] is not None:
         now = checking["now"]
         rows.append(f"- Now: {_markdown_text(now['subject'])}, {_markdown_text(now['title'])}, since {_markdown_text(now['startedAt'])}")
-        rows.extend(f"  - {_markdown_text(step['label'])}: {_markdown_text(step['state'])}" for step in now["steps"])
+        rows.extend(f"  - {_markdown_text(_step_text(step, meta['updatedAt']))}" for step in now["steps"])
     if checking["next"]:
         rows.append("- Next: " + ", ".join(_markdown_text(subject) for subject in checking["next"]))
     lines += _markdown_section("Checking", rows, "Nothing is being checked.")
 
     stats = document.get("stats") or {}
+    estimates = document.get("estimates") or {}
 
     def change_request(item: dict) -> str:
         reference = item.get("changeRequest")
@@ -285,7 +331,9 @@ def render_markdown(document: dict) -> str:
             f" · lane {_markdown_text(item['lane'])} · head {_markdown_text(item['head'])}{change_request(item)}"
         )
         rows.extend(stats_row(item, "  "))
-        rows.extend(f"  - {_markdown_text(check['id'])}: {_markdown_text(check['state'])}" for check in item["checks"])
+        if isinstance(estimates.get(item["subject"]), dict):
+            rows.append(f"  - {_markdown_text(_estimate_text(estimates[item['subject']]))}")
+        rows.extend(f"  - {_markdown_text(_check_text(check))}" for check in item["checks"])
     lines += _markdown_section("Queue", rows, "The queue is empty.")
 
     rows = []
@@ -395,6 +443,36 @@ _PAGE_PROGRAM = """
     if (seconds < 86400) { return Math.floor(seconds / 3600) + "h " + two(Math.floor(seconds / 60) % 60) + "m"; }
     return Math.floor(seconds / 86400) + "d " + two(Math.floor(seconds / 3600) % 24) + "h";
   }
+  function elapsed(start, end) {
+    if (typeof start !== "string" || typeof end !== "string") { return null; }
+    var span = Math.floor((Date.parse(end) - Date.parse(start)) / 1000);
+    return isNaN(span) ? null : Math.max(0, span);
+  }
+  function stepText(step, asOf) {
+    var text = show(step.label) + ": " + show(step.state);
+    if (typeof step.finishedAt === "string" && typeof step.startedAt === "string") {
+      return text + " \\u00b7 took " + duration(elapsed(step.startedAt, step.finishedAt));
+    }
+    if (step.state === "running" && typeof step.startedAt === "string") {
+      var spent = elapsed(step.startedAt, asOf);
+      if (typeof step.expectedSeconds !== "number") {
+        return text + " \\u00b7 " + duration(spent) + ", no expected time yet";
+      }
+      return text + " \\u00b7 " + duration(spent) + " of an expected " + duration(step.expectedSeconds) +
+        (spent !== null && spent > step.expectedSeconds ? ", over the expected time" : "");
+    }
+    return text;
+  }
+  function checkText(check) {
+    var text = show(check.id) + ": " + show(check.state);
+    if (isArray(check.failures) && check.failures.length) { text += " \\u00b7 failing " + check.failures.map(show).join(", "); }
+    if (typeof check.log === "string") { text += " \\u00b7 log " + check.log; }
+    return text;
+  }
+  function estimateText(estimate) {
+    var when = typeof estimate.expectedStart === "string" ? "expected to start around " + estimate.expectedStart : "start time unknown";
+    return "position " + show(estimate.position) + " \\u00b7 " + when + " (an estimate)";
+  }
   function statsText(stats) {
     var review;
     if (stats.rounds === null || stats.rounds === undefined) {
@@ -438,7 +516,7 @@ _PAGE_PROGRAM = """
       current.appendChild(el("div", show(now.subject) + ": " + show(now.title)));
       current.appendChild(el("div", "Since " + show(now.startedAt), "detail"));
       var steps = list("ul", now.steps, "No steps yet.", function (step) {
-        return el("li", show(step.label) + ": " + show(step.state));
+        return el("li", stepText(step, meta.updatedAt));
       });
       if (now.steps.length) { steps.className = "steps"; }
       current.appendChild(steps);
@@ -452,6 +530,7 @@ _PAGE_PROGRAM = """
 
     /* Stats are derived by the state tool; a live document without them still draws. */
     var stats = isObject(doc.stats) ? doc.stats : {};
+    var estimates = isObject(doc.estimates) ? doc.estimates : {};
     function changeRequest(item) {
       return item.changeRequest === undefined || item.changeRequest === null ? "" : " \\u00b7 change request " + show(item.changeRequest);
     }
@@ -465,9 +544,17 @@ _PAGE_PROGRAM = """
     parts.push(el("h2", "Queue"));
     parts.push(list("ol", queue, "The queue is empty.", function (item) {
       var checks = item.checks.map(function (check) { return show(check.id) + " " + show(check.state); }).join(", ");
-      return withStats(row(show(item.order) + ". " + show(item.subject) + ": " + show(item.title),
+      var entry = withStats(row(show(item.order) + ". " + show(item.subject) + ": " + show(item.title),
         "Lane " + show(item.lane) + " \\u00b7 head " + show(item.head) + changeRequest(item) + (checks ? " \\u00b7 " + checks : ""),
         item.stage), item);
+      var estimate = Object.prototype.hasOwnProperty.call(estimates, item.subject) ? estimates[item.subject] : null;
+      if (isObject(estimate)) { entry.appendChild(el("div", estimateText(estimate), "detail")); }
+      item.checks.forEach(function (check) {
+        if ((isArray(check.failures) && check.failures.length) || typeof check.log === "string") {
+          entry.appendChild(el("div", checkText(check), "detail"));
+        }
+      });
+      return entry;
     }));
 
     parts.push(el("h2", "Planned"));

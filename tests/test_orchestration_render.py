@@ -837,6 +837,55 @@ class StatsViewTests(unittest.TestCase):
         self.assertIn("Nothing planned outside the queue.", view)
 
 
+def visibility_document() -> dict:
+    """The fixed state with timed steps, a failed check with its log, and queue estimates; as of 12:00:00."""
+    state = copy.deepcopy(FIXED_STATE)
+    state["meta"]["checking"]["now"]["steps"] = [
+        {"label": "fmt", "state": "passed", "startedAt": "2026-10-20T11:50:00Z", "finishedAt": "2026-10-20T11:50:30Z",
+         "expectedSeconds": 40},
+        {"label": "unit", "state": "running", "startedAt": "2026-10-20T11:58:20Z", "expectedSeconds": 600},
+        {"label": "lint", "state": "running", "startedAt": "2026-10-20T11:48:00Z", "expectedSeconds": 600},
+        {"label": "docs", "state": "running", "startedAt": "2026-10-20T11:59:00Z"},
+    ]
+    state["queue"][0]["checks"] = [
+        {"id": "suite", "state": "failed", "failures": ["test_alpha", "test_beta"], "log": "logs/01-suite.log"},
+    ]
+    return {"state": state, "journal": FIXED_JOURNAL,
+            "estimates": {"change-2": {"position": 1, "expectedStart": "2026-10-20T12:08:20Z"}}}
+
+
+VISIBILITY_LINES = (
+    "fmt: passed · took 30s",
+    "unit: running · 1m 40s of an expected 10m 00s",
+    "lint: running · 12m 00s of an expected 10m 00s, over the expected time",
+    "docs: running · 1m 00s, no expected time yet",
+    "suite: failed · failing test_alpha, test_beta · log logs/01-suite.log",
+    "position 1 · expected to start around 2026-10-20T12:08:20Z (an estimate)",
+)
+
+
+class CheckVisibilityViewTests(unittest.TestCase):
+    """Both views show elapsed against expected, failing tests with their log, and queue estimates."""
+
+    def test_the_markdown_view_shows_timing_failures_and_estimates(self) -> None:
+        view = render_state.render_markdown(visibility_document())
+        for line in VISIBILITY_LINES:
+            with self.subTest(line=line):
+                self.assertIn(render_state._markdown_text(line), view)
+
+    def test_an_unknown_start_reads_as_unknown(self) -> None:
+        document = visibility_document()
+        document["estimates"] = {"change-2": {"position": 1, "expectedStart": None}}
+        self.assertIn(render_state._markdown_text("position 1 · start time unknown (an estimate)"),
+                      render_state.render_markdown(document))
+
+    def test_a_document_without_estimates_or_timing_renders_as_before(self) -> None:
+        document = {"state": FIXED_STATE, "journal": FIXED_JOURNAL}
+        view = render_state.render_markdown(document)
+        self.assertNotIn("expected", view)
+        self.assertNotIn("position", view)
+
+
 class WrapperTests(DeliveryStateFixture):
     def test_a_built_in_view_that_fails_keeps_its_previous_view(self) -> None:
         renderers = [{"id": "summary", "builtin": "markdown", "output": "delivery.md"}]
@@ -910,7 +959,7 @@ class WrapperTests(DeliveryStateFixture):
         self.assertEqual(code, 0, result)
         received = json.loads((self.state_dir / "echo.json").read_bytes().decode("utf-8"))
         self.assertEqual(received, self.document)
-        self.assertEqual(set(received), {"state", "journal", "stats"})
+        self.assertEqual(set(received), {"state", "journal", "stats", "estimates"})
 
     def test_extensions_reach_renderers_unchanged(self) -> None:
         wrapper(self.state_dir, "--state-config", self.config([self.capture_renderer("echo")]))
@@ -1336,6 +1385,13 @@ setTimeout(async () => {
         self.assertIn("10000000 rounds, findings P0/P1/P2/P3 0/10000000/1000000000000000000000/123456789012",
                       shown["text"])
         self.assertNotRegex(shown["text"], r"\de[+-]?\d")
+
+
+    def test_the_page_shows_timing_failures_and_estimates_as_the_markdown_does(self) -> None:
+        shown = self.run_page({}, visibility_document())
+        for line in VISIBILITY_LINES:
+            with self.subTest(line=line):
+                self.assertIn(line, shown["text"])
 
     def test_without_an_adapter_the_embedded_state_is_shown(self) -> None:
         shown = self.run_page({})
