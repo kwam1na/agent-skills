@@ -1708,7 +1708,8 @@ class TrackerSnapshotTests(unittest.TestCase):
         for mode, reason, detail in (("fail", "exited with 3", "the tracker refused"),
                                      ("garbage", "printed no JSON", None),
                                      ("forge", "not a valid tracker snapshot", "forge"),
-                                     ("old", "too old", "7200s ago"),
+                                     # The age is whole seconds and the run takes time: 7200s or a little more.
+                                     ("old", "too old", re.compile(r"was taken 720\ds ago")),
                                      ("huge", "printed more than", None),
                                      ("bigint", "printed no JSON", None),
                                      ("deep", "printed no JSON", None),
@@ -1718,7 +1719,9 @@ class TrackerSnapshotTests(unittest.TestCase):
                 result = self.snap(mode)
                 self.assertEqual((result["taken"], result["fallback"]), (False, True))
                 self.assertIn(reason, result["reason"])
-                if detail:
+                if isinstance(detail, re.Pattern):
+                    self.assertRegex(result["detail"], detail)
+                elif detail:
                     self.assertIn(detail, result["detail"])
                 self.assertEqual(self.output.read_bytes(), kept, "the last snapshot stands")
                 self.assertIn(reason, self.notes()[-1])
