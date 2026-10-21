@@ -1403,6 +1403,19 @@ setTimeout(async () => {
             with self.subTest(line=line):
                 self.assertIn(line, shown["text"])
 
+    def test_a_page_whose_clock_is_behind_the_record_counts_from_the_records_last_write(self) -> None:
+        shown = self.run_page({"now": "2026-10-20T11:59:00Z"}, visibility_document())
+        self.assertIn("unit: running · 1m 40s of an expected 10m 00s", shown["text"])
+
+    def test_fractions_of_a_second_never_make_the_views_disagree(self) -> None:
+        document = visibility_document()
+        document["state"]["meta"]["updatedAt"] = "2026-10-20T12:00:00.100Z"
+        document["state"]["meta"]["checking"]["now"]["steps"] = [
+            {"label": "unit", "state": "running", "startedAt": "2026-10-20T11:58:20.900Z", "expectedSeconds": 600}]
+        line = "unit: running · 1m 40s of an expected 10m 00s"
+        self.assertIn(render_state._markdown_text(line), render_state.render_markdown(document))
+        self.assertIn(line, self.run_page({"now": "2026-10-20T12:00:00.100Z"}, document)["text"])
+
     def test_the_page_counts_a_running_check_live_from_its_own_clock(self) -> None:
         # Five minutes after the last write, with no write since, the page still counts on.
         shown = self.run_page({"now": "2026-10-20T12:05:00Z"}, visibility_document())

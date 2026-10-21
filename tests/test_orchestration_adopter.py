@@ -563,7 +563,7 @@ class FixtureAdopterTests(unittest.TestCase):
         binding["alwaysRun"] = [{"id": "suite", "argv": [sys.executable, "-B", "tools/suite.py", str(flaked)], "cwd": ".",
                                  "reasons": ["every change"], "prerequisites": []}]
         binding["checkOutput"] = {"failurePattern": r"^FAIL: (?P<id>\S+)(?: (?P<message>.*))?$"}
-        binding["flakes"] = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "V26-2764"}]
+        binding["flakes"] = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
         adopter.push_to_base({"tools/suite.py": suite}, "Add the adopter's suite, with its known flake", binding=binding)
         heads = {
             "alpha-copy": adopter.lane_change("alpha-copy", {"src/alpha.txt": "alpha two\n"}),
@@ -582,7 +582,7 @@ class FixtureAdopterTests(unittest.TestCase):
         journal = adopter.show()["journal"]
         retried = [entry for entry in journal if entry["kind"] == "check.retried"]
         self.assertEqual(len(retried), 1)
-        self.assertIn("V26-2764", retried[0]["summary"])
+        self.assertIn("FLAKE-7", retried[0]["summary"])
         self.assertIn("test_launcher_cancel", retried[0]["summary"])
         history = adopter.show()["state"]["meta"]["checkHistory"]
         self.assertEqual(history["checks"]["suite"]["flakes"], 1)

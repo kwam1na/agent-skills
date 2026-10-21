@@ -2331,23 +2331,23 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertEqual(self.journal(adopter, "check.retried"), [])
 
     def test_a_failure_matching_only_a_declared_flake_is_retried_once_and_journaled(self) -> None:
-        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "V26-2764"}]
+        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
         adopter = self.visible_adopter([check_entry("suite", "--flaky-once", "test_launcher_cancel")], flakes=flakes)
         self.candidate(adopter)
         results = self.run_queue(adopter, "feature")
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
         [retried] = self.journal(adopter, "check.retried")
-        self.assertIn("V26-2764", retried["summary"])
+        self.assertIn("FLAKE-7", retried["summary"])
         self.assertIn("test_launcher_cancel", retried["summary"])
         entry = self.check_entry_of(results, "suite")
         self.assertEqual(entry["state"], "passed")
-        self.assertEqual(entry["retried"]["flake"], "V26-2764")
+        self.assertEqual(entry["retried"]["flake"], "FLAKE-7")
         self.assertEqual(entry["retried"]["failures"], [{"id": "test_launcher_cancel", "message": "flaked"}])
         history = state_tool.read_state(adopter.state)["meta"]["checkHistory"]
         self.assertEqual(history["checks"]["suite"]["flakes"], 1)
 
     def test_a_declared_flake_that_fails_again_stops_with_both_failures(self) -> None:
-        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "V26-2764"}]
+        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
         adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_launcher_cancel")], flakes=flakes)
         self.candidate(adopter)
         results = self.run_queue(adopter, "feature")
@@ -2360,7 +2360,7 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertNotEqual(entry["retried"]["log"], entry["log"])
 
     def test_a_mixed_or_unknown_failure_is_never_retried(self) -> None:
-        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "V26-2764"}]
+        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
         for name, tests in (("mixed", ["test_launcher_cancel", "test_real_bug"]), ("unknown", ["test_real_bug"])):
             with self.subTest(name):
                 self.fresh()
@@ -2437,7 +2437,7 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertEqual(self.check_entry_of(results, "suite")["failures"], [{"id": "t_a", "message": "first"}])
 
     def test_a_flake_pattern_must_match_the_whole_failure_id(self) -> None:
-        flakes = [{"check": "suite", "tests": ["test_launcher"], "ref": "V26-2764"}]
+        flakes = [{"check": "suite", "tests": ["test_launcher"], "ref": "FLAKE-7"}]
         adopter = self.visible_adopter([check_entry("suite", "--flaky-once", "test_launcher_cancel_real_bug")],
                                        flakes=flakes)
         self.candidate(adopter)
@@ -2455,7 +2455,7 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertNotIn("test_10", document["stop"]["detail"])
 
     def test_a_run_that_retried_a_flake_still_joins_the_history(self) -> None:
-        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "V26-2764"}]
+        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
         adopter = self.visible_adopter([check_entry("suite", "--flaky-once", "test_launcher_cancel")], flakes=flakes)
         self.candidate(adopter)
         self.run_queue(adopter, "feature")
@@ -2464,7 +2464,7 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertEqual(len(history["checks"]["suite"]["seconds"]), 1)
 
     def test_a_retried_check_shows_no_stale_failure_while_it_runs_again(self) -> None:
-        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "V26-2764"}]
+        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
         adopter = self.visible_adopter([check_entry("suite", "--flaky-once", "test_launcher_cancel")], flakes=flakes)
         self.candidate(adopter)
         real = state_tool.patch

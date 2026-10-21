@@ -696,7 +696,8 @@ binding declares may change.
   durations. A check with no history has no estimate, never a guess. The
   views show a running step's elapsed time against the expected time, in
   whole seconds, and mark one that has run over: the markdown view as of the
-  record's last write, the page counting on from its own clock.
+  record's last write, the page as of the moment it draws, on load and at
+  each update it receives, by its own clock.
 - **History.** `meta.checkHistory` keeps each check's last five passing
   durations and how often a declared flake made it retry, and the last five
   whole check runs. Only the runner writes it.
