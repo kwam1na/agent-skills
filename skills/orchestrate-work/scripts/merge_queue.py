@@ -1408,10 +1408,11 @@ class Runner:
 
     # -- merge -------------------------------------------------------------
 
-    def merge(self, subject: str, result: Result) -> None:
+    def merge(self, subject: str, result: Result, batch_synced: str | None = None) -> None:
+        """Merge a checked candidate; a batch passes the synced head it built from the checked tree instead."""
         item = self.item(subject)
-        synced = item["syncedHead"]
-        if synced is None or item["stage"] != "checked":
+        synced = batch_synced or item["syncedHead"]
+        if batch_synced is None and (synced is None or item["stage"] != "checked"):
             raise Stop("not_synced", f"{subject} has not passed its checks at a synced head")
         base_head = self.load()
         result.base, result.baseHead, result.syncedHead = self.base, base_head, synced
@@ -1568,8 +1569,11 @@ class Runner:
         ).stdout.strip()
         self.push(member.branch, member.head, synced, member.subject)
         result.syncedHead = synced
-        self.set_item(member.subject, stage="checked", syncedHead=synced)
-        self.merge(member.subject, result)
+        # Never "checked": only the whole batch was checked, so a run killed here
+        # must not leave this tree mergeable on its own. It stays "checking"
+        # until the merge moves it on, and the next run stops it.
+        self.set_item(member.subject, syncedHead=synced)
+        self.merge(member.subject, result, batch_synced=synced)
 
     def batch_round(self, members: list[str], results: list[Result]) -> list[str]:
         """Build, check once and land one batch. Returns the members left for another round.

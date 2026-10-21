@@ -1830,6 +1830,21 @@ class BatchTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("second")["stage"], "queued")
         self.assertEqual(adopter.item("third")["stage"], "queued")
 
+    def test_a_base_push_before_the_first_landing_stops_the_queue_with_nothing_landed(self) -> None:
+        adopter = self.adopter()
+        subjects = self.trio(adopter)
+
+        def push_base(runner, subject) -> None:
+            if subject == "first":
+                adopter.advance_base({"src/other.txt": "other\n"})
+
+        documents = {result.document()["candidate"]: result.document()
+                     for result in self.batch(adopter, *subjects, seams={"before_batch_landing": push_base})}
+        self.assertEqual(documents["first"]["stop"]["reason"], "batch_tree_mismatch")
+        self.assertTrue(documents["first"]["stop"]["queueStopped"])
+        for name in subjects:
+            self.assertEqual(adopter.item(name)["stage"], "queued")
+
     def test_a_conflict_in_derived_paths_is_regenerated_and_one_in_source_drops_the_member(self) -> None:
         adopter = self.adopter()
         # Both carry their own stale gen/generated.txt, so their trees conflict there only.
@@ -1970,6 +1985,79 @@ class BatchTests(MergeQueueTestCase):
         build = seen[:3]
         self.assertEqual(build, [(base_tree, base_head)] * 3)
 
+    @staticmethod
+    def runner_set(adopter: Adopter, subject: str, **fields: object) -> None:
+        """Write fields only the runner owns, as an earlier run would have."""
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="runner", version=current["version"],
+                         selector=f"queue[subject={subject}]", assignments={f"/{key}": value for key, value in fields.items()})
+
+    def batch_documents(self, adopter: Adopter, *subjects: str, **options: object) -> dict[str, dict]:
+        return {result.document()["candidate"]: result.document() for result in self.batch(adopter, *subjects, **options)}
+
+    def test_a_member_that_moved_after_review_drops_out(self) -> None:
+        adopter = self.adopter()
+        subjects = self.trio(adopter)
+        # The second lane pushes again after its head was recorded.
+        adopter.lane_commit("second", {"src/app.txt": "app unreviewed\n"})
+        documents = self.batch_documents(adopter, *subjects)
+        self.assertEqual(documents["second"]["stop"]["reason"], "candidate_moved")
+        self.assertEqual(documents["first"]["outcome"], "merged")
+        self.assertEqual(documents["third"]["outcome"], "merged")
+        self.assertEqual(adopter.show(adopter.tip("main"), "src/app.txt"), "app one")
+
+    def test_a_branch_that_moves_after_resolving_drops_out(self) -> None:
+        adopter = self.adopter()
+        subjects = self.trio(adopter)
+        real = queue.Runner.fetch
+
+        def moved(runner, branch, private):
+            fetched = real(runner, branch, private)
+            return "f" * 40 if branch == "second" and private == "candidate" else fetched
+
+        with mock.patch.object(queue.Runner, "fetch", moved):
+            documents = self.batch_documents(adopter, *subjects)
+        self.assertEqual(documents["second"]["stop"]["reason"], "candidate_moved")
+        self.assertEqual(documents["third"]["outcome"], "merged")
+
+    def test_an_unreviewed_change_drops_the_member_and_leaves_nothing_of_it_behind(self) -> None:
+        adopter = self.adopter()
+        subjects = self.trio(adopter)
+        # The second's recorded synced head carries a change its reviewed head does not.
+        sneaked = adopter.lane_commit("second", {"src/sneaked.txt": "not reviewed\n"})
+        self.runner_set(adopter, "second", syncedHead=sneaked)
+        documents = self.batch_documents(adopter, *subjects)
+        self.assertEqual(documents["second"]["stop"]["reason"], "unreviewed_change")
+        self.assertEqual(documents["third"]["outcome"], "merged")
+        # The dropped member's merge was undone before the next member joined.
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        self.assertFalse(run("ls-tree", "--name-only", "origin/main", "src/sneaked.txt", cwd=adopter.lane))
+        self.assertEqual(adopter.show(adopter.tip("main"), "src/app.txt"), "app one")
+
+    def test_an_already_merged_member_drops_out(self) -> None:
+        adopter = self.adopter()
+        subjects = self.trio(adopter)
+        self.runner_set(adopter, "second", stage="merged")
+        documents = self.batch_documents(adopter, *subjects)
+        self.assertEqual(documents["second"]["stop"]["reason"], "already_merged")
+        self.assertEqual(documents["first"]["outcome"], "merged")
+        self.assertEqual(documents["third"]["outcome"], "merged")
+
+    def test_a_member_is_never_left_mergeable_on_its_own_tree(self) -> None:
+        # A run killed after a member's synced head is pushed must not leave it checked: that tree was never checked alone.
+        adopter = self.adopter()
+        subjects = self.trio(adopter)
+        seen: list[str] = []
+        real = queue.Runner.merge
+
+        def stage_at_merge(runner, subject, result, **options):
+            seen.append(runner.item(subject)["stage"])
+            return real(runner, subject, result, **options)
+
+        with mock.patch.object(queue.Runner, "merge", stage_at_merge):
+            self.batch(adopter, *subjects)
+        self.assertEqual(seen, ["checking"] * 3)
+
     def test_a_batch_needs_two_candidates(self) -> None:
         adopter = self.adopter()
         self.candidate(adopter, name="only")
@@ -2034,6 +2122,25 @@ class ParallelCheckTests(MergeQueueTestCase):
             self.run_queue(adopter, "feature")
         self.assertTrue(threads)
         self.assertTrue(all(threads), threads)
+
+    def test_no_more_than_the_limit_run_at_once(self) -> None:
+        checks = [self.timed(name, True) for name in ("p1", "p2", "p3")]
+        adopter = self.adopter({"alwaysRun": checks, "parallelChecks": 2})
+        self.candidate(adopter)
+        real = queue.Runner.write_progress
+        running: list[int] = []
+
+        def counting(runner, subjects, states):
+            running.append(sum(1 for _, state in states if state == "running"))
+            return real(runner, subjects, states)
+
+        with mock.patch.object(queue.Runner, "write_progress", counting):
+            self.run_queue(adopter, "feature")
+        spans = self.spans(adopter)
+        self.assertFalse(self.overlap(spans["p1"], spans["p3"]) and self.overlap(spans["p2"], spans["p3"])
+                         and self.overlap(spans["p1"], spans["p2"]), spans)
+        # The live view never shows more checks running than may run.
+        self.assertEqual(max(running), 2, running)
 
     def test_the_limit_defaults_to_one(self) -> None:
         checks = [self.timed("p1", True), self.timed("p2", True)]
