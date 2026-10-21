@@ -1403,7 +1403,9 @@ class WorkRootSafetyTests(MergeQueueTestCase):
 
     def test_pathspec_settings_in_the_bindings_environment_are_refused(self) -> None:
         # They change how git reads every path the workRoot checks name.
-        for variable in ("GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"):
+        # Windows reads environment names without case, so a case variant is refused too.
+        for variable in ("GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS",
+                         "Git_Literal_Pathspecs"):
             with self.subTest(variable):
                 self.fresh()
                 adopter = self.environment_adopter({variable: "1"}, {"workRoot": ".merge-queue"})
@@ -1432,7 +1434,7 @@ class WorkRootSafetyTests(MergeQueueTestCase):
         runner.binding = {"environment": {
             "HOME": str(self.directory / "binding-home"), "XDG_CONFIG_HOME": str(self.directory / "binding-xdg"),
             "GIT_CONFIG_GLOBAL": str(self.directory / "binding-global"), "GIT_CONFIG_SYSTEM": str(self.directory / "binding-system"),
-            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_NOSYSTEM": "1", "USERPROFILE": str(self.directory / "binding-profile"),
         }}
         seen: dict[str, dict] = {}
         original = queue.run_process
@@ -1446,8 +1448,21 @@ class WorkRootSafetyTests(MergeQueueTestCase):
             runner.git("status")
         for name in ("HOME", "GIT_CONFIG_GLOBAL"):
             self.assertEqual(seen["env"].get(name), operator[name], name)
-        for name in ("XDG_CONFIG_HOME", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM"):
+        for name in ("XDG_CONFIG_HOME", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "USERPROFILE"):
             self.assertEqual(seen["env"].get(name), os.environ.get(name), name)
+        # On Windows a case variant names the same variable, and is dropped as well.
+        runner.binding = {"environment": {
+            "Home": str(self.directory / "binding-home"), "UserProfile": str(self.directory / "binding-profile"),
+            "Git_Dir": str(self.directory / "elsewhere"),
+        }}
+        with mock.patch.object(queue, "WINDOWS", True), mock.patch.dict(os.environ, operator), \
+                mock.patch.object(queue, "run_process", side_effect=capture):
+            runner.git("status")
+        self.assertFalse({"Home", "UserProfile", "Git_Dir"} & set(seen["env"]))
+        self.assertEqual(seen["env"]["HOME"], operator["HOME"])
+        runner.binding = {"environment": {
+            "HOME": str(self.directory / "binding-home"), "GIT_CONFIG_GLOBAL": str(self.directory / "binding-global"),
+        }}
         # A declared argv still runs with the binding's own values.
         declared = runner.environment()
         self.assertEqual(declared["HOME"], str(self.directory / "binding-home"))
@@ -1457,10 +1472,16 @@ class WorkRootSafetyTests(MergeQueueTestCase):
         folder = self.directory / "plain"
         folder.mkdir()
         self.assertFalse(queue.is_link(folder))
-        # A junction is a reparse point that is not a symlink.
-        reparse = type("Info", (), {"st_file_attributes": 0x400, "st_mode": 0o040755})()
-        with mock.patch.object(queue.os, "lstat", return_value=reparse):
+        # A junction is a mount-point reparse point that is not a symlink.
+        def reparse(tag: int) -> object:
+            return type("Info", (), {"st_file_attributes": 0x410, "st_mode": 0o040755, "st_reparse_tag": tag})()
+
+        with mock.patch.object(queue.os, "lstat", return_value=reparse(0xA0000003)):
             self.assertTrue(queue.is_link(folder))
+        # A cloud placeholder or deduplicated folder is a reparse point that leads nowhere else.
+        for tag in (0x9000001A, 0x80000013):
+            with mock.patch.object(queue.os, "lstat", return_value=reparse(tag)):
+                self.assertFalse(queue.is_link(folder), hex(tag))
         self.assertFalse(queue.is_link(self.directory / "missing"))
 
     def test_a_junction_at_a_runner_folder_under_work_root_is_refused(self) -> None:
@@ -1490,6 +1511,15 @@ class WorkRootSafetyTests(MergeQueueTestCase):
         self.candidate(adopter)
         self.assertRefused(self.run_queue(adopter, "feature"), "submodule")
         self.assertTrue((adopter.operator / "vendor" / "library" / "build" / "checkouts" / "keep.txt").exists())
+
+    def test_the_submodule_lookup_matches_a_listed_gitlink_without_case(self) -> None:
+        runner = self.adopter().runner()
+        listed = "160000 0123456789abcdef0123456789abcdef01234567 0\tVendor/Library\0"
+        found = queue.Completed(0, listed, "", False, 0.0)
+        with mock.patch.object(runner, "git", return_value=found):
+            self.assertEqual(runner.submodule_at(runner.repository, ["vendor", "library", "build"]), "Vendor/Library")
+            # A listed gitlink that is not one of the asked paths is not reported.
+            self.assertIsNone(runner.submodule_at(runner.repository, ["vendor", "other"]))
 
     def test_a_leftover_checkout_removed_between_runs_does_not_block_the_next(self) -> None:
         adopter = self.adopter({"workRoot": ".merge-queue"})

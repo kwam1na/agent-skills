@@ -580,7 +580,7 @@ substitutes inside a longer string:
 | `checkTimeoutCeiling` | The maximum any check may ask for. |
 | `parallelChecks` | Optional. How many checks marked `parallelSafe` may run at once; 1 when absent. A check without `parallelSafe` always runs alone. |
 | `batch` | Optional. `{culpritSearch}`: how `batch` finds the member that failed a batch's checks, `bisect` (the default, fewest check runs) or `serial` (each prefix in order). |
-| `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match; the runner also drops them from its own environment. |
+| `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match. The runner drops an inherited setting of them before running git or any declared argv; a profile's environment may still set them for its checks. |
 | `ready` | An argv run before merging; a non-zero exit stops with `ready_refused`. |
 | `merge` | An argv that must use `{expectedHead}`. A binding whose `merge` lacks it is invalid. |
 | `release` | Ordered targets, each with an `id`, `argv`, `stopsOnFailure` and `requiresApproval`, and an optional `timeoutSeconds`. |
@@ -631,11 +631,13 @@ user's full configuration apart from the hooks setting above. Under
 The runner's own git reads the global and system configuration of the user
 who started it: `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`,
 `GIT_CONFIG_SYSTEM` and `GIT_CONFIG_NOSYSTEM` come from the runner's own
-environment, never from the binding's `environment`. A binding can therefore
-give its declared argv another home or configuration file without changing
-the sign-in helpers and transport settings the runner fetches and pushes with.
-The pins above already cover the ignore and attribute files a home could
-supply.
+environment, never from the binding's `environment`; on Windows so do
+`USERPROFILE`, `HOMEDRIVE` and `HOMEPATH`, and a name is matched without case.
+A binding can therefore give its declared argv another home or configuration
+file without changing which configuration files the runner's own git reads.
+Other variables in the binding's `environment`, such as an SSH command or a
+proxy, still reach the runner's own fetch and push. The pins above already
+cover the ignore and attribute files a home could supply.
 
 ### The affected-checks provider
 

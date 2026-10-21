@@ -113,16 +113,6 @@ def folded(path: Path) -> PurePath:
 
 def within(path: Path, parent: Path) -> bool:
     return folded(path).is_relative_to(folded(parent))
-
-
-def is_link(path: Path) -> bool:
-    """Whether the path is a symlink or a Windows junction, either of which leads somewhere else."""
-    try:
-        info = os.lstat(path)
-    except OSError:
-        return False
-    # A junction is a reparse point that is not a symlink.
-    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT)
 # How long a killed process's output is drained before the runner stops waiting.
 DRAIN_SECONDS = 5
 # Inherited variables that would point git somewhere other than the runner's checkouts.
@@ -136,8 +126,33 @@ GIT_PATHSPEC_VARIABLES = frozenset({
     "GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS",
 })
 # Where the runner's own git finds the user's global and system configuration: always the operator's.
-GIT_CONFIG_HOME_VARIABLES = ("HOME", "XDG_CONFIG_HOME", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM")
+GIT_CONFIG_HOME_VARIABLES = (
+    "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "XDG_CONFIG_HOME",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
+)
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
+# Windows reads environment names without case.
+WINDOWS = os.name == "nt"
+
+
+def environment_name(name: str) -> str:
+    """The name as the platform compares it."""
+    return name.upper() if WINDOWS else name
+
+
+def is_link(path: Path) -> bool:
+    """Whether the path is a symlink or a Windows junction, either of which leads somewhere else."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    # A junction is a mount-point reparse point; other reparse points, such as
+    # cloud placeholders or deduplicated files, stay where they are.
+    return (bool(getattr(info, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT)
+            and getattr(info, "st_reparse_tag", 0) == IO_REPARSE_TAG_MOUNT_POINT)
 
 
 def now() -> str:
@@ -229,8 +244,9 @@ def binding_errors(binding: object) -> list[str]:
             match = PLACEHOLDER.match(element)
             if match and match[1] not in PLACEHOLDERS:
                 errors.append(f"{where}: unknown placeholder {element}")
-    for variable in sorted(GIT_PATHSPEC_VARIABLES & set(binding["environment"])):
-        errors.append(f"/environment: {variable} changes how git reads a pathspec and must not be set")
+    for variable in sorted(binding["environment"]):
+        if variable.upper() in GIT_PATHSPEC_VARIABLES:
+            errors.append(f"/environment: {variable} changes how git reads a pathspec and must not be set")
     if "{expectedHead}" not in binding["merge"]:
         errors.append("/merge: the merge argv must use {expectedHead} as a whole element")
     if binding["checkTimeoutSeconds"] > binding["checkTimeoutCeiling"]:
@@ -565,13 +581,15 @@ class Runner:
             prefix += ["-c", f"core.hooksPath={self.hooks_directory}"]
         # The binding's environment never moves the runner's own git to another
         # repository, index or object store; the hooks setting is passed above.
-        env = {key: value for key, value in self.environment().items() if key not in GIT_LOCATION_VARIABLES}
         # Nor does it choose the global or system configuration the pins sit on.
+        own = {environment_name(name) for name in GIT_CONFIG_HOME_VARIABLES}
+        env = {
+            key: value for key, value in self.environment().items()
+            if environment_name(key) not in GIT_LOCATION_VARIABLES and environment_name(key) not in own
+        }
         for name in GIT_CONFIG_HOME_VARIABLES:
             if name in os.environ:
                 env[name] = os.environ[name]
-            else:
-                env.pop(name, None)
         result = run_process([*prefix, *args], cwd=cwd or self.repository, env=env, stdin=stdin)
         if check and result.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
