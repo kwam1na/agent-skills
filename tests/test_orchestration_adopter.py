@@ -505,6 +505,52 @@ class FixtureAdopterTests(unittest.TestCase):
         # 9. The lead keeps the live view current: snapshots, reconcile, render, publish, acknowledge.
         self.keep_the_live_view_current(adopter)
 
+    def test_a_batch_of_two_is_checked_once_and_lands_tree_verified(self) -> None:
+        adopter = FixtureAdopter(self.root)
+        adopter.state_tool("init", "--headline", "Fixture batch")
+        subjects = ("alpha-copy", "beta-copy")
+        heads = {
+            "alpha-copy": adopter.lane_change("alpha-copy", {"src/alpha.txt": "alpha two\n"}),
+            # Its catalog line sits next to the first's: a generated-only conflict in the combined tree.
+            "beta-copy": adopter.lane_change("beta-copy", {"src/beta.txt": "beta two\n"}),
+        }
+        queue = [{
+            "order": n, "subject": subject, "title": f"Candidate {subject}", "lane": f"lane-{n}", "stage": "queued",
+            "head": heads[subject], "syncedHead": None, "leadInputs": [], "reportedRounds": 1, "runId": None,
+            "checks": [],
+        } for n, subject in enumerate(subjects, start=1)]
+        adopter.lead_patch({"queue": queue})
+        base_before = adopter.tip(BASE)
+        results = adopter.queue("batch", *subjects, expect=0)
+        self.assertEqual([(result["subcommand"], result["candidate"], result["outcome"]) for result in results],
+                         [("batch", "alpha-copy", "merged"), ("batch", "beta-copy", "merged")])
+        # One check run covered both: every member reports the same selection and the same checks.
+        self.assertEqual(results[0]["selection"], results[1]["selection"])
+        self.assertEqual(results[0]["checks"], results[1]["checks"])
+        self.assertEqual([check["state"] for check in results[0]["checks"]], ["passed"] * len(results[0]["checks"]))
+        # Each landing is a merge onto the previous one, with exactly the tree the batch recorded.
+        first, second = results
+        adopter.git("fetch", "--quiet", REMOTE, cwd=adopter.lane)
+        for result in results:
+            adopter.git("fetch", "--quiet", REMOTE, result["syncedHead"], cwd=adopter.lane)
+        self.assertEqual(adopter.git("rev-parse", f"{first['mergedHead']}^1", cwd=adopter.lane), base_before)
+        self.assertEqual(adopter.git("rev-parse", f"{second['mergedHead']}^1", cwd=adopter.lane), first["mergedHead"])
+        for result in results:
+            self.assertEqual(adopter.git("rev-parse", f"{result['mergedHead']}^{{tree}}", cwd=adopter.lane),
+                             adopter.git("rev-parse", f"{result['syncedHead']}^{{tree}}", cwd=adopter.lane))
+        self.assertEqual(second["mergedHead"], adopter.tip(BASE))
+        catalog = adopter.read(adopter.tip(BASE), "generated/catalog.txt")
+        self.assertIn("alpha.txt: alpha two", catalog)
+        self.assertIn("beta.txt: beta two", catalog)
+        view = adopter.view()
+        for subject in subjects:
+            self.assertQueueRow(view, subject, "merged")
+        self.assertIn("Nothing is being checked.", view)
+        journal = [(entry["kind"], entry.get("subject")) for entry in adopter.show()["journal"]]
+        for subject in subjects:
+            self.assertIn(("check.started", subject), journal)
+            self.assertIn(("candidate.merged", subject), journal)
+
     def keep_the_live_view_current(self, adopter: FixtureAdopter) -> None:
         # A fourth candidate is handed over, then merged on the forge by hand: the runner never sees it.
         hand_merged = adopter.lane_change("delta-copy", {"src/delta.txt": "delta one\n"})

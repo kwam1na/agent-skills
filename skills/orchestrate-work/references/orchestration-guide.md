@@ -165,7 +165,10 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   it through the lease sequence in the coordination protocol (request,
   acknowledge, then record the lead as holder and journal `lease.granted`),
   never by overwriting another holder.
-- Run the queue with the runner's `run` subcommand, in queue order.
+- Run the queue with the runner's `run` subcommand, in queue order. When two
+  or more approved candidates wait and the checks are slow, run them with
+  `batch` instead, in queue order: one check run covers them all (see "What a
+  batch proves" in the binding guide).
 - On a stop, read its code in the result document, act, then name the
   candidate again to re-queue it. A re-queued candidate runs again, still
   pinned to its reviewed `head` or the runner's last `syncedHead`; write a new
@@ -193,6 +196,7 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   | `not_synced` | Run `sync` before `check` or `merge`. |
   | `push_refused`, `ready_refused`, `merge_refused` | The forge refused the push, the `ready` gate, or the merge. Read the output, resolve it, and re-queue. |
   | `merged_unverified` | Stop the queue and confirm the base by hand before anything else merges. |
+  | `batch_tree_mismatch` | The base's tree is no longer the one the batch recorded, so something landed that the batch did not check. Stop the queue, confirm the base by hand, then batch the members that did not land again; they are back at `queued`. |
   | `binding_invalid` | Fix the binding on the base branch. |
   | `queue_locked` | Another runner holds the queue. Wait for it, or raise `--wait`. |
   | `runner_error` | Read the result document and the runner's output; investigate before retrying. |
@@ -573,6 +577,8 @@ substitutes inside a longer string:
 | `fallback` | Checks in the affected-check entry shape, added when impact is unknown. |
 | `checkTimeoutSeconds` | The default check timeout. |
 | `checkTimeoutCeiling` | The maximum any check may ask for. |
+| `parallelChecks` | Optional. How many checks marked `parallelSafe` may run at once; 1 when absent. A check without `parallelSafe` always runs alone. |
+| `batch` | Optional. `{culpritSearch}`: how `batch` finds the member that failed a batch's checks, `bisect` (the default, fewest check runs) or `serial` (each prefix in order). |
 | `environment` | Variables set for every argv the runner runs. |
 | `ready` | An argv run before merging; a non-zero exit stops with `ready_refused`. |
 | `merge` | An argv that must use `{expectedHead}`. A binding whose `merge` lacks it is invalid. |
@@ -629,8 +635,11 @@ need?", in format `affected-checks/1`.
 - **Input,** on stdin: `{base, baseHead, head, changes: [{path, status,
   oldPath?}]}`. The runner computes `changes` with rename detection.
 - **Output:** `{checks: [{id, argv, cwd, reasons, prerequisites,
-  environmentProfile?, timeoutSeconds?}], widened, uncovered: [paths],
-  notes?}`.
+  environmentProfile?, timeoutSeconds?, parallelSafe?}], widened, uncovered:
+  [paths], notes?}`. A check marked `parallelSafe` may run at the same time
+  as other such checks, up to the binding's `parallelChecks`; mark only checks
+  that share nothing a concurrent run could disturb. The runner starts checks
+  in order and still honours prerequisites.
 - The runner refuses the output as malformed when an argv is not a non-empty
   list of strings, a `cwd` resolves outside the checkout, ids repeat, a
   prerequisite names an unselected check, the prerequisites form a cycle, or
@@ -674,6 +683,48 @@ the runner proves two things before pushing:
 
 So the code that merges is the code the lenses reviewed, plus only what the
 binding declares may change.
+
+### What a batch proves
+
+`batch` builds one tree from the base tip, adding each member in queue order
+with the same steps a sync runs: it merges the member in, takes the base side
+of a conflict confined to `regenerable` paths and regenerates, runs the
+member's lead inputs and the post-sync steps, and proves the same two things
+a sync proves, against the tree built so far. A member that stops on any of
+these drops out of the batch with that code; the rest continue. The runner
+records the commit and tree after each member, and journals `check.started`
+for every member.
+
+- **One check run.** The selection and the checks run once, on the tree after
+  the last member. Every member's queue row shows the batch's live check
+  states, and the checking panel's title names the batch and its members.
+- **Tree-verified landing.** Each member lands in order. Before it lands, the
+  base's tree must equal the tree recorded before that member; otherwise the
+  batch stops with `batch_tree_mismatch` and the members left go back to
+  `queued`. The runner then commits the member's recorded tree, with the
+  member's head and the base as parents, pushes it to the member's branch,
+  and merges it through `ready` and `merge`, which must land exactly that
+  tree on that base. Every tree that lands is one the batch built, even when
+  a post-sync step's output depends on commit ids, and the tree after the
+  last member is the one the batch checked. The trees in between were
+  checked only as part of the whole: when a landing stops after another
+  member landed, the base holds such a tree, so the stop also stops the queue
+  and its result says up to which member. Run the full health check before
+  anything else merges.
+- **Placeholders.** Each member resolves from a checkout of the base, with
+  the base head as `{baseHead}`, as a sync does. Its post-sync steps and lead
+  inputs see the tree built so far as `{baseHead}`. `prepare` runs once in the
+  batch's checkout of the base, with the base branch and head as `{branch}`
+  and `{head}`. The batch's checks see the last member's branch as
+  `{branch}`, and the batch's commit as `{head}` and `{expectedHead}`.
+- **A failing batch** merges nothing at first. The runner checks prefixes of
+  the batch, by bisection or in order as `batch.culpritSearch` says, until it
+  finds the first member whose arrival makes the checks fail, and stops it
+  with `check_failed`, naming it the culprit; when that member is the first,
+  the base-broken rule applies to it. The members before it were checked
+  together as a passing prefix, so they land; the members after it go back to
+  `queued` and form the next batch. A flaky check can name the last member as
+  the culprit; re-queue it.
 
 ### Checking a binding
 

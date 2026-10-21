@@ -167,6 +167,13 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   stopping at the first failure. When the base moves after a sync, `run`
   re-syncs and re-checks once; a second move stops with `base_moved`. A
   candidate is merged only onto the exact base it was checked against.
+- `batch <candidate> <candidate>...` checks two or more candidates once, as
+  one combined tree, then lands each in order with exactly the tree the batch
+  recorded for it. A member that conflicts drops out and the rest continue.
+  When the checks fail, nothing merges until the runner finds the member whose
+  arrival made them fail; it stops that member, lands those before it, and
+  batches those after it again. Use it when the checks are slow and several
+  approved candidates wait; a lone candidate goes through `run`.
 - `release <ref> [--approved-by <text>]` runs the binding's release targets on
   the base tip or an ancestor of it.
 
