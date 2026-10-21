@@ -1414,6 +1414,9 @@ class RecoveryIntentTests(unittest.TestCase):
         run_tool(self.directory, "reconcile", "--snapshot", str(self.forge))
         self.assertTrue(quarantine.exists())
         self.assertEqual((self.directory / f"{state_tool.RECOVERY_QUARANTINE}.2").read_text(encoding="utf-8"), "second")
+        # Clearing the first leaves the second still pending.
+        quarantine.unlink()
+        self.assertTrue(run_tool(self.directory, "show")[1]["publication"]["recoveryPending"])
 
     def test_a_malformed_intent_the_recovery_itself_meets_is_set_aside_too(self) -> None:
         version = state_tool.show(self.directory)["state"]["version"]
