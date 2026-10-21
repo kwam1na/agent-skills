@@ -42,7 +42,11 @@ FIXTURE_MARKER = "AGENT_SKILLS_LAUNCHER_FIXTURE"
 
 
 def _fixture_processes(token: str) -> list[int]:
-    """Running processes that carry this test's fixture marker."""
+    """Running processes that carry this test's fixture marker.
+
+    macOS discloses no environment for Apple system binaries (/bin/sh and the
+    like), so fixtures must run Python, as they all do, to be seen here.
+    """
     marker = f"{FIXTURE_MARKER}={token}"
     found = []
     proc = Path("/proc")

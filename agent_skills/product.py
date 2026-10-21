@@ -256,8 +256,11 @@ class _DescendantTracker:
     every drain tick (0.05 s) once cancellation starts. Ancestry alone misses
     a descendant born, escaped and orphaned between two observations, such
     as a classic double-fork daemon, so cancellation also sweeps for the
-    launch's environment marker (see ``sweep``). Only a descendant that both
-    escapes that way and clears its environment is not found.
+    launch's environment marker (see ``sweep``). What it still misses is a
+    descendant that escapes that way and whose environment cannot be seen:
+    one that cleared it, or, on macOS, one running an Apple system binary
+    (/bin/sh, /bin/sleep and the like), whose environment the kernel does
+    not disclose.
     """
 
     # The launcher's wait loop ticks every 0.1 s; observe every third tick.
@@ -324,7 +327,9 @@ class _DescendantTracker:
         it cleared its environment. Every descendant started after the child,
         so only processes started since then are read. A process whose
         environment cannot be read at that moment (another user's, or one
-        caught mid-exec) is not adopted.
+        caught mid-exec) is not adopted, and is read again on the next sweep.
+        macOS returns no environment at all for Apple system binaries, so a
+        double-fork daemon running one is not found.
         """
         if self._marker is None:
             return
