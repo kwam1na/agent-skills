@@ -21,6 +21,7 @@ sys.dont_write_bytecode = True
 import argparse
 import concurrent.futures
 import contextlib
+import copy
 import datetime
 import json
 import os
@@ -31,6 +32,7 @@ import subprocess
 import tempfile
 import time
 import unicodedata
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 from typing import Callable, Iterable, Iterator
@@ -57,6 +59,10 @@ REFUSALS = frozenset({
 IDENTITY = ("merge-queue", "merge-queue@localhost")
 PRIVATE_REF = "refs/merge-queue"
 STATE_PATCH_ATTEMPTS = 5
+# How many passing durations, and whole runs, the check history keeps.
+HISTORY_LENGTH = 5
+# How many failing tests a stop names before it says how many more there are.
+STOP_FAILURES = 10
 # The skill's renderer wrapper, called after every state write.
 RENDER_WRAPPER = Path(__file__).resolve().parent / "render_state.py"
 RENDER_TIMEOUT_SECONDS = 120
@@ -230,6 +236,22 @@ def binding_errors(binding: object) -> list[str]:
         errors.append("/leadInputs: ids must be unique")
     if len({target["id"] for target in binding["release"]}) != len(binding["release"]):
         errors.append("/release: ids must be unique")
+    if "checkOutput" in binding:
+        try:
+            pattern = re.compile(binding["checkOutput"]["failurePattern"])
+        except re.error as error:
+            errors.append(f"/checkOutput/failurePattern: not a regular expression: {error}")
+        else:
+            if "id" not in pattern.groupindex:
+                errors.append("/checkOutput/failurePattern: needs a named group id")
+    for index, flake in enumerate(binding.get("flakes", [])):
+        if "tests" in flake and not flake["tests"]:
+            errors.append(f"/flakes/{index}/tests: name at least one pattern, or leave tests out for the whole check")
+        for pattern in flake.get("tests", []):
+            try:
+                re.compile(pattern)
+            except re.error as error:
+                errors.append(f"/flakes/{index}/tests: {pattern!r} is not a regular expression: {error}")
     return errors
 
 
@@ -509,6 +531,7 @@ class Runner:
         self.hooks_bypassed = False
         self.checkouts: list[Path] = []
         self._counter = 0
+        self._logs = 0
 
     # -- git ---------------------------------------------------------------
 
@@ -676,23 +699,101 @@ class Runner:
             raise delivery_state.StateError("version_stale", "the state kept changing under the runner")
         self.render()
 
-    def write_progress(self, subjects: list[str], states: list[tuple[str, str]]) -> None:
+    def write_progress(self, subjects: list[str], states: list[dict]) -> None:
         """Show the checks' live states in the checking panel and the queue rows, in one write.
 
         Written before a check starts and after it ends, so both views name the
         check that is running and never disagree. Every member of a batch shows
-        the batch's checks.
+        the batch's checks. A step carries its times and its expected duration;
+        a queue row's check carries its failing tests and its log.
         """
+        steps = [
+            {"label": record["id"], "state": record["state"],
+             **{key: record[key] for key in ("startedAt", "finishedAt", "expectedSeconds") if key in record}}
+            for record in states
+        ]
+        rows = [
+            {"id": record["id"], "state": record["state"],
+             **({"failures": [failure["id"] for failure in record["failures"]]} if record.get("failures") else {}),
+             **({"log": record["log"]} if "log" in record else {})}
+            for record in states
+        ]
 
         def build(current: dict) -> tuple[dict, dict]:
             queue = [dict(item) for item in current["queue"]]
             for item in queue:
                 if item["subject"] in subjects:
-                    item["checks"] = [{"id": name, "state": state} for name, state in states]
-            steps = [{"label": name, "state": state} for name, state in states]
+                    item["checks"] = [dict(row) for row in rows]
             return {"queue": queue}, {"/meta/checking/now/steps": steps}
 
         self.write(build=build)
+
+    def history(self) -> dict:
+        found = self.state()["meta"].get("checkHistory")
+        return copy.deepcopy(found) if found else {"checks": {}, "runs": []}
+
+    def record_history(self, passed: dict[str, int], flaked: dict[str, int], run_seconds: int | None) -> None:
+        """Keep each check's last five passing durations, its flake count, and the last five whole runs."""
+
+        def build(current: dict) -> tuple[dict, dict]:
+            history = copy.deepcopy(current["meta"].get("checkHistory") or {"checks": {}, "runs": []})
+            for name in set(passed) | set(flaked):
+                record = history["checks"].setdefault(name, {"seconds": [], "flakes": 0})
+                if name in passed:
+                    record["seconds"] = [*record["seconds"], passed[name]][-HISTORY_LENGTH:]
+                record["flakes"] += flaked.get(name, 0)
+            if run_seconds is not None:
+                history["runs"] = [*history["runs"], run_seconds][-HISTORY_LENGTH:]
+            return {}, {"/meta/checkHistory": history}
+
+        self.write(build=build)
+
+    def save_log(self, check_id: str, completed: Completed) -> str:
+        """Write a check's whole output under the state directory; returns its path relative to it."""
+        self._logs += 1
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        name = f"{stamp}-{self._logs:03d}-{uuid.uuid4().hex[:8]}-{re.sub(r'[^A-Za-z0-9._-]', '_', check_id)}.log"
+        directory = self.state_directory / "logs"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_bytes((completed.stdout + completed.stderr).encode("utf-8", "replace"))
+        return f"logs/{name}"
+
+    def failures(self, completed: Completed) -> list[dict]:
+        """The failing tests or steps the binding's failure pattern finds in a check's output, each once."""
+        settings = self.binding.get("checkOutput")
+        if not settings:
+            return []
+        pattern = re.compile(settings["failurePattern"])
+        found: dict[str, str] = {}
+        for stream in (completed.stdout, completed.stderr):
+            for line in stream.splitlines():
+                match = pattern.search(line)
+                # A match whose id is missing or empty names nothing.
+                if match is None or not match["id"]:
+                    continue
+                found.setdefault(match["id"], (match.groupdict().get("message") or "").strip())
+        return [{"id": name, "message": message} for name, message in found.items()]
+
+    def flake_for(self, check_id: str, failures: list[dict]) -> str | None:
+        """The references of the declared flakes that cover every failure of this check, or None.
+
+        A declaration without test patterns covers the whole check; one with
+        patterns covers only failures it can name, so output the failure
+        pattern cannot read is never retried on its strength.
+        """
+        declared = [flake for flake in self.binding.get("flakes", []) if flake["check"] == check_id]
+        whole = [flake["ref"] for flake in declared if "tests" not in flake]
+        if whole:
+            return ", ".join(whole)
+        if not failures:
+            return None
+        refs: list[str] = []
+        for failure in failures:
+            covering = [flake for flake in declared if any(re.fullmatch(pattern, failure["id"]) for pattern in flake["tests"])]
+            if not covering:
+                return None
+            refs += [flake["ref"] for flake in covering if flake["ref"] not in refs]
+        return ", ".join(refs)
 
     def finish_checking(self, subject: str) -> None:
         """Clear the checking panel; a check left running, by a stop mid-check, reads pending again.
@@ -1161,7 +1262,7 @@ class Runner:
             if changes:
                 raise Stop("no_checks", "nothing would check this candidate's changes")
             result.notes.append("the candidate changes nothing, so no check was selected")
-        self.write_progress([subject], [(check["id"], "pending") for check in checks])
+        self.write_progress([subject], [{"id": check["id"], "state": "pending"} for check in checks])
         outcomes = self.run_checks([subject], checks, checkout, context.with_values(treeSha=self.tree(synced)), result)
         self.assert_clean(checkout, "the checkout after the checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
@@ -1301,15 +1402,46 @@ class Runner:
         profile = self.binding["profiles"].get(check.get("environmentProfile", ""), {"environment": {}})
         return self.run_argv(check["argv"], cwd, context, timeout, extra_env=profile["environment"])
 
-    def run_checks(self, subjects: list[str], checks: list[dict], checkout: Path, context: Context, result: Result) -> dict[str, str]:
+    def run_checks(
+        self, subjects: list[str], checks: list[dict], checkout: Path, context: Context, result: Result,
+        whole_run: bool = True,
+    ) -> dict[str, str]:
         outcomes: dict[str, str] = {}
+        records = {check["id"]: {"id": check["id"], "state": "pending"} for check in checks}
+        history = self.history()["checks"]
+        for check in checks:
+            expected = delivery_state.median_seconds(history.get(check["id"], {}).get("seconds", []))
+            if expected is not None:
+                records[check["id"]]["expectedSeconds"] = expected
+        passed: dict[str, int] = {}
+        flaked: dict[str, int] = {}
+        began = time.monotonic()
 
-        def show(running: set[str] = frozenset()) -> None:
-            states = [
-                (item["id"], "running" if item["id"] in running else outcomes.get(item["id"], "pending"))
-                for item in checks
-            ]
-            self.write_progress(subjects, states)
+        def show() -> None:
+            self.write_progress(subjects, [records[check["id"]] for check in checks])
+
+        def begin(check: dict) -> None:
+            record = records[check["id"]]
+            record.update(state="running", startedAt=now())
+            for key in ("finishedAt", "failures", "log"):
+                record.pop(key, None)
+
+        def finish(check: dict, completed: Completed) -> dict:
+            """Record one finished run of a check; a failed or timed-out run keeps its output and failing tests."""
+            state = "timed_out" if completed.timed_out else "passed" if completed.returncode == 0 else "failed"
+            record = records[check["id"]]
+            record.update(state=state, finishedAt=now())
+            entry = {"id": check["id"], "state": state, "exitCode": completed.returncode,
+                     "seconds": round(completed.seconds, 3)}
+            record.pop("failures", None)
+            record.pop("log", None)
+            if state == "passed":
+                passed[check["id"]] = int(round(completed.seconds))
+            else:
+                entry["failures"] = self.failures(completed)
+                entry["log"] = self.save_log(check["id"], completed)
+                record["failures"], record["log"] = entry["failures"], entry["log"]
+            return entry
 
         limit = self.binding.get("parallelChecks", 1)
         pending = list(checks)
@@ -1325,8 +1457,9 @@ class Runner:
                     if any(outcomes[name] != "passed" for name in check["prerequisites"]):
                         pending.pop(0)
                         outcomes[check["id"]] = "skipped"
+                        records[check["id"]]["state"] = "skipped"
                         result.checks.append({"id": check["id"], "state": "skipped", "exitCode": None, "seconds": 0})
-                        show(running={item["id"] for item in running.values()})
+                        show()
                         continue
                     alone = not check.get("parallelSafe") or limit == 1
                     if running and (alone or len(running) >= limit or any(
@@ -1335,7 +1468,8 @@ class Runner:
                         break
                     pending.pop(0)
                     # Live state is written before the work starts, not after it.
-                    show(running={check["id"], *(item["id"] for item in running.values())})
+                    begin(check)
+                    show()
                     running[pool.submit(self.run_one, check, checkout, context)] = check
                     if alone:
                         break
@@ -1346,13 +1480,27 @@ class Runner:
                     check = running.pop(future)
                     completed = future.result()
                     assert completed is not None
-                    state = "timed_out" if completed.timed_out else "passed" if completed.returncode == 0 else "failed"
-                    outcomes[check["id"]] = state
-                    result.checks.append({
-                        "id": check["id"], "state": state, "exitCode": completed.returncode,
-                        "seconds": round(completed.seconds, 3),
-                    })
-                show(running={item["id"] for item in running.values()})
+                    entry = finish(check, completed)
+                    flake = self.flake_for(check["id"], entry["failures"]) if entry["state"] == "failed" else None
+                    if flake is not None:
+                        # Every failure is a declared flake: one retry, on the record.
+                        named = ", ".join(failure["id"] for failure in entry["failures"]) or "the whole check"
+                        for subject in subjects:
+                            self.journal("check.retried",
+                                         f"{check['id']} failed only on known flakes ({named}; {flake}); retrying once",
+                                         subject)
+                        flaked[check["id"]] = flaked.get(check["id"], 0) + 1
+                        first = {"flake": flake, "failures": entry["failures"], "log": entry["log"],
+                                 "exitCode": entry["exitCode"]}
+                        begin(check)
+                        show()
+                        again = self.run_one(check, checkout, context)
+                        assert again is not None
+                        entry = {**finish(check, again), "retried": first}
+                    outcomes[check["id"]] = entry["state"]
+                    result.checks.append(entry)
+                show()
+        self.record_history(passed, flaked, int(round(time.monotonic() - began)) if checks and whole_run else None)
         return outcomes
 
     def classify(self, failed: list[dict], selected: list[dict], checkout: Path, base_head: str, changes: list[dict], context: Context, result: Result) -> None:
@@ -1387,7 +1535,20 @@ class Runner:
                 started = completed is not None and (completed.timed_out or completed.returncode is not None)
                 if started and (completed.timed_out or completed.returncode != 0):
                     raise Stop("base_broken", f"{check['id']} also fails on {self.base} at {base_head}")
-        raise Stop("check_failed", "failing checks: " + ", ".join(check["id"] for check in failed))
+        raise Stop("check_failed", "failing checks: " + "; ".join(self.failure_text(check["id"], result) for check in failed))
+
+    @staticmethod
+    def failure_text(check_id: str, result: Result) -> str:
+        """A failed check as a stop names it: its failing tests and its log."""
+        entry = next((item for item in reversed(result.checks) if item["id"] == check_id), {})
+        parts = []
+        if entry.get("failures"):
+            named = [failure["id"] for failure in entry["failures"]]
+            more = f" and {len(named) - STOP_FAILURES} more" if len(named) > STOP_FAILURES else ""
+            parts.append("failing " + ", ".join(named[:STOP_FAILURES]) + more)
+        if entry.get("log"):
+            parts.append("log " + entry["log"])
+        return check_id + (f" ({'; '.join(parts)})" if parts else "")
 
     def base_prerequisites_pass(self, check: dict, by_id: dict[str, dict], checkout: Path, context: Context) -> bool:
         """Run a check's prerequisites, in order, on the base re-run checkout."""
@@ -1499,7 +1660,9 @@ class Runner:
             built.append(Member(subject, item, branch, head, accumulated, self.tree(accumulated)))
         return built
 
-    def check_tree(self, members: list[Member], base_head: str, result: Result, what: str) -> tuple[list[dict], list[dict], Path, list[dict]]:
+    def check_tree(
+        self, members: list[Member], base_head: str, result: Result, what: str, whole_run: bool = True,
+    ) -> tuple[list[dict], list[dict], Path, list[dict]]:
         """Select and run the checks for the tree the batch built up to its last member.
 
         Returns the failed checks, the selected checks, the checkout and the changes.
@@ -1517,8 +1680,8 @@ class Runner:
         result.selection = selection
         if not checks and changes:
             raise Stop("no_checks", "nothing would check this batch's changes")
-        self.write_progress(subjects, [(check["id"], "pending") for check in checks])
-        outcomes = self.run_checks(subjects, checks, checkout, context, result)
+        self.write_progress(subjects, [{"id": check["id"], "state": "pending"} for check in checks])
+        outcomes = self.run_checks(subjects, checks, checkout, context, result, whole_run=whole_run)
         self.assert_clean(checkout, "the checkout after the batch's checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
         return failed, checks, checkout, changes
@@ -1536,7 +1699,7 @@ class Runner:
         def fails(count: int) -> bool:
             result = Result("batch", built[count - 1].subject)
             prefix_failed, checks, checkout, changes = self.check_tree(
-                built[:count], base_head, result, "Finding the failing member, prefix")
+                built[:count], base_head, result, "Finding the failing member, prefix", whole_run=False)
             tested[count] = Probe(prefix_failed, checks, checkout, changes, result)
             return bool(prefix_failed)
 
@@ -1626,8 +1789,9 @@ class Runner:
                 culprit = built[found - 1]
                 stop = Stop(
                     "check_failed",
-                    f"culprit of the batch: {', '.join(check['id'] for check in failing.failed)} first fail when "
-                    f"{culprit.subject} joins",
+                    f"culprit of the batch: "
+                    f"{'; '.join(self.failure_text(check['id'], failing.result) for check in failing.failed)} "
+                    f"first fail when {culprit.subject} joins",
                 )
                 if found == 1:
                     # Alone on the base, the usual rule tells the base's own failures apart.
