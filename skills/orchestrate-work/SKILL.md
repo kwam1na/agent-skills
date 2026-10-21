@@ -75,7 +75,8 @@ question only the operator can answer reaches the operator through the lead.
   next unblocked ticket or follow-up in the same step. An idle lane while
   unblocked work exists is a lead defect, and the lead records it.
 - **Reconcile at every event.** At every event the lead reconciles the
-  delivery record with the forge, the tracker and the lanes, so the operator
+  delivery record with the forge, the tracker and the lanes, by
+  [the sync loop](#keeping-the-live-view-current), so the operator
   never has to prompt a status check. For the tracker, the lead lists the
   epic's child items with its host's tracker tools and compares them with the
   record. An item the record lacks, such as a follow-up filed but never
@@ -239,7 +240,7 @@ in this order:
 2. **Reconcile.**
 
    ```bash
-   python3 -B scripts/delivery_state.py --dir <state directory> reconcile --snapshot <forge snapshot> --snapshot <tracker snapshot>
+   python3 -B scripts/delivery_state.py --dir <state directory> reconcile --snapshot <forge snapshot> --snapshot <tracker snapshot> --binding .agents/orchestration.json
    ```
 
    - A tracker child the record lacks is added: `backlog` as a follow-up,
@@ -250,10 +251,17 @@ in this order:
      moves planned work to review.
    - A merge the runner never recorded is written as the runner's, with a
      `candidate.merged` journal entry saying so. The runner records its own
-     merges, so this is a recovery path, not the normal one.
+     merges, so this is a recovery path, not the normal one. A recovery a
+     crash interrupts leaves `recovery.json` in the state directory, and the
+     next reconcile finishes it: the entry is never lost or written twice.
+     `show` reports `recoveryPending` while one waits. One that cannot be
+     read is set aside as `recovery.json.invalid` (numbered after the first)
+     and reported; check the queue item it names against the journal, journal
+     the merge if it is missing, then delete the file.
    - Anything it cannot settle, such as a completed child still planned, is
      reported and left for the lead.
-   - A snapshot older than `--max-age` seconds (900 by default) is refused
+   - A snapshot older than the binding's `state.snapshotMaxAgeSeconds` (900
+     when absent; `--max-age` overrides it) is refused
      with `snapshot_stale`, and one dated ahead of this machine's clock with
      `snapshot_invalid`; nothing is written: list the work again. A listing
      that fails is noted, and the loop carries on to render and publish.
@@ -282,6 +290,18 @@ in this order:
    `ack_invalid`. The next outbox then carries only later entries. `show` reports a
    publication or an outbox that lags the record, so an unpublished view is
    always visible.
+
+A binding names at most one `host` publisher, and its outbox records that
+publisher's id. Rendering never removes an outbox. When the binding no longer
+names its publisher, `show --binding .agents/orchestration.json` reports the
+outbox as orphaned, and it keeps capping `ack` until the lead retires it:
+
+```bash
+python3 -B scripts/delivery_state.py --dir <state directory> outbox --retire <publisher id>
+```
+
+Add `--force` to retire an outbox that cannot be read; no render rewrites one
+whose publisher is gone.
 
 ## Running the epic
 

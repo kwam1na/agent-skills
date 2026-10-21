@@ -491,6 +491,76 @@ class PinnedViewTests(unittest.TestCase):
 class HostPublisherTests(DeliveryStateFixture):
     """A host publisher leaves an outbox the lead publishes with its host's own tool."""
 
+    def binding(self, publishers: list[dict]) -> str:
+        path = self.root / f"binding {len(list(self.root.iterdir()))}.json"
+        path.write_text(json.dumps({"state": json.loads(self.config([], publishers))}), encoding="utf-8")
+        return str(path)
+
+    def refused(self, *args: str) -> dict:
+        result = run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(self.state_dir), *args])
+        self.assertEqual(result.returncode, 1, result.stdout)
+        return json.loads(result.stdout)
+
+    def test_an_orphaned_outbox_is_flagged_retired_explicitly_and_never_deleted_by_a_render(self) -> None:
+        host = [{"id": "live", "kind": "host"}]
+        wrapper(self.state_dir, "--state-config", self.config([], host))
+        self.assertEqual(self.outbox()["publisher"], "live")
+        publication = state_tool(self.state_dir, "show")["publication"]
+        self.assertEqual((publication["outboxPublisher"], publication["outboxOrphaned"]), ("live", None))
+        kept = state_tool(self.state_dir, "show", "--binding", self.binding(host))["publication"]
+        self.assertFalse(kept["outboxOrphaned"])
+        orphaned = state_tool(self.state_dir, "show", "--binding", self.binding([]))["publication"]
+        self.assertTrue(orphaned["outboxOrphaned"])
+        # A render that does not name the host publisher, with or without a configuration, leaves the outbox.
+        for args in ((), ("--state-config", self.config([], []))):
+            with self.subTest(args=args):
+                wrapper(self.state_dir, *args)
+                self.assertEqual(self.outbox()["publisher"], "live")
+        # While it stands it caps ack; another publisher cannot retire it.
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "After the outbox")
+        shown = state_tool(self.state_dir, "show")
+        last = shown["journal"][-1]["id"]
+        capped = self.refused("ack", "--version", str(shown["state"]["version"]), "--through", str(last))
+        self.assertEqual(capped["code"], "ack_invalid")
+        self.assertIn("outbox --retire live", capped["error"], "the refusal names the way out")
+        self.assertEqual(self.refused("outbox", "--retire", "other")["code"], "outbox_not_owned")
+        retired = state_tool(self.state_dir, "outbox", "--retire", "live")
+        self.assertEqual(retired["retired"]["publisher"], "live")
+        self.assertFalse((self.state_dir / "outbox").exists())
+        state_tool(self.state_dir, "ack", "--version", str(shown["state"]["version"]), "--through", str(last))
+        self.assertEqual(self.refused("outbox", "--retire", "live")["code"], "outbox_missing")
+        publication = state_tool(self.state_dir, "show", "--binding", self.binding([]))["publication"]
+        self.assertEqual((publication["outboxPublisher"], publication["outboxOrphaned"]), (None, None))
+
+    def test_an_outbox_from_before_outboxes_named_their_publisher_is_retired_by_any_id(self) -> None:
+        wrapper(self.state_dir, "--state-config", self.config([], [{"id": "live", "kind": "host"}]))
+        legacy = {key: value for key, value in self.outbox().items() if key != "publisher"}
+        (self.state_dir / "outbox" / "outbox.json").write_text(json.dumps(legacy), encoding="utf-8")
+        self.assertTrue(state_tool(self.state_dir, "show", "--binding", self.binding([{"id": "live", "kind": "host"}]))
+                        ["publication"]["outboxOrphaned"], "an outbox naming no publisher belongs to none")
+        self.assertIsNone(state_tool(self.state_dir, "outbox", "--retire", "anyone")["retired"]["publisher"])
+
+    def test_an_unreadable_outbox_is_retired_only_by_force(self) -> None:
+        wrapper(self.state_dir, "--state-config", self.config([], [{"id": "live", "kind": "host"}]))
+        (self.state_dir / "outbox" / "outbox.json").write_text(json.dumps(
+            {"version": 1, "journalThrough": 0, "publisher": 7}), encoding="utf-8")
+        self.assertEqual(self.refused("outbox", "--retire", "live")["code"], "state_invalid")
+        retired = state_tool(self.state_dir, "outbox", "--retire", "live", "--force")
+        self.assertTrue(retired["retired"]["unreadable"])
+        self.assertFalse((self.state_dir / "outbox").exists())
+
+    def test_one_host_publisher_and_a_whole_max_age_per_configuration(self) -> None:
+        two = [{"id": "live", "kind": "host"}, {"id": "mirror", "kind": "host"}]
+        code, result = wrapper(self.state_dir, "--state-config", self.config([], two))
+        self.assertEqual((code, result["code"]), (2, "config_invalid"))
+        for age in (0, 1.5, True, "60"):
+            with self.subTest(age=age):
+                config = json.dumps({**json.loads(self.config([], [])), "snapshotMaxAgeSeconds": age})
+                code, result = wrapper(self.state_dir, "--state-config", config)
+                self.assertEqual((code, result["code"]), (2, "config_invalid"))
+        config = json.dumps({**json.loads(self.config([], [])), "snapshotMaxAgeSeconds": 60})
+        self.assertEqual(wrapper(self.state_dir, "--state-config", config)[0], 0)
+
     def outbox(self) -> dict:
         return json.loads((self.state_dir / "outbox" / "outbox.json").read_text(encoding="utf-8"))
 
@@ -535,7 +605,8 @@ class HostPublisherTests(DeliveryStateFixture):
             with self.subTest(publisher=publisher):
                 code, result = wrapper(self.state_dir, "--state-config", self.config([], [publisher]))
                 self.assertEqual((code, result["code"]), (2, "config_invalid"), result)
-        for output in ("outbox/outbox.json", "published.json", "OUTBOX/x.md"):
+        for output in ("outbox/outbox.json", "published.json", "OUTBOX/x.md", "recovery.json", "Recovery.JSON", "recovery.json.invalid",
+                       "recovery.json.invalid.2"):
             with self.subTest(output=output):
                 renderer = [{"id": "sneaky", "builtin": "markdown", "output": output}]
                 code, result = wrapper(self.state_dir, "--state-config", self.config(renderer))
