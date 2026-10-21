@@ -66,6 +66,32 @@ def python_argv(source: str, folder: Path, name: str) -> list[str]:
     return [sys.executable, "-B", str(script)]
 
 
+# Names the point at which the wrapper delivers a signal to itself, and the
+# signal: "<point>:<SIGNAME>".
+SEAM = "ORCHESTRATE_RENDER_INTERRUPT_AT"
+
+
+def _processes(script: Path) -> list[int]:
+    """Every process running ``script``, a path unique to one test's own folder."""
+    listing = subprocess.run(["ps", "-A", "-o", "pid=,command="], capture_output=True, text=True, check=False).stdout
+    return [int(line.split(None, 1)[0]) for line in listing.splitlines() if str(script) in line]
+
+
+def _wait_for_none(script: Path, seconds: float = 3.0) -> list[int]:
+    """Processes still running ``script`` after a bounded wait; empty when all stopped."""
+    deadline = time.monotonic() + seconds
+    while True:
+        found = _processes(script)
+        if not found or time.monotonic() >= deadline:
+            return found
+        time.sleep(0.05)
+
+
+def _kill_all(pids: list[int]) -> None:
+    for pid in pids:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
 class DeliveryStateFixture(unittest.TestCase):
     """A real state directory, written only through the state tool."""
 
@@ -300,38 +326,149 @@ class BoundedCommandTests(DeliveryStateFixture):
         self.assertLess(time.monotonic() - started, 1 + render_state.DRAIN_SECONDS + 3)
         self.assertEqual((outcome.exit_code, outcome.error), (None, "timed out after 1s"))
 
+    # Points the wrapper passes in order, and whether its renderer is running
+    # there. The seam delivers the signal at exactly that point, so no test
+    # depends on how fast the machine is.
+    INTERRUPT_POINTS = (
+        ("loading", False),
+        ("start", False),
+        ("spawning", True),
+        ("spawn", True),
+        ("wait", True),
+        ("drain", False),
+        ("finished", False),
+        ("exit", False),
+    )
+    # One signal, then two in quick succession: a repeated interrupt, or a
+    # supervisor that terminates after interrupting.
+    SIGNALS = (
+        (signal.SIGINT,), (signal.SIGTERM,), (signal.SIGHUP,),
+        (signal.SIGINT, signal.SIGTERM), (signal.SIGTERM, signal.SIGINT),
+    )
+
     @unittest.skipIf(os.name == "nt", "POSIX signals")
-    def test_interrupting_the_wrapper_stops_its_running_commands(self) -> None:
-        for number in (signal.SIGINT, signal.SIGTERM):
-            with self.subTest(signal=number.name):
-                started = self.root / f"started-{number.name}"
-                finished = self.root / f"finished-{number.name}"
-                slow = {
-                    "id": "slow",
-                    "argv": python_argv(
-                        "import pathlib, sys, time\n"
-                        f"pathlib.Path({str(started)!r}).write_text('x')\n"
-                        "time.sleep(4)\n"
-                        f"pathlib.Path({str(finished)!r}).write_text('x')\n",
-                        self.tools, f"slow-{number.name}",
-                    ),
-                    "output": "slow.txt",
-                    "timeoutSeconds": 30,
-                }
-                process = subprocess.Popen(
-                    [sys.executable, "-B", str(WRAPPER), "--dir", str(self.state_dir),
-                     "--state-config", self.config([slow])],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
-                deadline = time.monotonic() + 10
-                while not started.exists() and time.monotonic() < deadline:
-                    time.sleep(0.05)
-                self.assertTrue(started.exists())
-                process.send_signal(number)
-                process.wait(10)
-                self.assertNotEqual(process.returncode, 0)
-                time.sleep(5)
-                self.assertFalse(finished.exists(), "the renderer kept running after the wrapper stopped")
+    def test_an_interrupt_at_any_point_exits_non_zero_and_stops_its_commands(self) -> None:
+        for point, running in self.INTERRUPT_POINTS:
+            for numbers in self.SIGNALS:
+                names = ",".join(number.name for number in numbers)
+                first = numbers[0]
+                with self.subTest(point=point, signals=names):
+                    # A unique script name finds the command, and anything it
+                    # started, however early it was stopped.
+                    tag = f"probe-{point}-{names.replace(',', '-')}"
+                    pause = 60 if running else 0
+                    renderer = {
+                        "id": "probe",
+                        "argv": python_argv(
+                            "import sys, time\n"
+                            "sys.stdin.buffer.read()\n"
+                            f"time.sleep({pause})\n"
+                            "sys.stdout.write('view')\n",
+                            self.tools, tag,
+                        ),
+                        "output": "probe.txt",
+                        "timeoutSeconds": 120,
+                    }
+                    environment = dict(os.environ, **{SEAM: f"{point}:{names}"})
+                    process = subprocess.run(
+                        [sys.executable, "-B", str(WRAPPER), "--dir", str(self.state_dir),
+                         "--state-config", self.config([renderer])],
+                        env=environment, capture_output=True, timeout=60, check=False,
+                    )
+                    survivors = _wait_for_none(self.tools / f"{tag}.py")
+                    self.addCleanup(_kill_all, survivors)
+                    self.assertEqual(survivors, [], "a command kept running after the wrapper stopped")
+                    self.assertNotEqual(process.returncode, 0, process.stderr)
+                    if point == "exit":
+                        # Both signals are held pending, and a pending set has
+                        # no order: either one decides the exit code.
+                        expected = tuple(128 + number for number in numbers)
+                    else:
+                        expected = (128 + first,)
+                    self.assertIn(process.returncode, expected, process.stderr)
+                    if point != "exit":
+                        # Once the result is printed it cannot change; only
+                        # the exit code still reports the interrupt.
+                        result = json.loads(process.stdout)
+                        self.assertEqual((result["ok"], result["code"], result["signal"]),
+                                         (False, "interrupted", first.name))
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_a_second_signal_while_stopping_a_command_still_stops_it(self) -> None:
+        for point in ("spawning", "spawn", "wait"):
+            for first, second in ((signal.SIGINT, signal.SIGTERM), (signal.SIGTERM, signal.SIGINT)):
+                with self.subTest(point=point, first=first.name, second=second.name):
+                    tag = f"stopping-{point}-{first.name}-{second.name}"
+                    renderer = {
+                        "id": "probe",
+                        "argv": python_argv("import sys, time\nsys.stdin.buffer.read()\ntime.sleep(60)\n", self.tools, tag),
+                        "output": "probe.txt",
+                        "timeoutSeconds": 120,
+                    }
+                    environment = dict(os.environ, **{SEAM: f"{point}:{first.name};stopping:{second.name}"})
+                    process = subprocess.run(
+                        [sys.executable, "-B", str(WRAPPER), "--dir", str(self.state_dir),
+                         "--state-config", self.config([renderer])],
+                        env=environment, capture_output=True, timeout=60, check=False,
+                    )
+                    survivors = _wait_for_none(self.tools / f"{tag}.py")
+                    self.addCleanup(_kill_all, survivors)
+                    self.assertEqual(survivors, [], "a command kept running after the wrapper stopped")
+                    self.assertEqual(process.returncode, 128 + first, process.stderr)
+                    self.assertEqual(json.loads(process.stdout)["signal"], first.name)
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_an_interrupt_while_a_publisher_runs_stops_it(self) -> None:
+        tag = "publisher-wait"
+        publisher = {"id": "store", "argv": python_argv("import sys, time\nsys.stdin.buffer.read()\ntime.sleep(60)\n", self.tools, tag),
+                     "timeoutSeconds": 120}
+        environment = dict(os.environ, **{SEAM: "wait:SIGTERM"})
+        process = subprocess.run(
+            [sys.executable, "-B", str(WRAPPER), "--dir", str(self.state_dir), "--state-config", self.config(publishers=[publisher])],
+            env=environment, capture_output=True, timeout=60, check=False,
+        )
+        survivors = _wait_for_none(self.tools / f"{tag}.py")
+        self.addCleanup(_kill_all, survivors)
+        self.assertEqual(survivors, [], "a publisher kept running after the wrapper stopped")
+        self.assertEqual(process.returncode, 128 + signal.SIGTERM, process.stderr)
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_a_swallowed_raise_still_ends_the_wait(self) -> None:
+        tag = "swallowed-wait"
+        renderer = {"id": "probe", "argv": python_argv("import sys, time\nsys.stdin.buffer.read()\ntime.sleep(60)\n", self.tools, tag),
+                    "output": "probe.txt", "timeoutSeconds": 120}
+        environment = dict(os.environ, **{SEAM: "wait:SIGINT!"})
+        process = subprocess.run(
+            [sys.executable, "-B", str(WRAPPER), "--dir", str(self.state_dir), "--state-config", self.config([renderer])],
+            env=environment, capture_output=True, timeout=60, check=False,
+        )
+        survivors = _wait_for_none(self.tools / f"{tag}.py")
+        self.addCleanup(_kill_all, survivors)
+        self.assertEqual(survivors, [], "a command kept running after the wrapper stopped")
+        self.assertEqual(process.returncode, 128 + signal.SIGINT, process.stderr)
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_an_interrupt_the_parent_ignores_stays_ignored(self) -> None:
+        renderer = self.capture_renderer("echo")
+        environment = dict(os.environ, **{SEAM: "wait:SIGINT"})
+        process = subprocess.run(
+            [sys.executable, "-B", str(WRAPPER), "--dir", str(self.state_dir), "--state-config", self.config([renderer])],
+            env=environment, capture_output=True, timeout=60, check=False,
+            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN),
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertTrue(json.loads(process.stdout)["ok"])
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_without_an_interrupt_the_seam_changes_nothing(self) -> None:
+        renderer = self.capture_renderer("echo")
+        environment = dict(os.environ, **{SEAM: "nowhere:SIGINT"})
+        process = subprocess.run(
+            [sys.executable, "-B", str(WRAPPER), "--dir", str(self.state_dir), "--state-config", self.config([renderer])],
+            env=environment, capture_output=True, timeout=60, check=False,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertTrue(json.loads(process.stdout)["ok"])
 
     def test_a_command_that_never_reads_its_input_still_completes(self) -> None:
         deaf = {
