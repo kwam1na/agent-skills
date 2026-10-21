@@ -2275,12 +2275,17 @@ class SourceRefreshTests(unittest.TestCase):
         self.assertEqual(state_tool.refresh_interval({"refreshSeconds": 86400}), 86400)
 
     def test_a_command_that_never_stops_printing_is_stopped_at_the_limit(self) -> None:
+        import tracemalloc
+        tracemalloc.start()
+        self.addCleanup(tracemalloc.stop)
         started = time.monotonic()
         code, out, reason = state_tool._run_bounded(
-            [sys.executable, "-c", "import sys\nwhile True: sys.stdout.write('x' * 65536)"], 30, 1_000_000)
+            # Far past the limit, yet finite: a reader that ignored the limit could not take the machine with it.
+            [sys.executable, "-c", "import sys\nfor _ in range(4096): sys.stdout.write('x' * 65536)"], 30, 1_000_000)
         self.assertEqual((code, out), (None, b""))
         self.assertIn("printed more than 1000000 bytes", reason)
         self.assertLess(time.monotonic() - started, 15, "stopped at the limit, not at the timeout")
+        self.assertLess(tracemalloc.get_traced_memory()[1], 8 * 1024 * 1024, "never held past the limit")
 
     def test_the_status_says_when_a_stale_source_was_last_read(self) -> None:
         record = {"meta": {"headline": "Epic", "checking": {"now": None, "next": []}, "sources": {
