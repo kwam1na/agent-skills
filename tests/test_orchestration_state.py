@@ -1317,6 +1317,20 @@ class DeliveryStatsTests(unittest.TestCase):
         ]
         stats = state_tool.delivery_stats(self.state(queue_item("work-a")), journal)["work-a"]
         self.assertEqual((stats["outcome"], stats["totalSeconds"]), ("merged", 7320))
+        # The total always ends where the attempt ended: a stop after a
+        # recovered merge has no total, and a second merge after a check is
+        # where both end.
+        base = [entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),
+                entry(2, "2026-10-20T10:00:00Z", "candidate.handed", "work-a", "lane-1"),
+                entry(3, "2026-10-20T10:10:00Z", "candidate.merged", "work-a"),
+                entry(4, "2026-10-20T10:20:00Z", "check.started", "work-a")]
+        stopped = state_tool.delivery_stats(self.state(queue_item("work-a")), [
+            *base, entry(5, "2026-10-20T10:30:00Z", "candidate.stopped", "work-a")])["work-a"]
+        self.assertEqual((stopped["outcome"], stopped["totalSeconds"]), ("stopped", None))
+        again = state_tool.delivery_stats(self.state(queue_item("work-a")), [
+            *base, entry(5, "2026-10-20T10:40:00Z", "candidate.merged", "work-a")])["work-a"]
+        self.assertEqual((again["outcome"], again["endedAt"], again["totalSeconds"]),
+                         ("merged", "2026-10-20T10:40:00Z", 6000))
         # With no hand-off on record, the last merge stands, as before.
         journal = [
             entry(1, "2026-10-20T09:00:00Z", "lane.assigned", "work-a", "lane-1"),

@@ -750,16 +750,20 @@ def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> d
                     None)
         if last is not None and last["kind"] == "candidate.stopped":
             ended, outcome = last, "stopped"
-    # The total belongs to the latest attempt: its first merge after the last
-    # hand-off, checked or not (a merge recovered from the forge has no check).
-    # A merge that a later hand-off superseded is not this candidate's total.
-    # With no hand-off on record, the last merge stands, as it always has.
-    if handed is not None:
-        merged = next((entry for entry in after_handing if entry["kind"] == "candidate.merged"), None)
-    else:
+    # The total ends where the latest attempt ended, and only at a merge. A
+    # merge recovered from the forge, with no check, ends an attempt nothing
+    # else ended. A merge that a later hand-off superseded is not this
+    # candidate's total. With no hand-off on record, the last merge stands.
+    if outcome == "merged":
+        merged = ended
+    elif handed is None:
         merged = next((entry for entry in reversed(own) if entry["kind"] == "candidate.merged"), None)
-    if ended is None and merged is not None and handed is not None:
-        ended, outcome = merged, "merged"
+    elif ended is None:
+        merged = next((entry for entry in after_handing if entry["kind"] == "candidate.merged"), None)
+        if merged is not None:
+            ended, outcome = merged, "merged"
+    else:
+        merged = None
 
     def at(entry: dict | None) -> str | None:
         return entry["at"] if entry else None
@@ -829,9 +833,9 @@ def _parse_time(text: str, *, exact: bool = False) -> datetime.datetime:
     """A schema timestamp as UTC; ``exact`` keeps its fraction of a second, to the microsecond.
 
     Digits beyond the sixth are dropped, never rounded, so a time never moves
-    later than it was written. Durations are whole seconds in any case, so two
-    times less than a microsecond apart compare as equal, even when the later
-    one was written first.
+    later than it was written. Times in the same microsecond compare as equal,
+    even when the later one was written first; durations are whole seconds in
+    any case.
     """
     whole, _, fraction = text.rstrip("Z").partition(".")
     moment = datetime.datetime.strptime(whole, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)

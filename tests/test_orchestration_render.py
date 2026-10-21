@@ -1281,7 +1281,7 @@ setTimeout(async () => {
         subject = document["state"]["queue"][0]["subject"]
         stats = document["stats"][subject]
         stats.update({"rounds": 10 ** 7, "roundsSource": "journal",
-                      "findings": {"P0": 0, "P1": 10 ** 7, "P2": 10 ** 21, "P3": 123456789012}})
+                      "findings": {"P0": -0.0, "P1": 10 ** 7, "P2": 10 ** 21, "P3": 123456789012}})
         shown = self.run_page({}, document)
         self.assertIn("10000000 rounds, findings P0/P1/P2/P3 0/10000000/1000000000000000000000/123456789012",
                       shown["text"])
