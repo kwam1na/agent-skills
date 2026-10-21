@@ -1631,6 +1631,15 @@ class TrackerSnapshotTests(unittest.TestCase):
         self.snap()
         self.assertEqual(self.notes().count("tracker-snapshot: taken again"), 2, "a run of successes is noted once")
 
+    def test_reconcile_refuses_a_snapshot_the_parser_cannot_read(self) -> None:
+        for name, text in (("long number", '{"takenAt": ' + "9" * 5000 + "}"),
+                           ("deep nesting", "[" * 200000 + "]" * 200000)):
+            with self.subTest(name):
+                path = self.root / f"{name}.json"
+                path.write_text(text, encoding="utf-8")
+                code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(path))
+                self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"), refused)
+
     def test_a_reason_that_comes_back_after_another_is_noted_again(self) -> None:
         self.snap("fail")
         self.snap("garbage")
@@ -1638,6 +1647,7 @@ class TrackerSnapshotTests(unittest.TestCase):
         self.assertEqual(len(self.notes()), 3)
 
     def test_a_snapshot_is_never_written_over_the_record_s_own_files(self) -> None:
+        (self.directory / "outbox").mkdir()
         before = {name: (self.directory / name).read_bytes() for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE)}
         for name in ("state.json", "journal.jsonl", "STATE.JSON", "outbox/outbox.json", "published.json",
                      "recovery.json", "recovery.json.invalid.2", "queue.lock"):
@@ -1646,6 +1656,16 @@ class TrackerSnapshotTests(unittest.TestCase):
                                          "--output", str(self.directory / name))
                 self.assertEqual((code, refused["code"]), (1, "output_invalid"), refused)
         self.assertEqual({name: (self.directory / name).read_bytes() for name in before}, before)
+        # The directory named in another case is still the directory, where the filesystem ignores case.
+        other_case = self.directory.with_name(self.directory.name.upper())
+        if other_case.exists() and os.path.samefile(other_case, self.directory):
+            code, refused = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(),
+                                     "--output", str(other_case / "state.json"))
+            self.assertEqual((code, refused["code"]), (1, "output_invalid"), refused)
+            code, refused = run_tool(other_case, "tracker-snapshot", "--binding", self.binding(),
+                                     "--output", str(self.directory / "state.json"))
+            self.assertEqual((code, refused["code"]), (1, "output_invalid"), refused)
+            self.assertEqual({name: (self.directory / name).read_bytes() for name in before}, before)
         code, result = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(),
                                 "--output", str(self.directory / "tracker snapshot.json"))
         self.assertEqual((code, result["taken"]), (0, True), "any other name in the directory is fine")

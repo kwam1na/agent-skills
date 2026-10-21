@@ -328,7 +328,7 @@ class ListWorkTests(unittest.TestCase):
         self.assertEqual(outcome.kind, OutcomeKind.SUCCESS)
 
     def test_a_listing_names_its_parent(self) -> None:
-        for payload in ({}, {"parentReference": ""}, {"parentReference": 3}):
+        for payload in ({}, {"parentReference": ""}, {"parentReference": "  "}, {"parentReference": 3}):
             with self.subTest(payload=payload):
                 adapter = InMemoryTrackerAdapter(work={"epic-1": CHILDREN})
                 outcome = execute_tracker_operation(

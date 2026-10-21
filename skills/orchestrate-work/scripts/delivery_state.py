@@ -1291,11 +1291,20 @@ RECORD_NAMES = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE
 
 
 def _refuse_record_path(directory: Path, output: Path) -> None:
-    try:
-        inside = output.resolve().relative_to(Path(directory).resolve())
-    except ValueError:
+    # By file identity, not by path text: a filesystem that ignores case can
+    # name the state directory in a case its path does not spell.
+    chain = [Path(output).resolve(), *Path(output).resolve().parents]
+    below = None
+    for index, ancestor in enumerate(chain):
+        try:
+            if os.path.samefile(ancestor, directory):
+                below = chain[index - 1] if index else ancestor
+                break
+        except OSError:
+            continue
+    if below is None:
         return
-    first = inside.parts[0].casefold() if inside.parts else ""
+    first = below.name.casefold()
     if first in {name.casefold() for name in RECORD_NAMES} or first.startswith(RECOVERY_QUARANTINE.casefold()):
         raise StateError("output_invalid", f"{output.name} is one of the record's own files: write the snapshot elsewhere")
 
