@@ -60,7 +60,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from delivery_state import (  # noqa: E402
-    JOURNAL_FILE, OUTBOX_DIRECTORY, OUTBOX_FILE, PUBLISHED_FILE, QUEUE_LOCK, RECOVERY_FILE, STATE_FILE, STATE_LOCK,
+    JOURNAL_FILE, OUTBOX_DIRECTORY, OUTBOX_FILE, PUBLISHED_FILE, QUEUE_LOCK, RECOVERY_FILE, RECOVERY_QUARANTINE, STATE_FILE, STATE_LOCK,
     StateError,
     dumps, read_published, show,
 )
@@ -71,7 +71,8 @@ DEFAULT_RENDERERS = (
     {"id": "static-page", "builtin": "static-page", "output": "delivery.html"},
 )
 # The files the state tool and the runner own; no view may replace them.
-RESERVED = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE, OUTBOX_DIRECTORY, RECOVERY_FILE)
+RESERVED = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE, OUTBOX_DIRECTORY, RECOVERY_FILE,
+            RECOVERY_QUARANTINE)
 DEFAULT_TIMEOUT_SECONDS = 60
 MAX_TIMEOUT_SECONDS = 600
 # How much of a failing command's stderr the result keeps, in characters, and

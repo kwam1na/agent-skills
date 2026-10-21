@@ -520,8 +520,9 @@ class HostPublisherTests(DeliveryStateFixture):
         state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "After the outbox")
         shown = state_tool(self.state_dir, "show")
         last = shown["journal"][-1]["id"]
-        self.assertEqual(self.refused("ack", "--version", str(shown["state"]["version"]), "--through", str(last))["code"],
-                         "ack_invalid")
+        capped = self.refused("ack", "--version", str(shown["state"]["version"]), "--through", str(last))
+        self.assertEqual(capped["code"], "ack_invalid")
+        self.assertIn("outbox --retire live", capped["error"], "the refusal names the way out")
         self.assertEqual(self.refused("outbox", "--retire", "other")["code"], "outbox_not_owned")
         retired = state_tool(self.state_dir, "outbox", "--retire", "live")
         self.assertEqual(retired["retired"]["publisher"], "live")
@@ -538,6 +539,15 @@ class HostPublisherTests(DeliveryStateFixture):
         self.assertTrue(state_tool(self.state_dir, "show", "--binding", self.binding([{"id": "live", "kind": "host"}]))
                         ["publication"]["outboxOrphaned"], "an outbox naming no publisher belongs to none")
         self.assertIsNone(state_tool(self.state_dir, "outbox", "--retire", "anyone")["retired"]["publisher"])
+
+    def test_an_unreadable_outbox_is_retired_only_by_force(self) -> None:
+        wrapper(self.state_dir, "--state-config", self.config([], [{"id": "live", "kind": "host"}]))
+        (self.state_dir / "outbox" / "outbox.json").write_text(json.dumps(
+            {"version": 1, "journalThrough": 0, "publisher": 7}), encoding="utf-8")
+        self.assertEqual(self.refused("outbox", "--retire", "live")["code"], "state_invalid")
+        retired = state_tool(self.state_dir, "outbox", "--retire", "live", "--force")
+        self.assertTrue(retired["retired"]["unreadable"])
+        self.assertFalse((self.state_dir / "outbox").exists())
 
     def test_one_host_publisher_and_a_whole_max_age_per_configuration(self) -> None:
         two = [{"id": "live", "kind": "host"}, {"id": "mirror", "kind": "host"}]

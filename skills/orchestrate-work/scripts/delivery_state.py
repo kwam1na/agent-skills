@@ -50,6 +50,7 @@ PUBLISHED_FILE = "published.json"
 # A recovery in progress: written before a missed merge is recorded, removed
 # once its journal entry is appended, and finished by the next reconcile.
 RECOVERY_FILE = "recovery.json"
+RECOVERY_QUARANTINE = "recovery.json.invalid"
 OUTBOX_DIRECTORY = "outbox"
 OUTBOX_FILE = "outbox.json"
 # A snapshot older than this is refused, so a skipped listing fails loudly.
@@ -1013,6 +1014,16 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                 reports.append({"subject": recovery["subject"],
                                 "note": "merged on the forge while the runner is running: reconcile again once it stops"})
             return
+        # An intent left waiting for the runner is finished first, under this
+        # same hold of the lock, so the next intent never overwrites it.
+        try:
+            pending = _read_recovery(directory)
+        except StateError as error:
+            (directory / RECOVERY_FILE).replace(directory / RECOVERY_QUARANTINE)
+            reports.append({"subject": None, "note": f"{error}: set aside as {RECOVERY_QUARANTINE}"})
+            pending = None
+        if pending is not None:
+            _finish_intent(directory, pending, changes)
         for recovery in recoveries:
             selector = f"queue[subject={recovery['subject']}]"
             for _ in range(RECONCILE_ATTEMPTS):
@@ -1074,8 +1085,7 @@ def _finish_recovery(directory: Path, finished: list[dict], held: list[dict]) ->
     recorded but not journaled, the entry is appended; when the state write
     never landed, the intent is dropped and the plan recovers the merge again.
     """
-    intent = _read_recovery(directory)
-    if intent is None:
+    if not (directory / RECOVERY_FILE).exists():
         return
     with contextlib.ExitStack() as locks:
         try:
@@ -1083,19 +1093,43 @@ def _finish_recovery(directory: Path, finished: list[dict], held: list[dict]) ->
         except StateError as error:
             if error.code != "lock_timeout":
                 raise
-            held.append({"subject": intent["subject"],
-                         "note": "an interrupted recovery waits for the runner to stop: reconcile again"})
+            held.append({"subject": _pending_subject(directory),
+                         "note": "an interrupted recovery waits for the queue lock: reconcile again once it is free"})
             return
-        journal = read_journal(directory)
-        journaled = any(entry["id"] > intent["journalAfter"] and entry["kind"] == "candidate.merged"
-                        and entry["subject"] == intent["subject"] and entry["summary"] == intent["summary"]
-                        for entry in journal)
-        item = next((item for item in read_state(directory)["queue"] if item["subject"] == intent["subject"]), None)
-        if not journaled and item is not None and item["stage"] == "merged" and item["syncedHead"] == intent["head"]:
-            _journal_recovery(directory, intent)
-            finished.append({"subject": intent["subject"], "recovery": True,
-                             "change": "an interrupted recovery's journal entry: appended"})
-        (directory / RECOVERY_FILE).unlink(missing_ok=True)
+        # Read under the lock: another reconcile may have finished it, or written a newer one.
+        try:
+            intent = _read_recovery(directory)
+        except StateError as error:
+            # Set aside, never deleted: what it held is for the lead to check against the journal.
+            (directory / RECOVERY_FILE).replace(directory / RECOVERY_QUARANTINE)
+            held.append({"subject": None, "note": f"{error}: set aside as {RECOVERY_QUARANTINE}; check the queue "
+                                                   "item it names against the journal"})
+            return
+        if intent is not None:
+            _finish_intent(directory, intent, finished)
+
+
+def _pending_subject(directory: Path) -> str | None:
+    try:
+        intent = _read_recovery(directory)
+    except StateError:
+        return None
+    return intent["subject"] if intent else None
+
+
+def _finish_intent(directory: Path, intent: dict, finished: list[dict]) -> None:
+    """Finish one interrupted recovery; the caller holds the queue lock."""
+    journal = read_journal(directory)
+    # Any merge entry for the subject since the intent, whoever wrote it: the
+    # runner may have recorded the merge itself before this reconcile.
+    journaled = any(entry["id"] > intent["journalAfter"] and entry["kind"] == "candidate.merged"
+                    and entry["subject"] == intent["subject"] for entry in journal)
+    item = next((item for item in read_state(directory)["queue"] if item["subject"] == intent["subject"]), None)
+    if not journaled and item is not None and item["stage"] == "merged" and item["syncedHead"] == intent["head"]:
+        _journal_recovery(directory, intent)
+        finished.append({"subject": intent["subject"], "recovery": True,
+                         "change": "an interrupted recovery's journal entry: appended"})
+    (directory / RECOVERY_FILE).unlink(missing_ok=True)
 
 
 def read_outbox(directory: Path) -> dict | None:
@@ -1114,16 +1148,25 @@ def read_outbox(directory: Path) -> dict | None:
     return outbox
 
 
-def retire_outbox(directory: Path, publisher: str) -> dict:
+def retire_outbox(directory: Path, publisher: str, *, force: bool = False) -> dict:
     """Remove a host publisher's outbox, so it no longer caps ``ack``.
 
     Explicit, never implied: a render without a binding cannot tell a removed
     publisher from one it was simply not given, so only this removes an outbox.
     An outbox written before outboxes named their publisher is retired by any id.
+    ``force`` retires one that cannot be read, which no render would rewrite.
     """
     with file_lock(directory / STATE_LOCK):
         read_state(directory)
-        outbox = read_outbox(directory)
+        try:
+            outbox = read_outbox(directory)
+        except StateError:
+            if not force:
+                raise
+            (directory / OUTBOX_DIRECTORY / OUTBOX_FILE).unlink()
+            with contextlib.suppress(OSError):
+                (directory / OUTBOX_DIRECTORY).rmdir()
+            return {"publisher": None, "version": None, "journalThrough": None, "unreadable": True}
         if outbox is None:
             raise StateError("outbox_missing", "there is no outbox to retire")
         owner = outbox.get("publisher")
@@ -1200,9 +1243,11 @@ def ack(directory: Path, *, version: int, through: int) -> dict:
             problems.append(f"journal entry {through} is before the published {previous['journalThrough']}")
         outbox = read_outbox(directory)
         if outbox is not None and (version > outbox["version"] or through > outbox["journalThrough"]):
+            hint = (f"; if {outbox['publisher']} is no longer bound, retire its outbox with outbox --retire "
+                    f"{outbox['publisher']}") if outbox.get("publisher") else ""
             problems.append(
                 f"the outbox holds version {outbox['version']} through entry {outbox['journalThrough']}: "
-                "acknowledge only what was published")
+                f"acknowledge only what was published{hint}")
         if problems:
             raise StateError("ack_invalid", "; ".join(problems))
         published = {"version": version, "journalThrough": through, "at": now()}
@@ -1235,6 +1280,8 @@ def publication(directory: Path, shown: dict, hosts: set[str] | None = None) -> 
         "unpublishedEntries": unpublished,
         "outboxVersion": outbox["version"] if outbox else None,
         "outboxPublisher": outbox.get("publisher") if outbox else None,
+        # A recovery a crash interrupted: its merge may be recorded and not yet journaled.
+        "recoveryPending": (directory / RECOVERY_FILE).exists() or (directory / RECOVERY_QUARANTINE).exists(),
         # Known only against a binding: an outbox whose host publisher it no longer names.
         "outboxOrphaned": None if hosts is None or outbox is None else outbox.get("publisher") not in hosts,
         "outboxLags": "outboxError" in errors or (
@@ -1320,6 +1367,7 @@ def main(argv: list[str] | None = None) -> int:
     sync.add_argument("--binding", type=Path, help="the repository binding, for its state.snapshotMaxAgeSeconds")
     retire = commands.add_parser("outbox", help="manage a host publisher's outbox")
     retire.add_argument("--retire", required=True, metavar="PUBLISHER", help="remove this publisher's outbox")
+    retire.add_argument("--force", action="store_true", help="also remove an outbox that cannot be read")
     published = commands.add_parser("ack", help="record which version and journal entries were published")
     published.add_argument("--version", type=int, required=True)
     published.add_argument("--through", type=int, required=True, help="the last journal id published")
@@ -1356,13 +1404,12 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             }
         elif args.command == "reconcile":
-            max_age = args.max_age
-            if max_age is None and args.binding is not None:
-                max_age = binding_state(args.binding).get("snapshotMaxAgeSeconds")
+            bound = binding_state(args.binding).get("snapshotMaxAgeSeconds") if args.binding is not None else None
+            max_age = args.max_age if args.max_age is not None else bound
             result = reconcile(args.dir, args.snapshot,
                                max_age=SNAPSHOT_MAX_AGE_SECONDS if max_age is None else float(max_age))
         elif args.command == "outbox":
-            result = {"ok": True, "retired": retire_outbox(args.dir, args.retire)}
+            result = {"ok": True, "retired": retire_outbox(args.dir, args.retire, force=args.force)}
         elif args.command == "ack":
             result = {"ok": True, "published": ack(args.dir, version=args.version, through=args.through)}
         else:

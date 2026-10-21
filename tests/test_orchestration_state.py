@@ -1361,17 +1361,83 @@ class RecoveryIntentTests(unittest.TestCase):
         with state_tool.file_lock(self.directory / state_tool.QUEUE_LOCK):
             code, result = run_tool(self.directory, "reconcile", "--snapshot", str(self.forge))
         self.assertEqual(code, 0, result)
-        self.assertIn("waits for the runner", " ".join(report["note"] for report in result["reports"]))
+        self.assertIn("waits for the queue lock", " ".join(report["note"] for report in result["reports"]))
         self.assertTrue(self.intent().exists())
+        self.assertTrue(run_tool(self.directory, "show")[1]["publication"]["recoveryPending"])
         self.assertEqual(self.recovered(), [])
 
-    def test_a_malformed_intent_is_refused(self) -> None:
+    def test_an_intent_left_for_the_runner_is_finished_before_another_recovery_overwrites_it(self) -> None:
+        with mock.patch.object(state_tool, "_journal_recovery", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        version = state_tool.show(self.directory)["state"]["version"]
+        queue = state_tool.show(self.directory)["state"]["queue"]
+        state_tool.patch(self.directory, writer="lead", version=version,
+                         changes={"queue": [*queue, queue_item("work-r", order=2, changeRequest="change 8")]})
+        both = self.root / "both.json"
+        both.write_text(json.dumps({"takenAt": taken(), "source": "forge", "items": [
+            {"subject": "work-q", "state": "merged", "changeRequest": "change 7", "head": HEAD_B},
+            {"subject": "work-r", "state": "merged", "changeRequest": "change 8", "head": HEAD_A}]}), encoding="utf-8")
+
+        def runner_held_the_queue(directory: Path, finished: list, held: list) -> None:
+            # The runner held the lock as this reconcile began, and let it go just after.
+            held.append({"subject": "work-q", "note": "an interrupted recovery waits for the runner to stop"})
+
+        with mock.patch.object(state_tool, "_finish_recovery", runner_held_the_queue):
+            result = state_tool.reconcile(self.directory, [both])
+        self.assertEqual(sorted(change["subject"] for change in result["changes"] if change["recovery"]),
+                         ["work-q", "work-r"])
+        merged = [entry["subject"] for entry in state_tool.show(self.directory)["journal"]
+                  if entry["kind"] == "candidate.merged"]
+        self.assertEqual(sorted(merged), ["work-q", "work-r"], "the waiting entry was not lost")
+        self.assertFalse(self.intent().exists())
+
+    def test_a_malformed_intent_is_set_aside_reported_and_never_wedges_reconcile(self) -> None:
+        quarantine = self.directory / state_tool.RECOVERY_QUARANTINE
         for contents in ("not json", json.dumps({"subject": "work-q"}),
                          json.dumps({"subject": "work-q", "head": HEAD_B, "lane": 3, "summary": "s", "journalAfter": 0})):
             with self.subTest(contents=contents):
+                quarantine.unlink(missing_ok=True)
                 self.intent().write_text(contents, encoding="utf-8")
-                code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(self.forge))
-                self.assertEqual((code, refused["code"]), (1, "state_invalid"), refused)
+                self.assertTrue(run_tool(self.directory, "show")[1]["publication"]["recoveryPending"])
+                code, result = run_tool(self.directory, "reconcile", "--snapshot", str(self.forge))
+                self.assertEqual(code, 0, result)
+                self.assertIn("set aside", " ".join(report["note"] for report in result["reports"]))
+                self.assertEqual(quarantine.read_text(encoding="utf-8"), contents, "kept for the lead, not deleted")
+                self.assertFalse(self.intent().exists())
+                self.assertTrue(run_tool(self.directory, "show")[1]["publication"]["recoveryPending"],
+                                "a set-aside intent stays visible until the lead clears it")
+
+    def test_a_merge_another_writer_journaled_meanwhile_is_never_journaled_twice(self) -> None:
+        with mock.patch.object(state_tool, "patch", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        # Before the next reconcile, the runner records the merge itself.
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-q]",
+                         changes={"stage": "merged", "syncedHead": HEAD_B})
+        state_tool.append_journal(self.directory, kind="candidate.merged", summary=f"Merged at {HEAD_B}",
+                                  subject="work-q", writer="runner")
+        state_tool.reconcile(self.directory, [self.forge])
+        self.assertEqual(len(self.recovered()), 1)
+        self.assertFalse(self.intent().exists())
+
+    def test_an_earlier_merge_entry_for_the_subject_does_not_count_for_a_later_recovery(self) -> None:
+        state_tool.append_journal(self.directory, kind="candidate.merged", summary="An earlier merge, since reverted",
+                                  subject="work-q", writer="runner")
+        with mock.patch.object(state_tool, "_journal_recovery", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        state_tool.reconcile(self.directory, [self.forge])
+        self.assertEqual(len(self.recovered()), 2, "the recovery's own entry is still appended")
+
+    def test_a_refused_state_write_clears_its_intent(self) -> None:
+        refusal = state_tool.StateError("field_not_owned", "refused")
+        with mock.patch.object(state_tool, "patch", side_effect=refusal):
+            with self.assertRaises(state_tool.StateError):
+                state_tool.reconcile(self.directory, [self.forge])
+        self.assertFalse(self.intent().exists())
+        self.assertFalse(run_tool(self.directory, "show")[1]["publication"]["recoveryPending"])
 
 
 class BindingMaxAgeTests(unittest.TestCase):
@@ -1405,6 +1471,13 @@ class BindingMaxAgeTests(unittest.TestCase):
         self.assertEqual((code, refused["code"]), (1, "snapshot_stale"))
         code, result = run_tool(self.directory, "reconcile", "--snapshot", str(self.snapshot), "--binding", self.binding())
         self.assertEqual(code, 0, "without the field, the default applies")
+
+    def test_a_broken_binding_is_refused_even_when_max_age_overrides_it(self) -> None:
+        bad = self.root / "broken.json"
+        bad.write_text("{", encoding="utf-8")
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(self.snapshot), "--binding", str(bad),
+                                 "--max-age", "300")
+        self.assertEqual((code, refused["code"]), (1, "binding_invalid"))
 
     def test_a_malformed_binding_or_max_age_is_refused(self) -> None:
         bad = self.root / "bad.json"
@@ -1481,7 +1554,8 @@ class PublicationTests(unittest.TestCase):
         outbox = self.directory / "outbox" / "outbox.json"
         outbox.parent.mkdir()
         for contents in ("garbage", json.dumps({"version": "one", "journalThrough": 1}),
-                         json.dumps({"version": -3, "journalThrough": -1})):
+                         json.dumps({"version": -3, "journalThrough": -1}),
+                         json.dumps({"version": 1, "journalThrough": 1, "publisher": 3})):
             with self.subTest(contents=contents):
                 outbox.write_text(contents, encoding="utf-8")
                 code, shown = run_tool(self.directory, "show")
@@ -1507,7 +1581,8 @@ class PublicationTests(unittest.TestCase):
     def test_show_flags_a_publication_that_lags_the_record(self) -> None:
         code, shown = run_tool(self.directory, "show")
         self.assertEqual(shown["publication"], {"publishedVersion": None, "journalThrough": 0, "unpublishedEntries": 3,
-                                                "outboxVersion": None, "outboxPublisher": None, "outboxOrphaned": None,
+                                                "outboxVersion": None, "outboxPublisher": None, "recoveryPending": False,
+                                                "outboxOrphaned": None,
                                                 "outboxLags": False, "lags": True})
         version = shown["state"]["version"]
         run_tool(self.directory, "ack", "--version", str(version), "--through", "3")

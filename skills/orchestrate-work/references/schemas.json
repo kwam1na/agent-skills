@@ -1489,7 +1489,8 @@
                   }
                 }
               ]
-            }
+            },
+            "description": "Each publisher is an argv, or a host publisher whose outbox the lead publishes. At most one is a host publisher: every host publisher writes the one outbox."
           },
           "snapshotMaxAgeSeconds": {
             "description": "How old a forge or tracker snapshot may be before reconcile refuses it, in seconds. Optional; 900 when absent, and --max-age overrides it.",
