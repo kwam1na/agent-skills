@@ -1829,7 +1829,7 @@ def hints_from_command(config: dict, parent: str | None) -> tuple[dict | None, s
     if code is None:
         return None, f"the hints command {detail}"
     if code != 0:
-        return None, f"the hints command exited with {code}"
+        return None, f"the hints command exited with {code}" + (f": {detail}" if detail != f"exited with {code}" else "")
     try:
         return check_hints(json.loads(out.decode("utf-8-sig")), "the hints command's output"), None
     except (UnicodeDecodeError, ValueError, RecursionError):
@@ -1865,18 +1865,26 @@ def _overlap(first: str, second: str) -> bool:
     return globbed and (first_fixed.startswith(second_fixed) or second_fixed.startswith(first_fixed))
 
 
-def _files(hint: dict) -> tuple[list[str], str]:
-    """An item's files: what its change touches when known, else what it declares; and which they are."""
-    if "changedFiles" in hint:
-        return hint["changedFiles"], "changed files"
-    return hint.get("files", []), "declared files"
+def _files(hint: dict, *, queued: bool) -> tuple[list[str], str]:
+    """An item's files, and which they are.
+
+    Queued work is compared on what its change touched, when the hints give
+    any. Work not yet queued keeps what it declares, with anything its change
+    has touched so far. An empty changed list hides nothing.
+    """
+    changed, declared = hint.get("changedFiles") or [], hint.get("files", [])
+    if changed and queued:
+        return changed, "changed files"
+    if changed:
+        return sorted({*declared, *changed}), "declared and changed files"
+    return declared, "declared files"
 
 
 def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) -> list[dict]:
     """The planned and follow-up work ``lane`` could take next, best first, each with a one-line reason.
 
-    Candidates are planned work no lane holds, or ``lane`` holds and has not
-    yet put in review, and the follow-ups, less anything queued and anything
+    Candidates are planned work that no lane, or ``lane``, holds and nobody
+    has yet put in review, and the follow-ups, less anything queued and anything
     the tracker shows completed or canceled. A follow-up is the tracker's
     item named by its reference, or by its id when it has none; the hints are
     keyed the same way. They are ordered by:
@@ -1908,14 +1916,15 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
     finished = {subject for subject, item in tracker.items() if item["state"] in ("completed", "canceled")}
     for item in [*state.get("planned", []), *state["queue"]]:
         if item["lane"] in open_lanes and item["subject"] not in merged | finished:
-            paths, kind = _files(declared.get(item["subject"], {}))
+            paths, kind = _files(declared.get(item["subject"], {}), queued=item["subject"] in queued)
             held.setdefault(item["lane"], []).extend((path, kind) for path in paths)
     own = [(item["subject"], path) for item in [*state.get("planned", []), *state["queue"]] if item["lane"] == lane
-           for path in _files(declared.get(item["subject"], {}))[0]]
+           for path in _files(declared.get(item["subject"], {}), queued=item["subject"] in queued)[0]]
     candidates = [(item["subject"], item["title"]) for item in state.get("planned", [])
-                  if item["lane"] is None or (item["lane"] == lane and item["stage"] == "planned")]
-    candidates += [(item["reference"] or item["id"], item["title"]) for item in state["followups"]]
+                  if item["lane"] in (None, lane) and item["stage"] == "planned"]
     others = {item["subject"] for item in state.get("planned", []) if item["lane"] not in (None, lane)}
+    candidates += [(item["reference"] or item["id"], item["title"]) for item in state["followups"]
+                   if item["id"] not in others]
     ranked = []
     seen: set[str] = set()
     for order, (subject, title) in enumerate(candidates):
@@ -1929,7 +1938,7 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
             if blocker in merged or tracker.get(blocker, {}).get("state") in ("completed", "canceled"):
                 continue
             open_blockers.append(blocker if blocker in tracker else f"{blocker} (not in the snapshot)")
-        files, kind = _files(declared.get(subject, {}))
+        files, kind = _files(declared.get(subject, {}), queued=False)
         collisions = {}
         for other, paths in sorted(held.items()):
             hits = sorted({(path, theirs_kind) for path in files for theirs, theirs_kind in paths
@@ -1986,6 +1995,10 @@ def suggest_next(directory: Path, lane: str, snapshot_path: Path, hints_path: Pa
         source = "command" if hints is not None else source
     if hints is None and hints_path is not None:
         hints, source = read_hints(hints_path), "file"
+    elif hints is not None and hints_path is not None:
+        note = "the binding's command gave the hints, so the --hints file was not read"
+    if hints is None:
+        note = "; ".join(filter(None, [note, "no hints: files and priorities are unknown"]))
     ranked = next_for_lane(state, lane, snapshot, hints)
     result = {"ok": True, "lane": lane, "hints": source, "next": ranked[:max(limit, 0)]}
     if note is not None:

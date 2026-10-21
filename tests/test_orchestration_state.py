@@ -3281,6 +3281,54 @@ class NextTests(unittest.TestCase):
         self.assertEqual(ranked["fix-a"]["collidesWith"], ["lane-2"])
         self.assertIn("declared files", ranked["fix-a"]["reason"])
 
+    def test_an_empty_or_partial_change_never_hides_declared_files(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version,
+                         changes={"queue": [*state_tool.show(self.directory)["state"]["queue"],
+                                            queue_item("fresh", lane="lane-2", order=4)]})
+        snapshot = self.snapshot([{"subject": name, "state": "backlog"} for name in ("fix-a", "fix-b", "fix-c")])
+        ranked = {item["subject"]: item for item in self.ranked(snapshot, self.hints({
+            # Queued with no commits yet: what it declares still counts.
+            "fresh": {"files": ["core/"], "changedFiles": []},
+            # Planned, part done: both what it declares and what it changed count.
+            "busy": {"files": ["lib/a.py", "lib/b.py"], "changedFiles": ["lib/a.py"]},
+            "fix-a": {"files": ["core/x.py"], "priority": 1},
+            "fix-b": {"files": ["lib/b.py"], "priority": 1},
+            "fix-c": {"files": ["docs/c.md"], "changedFiles": []},
+        }))}
+        self.assertEqual(ranked["fix-a"]["collidesWith"], ["lane-2"])
+        self.assertIn("declared files", ranked["fix-a"]["reason"])
+        self.assertEqual(ranked["fix-b"]["collidesWith"], ["lane-2"])
+        self.assertIn("declared and changed files", ranked["fix-b"]["reason"])
+        self.assertNotIn("no files declared", ranked["fix-c"]["reason"])
+
+    def test_a_follow_up_another_lane_holds_under_its_id_is_not_offered(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"followups": [
+            {"id": "busy", "title": "Held by lane-2 under its id", "reference": "TRK-5"},
+            {"id": "fu-6", "title": "Held by lane-2 under its reference", "reference": "taken"}]})
+        ranked = self.ranked(self.snapshot([{"subject": "TRK-5", "state": "backlog"},
+                                            {"subject": "taken", "state": "backlog"}]))
+        self.assertNotIn("TRK-5", [item["subject"] for item in ranked])
+        self.assertNotIn("taken", [item["subject"] for item in ranked])
+
+    def test_the_result_says_why_hints_came_from_where_they_did(self) -> None:
+        snapshot = self.snapshot([{"subject": "fix-a", "state": "backlog"}])
+        tool = self.root / "hints tool.py"
+        tool.write_text("import sys\nprint('the tracker refused the request', file=sys.stderr)\nsys.exit(4)\n",
+                        encoding="utf-8")
+        binding = self.write("binding.json", {"state": {"directory": "state", "renderers": [], "publishers": [],
+                                                        "workHints": {"argv": [sys.executable, "-B", str(tool)]}}})
+        code, result = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot", snapshot, "--binding", binding)
+        self.assertEqual((code, result["hints"]), (0, "none"), result)
+        self.assertIn("exited with 4: the tracker refused the request", result["hintsNote"])
+        self.assertIn("no hints", result["hintsNote"])
+        working = self.hints_binding({"items": {}})
+        code, result = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot", snapshot,
+                                "--binding", working, "--hints", self.hints({}))
+        self.assertEqual((code, result["hints"]), (0, "command"), result)
+        self.assertIn("was not read", result["hintsNote"])
+
     def test_the_binding_and_the_render_wrapper_take_a_work_hints_block(self) -> None:
         schema = state_tool.load_schema("orchestration-binding/1")
         member = {**schema["properties"]["state"], "$defs": schema["$defs"]}
@@ -3322,6 +3370,7 @@ class NextTests(unittest.TestCase):
         state_tool.patch(self.directory, writer="lead", version=version, changes={"planned": [
             *state["planned"],
             {"subject": "mine-review", "title": "In review", "lane": "lane-1", "stage": "review"},
+            {"subject": "nobody-review", "title": "In review, no lane", "lane": None, "stage": "review"},
             {"subject": "mine-next", "title": "Planned for me", "lane": "lane-1", "stage": "planned"},
         ]})
         snapshot = self.snapshot([{"subject": "mine-review", "state": "started"},
@@ -3330,6 +3379,7 @@ class NextTests(unittest.TestCase):
                                                    "mine-review": {"files": ["lib/review.py"]}}))
         order = [item["subject"] for item in ranked]
         self.assertNotIn("mine-review", order)
+        self.assertNotIn("nobody-review", order, "work in review is nobody's next work")
         mine = next(item for item in ranked if item["subject"] == "mine-next")
         self.assertFalse(mine["owned"], "its own files are not a sign the lane worked on them")
 

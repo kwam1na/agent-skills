@@ -742,7 +742,7 @@ class HostPublisherTests(DeliveryStateFixture):
     def test_every_state_field_the_binding_schema_declares_renders_and_no_other(self) -> None:
         schemas = json.loads((ROOT / "skills/orchestrate-work/references/schemas.json").read_text(encoding="utf-8"))
         fields = schemas["orchestration-binding/1"]["properties"]["state"]["properties"]
-        # A valid value for the fields the wrapper checks; any other field it only has to accept.
+        # Values the schema allows; the wrapper checks snapshotMaxAgeSeconds and only has to accept the rest.
         samples = {"snapshotMaxAgeSeconds": 60, "statusOverrideMaxAgeSeconds": 600,
                    "trackerSnapshot": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30},
                    "workHints": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30}}
