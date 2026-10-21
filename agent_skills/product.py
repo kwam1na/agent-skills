@@ -368,11 +368,16 @@ class _ForkWatcher(threading.Thread):
         self._starts[pid] = started
         notes = self._select.KQ_NOTE_FORK | self._select.KQ_NOTE_EXIT
         try:
+            # The pid may have been reused before the registration: keep it
+            # only on the process that was learned, read before and after.
+            # One gone by the second read keeps it, so its exit is still
+            # reported; that relies on no pid being reused between the reads.
+            before = _darwin_process(pid)
+            if before is None or before.started != started:
+                self._forget(pid, started)
+                return
             self._queue.control([self._select.kevent(
                 pid, self._select.KQ_FILTER_PROC, self._select.KQ_EV_ADD, notes)], 0, 0)
-            # The pid may have been reused before the registration: keep it
-            # only on the process that was learned. One gone since keeps it,
-            # so its exit is still reported.
             current = _darwin_process(pid)
             if current is not None and current.started != started:
                 self._forget(pid, started)
@@ -439,8 +444,8 @@ def _started_before(started: object, reference: object) -> bool:
 
 def _wall_stamp() -> tuple[int, int]:
     """Now, as a macOS start stamp: wall-clock (seconds, microseconds)."""
-    now = time.time()
-    return int(now), int(now % 1 * 1_000_000)
+    seconds, micros = divmod(time.time_ns() // 1000, 1_000_000)
+    return seconds, micros
 
 
 def _precedes(started: object, reference: object) -> bool:

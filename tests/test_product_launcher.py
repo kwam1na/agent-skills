@@ -1408,8 +1408,15 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         # A later exit reported for another process under that pid widens nothing,
         # and a process started at the very instant of the exit is not counted.
         tracker.ended(300, (12, 0), (20, 0))
+        self.assertEqual(tracker._ends[300], ((11, 0), (15, 0)))
         table[313] = _Process(1, 300, UID, (15, 0), False)
         self.assertEqual(tracker.escaped(), (310,))
+        # An end recorded for another start vouches for nothing.
+        tracker._ends[300] = ((12, 0), (20, 0))
+        table[314] = _Process(1, 300, UID, (14, 500000), False)
+        self.assertNotIn(314, tracker.escaped())
+        del table[314]
+        tracker._ends[300] = ((11, 0), (15, 0))
         # While the descendant is there, its group is its own.
         table[400] = _Process(100, 400, UID, (20, 0), False)
         tracker.observe()
@@ -1521,6 +1528,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         self.assertIsInstance(stamp, tuple)
         self.assertEqual(len(stamp), 2)
         self.assertFalse(_started_before(stamp, _darwin_process(os.getpid()).started))
+        # Microseconds, not a truncated second.
+        self.assertTrue(any(_wall_stamp()[1] for _ in range(5)))
         offered, ended = [], []
         with tempfile.TemporaryDirectory() as directory:
             go = Path(directory) / "go"
@@ -1530,20 +1539,21 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                 "pid = os.fork()\n"
                 "if pid == 0:\n    time.sleep(0.3)\n    os._exit(0)\n"
                 "os.waitpid(pid, 0)\n", str(go)])
-            started = _darwin_process(parent.pid).started
-
-            def adopt(pid, by):
-                offered.append((pid, by))
-                process = _darwin_process(pid)
-                if process is not None:
-                    watcher.watch(pid, process.started)
-
-            # Exactly comparable with a start stamp: no truncation.
-            self.assertFalse(_precedes(_wall_stamp(), started))
-            seen_at = []
-            watcher = _ForkWatcher(adopt, lambda pid, start, at: ended.append((pid, start)) or seen_at.append(at))
-            watcher.start()
+            watcher = None
             try:
+                started = _darwin_process(parent.pid).started
+
+                def adopt(pid, by):
+                    offered.append((pid, by))
+                    process = _darwin_process(pid)
+                    if process is not None:
+                        watcher.watch(pid, process.started)
+
+                # Exactly comparable with a start stamp: no truncation.
+                self.assertFalse(_precedes(_wall_stamp(), started))
+                seen_at = []
+                watcher = _ForkWatcher(adopt, lambda pid, start, at: ended.append((pid, start)) or seen_at.append(at))
+                watcher.start()
                 watcher.watch(parent.pid, started)
                 before = _wall_stamp()
                 go.write_text("1")
@@ -1553,7 +1563,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                     time.sleep(0.02)
                 after = _wall_stamp()
             finally:
-                watcher.close()
+                if watcher is not None:
+                    watcher.close()
                 if parent.poll() is None:
                     parent.kill()
                     parent.wait()
@@ -1572,6 +1583,49 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         self.assertEqual(stale._starts[os.getpid()], _darwin_process(os.getpid()).started)
         stale.start()
         stale.close()
+
+    @unittest.skipUnless(sys.platform == "darwin", "kqueue process events")
+    def test_a_fork_watch_records_its_start_first_keeps_an_exited_process_and_forgets_a_failure(self) -> None:
+        watcher = _ForkWatcher(lambda *args: None)
+        kqueue = watcher._queue
+        seen = []
+
+        class Queue:
+            def __init__(self, failure=None):
+                self.failure = failure
+
+            def control(self, changes, *_):
+                seen.append(dict(watcher._starts))
+                if self.failure:
+                    raise self.failure
+                return []
+
+        try:
+            process = _Process(1, 4242, UID, (5, 0), False)
+            reads = iter([process, None])   # there before the registration, gone after it
+            watcher._queue = Queue()
+            with patch("agent_skills.product._darwin_process", side_effect=lambda pid: next(reads)), \
+                 patch("agent_skills.product._darwin_children", return_value=[]):
+                watcher.watch(4242, (5, 0))
+            # Recorded before the registration, and kept so its exit is reported.
+            self.assertEqual(seen, [{4242: (5, 0)}])
+            self.assertEqual(watcher._starts, {4242: (5, 0)})
+            # Forgetting another start leaves this one.
+            watcher._forget(4242, (1, 0))
+            self.assertEqual(watcher._starts, {4242: (5, 0)})
+            # A registration that fails is forgotten.
+            watcher._queue = Queue(OSError("gone"))
+            with patch("agent_skills.product._darwin_process", return_value=_Process(1, 4243, UID, (6, 0), False)):
+                watcher.watch(4243, (6, 0))
+            self.assertNotIn(4243, watcher._starts)
+            # A pid that already names another process is never registered.
+            seen.clear()
+            with patch("agent_skills.product._darwin_process", return_value=_Process(1, 4244, UID, (9, 0), False)):
+                watcher.watch(4244, (7, 0))
+            self.assertEqual(seen, [])
+            self.assertNotIn(4244, watcher._starts)
+        finally:
+            kqueue.close()
 
     @unittest.skipUnless(sys.platform == "darwin", "the lifeline pipe is macOS only")
     def test_the_lifeline_read_end_goes_only_to_the_child_and_both_ends_are_closed(self) -> None:
