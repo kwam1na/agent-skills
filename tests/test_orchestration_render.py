@@ -605,7 +605,8 @@ class HostPublisherTests(DeliveryStateFixture):
             with self.subTest(publisher=publisher):
                 code, result = wrapper(self.state_dir, "--state-config", self.config([], [publisher]))
                 self.assertEqual((code, result["code"]), (2, "config_invalid"), result)
-        for output in ("outbox/outbox.json", "published.json", "OUTBOX/x.md", "recovery.json", "Recovery.JSON"):
+        for output in ("outbox/outbox.json", "published.json", "OUTBOX/x.md", "recovery.json", "Recovery.JSON", "recovery.json.invalid",
+                       "recovery.json.invalid.2"):
             with self.subTest(output=output):
                 renderer = [{"id": "sneaky", "builtin": "markdown", "output": output}]
                 code, result = wrapper(self.state_dir, "--state-config", self.config(renderer))

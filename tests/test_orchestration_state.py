@@ -1381,7 +1381,7 @@ class RecoveryIntentTests(unittest.TestCase):
 
         def runner_held_the_queue(directory: Path, finished: list, held: list) -> None:
             # The runner held the lock as this reconcile began, and let it go just after.
-            held.append({"subject": "work-q", "note": "an interrupted recovery waits for the runner to stop"})
+            held.append({"subject": "work-q", "note": "an interrupted recovery waits for the queue lock: reconcile again once it is free"})
 
         with mock.patch.object(state_tool, "_finish_recovery", runner_held_the_queue):
             result = state_tool.reconcile(self.directory, [both])
@@ -1390,6 +1390,8 @@ class RecoveryIntentTests(unittest.TestCase):
         merged = [entry["subject"] for entry in state_tool.show(self.directory)["journal"]
                   if entry["kind"] == "candidate.merged"]
         self.assertEqual(sorted(merged), ["work-q", "work-r"], "the waiting entry was not lost")
+        self.assertFalse([report for report in result["reports"] if "waits for the queue lock" in report["note"]],
+                         "an intent finished in the same pass is not reported as waiting")
         self.assertFalse(self.intent().exists())
 
     def test_a_malformed_intent_is_set_aside_reported_and_never_wedges_reconcile(self) -> None:
@@ -1407,6 +1409,30 @@ class RecoveryIntentTests(unittest.TestCase):
                 self.assertFalse(self.intent().exists())
                 self.assertTrue(run_tool(self.directory, "show")[1]["publication"]["recoveryPending"],
                                 "a set-aside intent stays visible until the lead clears it")
+        # A second one never overwrites the first set aside.
+        self.intent().write_text("second", encoding="utf-8")
+        run_tool(self.directory, "reconcile", "--snapshot", str(self.forge))
+        self.assertTrue(quarantine.exists())
+        self.assertEqual((self.directory / f"{state_tool.RECOVERY_QUARANTINE}.2").read_text(encoding="utf-8"), "second")
+
+    def test_a_malformed_intent_the_recovery_itself_meets_is_set_aside_too(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"queue": [
+            *state_tool.show(self.directory)["state"]["queue"], queue_item("work-r", order=2)]})
+        both = self.root / "both.json"
+        both.write_text(json.dumps({"takenAt": taken(), "source": "forge", "items": [
+            {"subject": "work-r", "state": "merged", "head": HEAD_A}]}), encoding="utf-8")
+        self.intent().write_text("{bad", encoding="utf-8")
+
+        def queue_held(directory: Path, finished: list, held: list) -> None:
+            held.append({"subject": None, "note": "an interrupted recovery waits for the queue lock"})
+
+        with mock.patch.object(state_tool, "_finish_recovery", queue_held):
+            result = state_tool.reconcile(self.directory, [both])
+        self.assertEqual((self.directory / state_tool.RECOVERY_QUARANTINE).read_text(encoding="utf-8"), "{bad")
+        self.assertIn("set aside", " ".join(report["note"] for report in result["reports"]))
+        self.assertEqual([entry["subject"] for entry in state_tool.show(self.directory)["journal"]
+                          if entry["kind"] == "candidate.merged"], ["work-r"], "the recovery still ran")
 
     def test_a_merge_another_writer_journaled_meanwhile_is_never_journaled_twice(self) -> None:
         with mock.patch.object(state_tool, "patch", side_effect=RuntimeError("the machine stopped")):

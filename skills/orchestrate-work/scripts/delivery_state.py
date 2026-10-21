@@ -1019,11 +1019,13 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
         try:
             pending = _read_recovery(directory)
         except StateError as error:
-            (directory / RECOVERY_FILE).replace(directory / RECOVERY_QUARANTINE)
-            reports.append({"subject": None, "note": f"{error}: set aside as {RECOVERY_QUARANTINE}"})
+            reports.append({"subject": None, "note": f"{error}: set aside as {_set_aside(directory)}"})
             pending = None
         if pending is not None:
             _finish_intent(directory, pending, changes)
+            # Finished here after all, so no longer waiting.
+            reports[:] = [report for report in reports
+                          if not (report["subject"] == pending["subject"] and "waits for the queue lock" in report["note"])]
         for recovery in recoveries:
             selector = f"queue[subject={recovery['subject']}]"
             for _ in range(RECONCILE_ATTEMPTS):
@@ -1101,12 +1103,26 @@ def _finish_recovery(directory: Path, finished: list[dict], held: list[dict]) ->
             intent = _read_recovery(directory)
         except StateError as error:
             # Set aside, never deleted: what it held is for the lead to check against the journal.
-            (directory / RECOVERY_FILE).replace(directory / RECOVERY_QUARANTINE)
-            held.append({"subject": None, "note": f"{error}: set aside as {RECOVERY_QUARANTINE}; check the queue "
+            aside = _set_aside(directory)
+            held.append({"subject": None, "note": f"{error}: set aside as {aside}; check the queue "
                                                    "item it names against the journal"})
             return
         if intent is not None:
             _finish_intent(directory, intent, finished)
+
+
+def _set_aside(directory: Path) -> str:
+    """Move a malformed intent aside, never over one set aside before, and say where."""
+    name, number = RECOVERY_QUARANTINE, 1
+    while (directory / name).exists():
+        number += 1
+        name = f"{RECOVERY_QUARANTINE}.{number}"
+    (directory / RECOVERY_FILE).replace(directory / name)
+    return name
+
+
+def _set_aside_intents(directory: Path) -> list[str]:
+    return sorted(path.name for path in directory.glob(f"{RECOVERY_QUARANTINE}*"))
 
 
 def _pending_subject(directory: Path) -> str | None:
@@ -1281,7 +1297,7 @@ def publication(directory: Path, shown: dict, hosts: set[str] | None = None) -> 
         "outboxVersion": outbox["version"] if outbox else None,
         "outboxPublisher": outbox.get("publisher") if outbox else None,
         # A recovery a crash interrupted: its merge may be recorded and not yet journaled.
-        "recoveryPending": (directory / RECOVERY_FILE).exists() or (directory / RECOVERY_QUARANTINE).exists(),
+        "recoveryPending": (directory / RECOVERY_FILE).exists() or bool(_set_aside_intents(directory)),
         # Known only against a binding: an outbox whose host publisher it no longer names.
         "outboxOrphaned": None if hosts is None or outbox is None else outbox.get("publisher") not in hosts,
         "outboxLags": "outboxError" in errors or (

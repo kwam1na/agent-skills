@@ -247,6 +247,10 @@ in this order:
      merges, so this is a recovery path, not the normal one. A recovery a
      crash interrupts leaves `recovery.json` in the state directory, and the
      next reconcile finishes it: the entry is never lost or written twice.
+     `show` reports `recoveryPending` while one waits. One that cannot be
+     read is set aside as `recovery.json.invalid` (numbered after the first)
+     and reported; check the queue item it names against the journal, journal
+     the merge if it is missing, then delete the file.
    - Anything it cannot settle, such as a completed child still planned, is
      reported and left for the lead.
    - A snapshot older than the binding's `state.snapshotMaxAgeSeconds` (900
@@ -288,6 +292,9 @@ outbox as orphaned, and it keeps capping `ack` until the lead retires it:
 ```bash
 python3 -B scripts/delivery_state.py --dir <state directory> outbox --retire <publisher id>
 ```
+
+Add `--force` to retire an outbox that cannot be read; no render rewrites one
+whose publisher is gone.
 
 ## Running the epic
 

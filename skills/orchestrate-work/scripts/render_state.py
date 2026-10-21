@@ -567,6 +567,8 @@ def _safe_output(value: object) -> bool:
         and not windows.drive
         and not windows.is_absolute()
         and _fold(path.parts[0]) not in RESERVED_FOLDED
+        # Malformed recovery intents are set aside under numbered names too.
+        and not _fold(path.parts[0]).startswith(_fold(RECOVERY_QUARANTINE))
     )
 
 
