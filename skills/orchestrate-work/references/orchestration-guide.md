@@ -54,6 +54,14 @@ it through the state tool, then render the views.
   whose prerequisite failed reads `skipped`; one that never started reads
   `pending`. Whatever acts as the runner should write live state the same way:
   before the work starts, not after it.
+- **A killed run's live state is cleared by the next one.** A runner killed
+  outright cannot clear what it wrote. The operating system releases the
+  queue lock when its holder dies, so the next run to take the lock knows
+  that anything still `running` or mid-step is stale. Before doing anything
+  else, it stops each such item, sets its `running` checks back to `pending`,
+  clears the checking panel, and journals `candidate.stopped` with the reason
+  `interrupted`. A run that still holds the lock is never reset: no other run
+  can take the lock while it lives.
 
 ### Before the repository has the runner
 

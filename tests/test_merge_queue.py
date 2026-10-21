@@ -94,6 +94,12 @@ if args[:1] == ["--sleep-child"]:
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     pathlib.Path(os.environ["MQ_LOG"] + ".child").write_text(str(child.pid))
     time.sleep(60)
+if args[:1] == ["--hang-once"]:
+    # Says it started, then hangs while the hang flag exists, so a test can kill the runner mid-check.
+    pathlib.Path(os.environ["MQ_LOG"] + ".started").write_text(str(os.getpid()))
+    while pathlib.Path(os.environ["MQ_LOG"] + ".hang").exists():
+        time.sleep(0.1)
+    sys.exit(0)
 if args[:1] == ["--lead-writes"]:
     # The lead edits another queue item while this check runs.
     sys.path.insert(0, os.environ["MQ_SCRIPTS"])
@@ -1693,6 +1699,135 @@ class LiveCheckStateTests(MergeQueueTestCase):
         # After the run the queue keeps every check's final state; d never ran because b failed.
         final = {"a": "passed", "b": "failed", "c": "passed", "d": "skipped"}
         self.assertEqual(adopter.item("feature")["checks"], self.as_checks(final))
+
+    def test_a_finished_check_never_reads_running_again_and_one_check_runs_at_a_time(self) -> None:
+        adopter = self.snapshot_adopter("trio", {"alwaysRun": []})
+        self.candidate(adopter)
+        patched, seen = self.recording()
+        with patched:
+            self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        finished: set[str] = set()
+        for steps, checks, _ in seen:
+            running = [name for name, state in checks if state == "running"]
+            self.assertLessEqual(len(running), 1, seen)
+            self.assertFalse(finished & set(running), seen)
+            finished |= {name for name, state in checks if state not in ("pending", "running")}
+        self.assertEqual(finished, {"a", "b", "c", "d"})
+
+
+class InterruptedRunTests(MergeQueueTestCase):
+    """A run killed outright leaves live state behind; the next run to take the queue lock clears it first."""
+
+    def seed_running(self, adopter: Adopter, subject: str = "feature") -> None:
+        """What a run killed mid-check leaves: the panel and the row reading running, the stage checking."""
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(
+            adopter.state, writer="runner", version=current["version"], selector=f"queue[subject={subject}]",
+            assignments={"/stage": "checking", "/checks": [{"id": "a", "state": "passed"}, {"id": "b", "state": "running"}]},
+        )
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(
+            adopter.state, writer="runner", version=current["version"],
+            assignments={"/meta/checking/now": {
+                "subject": subject, "title": subject, "startedAt": "2026-10-20T00:00:00Z",
+                "steps": [{"label": "a", "state": "passed"}, {"label": "b", "state": "running"}],
+            }},
+        )
+
+    def interruptions(self, adopter: Adopter) -> list[dict]:
+        return [
+            entry for entry in state_tool.read_journal(adopter.state)
+            if entry["kind"] == "candidate.stopped" and "interrupted" in entry["summary"]
+        ]
+
+    def test_the_next_run_clears_what_a_killed_run_left_before_anything_else(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        self.seed_running(adopter)
+        patched_writes: list[dict] = []
+        real = state_tool.patch
+
+        def first_write(directory, **kwargs):
+            written = real(directory, **kwargs)
+            patched_writes.append(written)
+            return written
+
+        with mock.patch.object(queue.delivery_state, "patch", first_write):
+            # The release subcommand never touches the candidate; the reset happens anyway.
+            adopter.runner().run_command("release", ["v1"])
+        cleared = patched_writes[0]
+        self.assertIsNone(cleared["meta"]["checking"]["now"])
+        item = next(element for element in cleared["queue"] if element["subject"] == "feature")
+        self.assertEqual(item["checks"], [{"id": "a", "state": "passed"}, {"id": "b", "state": "pending"}])
+        self.assertEqual(item["stage"], "stopped")
+        [entry] = self.interruptions(adopter)
+        self.assertEqual(entry["subject"], "feature")
+
+    def test_a_row_left_running_on_its_own_is_cleared(self) -> None:
+        # The stage already reads stopped and the panel is clear; only the row still says running.
+        adopter = self.adopter()
+        self.candidate(adopter)
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(
+            adopter.state, writer="runner", version=current["version"], selector="queue[subject=feature]",
+            assignments={"/stage": "stopped", "/checks": [{"id": "b", "state": "running"}]},
+        )
+        adopter.runner().run_command("release", ["v1"])
+        self.assertEqual(adopter.item("feature")["checks"], [{"id": "b", "state": "pending"}])
+        self.assertEqual(len(self.interruptions(adopter)), 1)
+
+    def test_a_clean_state_is_left_alone(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        before = state_tool.read_state(adopter.state)
+        adopter.runner().run_command("release", ["v1"])
+        self.assertEqual(self.interruptions(adopter), [])
+        self.assertEqual(adopter.item("feature"), next(item for item in before["queue"] if item["subject"] == "feature"))
+
+    def test_a_run_that_still_holds_the_lock_is_never_reset(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        self.seed_running(adopter)
+        before = state_tool.read_state(adopter.state)
+        with state_tool.file_lock(adopter.state / state_tool.QUEUE_LOCK):
+            results = adopter.runner().run_command("run", ["feature"])
+        self.assertEqual(results[-1].document()["stop"]["reason"], "queue_locked")
+        self.assertEqual(state_tool.read_state(adopter.state), before)
+        self.assertEqual(self.interruptions(adopter), [])
+
+    def test_a_runner_killed_mid_check_is_cleared_by_the_next_run(self) -> None:
+        adopter = self.adopter({"alwaysRun": [check_entry("hang", "--hang-once")]})
+        self.candidate(adopter)
+        hang = Path(str(adopter.log) + ".hang")
+        started = Path(str(adopter.log) + ".started")
+        hang.write_text("")
+        self.addCleanup(hang.unlink, True)
+        runner = subprocess.Popen(
+            [PY, "-B", str(SCRIPTS / "merge_queue.py"), "--repo", str(adopter.operator), "--state", str(adopter.state),
+             "--remote", "origin", "--base", "main", "run", "feature"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 120
+        while not started.exists() and runner.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertTrue(started.exists(), "the check never started")
+        runner.kill()  # SIGKILL on POSIX, TerminateProcess on Windows: no cleanup runs.
+        runner.wait()
+        item = adopter.item("feature")
+        self.assertIn({"id": "hang", "state": "running"}, item["checks"])
+        self.assertEqual(item["stage"], "checking")
+        self.assertIsNotNone(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])
+        # The orphaned check finishes once the flag is gone.
+        hang.unlink()
+        results = self.run_queue(adopter, "feature")
+        [entry] = self.interruptions(adopter)
+        kinds = [(item["kind"], item["summary"]) for item in state_tool.read_journal(adopter.state)]
+        self.assertLess(kinds.index((entry["kind"], entry["summary"])),
+                        max(index for index, (kind, _) in enumerate(kinds) if kind == "check.started"))
+        final = adopter.item("feature")
+        self.assertNotIn("running", [check["state"] for check in final["checks"]])
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
 
 
 class RenderingTests(MergeQueueTestCase):
