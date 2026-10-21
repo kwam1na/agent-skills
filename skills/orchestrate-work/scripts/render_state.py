@@ -35,20 +35,64 @@ wrapper is interrupted or terminated. Stopping is best-effort: a child that
 leaves the group escapes it, a wrapper killed outright cannot stop anything,
 and on Windows the children of a command that has already exited are no longer
 reachable through it.
+
+An interrupt, termination or hangup ends the wrapper non-zero and stops every
+running command; it never reports an interrupted render as a success:
+
+- from the script's first statement until its result is printed, it exits
+  with 128 plus the signal number and an ``interrupted`` result;
+- after the result is printed, the result stands but the exit code is still
+  128 plus the signal number, or the signal itself ends the wrapper.
+
+A signal the parent set to be ignored, as for a command started in the
+background, stays ignored. A signal during the interpreter's own startup,
+before this script's first statement runs, is outside the wrapper's reach.
+
+Only the first signal unwinds the work; a second one, such as a repeated
+interrupt, is recorded and never interrupts the stopping of commands.
 """
 
 from __future__ import annotations
 
+import signal
 import sys
 
 sys.dont_write_bytecode = True
+
+# Run as the wrapper process, record a terminating signal from this point on,
+# before the imports below, so a signal arriving while they load is never
+# swallowed by Python's default handling. A signal the parent set to be
+# ignored, such as an interrupt for a command started in the background, stays
+# ignored. Nothing here changes for a caller that imports this module.
+_received: list[int] = []
+_ignored: set[int] = set()
+
+
+def _record(number: int, frame: object) -> None:
+    if not _received:
+        _received.append(number)
+
+
+if __name__ == "__main__":
+    for _name in ("SIGINT", "SIGTERM", "SIGHUP"):
+        if hasattr(signal, _name):
+            _number = getattr(signal, _name)
+            if signal.getsignal(_number) is signal.SIG_IGN:
+                _ignored.add(_number)
+            else:
+                signal.signal(_number, _record)
+    import os as _os
+
+    _step = _os.environ.get("ORCHESTRATE_RENDER_INTERRUPT_AT", "")
+    if _step.startswith("loading:"):
+        for _signal_name in _step.partition(":")[2].split(","):
+            _os.kill(_os.getpid(), getattr(signal, _signal_name))
 
 import argparse
 import contextlib
 import json
 import os
 import re
-import signal
 import subprocess
 import tempfile
 import threading
@@ -731,6 +775,66 @@ def _feed(stream, document: bytes) -> None:
         stream.close()
 
 
+# The signals that end the wrapper. Each is recorded when it arrives, and while
+# work is in progress it also unwinds that work, so running commands stop.
+# How long a command is waited for between checks for a recorded signal.
+WAIT_SLICE_SECONDS = 0.2
+TERMINATING = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGHUP") if hasattr(signal, name))
+_unwinding = True
+# A test seam: "<point>:<SIGNAME>[,<SIGNAME>...][;<point>:...]" delivers those
+# signals to the wrapper itself at each named point, so every interrupt window
+# can be tested without relying on timing; "<SIGNAME>!" records one without
+# raising, as when a raise is swallowed. Unset, it does nothing.
+INTERRUPT_SEAM = "ORCHESTRATE_RENDER_INTERRUPT_AT"
+
+
+class Interrupted(BaseException):
+    """A terminating signal arrived while work was in progress."""
+
+    def __init__(self, number: int) -> None:
+        super().__init__(number)
+        self.number = number
+
+
+def _on_signal(number: int, frame: object) -> None:
+    global _unwinding
+    if not _received:
+        _received.append(number)
+    if _unwinding:
+        # Only the first signal unwinds, so a second one never lands inside
+        # the stopping of commands the first one started.
+        _unwinding = False
+        raise Interrupted(number)
+
+
+def _defer() -> None:
+    """Hold unwinding back while a step that cannot be interrupted runs."""
+    global _unwinding
+    _unwinding = False
+
+
+def _resume() -> None:
+    """Unwind now if a signal arrived while unwinding was held back."""
+    global _unwinding
+    _unwinding = True
+    if _received:
+        _unwinding = False
+        raise Interrupted(_received[0])
+
+
+def _seam(point: str) -> None:
+    for step in os.environ.get(INTERRUPT_SEAM, "").split(";"):
+        named, _, signal_names = step.partition(":")
+        if named == point:
+            for name in (signal_names or "SIGINT").split(","):
+                if name.endswith("!"):
+                    # A raise swallowed where Python cannot raise: the signal
+                    # is recorded and nothing unwinds.
+                    _record(getattr(signal, name[:-1]), None)
+                else:
+                    os.kill(os.getpid(), getattr(signal, name))
+
+
 def _process_group() -> dict:
     if os.name == "nt":
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
@@ -739,6 +843,7 @@ def _process_group() -> dict:
 
 def _stop(process: subprocess.Popen) -> None:
     """Stop a command and every process it started."""
+    _seam("stopping")
     with contextlib.suppress(OSError):
         if os.name == "nt":
             subprocess.run(
@@ -757,13 +862,22 @@ def _execute(argv: list[str], document: bytes, timeout: int, *, needs_stdout: bo
     With ``needs_stdout``, a command whose stdout is still open after it exits
     is stopped with its group, since nothing more of its output will be used.
     """
+    # A signal inside Popen, once the child is forked, would escape with the
+    # child running and never stopped, so unwinding waits until it is known.
+    _defer()
     try:
         process = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **_process_group()
         )
+        # The child exists but nothing stops it yet: the window a signal
+        # inside Popen falls into.
+        _seam("spawning")
     except OSError as error:
+        _resume()
         return Outcome(None, b"", b"", False, False, f"could not start: {error.strerror or error}")
     try:
+        _resume()
+        _seam("spawn")
         stdout = _Capture(process.stdout, VIEW_LIMIT_BYTES)
         # Enough bytes that the last ERROR_LIMIT characters survive decoding.
         stderr = _Capture(process.stderr, ERROR_BYTES, tail=True)
@@ -771,7 +885,8 @@ def _execute(argv: list[str], document: bytes, timeout: int, *, needs_stdout: bo
         for thread in (stdout, stderr, feeder):
             thread.start()
         try:
-            code = process.wait(timeout)
+            _seam("wait")
+            code = _wait(process, timeout)
         except subprocess.TimeoutExpired:
             _stop(process)
             with contextlib.suppress(subprocess.TimeoutExpired):
@@ -780,6 +895,7 @@ def _execute(argv: list[str], document: bytes, timeout: int, *, needs_stdout: bo
                            f"timed out after {timeout}s")
         # The process has exited; its output may still be in flight, or held
         # open by a child it left behind. Wait a bounded time for the rest.
+        _seam("drain")
         deadline = time.monotonic() + DRAIN_SECONDS
         for thread in (stdout, stderr):
             thread.join(max(0.0, deadline - time.monotonic()))
@@ -797,6 +913,23 @@ def _execute(argv: list[str], document: bytes, timeout: int, *, needs_stdout: bo
         detail = kept_err.decode("utf-8", errors="replace").strip()[-ERROR_LIMIT:]
         error = detail or f"exited with {code}"
     return Outcome(code, bytes(stdout.kept), kept_err, stdout.truncated, stdout_open, error)
+
+
+def _wait(process: subprocess.Popen, timeout: float) -> int:
+    """Wait for a command, checking between short slices for a recorded signal.
+
+    A signal's raise can be swallowed where Python cannot raise, such as in a
+    finalizer; the recorded signal still ends the wait at the next slice.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            return process.wait(max(0.0, min(WAIT_SLICE_SECONDS, deadline - time.monotonic())))
+        except subprocess.TimeoutExpired:
+            if _received:
+                raise Interrupted(_received[0]) from None
+            if time.monotonic() >= deadline:
+                raise
 
 
 def _write_atomically(path: Path, contents: bytes) -> None:
@@ -937,16 +1070,36 @@ def _load_config(args: argparse.Namespace) -> object:
     return {"renderers": [dict(entry) for entry in DEFAULT_RENDERERS], "publishers": []}
 
 
-def _exit_on_signal(number: int, frame: object) -> None:
-    # Let a termination unwind like an interrupt, so running commands are stopped.
-    raise SystemExit(128 + number)
+def _interrupted(number: int) -> tuple[int, dict]:
+    return 128 + number, {"code": "interrupted", "ok": False, "signal": signal.Signals(number).name}
 
 
-def main(argv: list[str] | None = None) -> int:
-    for name in ("SIGTERM", "SIGHUP"):
-        if hasattr(signal, name):
-            with contextlib.suppress(ValueError, OSError):
-                signal.signal(getattr(signal, name), _exit_on_signal)
+def _watched() -> tuple[int, ...]:
+    """The terminating signals the wrapper acts on: not those the parent ignored.
+
+    An ignored signal is never blocked or read as pending, since some systems
+    keep a blocked one pending even while it is ignored.
+    """
+    return tuple(number for number in TERMINATING if number not in _ignored)
+
+
+def _pending() -> int | None:
+    """A terminating signal held back by the block, if one arrived."""
+    if not hasattr(signal, "sigpending"):
+        return None
+    pending = signal.sigpending()
+    return next((number for number in _watched() if number in pending), None)
+
+
+def _let_handlers_run() -> None:
+    # CPython runs a pending Python-level handler when a function is entered
+    # (and at loop iterations), so a signal another thread took just before
+    # the block has its handler run by this call, where it only records it.
+    for _ in range(2):
+        pass
+
+
+def _render_from_args(argv: list[str] | None) -> tuple[int, dict]:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", type=Path, required=True, help="the state directory")
     source = parser.add_mutually_exclusive_group()
@@ -956,12 +1109,91 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = _load_config(args)
     except ConfigError as error:
-        emit({"ok": False, "code": "config_invalid", "error": str(error)})
-        return 2
+        return 2, {"ok": False, "code": "config_invalid", "error": str(error)}
     code, result = render(args.dir, config)
+    _seam("finished")
+    return code, result
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Render as a caller in this process would: no signal handling changes."""
+    code, result = _render_from_args(argv)
     emit(result)
     return code
 
 
+def _main_process(argv: list[str] | None = None) -> int:
+    """Render as the wrapper process, settling the exit code against signals."""
+    global _unwinding
+    _unwinding = True
+    try:
+        _seam("start")
+        for number in TERMINATING:
+            if number in _ignored:
+                continue
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(number, _on_signal)
+        # A signal recorded before the work began ends it before it starts.
+        if _received:
+            _unwinding = False
+            raise Interrupted(_received[0])
+        code, result = _render_from_args(argv)
+    except Interrupted as error:
+        code, result = _interrupted(error.number)
+    except KeyboardInterrupt:
+        # Python's own handler, before the wrapper's was installed.
+        code, result = _interrupted(signal.SIGINT)
+    # Settle the exit code. From here a signal no longer unwinds anything: it
+    # is recorded, or held back by the block and read from the pending set.
+    _unwinding = False
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_BLOCK, _watched())
+    _let_handlers_run()
+    number = _received[0] if _received else _pending()
+    if number is not None:
+        code, result = _interrupted(number)
+    emit(result)
+    _seam("exit")
+    # Checked again here and once more in _exit: either alone catches a signal
+    # held back since the block; together they leave no gap before the exit.
+    if number is None:
+        number = _pending()
+        if number is not None:
+            code = 128 + number
+    return code
+
+
+def _exit(code: int) -> None:
+    """End the process with ``code``, never reporting success after a signal.
+
+    Every terminating signal takes its default action from here on, so one
+    arriving now ends the process by the signal. One that arrived before is
+    either held back by the block or was taken by another thread, whose
+    handler then runs at the next step here and records it; either way it
+    turns the exit code non-zero. Only a clean exit unblocks the signals, so a
+    signal still pending then ends the process by itself.
+
+    One window remains, nanoseconds wide and only while a helper thread is
+    alive: a signal that thread takes during the reset of its own handler can
+    be discarded by CPython itself.
+    """
+    with contextlib.suppress(OSError, ValueError):
+        sys.stdout.flush()
+        sys.stderr.flush()
+    for number in TERMINATING:
+        if number in _ignored:
+            continue
+        with contextlib.suppress(ValueError, OSError):
+            signal.signal(number, signal.SIG_DFL)
+    _let_handlers_run()
+    if code == 0:
+        number = _received[0] if _received else _pending()
+        if number is not None:
+            code = 128 + number
+    if code == 0 and hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, _watched())
+    os._exit(code)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _exit(_main_process())
