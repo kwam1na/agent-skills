@@ -1388,11 +1388,11 @@ def _read_into(stream, buffer: bytearray, cap: int, keep_tail: bool, over: threa
                 if frozen.is_set():
                     return
                 buffer.extend(data)
-            if len(buffer) > cap:
-                if not keep_tail:
-                    over.set()
-                    return
-                del buffer[:-cap]
+                if len(buffer) > cap:
+                    if not keep_tail:
+                        over.set()
+                        return
+                    del buffer[:-cap]
 
 
 def _run_bounded(argv: list[str], timeout: int, limit: int) -> tuple[int | None, bytes, str]:
