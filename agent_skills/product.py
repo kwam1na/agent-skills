@@ -7,6 +7,7 @@ import signal
 import struct
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -98,6 +99,52 @@ class _Process(NamedTuple):
     zombie: bool
 
 
+_LIBPROC: list = []
+
+
+def _libproc():
+    import ctypes
+
+    if not _LIBPROC:
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        libproc.proc_listallpids.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        libproc.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        libproc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        libproc.proc_pidfdinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        _LIBPROC.append(libproc)
+    return _LIBPROC[0]
+
+
+def _darwin_process(pid: int, info=None) -> _Process | None:
+    """One process from PROC_PIDTBSDINFO, or None when it cannot be read."""
+    import ctypes
+
+    # struct proc_bsdinfo: pbi_status at 4, pbi_ppid and pbi_uid at 16,
+    # pbi_pgid at 100, pbi_start_tvsec and _tvusec at 120.
+    size = 136
+    info = info if info is not None else ctypes.create_string_buffer(size)
+    if pid <= 0 or _libproc().proc_pidinfo(pid, 3, 0, info, size) != size:
+        return None
+    raw = info.raw
+    (status,) = struct.unpack_from("I", raw, 4)
+    ppid, uid = struct.unpack_from("II", raw, 16)
+    (pgid,) = struct.unpack_from("I", raw, 100)
+    started = struct.unpack_from("QQ", raw, 120)
+    return _Process(ppid, pgid, uid, started, status == 5)  # SZOMB
+
+
+def _darwin_children(pid: int) -> list[int]:
+    import ctypes
+
+    capacity = 256
+    while True:
+        pids = (ctypes.c_int * capacity)()
+        count = _libproc().proc_listchildpids(pid, pids, ctypes.sizeof(pids))
+        if count < capacity:
+            return [child for child in pids[:max(count, 0)] if child > 0]
+        capacity *= 2
+
+
 def _darwin_process_table() -> dict[int, _Process]:
     """Every process the caller may inspect, from libproc, in a few milliseconds.
 
@@ -105,9 +152,7 @@ def _darwin_process_table() -> dict[int, _Process]:
     """
     import ctypes
 
-    libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
-    libproc.proc_listallpids.argtypes = [ctypes.c_void_p, ctypes.c_int]
-    libproc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+    libproc = _libproc()
     capacity = libproc.proc_listallpids(None, 0)
     while True:
         if capacity <= 0:
@@ -120,20 +165,12 @@ def _darwin_process_table() -> dict[int, _Process]:
         if count < len(pids):
             break
         capacity = count * 2
-    # struct proc_bsdinfo (PROC_PIDTBSDINFO): pbi_status at 4, pbi_ppid and
-    # pbi_uid at 16, pbi_pgid at 100, pbi_start_tvsec and _tvusec at 120.
-    size = 136
-    info = ctypes.create_string_buffer(size)
+    info = ctypes.create_string_buffer(136)
     table = {}
     for pid in pids[:count]:
-        if pid <= 0 or libproc.proc_pidinfo(pid, 3, 0, info, size) != size:
-            continue
-        raw = info.raw
-        (status,) = struct.unpack_from("I", raw, 4)
-        ppid, uid = struct.unpack_from("II", raw, 16)
-        (pgid,) = struct.unpack_from("I", raw, 100)
-        started = struct.unpack_from("QQ", raw, 120)
-        table[pid] = _Process(ppid, pgid, uid, started, status == 5)  # SZOMB
+        process = _darwin_process(pid, info)
+        if process is not None:
+            table[pid] = process
     return table
 
 
@@ -202,6 +239,61 @@ def _process_environment(pid: int) -> list[bytes] | None:
     return None
 
 
+def _darwin_pipes(pid: int) -> set[int] | None:
+    """The kernel handles of the pipe ends open in pid (not of their peers)."""
+    import ctypes
+
+    libproc = _libproc()
+    size = libproc.proc_pidinfo(pid, 1, 0, None, 0)  # PROC_PIDLISTFDS
+    if size <= 0:
+        return None
+    listing = ctypes.create_string_buffer(size + 8 * 64)
+    size = libproc.proc_pidinfo(pid, 1, 0, listing, len(listing))
+    if size <= 0:
+        return None
+    # struct pipe_fdinfo: a 24-byte proc_fileinfo, then pipe_info, whose
+    # 136-byte vinfo_stat is followed by pipe_handle and pipe_peerhandle.
+    info = ctypes.create_string_buffer(256)
+    handles = set()
+    for offset in range(0, size - size % 8, 8):
+        fd, kind = struct.unpack_from("iI", listing.raw, offset)
+        if kind != 6:  # PROX_FDTYPE_PIPE
+            continue
+        if libproc.proc_pidfdinfo(pid, fd, 6, info, 256) >= 176:  # PROC_PIDFDPIPEINFO
+            handles.add(struct.unpack_from("Q", info.raw, 160)[0])
+    return handles
+
+
+def _process_pipes(pid: int) -> set[int] | None:
+    """The pipe ends open in pid, on macOS; None when they cannot be read."""
+    try:
+        if sys.platform == "darwin":
+            return _darwin_pipes(pid)
+    except (OSError, ValueError, struct.error):
+        pass
+    return None
+
+
+def _lifeline_handle(fd: int) -> int | None:
+    """The handle of the read end facing this write end, while anything holds it.
+
+    None once every holder has closed it. A pipe whose other end is closed
+    reports a peer of 0, and any process may hold such a pipe, so 0 never
+    names anyone. A live read end's handle cannot be reused while this end
+    still faces it.
+    """
+    import ctypes
+
+    try:
+        info = ctypes.create_string_buffer(256)
+        if _libproc().proc_pidfdinfo(os.getpid(), fd, 6, info, 256) < 176:  # PROC_PIDFDPIPEINFO
+            return None
+        (peer,) = struct.unpack_from("Q", info.raw, 168)
+    except (OSError, ValueError, struct.error):
+        return None
+    return peer or None
+
+
 def _ps_process_table() -> dict[int, _Process]:
     output = subprocess.run(
         ["ps", "-A", "-o", "pid=,ppid=,pgid=,uid=,stat=,lstart="],
@@ -228,6 +320,61 @@ def _process_table() -> dict[int, _Process] | None:
         return None
 
 
+class _ForkWatcher(threading.Thread):
+    """Learn each new descendant as it is forked, through kqueue NOTE_FORK.
+
+    A double-fork daemon's intermediate parent may exit long before the next
+    table read, taking the only ancestry with it. A kqueue on every known
+    process reports each fork at once; the new child's own children are
+    listed when it is registered, so one forked in that instant is not lost.
+    Each child is offered to the tracker with the parent that forked it, and
+    the tracker decides whether that parent may vouch for it.
+    """
+
+    def __init__(self, adopt) -> None:
+        super().__init__(name="launcher-fork-watcher", daemon=True)
+        import select
+
+        self._select = select
+        self._queue = select.kqueue()
+        self._adopt = adopt
+        self._watched: set[int] = set()
+        self._closed = False
+
+    def watch(self, pid: int) -> None:
+        if self._closed or pid in self._watched:
+            return
+        self._watched.add(pid)
+        event = self._select.kevent(pid, self._select.KQ_FILTER_PROC, self._select.KQ_EV_ADD,
+                                    self._select.KQ_NOTE_FORK)
+        try:
+            self._queue.control([event], 0, 0)
+        except OSError:
+            return  # Gone already, or not ours to watch.
+        self._children_of(pid)
+
+    def _children_of(self, pid: int) -> None:
+        for child in _darwin_children(pid):
+            self._adopt(child, pid)
+
+    def run(self) -> None:
+        while not self._closed:
+            try:
+                events = self._queue.control(None, 64, 0.1)
+            except (OSError, ValueError):
+                return  # Closed.
+            for event in events:
+                if event.fflags & self._select.KQ_NOTE_FORK:
+                    self._children_of(event.ident)
+
+    def close(self) -> None:
+        self._closed = True
+        try:
+            self._queue.close()
+        except OSError:
+            pass
+
+
 def _started_before(started: object, reference: object) -> bool:
     """Whether a process certainly started before the reference.
 
@@ -238,6 +385,15 @@ def _started_before(started: object, reference: object) -> bool:
     """
     if isinstance(started, tuple) and isinstance(reference, tuple):
         return started[0] < reference[0] - 3600
+    if isinstance(started, int) and isinstance(reference, int):
+        return started < reference
+    return False
+
+
+def _precedes(started: object, reference: object) -> bool:
+    """Whether a start stamp is exactly earlier than the reference, with no slack."""
+    if isinstance(started, tuple) and isinstance(reference, tuple):
+        return started < reference
     if isinstance(started, int) and isinstance(reference, int):
         return started < reference
     return False
@@ -256,29 +412,55 @@ class _DescendantTracker:
     every drain tick (0.05 s) once cancellation starts. Ancestry alone misses
     a descendant born, escaped and orphaned between two observations, such
     as a classic double-fork daemon, so cancellation also sweeps for the
-    launch's environment marker (see ``sweep``). What it still misses is a
-    descendant that escapes that way and whose environment cannot be seen:
-    one that cleared it, or, on macOS, one running an Apple system binary
-    (/bin/sh, /bin/sleep and the like), whose environment the kernel does
-    not disclose.
+    launch's environment marker (see ``sweep``). On macOS, which discloses
+    no environment for Apple system binaries (/bin/sh, /bin/sleep and the
+    like), a fork watcher learns each child as it is forked, and the sweep
+    also recognises a holder of the launch's lifeline pipe. Elsewhere a
+    descendant that escapes that way and whose environment cannot be seen
+    is still missed.
+
+    Every process is learned for a reason: ``group`` (in the child's process
+    group), ``descendant`` (by ancestry in the table), ``forked`` (seen being
+    forked by a known process), ``marker`` or ``lifeline``. Whatever the
+    reason, cleanup never selects pid 0 or 1, the launcher or any of its
+    ancestors, a process started before the child, or, to signal on its
+    own, another user's process (see ``_refusal``). Such a candidate is
+    refused and remembered, never signalled, and cancellation then reports
+    itself incomplete.
     """
 
     # The launcher's wait loop ticks every 0.1 s; observe every third tick.
     EVERY = 3
 
     def __init__(self, child: subprocess.Popen, table=_process_table, marker: bytes | None = None,
-                 environment=_process_environment) -> None:
+                 environment=_process_environment, lifeline=None, pipes=_process_pipes,
+                 watcher=None) -> None:
         self._root = child.pid
         self._table = table
         self._marker = marker
         self._environment = environment
+        # Called for the lifeline's current read-end handle, or None.
+        self._lifeline = lifeline
+        self._pipes = pipes
+        # Called with the tracker's adopt method once the child is confirmed.
+        self._watcher_factory = watcher
+        self._watcher = None
+        self._lock = threading.RLock()
         self._known: dict[int, object] = {}
+        self._why: dict[int, str] = {}
+        self._refused: dict[tuple[int, object], str] = {}
         self._confirmed = False
         self._root_started: object = None
+        self._root_present = False
+        self._last_table: dict[int, _Process] = {}
         self._unmarked: set[tuple[int, object]] = set()
         self._ticks = 0
 
     def observe(self, *, throttle: bool = False) -> dict[int, _Process] | None:
+        with self._lock:
+            return self._observe(throttle)
+
+    def _observe(self, throttle: bool) -> dict[int, _Process] | None:
         if throttle:
             self._ticks += 1
             if self._ticks % self.EVERY != 1:
@@ -286,6 +468,7 @@ class _DescendantTracker:
         table = self._table()
         if table is None:
             return None
+        self._last_table = table
         root = table.get(self._root)
         if not self._confirmed:
             # Only a process that is really this launcher's child is tracked,
@@ -294,20 +477,93 @@ class _DescendantTracker:
                 return table
             self._confirmed = True
             self._root_started = root.started
+            if self._watcher_factory is not None:
+                self._watcher = self._watcher_factory(self.adopt)
+                self._watcher.start()
+                self._watcher.watch(self._root)
         live = {pid for pid, started in self._known.items()
                 if pid in table and table[pid].started == started}
         seeds = set(live)
         # Once the child is reaped its pid may be reused, so the root and its
         # process group count only while the same child is still there.
         root_present = root is not None and root.started == self._root_started
+        self._root_present = root_present
         if root_present:
             seeds.add(self._root)
         for pid, process in table.items():
-            if pid in self._known or process.zombie:
+            if pid in self._known or process.zombie or (pid, process.started) in self._refused:
                 continue
-            if (root_present and process.pgid == self._root) or self._descends(pid, table, seeds):
-                self._known[pid] = process.started
+            if root_present and process.pgid == self._root:
+                self._learn(pid, process, "group", table)
+            elif self._descends(pid, table, seeds):
+                self._learn(pid, process, "descendant", table)
         return table
+
+    def _callers(self, table: dict[int, _Process]) -> set[int]:
+        """The launcher and every ancestor of it."""
+        callers = {os.getpid(), os.getppid()}
+        for pid in tuple(callers):
+            while pid in table and table[pid].ppid not in callers:
+                pid = table[pid].ppid
+                callers.add(pid)
+        return callers
+
+    def _refusal(self, pid: int, process: _Process, table: dict[int, _Process], *,
+                 group: bool = False) -> str | None:
+        """Why cleanup may not select this process, or None when it may.
+
+        A group member owned by another user is still learned, so a group
+        that cannot drain names it, but it is never signalled on its own.
+        """
+        if pid <= 1:
+            return "init"
+        if pid in self._callers(table):
+            return "caller"
+        if not group and hasattr(os, "geteuid") and process.uid != os.geteuid():
+            return "other-user"
+        if self._root_started is not None and _precedes(process.started, self._root_started):
+            return "before-run"
+        return None
+
+    def _learn(self, pid: int, process: _Process, why: str, table: dict[int, _Process] | None) -> bool:
+        refusal = self._refusal(pid, process, table or self._last_table, group=why == "group")
+        if refusal is not None:
+            self._refused[(pid, process.started)] = refusal
+            return False
+        self._known[pid] = process.started
+        self._why[pid] = why
+        if self._watcher is not None:
+            self._watcher.watch(pid)
+        return True
+
+    def adopt(self, pid: int, parent: int) -> bool:
+        """Remember a child the fork watcher saw parent fork; False if not adopted.
+
+        The parent vouches for it only while it is the same process the
+        tracker knows: the child is read first, so a parent still there
+        afterwards, with the start it was known by, was its parent.
+        """
+        process = _darwin_process(pid)
+        if process is None or process.zombie or process.ppid != parent:
+            return False
+        with self._lock:
+            if not self._confirmed:
+                return False
+            vouched = self._root_started if parent == self._root else self._known.get(parent)
+            current = _darwin_process(parent)
+            if vouched is None or current is None or current.started != vouched:
+                return False
+            if self._known.get(pid) == process.started:
+                return True
+            if (pid, process.started) in self._refused:
+                return False
+            return self._learn(pid, process, "forked", None)
+
+    def close(self) -> None:
+        with self._lock:
+            self._lifeline = None
+            if self._watcher is not None:
+                self._watcher.close()
 
     @staticmethod
     def _descends(pid: int, table: dict[int, _Process], seeds: set[int]) -> bool:
@@ -320,7 +576,7 @@ class _DescendantTracker:
         return False
 
     def sweep(self, table: dict[int, _Process]) -> None:
-        """Adopt every process that carries this launch's environment marker.
+        """Adopt every process that carries one of this launch's markers.
 
         The marker survives what ancestry does not: a double-fork daemon,
         re-parented to init in a session of its own, still carries it, unless
@@ -328,26 +584,36 @@ class _DescendantTracker:
         so only processes started since then are read. A process whose
         environment cannot be read at that moment (another user's, or one
         caught mid-exec) is not adopted, and is read again on the next sweep.
-        macOS returns no environment at all for Apple system binaries, so a
-        double-fork daemon running one is not found.
+
+        macOS returns no environment at all for Apple system binaries, so
+        there the child also holds the read end of a lifeline pipe, which
+        every descendant inherits unless it closes its descriptors. A process
+        holds it only when one of its own pipe ends is that read end, read
+        while the launcher's write end still faces it both before and after;
+        once it closes, the lifeline names nobody. It is used only once the
+        child is confirmed.
         """
-        if self._marker is None:
+        if self._marker is None and self._lifeline is None:
             return
+        lifeline = (self._lifeline() or None) if self._lifeline is not None and self._confirmed else None
         for pid, process in table.items():
             if pid in self._known or process.zombie or pid in (os.getpid(), self._root):
                 continue
-            if (pid, process.started) in self._unmarked:
+            if (pid, process.started) in self._unmarked or (pid, process.started) in self._refused:
                 continue
             if _started_before(process.started, self._root_started):
                 continue
-            environment = self._environment(pid)
-            if environment is None:
-                continue  # Not readable now; tried again on the next sweep.
-            if self._marker in environment:
-                self._known[pid] = process.started
-            else:
+            environment = self._environment(pid) if self._marker is not None else []
+            pipes = self._pipes(pid) if lifeline is not None else set()
+            marked = bool(environment) and self._marker in environment
+            held = bool(pipes) and lifeline in pipes and self._lifeline is not None \
+                and self._lifeline() == lifeline
+            if marked or held:
+                self._learn(pid, process, "marker" if marked else "lifeline", table)
+            elif environment is not None and pipes is not None:
                 # Remembered by pid and start, so each process is read once.
                 self._unmarked.add((pid, process.started))
+            # Otherwise not readable now; tried again on the next sweep.
 
     def escaped(self) -> tuple[int, ...] | None:
         """Known descendants still running outside the child's process group.
@@ -355,29 +621,59 @@ class _DescendantTracker:
         None when the table cannot be read although descendants are known:
         they may still be running, so that is never reported as none. The
         marker sweep runs even before the child is confirmed, since only this
-        launch's descendants carry its key.
+        launch's descendants carry its key. Each is checked against the
+        selection rule again, now, before it is returned.
         """
-        table = self.observe()
-        if table is None:
-            # Any descendant known besides the child may have left the group.
-            return None if set(self._known) - {self._root} else ()
-        self.sweep(table)
-        return tuple(sorted(
-            pid for pid, started in self._known.items()
-            if pid in table and table[pid].started == started
-            and not table[pid].zombie and table[pid].pgid != self._root
-        ))
+        with self._lock:
+            table = self._observe(False)
+            if table is None:
+                # Any descendant known besides the child may have left the group.
+                return None if set(self._known) - {self._root} else ()
+            self.sweep(table)
+            selected = []
+            for pid, started in self._known.items():
+                process = table.get(pid)
+                if process is None or process.started != started or process.zombie or process.pgid == self._root:
+                    continue
+                refusal = self._refusal(pid, process, table)
+                if refusal is None:
+                    selected.append(pid)
+                else:
+                    self._refused[(pid, started)] = refusal
+            return tuple(sorted(selected))
+
+    def refused(self) -> tuple[int, ...]:
+        """Every pid the selection rule kept cleanup from stopping."""
+        with self._lock:
+            return tuple(sorted({pid for pid, _ in self._refused}))
+
+    def preview(self) -> dict:
+        """What cleanup would stop now, and why, without signalling anything.
+
+        ``group`` is the process group signalled as a whole (the child's own,
+        while it is there), ``escaped`` each process signalled on its own
+        with the reason it was learned, and ``refused`` each candidate the
+        selection rule refused, with the rule it broke.
+        """
+        with self._lock:
+            escaped = self.escaped()
+            return {
+                "group": self._root if self._root_present else None,
+                "escaped": None if escaped is None else [[pid, self._why[pid]] for pid in escaped],
+                "refused": [[pid, why] for (pid, _), why in sorted(self._refused.items(), key=lambda item: item[0][0])],
+            }
 
     def group_members(self) -> tuple[int, ...]:
         """Known descendants still visible in the child's process group."""
-        table = self._table()
-        if table is None or not self._confirmed:
-            return ()
-        return tuple(sorted(
-            pid for pid, started in self._known.items()
-            if pid in table and table[pid].started == started
-            and not table[pid].zombie and table[pid].pgid == self._root
-        ))
+        with self._lock:
+            table = self._table()
+            if table is None or not self._confirmed:
+                return ()
+            return tuple(sorted(
+                pid for pid, started in self._known.items()
+                if pid in table and table[pid].started == started
+                and not table[pid].zombie and table[pid].pgid == self._root
+            ))
 
 
 def _signal_each(pids: tuple[int, ...], signum: int) -> None:
@@ -393,6 +689,27 @@ def _stop_escaped_descendants(
     tracker: _DescendantTracker,
     interrupted: int,
     signalled: tuple[int, ...] = (),
+) -> None:
+    """Stop descendants that left the group, then fail closed on any refusal.
+
+    A candidate the selection rule refused was never signalled, so the tree
+    is not shown to be stopped: the cancellation is reported incomplete.
+    """
+    _stop_selected_escapees(child, tracker, interrupted, signalled)
+    if tracker.refused():
+        raise _incomplete_cancellation(
+            child,
+            interrupted=interrupted,
+            platform="posix",
+            cleanup="escaped-descendants-refused",
+        )
+
+
+def _stop_selected_escapees(
+    child: subprocess.Popen,
+    tracker: _DescendantTracker,
+    interrupted: int,
+    signalled: tuple[int, ...],
 ) -> None:
     """Stop descendants that left the group, or report them by pid.
 
@@ -598,16 +915,23 @@ def _stop_posix_group(child: subprocess.Popen, interrupted: int, tracker: _Desce
         )
 
 
-def _run_command(arguments: list[str], root: Path) -> int:
-    """Keep native process-group cancellation inside the installed launcher."""
+def _run_command(arguments: list[str], root: Path, *, preview=None) -> int:
+    """Keep native process-group cancellation inside the installed launcher.
+
+    With ``preview``, a POSIX cancellation signals nothing: ``preview`` is
+    called with what cleanup would stop (``_DescendantTracker.preview``) and
+    the command is left running for the caller to stop.
+    """
     interrupted = 0
     child = None
+    tracker = None
+    lifeline_end = None
     windows = os.name == "nt"
 
     def interrupt(signum: int, _frame: object) -> None:
         nonlocal interrupted
         interrupted = interrupted or signum
-        if child is not None and not windows:
+        if child is not None and not windows and preview is None:
             try:
                 os.killpg(child.pid, signum)
             except (ProcessLookupError, PermissionError):
@@ -632,9 +956,26 @@ def _run_command(arguments: list[str], root: Path) -> int:
             # Each launch has a key of its own, so a launch inside the command
             # adds its marker beside this one rather than replacing it.
             key = f"{_LAUNCH_MARKER}_{uuid.uuid4().hex}"
-            child = subprocess.Popen(arguments, cwd=root, start_new_session=True,
-                                     env=dict(os.environ, **{key: "1"}))
-            tracker = _DescendantTracker(child, marker=f"{key}=1".encode())
+            # On macOS the child also holds the read end of a pipe the
+            # launcher keeps open. Descendants inherit it unless they close
+            # their descriptors, and it shows where the environment is hidden.
+            darwin = sys.platform == "darwin"
+            passed: tuple[int, ...] = ()
+            if darwin:
+                read_end, lifeline_end = os.pipe()
+                passed = (read_end,)
+            try:
+                child = subprocess.Popen(arguments, cwd=root, start_new_session=True,
+                                         env=dict(os.environ, **{key: "1"}), pass_fds=passed)
+            finally:
+                for fd in passed:
+                    os.close(fd)
+            write_end = lifeline_end
+            tracker = _DescendantTracker(
+                child, marker=f"{key}=1".encode(),
+                lifeline=(lambda: _lifeline_handle(write_end)) if darwin else None,
+                watcher=_ForkWatcher if darwin else None,
+            )
             # Confirm the child at once, so a cancellation that comes before
             # the first wait tick still knows when the tree began.
             tracker.observe()
@@ -672,6 +1013,9 @@ def _run_command(arguments: list[str], root: Path) -> int:
                     cleanup="child-wait-failed",
                 ) from error
             return 128 + interrupted
+        if preview is not None:
+            preview(tracker.preview())
+            return 128 + interrupted
         # Descendants that already left the group get the same signal now, so
         # they stop alongside it rather than after it.
         signalled = tracker.escaped() or ()
@@ -684,6 +1028,10 @@ def _run_command(arguments: list[str], root: Path) -> int:
         _stop_escaped_descendants(child, tracker, interrupted, signalled)
         return 128 + interrupted
     finally:
+        if tracker is not None:
+            tracker.close()
+        if lifeline_end is not None:
+            os.close(lifeline_end)
         for sig, handler in previous.items():
             signal.signal(sig, handler)
 
