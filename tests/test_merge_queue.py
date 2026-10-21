@@ -1763,6 +1763,73 @@ class InterruptedRunTests(MergeQueueTestCase):
         [entry] = self.interruptions(adopter)
         self.assertEqual(entry["subject"], "feature")
 
+    def seed(self, adopter: Adopter, stage: str, checks: list[dict], panel: str | None) -> None:
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(
+            adopter.state, writer="runner", version=current["version"], selector="queue[subject=feature]",
+            assignments={"/stage": stage, "/checks": checks},
+        )
+        if panel is not None:
+            current = state_tool.read_state(adopter.state)
+            state_tool.patch(
+                adopter.state, writer="runner", version=current["version"],
+                assignments={"/meta/checking/now": {
+                    "subject": panel, "title": panel, "startedAt": "2026-10-20T00:00:00Z", "steps": [],
+                }},
+            )
+
+    def test_an_item_killed_mid_step_stops_whatever_the_step(self) -> None:
+        passed = [{"id": "a", "state": "passed"}]
+        for name, stage, panel, summary in (
+            # merge writes no running check and no panel; only the stage shows it.
+            ("killed while merging", "merging", None, "check the forge"),
+            ("killed while syncing", "syncing", None, "interrupted"),
+            # The panel alone names it: the run died between steps while working on it.
+            ("named only by the panel", "checked", "feature", "interrupted"),
+        ):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.adopter()
+                self.candidate(adopter)
+                self.seed(adopter, stage, passed, panel)
+                adopter.runner().run_command("release", ["v1"])
+                self.assertEqual(adopter.item("feature")["stage"], "stopped")
+                self.assertEqual(adopter.item("feature")["checks"], passed)
+                self.assertIsNone(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])
+                [entry] = self.interruptions(adopter)
+                self.assertIn(summary, entry["summary"])
+
+    def test_the_interruption_is_journalled_before_the_state_is_cleared(self) -> None:
+        # A second failure between the two repeats the entry at the next run; it never loses it.
+        adopter = self.adopter()
+        self.candidate(adopter)
+        self.seed_running(adopter)
+        real = queue.Runner.write
+        failed: list[int] = []
+
+        def write_fails_once(runner, **kwargs):
+            if not failed:
+                failed.append(1)
+                raise OSError("disk went away")
+            return real(runner, **kwargs)
+
+        with mock.patch.object(queue.Runner, "write", write_fails_once):
+            adopter.runner().run_command("release", ["v1"])
+        self.assertEqual(len(self.interruptions(adopter)), 1)
+        self.assertEqual(adopter.item("feature")["stage"], "checking")
+        adopter.runner().run_command("release", ["v1"])
+        self.assertEqual(len(self.interruptions(adopter)), 2)
+        self.assertEqual(adopter.item("feature")["stage"], "stopped")
+
+    def test_a_panel_naming_no_queued_item_is_cleared_without_a_journal_entry(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        self.seed(adopter, "queued", [], "gone")
+        adopter.runner().run_command("release", ["v1"])
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertEqual(self.interruptions(adopter), [])
+
     def test_a_row_left_running_on_its_own_is_cleared(self) -> None:
         # The stage already reads stopped and the panel is clear; only the row still says running.
         adopter = self.adopter()

@@ -57,11 +57,13 @@ it through the state tool, then render the views.
 - **A killed run's live state is cleared by the next one.** A runner killed
   outright cannot clear what it wrote. The operating system releases the
   queue lock when its holder dies, so the next run to take the lock knows
-  that anything still `running` or mid-step is stale. Before doing anything
-  else, it stops each such item, sets its `running` checks back to `pending`,
-  clears the checking panel, and journals `candidate.stopped` with the reason
-  `interrupted`. A run that still holds the lock is never reset: no other run
-  can take the lock while it lives.
+  that anything still `running`, mid-step or named by the checking panel is
+  stale. Before doing anything else, it journals `candidate.stopped` with the
+  reason `interrupted` for each such item, then stops the item, sets its
+  `running` checks back to `pending`, and clears the panel. For an item killed
+  while `merging`, the entry says to check the forge, since the merge may have
+  landed. A run that still holds the lock is never reset: no other run can
+  take the lock while it lives.
 
 ### Before the repository has the runner
 
