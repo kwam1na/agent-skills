@@ -1178,18 +1178,106 @@ def _parse_time(text: str, *, exact: bool = False) -> datetime.datetime:
     return moment
 
 
-def read_snapshot(path: Path, max_age: float) -> dict:
+def read_snapshot(path: Path, max_age: float, *, parent: str | None = None) -> dict:
     """A validated, fresh ``work-snapshot/1``, or a refusal."""
     try:
         snapshot = json.loads(Path(path).read_bytes().decode("utf-8-sig"))
     except (OSError, UnicodeDecodeError, ValueError, RecursionError) as error:
         # ValueError covers JSON a parser refuses, such as a number too long to convert.
         raise StateError("snapshot_invalid", f"cannot read the snapshot {Path(path).name}: {error}") from None
-    return check_snapshot(snapshot, Path(path).name, max_age)
+    return check_snapshot(snapshot, Path(path).name, max_age, parent=parent)
 
 
-def check_snapshot(snapshot: object, name: str, max_age: float) -> dict:
-    """``snapshot`` as a valid, fresh ``work-snapshot/1``, or a refusal naming it ``name``."""
+# How many dependency problems a refusal names before it counts the rest.
+DEPENDENCY_PROBLEM_LIMIT = 10
+
+
+def dependency_problems(items: list[tuple[str, list[str]]], parent: str | None) -> list[str]:
+    """Why work items' blockers are not a dependency list, naming the items; empty when they are.
+
+    ``items`` are (reference, blockers) pairs. An item may not be the parent,
+    be blocked by the parent, block itself, name a blocker more than once, or
+    wait on itself through other items. A blocker outside the items is
+    allowed. At most ``DEPENDENCY_PROBLEM_LIMIT`` problems are named, then how
+    many more there are; a long cycle is named by its first items and the one
+    it returns to.
+
+    Two identical copies exist, because the delivery state tool must run on
+    its own: one in agent_skills/capabilities.py for list-work results, one in
+    skills/orchestrate-work/scripts/delivery_state.py for tracker snapshots.
+    A parity test in tests/test_tracker_contract.py requires them to match, so
+    edit both together.
+    """
+    problems: list[str] = []
+    unnamed = 0
+
+    def found(problem: str) -> None:
+        # Past the limit a problem is only counted, so a dense graph never
+        # keeps more text than the refusal shows.
+        nonlocal unnamed
+        if len(problems) < DEPENDENCY_PROBLEM_LIMIT:
+            problems.append(problem)
+        else:
+            unnamed += 1
+
+    blockers_of: dict[str, list[str]] = {}
+    for reference, blockers in items:
+        if parent is not None and reference == parent:
+            found(f"{reference} is the parent itself")
+        if parent is not None and parent in blockers:
+            found(f"{reference} is blocked by its own parent {parent}")
+        if reference in blockers:
+            found(f"{reference} blocks itself")
+        named: set[str] = set()
+        repeated: dict[str, None] = {}
+        for blocker in blockers:
+            if blocker in named:
+                repeated[blocker] = None
+            named.add(blocker)
+        for blocker in repeated:
+            found(f"{reference} names its blocker {blocker} more than once")
+        blockers_of[reference] = [blocker for blocker in dict.fromkeys(blockers) if blocker != reference]
+    # A cycle through other items, found without recursion in one pass over
+    # the items and blockers: each is reported once, from the item it is first
+    # reached by.
+    finished: set[str] = set()
+    for start in blockers_of:
+        if start in finished:
+            continue
+        path = [start]
+        position = {start: 0}
+        stack = [iter(blockers_of[start])]
+        while stack:
+            for blocker in stack[-1]:
+                if blocker not in blockers_of or blocker in finished:
+                    continue
+                if blocker in position:
+                    length = len(path) - position[blocker]
+                    shown = path[position[blocker]:position[blocker] + min(length, 5)]
+                    if length > 5:
+                        shown.append(f"... {length - 5} more")
+                    found("the blockers form a cycle, each blocked by the next: " + " -> ".join(shown + [blocker]))
+                    continue
+                position[blocker] = len(path)
+                path.append(blocker)
+                stack.append(iter(blockers_of[blocker]))
+                break
+            else:
+                stack.pop()
+                done = path.pop()
+                del position[done]
+                finished.add(done)
+    if unnamed:
+        problems.append(f"and {unnamed} more")
+    return problems
+
+
+def check_snapshot(snapshot: object, name: str, max_age: float, *, parent: str | None = None) -> dict:
+    """``snapshot`` as a valid, fresh ``work-snapshot/1``, or a refusal naming it ``name``.
+
+    A tracker snapshot's blockers must form a dependency list under ``parent``,
+    the record's tracker parent; a forge snapshot's are ignored, so never checked.
+    """
     errors = validate(snapshot, load_schema("work-snapshot/1"))
     if not errors:
         allowed = SNAPSHOT_STATES[snapshot["source"]]
@@ -1198,6 +1286,9 @@ def check_snapshot(snapshot: object, name: str, max_age: float) -> dict:
         subjects = [item["subject"] for item in snapshot["items"]]
         if len(subjects) != len(set(subjects)):
             errors.append("/items: each subject appears once")
+        if snapshot["source"] == "tracker":
+            errors += [f"/items: {problem}" for problem in dependency_problems(
+                [(item["subject"], item.get("blockedBy", [])) for item in snapshot["items"]], parent)]
     if not errors:
         try:
             _parse_time(snapshot["takenAt"], exact=True)
@@ -1322,7 +1413,8 @@ def reconcile(
     """
     if not snapshot_paths:
         raise StateError("snapshot_invalid", "give at least one --snapshot")
-    snapshots = [read_snapshot(Path(path), max_age) for path in snapshot_paths]
+    parent = read_state(directory)["meta"].get("trackerParent")
+    snapshots = [read_snapshot(Path(path), max_age, parent=parent) for path in snapshot_paths]
     seen: dict[tuple[str, str], str] = {}
     for path, snapshot in zip(snapshot_paths, snapshots):
         for item in snapshot["items"]:
@@ -1331,6 +1423,11 @@ def reconcile(
                 raise StateError("snapshot_invalid", f"{item['subject']} is in two {snapshot['source']} snapshots, "
                                                      f"{seen[key]} and {Path(path).name}: give one view of each")
             seen[key] = Path(path).name
+    # Each snapshot was checked alone; a cycle can still run across two of them.
+    problems = dependency_problems([(item["subject"], item.get("blockedBy", [])) for snapshot in snapshots
+                                    if snapshot["source"] == "tracker" for item in snapshot["items"]], parent)
+    if problems:
+        raise StateError("snapshot_invalid", "the tracker snapshots together: " + "; ".join(problems))
     finished: list[dict] = []
     held: list[dict] = []
     _finish_recovery(directory, finished, held)
@@ -1797,7 +1894,8 @@ def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: fl
             reason = f"the command exited with {code}"
         else:
             try:
-                snapshot = check_snapshot(json.loads(out.decode("utf-8-sig")), "the command's snapshot", max_age)
+                snapshot = check_snapshot(json.loads(out.decode("utf-8-sig")), "the command's snapshot", max_age,
+                                          parent=parent)
                 if snapshot["source"] != "tracker":
                     raise StateError("snapshot_invalid", "the command's snapshot is not from the tracker")
             except (UnicodeDecodeError, ValueError, RecursionError):

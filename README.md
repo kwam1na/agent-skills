@@ -294,10 +294,16 @@ Accepted limits:
 - The fork watcher is best effort. A descendant can escape and be orphaned
   between two observations, with no readable marker and no inherited lifeline,
   before the watcher sees its fork. Such a descendant is not found.
-- Recognising a job by the group of a descendant that has exited relies on no
-  pid being reused within the moment between that exit and the watcher seeing
-  it. macOS allocates pids in sequence, so such a reuse is practically
-  impossible.
+- On macOS the launcher tells processes apart by the kernel's unique id,
+  which is never reused, and finds a descendant by its parent's unique id even
+  after it is reparented. A pid reused by an unrelated process is therefore
+  never taken for one of the run's. One fallback still relies on no pid being
+  reused within the moment between a descendant's exit and the watcher seeing
+  it: a job found only through the group of a descendant that has exited,
+  because the process that forked the job was never seen. Where the unique id
+  cannot be read, start times stand in, with an hour of slack for a clock
+  stepped back, and the preview of cleanup targets reports
+  `identity: start-time` instead of `unique-id`.
 
 Mutation is an explicit repository-maintenance action. `apply` is the product
 installer entry point: it installs into an absent repository, updates a current

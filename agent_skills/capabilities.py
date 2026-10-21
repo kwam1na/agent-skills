@@ -210,11 +210,95 @@ def _work_list_problem(data: Mapping[str, object], requested: object = None) -> 
         blockers = item.get("blockedBy", [])
         if not isinstance(blockers, list) or not all(isinstance(entry, str) and entry for entry in blockers):
             return "Return each work item's blockers as a list of references."
-        if reference in blockers:
-            return "Return no work item as its own blocker."
-        if len(set(blockers)) != len(blockers):
-            return "Return each of a work item's blockers once."
+    problems = dependency_problems(
+        [(item["workReference"], item.get("blockedBy", [])) for item in items], data["parentReference"])
+    if problems:
+        return "Return the work items' blockers as a dependency list: " + "; ".join(problems) + "."
     return None
+
+
+# How many dependency problems a refusal names before it counts the rest.
+DEPENDENCY_PROBLEM_LIMIT = 10
+
+
+def dependency_problems(items: list[tuple[str, list[str]]], parent: str | None) -> list[str]:
+    """Why work items' blockers are not a dependency list, naming the items; empty when they are.
+
+    ``items`` are (reference, blockers) pairs. An item may not be the parent,
+    be blocked by the parent, block itself, name a blocker more than once, or
+    wait on itself through other items. A blocker outside the items is
+    allowed. At most ``DEPENDENCY_PROBLEM_LIMIT`` problems are named, then how
+    many more there are; a long cycle is named by its first items and the one
+    it returns to.
+
+    Two identical copies exist, because the delivery state tool must run on
+    its own: one in agent_skills/capabilities.py for list-work results, one in
+    skills/orchestrate-work/scripts/delivery_state.py for tracker snapshots.
+    A parity test in tests/test_tracker_contract.py requires them to match, so
+    edit both together.
+    """
+    problems: list[str] = []
+    unnamed = 0
+
+    def found(problem: str) -> None:
+        # Past the limit a problem is only counted, so a dense graph never
+        # keeps more text than the refusal shows.
+        nonlocal unnamed
+        if len(problems) < DEPENDENCY_PROBLEM_LIMIT:
+            problems.append(problem)
+        else:
+            unnamed += 1
+
+    blockers_of: dict[str, list[str]] = {}
+    for reference, blockers in items:
+        if parent is not None and reference == parent:
+            found(f"{reference} is the parent itself")
+        if parent is not None and parent in blockers:
+            found(f"{reference} is blocked by its own parent {parent}")
+        if reference in blockers:
+            found(f"{reference} blocks itself")
+        named: set[str] = set()
+        repeated: dict[str, None] = {}
+        for blocker in blockers:
+            if blocker in named:
+                repeated[blocker] = None
+            named.add(blocker)
+        for blocker in repeated:
+            found(f"{reference} names its blocker {blocker} more than once")
+        blockers_of[reference] = [blocker for blocker in dict.fromkeys(blockers) if blocker != reference]
+    # A cycle through other items, found without recursion in one pass over
+    # the items and blockers: each is reported once, from the item it is first
+    # reached by.
+    finished: set[str] = set()
+    for start in blockers_of:
+        if start in finished:
+            continue
+        path = [start]
+        position = {start: 0}
+        stack = [iter(blockers_of[start])]
+        while stack:
+            for blocker in stack[-1]:
+                if blocker not in blockers_of or blocker in finished:
+                    continue
+                if blocker in position:
+                    length = len(path) - position[blocker]
+                    shown = path[position[blocker]:position[blocker] + min(length, 5)]
+                    if length > 5:
+                        shown.append(f"... {length - 5} more")
+                    found("the blockers form a cycle, each blocked by the next: " + " -> ".join(shown + [blocker]))
+                    continue
+                position[blocker] = len(path)
+                path.append(blocker)
+                stack.append(iter(blockers_of[blocker]))
+                break
+            else:
+                stack.pop()
+                done = path.pop()
+                del position[done]
+                finished.add(done)
+    if unnamed:
+        problems.append(f"and {unnamed} more")
+    return problems
 
 
 def work_snapshot(data: Mapping[str, object], taken_at: str) -> dict[str, object]:
