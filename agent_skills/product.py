@@ -182,13 +182,24 @@ def _proc_process_table(proc: Path = Path("/proc")) -> dict[int, _Process]:
             continue
         try:
             stat = (entry / "stat").read_text()
-            uid = entry.stat().st_uid
+            uid = _proc_effective_uid(entry)
         except OSError:
             continue  # It exited while we looked.
         # The command name is parenthesised and may itself hold spaces.
         fields = stat[stat.rindex(")") + 2:].split()
         table[int(entry.name)] = _Process(int(fields[1]), int(fields[2]), uid, int(fields[19]), fields[0] == "Z")
     return table
+
+
+def _proc_effective_uid(entry: Path) -> int:
+    """The effective uid from status; the entry's owner is root for a non-dumpable process."""
+    try:
+        for line in (entry / "status").read_text().splitlines():
+            if line.startswith("Uid:"):
+                return int(line.split()[2])
+    except (OSError, IndexError, ValueError):
+        pass
+    return entry.stat().st_uid
 
 
 _ARGUMENTS_BUFFER: list = []
@@ -325,32 +336,38 @@ class _ForkWatcher(threading.Thread):
 
     A double-fork daemon's intermediate parent may exit long before the next
     table read, taking the only ancestry with it. A kqueue on every known
-    process reports each fork at once; the new child's own children are
-    listed when it is registered, so one forked in that instant is not lost.
-    Each child is offered to the tracker with the parent that forked it, and
-    the tracker decides whether that parent may vouch for it.
+    process reports each fork at once, and the new child's own children are
+    listed as soon as it is registered. This is best effort: NOTE_FORK names
+    only the parent, so a child is found only while that parent is still
+    there to list it, and one that forks and exits before it is registered
+    takes the grandchild's ancestry with it. Each child is offered to the
+    tracker with the parent that forked it, and the tracker decides whether
+    that parent may vouch for it. Each exit is reported too, with when it
+    was seen, so the tracker knows how long that process's group was its own.
     """
 
-    def __init__(self, adopt) -> None:
+    def __init__(self, adopt, ended=None) -> None:
         super().__init__(name="launcher-fork-watcher", daemon=True)
         import select
 
         self._select = select
         self._queue = select.kqueue()
         self._adopt = adopt
-        self._watched: set[int] = set()
+        self._ended = ended
+        # By pid and start, so a reused pid is registered again.
+        self._watched: set[tuple[int, object]] = set()
         self._closed = False
 
-    def watch(self, pid: int) -> None:
-        if self._closed or pid in self._watched:
+    def watch(self, pid: int, started: object) -> None:
+        if self._closed or (pid, started) in self._watched:
             return
-        self._watched.add(pid)
+        self._watched.add((pid, started))
         event = self._select.kevent(pid, self._select.KQ_FILTER_PROC, self._select.KQ_EV_ADD,
-                                    self._select.KQ_NOTE_FORK)
+                                    self._select.KQ_NOTE_FORK | self._select.KQ_NOTE_EXIT)
         try:
             self._queue.control([event], 0, 0)
-        except OSError:
-            return  # Gone already, or not ours to watch.
+        except (OSError, ValueError):
+            return  # Gone already, not ours to watch, or the watcher closed.
         self._children_of(pid)
 
     def _children_of(self, pid: int) -> None:
@@ -358,21 +375,30 @@ class _ForkWatcher(threading.Thread):
             self._adopt(child, pid)
 
     def run(self) -> None:
-        while not self._closed:
-            try:
-                events = self._queue.control(None, 64, 0.1)
-            except (OSError, ValueError):
-                return  # Closed.
-            for event in events:
-                if event.fflags & self._select.KQ_NOTE_FORK:
-                    self._children_of(event.ident)
+        try:
+            while not self._closed:
+                try:
+                    events = self._queue.control(None, 64, 0.1)
+                except (OSError, ValueError):
+                    return
+                for event in events:
+                    if event.fflags & self._select.KQ_NOTE_EXIT and self._ended is not None:
+                        self._ended(event.ident, _wall_stamp())
+                    if event.fflags & self._select.KQ_NOTE_FORK:
+                        try:
+                            self._children_of(event.ident)
+                        except (OSError, ValueError, struct.error):
+                            pass  # That parent is gone; the table still sees its tree.
+        finally:
+            # Closed here, by the only thread that waits on it, so its
+            # descriptor is never reused under a wait in progress.
+            self._closed = True
+            self._queue.close()
 
     def close(self) -> None:
         self._closed = True
-        try:
-            self._queue.close()
-        except OSError:
-            pass
+        if self.is_alive() and threading.current_thread() is not self:
+            self.join(1)
 
 
 def _started_before(started: object, reference: object) -> bool:
@@ -388,6 +414,12 @@ def _started_before(started: object, reference: object) -> bool:
     if isinstance(started, int) and isinstance(reference, int):
         return started < reference
     return False
+
+
+def _wall_stamp() -> tuple[int, int]:
+    """Now, as a macOS start stamp: wall-clock (seconds, microseconds)."""
+    now = time.time()
+    return int(now), int(now % 1 * 1_000_000)
 
 
 def _precedes(started: object, reference: object) -> bool:
@@ -414,19 +446,23 @@ class _DescendantTracker:
     as a classic double-fork daemon, so cancellation also sweeps for the
     launch's environment marker (see ``sweep``). On macOS, which discloses
     no environment for Apple system binaries (/bin/sh, /bin/sleep and the
-    like), a fork watcher learns each child as it is forked, and the sweep
-    also recognises a holder of the launch's lifeline pipe. Elsewhere a
-    descendant that escapes that way and whose environment cannot be seen
-    is still missed.
+    like), a fork watcher learns each child as it is forked, best effort,
+    and the sweep also recognises a holder of the launch's lifeline pipe.
+    A descendant that escapes and is orphaned between two observations,
+    with no readable marker and no lifeline (it closed its descriptors),
+    and whose fork the watcher did not see, is still missed. On Linux
+    neither the fork watcher nor the lifeline applies.
 
     Every process is learned for a reason: ``group`` (in the child's process
     group), ``descendant`` (by ancestry in the table), ``forked`` (seen being
     forked by a known process), ``marker`` or ``lifeline``. Whatever the
     reason, cleanup never selects pid 0 or 1, the launcher or any of its
-    ancestors, a process started before the child, or, to signal on its
-    own, another user's process (see ``_refusal``). Such a candidate is
-    refused and remembered, never signalled, and cancellation then reports
-    itself incomplete.
+    ancestors, or, to signal on its own, another user's process; nor a
+    ``marker`` or ``lifeline`` match that started before the child, or,
+    while the child is unconfirmed, before the launcher itself (see
+    ``_refusal``). Pid and start are matched at each table read. A refused
+    candidate is remembered and never signalled, and while one is still
+    running cancellation reports itself incomplete.
     """
 
     # The launcher's wait loop ticks every 0.1 s; observe every third tick.
@@ -448,10 +484,14 @@ class _DescendantTracker:
         self._lock = threading.RLock()
         self._known: dict[int, object] = {}
         self._why: dict[int, str] = {}
+        # Known processes the fork watcher saw exit: pid -> (start, seen at).
+        self._ends: dict[int, tuple[object, object]] = {}
         self._refused: dict[tuple[int, object], str] = {}
         self._confirmed = False
         self._root_started: object = None
         self._root_present = False
+        # The launcher's own start: no descendant started before it.
+        self._floor: object = None
         self._last_table: dict[int, _Process] = {}
         self._unmarked: set[tuple[int, object]] = set()
         self._ticks = 0
@@ -469,6 +509,8 @@ class _DescendantTracker:
         if table is None:
             return None
         self._last_table = table
+        if self._floor is None and os.getpid() in table:
+            self._floor = table[os.getpid()].started
         root = table.get(self._root)
         if not self._confirmed:
             # Only a process that is really this launcher's child is tracked,
@@ -478,9 +520,14 @@ class _DescendantTracker:
             self._confirmed = True
             self._root_started = root.started
             if self._watcher_factory is not None:
-                self._watcher = self._watcher_factory(self.adopt)
-                self._watcher.start()
-                self._watcher.watch(self._root)
+                try:
+                    watcher = self._watcher_factory(self.adopt, self.ended)
+                    watcher.start()
+                except (OSError, RuntimeError):
+                    watcher = None  # Best effort; the table still sees the tree.
+                self._watcher = watcher
+                if watcher is not None:
+                    watcher.watch(self._root, root.started)
         live = {pid for pid, started in self._known.items()
                 if pid in table and table[pid].started == started}
         seeds = set(live)
@@ -495,9 +542,37 @@ class _DescendantTracker:
                 continue
             if root_present and process.pgid == self._root:
                 self._learn(pid, process, "group", table)
-            elif self._descends(pid, table, seeds):
+            elif self._descends(pid, table, seeds) or self._in_known_group(process, table):
                 self._learn(pid, process, "descendant", table)
         return table
+
+    def _in_known_group(self, process: _Process, table: dict[int, _Process]) -> bool:
+        """Whether a process is in the group a known descendant created.
+
+        Only the process holding a pid can create the group of that id, and
+        no pid is reused while a group of its id remains. So a process in the
+        group named by a known descendant's pid, started after that
+        descendant and while it was still there (it is now, or the fork
+        watcher saw it exit later), joined that descendant's group, in a
+        session the run created. This finds a job a short-lived shell left
+        behind (``nohup sleep &``) after the shell exited.
+        """
+        leader = process.pgid
+        started = self._known.get(leader)
+        if started is None or leader == self._root or _precedes(process.started, started):
+            return False
+        current = table.get(leader)
+        if current is not None and current.started == started:
+            return True
+        end = self._ends.get(leader)
+        return end is not None and end[0] == started and _precedes(process.started, end[1])
+
+    def ended(self, pid: int, at: object) -> None:
+        """Remember when the fork watcher saw a known process exit."""
+        with self._lock:
+            started = self._root_started if pid == self._root else self._known.get(pid)
+            if started is not None:
+                self._ends[pid] = (started, at)
 
     def _callers(self, table: dict[int, _Process]) -> set[int]:
         """The launcher and every ancestor of it."""
@@ -508,32 +583,40 @@ class _DescendantTracker:
                 callers.add(pid)
         return callers
 
-    def _refusal(self, pid: int, process: _Process, table: dict[int, _Process], *,
-                 group: bool = False) -> str | None:
+    def _in_group(self, process: _Process) -> bool:
+        return self._root_present and process.pgid == self._root
+
+    def _refusal(self, pid: int, process: _Process, table: dict[int, _Process], why: str) -> str | None:
         """Why cleanup may not select this process, or None when it may.
 
-        A group member owned by another user is still learned, so a group
-        that cannot drain names it, but it is never signalled on its own.
+        A member of the child's process group owned by another user (one
+        running a setuid program, say) is still learned, so a group that
+        cannot drain names it, but it is never signalled on its own. A
+        ``marker`` or ``lifeline`` match is only as good as the match, so
+        it must also have started no earlier than the child, by its exact
+        stamp, or, before the child is confirmed, than the launcher.
+        Ancestry and the fork watcher show parentage directly.
         """
         if pid <= 1:
             return "init"
         if pid in self._callers(table):
             return "caller"
-        if not group and hasattr(os, "geteuid") and process.uid != os.geteuid():
+        if not self._in_group(process) and hasattr(os, "geteuid") and process.uid != os.geteuid():
             return "other-user"
-        if self._root_started is not None and _precedes(process.started, self._root_started):
+        reference = self._root_started if self._root_started is not None else self._floor
+        if why in ("marker", "lifeline") and reference is not None and _precedes(process.started, reference):
             return "before-run"
         return None
 
     def _learn(self, pid: int, process: _Process, why: str, table: dict[int, _Process] | None) -> bool:
-        refusal = self._refusal(pid, process, table or self._last_table, group=why == "group")
+        refusal = self._refusal(pid, process, table or self._last_table, why)
         if refusal is not None:
             self._refused[(pid, process.started)] = refusal
             return False
         self._known[pid] = process.started
         self._why[pid] = why
         if self._watcher is not None:
-            self._watcher.watch(pid)
+            self._watcher.watch(pid, process.started)
         return True
 
     def adopt(self, pid: int, parent: int) -> bool:
@@ -562,8 +645,10 @@ class _DescendantTracker:
     def close(self) -> None:
         with self._lock:
             self._lifeline = None
-            if self._watcher is not None:
-                self._watcher.close()
+            watcher = self._watcher
+        # Outside the lock: the watcher may be waiting on it in adopt.
+        if watcher is not None:
+            watcher.close()
 
     @staticmethod
     def _descends(pid: int, table: dict[int, _Process], seeds: set[int]) -> bool:
@@ -601,7 +686,8 @@ class _DescendantTracker:
                 continue
             if (pid, process.started) in self._unmarked or (pid, process.started) in self._refused:
                 continue
-            if _started_before(process.started, self._root_started):
+            reference = self._root_started if self._root_started is not None else self._floor
+            if _started_before(process.started, reference):
                 continue
             environment = self._environment(pid) if self._marker is not None else []
             pipes = self._pipes(pid) if lifeline is not None else set()
@@ -635,17 +721,30 @@ class _DescendantTracker:
                 process = table.get(pid)
                 if process is None or process.started != started or process.zombie or process.pgid == self._root:
                     continue
-                refusal = self._refusal(pid, process, table)
+                refusal = self._refusal(pid, process, table, self._why[pid])
                 if refusal is None:
                     selected.append(pid)
                 else:
                     self._refused[(pid, started)] = refusal
             return tuple(sorted(selected))
 
+    def _live_refusals(self, table: dict[int, _Process] | None) -> list[tuple[int, str]]:
+        """Refused candidates still running outside the child's group, by pid.
+
+        One that exited, or whose pid now names a later process, no longer
+        stands between cancellation and a clean result; behind a table that
+        cannot be read, every one still does.
+        """
+        return sorted({
+            (pid, why) for (pid, started), why in self._refused.items()
+            if table is None or (pid in table and table[pid].started == started
+                                 and not table[pid].zombie and table[pid].pgid != self._root)
+        })
+
     def refused(self) -> tuple[int, ...]:
-        """Every pid the selection rule kept cleanup from stopping."""
+        """Running pids the selection rule kept cleanup from stopping."""
         with self._lock:
-            return tuple(sorted({pid for pid, _ in self._refused}))
+            return tuple(sorted({pid for pid, _ in self._live_refusals(self._table())}))
 
     def preview(self) -> dict:
         """What cleanup would stop now, and why, without signalling anything.
@@ -660,7 +759,7 @@ class _DescendantTracker:
             return {
                 "group": self._root if self._root_present else None,
                 "escaped": None if escaped is None else [[pid, self._why[pid]] for pid in escaped],
-                "refused": [[pid, why] for (pid, _), why in sorted(self._refused.items(), key=lambda item: item[0][0])],
+                "refused": [[pid, why] for pid, why in self._live_refusals(self._last_table)],
             }
 
     def group_members(self) -> tuple[int, ...]:

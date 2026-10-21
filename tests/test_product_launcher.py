@@ -933,18 +933,21 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             ):
                 (proc / pid).mkdir()
                 (proc / pid / "stat").write_text(stat)
+            # The effective uid, from status: a non-dumpable process's entry
+            # is owned by root whoever runs it. Without status, the owner.
+            (proc / "41" / "status").write_text("Name:\tworker\nUid:\t1000\t1234\t1000\t1000\n")
             (proc / "self").mkdir()  # Not a pid: skipped.
             table = _proc_process_table(proc)
         owner = os.getuid() if hasattr(os, "getuid") else 0
         self.assertEqual(table, {
-            41: _Process(7, 41, owner, 5551, False),
+            41: _Process(7, 41, 1234, 5551, False),
             42: _Process(41, 41, owner, 5552, True),
         })
         listing = " 41  7 41 501 S    Wed Oct 21 01:20:50 2026\n 42 41 41 501 Z+   Wed Oct 21 01:20:51 2026\n"
         with patch("agent_skills.product.subprocess.run", return_value=Mock(stdout=listing)):
             self.assertEqual(_ps_process_table(), {
-                41: _Process(7, 41, UID, "Wed Oct 21 01:20:50 2026", False),
-                42: _Process(41, 41, UID, "Wed Oct 21 01:20:51 2026", True),
+                41: _Process(7, 41, 501, "Wed Oct 21 01:20:50 2026", False),
+                42: _Process(41, 41, 501, "Wed Oct 21 01:20:51 2026", True),
             })
         with patch("agent_skills.product._darwin_process_table", side_effect=OSError("libproc unavailable")), \
              patch("agent_skills.product._proc_process_table", side_effect=OSError("no proc")), \
@@ -1093,7 +1096,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         me = os.getpid()
         child = Mock(pid=100)
         marker = b"AGENT_SKILLS_LAUNCH=abc"
-        environments = {200: [b"HOME=/", marker], 201: [marker], 202: [b"HOME=/"], me: [marker]}
+        environments = {200: [b"HOME=/", marker], 201: [marker], 202: [b"HOME=/"], 204: [marker], me: [marker]}
         read = []
 
         def environment(pid):
@@ -1106,7 +1109,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             201: _Process(1, 201, UID, 5, False),    # started before the child: never read
             202: _Process(1, 202, UID, 13, False),   # unmarked
             203: _Process(1, 203, UID, 14, True),    # a zombie
-            me: _Process(1, me, UID, 11, False),     # the launcher itself
+            204: _Process(1, 204, UID, 2, False),    # started before the launcher itself
+            me: _Process(1, me, UID, 3, False),      # the launcher itself
         }
         tracker = _DescendantTracker(child, table=lambda: table, marker=marker, environment=environment)
         self.assertEqual(tracker.escaped(), (200,))
@@ -1116,7 +1120,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         self.assertEqual(tracker.escaped(), (200,))
         self.assertEqual(read, [])
         # A child reaped before the tracker ever confirmed it: the launch key is
-        # unique, so the sweep still adopts what carries it, reading everything.
+        # unique, so the sweep still adopts what carries it, reading everything
+        # started since the launcher itself.
         read.clear()
         early = dict(table)
         del early[100]
@@ -1196,7 +1201,12 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         self.assertNotIn(os.getpid(), selected)
         self.assertNotIn(1, selected)
         self.assertTrue(all(table[pid].uid == UID for pid in selected if pid in table))
-        self.assertLessEqual({pid for pid in parents if table[pid].uid == UID}, refused)
+        runner = table[os.getpid()].started
+        self.assertFalse([pid for pid in selected if pid in table and table[pid].started < runner])
+        # The parents started before the runner, so none is even a candidate;
+        # whatever is refused names the rule it broke.
+        self.assertEqual(refused & set(parents) - {pid for pid, why in preview["refused"] if why == "caller"}, set())
+        self.assertLessEqual({why for _, why in preview["refused"]}, {"init", "caller", "other-user", "before-run"})
 
     def test_the_lifeline_names_only_holders_of_its_live_read_end(self) -> None:
         me = os.getpid()
@@ -1267,6 +1277,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             processes[300] = _Process(100, 300, UID, 99, False)
             processes[303] = _Process(300, 303, UID, 100, False)
             self.assertFalse(tracker.adopt(303, 300))
+        # Refusals count while the refused process is still running.
+        table[302] = processes[302]
         self.assertEqual(tracker.refused(), (302,))
         table[300] = _Process(1, 300, UID, 11, False)
         self.assertEqual(tracker.escaped(), (300,))
@@ -1314,6 +1326,136 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
              patch("agent_skills.product._stop_posix_group", side_effect=AssertionError("stopped")):
             self.assertEqual(_run_command(["worker"], ROOT, preview=seen.append), 128 + signal.SIGTERM)
         self.assertEqual(seen, [tracker.preview.return_value])
+
+    def test_another_users_group_member_that_leaves_the_group_is_refused_not_signalled(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        table = {100: _Process(me, 100, UID, 10, False), 300: _Process(100, 100, UID + 1, 11, False)}
+        with patch("agent_skills.product.os.kill", side_effect=AssertionError("signalled")), \
+             patch("agent_skills.product.os.killpg", side_effect=AssertionError("signalled")):
+            tracker = _DescendantTracker(child, table=lambda: table)
+            tracker.observe()
+            # A setuid program in the group is learned, and is no refusal.
+            self.assertEqual(tracker.group_members(), (100, 300))
+            self.assertEqual(tracker.refused(), ())
+            table[300] = _Process(1, 300, UID + 1, 11, False)   # it calls setsid()
+            self.assertEqual(tracker.escaped(), ())
+            self.assertEqual(tracker.refused(), (300,))
+            self.assertEqual(tracker.preview()["refused"], [[300, "other-user"]])
+            # Once it exits, it no longer stands between cancellation and a clean result.
+            del table[300]
+            self.assertEqual(tracker.refused(), ())
+            # An ancestry-learned descendant is labelled so; another user's,
+            # outside the group, is refused when it is learned.
+            table.update({301: _Process(100, 301, UID, 12, False), 302: _Process(301, 302, UID, 13, False),
+                          303: _Process(301, 303, UID + 1, 13, False)})
+            tracker.observe()
+            table[301] = _Process(1, 301, UID, 12, False)
+            table[302] = _Process(1, 302, UID, 13, False)
+            self.assertEqual(tracker.preview()["escaped"], [[301, "descendant"], [302, "descendant"]])
+            self.assertEqual(tracker.refused(), (303,))
+
+    def test_a_job_left_in_a_known_descendants_group_is_found_after_that_descendant_exits(self) -> None:
+        # A shell in a session of its own backgrounds a job and exits at once:
+        # the job is reparented to init, with no ancestry left, but it is
+        # still in the group the shell's pid names.
+        me = os.getpid()
+        child = Mock(pid=100)
+        table = {100: _Process(me, 100, UID, (10, 0), False), 300: _Process(100, 300, UID, (11, 0), False)}
+        tracker = _DescendantTracker(child, table=lambda: table)
+        tracker.observe()
+        del table[300]
+        tracker.ended(300, (15, 0))
+        table.update({
+            310: _Process(1, 300, UID, (14, 0), False),   # started while the shell was there
+            311: _Process(1, 300, UID, (16, 0), False),   # after it was seen to exit
+            312: _Process(1, 300, UID, (10, 500000), False),  # before the shell started
+        })
+        self.assertEqual(tracker.escaped(), (310,))
+        # While the descendant is there, its group is its own.
+        table[400] = _Process(100, 400, UID, (20, 0), False)
+        tracker.observe()
+        table[401] = _Process(1, 400, UID, (21, 0), False)
+        self.assertEqual(tracker.escaped(), (310, 400, 401))
+        # An exit seen for a pid that now names a later process vouches for nothing.
+        tracker.ended(500, (30, 0))
+        table[501] = _Process(1, 500, UID, (25, 0), False)
+        self.assertEqual(tracker.escaped(), (310, 400, 401))
+
+    def test_a_marker_match_started_before_the_run_is_refused_by_its_exact_macos_stamp(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        marker = b"AGENT_SKILLS_LAUNCH_k=1"
+        table = {
+            100: _Process(me, 100, UID, (20, 500000), False),
+            200: _Process(1, 200, UID, (20, 499999), False),   # a microsecond earlier, inside the slack
+            201: _Process(1, 201, UID, (20, 500000), False),   # the same instant
+        }
+        tracker = _DescendantTracker(child, table=lambda: table, marker=marker, environment=lambda pid: [marker])
+        self.assertEqual(tracker.escaped(), (201,))
+        self.assertEqual(tracker.preview()["refused"], [[200, "before-run"]])
+        # Before the child is confirmed, the launcher's own start is the bound.
+        early = {me: _Process(1, me, UID, (20, 0), False), 202: _Process(1, 202, UID, (19, 999999), False),
+                 203: _Process(1, 203, UID, (20, 0), False)}
+        unconfirmed = _DescendantTracker(child, table=lambda: early, marker=marker, environment=lambda pid: [marker])
+        self.assertEqual(unconfirmed.escaped(), (203,))
+        self.assertEqual(unconfirmed.refused(), (202,))
+
+    def test_each_learned_process_is_watched_for_forks_and_a_zombie_is_not_adopted(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        table = {100: _Process(me, 100, UID, 10, False)}
+        watcher = Mock()
+        tracker = _DescendantTracker(child, table=lambda: table, watcher=lambda *callbacks: watcher)
+        processes = {100: table[100], 300: _Process(100, 300, UID, 11, False),
+                     304: _Process(100, 304, UID, 12, True)}
+        with patch("agent_skills.product._darwin_process", side_effect=processes.get):
+            tracker.observe()
+            watcher.start.assert_called_once_with()
+            self.assertTrue(tracker.adopt(300, 100))
+            self.assertFalse(tracker.adopt(304, 100))
+        self.assertIn(call(100, 10), watcher.watch.call_args_list)
+        self.assertIn(call(300, 11), watcher.watch.call_args_list)
+        self.assertNotIn(304, [args[0] for args, _ in watcher.watch.call_args_list])
+        tracker.close()
+        watcher.close.assert_called_once_with()
+        # A watcher that cannot start leaves the tree to the table.
+        failing = _DescendantTracker(child, table=lambda: table, watcher=Mock(side_effect=OSError("kqueue")))
+        failing.observe()
+        self.assertEqual(failing.group_members(), (100,))
+        # Before the child is confirmed nothing vouches, not even a marked parent.
+        marker = b"AGENT_SKILLS_LAUNCH_k=1"
+        early = {me: _Process(1, me, UID, 1, False), 400: _Process(1, 400, UID, 11, False)}
+        unconfirmed = _DescendantTracker(child, table=lambda: early, marker=marker, environment=lambda pid: [marker])
+        self.assertEqual(unconfirmed.escaped(), (400,))
+        with patch("agent_skills.product._darwin_process",
+                   side_effect={400: early[400], 401: _Process(400, 401, UID, 12, False)}.get):
+            self.assertFalse(unconfirmed.adopt(401, 400))
+
+    @unittest.skipUnless(sys.platform == "darwin", "the lifeline pipe is macOS only")
+    def test_the_lifeline_read_end_goes_only_to_the_child_and_both_ends_are_closed(self) -> None:
+        child = Mock(pid=12345)
+        child.wait.return_value = 0
+        ends = []
+        real_pipe = os.pipe
+
+        def pipe():
+            ends.extend(real_pipe())
+            return tuple(ends)
+
+        tracker = Mock()
+        with patch("agent_skills.product.os.pipe", side_effect=pipe), \
+             patch("agent_skills.product.subprocess.Popen", return_value=child) as popen, \
+             patch("agent_skills.product._DescendantTracker", return_value=tracker) as made:
+            self.assertEqual(_run_command(["worker"], ROOT), 0)
+        read_end, write_end = ends
+        self.assertEqual(popen.call_args.kwargs["pass_fds"], (read_end,))
+        self.assertIsNotNone(made.call_args.kwargs["lifeline"])
+        self.assertIsNotNone(made.call_args.kwargs["watcher"])
+        tracker.close.assert_called_once_with()
+        for fd in (read_end, write_end):
+            with self.assertRaises(OSError):
+                os.fstat(fd)
 
     def test_process_environments_are_read_where_the_platform_exposes_them(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
