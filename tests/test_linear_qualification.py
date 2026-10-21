@@ -924,6 +924,9 @@ class LinearQualificationTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256((PRODUCT / name).read_bytes()).hexdigest(), expected)
 
     def test_checked_product_linear_record_replays_exactly(self) -> None:
+        # The retained record was earned against the previous adapter contract;
+        # it is re-earned with the pending linear set.
+        skip_if_pending(self, "core", "linear")
         replay = _load_runner().qualify(
             PRODUCT / "core-concurrent-delivery-v1.zip",
             PRODUCT / "core-concurrent-delivery-v1.release.json",

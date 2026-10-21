@@ -826,7 +826,8 @@ def read_snapshot(path: Path, max_age: float) -> dict:
     """A validated, fresh ``work-snapshot/1``, or a refusal."""
     try:
         snapshot = json.loads(Path(path).read_bytes().decode("utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as error:
+        # ValueError covers JSON a parser refuses, such as a number too long to convert.
         raise StateError("snapshot_invalid", f"cannot read the snapshot {Path(path).name}: {error}") from None
     return check_snapshot(snapshot, Path(path).name, max_age)
 
@@ -1285,6 +1286,20 @@ def _run_bounded(argv: list[str], timeout: int, limit: int) -> tuple[int | None,
     return process.returncode, out, detail or f"exited with {process.returncode}"
 
 
+# The state directory's own files: a snapshot is never written over one of them.
+RECORD_NAMES = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE, OUTBOX_DIRECTORY, RECOVERY_FILE)
+
+
+def _refuse_record_path(directory: Path, output: Path) -> None:
+    try:
+        inside = output.resolve().relative_to(Path(directory).resolve())
+    except ValueError:
+        return
+    first = inside.parts[0].casefold() if inside.parts else ""
+    if first in {name.casefold() for name in RECORD_NAMES} or first.startswith(RECOVERY_QUARANTINE.casefold()):
+        raise StateError("output_invalid", f"{output.name} is one of the record's own files: write the snapshot elsewhere")
+
+
 def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: float) -> dict:
     """Take the tracker snapshot with the binding's command, or keep the last one.
 
@@ -1297,6 +1312,7 @@ def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: fl
     config = tracker_snapshot_config(member)
     if config is None:
         return {"ok": True, "taken": False, "note": "the binding declares no trackerSnapshot command"}
+    _refuse_record_path(directory, Path(output))
     state = read_state(directory)
     parent = state["meta"].get("trackerParent")
     # The journal is published, so it gets a fixed reason class; the command's
@@ -1316,7 +1332,7 @@ def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: fl
                 snapshot = check_snapshot(json.loads(out.decode("utf-8-sig")), "the command's snapshot", max_age)
                 if snapshot["source"] != "tracker":
                     raise StateError("snapshot_invalid", "the command's snapshot is not from the tracker")
-            except (UnicodeDecodeError, json.JSONDecodeError):
+            except (UnicodeDecodeError, ValueError, RecursionError):
                 reason = "the command printed no JSON"
             except StateError as error:
                 reason = ("the command's snapshot is too old" if error.code == "snapshot_stale"

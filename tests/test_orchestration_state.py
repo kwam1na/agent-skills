@@ -695,7 +695,9 @@ GUARD_CALLS = {
         ("skip_if_pending", ["core"]), ("pending", ["core"]), ("skip_if_pending", ["core"]), ("skip_if_pending", ["core"]),
     ],
     "tests/test_provider_qualification.py": [("skip_if_pending", ["provider"])],
-    "tests/test_linear_qualification.py": [("pending", ["profile"]), ("skip_if_pending", ["core", "linear"])],
+    "tests/test_linear_qualification.py": [
+        ("skip_if_pending", ["core", "linear"]), ("pending", ["profile"]), ("skip_if_pending", ["core", "linear"]),
+    ],
     "tests/test_bootstrap_qualification.py": [
         ("pending", ["bootstrap"]), ("skip_if_pending", ["bootstrap"]), ("skip_if_pending", ["bootstrap"]),
     ],
@@ -1545,8 +1547,17 @@ class TrackerSnapshotTests(unittest.TestCase):
                 time.sleep(5)
             if mode == "garbage":
                 print("not json"); sys.exit(0)
+            if mode == "bigint":
+                print('{"takenAt": ' + "9" * 5000 + '}'); sys.exit(0)
+            if mode == "deep":
+                print("[" * 200000 + "]" * 200000); sys.exit(0)
             taken = now - datetime.timedelta(seconds=7200 if mode == "old" else 0)
-            source = "forge" if mode == "forge" else "tracker"
+            source = "forge" if mode in ("forge", "forgeok") else "tracker"
+            if mode == "forgeok":
+                print(json.dumps({"takenAt": taken.strftime("%Y-%m-%dT%H:%M:%SZ"), "source": "forge", "items": [
+                    {"subject": "a", "state": "open"}]})); sys.exit(0)
+            if mode == "baddate":
+                print(json.dumps({"takenAt": "2026-02-30T00:00:00Z", "source": "tracker", "items": []})); sys.exit(0)
             print(json.dumps({"takenAt": taken.strftime("%Y-%m-%dT%H:%M:%SZ"), "source": source, "items": [
                 {"subject": parent + "-child-1", "title": "Later work", "state": "backlog"},
                 {"subject": parent + "-child-2", "title": "Work now", "state": "started",
@@ -1588,7 +1599,11 @@ class TrackerSnapshotTests(unittest.TestCase):
                                      ("garbage", "printed no JSON", None),
                                      ("forge", "not a valid tracker snapshot", "forge"),
                                      ("old", "too old", "7200s ago"),
-                                     ("huge", "printed more than", None)):
+                                     ("huge", "printed more than", None),
+                                     ("bigint", "printed no JSON", None),
+                                     ("deep", "printed no JSON", None),
+                                     ("forgeok", "not a valid tracker snapshot", "not from the tracker"),
+                                     ("baddate", "not a valid tracker snapshot", "not a real time")):
             with self.subTest(mode=mode):
                 result = self.snap(mode)
                 self.assertEqual((result["taken"], result["fallback"]), (False, True))
@@ -1600,7 +1615,7 @@ class TrackerSnapshotTests(unittest.TestCase):
         # What the command printed is never published: the journal names only the reason.
         self.assertFalse([note for note in self.notes() if "secret-token" in note or "Bearer" in note])
         before = len(self.notes())
-        self.snap("huge")
+        self.snap("baddate")
         self.assertEqual(len(self.notes()), before, "the same reason is noted once")
 
     def test_an_outage_that_ended_is_noted_so_the_next_one_is_noted_too(self) -> None:
@@ -1615,6 +1630,36 @@ class TrackerSnapshotTests(unittest.TestCase):
         self.snap()
         self.snap()
         self.assertEqual(self.notes().count("tracker-snapshot: taken again"), 2, "a run of successes is noted once")
+
+    def test_a_reason_that_comes_back_after_another_is_noted_again(self) -> None:
+        self.snap("fail")
+        self.snap("garbage")
+        self.snap("fail")
+        self.assertEqual(len(self.notes()), 3)
+
+    def test_a_snapshot_is_never_written_over_the_record_s_own_files(self) -> None:
+        before = {name: (self.directory / name).read_bytes() for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE)}
+        for name in ("state.json", "journal.jsonl", "STATE.JSON", "outbox/outbox.json", "published.json",
+                     "recovery.json", "recovery.json.invalid.2", "queue.lock"):
+            with self.subTest(name=name):
+                code, refused = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(),
+                                         "--output", str(self.directory / name))
+                self.assertEqual((code, refused["code"]), (1, "output_invalid"), refused)
+        self.assertEqual({name: (self.directory / name).read_bytes() for name in before}, before)
+        code, result = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(),
+                                "--output", str(self.directory / "tracker snapshot.json"))
+        self.assertEqual((code, result["taken"]), (0, True), "any other name in the directory is fine")
+
+    def test_the_binding_schema_takes_a_tracker_snapshot_block(self) -> None:
+        schema = state_tool.load_schema("orchestration-binding/1")
+        member = schema["properties"]["state"]
+        block = {"argv": ["tool", "{parent}"], "timeoutSeconds": 30}
+        errors = state_tool.validate({"directory": "s", "renderers": [], "publishers": [], "trackerSnapshot": block},
+                                     {**member, "$defs": schema["$defs"]})
+        self.assertEqual(errors, [])
+        errors = state_tool.validate({"directory": "s", "renderers": [], "publishers": [],
+                                      "trackerSnapshot": {"argv": ["tool"], "extra": 1}}, {**member, "$defs": schema["$defs"]})
+        self.assertTrue(errors)
 
     def test_an_output_that_cannot_be_written_is_refused_not_a_crash(self) -> None:
         code, refused = run_tool(self.directory, "tracker-snapshot", "--binding", self.binding(),
