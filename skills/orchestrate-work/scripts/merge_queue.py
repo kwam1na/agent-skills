@@ -672,6 +672,48 @@ class Runner:
 
         self.write(build=build)
 
+    def recover_interrupted(self) -> None:
+        """Clear the live state a run killed outright left behind, and journal it.
+
+        Called first, while holding the queue lock. The lock is released by the
+        operating system when its holder dies, so anything still reading running
+        or mid-step, or that the checking panel names, now belongs to a run that
+        no longer exists. Each such item stops, its running checks read pending
+        again, and the panel clears.
+
+        The journal entries come first: a second kill between them and the
+        write repeats an entry at the next run, but never loses one.
+        """
+        current = self.state()
+        named = (current["meta"]["checking"]["now"] or {}).get("subject")
+        interrupted = {
+            item["subject"]: item["stage"] for item in current["queue"]
+            if item["subject"] == named
+            or item["stage"] in ("syncing", "checking", "merging")
+            or any(check["state"] == "running" for check in item["checks"])
+        }
+        if not interrupted and current["meta"]["checking"]["now"] is None:
+            return
+        for subject, stage in interrupted.items():
+            summary = f"interrupted: a run ended while {subject} was {stage}; its running checks read pending again"
+            if stage == "merging":
+                summary += "; check the forge, since the merge may have landed"
+            self.journal("candidate.stopped", summary, subject)
+
+        def build(current: dict) -> tuple[dict, dict]:
+            queue = [dict(item) for item in current["queue"]]
+            for item in queue:
+                if item["subject"] in interrupted:
+                    item["checks"] = [
+                        {**check, "state": "pending"} if check["state"] == "running" else check
+                        for check in item["checks"]
+                    ]
+                    if item["stage"] != "merged":
+                        item["stage"] = "stopped"
+            return {"queue": queue}, {"/meta/checking/now": None}
+
+        self.write(build=build)
+
     def set_item(self, subject: str, **fields: object) -> None:
         self.write(selector=f"queue[subject={subject}]", assignments={f"/{key}": value for key, value in fields.items()})
 
@@ -1419,6 +1461,9 @@ class Runner:
     def run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None) -> list[Result]:
         try:
             with self.locked():
+                # A state that cannot be read or written is reported by the subcommand itself, as before.
+                with contextlib.suppress(delivery_state.StateError, OSError):
+                    self.recover_interrupted()
                 return self._run_locked(subcommand, subjects, approved_by)
         except Stop as stop:
             result = Result(subcommand, subjects[0] if subjects and subcommand != "release" else None)
