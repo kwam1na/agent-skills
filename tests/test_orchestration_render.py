@@ -1318,6 +1318,10 @@ class LiveInProcessTests(DeliveryStateFixture):
         self.addCleanup(view.stop)
         client = LiveClient(f"http://127.0.0.1:{server.server_address[1]}/")
         self.addCleanup(client.close)
+        # Quiet spells come often here; each must send a keepalive, never the document again.
+        keepalive = mock.patch.object(render_state, "LIVE_KEEPALIVE_SECONDS", 0.1)
+        keepalive.start()
+        self.addCleanup(keepalive.stop)
         client.listen()
         self.assertIsNotNone(client.wait_for(lambda doc: True))
         latest = copy.deepcopy(view.document)
@@ -1335,11 +1339,39 @@ class LiveInProcessTests(DeliveryStateFixture):
         # Signals land on the main thread; a helper thread's command must not
         # stop that thread from unwinding, even for the instant it spawns.
         view = render_state.LiveView(self.state_dir, json.loads(self.config([self.capture_renderer("echo")])))
-        with mock.patch.object(render_state, "_unwinding", True):
+        seam = render_state._seam
+        spawning: list[bool] = []
+
+        def watching(point: str) -> None:
+            # Inside the window between the command's spawn and its being known.
+            if point == "spawning":
+                spawning.append(render_state._unwinding)
+            seam(point)
+
+        with mock.patch.object(render_state, "_unwinding", True), mock.patch.object(render_state, "_seam", watching):
             watcher = threading.Thread(target=view.refresh)
             watcher.start()
             watcher.join(10)
             self.assertTrue((self.state_dir / "echo.json").exists(), "the view command ran on the helper thread")
+            self.assertEqual(spawning, [True], "the main thread could unwind while the command spawned")
+            self.assertTrue(render_state._unwinding)
+
+    def test_a_helper_thread_that_resumes_after_a_signal_neither_raises_nor_unwinds(self) -> None:
+        outcome: list[object] = []
+
+        def resume() -> None:
+            try:
+                render_state._resume()
+                outcome.append(None)
+            except BaseException as error:  # noqa: BLE001 - what escaped is the result
+                outcome.append(error)
+
+        with mock.patch.object(render_state, "_unwinding", True), \
+                mock.patch.object(render_state, "_received", [signal.SIGINT]):
+            helper = threading.Thread(target=resume)
+            helper.start()
+            helper.join(5)
+            self.assertEqual(outcome, [None], "only the main thread unwinds")
             self.assertTrue(render_state._unwinding)
 
 
@@ -1413,11 +1445,14 @@ class ChangeNotificationTests(DeliveryStateFixture):
         kept = [change["journal"] for change in changes[:-1]]
         self.assertGreater(len(kept), 100, "enough history is kept")
         self.assertEqual(kept, list(range(len(seeded) - len(kept), len(seeded))), "the latest changes, in order")
+        self.assertLessEqual(path.stat().st_size, limit // 2, "a trim keeps its latest half, so it is rare")
+        trimmed = path.stat()
         # It keeps appending after a trim, and stays within its cap however long the run.
         for n in range(3):
             state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", f"After {n}")
         self.assertEqual([change["change"] for change in self.changes()[-3:]], ["journal"] * 3)
-        self.assertLessEqual(path.stat().st_size, limit)
+        self.assertEqual(path.stat().st_ino, trimmed.st_ino, "below the cap, a write only appends")
+        self.assertGreater(path.stat().st_size, trimmed.st_size)
 
     def test_a_notification_that_cannot_be_written_never_fails_the_write(self) -> None:
         path = self.state_dir / "changes.jsonl"
