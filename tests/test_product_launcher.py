@@ -12,17 +12,79 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import Mock, patch
+import uuid
+from unittest.mock import Mock, call, patch
 
 from agent_skills.cli import main
 from agent_skills.product import (
     CancellationIncompleteError,
+    _DescendantTracker,
+    _Process,
+    _darwin_process_table,
     _observed_child_liveness,
+    _proc_process_table,
+    _process_table,
+    _ps_process_table,
     _run_command,
+    _stop_escaped_descendants,
     _wait_for_posix_group,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+# Every fixture process inherits this variable, even one that leaves its
+# process group or session, so teardown can find whatever a test left behind.
+FIXTURE_MARKER = "AGENT_SKILLS_LAUNCHER_FIXTURE"
+
+
+def _fixture_processes(token: str) -> list[int]:
+    """Running processes that carry this test's fixture marker."""
+    marker = f"{FIXTURE_MARKER}={token}"
+    found = []
+    proc = Path("/proc")
+    if (proc / "self" / "environ").is_file():
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                environ = (entry / "environ").read_bytes().split(b"\0")
+                state = (entry / "stat").read_text().rsplit(")", 1)[1].split()[0]
+            except (OSError, IndexError):
+                continue
+            if marker.encode() in environ and state != "Z":
+                found.append(int(entry.name))
+    else:
+        # BSD ps prints each process's environment after its arguments.
+        listing = subprocess.run(["ps", "-A", "-E", "-ww", "-o", "pid=,stat=,command="],
+                                 capture_output=True, text=True, check=True).stdout
+        for line in listing.splitlines():
+            fields = line.split()
+            if len(fields) > 2 and marker in fields[2:] and not fields[1].startswith("Z"):
+                found.append(int(fields[0]))
+    return sorted(pid for pid in found if pid != os.getpid())
+
+
+def _reap_fixtures(token: str, settle: float = 2) -> list[int]:
+    """Kill this test's surviving fixture processes; return those that survived.
+
+    Processes still exiting when the test ends get ``settle`` seconds to go on
+    their own, so only real survivors are reported.
+    """
+    deadline = time.monotonic() + settle
+    survivors = _fixture_processes(token)
+    while survivors and time.monotonic() < deadline:
+        time.sleep(0.05)
+        survivors = _fixture_processes(token)
+    for pid in survivors:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + 5
+    while _fixture_processes(token) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return survivors
+
+
 def _await_pid(path: Path, seconds: float = 5) -> int | None:
     """The pid a worker wrote, once the whole number is there.
 
@@ -44,6 +106,20 @@ POSIX_SIGNALS = (signal.SIGINT, signal.SIGTERM) + tuple(
 
 
 class ProductLauncherTests(unittest.TestCase):
+    def fixture_env(self) -> dict[str, str]:
+        """An environment that marks this test's processes; teardown reaps them.
+
+        A fixture process still running after the test is a leak, and fails it.
+        """
+        token = uuid.uuid4().hex
+        self.addCleanup(self._assert_no_fixture_survives, token)
+        return dict(os.environ, **{FIXTURE_MARKER: token})
+
+    def _assert_no_fixture_survives(self, token: str) -> None:
+        survivors = _reap_fixtures(token)
+        if survivors:
+            self.fail(f"fixture processes outlived the test and were killed: {survivors}")
+
     def test_harness_help_reaches_runtime(self) -> None:
         for arguments in (["--help"], ["-h"], ["gate", "--help"]):
             with self.subTest(arguments=arguments), patch("agent_skills.cli.run_runtime", return_value=17) as runtime:
@@ -450,7 +526,7 @@ raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))
             launcher = subprocess.Popen(
                 [sys.executable, "-B", "-c", program, str(root)], cwd=ROOT,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                start_new_session=True,
+                start_new_session=True, env=self.fixture_env(),
             )
             worker_pid = None
             try:
@@ -552,7 +628,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                     launcher = subprocess.Popen([sys.executable, "-c",
                         "from pathlib import Path; from agent_skills.product import _run_command; import sys; "
                         "raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))", str(root)],
-                        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                        env=self.fixture_env())
                     worker_pid = None
                     try:
                         worker_pid = _await_pid(root / "worker.pid")
@@ -582,6 +659,220 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                                 os.kill(worker_pid, signal.SIGKILL)
                             except ProcessLookupError:
                                 pass
+
+    @unittest.skipUnless(os.name == "posix", "POSIX sessions and process groups")
+    def test_a_descendant_that_leaves_the_group_is_stopped_with_it(self) -> None:
+        escapes = {"setsid": "os.setsid()", "setpgid": "os.setpgid(0, 0)"}
+        resist = "".join(f"signal.signal(signal.{sig.name}, signal.SIG_IGN)\n" for sig in POSIX_SIGNALS)
+        for (mode, escape), during in [(item, during) for item in escapes.items() for during in (False, True)]:
+            with self.subTest(mode=mode, during=during), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                if during:
+                    # It leaves the group only when the cancellation reaches it.
+                    body = ("def received(signum, _frame):\n"
+                            f"    try: {escape}\n    except OSError: pass\n"
+                            + "".join(f"    signal.signal(signal.{sig.name}, signal.SIG_IGN)\n" for sig in POSIX_SIGNALS)
+                            + "".join(f"signal.signal(signal.{sig.name}, received)\n" for sig in POSIX_SIGNALS))
+                else:
+                    body = f"{escape}\n" + resist
+                (root / "escapee.py").write_text(
+                    "import os, signal, time\nfrom pathlib import Path\n" + body
+                    + "Path('escapee.pid').write_text(str(os.getpid()))\nwhile True: time.sleep(1)\n"
+                )
+                (root / "parent.py").write_text("import subprocess, sys\nsubprocess.run([sys.executable, 'escapee.py'])\n")
+                launcher = subprocess.Popen([sys.executable, "-c",
+                    "from pathlib import Path; from agent_skills.product import _run_command; import sys; "
+                    "raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))", str(root)],
+                    cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                    env=self.fixture_env())
+                try:
+                    escapee = _await_pid(root / "escapee.pid")
+                    self.assertIsNotNone(escapee, "escapee never wrote its pid")
+                    # Let the launcher observe the tree at least once.
+                    time.sleep(0.5)
+                    launcher.send_signal(signal.SIGTERM)
+                    self.assertEqual(launcher.wait(timeout=15), 128 + signal.SIGTERM)
+                    state = subprocess.run(["ps", "-o", "stat=", "-p", str(escapee)],
+                                           capture_output=True, text=True).stdout.strip()
+                    self.assertTrue(not state or state.startswith("Z"), f"escapee {escapee} is still running")
+                finally:
+                    if launcher.poll() is None:
+                        launcher.kill()
+                        launcher.wait()
+
+    def test_an_escaped_descendant_that_cannot_be_stopped_is_reported_by_pid(self) -> None:
+        child = Mock(pid=12345)
+        child.poll.return_value = 0
+        tracker = Mock()
+        tracker.escaped.return_value = (777,)
+        clock = iter(range(1000))
+        for signalled, first in (((), signal.SIGTERM), ((777,), None)):
+            with self.subTest(signalled=signalled), \
+                 patch("agent_skills.product.os.kill") as kill, \
+                 patch("agent_skills.product.time.sleep"), \
+                 patch("agent_skills.product.time.monotonic", side_effect=lambda: next(clock) * 0.5):
+                with self.assertRaises(CancellationIncompleteError) as raised:
+                    _stop_escaped_descendants(child, tracker, signal.SIGTERM, signalled)
+            sent = [call.args for call in kill.call_args_list]
+            # The cancellation signal once, unless it was already forwarded, then SIGKILL.
+            self.assertEqual(sent, ([(777, first)] if first else []) + [(777, signal.SIGKILL)])
+            self.assertEqual(raised.exception.cleanup, "escaped-descendants-survived")
+            self.assertEqual(raised.exception.surviving_pids, (777,))
+            self.assertEqual(raised.exception.liveness, "confirmed")
+            self.assertIn("survivingPids=777", str(raised.exception))
+        tracker.escaped.return_value = ()
+        with patch("agent_skills.product.os.kill") as kill:
+            _stop_escaped_descendants(child, tracker, signal.SIGTERM)
+        kill.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_a_group_holding_a_member_nothing_may_signal_is_partially_stopped(self) -> None:
+        # Another user's member: SIGKILL reaches the launcher's own members, so
+        # it succeeds, but the group probe keeps answering EPERM.
+        handlers = {}
+        child = Mock(pid=12345)
+        child.poll.return_value = -9
+
+        def register(sig, handler):
+            handlers[sig] = handler
+            return signal.SIG_DFL
+
+        def wait(*, timeout):
+            if timeout == 0.1:
+                handlers[signal.SIGTERM](signal.SIGTERM, None)
+                raise subprocess.TimeoutExpired("worker", timeout)
+            return -9
+
+        def kill_group(pid, forwarded):
+            if forwarded == 0:
+                raise PermissionError("a member owned by another user")
+
+        child.wait.side_effect = wait
+        clock = iter(range(1000))
+        with patch("agent_skills.product.signal.signal", side_effect=register), \
+             patch("agent_skills.product.subprocess.Popen", return_value=child), \
+             patch("agent_skills.product.os.killpg", side_effect=kill_group) as killpg, \
+             patch("agent_skills.product.time.sleep"), \
+             patch("agent_skills.product.time.monotonic", side_effect=lambda: next(clock) * 0.5):
+            with self.assertRaises(CancellationIncompleteError) as raised:
+                _run_command(["worker"], ROOT)
+        self.assertIn(call(12345, signal.SIGKILL), killpg.call_args_list)
+        self.assertEqual(raised.exception.cleanup, "group-partially-stopped")
+        self.assertEqual(handlers, {sig: signal.SIG_DFL for sig in POSIX_SIGNALS})
+
+    def test_the_tracker_remembers_descendants_by_pid_and_start_after_they_leave(self) -> None:
+        me = os.getpid()
+        child = Mock(pid=100)
+        tables = []
+        tracker = _DescendantTracker(child, table=lambda: tables[-1])
+        # A process that is not this launcher's child is never tracked.
+        tables.append({100: _Process(1, 100, 501, "t0", False), 101: _Process(100, 300, 501, "t1", False)})
+        tracker.observe()
+        self.assertEqual(tracker.escaped(), ())
+        tables.append({
+            100: _Process(me, 100, 501, "t0", False),
+            101: _Process(100, 100, 501, "t1", False),   # the parent's worker, in the group
+            102: _Process(101, 100, 501, "t2", False),   # a grandchild, still in the group
+            900: _Process(1, 900, 501, "t9", False),     # unrelated
+        })
+        tracker.observe()
+        self.assertEqual(tracker.escaped(), ())
+        self.assertEqual(tracker.group_members(), (100, 101, 102))
+        # The worker exits; its child calls setsid() and is reparented to init.
+        tables.append({
+            100: _Process(me, 100, 501, "t0", False),
+            102: _Process(1, 102, 501, "t2", False),
+            103: _Process(102, 102, 501, "t3", False),   # born after it escaped
+            900: _Process(1, 900, 501, "t9", False),
+        })
+        self.assertEqual(tracker.escaped(), (102, 103))
+        # A reused pid is someone else, and a zombie is not running.
+        tables.append({
+            100: _Process(me, 100, 501, "t0", False),
+            102: _Process(1, 102, 501, "other", False),
+            103: _Process(1, 103, 501, "t3", True),
+        })
+        self.assertEqual(tracker.escaped(), ())
+        # An unreadable table changes nothing it knows.
+        tables.append(None)
+        self.assertEqual(tracker.escaped(), ())
+
+    def test_the_tracker_observes_every_third_wait_tick(self) -> None:
+        reads = []
+        child = Mock(pid=100)
+        tracker = _DescendantTracker(child, table=lambda: reads.append(1) or {})
+        for _ in range(7):
+            tracker.observe(throttle=True)
+        self.assertEqual(len(reads), 3)
+
+    def test_process_tables_read_parent_group_owner_start_and_zombies(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            proc = Path(directory)
+            for pid, stat in (
+                ("41", "41 (worker) S 7 41 41 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 5551 0 0"),
+                ("42", "42 (odd) name)) Z 41 41 41 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 5552 0 0"),
+            ):
+                (proc / pid).mkdir()
+                (proc / pid / "stat").write_text(stat)
+            (proc / "self").mkdir()  # Not a pid: skipped.
+            table = _proc_process_table(proc)
+        owner = os.getuid() if hasattr(os, "getuid") else 0
+        self.assertEqual(table, {
+            41: _Process(7, 41, owner, "5551", False),
+            42: _Process(41, 41, owner, "5552", True),
+        })
+        listing = " 41  7 41 501 S    Wed Oct 21 01:20:50 2026\n 42 41 41 501 Z+   Wed Oct 21 01:20:51 2026\n"
+        with patch("agent_skills.product.subprocess.run", return_value=Mock(stdout=listing)):
+            self.assertEqual(_ps_process_table(), {
+                41: _Process(7, 41, 501, "Wed Oct 21 01:20:50 2026", False),
+                42: _Process(41, 41, 501, "Wed Oct 21 01:20:51 2026", True),
+            })
+        with patch("agent_skills.product._darwin_process_table", side_effect=OSError("libproc unavailable")), \
+             patch("agent_skills.product._proc_process_table", side_effect=OSError("no proc")), \
+             patch("agent_skills.product._ps_process_table", side_effect=OSError("no ps")):
+            self.assertIsNone(_process_table())
+
+    @unittest.skipUnless(sys.platform == "darwin", "libproc")
+    def test_the_macos_process_table_matches_this_process(self) -> None:
+        table = _darwin_process_table()
+        mine = table[os.getpid()]
+        self.assertEqual((mine.ppid, mine.pgid, mine.uid, mine.zombie),
+                         (os.getppid(), os.getpgid(0), os.getuid(), False))
+        self.assertEqual(_darwin_process_table()[os.getpid()].started, mine.started)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process groups")
+    def test_teardown_finds_and_reaps_a_fixture_tree_a_killed_launcher_left(self) -> None:
+        # The leak behind the orphans seen in V26-2764: a launcher killed
+        # outright cannot stop its child's group, which then outlives the test.
+        token = uuid.uuid4().hex
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "worker.py").write_text(
+                "import os, time\nfrom pathlib import Path\n"
+                "Path('worker.pid').write_text(str(os.getpid()))\nwhile True: time.sleep(1)\n"
+            )
+            (root / "parent.py").write_text("import subprocess, sys\nsubprocess.run([sys.executable, 'worker.py'])\n")
+            launcher = subprocess.Popen([sys.executable, "-c",
+                "from pathlib import Path; from agent_skills.product import _run_command; import sys; "
+                "raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))", str(root)],
+                cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                env=dict(os.environ, **{FIXTURE_MARKER: token}))
+            left = []
+            try:
+                worker = _await_pid(root / "worker.pid")
+                self.assertIsNotNone(worker, "worker never wrote its pid")
+                launcher.kill()
+                launcher.wait()
+                left = _fixture_processes(token)
+                self.assertIn(worker, left)
+                self.assertEqual(len(left), 2, left)  # parent.py and worker.py
+            finally:
+                if launcher.poll() is None:
+                    launcher.kill()
+                    launcher.wait()
+                reaped = _reap_fixtures(token, settle=0)
+            self.assertEqual(reaped, left)
+            self.assertEqual(_fixture_processes(token), [])
 
 
 if __name__ == "__main__":
