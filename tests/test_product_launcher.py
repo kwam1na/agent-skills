@@ -30,6 +30,7 @@ from agent_skills.product import (
     _ps_process_table,
     _run_command,
     _stop_escaped_descendants,
+    _stop_posix_group,
     _wait_for_posix_group,
 )
 
@@ -875,7 +876,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
 
     @unittest.skipUnless(os.name == "posix", "POSIX process groups")
     def test_teardown_finds_and_reaps_a_fixture_tree_a_killed_launcher_left(self) -> None:
-        # The leak behind the orphans seen in V26-2764: a launcher killed
+        # The leak behind orphaned fixture trees: a launcher killed
         # outright cannot stop its child's group, which then outlives the test.
         token = uuid.uuid4().hex
         with tempfile.TemporaryDirectory() as directory:
@@ -906,6 +907,20 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                 reaped = _reap_fixtures(token, settle=0)
             self.assertEqual(reaped, left)
             self.assertEqual(_fixture_processes(token), [])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
+    def test_known_escapees_are_killed_with_the_group_so_a_member_they_hold_can_drain(self) -> None:
+        child = Mock(pid=12345)
+        child.wait.return_value = -9
+        tracker = Mock()
+        tracker.escaped.return_value = (777,)
+        events = []
+        with patch("agent_skills.product._wait_for_posix_group",
+                   side_effect=lambda *args: events.append("drain?") or len(events) > 1), \
+             patch("agent_skills.product.os.killpg", side_effect=lambda pid, sig: events.append(("killpg", sig))), \
+             patch("agent_skills.product.os.kill", side_effect=lambda pid, sig: events.append(("kill", pid, sig))):
+            _stop_posix_group(child, signal.SIGTERM, tracker)
+        self.assertEqual(events, ["drain?", ("kill", 777, signal.SIGKILL), ("killpg", signal.SIGKILL), "drain?"])
 
     def test_known_escapees_behind_an_unreadable_table_are_never_reported_stopped(self) -> None:
         me = os.getpid()

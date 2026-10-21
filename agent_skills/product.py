@@ -485,6 +485,10 @@ def _stop_posix_group(child: subprocess.Popen, interrupted: int, tracker: _Desce
         ) from error
     if drained:
         return
+    # Known escapees are escalated with the group. An escaped parent that
+    # ignores signals never reaps a killed member, and a group held only by
+    # that zombie would never drain.
+    _signal_each(tracker.escaped() or (), signal.SIGKILL)
     try:
         os.killpg(child.pid, signal.SIGKILL)
     except ProcessLookupError:
