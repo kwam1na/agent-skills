@@ -33,6 +33,7 @@ from agent_skills.product import (
     _process_table,
     _ps_process_table,
     _run_command,
+    _precedes,
     _started_before,
     _stop_escaped_descendants,
     _wall_stamp,
@@ -1342,7 +1343,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         table = {100: _Process(me, 100, UID, 10, False), 300: _Process(100, 100, UID + 1, 11, False)}
         with patch("agent_skills.product.os.kill", side_effect=AssertionError("signalled")), \
              patch("agent_skills.product.os.killpg", side_effect=AssertionError("signalled")):
-            tracker = _DescendantTracker(child, table=lambda: table)
+            # Each read is a snapshot of its own, as a real table is.
+            tracker = _DescendantTracker(child, table=lambda: dict(table))
             tracker.observe()
             # A setuid program in the group is learned, and is no refusal.
             self.assertEqual(tracker.group_members(), (100, 300))
@@ -1351,12 +1353,17 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             self.assertEqual(tracker.escaped(), ())
             self.assertEqual(tracker.refused(), (300,))
             self.assertEqual(tracker.preview()["refused"], [[300, "other-user"]])
-            # Behind a table that cannot be read, it still counts.
+            # Another user's child the fork watcher offers, which no table read
+            # has shown, is refused too.
+            forked = {100: table[100], 320: _Process(100, 320, UID + 1, 12, False)}
+            with patch("agent_skills.product._darwin_process", side_effect=forked.get):
+                self.assertFalse(tracker.adopt(320, 100))
+            # Behind a table that cannot be read, every refusal still counts.
             reads = [None]
             unreadable = tracker._table
-            tracker._table = lambda: reads[-1] if reads else table
-            self.assertEqual(tracker.refused(), (300,))
-            self.assertEqual(tracker.preview()["refused"], [[300, "other-user"]])
+            tracker._table = lambda: reads[-1] if reads else dict(table)
+            self.assertEqual(tracker.refused(), (300, 320))
+            self.assertEqual(tracker.preview()["refused"], [[300, "other-user"], [320, "other-user"]])
             reads.clear()
             tracker._table = unreadable
             # A zombie, a pid that now names a later process, or one back in
@@ -1398,6 +1405,11 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         })
         self.assertEqual(tracker.escaped(), (310,))
         self.assertEqual(tracker.preview()["escaped"], [[310, "descendant"]])
+        # A later exit reported for another process under that pid widens nothing,
+        # and a process started at the very instant of the exit is not counted.
+        tracker.ended(300, (12, 0), (20, 0))
+        table[313] = _Process(1, 300, UID, (15, 0), False)
+        self.assertEqual(tracker.escaped(), (310,))
         # While the descendant is there, its group is its own.
         table[400] = _Process(100, 400, UID, (20, 0), False)
         tracker.observe()
@@ -1414,7 +1426,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         table[600] = _Process(1, 600, UID, (40, 0), False)
         table[601] = _Process(1, 600, UID, (41, 0), False)
         self.assertNotIn(601, tracker.escaped())
-        # The child's own group counts only while the child is there.
+        # The child's pid, now naming a later process, vouches for nothing
+        # (its own group is signalled as a whole while the child is there).
         table[100] = _Process(1, 100, UID, (50, 0), False)
         table[602] = _Process(1, 100, UID, (51, 0), False)
         self.assertNotIn(602, tracker.escaped())
@@ -1525,25 +1538,38 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                 if process is not None:
                     watcher.watch(pid, process.started)
 
-            watcher = _ForkWatcher(adopt, lambda pid, start, at: ended.append((pid, start)))
+            # Exactly comparable with a start stamp: no truncation.
+            self.assertFalse(_precedes(_wall_stamp(), started))
+            seen_at = []
+            watcher = _ForkWatcher(adopt, lambda pid, start, at: ended.append((pid, start)) or seen_at.append(at))
             watcher.start()
             try:
                 watcher.watch(parent.pid, started)
+                before = _wall_stamp()
                 go.write_text("1")
                 parent.wait(timeout=10)
                 deadline = time.monotonic() + 5
                 while len(ended) < 2 and time.monotonic() < deadline:
                     time.sleep(0.02)
+                after = _wall_stamp()
             finally:
                 watcher.close()
+                if parent.poll() is None:
+                    parent.kill()
+                    parent.wait()
         self.assertEqual([by for _, by in offered], [parent.pid])
         self.assertIn((parent.pid, started), ended)
         self.assertIn(offered[0][0], [pid for pid, _ in ended])
+        # Each exit is stamped when it was seen, between these two readings.
+        self.assertTrue(seen_at and all(before <= at <= after for at in seen_at), (before, seen_at, after))
         self.assertFalse(watcher.is_alive())
         # A registration for a start the pid no longer has is dropped.
         stale = _ForkWatcher(lambda *args: None)
         stale.watch(os.getpid(), (0, 0))
         self.assertNotIn(os.getpid(), stale._starts)
+        # The same pid with another start is registered anew.
+        stale.watch(os.getpid(), _darwin_process(os.getpid()).started)
+        self.assertEqual(stale._starts[os.getpid()], _darwin_process(os.getpid()).started)
         stale.start()
         stale.close()
 

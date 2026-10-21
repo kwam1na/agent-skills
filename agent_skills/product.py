@@ -364,21 +364,29 @@ class _ForkWatcher(threading.Thread):
         if self._closed or (pid, started) in self._watched:
             return
         self._watched.add((pid, started))
+        # Before the registration: its exit may be reported at once.
+        self._starts[pid] = started
         notes = self._select.KQ_NOTE_FORK | self._select.KQ_NOTE_EXIT
         try:
             self._queue.control([self._select.kevent(
                 pid, self._select.KQ_FILTER_PROC, self._select.KQ_EV_ADD, notes)], 0, 0)
             # The pid may have been reused before the registration: keep it
-            # only on the process that was learned.
+            # only on the process that was learned. One gone since keeps it,
+            # so its exit is still reported.
             current = _darwin_process(pid)
-            if current is None or current.started != started:
+            if current is not None and current.started != started:
+                self._forget(pid, started)
                 self._queue.control([self._select.kevent(
                     pid, self._select.KQ_FILTER_PROC, self._select.KQ_EV_DELETE, notes)], 0, 0)
                 return
         except (OSError, ValueError):
+            self._forget(pid, started)
             return  # Gone already, not ours to watch, or the watcher closed.
-        self._starts[pid] = started
         self._children_of(pid)
+
+    def _forget(self, pid: int, started: object) -> None:
+        if self._starts.get(pid) == started:
+            del self._starts[pid]
 
     def _children_of(self, pid: int) -> None:
         for child in _darwin_children(pid):
@@ -474,7 +482,8 @@ class _DescendantTracker:
     reason, cleanup never selects pid 0 or 1, the launcher or any of its
     ancestors, or, to signal on its own, another user's process; nor a
     ``marker`` or ``lifeline`` match that started before the child, or,
-    while the child is unconfirmed, before the launcher itself (see
+    while the child is unconfirmed, before the launcher itself, nor any
+    other that started more than an hour before the child (see
     ``_refusal``). Pid and start are matched at each table read. A refused
     candidate is remembered and never signalled, and while one is still
     running cancellation reports itself incomplete.
