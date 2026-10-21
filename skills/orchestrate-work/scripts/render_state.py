@@ -288,12 +288,27 @@ def _stats_text(stats: dict) -> str:
             f" · check to merge {_duration(stats.get('checkToMergeSeconds'))} · total {_duration(stats.get('totalSeconds'))}")
 
 
+def _status_text(status: object) -> str | None:
+    """The status line; the page's program writes the same line."""
+    if not isinstance(status, dict) or not isinstance(status.get("text"), str):
+        return None
+    if status.get("source") == "override":
+        return f"Status: {status['text']} (set by the lead, until {status.get('expiresAt')})"
+    return f"Status: {status['text']}"
+
+
+def _status_lines(status: object) -> list[str]:
+    text = _status_text(status)
+    return [] if text is None else [_markdown_text(text), ""]
+
+
 def render_markdown(document: dict) -> str:
     state = document["state"]
     meta = state["meta"]
     lines = [
         f"# {_markdown_text(meta['headline'])}",
         "",
+        *_status_lines(document.get("status")),
         f"Updated {_markdown_text(meta['updatedAt'])} · state version {_markdown_text(state['version'])}",
         f"Base head {_markdown_text(meta['baseHead'])} · released head {_markdown_text(meta['releasedHead'])}",
         "",
@@ -340,9 +355,16 @@ def render_markdown(document: dict) -> str:
         rows.extend(stats_row(item, "  "))
     lines += _markdown_section("Planned", rows, "Nothing planned outside the queue.")
 
+    derived = document.get("focus") or {}
+
+    def lane_focus(lane: dict) -> str:
+        if not lane["focus"] and isinstance(derived.get(lane["id"]), str):
+            return _markdown_text(derived[lane["id"]]) + " (derived)"
+        return _markdown_text(lane["focus"])
+
     rows = [
         f"- {_markdown_text(lane['id'])}: {_markdown_text(lane['title'])}, {_markdown_text(lane['state'])}"
-        f" · focus {_markdown_text(lane['focus'])} · waiting on {_markdown_text(lane['waitingOn'])} · since {_markdown_text(lane['since'])}"
+        f" · focus {lane_focus(lane)} · waiting on {_markdown_text(lane['waitingOn'])} · since {_markdown_text(lane['since'])}"
         for lane in state["lanes"]
     ]
     lines += _markdown_section("Lanes", rows, "No lanes.")
@@ -511,6 +533,10 @@ _PAGE_PROGRAM = """
     parts.push(el("p", "Updated " + show(meta.updatedAt) + " \\u00b7 state version " + show(state.version) +
       " \\u00b7 base " + show(meta.baseHead) + " \\u00b7 released " + show(meta.releasedHead), "meta"));
     if (note) { parts.push(el("p", note, "note")); }
+    if (isObject(doc.status) && typeof doc.status.text === "string") {
+      parts.push(el("p", "Status: " + doc.status.text +
+        (doc.status.source === "override" ? " (set by the lead, until " + show(doc.status.expiresAt) + ")" : ""), "status"));
+    }
 
     parts.push(el("h2", "Checking"));
     var now = meta.checking.now;
@@ -567,9 +593,11 @@ _PAGE_PROGRAM = """
     }));
 
     parts.push(el("h2", "Lanes"));
+    var derivedFocus = isObject(doc.focus) ? doc.focus : {};
     parts.push(list("ul", state.lanes, "No lanes.", function (lane) {
+      var focus = !lane.focus && typeof derivedFocus[lane.id] === "string" ? derivedFocus[lane.id] + " (derived)" : show(lane.focus);
       return row(show(lane.id) + ": " + show(lane.title),
-        "Focus " + show(lane.focus) + " \\u00b7 waiting on " + show(lane.waitingOn) + " \\u00b7 since " + show(lane.since), lane.state);
+        "Focus " + focus + " \\u00b7 waiting on " + show(lane.waitingOn) + " \\u00b7 since " + show(lane.since), lane.state);
     }));
 
     parts.push(el("h2", "Finish line"));

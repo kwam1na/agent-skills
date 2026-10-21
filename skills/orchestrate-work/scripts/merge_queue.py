@@ -1877,6 +1877,9 @@ class Runner:
                             f"checked on its own; run the full health check before anything else merges",
                         )
                         document.stop["queueStopped"] = True
+                        with contextlib.suppress(Stop, delivery_state.StateError, OSError):
+                            self.journal("base.broken", f"{stop.reason} after a partial landing; "
+                                         f"{self.base} holds the batch's tree up to {landed[-1]}", member.subject)
                     if stop.reason == "batch_tree_mismatch":
                         # Nothing of it landed; it is batched again once the base is confirmed.
                         with contextlib.suppress(Stop, delivery_state.StateError):
@@ -2005,8 +2008,9 @@ class Runner:
             in_progress = subject is not None and self.item(subject)["stage"] in ("syncing", "checking", "merging")
             if subject is not None and (not refused or in_progress):
                 self.set_item(subject, stage="stopped")
-            if stop.reason == "base_broken":
-                self.journal("base.broken", stop.detail, subject)
+            if queue_stopped:
+                # Every stop that stops the queue leaves the base to confirm by hand; serve waits for base.repaired.
+                self.journal("base.broken", f"{stop.reason}: {stop.detail}", subject)
             if subject is not None:
                 self.journal("candidate.stopped", f"{stop.reason}: {stop.detail}", subject)
 
@@ -2016,6 +2020,17 @@ class Runner:
             self.start()
             step(result)
         return self.invoke(subcommand, subject, guarded)
+
+    def recover(self) -> None:
+        """Take the queue lock just to clear what a killed run left; a lock another runner holds is left alone."""
+        try:
+            with self.locked():
+                with contextlib.suppress(delivery_state.StateError, OSError):
+                    self.recover_interrupted()
+        except Stop:
+            pass
+        finally:
+            shutil.rmtree(self._bootstrap_hooks, ignore_errors=True)
 
     def run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None) -> list[Result]:
         try:
@@ -2073,7 +2088,9 @@ def write_result(state_directory: Path, result: Result) -> dict:
     directory = state_directory / "results"
     directory.mkdir(parents=True, exist_ok=True)
     stamp = document["finishedAt"].replace(":", "").replace("-", "").replace(".", "")
-    name = f"{stamp}-{document['subcommand']}-{re.sub(r'[^A-Za-z0-9_.-]', '_', document['candidate'] or 'release')}.json"
+    # A result about no candidate is named for what it covers: a release, or serve's setup.
+    about = document["candidate"] or ("release" if document["subcommand"] == "release" else "setup")
+    name = f"{stamp}-{document['subcommand']}-{re.sub(r'[^A-Za-z0-9_.-]', '_', about)}.json"
     # UTF-8 bytes with "\n" line endings on every platform.
     (directory / name).write_bytes(delivery_state.dumps(document).encode("utf-8"))
     return document
@@ -2082,6 +2099,119 @@ def write_result(state_directory: Path, result: Result) -> dict:
 def ascii_json(value: object) -> bytes:
     """JSON for stdout: ASCII-only, so no console code page can fail on it."""
     return (json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True) + "\n").encode("ascii")
+
+
+def _refused_stop(subject: str, head: str | None) -> Callable[[dict], tuple[dict | None, dict]]:
+    """Stop a refused candidate only as serve took it: a lane that handed it off again since keeps its new head."""
+
+    def build(current: dict) -> tuple[dict | None, dict]:
+        item = next((entry for entry in current["queue"] if entry["subject"] == subject), None)
+        if item is None or item["stage"] != "queued" or item["head"] != head:
+            raise Stop("candidate_unknown", f"{subject} changed since serve took it")
+        return None, {"/stage": "stopped"}
+
+    return build
+
+
+def _setup_stop(repository: Path, state_directory: Path, *, remote: str, base: str, lead: str) -> Result:
+    """Read the binding from the base and check the checkout once, under the queue lock, before serving anything."""
+    runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead)
+
+    def check(result: Result) -> None:
+        with runner.locked():
+            result.baseHead = runner.load()
+            result.base = base
+
+    try:
+        return runner.invoke("serve", None, check)
+    finally:
+        shutil.rmtree(runner._bootstrap_hooks, ignore_errors=True)
+
+
+def serve(
+    repository: Path,
+    state_directory: Path,
+    *,
+    remote: str,
+    base: str,
+    lead: str = "lead",
+    until_idle: bool = False,
+    poll: float = 30.0,
+    seams: dict[str, Seam] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    on_result: Callable[[Result], None] | None = None,
+) -> list[Result]:
+    """Take what is queued, in order, whenever the merge slot is free.
+
+    Two or more queued candidates run as one batch; one runs alone. A
+    candidate waiting for the lead to accept its hand-off is left alone. The
+    lead's meta.hold pauses serving, and so does a stop that stopped the queue
+    until the lead journals base.repaired; a stopped candidate waits for its
+    lane to hand it off again, and so does a refused one, which serve would
+    otherwise take again every turn. A checkout or binding the runner cannot
+    use ends serve before it takes anything, with that one result. Each turn takes the queue lock afresh, so
+    a serve killed outright is cleared by the next one's recovery. With
+    until_idle, serving ends once nothing more can be taken and returns every
+    result; without it, serving never returns, so each result goes to
+    on_result as it is written and none is kept.
+    """
+    results: list[Result] = []
+    while True:
+        # A wrong checkout or binding would refuse every candidate in turn: find it once, before taking any.
+        setup = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+        if setup.stop is None:
+            break
+        if setup.stop["reason"] != "queue_locked":
+            write_result(state_directory, setup)
+            if on_result is not None:
+                on_result(setup)
+            return [setup]
+        if until_idle:
+            return results
+        sleep(poll)
+    while True:
+        # A killed serve or run leaves live state behind; clear it first, even when nothing is queued.
+        Runner(repository, state_directory, remote=remote, base=base, lead=lead).recover()
+        state = delivery_state.read_state(state_directory)
+        journal = delivery_state.read_journal(state_directory)
+        waiting = [
+            item["subject"] for item in sorted(state["queue"], key=lambda entry: (entry["order"], entry["subject"]))
+            if item["stage"] == "queued" and not item.get("pending")
+        ]
+        if state["meta"].get("hold") or delivery_state.base_awaits_repair(journal) or not waiting:
+            if until_idle:
+                return results
+            sleep(poll)
+            continue
+        heads = {item["subject"]: item["head"] for item in state["queue"]}
+        runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams)
+        taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting)
+        if all(result.stop is not None and result.stop["reason"] == "queue_locked" for result in taken):
+            # Another runner holds the queue: nothing was attempted, so nothing is recorded.
+            if until_idle:
+                return results
+            sleep(poll)
+            continue
+        for result in taken:
+            write_result(state_directory, result)
+            if result.outcome == "refused" and result.candidate is not None and result.stop["reason"] != "queue_locked":
+                # A refusal leaves the candidate queued as it was; serve stops it, journaled once, as any stop.
+                with contextlib.suppress(Stop, delivery_state.StateError):
+                    runner.write(selector=f"queue[subject={result.candidate}]",
+                                 build=_refused_stop(result.candidate, heads.get(result.candidate)))
+        for result in taken:
+            # Reported only once every result is written and every refusal stopped, so a reader never loses them.
+            if on_result is not None:
+                on_result(result)
+        if until_idle:
+            results += taken
+        after = delivery_state.read_state(state_directory)
+        moved = any(item["subject"] in waiting and item["stage"] != "queued" for item in after["queue"])
+        if not moved:
+            # Nothing it took left queued (another runner held the lock): wait rather than spin.
+            if until_idle:
+                return results
+            sleep(poll)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2097,10 +2227,42 @@ def main(argv: list[str] | None = None) -> int:
         commands.add_parser(name).add_argument("candidate")
     commands.add_parser("run").add_argument("candidates", nargs="+")
     commands.add_parser("batch").add_argument("candidates", nargs="+")
+    serving = commands.add_parser("serve", help="take queued candidates as they come, until held")
+    serving.add_argument("--poll", type=float, default=30.0, help="seconds between looks at an idle or held queue")
+    serving.add_argument("--until-idle", action="store_true", help="stop once nothing more can be taken")
     release = commands.add_parser("release")
     release.add_argument("ref")
     release.add_argument("--approved-by", help="records an approval the operator already gave")
     args = parser.parse_args(argv)
+    if args.command == "serve" and not args.until_idle:
+        # Serving until stopped: one document a line as each is written; state/results keeps them all.
+        def report(result: Result) -> None:
+            try:
+                sys.stdout.buffer.write(json.dumps(result.document(), ensure_ascii=True, sort_keys=True).encode("ascii") + b"\n")
+                sys.stdout.buffer.flush()
+            except BrokenPipeError:
+                # Nobody reads any more: serving goes on, and state/results keeps every document.
+                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+
+        def interrupt(signum: int, frame: object) -> None:
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGTERM, interrupt)
+        try:
+            # Serving until stopped returns only when it cannot start.
+            refused = serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
+                            poll=args.poll, on_result=report)
+        except KeyboardInterrupt:
+            # A stop mid-turn leaves live state the next serve or run clears first.
+            return 0
+        return 1 if refused else 0
+    if args.command == "serve":
+        served = serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
+                       until_idle=True, poll=args.poll)
+        documents = [result.document() for result in served]
+        sys.stdout.buffer.write(ascii_json(documents))
+        sys.stdout.buffer.flush()
+        return 0 if all(document["outcome"] not in ("stopped", "refused") for document in documents) else 1
     runner = Runner(
         args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
         lock_wait=args.wait,

@@ -62,7 +62,9 @@ SNAPSHOT_MAX_AGE_SECONDS = 900.0
 SNAPSHOT_CLOCK_SKEW_SECONDS = 60.0
 RECONCILE_ATTEMPTS = 5
 STATE_VERSION = "delivery-state/1"
-WRITERS = ("lead", "runner")
+WRITERS = ("lead", "runner", "lane")
+# What a lane writes about itself, through the tool.
+LANE_FIELDS = ("focus", "state", "waitingOn", "since")
 # A review round is the lead's or a lane's record of its own review; the runner
 # never reviews, so it never writes one.
 REVIEW_KIND = "review.round"
@@ -595,6 +597,161 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
     return violations
 
 
+def lane_violations(before: dict, after: dict, lane: str) -> list[str]:
+    """What a lane changed beyond its own lane's focus, state and waiting-on: anything at all is refused."""
+    if lane not in [entry.get("id") for entry in before.get("lanes", [])]:
+        return [f"there is no lane {lane}"]
+    expected = copy.deepcopy(after)
+    for entry in expected.get("lanes", []):
+        if entry.get("id") == lane:
+            previous = next(item for item in before["lanes"] if item.get("id") == lane)
+            for field in LANE_FIELDS:
+                if field in previous:
+                    entry[field] = previous[field]
+    if expected != before:
+        return [f"a lane writes only its own lane's {', '.join(LANE_FIELDS[:3])}"]
+    return []
+
+
+def _stamp_lane(before: dict, after: dict, lane: str) -> None:
+    """The tool keeps since: it moves when the lane's state changes, and only then."""
+    old = next(entry for entry in before["lanes"] if entry["id"] == lane)
+    new = next(entry for entry in after["lanes"] if entry["id"] == lane)
+    if "state" in new:
+        new["since"] = now() if new["state"] != old.get("state") else old.get("since")
+
+
+def _tool_write(directory: Path, change: Callable[[dict], object]) -> tuple[dict, object]:
+    """A write the tool makes for a lane or the lead, under the state lock, with the record's own checks."""
+    with file_lock(directory / STATE_LOCK):
+        state = read_state(directory)
+        updated = copy.deepcopy(state)
+        outcome = change(updated)
+        updated["version"] = state["version"] + 1
+        updated["meta"]["updatedAt"] = now()
+        errors = state_errors(updated)
+        if errors:
+            raise StateError("patch_invalid", "; ".join(errors))
+        _require_unicode(updated, "patch_invalid")
+        _write_atomically(directory / STATE_FILE, dumps(updated))
+    return updated, outcome
+
+
+def _set_lane_state(state: dict, lane: str, lane_state: str) -> None:
+    for entry in state["lanes"]:
+        if entry["id"] == lane and entry["state"] != lane_state:
+            entry.update(state=lane_state, since=now())
+
+
+def handoff(
+    directory: Path,
+    *,
+    lane: str,
+    subject: str,
+    head: str,
+    change_request: str,
+    rounds: int | None = None,
+) -> dict:
+    """A lane hands its reviewed work to the queue, and the hand-off is journaled.
+
+    The subject is planned in the lane, or queued in it and waiting or stopped,
+    for a hand-off at a new head. Work in flight is never handed off again.
+    """
+
+    def change(state: dict) -> dict:
+        if lane not in [entry["id"] for entry in state["lanes"]]:
+            raise StateError("writer_not_owned", f"there is no lane {lane}")
+        queued = next((item for item in state["queue"] if item["subject"] == subject), None)
+        if queued is not None:
+            if queued["lane"] != lane:
+                raise StateError("writer_not_owned", f"{subject} belongs to {queued['lane']}, not {lane}")
+            if queued["stage"] not in ("queued", "stopped"):
+                raise StateError("handoff_invalid", f"{subject} is {queued['stage']}; hand it off once it stops")
+            queued.update(stage="queued", head=head, syncedHead=None, checks=[], changeRequest=change_request)
+            item = queued
+        else:
+            planned = next((entry for entry in state.get("planned", []) if entry["subject"] == subject), None)
+            if planned is None:
+                raise StateError("subject_unknown", f"{subject} is neither planned nor queued")
+            if planned["lane"] != lane:
+                raise StateError("writer_not_owned", f"{subject} is planned in {planned['lane']}, not {lane}")
+            state["planned"] = [entry for entry in state["planned"] if entry["subject"] != subject]
+            item = {
+                "order": max([entry["order"] for entry in state["queue"]], default=0) + 1,
+                "subject": subject, "title": planned["title"], "lane": lane, "stage": "queued", "head": head,
+                "syncedHead": None, "leadInputs": [], "reportedRounds": None, "runId": None, "checks": [],
+                "changeRequest": change_request,
+            }
+            state["queue"].append(item)
+        if rounds is not None:
+            item["reportedRounds"] = rounds
+        # The lead's own policy, from the record, so no caller can leave it out; only the lead clears the wait.
+        if state["meta"].get("handoffsNeedAcceptance"):
+            item["pending"] = True
+        _set_lane_state(state, lane, "handed")
+        return copy.deepcopy(item)
+
+    _, item = _tool_write(directory, change)
+    waiting = "; waiting for the lead to accept it" if item.get("pending") else ""
+    rounds_text = f" after {rounds} review rounds" if rounds is not None else ""
+    append_journal(directory, kind="candidate.handed", lane=lane, subject=subject,
+                   summary=f"{lane} handed {subject} at {head} ({change_request}){rounds_text}{waiting}")
+    return item  # type: ignore[return-value]
+
+
+def _pending(state: dict, subject: str) -> dict:
+    item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
+    if item is None or not item.get("pending"):
+        raise StateError("handoff_invalid", f"{subject} has no hand-off waiting for the lead")
+    return item
+
+
+def accept_handoff(directory: Path, subject: str) -> dict:
+    """The lead accepts a waiting hand-off; the runner may now take it."""
+
+    def change(state: dict) -> dict:
+        item = _pending(state, subject)
+        item.pop("pending")
+        return copy.deepcopy(item)
+
+    _, item = _tool_write(directory, change)
+    append_journal(directory, kind="decision.recorded", subject=subject, summary=f"Accepted the hand-off of {subject}")
+    return item  # type: ignore[return-value]
+
+
+def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
+    """The lead rejects a waiting hand-off; the work goes back to its lane as planned."""
+
+    def change(state: dict) -> dict:
+        item = _pending(state, subject)
+        state["queue"] = [entry for entry in state["queue"] if entry["subject"] != subject]
+        back = {"subject": subject, "title": item["title"], "lane": item["lane"], "stage": "review"}
+        if "changeRequest" in item:
+            back["changeRequest"] = item["changeRequest"]
+        state.setdefault("planned", []).append(back)
+        if item["lane"] is not None:
+            _set_lane_state(state, item["lane"], "working")
+        return back
+
+    _, back = _tool_write(directory, change)
+    append_journal(directory, kind="decision.recorded", subject=subject, lane=back["lane"],  # type: ignore[index]
+                   summary=f"Rejected the hand-off of {subject}: {reason}")
+    return back  # type: ignore[return-value]
+
+
+def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None,
+              waiting_on: object = ...) -> dict:
+    """A lane says what it is doing, as itself."""
+    changes: dict = {"focus": text}
+    if state is not None:
+        changes["state"] = state
+    # waitingOn is set exactly: a merge patch would read None as removing it, and the record requires it.
+    assignments = {} if waiting_on is ... else {"/waitingOn": waiting_on}
+    current = read_state(directory)
+    return patch(directory, writer="lane", lane=lane, version=current["version"], changes=changes,
+                 selector=f"lanes[id={lane}]", assignments=assignments)
+
+
 def patch(
     directory: Path,
     *,
@@ -604,8 +761,9 @@ def patch(
     selector: str | None = None,
     assignments: object = None,
     between_read_and_write: Callable[[], None] | None = None,
+    lane: str | None = None,
 ) -> dict:
-    """Apply ``changes`` as ``writer``, pinned to ``version``.
+    """Apply ``changes`` as ``writer``, pinned to ``version``; a lane's write names its ``lane``.
 
     ``between_read_and_write`` runs after the state is read and the patch is
     prepared, and before the lock is taken for the write: a deterministic seam
@@ -613,6 +771,8 @@ def patch(
     """
     if writer not in WRITERS:
         raise StateError("writer_invalid", f"writer must be one of {', '.join(WRITERS)}")
+    if writer == "lane" and not lane:
+        raise StateError("writer_invalid", "a lane's write names its lane")
     state = read_state(directory)
     if state["version"] != version:
         raise StateError("version_stale", f"patch is pinned to version {version}; state is at {state['version']}")
@@ -623,9 +783,15 @@ def patch(
         current = read_state(directory)
         if current["version"] != version:
             raise StateError("version_stale", f"patch is pinned to version {version}; state is at {current['version']}")
-        violations = ownership_violations(current, updated, writer)
-        if violations:
-            raise StateError("field_not_owned", "; ".join(sorted(set(violations))))
+        if writer == "lane":
+            violations = lane_violations(current, updated, lane)
+            if violations:
+                raise StateError("writer_not_owned", "; ".join(violations))
+            _stamp_lane(current, updated, lane)
+        else:
+            violations = ownership_violations(current, updated, writer)
+            if violations:
+                raise StateError("field_not_owned", "; ".join(sorted(set(violations))))
         updated["version"] = version + 1
         if isinstance(updated.get("meta"), dict):
             updated["meta"]["updatedAt"] = now()
@@ -650,6 +816,14 @@ def append_journal(
     """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset."""
     if writer == "runner" and kind == REVIEW_KIND:
         raise StateError("kind_not_owned", f"the runner never writes {REVIEW_KIND}: the lead or the lane records its review")
+    if writer == "lane":
+        if kind != REVIEW_KIND:
+            raise StateError("writer_not_owned", f"a lane journals only {REVIEW_KIND}; the tool journals its hand-off")
+        state = read_state(directory)
+        owner = next((entry.get("lane") for entry in [*state["queue"], *state.get("planned", [])]
+                      if entry["subject"] == subject), None)
+        if lane is None or owner != lane:
+            raise StateError("writer_not_owned", f"{subject} is not {lane}'s work")
     with file_lock(directory / STATE_LOCK):
         read_state(directory)
         entries = read_journal(directory)
@@ -696,7 +870,8 @@ def show(directory: Path, *, between_reads: Callable[[], None] | None = None) ->
             between_reads()
         journal = read_journal(directory)
     return {"state": state, "journal": journal, "stats": delivery_stats(state, journal),
-            "estimates": queue_estimates(state)}
+            "estimates": queue_estimates(state), "status": delivery_status(state, journal),
+            "focus": lane_focus(state)}
 
 
 # ---------------------------------------------------------------------------
@@ -823,7 +998,7 @@ def queue_estimates(state: dict, at: str | None = None) -> dict:
         elapsed = (moment - _parse_time(current["startedAt"], exact=True)).total_seconds()
         # A start in the future (a clock out of step) still leaves at most one run.
         remaining = min(expected, max(0, expected - int(elapsed)))
-    waiting = sorted((item for item in state["queue"] if item["stage"] == "queued"),
+    waiting = sorted((item for item in state["queue"] if item["stage"] == "queued" and not item.get("pending")),
                      key=lambda item: (item["order"], item["subject"]))
     estimates = {}
     for position, item in enumerate(waiting, start=1):
@@ -837,6 +1012,102 @@ def queue_estimates(state: dict, at: str | None = None) -> dict:
                 start = start.replace(microsecond=0).isoformat().replace("+00:00", "Z")
         estimates[item["subject"]] = {"position": position, "expectedStart": start}
     return estimates
+
+
+# How long a lead's status override lasts when the binding does not say.
+STATUS_OVERRIDE_MAX_AGE_SECONDS = 4 * 3600
+FINISHED_STEPS = ("passed", "failed", "skipped", "timed_out")
+
+
+def delivery_status(state: dict, journal: list[dict], at: str | None = None) -> dict:
+    """One line on where the delivery stands: the lead's override while it is fresh, or one derived from the record.
+
+    The derived line names what is being checked and how far it has got, the
+    last landing, the lanes that are blocked, and what is next.
+    """
+    moment = _parse_time(at or now(), exact=True)
+    override = state["meta"].get("statusOverride")
+    if override and moment < _parse_time(override["expiresAt"], exact=True):
+        # An override says so, and until when, so a stale manual line never passes as derived state.
+        return {"text": override["text"], "source": "override", "expiresAt": override["expiresAt"]}
+    parts = []
+    hold = state["meta"].get("hold")
+    if hold:
+        parts.append(f"Serving is paused: {hold['reason']}")
+    elif base_awaits_repair(journal):
+        parts.append("Serving is paused until the base is confirmed")
+    current = state["meta"]["checking"]["now"]
+    if current is not None:
+        text = f"Checking {current['title']}"
+        steps = [step for step in current["steps"] if step["label"] != "selecting checks"]
+        if steps:
+            done = sum(1 for step in steps if step["state"] in FINISHED_STEPS)
+            text += f", {done} of {len(steps)} checks done"
+        parts.append(text)
+    landed = next((entry for entry in reversed(journal) if entry["kind"] == "candidate.merged"), None)
+    if landed is not None:
+        parts.append(f"last landed {landed['subject']} at {landed['at']}")
+    blocked = [
+        lane["id"] + (f" (waiting on {lane['waitingOn']})" if lane.get("waitingOn") else "")
+        for lane in state["lanes"] if lane["state"] == "blocked"
+    ]
+    if blocked:
+        parts.append("blocked: " + ", ".join(blocked))
+    stopped = [item["subject"] for item in sorted(state["queue"], key=lambda item: (item["order"], item["subject"]))
+               if item["stage"] == "stopped"]
+    if stopped:
+        # Stopped work waits for its lane to hand it off again; it is never "nothing in flight".
+        parts.append("stopped: " + ", ".join(stopped))
+    waiting = [item["subject"] for item in sorted(state["queue"], key=lambda item: (item["order"], item["subject"]))
+               if item["stage"] == "queued" and not item.get("pending")]
+    if waiting:
+        parts.append(f"next: {waiting[0]}" + (f", then {len(waiting) - 1} more" if len(waiting) > 1 else ""))
+    return {"text": " · ".join(parts) or "Nothing in flight", "source": "derived"}
+
+
+def base_awaits_repair(journal: list[dict]) -> bool:
+    """Whether the last word on the base is base.broken: the lead confirms it with base.repaired."""
+    last = next((entry["kind"] for entry in reversed(journal) if entry["kind"] in ("base.broken", "base.repaired")), None)
+    return last == "base.broken"
+
+
+def lane_focus(state: dict) -> dict:
+    """For each lane that wrote no focus of its own, one derived from its work: subject, stage, review rounds."""
+    focus = {}
+    for lane in state["lanes"]:
+        if lane["focus"]:
+            continue
+        own = [item for item in state["queue"] if item["lane"] == lane["id"] and item["stage"] != "merged"]
+        if own:
+            item = max(own, key=lambda element: (element["order"], element["subject"]))
+            rounds = item.get("reportedRounds")
+            told = "rounds unknown" if rounds is None else f"{rounds} review {'round' if rounds == 1 else 'rounds'}"
+            focus[lane["id"]] = f"{item['subject']}: {item['stage']}, {told}"
+            continue
+        planned = [item for item in state.get("planned", []) if item["lane"] == lane["id"]]
+        if planned:
+            focus[lane["id"]] = f"{planned[-1]['subject']}: {planned[-1]['stage']}"
+    return focus
+
+
+def set_status_override(directory: Path, text: str | None, max_age: int) -> dict:
+    """The lead's status line, shown instead of the derived one for max_age seconds; None clears it."""
+
+    def change(state: dict) -> None:
+        if text is None:
+            state["meta"]["statusOverride"] = None
+            return
+        set_at = now()
+        try:
+            expires = _parse_time(set_at, exact=True) + datetime.timedelta(seconds=max_age)
+        except OverflowError:
+            raise StateError("patch_invalid", f"an override cannot last {max_age} seconds") from None
+        state["meta"]["statusOverride"] = {
+            "text": text, "setAt": set_at, "expiresAt": expires.isoformat().replace("+00:00", "Z"),
+        }
+
+    updated, _ = _tool_write(directory, change)
+    return updated
 
 
 def delivery_stats(state: dict, journal: list[dict]) -> dict:
@@ -1283,9 +1554,10 @@ def binding_state(path: Path) -> dict:
     member = binding.get("state") if isinstance(binding, dict) else None
     if not isinstance(member, dict) or not isinstance(member.get("publishers", []), list):
         raise StateError("binding_invalid", f"{Path(path).name} has no state member with a publishers list")
-    age = member.get("snapshotMaxAgeSeconds")
-    if age is not None and (not isinstance(age, int) or isinstance(age, bool) or age < 1):
-        raise StateError("binding_invalid", "state.snapshotMaxAgeSeconds is a whole number of seconds, at least 1")
+    for name in ("snapshotMaxAgeSeconds", "statusOverrideMaxAgeSeconds"):
+        age = member.get(name)
+        if age is not None and (not isinstance(age, int) or isinstance(age, bool) or age < 1):
+            raise StateError("binding_invalid", f"state.{name} is a whole number of seconds, at least 1")
     return member
 
 
@@ -1671,6 +1943,20 @@ def _json_argument(value: str | None, name: str) -> object:
         raise StateError("patch_invalid", f"{name} is not JSON: {error}") from None
 
 
+def _handoff_command(args: argparse.Namespace) -> dict:
+    if args.accept:
+        return accept_handoff(args.dir, args.accept)
+    if args.reject:
+        if not args.reason:
+            raise StateError("handoff_invalid", "say why with --reason")
+        return reject_handoff(args.dir, args.reject, args.reason)
+    missing = [name for name in ("lane", "subject", "head", "change_request") if not getattr(args, name)]
+    if missing:
+        raise StateError("handoff_invalid", "a hand-off needs " + ", ".join("--" + name.replace("_", "-") for name in missing))
+    return handoff(args.dir, lane=args.lane, subject=args.subject, head=args.head,
+                   change_request=args.change_request, rounds=args.rounds)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", type=Path, required=True, help="the state directory")
@@ -1680,6 +1966,7 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("validate", help="validate the state and the journal")
     change = commands.add_parser("patch", help="apply a JSON merge patch, pinned to a version")
     change.add_argument("--writer", choices=WRITERS, required=True)
+    change.add_argument("--lane", help="the lane a lane's write is for")
     change.add_argument("--version", type=int, required=True, help="the state version the patch was written against")
     change.add_argument("--element", help="apply the patch to one element, such as queue[subject=...]")
     change.add_argument("--patch", help="a JSON merge patch, or - to read it from stdin")
@@ -1693,6 +1980,29 @@ def main(argv: list[str] | None = None) -> int:
     entry.add_argument("--review", help="a review.round's review as JSON, or - to read it from stdin")
     entry.add_argument("--lane")
     entry.add_argument("--subject")
+    entry.add_argument("--writer", choices=("lead", "lane"), default="lead",
+                       help="lane: a lane journals a review round of its own work")
+    hand = commands.add_parser("handoff", help="a lane hands its work to the queue, or the lead accepts or rejects it")
+    decide = hand.add_mutually_exclusive_group()
+    decide.add_argument("--accept", metavar="SUBJECT", help="accept a hand-off waiting for the lead")
+    decide.add_argument("--reject", metavar="SUBJECT", help="reject a hand-off waiting for the lead")
+    hand.add_argument("--reason", help="why a hand-off is rejected")
+    hand.add_argument("--lane")
+    hand.add_argument("--subject")
+    hand.add_argument("--head")
+    hand.add_argument("--change-request")
+    hand.add_argument("--rounds", type=int)
+    headline = commands.add_parser("headline", help="the lead's status line, shown until it expires")
+    told = headline.add_mutually_exclusive_group(required=True)
+    told.add_argument("--text", help="the status line")
+    told.add_argument("--clear", action="store_true", help="go back to the derived status line")
+    headline.add_argument("--max-age", type=int, help="seconds until it expires; overrides the binding")
+    headline.add_argument("--binding", type=Path, help="the repository binding, for state.statusOverrideMaxAgeSeconds")
+    focused = commands.add_parser("focus", help="a lane says what it is doing")
+    focused.add_argument("--lane", required=True)
+    focused.add_argument("--text", required=True)
+    focused.add_argument("--state", choices=("idle", "assigned", "working", "reviewing", "handed", "blocked", "done"))
+    focused.add_argument("--waiting-on", help="who or what the lane waits on; an empty value clears it")
     display = commands.add_parser("show", help="print the validated state and journal, and whether publication lags")
     display.add_argument("--binding", type=Path, help="the repository binding, to tell whether the outbox is orphaned")
     sync = commands.add_parser("reconcile", help="bring the record up to date with forge and tracker snapshots")
@@ -1731,6 +2041,7 @@ def main(argv: list[str] | None = None) -> int:
                     changes=_json_argument(args.patch, "patch"),
                     selector=args.element,
                     assignments=_json_argument(args.assignments, "set"),
+                    lane=args.lane,
                 ),
             }
         elif args.command == "journal":
@@ -1740,8 +2051,21 @@ def main(argv: list[str] | None = None) -> int:
                 "entry": append_journal(
                     args.dir, kind=args.kind, summary=_journal_summary(args, review),
                     lane=args.lane, subject=args.subject, review=review,
+                    writer="lane" if args.writer == "lane" else None,
                 ),
             }
+        elif args.command == "headline":
+            bound = binding_state(args.binding).get("statusOverrideMaxAgeSeconds") if args.binding is not None else None
+            age = args.max_age if args.max_age is not None else bound or STATUS_OVERRIDE_MAX_AGE_SECONDS
+            if age < 1:
+                raise StateError("patch_invalid", "--max-age is at least 1 second")
+            result = {"ok": True, "state": set_status_override(args.dir, None if args.clear else args.text, age)}
+        elif args.command == "handoff":
+            result = {"ok": True, "item": _handoff_command(args)}
+        elif args.command == "focus":
+            waiting = ... if args.waiting_on is None else (args.waiting_on or None)
+            result = {"ok": True, "state": set_focus(args.dir, args.lane, args.text, state=args.state,
+                                                     waiting_on=waiting)}
         elif args.command == "reconcile":
             bound = binding_state(args.binding).get("snapshotMaxAgeSeconds") if args.binding is not None else None
             max_age = args.max_age if args.max_age is not None else bound
