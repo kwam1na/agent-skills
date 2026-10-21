@@ -44,7 +44,8 @@ tracker, host or forge.
   `queue[i].checks`, `queue[i].syncedHead`, `meta.checking`, `meta.baseHead`,
   `meta.releasedHead` and `meta.checkHistory`. A lane writes only its own
   lane's `focus`, `state` and `waitingOn`, its own review rounds, and its own
-  hand-off, which the tool turns into a queue element. Every write goes
+  hand-off, which the tool turns into a queue element, with any suite evidence
+  it gives in `queue[i].evidence`, which only a hand-off writes. Every write goes
   through the state tool, which checks the declared writer against this
   ownership and refuses anything else with `writer_not_owned` for a lane.
 
@@ -193,7 +194,11 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   against its usual duration; a failed check's failing tests and its log reach
   the record, the journal and the views. A failure made only of the binding's
   declared flakes is retried once and journaled as `check.retried`; any other
-  failure is never retried.
+  failure is never retried. A check the binding lists in `reusableChecks` is
+  not run again when the synced tree is exactly the tree the lane's hand-off
+  evidence shows it passing, under the same definition: it is recorded as
+  reused, with the head of the lane's run, and journaled as `check.reused`.
+  Every other check still runs, and the merge stays pinned to the synced head.
 - `merge <candidate>` merges the checked head through the binding's `ready`
   and `merge` commands and confirms the new base.
 - `run <candidate>...` does sync, check and merge in order for each candidate,

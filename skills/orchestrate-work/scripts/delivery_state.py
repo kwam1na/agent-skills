@@ -95,6 +95,11 @@ SELECTOR = re.compile(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)
 # tool itself maintains, belongs to the lead.
 RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory", "sources", "sourceReports")
 RUNNER_QUEUE = ("stage", "checks", "syncedHead")
+# Written only by a lane's hand-off, through the tool: no patch, the lead's or the runner's, changes it.
+HANDOFF_QUEUE = ("evidence",)
+EVIDENCE_FIELDS = ("check", "definition", "head", "tree", "result")
+EVIDENCE_COMMIT = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+EVIDENCE_DEFINITION = re.compile(r"^sha256:[0-9a-f]{64}$")
 TOOL_OWNED = ("schemaVersion", "version")
 # A queue element the lead adds starts with the runner's fields empty.
 QUEUE_START = {"stage": "queued", "checks": [], "syncedHead": None}
@@ -600,6 +605,12 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
     for field in TOOL_OWNED:
         if before.get(field) != after.get(field):
             violations.append(f"/{field} is maintained by the tool")
+    earlier = {item.get("subject"): item for item in before.get("queue", [])}
+    for item in after.get("queue", []):
+        previous = earlier.get(item.get("subject"), {})
+        for field in HANDOFF_QUEUE:
+            if item.get(field) != previous.get(field):
+                violations.append(f"/queue[subject={item.get('subject')}]/{field} is written only by a lane's hand-off")
     meta_before, meta_after = before.get("meta", {}), after.get("meta", {})
     if meta_before.get("updatedAt") != meta_after.get("updatedAt"):
         violations.append("/meta/updatedAt is maintained by the tool")
@@ -681,6 +692,30 @@ def _set_lane_state(state: dict, lane: str, lane_state: str) -> None:
             entry.update(state=lane_state, since=now())
 
 
+def evidence_errors(evidence: object) -> list[str]:
+    """Problems with a lane's suite evidence: what ``merge_queue.py evidence`` prints, one entry a check."""
+    if not isinstance(evidence, list):
+        return ["evidence is a list of entries"]
+    problems = []
+    for entry in evidence:
+        if not isinstance(entry, dict) or set(entry) != set(EVIDENCE_FIELDS):
+            problems.append(f"an evidence entry has exactly {', '.join(EVIDENCE_FIELDS)}")
+            continue
+        if not isinstance(entry["check"], str) or not entry["check"]:
+            problems.append("an evidence entry names its check")
+        if not isinstance(entry["definition"], str) or not EVIDENCE_DEFINITION.match(entry["definition"]):
+            problems.append(f"{entry['check']}: the definition is a sha256: digest")
+        for field in ("head", "tree"):
+            if not isinstance(entry[field], str) or not EVIDENCE_COMMIT.match(entry[field]):
+                problems.append(f"{entry['check']}: the {field} is a full object id")
+        if entry["result"] not in ("passed", "failed"):
+            problems.append(f"{entry['check']}: the result is passed or failed")
+    checks = [entry.get("check") for entry in evidence if isinstance(entry, dict)]
+    if len(checks) != len(set(checks)):
+        problems.append("one evidence entry a check")
+    return problems
+
+
 def handoff(
     directory: Path,
     *,
@@ -689,12 +724,18 @@ def handoff(
     head: str,
     change_request: str,
     rounds: int | None = None,
+    evidence: list[dict] | None = None,
 ) -> dict:
     """A lane hands its reviewed work to the queue, and the hand-off is journaled.
 
     The subject is planned in the lane, or queued in it and waiting or stopped,
     for a hand-off at a new head. Work in flight is never handed off again.
+    ``evidence`` records the lane's own runs of the binding's reusable checks,
+    each with the head and tree it ran on; a hand-off without it keeps none.
     """
+    problems = evidence_errors(evidence or [])
+    if problems:
+        raise StateError("handoff_invalid", "; ".join(problems))
 
     def change(state: dict) -> dict:
         if lane not in [entry["id"] for entry in state["lanes"]]:
@@ -723,6 +764,9 @@ def handoff(
             state["queue"].append(item)
         if rounds is not None:
             item["reportedRounds"] = rounds
+        item.pop("evidence", None)
+        if evidence:
+            item["evidence"] = [{**entry, "recordedAt": now()} for entry in evidence]
         # The lead's own policy, from the record, so no caller can leave it out; only the lead clears the wait.
         if state["meta"].get("handoffsNeedAcceptance"):
             item["pending"] = True
@@ -732,8 +776,10 @@ def handoff(
     _, item = _tool_write(directory, change)
     waiting = "; waiting for the lead to accept it" if item.get("pending") else ""
     rounds_text = f" after {rounds} review rounds" if rounds is not None else ""
+    proof = "".join(f"; suite evidence for {entry['check']} ({entry['result']}) at {entry['head']}"
+                    for entry in evidence or [])
     append_journal(directory, kind="candidate.handed", lane=lane, subject=subject,
-                   summary=f"{lane} handed {subject} at {head} ({change_request}){rounds_text}{waiting}")
+                   summary=f"{lane} handed {subject} at {head} ({change_request}){rounds_text}{proof}{waiting}")
     return item  # type: ignore[return-value]
 
 
@@ -1056,7 +1102,7 @@ def queue_estimates(state: dict, at: str | None = None) -> dict:
 
 # How long a lead's status override lasts when the binding does not say.
 STATUS_OVERRIDE_MAX_AGE_SECONDS = 4 * 3600
-FINISHED_STEPS = ("passed", "failed", "skipped", "timed_out")
+FINISHED_STEPS = ("passed", "failed", "skipped", "timed_out", "reused")
 
 
 def delivery_status(state: dict, journal: list[dict], at: str | None = None) -> dict:
@@ -2823,8 +2869,14 @@ def _handoff_command(args: argparse.Namespace) -> dict:
     missing = [name for name in ("lane", "subject", "head", "change_request") if not getattr(args, name)]
     if missing:
         raise StateError("handoff_invalid", "a hand-off needs " + ", ".join("--" + name.replace("_", "-") for name in missing))
+    evidence = []
+    for text in args.evidence or []:
+        try:
+            evidence.append(json.loads(text))
+        except json.JSONDecodeError as error:
+            raise StateError("handoff_invalid", f"--evidence is not JSON: {error}") from None
     return handoff(args.dir, lane=args.lane, subject=args.subject, head=args.head,
-                   change_request=args.change_request, rounds=args.rounds)
+                   change_request=args.change_request, rounds=args.rounds, evidence=evidence)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2862,6 +2914,8 @@ def main(argv: list[str] | None = None) -> int:
     hand.add_argument("--head")
     hand.add_argument("--change-request")
     hand.add_argument("--rounds", type=int)
+    hand.add_argument("--evidence", action="append",
+                      help="the lane's evidence of a reusable check's run, as merge_queue.py evidence prints it; once a check")
     headline = commands.add_parser("headline", help="the lead's status line, shown until it expires")
     told = headline.add_mutually_exclusive_group(required=True)
     told.add_argument("--text", help="the status line")

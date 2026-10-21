@@ -247,6 +247,8 @@ def _elapsed(start: object, end: object) -> int | None:
 def _step_text(step: dict, as_of: str) -> str:
     """A check step with its timing, as of the record's last write; the page counts on from its own clock."""
     text = f"{step['label']}: {step['state']}"
+    if step["state"] == "reused" and "reusedFrom" in step:
+        return text + f" · reused from the lane's run at {step['reusedFrom']}"
     if "finishedAt" in step and "startedAt" in step:
         return text + f" · took {_duration(_elapsed(step['startedAt'], step['finishedAt']))}"
     if step["state"] == "running" and "startedAt" in step:
@@ -262,6 +264,8 @@ def _step_text(step: dict, as_of: str) -> str:
 def _check_text(check: dict) -> str:
     """A queue row's check with its failing tests and log; the page's program writes the same line."""
     text = f"{check['id']}: {check['state']}"
+    if check["state"] == "reused" and "reusedFrom" in check:
+        text += f" · reused from the lane's run at {check['reusedFrom']}"
     if check.get("failures"):
         text += " · failing " + ", ".join(check["failures"])
     if check.get("log"):
@@ -505,6 +509,9 @@ _PAGE_PROGRAM = """
   }
   function stepText(step, asOf) {
     var text = show(step.label) + ": " + show(step.state);
+    if (step.state === "reused" && typeof step.reusedFrom === "string") {
+      return text + " \\u00b7 reused from the lane's run at " + step.reusedFrom;
+    }
     if (typeof step.finishedAt === "string" && typeof step.startedAt === "string") {
       return text + " \\u00b7 took " + duration(elapsed(step.startedAt, step.finishedAt));
     }
@@ -520,6 +527,7 @@ _PAGE_PROGRAM = """
   }
   function checkText(check) {
     var text = show(check.id) + ": " + show(check.state);
+    if (check.state === "reused" && typeof check.reusedFrom === "string") { text += " \\u00b7 reused from the lane's run at " + check.reusedFrom; }
     if (isArray(check.failures) && check.failures.length) { text += " \\u00b7 failing " + check.failures.map(show).join(", "); }
     if (typeof check.log === "string") { text += " \\u00b7 log " + check.log; }
     return text;
@@ -665,7 +673,8 @@ _PAGE_PROGRAM = """
       var estimate = Object.prototype.hasOwnProperty.call(estimates, item.subject) ? estimates[item.subject] : null;
       if (isObject(estimate)) { entry.appendChild(el("div", estimateText(estimate), "detail")); }
       item.checks.forEach(function (check) {
-        if ((isArray(check.failures) && check.failures.length) || typeof check.log === "string") {
+        if ((isArray(check.failures) && check.failures.length) || typeof check.log === "string" ||
+            typeof check.reusedFrom === "string") {
           entry.appendChild(el("div", checkText(check), "detail"));
         }
       });

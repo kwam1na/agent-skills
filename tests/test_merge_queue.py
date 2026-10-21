@@ -3474,5 +3474,204 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(list(SCRIPTS.rglob("*.pyc")), [])
 
 
+
+class ReusedCheckTests(MergeQueueTestCase):
+    """A check the binding marks reusable is not run again on a tree the lane already checked and passed."""
+
+    REUSING = {"postSync": [], "alwaysRun": [check_entry("always"), check_entry("full")], "reusableChecks": ["full"]}
+
+    def reusing(self, **changes: object) -> Adopter:
+        return self.adopter({**self.REUSING, **changes})
+
+    def hand_off(self, adopter: Adopter, subject: str, head: str, *, evidence: list[dict] | None = None,
+                 checked: str | None = None) -> None:
+        """The lane hands its candidate off through the tool, with the evidence of its own full run."""
+        state = state_tool.read_state(adopter.state)
+        lanes = state["lanes"] or [{"id": "lane-1", "title": "Lane 1", "focus": "", "state": "working",
+                                    "waitingOn": None, "since": state_tool.now()}]
+        planned = [*state.get("planned", []), {"subject": subject, "title": f"Candidate {subject}",
+                                               "lane": "lane-1", "stage": "review"}]
+        state_tool.patch(adopter.state, writer="lead", version=state["version"],
+                         changes={"lanes": lanes, "planned": planned})
+        if evidence is None:
+            evidence = [queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=checked or head)]
+        state_tool.handoff(adopter.state, lane="lane-1", subject=subject, head=head, change_request="cr",
+                           evidence=evidence)
+
+    def runs(self, adopter: Adopter, name: str) -> int:
+        return sum(1 for line in adopter.log_lines() if line.split()[:2] == ["check", name])
+
+    def check_document(self, results: list) -> dict:
+        return next(result.document() for result in results if result.document()["subcommand"] == "check")
+
+    def test_a_lane_head_that_already_contains_the_tip_reuses_the_lanes_full_run(self) -> None:
+        adopter = self.reusing()
+        head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
+        self.hand_off(adopter, "feature", head)
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
+        # The quick checks still run; the full one does not.
+        self.assertEqual((self.runs(adopter, "full"), self.runs(adopter, "always")), (0, 1))
+        self.assertEqual(self.runs(adopter, "test:tests/test_new.txt"), 1)
+        [reused] = [check for check in self.check_document(results)["checks"] if check["id"] == "full"]
+        self.assertEqual(reused["state"], "reused")
+        self.assertEqual(reused["reusedFrom"], {"subject": "feature", "head": head,
+                                                "tree": run("rev-parse", f"{head}^{{tree}}", cwd=adopter.lane)})
+        [row] = [check for check in adopter.item("feature")["checks"] if check["id"] == "full"]
+        self.assertEqual((row["state"], row["reusedFrom"]), ("reused", head))
+        [journaled] = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "check.reused"]
+        self.assertIn(f"reused from the lane's run at {head}", journaled["summary"])
+        # The merge is still pinned to the synced head, whose tree is the one the lane checked.
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        self.assertEqual(run("rev-parse", f"{adopter.tip('main')}^{{tree}}", cwd=adopter.lane),
+                         reused["reusedFrom"]["tree"])
+        # A reused check adds nothing to the check history.
+        self.assertNotIn("full", state_tool.read_state(adopter.state)["meta"]["checkHistory"]["checks"])
+
+    def test_any_difference_in_tree_definition_or_result_runs_the_check(self) -> None:
+        def tip_moved(adopter: Adopter, head: str) -> None:
+            self.hand_off(adopter, "feature", head)
+            adopter.advance_base({"notes/base.txt": "moved\n"})
+
+        def pushed_after(adopter: Adopter, head: str) -> None:
+            later = adopter.lane_commit("feature", {"tests/test_more.txt": "ok\n"})
+            self.hand_off(adopter, "feature", later, checked=head)
+
+        def other_definition(adopter: Adopter, head: str) -> None:
+            found = queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=head)
+            self.hand_off(adopter, "feature", head, evidence=[{**found, "definition": "sha256:" + "0" * 64}])
+
+        def failing(adopter: Adopter, head: str) -> None:
+            found = queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=head)
+            self.hand_off(adopter, "feature", head, evidence=[{**found, "result": "failed"}])
+
+        def missing(adopter: Adopter, head: str) -> None:
+            self.hand_off(adopter, "feature", head, evidence=[])
+
+        def another_check(adopter: Adopter, head: str) -> None:
+            found = queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=head)
+            self.hand_off(adopter, "feature", head, evidence=[{**found, "check": "always"}])
+
+        def forged_tree(adopter: Adopter, head: str) -> None:
+            # The recorded tree is the synced one, but the head it names has another tree.
+            base = run("rev-parse", "origin/main", cwd=adopter.lane)
+            found = queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=head)
+            self.hand_off(adopter, "feature", head, evidence=[{**found, "head": base}])
+
+        for name, setup in (("the tip moved after the hand-off", tip_moved),
+                            ("a push after the hand-off changed the tree", pushed_after),
+                            ("evidence for another check definition", other_definition),
+                            ("a failing result", failing), ("no evidence", missing),
+                            ("evidence for another check", another_check),
+                            ("a head whose tree is not the recorded one", forged_tree)):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.reusing()
+                head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
+                setup(adopter, head)
+                results = self.run_queue(adopter, "feature")
+                self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
+                self.assertEqual(self.runs(adopter, "full"), 1)
+                states = {check["id"]: check["state"] for check in self.check_document(results)["checks"]}
+                self.assertEqual(states["full"], "passed")
+
+    def written_evidence(self, adopter: Adopter, head: str) -> list[dict]:
+        """Evidence a lane could write by hand for a check the binding does not mark reusable."""
+        [full] = [check for check in adopter.binding["alwaysRun"] if check["id"] == "full"]
+        return [{"check": "full", "definition": queue.check_definition(full, adopter.binding), "head": head,
+                 "tree": run("rev-parse", f"{head}^{{tree}}", cwd=adopter.lane), "result": "passed"}]
+
+    def test_with_no_reusable_checks_declared_nothing_is_reused(self) -> None:
+        for name, changes in (("an empty list", {**self.REUSING, "reusableChecks": []}),
+                              ("no list", {key: value for key, value in self.REUSING.items() if key != "reusableChecks"})):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.adopter(changes)
+                head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
+                with self.assertRaises(queue.Stop):
+                    queue.evidence(adopter.lane, remote="origin", base="main", check="full", head=head)
+                self.hand_off(adopter, "feature", head, evidence=self.written_evidence(adopter, head))
+                self.run_queue(adopter, "feature")
+                self.assertEqual(self.runs(adopter, "full"), 1)
+
+    def test_evidence_is_never_reused_across_candidates(self) -> None:
+        adopter = self.reusing()
+        head = adopter.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
+        self.hand_off(adopter, "feature", head)
+        run("fetch", "--quiet", "origin", cwd=adopter.operator)
+        runner = adopter.runner()
+        runner.load()
+        [full] = [check for check in runner.binding["alwaysRun"] if check["id"] == "full"]
+        tree = run("rev-parse", f"{head}^{{tree}}", cwd=adopter.lane)
+        own = adopter.item("feature")
+        self.assertEqual(set(runner.reusable([("feature", own)], [full], tree)), {"full"})
+        # Another candidate at the very same tree has no evidence of its own.
+        other = {**own, "subject": "other"}
+        other.pop("evidence")
+        self.assertEqual(runner.reusable([("other", other)], [full], tree), {})
+        # Evidence for a head the runner's repository does not have is never taken on trust.
+        unknown = {**own, "evidence": [{**own["evidence"][0], "head": "0" * 40}]}
+        self.assertEqual(runner.reusable([("feature", unknown)], [full], tree), {})
+
+    def test_a_batch_reuses_only_when_the_combined_tree_is_a_members_checked_tree(self) -> None:
+        adopter = self.reusing()
+        first = adopter.lane_commit("first", {"tests/test_first.txt": "ok\n"})
+        second = adopter.lane_commit("second", {"tests/test_second.txt": "ok\n"})
+        self.hand_off(adopter, "first", first)
+        self.hand_off(adopter, "second", second)
+        results = adopter.runner().run_command("batch", ["first", "second"])
+        self.assertEqual({result.document()["outcome"] for result in results}, {"merged"},
+                         [result.document() for result in results])
+        # The combined tree is neither member's checked tree, so the full check runs, once.
+        self.assertEqual(self.runs(adopter, "full"), 1)
+        runner = adopter.runner()
+        runner.load()
+        [full] = [check for check in runner.binding["alwaysRun"] if check["id"] == "full"]
+        members = [("first", adopter.item("first")), ("second", adopter.item("second"))]
+        second_tree = adopter.item("second")["evidence"][0]["tree"]
+        found = runner.reusable(members, [full], second_tree)
+        self.assertEqual(found["full"]["subject"], "second")
+
+    def test_the_binding_reuses_only_its_own_checks(self) -> None:
+        adopter = self.reusing()
+        binding = copy.deepcopy(adopter.binding)
+        for listed, problem in ((["unit"], "unit"), (["full", "full"], "unique")):
+            binding["reusableChecks"] = listed
+            with self.subTest(listed):
+                self.assertTrue([error for error in queue.binding_errors(binding)
+                                 if error.startswith("/reusableChecks") and problem in error], queue.binding_errors(binding))
+        binding["reusableChecks"] = ["full", "fallback"]
+        self.assertEqual(queue.binding_errors(binding), [])
+
+    def test_a_check_definition_changes_with_anything_that_changes_the_run(self) -> None:
+        adopter = self.reusing()
+        binding = copy.deepcopy(adopter.binding)
+        [full] = [check for check in binding["alwaysRun"] if check["id"] == "full"]
+        digest = queue.check_definition(full, binding)
+        self.assertRegex(digest, r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual(queue.check_definition(copy.deepcopy(full), copy.deepcopy(binding)), digest)
+        changes = {
+            "argv": lambda check, b: check["argv"].append("--more"),
+            "cwd": lambda check, b: check.update(cwd="src"),
+            "timeout": lambda check, b: check.update(timeoutSeconds=7),
+            "the default timeout": lambda check, b: b.update(checkTimeoutSeconds=19),
+            "prerequisites": lambda check, b: check.update(prerequisites=["always"]),
+            "the profile": lambda check, b: check.update(environmentProfile="default"),
+            "the profile's environment": lambda check, b: (check.update(environmentProfile="default"),
+                                                           b["profiles"]["default"]["environment"].update(X="1")),
+            "the binding's environment": lambda check, b: b["environment"].update(MQ_EXTRA="1"),
+        }
+        seen = {digest}
+        for name, change in changes.items():
+            with self.subTest(name):
+                check, changed = copy.deepcopy(full), copy.deepcopy(binding)
+                change(check, changed)
+                found = queue.check_definition(check, changed)
+                self.assertNotIn(found, seen)
+                seen.add(found)
+        # Its reasons say why it was selected, not how it runs.
+        self.assertEqual(queue.check_definition({**full, "reasons": ["other"]}, binding), digest)
+
+
 if __name__ == "__main__":
     unittest.main()

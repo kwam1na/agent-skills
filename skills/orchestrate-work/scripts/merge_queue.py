@@ -23,6 +23,7 @@ import concurrent.futures
 import contextlib
 import copy
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -280,6 +281,13 @@ def binding_errors(binding: object) -> list[str]:
         else:
             if "id" not in pattern.groupindex:
                 errors.append("/checkOutput/failurePattern: needs a named group id")
+    own = {check["id"] for check in [*binding["alwaysRun"], *binding["fallback"]]}
+    reusable = binding.get("reusableChecks", [])
+    if len(set(reusable)) != len(reusable):
+        errors.append("/reusableChecks: ids must be unique")
+    for name in reusable:
+        if name not in own:
+            errors.append(f"/reusableChecks: {name} is not one of the binding's own checks (alwaysRun or fallback)")
     for index, flake in enumerate(binding.get("flakes", [])):
         if "tests" in flake and not flake["tests"]:
             errors.append(f"/flakes/{index}/tests: name at least one pattern, or leave tests out for the whole check")
@@ -289,6 +297,28 @@ def binding_errors(binding: object) -> list[str]:
             except re.error as error:
                 errors.append(f"/flakes/{index}/tests: {pattern!r} is not a regular expression: {error}")
     return errors
+
+
+def check_definition(check: dict, binding: dict) -> str:
+    """How a check runs, as one digest: its argv, cwd, prerequisites, timeout and environment.
+
+    The argv is digested before its placeholders are filled in, so the same
+    definition digests alike on every tree. A change to the binding that
+    changes how the check runs changes the digest; its reasons do not.
+    """
+    profile = check.get("environmentProfile")
+    described = {
+        "id": check["id"],
+        "argv": check["argv"],
+        "cwd": check["cwd"],
+        "prerequisites": check["prerequisites"],
+        "timeoutSeconds": check.get("timeoutSeconds", binding["checkTimeoutSeconds"]),
+        "environmentProfile": profile,
+        "profileEnvironment": binding["profiles"].get(profile, {"environment": {}})["environment"] if profile else {},
+        "environment": binding["environment"],
+    }
+    text = json.dumps(described, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(text.encode("ascii")).hexdigest()
 
 
 def selection_errors(checks: list[dict], binding: dict, check_cwd: Path | None) -> list[str]:
@@ -750,17 +780,19 @@ class Runner:
         Written before a check starts and after it ends, so both views name the
         check that is running and never disagree. Every member of a batch shows
         the batch's checks. A step carries its times and its expected duration;
-        a queue row's check carries its failing tests and its log.
+        a queue row's check carries its failing tests and its log. A reused
+        check carries the head of the lane's run it was reused from.
         """
         steps = [
             {"label": record["id"], "state": record["state"],
-             **{key: record[key] for key in ("startedAt", "finishedAt", "expectedSeconds") if key in record}}
+             **{key: record[key] for key in ("startedAt", "finishedAt", "expectedSeconds", "reusedFrom") if key in record}}
             for record in states
         ]
         rows = [
             {"id": record["id"], "state": record["state"],
              **({"failures": [failure["id"] for failure in record["failures"]]} if record.get("failures") else {}),
-             **({"log": record["log"]} if "log" in record else {})}
+             **({"log": record["log"]} if "log" in record else {}),
+             **({"reusedFrom": record["reusedFrom"]} if "reusedFrom" in record else {})}
             for record in states
         ]
 
@@ -943,17 +975,8 @@ class Runner:
 
     # -- binding -----------------------------------------------------------
 
-    def load(self) -> str:
-        """Fetch the base, read the binding from it, and set up workRoot."""
-        # A relative workRoot resolves against --repo, so --repo must be the
-        # top level git reports; from a subdirectory, "../tools" would name a
-        # tracked folder the checks below never examined.
-        top = self.git("rev-parse", "--show-toplevel", check=False)
-        if top.returncode != 0 or folded(Path(top.stdout.strip()).resolve()) != folded(self.repository):
-            raise Stop("binding_invalid", f"--repo must be the top level of a checkout, not {self.repository}")
-        if not self.valid_branch(self.base):
-            raise Stop("ref_invalid", f"not a valid branch name: {self.base}")
-        base_head = self.fetch(self.base, "base")
+    def read_binding(self, base_head: str) -> dict:
+        """The binding as the base commit holds it, validated."""
         shown = self.git("show", f"{base_head}:{BINDING_PATH}", check=False)
         if shown.returncode != 0:
             raise Stop("binding_invalid", f"the base has no {BINDING_PATH}")
@@ -966,6 +989,69 @@ class Runner:
             raise Stop("binding_invalid", "; ".join(errors))
         if binding["base"] != {"remote": self.remote, "ref": self.base}:
             raise Stop("binding_invalid", "the binding names a different base than the one it was read from")
+        return binding
+
+    def evidence(self, check_id: str, head: str, result: str = "passed") -> dict:
+        """What a lane records of its own run of a reusable check at ``head``, for its hand-off.
+
+        The check's definition is digested from the binding on the base as it
+        is now; the tree is the head's own. Only a check the binding marks
+        reusable has evidence.
+        """
+        binding = self.read_binding(self.fetch(self.base, "base"))
+        if check_id not in binding.get("reusableChecks", []):
+            raise Stop("binding_invalid", f"the binding does not mark {check_id} reusable")
+        check = next(check for check in [*binding["alwaysRun"], *binding["fallback"]] if check["id"] == check_id)
+        commit = self.git("rev-parse", "--verify", "--quiet", f"{head}^{{commit}}", check=False)
+        if commit.returncode != 0:
+            raise Stop("ref_invalid", f"{head} is not a commit here")
+        commit_id = commit.stdout.strip()
+        return {"check": check_id, "definition": check_definition(check, binding), "head": commit_id,
+                "tree": self.tree(commit_id), "result": result}
+
+    def tree_of(self, head: str) -> str | None:
+        """The tree of a commit this repository has, or None."""
+        found = self.git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}", check=False)
+        return found.stdout.strip() if found.returncode == 0 else None
+
+    def reusable(self, members: list[tuple[str, dict]], checks: list[dict], tree: str) -> dict[str, dict]:
+        """The checks to reuse rather than run on ``tree``, each with the run it is reused from.
+
+        A check is reused only when the binding marks it reusable and one of
+        the candidates being checked handed off evidence of a passing run of
+        that check, under the same definition, at a head whose tree, read here,
+        is ``tree``. Evidence is read from each candidate's own hand-off, so it
+        is never reused for another candidate.
+        """
+        declared = set(self.binding.get("reusableChecks", []))
+        found: dict[str, dict] = {}
+        for check in checks:
+            if check["id"] not in declared:
+                continue
+            definition = check_definition(check, self.binding)
+            for subject, item in members:
+                match = next((
+                    entry for entry in item.get("evidence", [])
+                    if entry["check"] == check["id"] and entry["definition"] == definition
+                    and entry["result"] == "passed" and entry["tree"] == tree and self.tree_of(entry["head"]) == tree
+                ), None)
+                if match is not None:
+                    found[check["id"]] = {"subject": subject, "head": match["head"], "tree": tree}
+                    break
+        return found
+
+    def load(self) -> str:
+        """Fetch the base, read the binding from it, and set up workRoot."""
+        # A relative workRoot resolves against --repo, so --repo must be the
+        # top level git reports; from a subdirectory, "../tools" would name a
+        # tracked folder the checks below never examined.
+        top = self.git("rev-parse", "--show-toplevel", check=False)
+        if top.returncode != 0 or folded(Path(top.stdout.strip()).resolve()) != folded(self.repository):
+            raise Stop("binding_invalid", f"--repo must be the top level of a checkout, not {self.repository}")
+        if not self.valid_branch(self.base):
+            raise Stop("ref_invalid", f"not a valid branch name: {self.base}")
+        base_head = self.fetch(self.base, "base")
+        binding = self.read_binding(base_head)
         self.binding = binding
         root = Path(binding["workRoot"])
         self.work_root = (root if root.is_absolute() else self.repository / root).resolve()
@@ -1308,7 +1394,9 @@ class Runner:
                 raise Stop("no_checks", "nothing would check this candidate's changes")
             result.notes.append("the candidate changes nothing, so no check was selected")
         self.write_progress([subject], [{"id": check["id"], "state": "pending"} for check in checks])
-        outcomes = self.run_checks([subject], checks, checkout, context.with_values(treeSha=self.tree(synced)), result)
+        reused = self.reusable([(subject, item)], checks, self.tree(synced))
+        outcomes = self.run_checks([subject], checks, checkout, context.with_values(treeSha=self.tree(synced)), result,
+                                   reused=reused)
         self.assert_clean(checkout, "the checkout after the checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
         if failed:
@@ -1449,8 +1537,10 @@ class Runner:
 
     def run_checks(
         self, subjects: list[str], checks: list[dict], checkout: Path, context: Context, result: Result,
-        whole_run: bool = True,
+        whole_run: bool = True, reused: dict[str, dict] | None = None,
     ) -> dict[str, str]:
+        """Run the checks in order, and record each one the lane's evidence lets this run reuse instead."""
+        reused = reused or {}
         outcomes: dict[str, str] = {}
         records = {check["id"]: {"id": check["id"], "state": "pending"} for check in checks}
         history = self.history()["checks"]
@@ -1499,11 +1589,26 @@ class Runner:
                     check = pending[0]
                     if any(name not in outcomes for name in check["prerequisites"]):
                         break
-                    if any(outcomes[name] != "passed" for name in check["prerequisites"]):
+                    if any(outcomes[name] not in ("passed", "reused") for name in check["prerequisites"]):
                         pending.pop(0)
                         outcomes[check["id"]] = "skipped"
                         records[check["id"]]["state"] = "skipped"
                         result.checks.append({"id": check["id"], "state": "skipped", "exitCode": None, "seconds": 0})
+                        show()
+                        continue
+                    if check["id"] in reused:
+                        # The tree is the one the lane checked and passed: its run stands, on the record.
+                        pending.pop(0)
+                        source = reused[check["id"]]
+                        outcomes[check["id"]] = "reused"
+                        records[check["id"]].pop("expectedSeconds", None)
+                        records[check["id"]].update(state="reused", reusedFrom=source["head"])
+                        result.checks.append({"id": check["id"], "state": "reused", "exitCode": None, "seconds": 0,
+                                              "reusedFrom": dict(source)})
+                        for subject in subjects:
+                            self.journal("check.reused",
+                                         f"{check['id']} reused from the lane's run at {source['head']} "
+                                         f"({source['subject']}): the tree is the one it checked and passed", subject)
                         show()
                         continue
                     alone = not check.get("parallelSafe") or limit == 1
@@ -1726,7 +1831,9 @@ class Runner:
         if not checks and changes:
             raise Stop("no_checks", "nothing would check this batch's changes")
         self.write_progress(subjects, [{"id": check["id"], "state": "pending"} for check in checks])
-        outcomes = self.run_checks(subjects, checks, checkout, context, result, whole_run=whole_run)
+        # A member's evidence counts only when the combined tree is the tree it checked.
+        reused = self.reusable([(member.subject, member.item) for member in members], checks, members[-1].tree)
+        outcomes = self.run_checks(subjects, checks, checkout, context, result, whole_run=whole_run, reused=reused)
         self.assert_clean(checkout, "the checkout after the batch's checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
         return failed, checks, checkout, changes
@@ -2249,6 +2356,15 @@ def serve(
             pause()
 
 
+def evidence(repository: Path, *, remote: str, base: str, check: str, head: str, result: str = "passed") -> dict:
+    """A lane's evidence of its own run of a reusable check at ``head``, for ``delivery_state.py handoff --evidence``."""
+    runner = Runner(repository, repository, remote=remote, base=base)
+    try:
+        return runner.evidence(check, head, result)
+    finally:
+        shutil.rmtree(runner._bootstrap_hooks, ignore_errors=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="the repository the queue serves")
@@ -2268,7 +2384,20 @@ def main(argv: list[str] | None = None) -> int:
     release = commands.add_parser("release")
     release.add_argument("ref")
     release.add_argument("--approved-by", help="records an approval the operator already gave")
+    proof = commands.add_parser("evidence", help="a lane's evidence of its own run of a reusable check, for its hand-off")
+    proof.add_argument("--check", required=True, help="the reusable check the lane ran")
+    proof.add_argument("--head", required=True, help="the commit the lane ran it on")
+    proof.add_argument("--result", choices=("passed", "failed"), default="passed", help="how the lane's run ended")
     args = parser.parse_args(argv)
+    if args.command == "evidence":
+        try:
+            found = evidence(args.repo, remote=args.remote, base=args.base, check=args.check, head=args.head,
+                             result=args.result)
+        except Stop as stop:
+            sys.stdout.buffer.write(ascii_json({"reason": stop.reason, "detail": stop.detail}))
+            return 1
+        sys.stdout.buffer.write(ascii_json(found))
+        return 0
     if args.command == "serve" and not args.until_idle:
         # Serving until stopped: one document a line as each is written; state/results keeps them all.
         def report(result: Result) -> None:

@@ -103,6 +103,7 @@ proceeds and the lead notes the gap in its close-out.
 | `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. |
 | `check.finished` | None: its outcome posts with `candidate.merged` or `candidate.stopped`. |
 | `check.retried` | On the flake's tracking reference: one more retry, naming the candidate and the failing tests, as evidence for fixing the flake. |
+| `check.reused` | None: the candidate's work item already says it was handed off and is being checked; the reused check shows in the record and the views. |
 | `candidate.merged` | On the ticket: the merge commit, the checks run, and any check reported but not awaited; the ticket moves to its review or completed state. |
 | `candidate.stopped` | On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or pending a decision. |
 | `base.broken` | On the epic: the stop code and its detail (the failing check, an unverified merge, a base that moved under a batch, or a batch that landed in part), and that the queue is stopped; `base.repaired` reopens it. |
@@ -161,7 +162,9 @@ decision. Lanes post on their own tickets at the points the lane brief names.
 - Lanes write their own hand-off, review rounds and focus through the state
   tool (the lane brief says how). Its `handoff` command moves a lane's planned
   work into `queue[]` at `queued`, with its head, change request and rounds,
-  sets the lane to `handed`, and journals `candidate.handed`; you do not.
+  and any suite evidence the lane gives, sets the lane to `handed`, and
+  journals `candidate.handed`; you do not. Only a hand-off writes evidence:
+  a patch that changes `queue[i].evidence`, yours or the runner's, is refused.
   Journal a `review.round`, or queue a hand-off yourself, only for a lane
   that could not write to the record, with the times, verdicts and findings
   it gives, so its stop's stats are complete.
@@ -407,8 +410,14 @@ the state tool; the lead no longer writes either for you:
 
 ```bash
 python3 -B <skill>/scripts/delivery_state.py --dir <state> focus --lane <lane> --text "<what you are doing>" [--state working|reviewing|blocked] [--waiting-on <who>]
-python3 -B <skill>/scripts/delivery_state.py --dir <state> handoff --lane <lane> --subject <subject> --head <reviewed head> --change-request <reference> --rounds <n>
+python3 -B <skill>/scripts/delivery_state.py --dir <state> handoff --lane <lane> --subject <subject> --head <reviewed head> --change-request <reference> --rounds <n> [--evidence "$(python3 -B <skill>/scripts/merge_queue.py --repo <lane checkout> --state <state> --remote <remote> --base <base> evidence --check <reusable check> --head <head you ran it on>)"]
 ```
+
+When the binding lists a check in `reusableChecks` and you ran that check
+yourself and it passed, add its evidence to the hand-off, once for each such
+check: the queue skips running it again when the tree it would check is the one
+you checked. Record only a run that finished at the head you name; add
+`--result failed` for one that failed, or leave the evidence out.
 
 The hand-off queues your planned work at its reviewed head; the runner takes
 it from there. To hand off a stopped candidate again, run the same command
@@ -642,6 +651,7 @@ substitutes inside a longer string:
 | `checkOutput` | Optional. `{failurePattern}`: a regular expression with a named group `id` and an optional named group `message`, matched line by line against a failed check's output. Each match is a failing test or step, shown in the record, the journal and the views. |
 | `flakes` | Optional. Known flakes, each `{check, tests?, ref}`: the check's id, the regular expressions its flaky failure ids match in full (leave `tests` out when the whole check is flaky), and the reference that tracks the flake. See "Flakes and retries". |
 | `parallelChecks` | Optional. How many checks marked `parallelSafe` may run at once; 1 when absent. A check without `parallelSafe` always runs alone. |
+| `reusableChecks` | Optional. Ids of the binding's own checks (`alwaysRun` or `fallback`) the runner may reuse from a lane's hand-off evidence instead of running them again. None when absent, so nothing is reused until you opt in. See "Reused checks". |
 | `batch` | Optional. `{culpritSearch}`: how `batch` finds the member that failed a batch's checks, `bisect` (the default, fewest check runs) or `serial` (each prefix in order). |
 | `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match; these names are matched without case. The runner drops an inherited setting of them before running git or any declared argv; a profile's environment may still set them for its checks. |
 | `ready` | An argv run before merging; a non-zero exit stops with `ready_refused`. |
@@ -802,6 +812,33 @@ Never retried: a mix of a flake and anything else; a timeout; and, for a flake
 declared with `tests`, a failure whose ids the pattern cannot read, since the
 patterns can only vouch for failures they can name. A declaration without
 `tests` covers the whole check, whatever its output says.
+
+### Reused checks
+
+A long check the lane already ran need not run again on the very tree it
+passed on. A lane names such a run in its hand-off with `--evidence`, which
+`merge_queue.py evidence` prints: the check, the head it ran on, that head's
+tree, a digest of the check's definition (its argv before placeholders are
+filled in, cwd, prerequisites, timeout, and its profile's and the binding's
+environment), and the result. After syncing, the runner reuses the run, and
+does not run the check, only when all of these hold:
+
+- the binding lists the check in `reusableChecks`;
+- the evidence is this candidate's own, from its hand-off;
+- it is for the same check and the same definition digest as the binding on
+  the base now;
+- its result is `passed`;
+- the synced tree is the evidence's tree, and the runner's own repository
+  reads that tree at the evidence's head.
+
+Any difference runs the check as usual: the base moved, the lane pushed after
+it ran the check, the binding changed the check, or the run failed or is
+missing. The record shows a reused check as `reused`, with the head of the
+lane's run, in the result (`reusedFrom`), the queue row, the checking panel,
+the journal (`check.reused`) and both views. A reused check adds nothing to the
+check history. The merge is pinned to the synced head as always, so nothing
+lands that was not checked by tree. In a batch, a member's evidence counts only
+when the batch's combined tree is that member's checked tree.
 
 ### What a batch proves
 
