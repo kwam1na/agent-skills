@@ -595,12 +595,12 @@ EMPTY_STATE = {
     "extensions": {},
 }
 PINNED_EMPTY_VIEWS = {
-    "delivery.md": "ee0fc476dfb0eb093a6a12a52fe0745943942be5ca9cf0158fc98e4167b61422",
-    "delivery.html": "fcb71d21e1ee7d6441c024671e6ca6ff22149a45b9697b389d07f4439e123208",
+    "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
+    "delivery.html": "be2c263e7209d1e018b02b4def52021f68cdf2c7ab4bc0aef08d2695b037215a",
 }
 PINNED_VIEWS = {
-    "delivery.md": "6cc957b383a306c8d5b57741020d79bde2b774bcae61a08b88f31d0828be7ad3",
-    "delivery.html": "fe8679a7088f7d21107d329cf246f8f298c68957c4fd3644e1286481e8921cda",
+    "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
+    "delivery.html": "d147718f7b633f522eb061b2cea86cbe74b1f45615a1fe288d92623714671dad",
 }
 
 
