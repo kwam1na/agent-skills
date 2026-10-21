@@ -60,7 +60,8 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from delivery_state import (  # noqa: E402
-    JOURNAL_FILE, OUTBOX_DIRECTORY, OUTBOX_FILE, PUBLISHED_FILE, QUEUE_LOCK, STATE_FILE, STATE_LOCK, StateError,
+    JOURNAL_FILE, OUTBOX_DIRECTORY, OUTBOX_FILE, PUBLISHED_FILE, QUEUE_LOCK, RECOVERY_FILE, STATE_FILE, STATE_LOCK,
+    StateError,
     dumps, read_published, show,
 )
 
@@ -70,7 +71,7 @@ DEFAULT_RENDERERS = (
     {"id": "static-page", "builtin": "static-page", "output": "delivery.html"},
 )
 # The files the state tool and the runner own; no view may replace them.
-RESERVED = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE, OUTBOX_DIRECTORY)
+RESERVED = (STATE_FILE, JOURNAL_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE, OUTBOX_DIRECTORY, RECOVERY_FILE)
 DEFAULT_TIMEOUT_SECONDS = 60
 MAX_TIMEOUT_SECONDS = 600
 # How much of a failing command's stderr the result keeps, in characters, and
@@ -622,10 +623,13 @@ def parse_config(config: object) -> tuple[list[dict], list[dict]]:
     """The renderers and publishers a ``state`` configuration declares."""
     if not isinstance(config, dict):
         raise ConfigError("the state configuration must be an object")
-    allowed = {"directory", "renderers", "publishers"}
+    allowed = {"directory", "renderers", "publishers", "snapshotMaxAgeSeconds"}
     unknown = sorted(set(config) - allowed)
     if unknown:
         raise ConfigError(f"unknown state configuration fields: {', '.join(unknown)}")
+    age = config.get("snapshotMaxAgeSeconds")
+    if age is not None and (not isinstance(age, int) or isinstance(age, bool) or age < 1):
+        raise ConfigError("snapshotMaxAgeSeconds must be a whole number of seconds, at least 1")
     renderers = []
     outputs: set[str] = set()
     for index, entry in enumerate(_entries(config, "renderers")):
@@ -657,6 +661,9 @@ def parse_config(config: object) -> tuple[list[dict], list[dict]]:
             # A host publisher runs nothing: the lead publishes its outbox with the host's own tool.
             if entry["kind"] != "host" or set(entry) != {"id", "kind"}:
                 raise ConfigError(f"{where}: a publisher with a kind is {{id, kind: host}} and nothing else")
+            if any(publisher.get("kind") == "host" for publisher in publishers):
+                # Every host publisher writes the one outbox; a second would overwrite the first.
+                raise ConfigError(f"{where}: a state configuration has at most one host publisher")
             publishers.append({"id": entry["id"], "kind": "host"})
             continue
         unknown = sorted(set(entry) - {"id", "argv", "timeoutSeconds"})
@@ -826,7 +833,7 @@ def _write_outbox(directory: Path, publisher_id: str, shown: dict) -> dict:
     journal = [item for item in shown["journal"] if item["id"] > through]
     # Readers ignore fields they do not know, so later projections can join these.
     outbox = {"version": shown["state"]["version"], "journalThrough": journal[-1]["id"] if journal else through,
-              "state": shown["state"], "journal": journal, "stats": shown["stats"]}
+              "publisher": publisher_id, "state": shown["state"], "journal": journal, "stats": shown["stats"]}
     relative = f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE}"
     try:
         _write_atomically(directory / OUTBOX_DIRECTORY / OUTBOX_FILE, dumps(outbox).encode("utf-8"))

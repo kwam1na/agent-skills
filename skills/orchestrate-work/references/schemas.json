@@ -1490,6 +1490,11 @@
                 }
               ]
             }
+          },
+          "snapshotMaxAgeSeconds": {
+            "description": "How old a forge or tracker snapshot may be before reconcile refuses it, in seconds. Optional; 900 when absent, and --max-age overrides it.",
+            "type": "integer",
+            "minimum": 1
           }
         }
       }

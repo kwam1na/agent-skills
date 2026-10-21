@@ -47,6 +47,9 @@ STATE_LOCK = "state.lock"
 QUEUE_LOCK = "queue.lock"
 # What was last published, and the outbox a host publisher leaves for the lead.
 PUBLISHED_FILE = "published.json"
+# A recovery in progress: written before a missed merge is recorded, removed
+# once its journal entry is appended, and finished by the next reconcile.
+RECOVERY_FILE = "recovery.json"
 OUTBOX_DIRECTORY = "outbox"
 OUTBOX_FILE = "outbox.json"
 # A snapshot older than this is refused, so a skipped listing fails loudly.
@@ -958,10 +961,18 @@ def reconcile(
                 raise StateError("snapshot_invalid", f"{item['subject']} is in two {snapshot['source']} snapshots, "
                                                      f"{seen[key]} and {Path(path).name}: give one view of each")
             seen[key] = Path(path).name
+    finished: list[dict] = []
+    held: list[dict] = []
+    _finish_recovery(directory, finished, held)
     for attempt in range(1, RECONCILE_ATTEMPTS + 1):
         state = read_state(directory)
         lead, recoveries, changes, reports = _plan(state, snapshots)
+        changes[:0] = finished
+        reports[:0] = held
         if not lead and not recoveries:
+            if finished:
+                return {"ok": True, "drift": True, "changes": changes, "reports": reports,
+                        "summary": f"{len(changes)} change{'s' if len(changes) != 1 else ''}"}
             return {"ok": True, "drift": False, "changes": [], "reports": reports, "summary": "no drift"}
         try:
             if lead:
@@ -1010,22 +1021,81 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                 if item is None or item["stage"] == "merged":
                     withdraw(recovery["subject"])
                     break
+                where = f" as change request {recovery['changeRequest']}" if recovery["changeRequest"] else ""
+                intent = {
+                    "subject": recovery["subject"], "head": recovery["head"], "lane": recovery["lane"],
+                    "summary": f"Recorded from a forge snapshot: merged{where} at {recovery['head']}, "
+                               "not recorded by the runner",
+                    "journalAfter": len(read_journal(directory)),
+                }
+                # The intent first: a crash after the state write and before
+                # the journal entry is then finished by the next reconcile.
+                _write_atomically(directory / RECOVERY_FILE, dumps(intent))
                 try:
                     patch(directory, writer="runner", version=state["version"], selector=selector,
                           changes={"stage": "merged", "syncedHead": recovery["head"]})
                 except StateError as error:
+                    (directory / RECOVERY_FILE).unlink(missing_ok=True)
                     if error.code != "version_stale":
                         raise
                     continue
-                where = f" as change request {recovery['changeRequest']}" if recovery["changeRequest"] else ""
-                append_journal(
-                    directory, kind="candidate.merged", subject=recovery["subject"], lane=recovery["lane"],
-                    summary=f"Recorded from a forge snapshot: merged{where} at {recovery['head']}, "
-                            "not recorded by the runner",
-                )
+                _journal_recovery(directory, intent)
+                (directory / RECOVERY_FILE).unlink(missing_ok=True)
                 break
             else:
                 raise StateError("version_stale", "the record kept changing while a merge was recovered")
+
+
+def _journal_recovery(directory: Path, intent: dict) -> dict:
+    return append_journal(directory, kind="candidate.merged", subject=intent["subject"], lane=intent["lane"],
+                          summary=intent["summary"])
+
+
+def _read_recovery(directory: Path) -> dict | None:
+    try:
+        intent = json.loads((directory / RECOVERY_FILE).read_bytes().decode("utf-8"))
+    except FileNotFoundError:
+        return None
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise StateError("state_invalid", f"{RECOVERY_FILE} is not JSON") from None
+    shape = {"subject": str, "head": str, "summary": str, "journalAfter": int}
+    if (not isinstance(intent, dict) or set(intent) != {*shape, "lane"}
+            or not all(isinstance(intent[key], kind) and not isinstance(intent[key], bool) for key, kind in shape.items())
+            or not (intent["lane"] is None or isinstance(intent["lane"], str))):
+        raise StateError("state_invalid", f"{RECOVERY_FILE} is malformed")
+    return intent
+
+
+def _finish_recovery(directory: Path, finished: list[dict], held: list[dict]) -> None:
+    """Finish a recovery a crash interrupted, so its journal entry is never lost or written twice.
+
+    Under the queue lock, tried and not waited for, like the recovery itself:
+    when the entry was appended, the intent is only cleared; when the merge was
+    recorded but not journaled, the entry is appended; when the state write
+    never landed, the intent is dropped and the plan recovers the merge again.
+    """
+    intent = _read_recovery(directory)
+    if intent is None:
+        return
+    with contextlib.ExitStack() as locks:
+        try:
+            locks.enter_context(file_lock(directory / QUEUE_LOCK, timeout=0))
+        except StateError as error:
+            if error.code != "lock_timeout":
+                raise
+            held.append({"subject": intent["subject"],
+                         "note": "an interrupted recovery waits for the runner to stop: reconcile again"})
+            return
+        journal = read_journal(directory)
+        journaled = any(entry["id"] > intent["journalAfter"] and entry["kind"] == "candidate.merged"
+                        and entry["subject"] == intent["subject"] and entry["summary"] == intent["summary"]
+                        for entry in journal)
+        item = next((item for item in read_state(directory)["queue"] if item["subject"] == intent["subject"]), None)
+        if not journaled and item is not None and item["stage"] == "merged" and item["syncedHead"] == intent["head"]:
+            _journal_recovery(directory, intent)
+            finished.append({"subject": intent["subject"], "recovery": True,
+                             "change": "an interrupted recovery's journal entry: appended"})
+        (directory / RECOVERY_FILE).unlink(missing_ok=True)
 
 
 def read_outbox(directory: Path) -> dict | None:
@@ -1038,9 +1108,51 @@ def read_outbox(directory: Path) -> dict | None:
         raise StateError("state_invalid", f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE} is not JSON") from None
     if (not isinstance(outbox, dict)
             or not all(isinstance(outbox.get(key), int) and not isinstance(outbox.get(key), bool)
-                       and outbox[key] >= 0 for key in ("version", "journalThrough"))):
+                       and outbox[key] >= 0 for key in ("version", "journalThrough"))
+            or not (outbox.get("publisher") is None or isinstance(outbox["publisher"], str))):
         raise StateError("state_invalid", f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE} is malformed")
     return outbox
+
+
+def retire_outbox(directory: Path, publisher: str) -> dict:
+    """Remove a host publisher's outbox, so it no longer caps ``ack``.
+
+    Explicit, never implied: a render without a binding cannot tell a removed
+    publisher from one it was simply not given, so only this removes an outbox.
+    An outbox written before outboxes named their publisher is retired by any id.
+    """
+    with file_lock(directory / STATE_LOCK):
+        read_state(directory)
+        outbox = read_outbox(directory)
+        if outbox is None:
+            raise StateError("outbox_missing", "there is no outbox to retire")
+        owner = outbox.get("publisher")
+        if owner is not None and owner != publisher:
+            raise StateError("outbox_not_owned", f"the outbox is {owner}'s, not {publisher}'s")
+        (directory / OUTBOX_DIRECTORY / OUTBOX_FILE).unlink()
+        with contextlib.suppress(OSError):
+            (directory / OUTBOX_DIRECTORY).rmdir()
+    return {"publisher": owner, "version": outbox["version"], "journalThrough": outbox["journalThrough"]}
+
+
+def binding_state(path: Path) -> dict:
+    """The binding's ``state`` member, for the two fields the state tool reads from it."""
+    try:
+        binding = json.loads(Path(path).read_bytes().decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise StateError("binding_invalid", f"cannot read the binding {Path(path).name}: {error}") from None
+    member = binding.get("state") if isinstance(binding, dict) else None
+    if not isinstance(member, dict) or not isinstance(member.get("publishers", []), list):
+        raise StateError("binding_invalid", f"{Path(path).name} has no state member with a publishers list")
+    age = member.get("snapshotMaxAgeSeconds")
+    if age is not None and (not isinstance(age, int) or isinstance(age, bool) or age < 1):
+        raise StateError("binding_invalid", "state.snapshotMaxAgeSeconds is a whole number of seconds, at least 1")
+    return member
+
+
+def host_publishers(member: dict) -> set[str]:
+    return {entry["id"] for entry in member.get("publishers", [])
+            if isinstance(entry, dict) and entry.get("kind") == "host" and isinstance(entry.get("id"), str)}
 
 
 # ---------------------------------------------------------------------------
@@ -1098,7 +1210,7 @@ def ack(directory: Path, *, version: int, through: int) -> dict:
     return published
 
 
-def publication(directory: Path, shown: dict) -> dict:
+def publication(directory: Path, shown: dict, hosts: set[str] | None = None) -> dict:
     """Whether what was published, and the outbox, lag the record.
 
     The record is fine when only an acknowledgement or an outbox is unreadable:
@@ -1122,6 +1234,9 @@ def publication(directory: Path, shown: dict) -> dict:
         "journalThrough": through,
         "unpublishedEntries": unpublished,
         "outboxVersion": outbox["version"] if outbox else None,
+        "outboxPublisher": outbox.get("publisher") if outbox else None,
+        # Known only against a binding: an outbox whose host publisher it no longer names.
+        "outboxOrphaned": None if hosts is None or outbox is None else outbox.get("publisher") not in hosts,
         "outboxLags": "outboxError" in errors or (
             outbox is not None and (outbox["version"] < version or outbox["journalThrough"] < last)),
         "lags": published is None or published["version"] < version or unpublished > 0,
@@ -1196,11 +1311,15 @@ def main(argv: list[str] | None = None) -> int:
     entry.add_argument("--review", help="a review.round's review as JSON, or - to read it from stdin")
     entry.add_argument("--lane")
     entry.add_argument("--subject")
-    commands.add_parser("show", help="print the validated state and journal, and whether publication lags")
+    display = commands.add_parser("show", help="print the validated state and journal, and whether publication lags")
+    display.add_argument("--binding", type=Path, help="the repository binding, to tell whether the outbox is orphaned")
     sync = commands.add_parser("reconcile", help="bring the record up to date with forge and tracker snapshots")
     sync.add_argument("--snapshot", action="append", type=Path, required=True, help="a work-snapshot/1 file")
-    sync.add_argument("--max-age", type=float, default=SNAPSHOT_MAX_AGE_SECONDS,
-                      help="refuse a snapshot older than this many seconds")
+    sync.add_argument("--max-age", type=float,
+                      help="refuse a snapshot older than this many seconds; overrides the binding")
+    sync.add_argument("--binding", type=Path, help="the repository binding, for its state.snapshotMaxAgeSeconds")
+    retire = commands.add_parser("outbox", help="manage a host publisher's outbox")
+    retire.add_argument("--retire", required=True, metavar="PUBLISHER", help="remove this publisher's outbox")
     published = commands.add_parser("ack", help="record which version and journal entries were published")
     published.add_argument("--version", type=int, required=True)
     published.add_argument("--through", type=int, required=True, help="the last journal id published")
@@ -1237,12 +1356,19 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             }
         elif args.command == "reconcile":
-            result = reconcile(args.dir, args.snapshot, max_age=args.max_age)
+            max_age = args.max_age
+            if max_age is None and args.binding is not None:
+                max_age = binding_state(args.binding).get("snapshotMaxAgeSeconds")
+            result = reconcile(args.dir, args.snapshot,
+                               max_age=SNAPSHOT_MAX_AGE_SECONDS if max_age is None else float(max_age))
+        elif args.command == "outbox":
+            result = {"ok": True, "retired": retire_outbox(args.dir, args.retire)}
         elif args.command == "ack":
             result = {"ok": True, "published": ack(args.dir, version=args.version, through=args.through)}
         else:
+            hosts = host_publishers(binding_state(args.binding)) if args.binding is not None else None
             shown = show(args.dir)
-            result = {**shown, "publication": publication(args.dir, shown)}
+            result = {**shown, "publication": publication(args.dir, shown, hosts)}
     except StateError as error:
         emit({"ok": False, "code": error.code, "error": str(error)})
         return 1

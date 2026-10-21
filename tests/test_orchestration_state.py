@@ -1289,6 +1289,134 @@ class DeliveryStatsTests(unittest.TestCase):
         self.assertIsNone(shown["stats"]["work-p"]["handedAt"])
 
 
+class RecoveryIntentTests(unittest.TestCase):
+    """A recovery interrupted by a crash is finished by the next reconcile: no entry lost, none doubled."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.directory = self.root / "state"
+        state_tool.init(self.directory, "Epic underway")
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version,
+                         changes={"queue": [queue_item("work-q", changeRequest="change 7")]})
+        self.forge = self.root / "forge.json"
+        self.forge.write_text(json.dumps({"takenAt": taken(), "source": "forge", "items": [
+            {"subject": "work-q", "state": "merged", "changeRequest": "change 7", "head": HEAD_B}]}), encoding="utf-8")
+
+    def recovered(self) -> list[dict]:
+        return [entry for entry in state_tool.show(self.directory)["journal"]
+                if entry["kind"] == "candidate.merged" and entry["subject"] == "work-q"]
+
+    def intent(self) -> Path:
+        return self.directory / state_tool.RECOVERY_FILE
+
+    def test_a_crash_between_the_state_write_and_its_entry_is_finished_next_time(self) -> None:
+        with mock.patch.object(state_tool, "_journal_recovery", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        self.assertTrue(self.intent().exists())
+        self.assertEqual(state_tool.show(self.directory)["state"]["queue"][0]["stage"], "merged")
+        self.assertEqual(self.recovered(), [], "the crash lost the entry")
+        result = state_tool.reconcile(self.directory, [self.forge])
+        self.assertTrue(result["drift"])
+        self.assertEqual([(change["subject"], change["recovery"]) for change in result["changes"]], [("work-q", True)])
+        self.assertEqual(len(self.recovered()), 1)
+        self.assertIn(HEAD_B, self.recovered()[0]["summary"])
+        self.assertFalse(self.intent().exists())
+        self.assertFalse(state_tool.reconcile(self.directory, [self.forge])["drift"])
+
+    def test_a_crash_after_the_entry_and_before_the_intent_is_cleared_writes_no_second_entry(self) -> None:
+        journal = state_tool._journal_recovery
+
+        def journal_then_stop(*args: object) -> dict:
+            journal(*args)
+            raise RuntimeError("the machine stopped")
+
+        with mock.patch.object(state_tool, "_journal_recovery", journal_then_stop):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        self.assertTrue(self.intent().exists())
+        result = state_tool.reconcile(self.directory, [self.forge])
+        self.assertEqual((result["drift"], result["changes"]), (False, []))
+        self.assertEqual(len(self.recovered()), 1)
+        self.assertFalse(self.intent().exists())
+
+    def test_a_crash_before_the_state_write_leaves_the_merge_to_be_recovered_again(self) -> None:
+        with mock.patch.object(state_tool, "patch", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        self.assertTrue(self.intent().exists())
+        self.assertEqual(state_tool.show(self.directory)["state"]["queue"][0]["stage"], "queued")
+        result = state_tool.reconcile(self.directory, [self.forge])
+        self.assertEqual([change["recovery"] for change in result["changes"]], [True])
+        self.assertEqual(len(self.recovered()), 1)
+        self.assertFalse(self.intent().exists())
+
+    def test_an_interrupted_recovery_waits_for_a_running_runner(self) -> None:
+        with mock.patch.object(state_tool, "_journal_recovery", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        with state_tool.file_lock(self.directory / state_tool.QUEUE_LOCK):
+            code, result = run_tool(self.directory, "reconcile", "--snapshot", str(self.forge))
+        self.assertEqual(code, 0, result)
+        self.assertIn("waits for the runner", " ".join(report["note"] for report in result["reports"]))
+        self.assertTrue(self.intent().exists())
+        self.assertEqual(self.recovered(), [])
+
+    def test_a_malformed_intent_is_refused(self) -> None:
+        for contents in ("not json", json.dumps({"subject": "work-q"}),
+                         json.dumps({"subject": "work-q", "head": HEAD_B, "lane": 3, "summary": "s", "journalAfter": 0})):
+            with self.subTest(contents=contents):
+                self.intent().write_text(contents, encoding="utf-8")
+                code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(self.forge))
+                self.assertEqual((code, refused["code"]), (1, "state_invalid"), refused)
+
+
+class BindingMaxAgeTests(unittest.TestCase):
+    """The binding sets how old a snapshot may be; --max-age overrides it."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.directory = self.root / "state"
+        state_tool.init(self.directory, "Epic underway")
+        self.snapshot = self.root / "two minutes old.json"
+        self.snapshot.write_text(json.dumps({"takenAt": taken(120), "source": "tracker", "items": [
+            {"subject": "work-a", "title": "A", "state": "started"}]}), encoding="utf-8")
+
+    def binding(self, **state: object) -> str:
+        path = self.root / f"binding {len(list(self.root.iterdir()))}.json"
+        path.write_text(json.dumps({"state": {"directory": "state", "renderers": [], "publishers": [], **state}}),
+                        encoding="utf-8")
+        return str(path)
+
+    def test_the_binding_s_max_age_is_honoured_and_max_age_overrides_it(self) -> None:
+        strict = self.binding(snapshotMaxAgeSeconds=60)
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(self.snapshot), "--binding", strict)
+        self.assertEqual((code, refused["code"]), (1, "snapshot_stale"), refused)
+        self.assertIn("60s", refused["error"])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", str(self.snapshot), "--binding", strict,
+                                "--max-age", "300")
+        self.assertEqual((code, result["drift"]), (0, True), result)
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(self.snapshot), "--max-age", "60")
+        self.assertEqual((code, refused["code"]), (1, "snapshot_stale"))
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", str(self.snapshot), "--binding", self.binding())
+        self.assertEqual(code, 0, "without the field, the default applies")
+
+    def test_a_malformed_binding_or_max_age_is_refused(self) -> None:
+        bad = self.root / "bad.json"
+        bad.write_text("{", encoding="utf-8")
+        cases = [str(bad), self.binding(snapshotMaxAgeSeconds=0), self.binding(snapshotMaxAgeSeconds=True),
+                 self.binding(snapshotMaxAgeSeconds=1.5), self.binding(snapshotMaxAgeSeconds="60")]
+        for path in cases:
+            with self.subTest(path=Path(path).name):
+                code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(self.snapshot), "--binding", path)
+                self.assertEqual((code, refused["code"]), (1, "binding_invalid"), refused)
+
+
 class PublicationTests(unittest.TestCase):
     """What was published, so an unpublished view is visible."""
 
@@ -1379,7 +1507,8 @@ class PublicationTests(unittest.TestCase):
     def test_show_flags_a_publication_that_lags_the_record(self) -> None:
         code, shown = run_tool(self.directory, "show")
         self.assertEqual(shown["publication"], {"publishedVersion": None, "journalThrough": 0, "unpublishedEntries": 3,
-                                                "outboxVersion": None, "outboxLags": False, "lags": True})
+                                                "outboxVersion": None, "outboxPublisher": None, "outboxOrphaned": None,
+                                                "outboxLags": False, "lags": True})
         version = shown["state"]["version"]
         run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
         code, shown = run_tool(self.directory, "show")
@@ -1648,7 +1777,7 @@ def bullets_after(text: str, lead_in: str) -> list[str]:
 # written into its state directory, as views, the outbox or the
 # acknowledgement, not shipped with the skill.
 ADOPTER_FILES = frozenset({".agents/orchestration.json", "delivery.md", "delivery.html", "outbox/outbox.json",
-                           "published.json"})
+                           "published.json", "recovery.json"})
 
 
 class SkillTextTests(unittest.TestCase):
