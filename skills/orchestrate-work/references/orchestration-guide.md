@@ -190,13 +190,17 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   nothing more until you confirm the base and journal `base.repaired`. A
   stopped candidate waits for its lane to hand it off again; under `serve`, so
   does one the runner refuses, such as one with a lead input the binding does
-  not declare. A refusal whose cause is the setup, such as a removed checkout
-  or a binding made invalid on the base, stops nothing: `serve` holds itself
-  with the setup error as the hold's reason and journals `blocker.recorded`.
-  Repair the setup, then clear `meta.hold`; the queue resumes in order, with
-  no lane handing off again. A refusal during a turn whose setup broke can
-  still journal `candidate.stopped` for the refused candidates; they stay
-  queued.
+  not declare. A stop or refusal whose cause is the setup, such as a removed
+  checkout, a binding made invalid on the base or a remote that does not
+  answer, stops nothing: `serve` holds itself with the setup error as the
+  hold's reason, journals `blocker.recorded`, and puts that turn's candidates
+  back to `queued`. Repair the setup, then clear `meta.hold`; the queue resumes
+  in order, with no lane handing off again. A brief network failure holds
+  serving the same way, so clear the hold once the remote answers. A
+  candidate whose merge had begun when the setup broke stays stopped, and
+  the blocker entry names it: check the forge before it is handed off again.
+  A turn whose setup broke can still journal `candidate.stopped` for its
+  candidates before they are put back.
 - Leave the status line to the record: the views derive it from what is being
   checked, what landed last, which lanes are blocked and what is next. Set a
   status of your own with `headline --text`, only for what the record cannot

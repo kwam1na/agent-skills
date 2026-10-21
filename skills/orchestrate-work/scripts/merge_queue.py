@@ -622,6 +622,8 @@ class Runner:
         self._bootstrap_hooks = Path(tempfile.mkdtemp(prefix="merge-queue-hooks-"))
         self.hooks_directory: Path | None = self._bootstrap_hooks
         self.hooks_bypassed = False
+        # Candidates whose merge began in this runner: the forge may have them, so they are never put back.
+        self.merging: set[str] = set()
         self.checkouts: list[Path] = []
         self._counter = 0
         self._logs = 0
@@ -1786,6 +1788,7 @@ class Runner:
         # base commit the synced head lacks went unchecked with this candidate.
         if self.git("merge-base", "--is-ancestor", base_head, synced, check=False).returncode != 0:
             raise Stop("base_moved", f"{self.base} moved to {base_head}, which {subject}'s checked head does not contain")
+        self.merging.add(subject)
         self.set_item(subject, stage="merging")
         context = context.with_values(branch=branch, head=synced, expectedHead=synced, baseHead=base_head, treeSha=self.tree(synced))
         timeout = self.binding["checkTimeoutSeconds"]
@@ -2300,13 +2303,21 @@ def _refresh(repository: Path, state_directory: Path, member: dict) -> None:
         print(f"serve: the refresh of the forge and tracker failed: {error}", file=sys.stderr, flush=True)
 
 
-def hold_for_setup(state_directory: Path, detail: str) -> bool:
+def hold_for_setup(state_directory: Path, detail: str, kept: Iterable[str] = ()) -> bool:
     """Hold serving because its setup cannot be used, as the runner and only where no hold is set; journal it once.
 
     The candidates stay queued as they are: nothing was wrong with them, so no
     lane hands anything off again. The lead repairs the setup and clears the hold.
+    ``kept`` names candidates left stopped because their merge had begun.
     """
-    reason = f"serve cannot use its setup: {detail[:300]}"
+    # The status line shows the reason: one line, short, never a whole stderr.
+    line = " ".join(next((part for part in detail.splitlines() if part.strip()), "no detail").split())
+    if len(line) > 200:
+        line = line[:200].rsplit(" ", 1)[0] + "..."
+    reason = f"serve cannot use its setup: {line}"
+    named = sorted(kept)
+    stopped = (f" Stopped while it broke, after their merge began, so check the forge before handing them off again: "
+               f"{', '.join(named)}." if named else "")
     for _ in range(STATE_PATCH_ATTEMPTS):
         current = delivery_state.read_state(state_directory)
         if current["meta"].get("hold"):
@@ -2319,9 +2330,39 @@ def hold_for_setup(state_directory: Path, detail: str) -> bool:
                 raise
             continue
         delivery_state.append_journal(state_directory, kind="blocker.recorded", writer="runner",
-                                      summary=f"Serving is held: {reason}. Repair it, then clear meta.hold.")
+                                      summary=f"Serving is held: {reason}. Repair it, then clear meta.hold.{stopped}")
         return True
     return False
+
+
+def _requeue(subject: str, head: str | None) -> Callable[[dict], tuple[dict | None, dict]]:
+    """Put a candidate back to queued, as serve took it: a lane that handed it off again since keeps its own."""
+
+    def build(current: dict) -> tuple[dict | None, dict]:
+        item = next((entry for entry in current["queue"] if entry["subject"] == subject), None)
+        if item is None or item["head"] != head or item["stage"] not in ("queued", "synced", "checked", "stopped"):
+            raise Stop("candidate_unknown", f"{subject} changed since serve took it")
+        return None, {"/stage": "queued", "/syncedHead": None, "/checks": []}
+
+    return build
+
+
+def _requeue_after_setup(runner: Runner, taken: list[Result], heads: dict[str, str]) -> list[str]:
+    """Put back what a broken setup refused or stopped this turn; name those whose merge had begun, left stopped."""
+    last: dict[str, Result] = {}
+    for result in taken:
+        if result.candidate is not None:
+            last[result.candidate] = result
+    kept = []
+    for subject, result in last.items():
+        if result.stop is None:
+            continue
+        if subject in runner.merging or result.stop["reason"] in QUEUE_STOPPING:
+            kept.append(subject)
+            continue
+        with contextlib.suppress(Stop, delivery_state.StateError):
+            runner.write(selector=f"queue[subject={subject}]", build=_requeue(subject, heads.get(subject)))
+    return kept
 
 
 def serve(
@@ -2346,15 +2387,16 @@ def serve(
     until the lead journals base.repaired; a stopped candidate waits for its
     lane to hand it off again, and so does a refused one, which serve would
     otherwise take again every turn. Before each turn that takes work, and
-    after any refusal, serve checks its checkout and binding again: when they
-    cannot be used, it holds itself (meta.hold, set only where none is) and
-    stops no candidate, since none was at fault. A checkout or binding the
-    runner cannot use ends serve before it takes anything, with that one
-    result. Each turn takes the queue lock afresh, so a serve killed outright
-    is cleared by the next one's recovery. Between turns, on the binding's
-    state.refreshSeconds, serve reads the declared forge and tracker snapshots
-    and reconciles them, whether or not it is held; a run in progress delays
-    the read. With
+    after any stop or refusal other than queue_locked, serve checks its
+    checkout and binding again: when they cannot be used, it holds itself
+    (meta.hold, set only where none is) and puts that turn's candidates back
+    to queued, since none was at fault, except one whose merge had begun. A
+    checkout or binding the runner cannot use ends serve before it takes
+    anything, with that one result. Each turn takes the queue lock afresh, so
+    a serve killed outright is cleared by the next one's recovery. Between
+    turns, on the binding's state.refreshSeconds, serve reads the declared
+    forge and tracker snapshots and reconciles them, whether or not it is
+    held; a run in progress delays the read. With
     until_idle, serving ends once nothing more can be taken and returns every
     result; without it, serving never returns, so each result goes to
     on_result as it is written and none is kept.
@@ -2419,21 +2461,25 @@ def serve(
             continue
         refused = [result for result in taken if result.outcome == "refused" and result.candidate is not None
                    and result.stop["reason"] != "queue_locked"]
-        candidates_refused = True
-        if refused:
-            # A refusal names its code, not its cause: the setup check says whether the setup broke during the turn.
+        troubled = any(result.stop is not None and result.stop["reason"] != "queue_locked" for result in taken)
+        cause_known, broken = True, None
+        if troubled:
+            # A stop or refusal names its code, not its cause: the setup check says whether the setup broke this turn.
             again = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
             if again.stop is not None:
-                candidates_refused = False
-                if again.stop["reason"] != "queue_locked":
-                    hold_for_setup(state_directory, again.stop["detail"])
+                cause_known = again.stop["reason"] != "queue_locked"
+                broken = again if cause_known else None
         for result in taken:
             write_result(state_directory, result)
-            if candidates_refused and result in refused:
+            if cause_known and broken is None and result in refused:
                 # A refusal leaves the candidate queued as it was; serve stops it, journaled once, as any stop.
                 with contextlib.suppress(Stop, delivery_state.StateError):
                     runner.write(selector=f"queue[subject={result.candidate}]",
                                  build=_refused_stop(result.candidate, heads.get(result.candidate)))
+        if broken is not None:
+            # None of this turn's candidates was at fault: back to queued, so no lane hands anything off again.
+            kept = _requeue_after_setup(runner, taken, heads)
+            hold_for_setup(state_directory, broken.stop["detail"], kept)
         for result in taken:
             # Reported only once every result is written and every refusal stopped, so a reader never loses them.
             if on_result is not None:
