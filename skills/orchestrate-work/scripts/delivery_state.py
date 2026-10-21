@@ -1755,7 +1755,7 @@ def _cleanup_selection(group: int | None, marker: bytes, started: float, table: 
             member_refused = member_refused or in_group
         else:
             selection["selected"].append(pid)
-    selection["whole_group"] = not member_refused
+    selection["whole_group"] = group is not None and not member_refused
     return selection
 
 
@@ -1808,33 +1808,32 @@ def _exited(process: subprocess.Popen, timeout: float) -> bool:
 def _unreaped(pid: int) -> bool:
     """Whether the exited command is still unreaped, so its pid, and the group id with it, stay reserved.
 
-    Without waitid a reaped pid that was reused at once reads as unreaped.
+    Without waitid, the pid must still be in the process table with this
+    process as its parent, as an unreaped child is.
     """
     if hasattr(os, "waitid"):
         try:
             return os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
         except ChildProcessError:
             return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except OSError:
-        return True
-    return True
+    table = _process_table()
+    return table is not None and pid in table and table[pid][0] == os.getpid()
 
 
-def _signal_selected(pids: list[int], group: int | None, marker: bytes, signum: int) -> None:
+def _signal_selected(pids: list[int], group: int | None, marker: bytes, signum: int) -> list[int]:
     """Signal each pid only if, checked again just before, it is still in the group or still carries the marker.
 
     Nothing holds a single pid the way the unreaped command holds the group
     id, so a pid freed and reused between that check and the signal is the
-    one window left.
+    one window left. Returns the pids that were signalled.
     """
+    signalled = []
     for pid in pids:
         with contextlib.suppress(OSError):
             if (group is not None and os.getpgid(pid) == group) or marker in (_process_environment(pid) or ()):
                 os.kill(pid, signum)
+                signalled.append(pid)
+    return signalled
 
 
 def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
@@ -1843,7 +1842,9 @@ def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
 
     What is selected is first frozen and the table read again, up to
     ``CLEANUP_PASSES`` times, so a process still spawning cannot leave
-    children the first read missed; then everything frozen is killed.
+    children the first read missed; then everything frozen is killed, even
+    when the passes are interrupted. A preview shows the first read only; a
+    later pass may add processes spawned since, each under the same refusals.
     """
     group = process.pid if _unreaped(process.pid) else None
 
@@ -1861,25 +1862,31 @@ def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
     frozen: list[int] = []
     whole_group = selection["whole_group"]
     latest = selection
-    for _ in range(CLEANUP_PASSES):
-        fresh = [pid for pid in latest["selected"] if pid not in frozen]
-        if not fresh:
-            break
-        _signal_selected(fresh, group, marker, signal.SIGSTOP)
-        frozen += fresh
-        latest = select_now()
-        if latest["unreadable"]:
-            break
-        whole_group = whole_group and latest["whole_group"]
-        for refusal in latest["refused"]:
-            if refusal not in selection["refused"]:
-                selection["refused"].append(refusal)
-    if group is not None and whole_group:
-        with contextlib.suppress(OSError):
-            os.killpg(group, signal.SIGKILL)
-    _signal_selected(frozen, group, marker, signal.SIGKILL)
-    selection["selected"] = sorted(frozen)
-    selection["whole_group"] = whole_group
+    try:
+        for _ in range(CLEANUP_PASSES):
+            fresh = [pid for pid in latest["selected"] if pid not in frozen]
+            if not fresh:
+                break
+            frozen += _signal_selected(fresh, group, marker, signal.SIGSTOP)
+            latest = select_now()
+            if latest["unreadable"]:
+                break
+            whole_group = whole_group and latest["whole_group"]
+            for refusal in latest["refused"]:
+                if refusal not in selection["refused"]:
+                    selection["refused"].append(refusal)
+            # A frozen process a later read refuses is let go again, never left stopped.
+            refused_now = {pid for pid, _ in latest["refused"]}
+            _signal_selected([pid for pid in frozen if pid in refused_now], group, marker, signal.SIGCONT)
+            frozen = [pid for pid in frozen if pid not in refused_now]
+    finally:
+        # Never leave a frozen process behind: what was stopped is killed.
+        if group is not None and whole_group:
+            with contextlib.suppress(OSError):
+                os.killpg(group, signal.SIGKILL)
+        _signal_selected(frozen, group, marker, signal.SIGKILL)
+        selection["selected"] = sorted(frozen)
+        selection["whole_group"] = whole_group
 
 
 def _stop_group(process: subprocess.Popen) -> None:

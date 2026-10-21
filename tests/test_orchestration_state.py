@@ -2512,7 +2512,10 @@ class SnapshotCleanupTests(unittest.TestCase):
         state_tool._run_bounded([sys.executable, "-c", script], 20, 4096, preview=seen.append)
         recorded = {int(line) for line in pids.read_text().split()}
         self.assertTrue(seen[0]["selected"], seen)
-        self.assertLessEqual(set(seen[0]["selected"]), recorded, "the preview names only the run's own processes")
+        # A child forked but not yet logged is still the spawner's: its parent is logged.
+        table = state_tool._process_table() or {}
+        unlogged = [pid for pid in seen[0]["selected"] if pid not in recorded]
+        self.assertTrue(all(pid in table and table[pid][0] in recorded for pid in unlogged), (unlogged, recorded))
         self.assertEqual(seen[0]["refused"], [])
         stop_recorded()
         time.sleep(0.5)
@@ -2546,6 +2549,35 @@ class SnapshotCleanupTests(unittest.TestCase):
                                                   lambda pid: [marker] if pid == 502 else [], caller=me)
         self.assertEqual(selection["selected"], [502], "a group member counts only while the group id is held")
         self.assertIn("marked processes only", state_tool._describe_selection(selection))
+
+    def test_an_interrupt_between_the_passes_never_leaves_a_process_frozen(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=True)
+        real, reads = state_tool._process_table, []
+
+        def interrupted() -> dict | None:
+            reads.append(1)
+            if len(reads) == 2:  # the read after the first freeze
+                raise KeyboardInterrupt
+            return real()
+
+        with mock.patch.object(state_tool, "_process_table", side_effect=interrupted):
+            with self.assertRaises(KeyboardInterrupt):
+                state_tool._run_bounded(argv, 20, 4096)
+        self.assertTrue(self.gone(int(pid_file.read_text())), "killed, not left stopped")
+
+    def test_a_command_reaped_elsewhere_is_previewed_without_its_group(self) -> None:
+        argv, pid_file = self.command(detached=False)
+        seen: list[dict] = []
+        with mock.patch.object(state_tool, "_unreaped", return_value=False):
+            code, _, _ = state_tool._run_bounded(argv, 20, 4096, preview=seen.append)
+        self.assertEqual(code, 0)
+        child = int(pid_file.read_text())
+        # No group members and no group signal; the child still carries the run's marker.
+        self.assertEqual((seen[0]["group"], seen[0]["selected"], seen[0]["whole_group"]), (None, [child], False), seen)
+        self.assertFalse(self.gone_now(child))
+        os.kill(child, signal.SIGKILL)
 
     def test_an_unreadable_process_table_stops_nothing_and_says_so(self) -> None:
         argv, pid_file = self.command(detached=False)
