@@ -24,6 +24,8 @@ from jsonschema import Draft202012Validator
 
 from agent_skills.validate import LEAKAGE_PATTERNS, validate_corpus
 from tests.dependency_cases import CASES as DEPENDENCY_CASES
+from tests.dependency_cases import CYCLES as DEPENDENCY_CYCLES
+from tests.dependency_cases import ONCE as DEPENDENCY_ONCE
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1846,6 +1848,15 @@ class TrackerSnapshotTests(unittest.TestCase):
                 self.assertEqual(refused.exception.code, "snapshot_invalid")
                 for text in named:
                     self.assertIn(text, str(refused.exception))
+                self.assertEqual(str(refused.exception).count("cycle"), DEPENDENCY_CYCLES.get(name, 0))
+                if name in DEPENDENCY_ONCE:
+                    self.assertEqual(str(refused.exception).count(DEPENDENCY_ONCE[name]), 1)
+
+    def test_a_long_chain_is_checked_quickly(self) -> None:
+        chain = [(f"n{index}", [f"n{index - 1}"] if index else []) for index in range(100_000)]
+        started = time.monotonic()
+        self.assertEqual(state_tool.dependency_problems(chain, "epic-7"), [])
+        self.assertLess(time.monotonic() - started, 5)
 
     def test_the_command_s_snapshot_and_reconcile_check_dependencies_against_the_record_s_parent(self) -> None:
         # The command prints an item its parent blocks; the parent is the record's.
@@ -1871,6 +1882,18 @@ class TrackerSnapshotTests(unittest.TestCase):
         code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(written))
         self.assertEqual((code, refused.get("code")), (1, "snapshot_invalid"), refused)
         self.assertIn("epic-7", refused["error"])
+
+    def test_reconcile_refuses_a_cycle_that_runs_across_two_tracker_snapshots(self) -> None:
+        first, second = self.root / "first.json", self.root / "second.json"
+        first.write_text(json.dumps({"takenAt": taken(), "source": "tracker", "items": [
+            {"subject": "a", "state": "backlog", "blockedBy": ["b"]}]}), encoding="utf-8")
+        second.write_text(json.dumps({"takenAt": taken(), "source": "tracker", "items": [
+            {"subject": "b", "state": "backlog", "blockedBy": ["a"]}]}), encoding="utf-8")
+        before = (self.directory / state_tool.STATE_FILE).read_bytes()
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(first), "--snapshot", str(second))
+        self.assertEqual((code, refused.get("code")), (1, "snapshot_invalid"), refused)
+        self.assertIn("a -> b -> a", refused["error"])
+        self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
 
     def test_a_forge_snapshot_s_blockers_are_not_checked_since_they_are_ignored(self) -> None:
         snapshot = {"takenAt": taken(), "source": "forge", "items": [

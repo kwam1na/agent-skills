@@ -58,8 +58,9 @@ Map the neutral operations directly:
   become `backlog`, and `started`, `completed` and `canceled` stay as they are.
   A type outside these six makes the result `malformed`, never a guess.
   Each item names each of its blockers once, never itself and never the
-  parent, even when the tracker lists a relation from both of its ends. A
-  dependency cycle among the items makes the result `malformed`.
+  parent, even when the tracker lists a relation from both of its ends. The
+  parent is never one of the items, and a dependency cycle among them makes
+  the result `malformed`.
 - Reconciliation after an uncertain mutation uses reconciliation only.
 
 Do not substitute another provider operation or access path. Retain the resolved

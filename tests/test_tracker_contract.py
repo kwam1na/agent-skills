@@ -7,7 +7,7 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from tests.dependency_cases import CASES
+from tests.dependency_cases import CASES, CYCLES, ONCE
 
 from agent_skills.capabilities import (
     AdapterOutcome,
@@ -330,6 +330,9 @@ class ListWorkTests(unittest.TestCase):
                 self.assertEqual(outcome.kind, OutcomeKind.MALFORMED)
                 for text in named:
                     self.assertIn(text, outcome.action)
+                self.assertEqual(outcome.action.count("cycle"), CYCLES.get(name, 0), outcome.action)
+                if name in ONCE:
+                    self.assertEqual(outcome.action.count(ONCE[name]), 1, outcome.action)
 
     def test_the_state_tool_checks_dependencies_with_the_same_validator(self) -> None:
         # The skill's state tool cannot import the product, so it keeps a copy; the copy must not drift.
