@@ -15,6 +15,10 @@ Retained records keep their bytes, including the concurrent-delivery set. The cu
 
 `pyproject.toml` stays at 0.1.0, because nothing reads it. This was the lead's decision.
 
+## Runtime
+
+The product archives carry runtime 0.7.4, by the owner's decision. Its bytes were copied, read only, from Athena's installed and verified generation (`.agent-skills/current/runtime`). Before use, every file was checked against that runtime's own `runtime.json` sha256 list, and all ten matched. Only `workflowContentSha256` was re-derived, once per profile, for the workflow bytes of this release. The previous checked product set carried 0.5.0, so shipping 0.5.0 would have rolled back adopters already on 0.7.4.
+
 ## Release notes
 
 ### New: orchestrate-work
