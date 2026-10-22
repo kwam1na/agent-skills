@@ -796,6 +796,25 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual([state[key] for key in lead_view], [twin_state[key] for key in lead_view])
         self.assertNotIn("work-b", json.dumps(state), "a forge blocker never reaches the record")
 
+    def test_reconcile_keeps_the_run_on_planned_work_and_carries_it_into_the_queue(self) -> None:
+        self.lead({"planned": [
+            {"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "planned", "runId": "run-now"},
+            {"subject": "work-done", "title": "Done", "lane": "lane-1", "stage": "review", "runId": "run-done"},
+        ]})
+        tracker = self.snapshot("tracker", [{"subject": "work-now", "title": "Work", "state": "started"}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", tracker)
+        self.assertEqual(code, 0, result)
+        state = state_tool.show(self.directory)["state"]
+        building = next(entry for entry in state["planned"] if entry["subject"] == "work-now")
+        self.assertEqual((building["stage"], building["runId"]), ("building", "run-now"))
+        forge = self.snapshot("forge", [{"subject": "work-done", "state": "merged", "changeRequest": "cr-9",
+                                         "head": HEAD_A}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual(code, 0, result)
+        state = state_tool.show(self.directory)["state"]
+        merged = next(entry for entry in state["queue"] if entry["subject"] == "work-done")
+        self.assertEqual(merged["runId"], "run-done", "work the lead missed joins the queue with its run")
+
     def test_planned_work_the_tracker_shows_started_moves_to_building_once(self) -> None:
         self.lead({"planned": [
             {"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "planned"},
@@ -2752,6 +2771,45 @@ class LaneWriterTests(unittest.TestCase):
         [handed] = [entry for entry in state_tool.read_journal(self.directory) if entry["kind"] == "candidate.handed"]
         self.assertEqual((handed["lane"], handed["subject"]), ("lane-1", "work-a"))
 
+    def test_a_hand_off_names_its_run_and_a_later_hand_off_keeps_or_replaces_it(self) -> None:
+        first = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40,
+                                   change_request="change request 4", run="run-abc")
+        self.assertEqual(first["runId"], "run-abc")
+        kept = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="b" * 40,
+                                  change_request="change request 4")
+        self.assertEqual(kept["runId"], "run-abc", "a hand-off that names no run keeps the stored one")
+        code, result = run_tool(self.directory, "handoff", "--lane", "lane-1", "--subject", "work-a",
+                                "--head", "c" * 40, "--change-request", "change request 4", "--run", "run-def")
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["item"]["runId"], "run-def")
+        queued = next(entry for entry in state_tool.read_state(self.directory)["queue"] if entry["subject"] == "work-a")
+        self.assertEqual(queued["runId"], "run-def")
+
+    def test_a_hand_off_that_names_no_run_writes_null(self) -> None:
+        code, result = run_tool(self.directory, "handoff", "--lane", "lane-1", "--subject", "work-a",
+                                "--head", "a" * 40, "--change-request", "change request 4")
+        self.assertEqual(code, 0, result)
+        self.assertIsNone(result["item"]["runId"])
+
+    def test_a_hand_off_of_planned_work_keeps_the_run_the_lead_planned_it_with(self) -> None:
+        self.lead({"runId": "run-planned"}, selector="planned[subject=work-a]")
+        item = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40,
+                                  change_request="change request 4")
+        self.assertEqual(item["runId"], "run-planned")
+
+    def test_a_malformed_run_id_is_refused_and_nothing_is_written(self) -> None:
+        journal = (self.directory / state_tool.JOURNAL_FILE).read_bytes()
+        code = self.refused(lambda: state_tool.handoff(self.directory, lane="lane-1", subject="work-a",
+                                                       head="a" * 40, change_request="change request 4", run=""))
+        self.assertEqual(code, "patch_invalid")
+        before = (self.directory / state_tool.STATE_FILE).read_bytes()
+        code, result = run_tool(self.directory, "handoff", "--lane", "lane-1", "--subject", "work-a",
+                                "--head", "a" * 40, "--change-request", "change request 4", "--run", "")
+        self.assertNotEqual(code, 0, result)
+        self.assertEqual(result["code"], "patch_invalid")
+        self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
+        self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), journal)
+
     @staticmethod
     def evidence(**changes: object) -> dict:
         found = {"check": "full", "definition": "sha256:" + "d" * 64, "head": "a" * 40, "tree": "e" * 40,
@@ -4035,7 +4093,7 @@ SNAPSHOT = {"takenAt": "2026-10-20T10:00:00Z", "source": "tracker",
             "items": [{"subject": "pr-1", "title": "Candidate", "state": "started"}]}
 VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
-    "with tickets", "snapshot with a summary",
+    "with tickets", "snapshot with a summary", "planned with a run",
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
@@ -4082,6 +4140,11 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("ticket without title", with_change(state, ("tickets",), {"pr-1": {"summary": "What it does."}})),
                 ("ticket with unknown field", with_change(state, ("tickets",), {"pr-1": {"title": "T", "body": "B"}})),
                 ("ticket summary over long", with_change(state, ("tickets",), {"pr-1": {"title": "T", "summary": "s" * 1001}})),
+                ("planned with a run", with_change(state, ("planned",), [
+                    {"subject": "pr-3", "title": "Planned", "lane": "lane-1", "stage": "planned", "runId": "run-3"}])),
+                ("planned with an empty run", with_change(state, ("planned",), [
+                    {"subject": "pr-3", "title": "Planned", "lane": "lane-1", "stage": "planned", "runId": ""}])),
+                ("empty run", with_change(state, ("queue", 0, "runId"), "")),
                 ("not an object", []),
             ],
             "delivery-journal/1": [

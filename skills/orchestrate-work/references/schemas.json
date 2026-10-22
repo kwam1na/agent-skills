@@ -448,6 +448,7 @@
               }
             },
             "reportedRounds": {
+              "description": "The review rounds the lane reported at hand-off. The fallback only when the journal holds no review.round entries for the subject.",
               "anyOf": [
                 {
                   "type": "null"
@@ -459,6 +460,7 @@
               ]
             },
             "runId": {
+              "description": "The opaque id of the run, in the adopter's delivery product, that built the work. The lane sets it at hand-off; null when the adopter records no runs.",
               "anyOf": [
                 {
                   "type": "null"
@@ -593,6 +595,10 @@
               ]
             },
             "changeRequest": {
+              "$ref": "#/$defs/name"
+            },
+            "runId": {
+              "description": "The run that is building the work, as in the queue. Optional; the lead's patch writes it and reconcile keeps it.",
               "$ref": "#/$defs/name"
             }
           }
