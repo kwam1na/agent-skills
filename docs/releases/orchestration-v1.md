@@ -4,12 +4,12 @@
 
 Nothing reads the corpus `pyproject.toml` version (0.1.0), and earlier releases never changed it. A release is identified by its release ids and qualification set names, so the bump is a new themed set for every profile:
 
-| Profile | Release id | Checked product set |
+| Profile | Product release id and checked set | Workflow-only release id and record |
 | --- | --- | --- |
-| core | `core-workflows-orchestration-v1` | `qualifications/product/core-orchestration-v1.*` |
-| linear | `linear-workflows-orchestration-v1` | `qualifications/product/linear-orchestration-v1.*` |
-| provider | qualified against the core archive | `qualifications/product/provider-orchestration-v1.*` |
-| bootstrap | `bootstrap-workflows-orchestration-v1` | `qualifications/product/bootstrap-orchestration-v1.*` |
+| core | `core-orchestration-v1`: `qualifications/product/core-orchestration-v1.*` | `core-workflows-orchestration-v1`: `qualifications/core-workflows-orchestration-v1.json` |
+| linear | `linear-orchestration-v1`: `qualifications/product/linear-orchestration-v1.*` | none |
+| provider | qualified against the core product archive: `qualifications/product/provider-orchestration-v1.json` | `qualifications/provider-workflows-orchestration-v1.json` |
+| bootstrap | `bootstrap-orchestration-v1`: `qualifications/product/bootstrap-orchestration-v1.*` | `bootstrap-workflows-orchestration-v1`: `qualifications/bootstrap-workflows-orchestration-v1.json` |
 
 Retained records keep their bytes, including the concurrent-delivery set. The current-set pointers in the qualification tests and the README move to these names.
 
@@ -41,6 +41,7 @@ An epic can be delivered by a lead and several lanes, without the operator in th
 
 **Reconciliation**
 - The record is reconciled from forge and tracker snapshots. A merge the runner never recorded can be recovered, and an interrupted recovery is finished.
+- Planned work whose ticket the tracker shows started moves to a new `building` stage, in one pass. Started work the record lacks is added at building. Building or review work the tracker shows back in backlog is reported, never moved back. An open change request moves planned or building work to review.
 - A neutral `list-work` tracker operation.
 - A binding can declare forge, tracker and work-hints snapshot commands, which `serve` refreshes on an interval.
 - Every snapshot command runs bounded, and whatever it leaves running is stopped. Nothing outside its run is touched.
@@ -50,7 +51,8 @@ An epic can be delivered by a lead and several lanes, without the operator in th
 - Driven by a repository binding and an affected-checks provider.
 - Batch mode: one check run for several candidates, landing that is verified against the tree, parallel checks, and a culprit search when a batch fails.
 - Check visibility: live running checks, timing against history, failing tests and logs, and declared flakes retried once.
-- `serve` lands the queue continuously.
+- `serve` lands the queue continuously. When its checkout or binding can't be used, it holds itself with the setup error as the reason and stops no candidate. A candidate whose merge had not begun goes back to the queue with its synced head. The lead repairs the setup and clears the hold, and the queue resumes in order.
+- After a state write, the runner starts no render wrapper when the binding declares no renderer and no publisher. It checks the configuration and reads the record in process instead.
 - The workRoot is checked against git's own view, and the runner's own git is isolated from global and system configuration, pathspec settings and junctions.
 - A killed run's leftovers are cleared at the next start.
 
