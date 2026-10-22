@@ -222,7 +222,7 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   anything, and does not start when either is wrong. It checks them again
   before each turn that takes work and after any stop or refusal other than
   `queue_locked`: when they break while it runs, it sets `meta.hold` itself,
-  only where none is set, journals one `blocker.recorded`, and puts that
+  only where none is set, journals one blocker entry, and puts that
   turn's candidates back to `queued`, except one whose merge had begun. On
   the binding's `state.refreshSeconds` it also reads the declared forge and
   tracker snapshot commands and reconciles them, so the record follows both
