@@ -3398,7 +3398,23 @@ class RenderingTests(MergeQueueTestCase):
         self.candidate(adopter)
         results = self.run_queue(adopter, "feature")
         self.assertEqual(results[-1].document()["outcome"], "merged")
-        self.assertIn("rendering the state exited 1", results[-1].document()["notes"])
+        # Noted once, however many writes it failed after.
+        self.assertEqual(results[-1].document()["notes"].count("rendering the state exited 1"), 1)
+
+    def test_a_missing_wrapper_renders_nothing_and_notes_nothing(self) -> None:
+        adopter = self.adopter({"state": {
+            "directory": "state", "renderers": [{"id": "page", "builtin": "static-page", "output": "view/index.html"}],
+            "publishers": [],
+        }})
+        original = queue.RENDER_WRAPPER
+        queue.RENDER_WRAPPER = self.directory.parent / f"{self.directory.name}-no-render_state.py"
+        self.addCleanup(setattr, queue, "RENDER_WRAPPER", original)
+        self.candidate(adopter)
+        counting, started = self.wrapper_runs()
+        with counting:
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged")
+        self.assertEqual((started, results[-1].document()["notes"]), ([], []))
 
     def wrapper_runs(self) -> tuple[object, list[list[str]]]:
         """Count the render wrapper processes the runner starts, and still start them."""
@@ -3468,6 +3484,7 @@ class RenderingTests(MergeQueueTestCase):
             # A record that cannot be read is noted as the wrapper's refusal was.
             with mock.patch.object(queue.delivery_state, "show",
                                    side_effect=state_tool.StateError("state_invalid", "unreadable")):
+                runner.render()
                 runner.render()
             self.assertEqual(runner.notes, ["rendering the state exited 2"])
             # A record the wrapper could not serialize is noted as its crash was.
