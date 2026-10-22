@@ -287,12 +287,13 @@ def run_suite(units: list[dict], *, workers: int, top: str, unit_timeout: float 
         # Out of the running set first: an interrupt then never signals a worker that is already reaped.
         expired = {name: running.pop(name) for name in names}
         # Stopped together, as an interrupt stops them: asked, one shared grace, then killed with their groups.
-        # An interrupt meanwhile is held, not lost, and is handled as soon as they are stopped.
+        # An interrupt meanwhile is held, not lost, and is handled as soon as they are stopped. Where
+        # signals cannot be held it is ignored instead, so these workers are never left unstopped.
         held = hasattr(signal, "pthread_sigmask")
         if held:
             signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
         try:
-            _stop_all([process for process, *_rest in expired.values()], ignore_interrupts=False)
+            _stop_all([process for process, *_rest in expired.values()], ignore_interrupts=not held)
         finally:
             if held:
                 signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
@@ -414,11 +415,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.unit_timeout is not None and not (math.isfinite(args.unit_timeout) and args.unit_timeout >= 0):
         parser.error("--unit-timeout must be a finite number of seconds, 0 for none")
     units = discover_units(os.path.abspath(args.start_directory), args.top_level_dir, args.pattern, args.chunk)
+    # Why the limit is not taken from --timings-from, when it is given and cannot be.
+    timings_note = None
     if args.timings_from is not None:
         try:
             document = json.loads(args.timings_from.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             document = None
+            timings_note = f"{args.timings_from.name} could not be read"
         earlier = document.get("testTimes") if isinstance(document, dict) else None
         earlier = {test: seconds for test, seconds in (earlier or {}).items()
                    if isinstance(seconds, (int, float)) and not isinstance(seconds, bool)
@@ -436,19 +440,21 @@ def main(argv: list[str] | None = None) -> int:
             return max(tests, earlier_units.get(unit["name"], 0))
 
         units.sort(key=cost, reverse=True)
+    unit_timeout = UNIT_TIMEOUT_DEFAULT
     if args.unit_timeout is not None:
         unit_timeout = args.unit_timeout or None
-    elif args.timings_from is not None and any(cost(unit) for unit in units):
-        unit_timeout = max(UNIT_TIMEOUT_FLOOR, UNIT_TIMEOUT_FACTOR * max(cost(unit) for unit in units))
-    else:
-        if args.timings_from is not None:
-            print(f"unit timeout: {args.timings_from.name} records no current test; using the default", flush=True)
-        unit_timeout = UNIT_TIMEOUT_DEFAULT
+    elif args.timings_from is not None and timings_note is None:
+        derived = UNIT_TIMEOUT_FACTOR * max((cost(unit) for unit in units), default=0)
+        if derived and math.isfinite(derived):
+            unit_timeout = max(UNIT_TIMEOUT_FLOOR, derived)
+        else:
+            timings_note = f"{args.timings_from.name} records no usable time for a current test"
     if args.list:
         for unit in units:
             print(f"{unit['name']}{'  (serial)' if unit['serial'] else ''}  {unit['tests']}")
         return 0
-    print(f"unit timeout: {f'{unit_timeout:g}s' if unit_timeout else 'none'}", flush=True)
+    note = f" (default: {timings_note})" if timings_note and args.unit_timeout is None else ""
+    print(f"unit timeout: {f'{unit_timeout:g}s' if unit_timeout else 'none'}{note}", flush=True)
     started = time.perf_counter()
     try:
         combined = run_suite(units, workers=args.workers, top=args.top_level_dir, unit_timeout=unit_timeout)

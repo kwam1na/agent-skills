@@ -472,18 +472,33 @@ class ParallelRunnerTests(unittest.TestCase):
         (self.root / "slow.json").write_text(json.dumps(slow))
         (self.root / "fast.json").write_text(json.dumps(fast))
         (self.root / "nothing.json").write_text(json.dumps({"testTimes": {"other.module.Test.test_x": 99.0}}))
+        # A negative time is dropped, not summed against the rest of its unit.
+        (self.root / "negative.json").write_text(json.dumps(
+            {"testTimes": {"suite.test_alpha.One.test_a": -500.0, "suite.test_alpha.One.test_b": 100.0}}))
+        # Only unusable times for current tests: boolean, too large to multiply.
+        (self.root / "boolean.json").write_text(json.dumps({"testTimes": {"suite.test_alpha.One.test_a": True}}))
+        (self.root / "huge.json").write_text(json.dumps({"units": {"suite.test_beta": 1e308}}))
+        (self.root / "garbled.json").write_text("not json")
         for extra, expected in ((("--timings-from", "slow.json"), "unit timeout: 600s"),
                                 (("--timings-from", "fast.json"), "unit timeout: 300s"),
                                 (("--timings-from", "slow.json", "--unit-timeout", "42"), "unit timeout: 42s"),
                                 ((), "unit timeout: 1800s"),
                                 (("--unit-timeout", "0"), "unit timeout: none"),
-                                (("--timings-from", "missing.json"), "unit timeout: 1800s"),
+                                (("--timings-from", "missing.json"),
+                                 "unit timeout: 1800s (default: missing.json could not be read)"),
+                                (("--timings-from", "garbled.json"),
+                                 "unit timeout: 1800s (default: garbled.json could not be read)"),
+                                (("--timings-from", "negative.json"), "unit timeout: 500s"),
+                                (("--timings-from", "boolean.json"), "unit timeout: 1800s (default: boolean.json"),
+                                (("--timings-from", "huge.json"), "unit timeout: 1800s (default: huge.json"),
                                 (("--timings-from", "setup.json"), "unit timeout: 450s"),
-                                (("--timings-from", "nothing.json"), "records no current test")):
+                                (("--timings-from", "nothing.json"),
+                                 "unit timeout: 1800s (default: nothing.json records no usable time")):
             with self.subTest(extra=extra):
                 run = self.run_runner(*extra)
                 self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
                 self.assertIn(expected, run.stdout)
+                self.assertEqual(run.stdout.count("unit timeout:"), 1, "one line states the limit")
         for bad in ("-1", "inf", "nan"):
             self.assertEqual(self.run_runner("--unit-timeout", bad).returncode, 2, bad)
 
