@@ -723,6 +723,34 @@ class FixtureAdopterTests(unittest.TestCase):
                           stale["state"]["meta"]["sources"]["forge"]["lastReadAt"]), ("stale", last))
         self.assertIn(f"forge last read at {last}", stale["status"]["text"])
 
+    def test_a_lane_starting_its_ticket_moves_its_stop_with_no_lead_step(self) -> None:
+        adopter = FixtureAdopter(self.root)
+        adopter.state_tool("init", "--headline", "Fixture starts")
+        tracker = adopter.root / "tracker data.json"
+        tracker.write_text(json.dumps({"epic-1": [
+            {"reference": "beta-copy", "title": "Copy for beta", "stateType": "backlog", "blockedBy": []},
+        ]}), encoding="utf-8")
+        binding = adopter.binding()
+        binding["state"]["trackerSnapshot"] = {"argv": [sys.executable, "-B", "tools/tracker.py", "{parent}", str(tracker)]}
+        adopter.push_to_base({}, "Declare the tracker command", binding)
+        adopter.lead_patch({"meta": {"trackerParent": "epic-1"},
+                            "planned": [{"subject": "beta-copy", "title": "Copy for beta", "lane": "lane-1",
+                                         "stage": "planned"}]})
+        adopter.queue("serve", "--until-idle", expect=0)
+        self.assertEqual(adopter.show()["state"]["planned"][0]["stage"], "planned", "not started yet")
+
+        # The lane moves its ticket to started; the next refresh moves the stop, and the views show it.
+        tracker.write_text(json.dumps({"epic-1": [
+            {"reference": "beta-copy", "title": "Copy for beta", "stateType": "started", "blockedBy": []},
+        ]}), encoding="utf-8")
+        adopter.queue("serve", "--until-idle", expect=0)
+        planned = adopter.show()["state"]["planned"][0]
+        self.assertEqual((planned["stage"], planned["lane"]), ("building", "lane-1"))
+        adopter.tool(WRAPPER, "--dir", str(adopter.state), "--binding", str(adopter.operator / ".agents/orchestration.json"))
+        self.assertIn(f"{text('beta-copy')}: {text('Copy for beta')}, building", adopter.view())
+        page = (adopter.state / "delivery.html").read_text(encoding="utf-8")
+        self.assertIn('"stage":"building"', page.replace(" ", ""))
+
     def test_a_batch_of_two_is_checked_once_and_lands_tree_verified(self) -> None:
         adopter = FixtureAdopter(self.root)
         adopter.state_tool("init", "--headline", "Fixture batch")

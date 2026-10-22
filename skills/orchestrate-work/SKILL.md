@@ -219,10 +219,15 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   `base.repaired`; a candidate waiting for the lead to accept its hand-off is
   left alone, a refused one stops, and a killed `serve` is cleared by the next
   one. It reads the binding and checks the checkout once before taking
-  anything, and does not start when either is wrong. On the binding's
-  `state.refreshSeconds` it also reads the declared forge and tracker
-  snapshot commands and reconciles them, so the record follows both with no
-  lead step. It prints each result document on a line of its own as it writes it,
+  anything, and does not start when either is wrong. It checks them again
+  before each turn that takes work and after any stop or refusal other than
+  `queue_locked`: when they break while it runs, it sets `meta.hold` itself,
+  only where none is set, journals one blocker entry, and puts that
+  turn's candidates back to `queued`, except one whose merge had begun. On
+  the binding's `state.refreshSeconds` it also reads the declared forge and
+  tracker snapshot commands and reconciles them, so the record follows both
+  with no lead step. It prints each result document on a line of its own as
+  it writes it,
   and `state/results` keeps them all; `--until-idle` prints them together.
 - `release <ref> [--approved-by <text>]` runs the binding's release targets on
   the base tip or an ancestor of it.
@@ -380,11 +385,16 @@ run the sync loop in this order:
    ```
 
    - A tracker child the record lacks is added: `backlog` as a follow-up,
-     `started` as planned work (the state's `planned` list). Planned work is
-     only what the approved plan covers, so write a started child outside it
-     as `backlog` in the snapshot: it then becomes a follow-up.
+     `started` as planned work at `building` (the state's `planned` list).
+     Planned work is only what the approved plan covers, so write a started
+     child outside it as `backlog` in the snapshot: it then becomes a
+     follow-up.
+   - Planned work at `planned` whose ticket the tracker shows `started` moves
+     to `building`, so a lane starting its ticket moves its stop with no lead
+     step. Work at `building` or in review that the tracker shows back in
+     `backlog` is reported for the lead, never moved back.
    - A change request is linked to its queue or planned item, and an open one
-     moves planned work to review.
+     moves planned or building work to review.
    - Each ticket's tracker title and summary, for work the record holds, are
      kept in the state's `tickets`, keyed by subject, and written only when
      they change; the views show them in place of the lead's own text. A

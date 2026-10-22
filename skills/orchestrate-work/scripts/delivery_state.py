@@ -622,6 +622,9 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
                 violations.append(f"/{field} belongs to the lead")
         for field in set(meta_before) | set(meta_after):
             if field not in RUNNER_META and field != "updatedAt" and meta_before.get(field) != meta_after.get(field):
+                # serve may hold itself when its setup breaks, but only where no hold is set; the lead clears it.
+                if field == "hold" and not meta_before.get("hold") and meta_after.get("hold"):
+                    continue
                 violations.append(f"/meta/{field} belongs to the lead")
         old, new = before.get("queue", []), after.get("queue", [])
         if [item.get("subject") for item in old] != [item.get("subject") for item in new]:
@@ -1421,6 +1424,10 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
     def report(subject: str, text: str) -> None:
         reports.append({"subject": subject, "note": text})
 
+    def where(entry: dict) -> str:
+        """Where planned work stands, as a report names it."""
+        return "in review" if entry["stage"] == "review" else entry["stage"]
+
     # The tracker first, whatever the order given: work it adds is then there
     # for the forge to link, so one pass reaches the fixed point.
     for snapshot in sorted(snapshots, key=lambda snapshot: snapshot["source"] != "tracker"):
@@ -1435,16 +1442,23 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
                         lead["followups"].append({"id": subject, "title": title, "reference": subject})
                         change(subject, "in the tracker but not the record: added as a follow-up")
                     elif word == "started":
-                        lead["planned"].append({"subject": subject, "title": title, "lane": None, "stage": "planned"})
-                        change(subject, "started in the tracker but not in the record: added as planned work")
+                        # Started means under way, so it joins as building, settled in this one pass.
+                        lead["planned"].append({"subject": subject, "title": title, "lane": None, "stage": "building"})
+                        change(subject, "started in the tracker but not in the record: added as planned work, building")
                     elif word == "completed":
                         report(subject, "completed in the tracker but never recorded")
                 elif word == "started" and not known:
                     report(subject, "a follow-up the tracker now shows started: assign it a lane")
+                elif word == "started" and planned(subject) and planned(subject)["stage"] == "planned":
+                    # A lane moves its ticket to started as it begins; that alone moves the stop.
+                    planned(subject)["stage"] = "building"
+                    change(subject, "started in the tracker: now building")
+                elif word == "backlog" and planned(subject) and planned(subject)["stage"] in ("building", "review"):
+                    report(subject, f"{where(planned(subject))} in the record but back in the tracker's backlog: check it")
                 elif word == "completed" and planned(subject):
-                    report(subject, "completed in the tracker but still planned in the record: check the forge")
+                    report(subject, f"completed in the tracker but still {where(planned(subject))} in the record: check the forge")
                 elif word == "canceled" and planned(subject):
-                    report(subject, "canceled in the tracker but still planned in the record")
+                    report(subject, f"canceled in the tracker but still {where(planned(subject))} in the record")
                 continue
             reference = item.get("changeRequest")
             entry = queued(subject) or planned(subject)
@@ -1455,7 +1469,7 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
             if reference and entry.get("changeRequest") != reference:
                 entry["changeRequest"] = reference
                 change(subject, f"linked change request {reference}")
-            if word == "open" and entry is planned(subject) and entry["stage"] == "planned":
+            if word == "open" and entry is planned(subject) and entry["stage"] in ("planned", "building"):
                 entry["stage"] = "review"
                 change(subject, "its change request is open: now in review")
             elif word == "closed" and entry.get("stage") != "merged":

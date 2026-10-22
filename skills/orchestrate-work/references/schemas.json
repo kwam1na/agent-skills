@@ -588,6 +588,7 @@
             "stage": {
               "enum": [
                 "planned",
+                "building",
                 "review"
               ]
             },
