@@ -2798,11 +2798,11 @@ class LaneWriterTests(unittest.TestCase):
         self.assertEqual(item["runId"], "run-planned")
 
     def test_a_malformed_run_id_is_refused_and_nothing_is_written(self) -> None:
+        before = (self.directory / state_tool.STATE_FILE).read_bytes()
         journal = (self.directory / state_tool.JOURNAL_FILE).read_bytes()
         code = self.refused(lambda: state_tool.handoff(self.directory, lane="lane-1", subject="work-a",
                                                        head="a" * 40, change_request="change request 4", run=""))
         self.assertEqual(code, "patch_invalid")
-        before = (self.directory / state_tool.STATE_FILE).read_bytes()
         code, result = run_tool(self.directory, "handoff", "--lane", "lane-1", "--subject", "work-a",
                                 "--head", "a" * 40, "--change-request", "change request 4", "--run", "")
         self.assertNotEqual(code, 0, result)
@@ -3015,11 +3015,15 @@ class LaneWriterTests(unittest.TestCase):
 
     def test_a_rejected_hand_off_returns_its_lane_to_work_with_its_change_request(self) -> None:
         self.lead({"meta": {"handoffsNeedAcceptance": True}})
-        state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr 7")
+        state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr 7",
+                           run="run-b")
         back = state_tool.reject_handoff(self.directory, "work-b", "no")
         state = state_tool.read_state(self.directory)
         self.assertEqual(state["planned"][-1], back)
-        self.assertEqual(back["changeRequest"], "cr 7")
+        self.assertEqual((back["changeRequest"], back["runId"]), ("cr 7", "run-b"))
+        again = state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="d" * 40,
+                                   change_request="cr 7")
+        self.assertEqual(again["runId"], "run-b", "the run survives a rejected hand-off")
         self.assertEqual(next(entry for entry in state["lanes"] if entry["id"] == "lane-2")["state"], "working")
 
 

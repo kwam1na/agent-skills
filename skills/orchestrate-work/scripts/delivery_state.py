@@ -824,6 +824,8 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
         back = {"subject": subject, "title": item["title"], "lane": item["lane"], "stage": "review"}
         if "changeRequest" in item:
             back["changeRequest"] = item["changeRequest"]
+        if item.get("runId") is not None:
+            back["runId"] = item["runId"]
         state.setdefault("planned", []).append(back)
         if item["lane"] is not None:
             _set_lane_state(state, item["lane"], "working")
