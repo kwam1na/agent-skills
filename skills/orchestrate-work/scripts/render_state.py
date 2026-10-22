@@ -967,6 +967,11 @@ def parse_config(config: object) -> tuple[list[dict], list[dict]]:
         outputs.add(output)
         renderers.append({"id": entry["id"], "argv": argv, "builtin": builtin, "output": output,
                           "timeout": _timeout(entry, where)})
+    home = config.get("liveHome")
+    # A built-in renderer's file never opts in to the live stream: the front page would be a 404.
+    if home is not None and not any(renderer["id"] == home and renderer["argv"] is not None
+                                    and renderer["output"].endswith(".html") for renderer in renderers):
+        raise ConfigError("liveHome must be the id of a declared argv renderer whose output is an .html file")
     publishers = []
     for index, entry in enumerate(_entries(config, "publishers")):
         where = f"publishers[{index}]"
@@ -1480,7 +1485,10 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool]) -> type:
                 self._plain(403, b"refused: this view serves only its own host and port\n")
                 return
             path = self.path.split("?", 1)[0]
-            if path in ("/", "/index.html"):
+            home = _live_home(view.config)
+            if path in ("/", "/index.html") and home is not None:
+                self._view(home)
+            elif path in ("/", "/index.html"):
                 with view.changed:
                     document = view.document
                 if document is None:
@@ -1549,6 +1557,12 @@ def _views_only(config: object) -> object:
     if config is None:
         return {"renderers": [dict(entry) for entry in DEFAULT_RENDERERS], "publishers": []}
     return {**config, "publishers": []} if isinstance(config, dict) else config
+
+
+def _live_home(config: object) -> str | None:
+    """The output of the renderer the binding names as the front page, or None for the built-in page."""
+    home = config.get("liveHome") if isinstance(config, dict) else None
+    return next((renderer["output"] for renderer in _live_renderers(config) if renderer["id"] == home), None)
 
 
 def _live_renderers(config: object) -> list[dict]:
