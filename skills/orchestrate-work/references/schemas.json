@@ -1975,6 +1975,11 @@
             "type": "integer",
             "minimum": 0
           },
+          "liveHome": {
+            "description": "Optional. The id of a declared argv renderer whose HTML view the live server serves at its front page, as it serves /view/<output>; the built-in page when absent.",
+            "type": "string",
+            "minLength": 1
+          },
           "statusOverrideMaxAgeSeconds": {
             "description": "Optional. How long a lead's status override lasts before the derived status line returns; 14400 when absent.",
             "type": "integer",

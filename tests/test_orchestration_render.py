@@ -752,7 +752,11 @@ class HostPublisherTests(DeliveryStateFixture):
                    "trackerSnapshot": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30},
                    "workHints": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30},
                    "forgeSnapshot": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30}, "refreshSeconds": 180}
-        base = json.loads(self.config([], []))
+        # liveHome names a renderer, so the base declares one for it to name.
+        home = {"id": "home", "argv": python_argv("import sys\nsys.stdout.write('<html></html>')\n", self.tools, "home"),
+                "output": "home.html"}
+        samples["liveHome"] = "home"
+        base = json.loads(self.config([home], []))
         for field in fields:
             if field in base:
                 continue
@@ -1291,6 +1295,39 @@ class LiveTests(DeliveryStateFixture):
         self.assertIn(b'fetch("/document")', page)
         self.assertEqual(client.get("view/plain.html")[0], 404)
         self.assertEqual(client.get("view/../state.json")[0], 404)
+
+    def test_the_binding_s_home_view_is_the_front_page(self) -> None:
+        own = {"id": "own", "argv": python_argv(
+            "import sys\nsys.stdout.write('<html><head><meta name=\"delivery-state-live\"></head><body>own home</body></html>')\n",
+            self.tools, "own"), "output": "own.html"}
+        config = json.loads(self.config([own]))
+        _, url = self.start("--state-config", json.dumps({**config, "liveHome": "own"}))
+        client = self.client(url)
+        deadline = time.monotonic() + 5
+        status, page = client.get("")
+        while status != 200 and time.monotonic() < deadline:
+            time.sleep(0.2)
+            status, page = client.get("")
+        self.assertEqual(status, 200)
+        self.assertIn(b"own home", page)
+        self.assertIn(b'EventSource("/events")', page)
+        self.assertEqual(client.get("index.html")[1], page)
+
+    def test_without_a_home_view_the_front_page_is_the_built_in_page(self) -> None:
+        _, url = self.start()
+        status, page = self.client(url).get("")
+        self.assertEqual(status, 200)
+        self.assertIn(b"<title>Delivery state</title>", page)
+
+    def test_a_home_view_that_names_no_html_renderer_never_starts_the_server(self) -> None:
+        markdown = {"id": "md", "builtin": "markdown", "output": "delivery.md"}
+        page = {"id": "page", "builtin": "static-page", "output": "delivery.html"}
+        for home in ("missing", "md", "page", 7):
+            with self.subTest(home=home):
+                config = json.loads(self.config([markdown, page]))
+                result = run([sys.executable, "-B", str(WRAPPER), "live", "--dir", str(self.state_dir),
+                              "--state-config", json.dumps({**config, "liveHome": home})])
+                self.assertEqual((result.returncode, json.loads(result.stdout)["code"]), (2, "config_invalid"))
 
     def test_a_wildcard_bind_is_refused_before_anything_listens(self) -> None:
         for host in ("0.0.0.0", "::", "0:0:0:0:0:0:0:0", "::ffff:0.0.0.0", "", " ", "0"):
