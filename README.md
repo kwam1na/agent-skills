@@ -34,7 +34,10 @@ cores by default, and gives the same verdict as `unittest discover` in a
 fraction of the time. A test class that sets `run_serially = True`, or a
 module that sets `RUN_SERIALLY = True`, runs with nothing beside it.
 `--timings <file>` records per-test times, and `--timings-from <file>` starts
-the slowest work first:
+the slowest work first. A unit that runs past `--unit-timeout` seconds, by
+default five times the slowest unit in the earlier timings and at least 300,
+or 1800 without them, is stopped with everything it started and reported as
+timed out, while the rest of the run carries on:
 
 ```bash
 .venv/bin/python scripts/run-tests.py --timings .test-timings.json
