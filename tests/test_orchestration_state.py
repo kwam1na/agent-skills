@@ -931,7 +931,7 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual((code, result["drift"]), (0, False), result)
 
     def test_a_ticket_listed_without_a_title_keeps_the_record_s_own(self) -> None:
-        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "planned"}]})
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "building"}]})
         before = self.bytes()
         code, result = run_tool(self.directory, "reconcile", "--snapshot",
                                 self.snapshot("tracker", [{"subject": "work-now", "state": "started"}]))
@@ -973,7 +973,7 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(run_tool(self.directory, "reconcile", "--snapshot", wider)[1]["code"], "snapshot_invalid")
 
     def test_a_blank_summary_is_none_and_text_that_cannot_be_stored_is_refused_up_front(self) -> None:
-        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "planned"}]})
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "building"}]})
         before = self.bytes()
         code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot(
             "tracker", [{"subject": "work-now", "title": "Work", "state": "started", "summary": "  \n "}]))
