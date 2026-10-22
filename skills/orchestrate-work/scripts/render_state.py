@@ -111,7 +111,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from delivery_state import (  # noqa: E402
     CHANGES_FILE, JOURNAL_FILE, OUTBOX_DIRECTORY, OUTBOX_FILE, PUBLISHED_FILE, QUEUE_LOCK, RECOVERY_FILE,
     RECOVERY_QUARANTINE, STATE_FILE, STATE_LOCK, StateError,
-    dumps, read_published, show,
+    dumps, load_schema, read_published, show,
 )
 
 
@@ -926,7 +926,8 @@ def parse_config(config: object) -> tuple[list[dict], list[dict]]:
     """The renderers and publishers a ``state`` configuration declares."""
     if not isinstance(config, dict):
         raise ConfigError("the state configuration must be an object")
-    allowed = {"directory", "renderers", "publishers", "snapshotMaxAgeSeconds", "trackerSnapshot"}
+    # The binding schema is the one list of state fields, so a field it gains is never refused here.
+    allowed = set(load_schema("orchestration-binding/1")["properties"]["state"]["properties"])
     unknown = sorted(set(config) - allowed)
     if unknown:
         raise ConfigError(f"unknown state configuration fields: {', '.join(unknown)}")

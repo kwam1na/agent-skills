@@ -1876,6 +1876,27 @@
               }
             }
           },
+          "workHints": {
+            "description": "Optional: the repository's command that prints a work-hints/1 document of each item's files and priority, for next to run. {parent} in argv is the record's meta.trackerParent.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "argv"
+            ],
+            "properties": {
+              "argv": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
           "refreshSeconds": {
             "description": "Optional. How often serve reads the declared forge and tracker snapshots and reconciles them, in seconds, at most 86400; 180 when absent, and 0 turns it off.",
             "type": "integer",
@@ -2044,6 +2065,65 @@
             "type": "boolean"
           }
         }
+      }
+    }
+  },
+  "work-hints/1": {
+    "$id": "urn:agent-skills:orchestrate-work:work-hints:1",
+    "title": "work-hints/1",
+    "description": "What the lead knows about the work beside its tracker state: the files each item is expected to touch, and its priority. The lead writes it; next reads it to rank a lane's next work.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "items"
+    ],
+    "properties": {
+      "items": {
+        "description": "Keyed by subject, as in work-snapshot/1.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "files": {
+              "description": "Paths the item is expected to touch, relative to the repository: a file, a folder ending in /, or a glob.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            },
+            "changedFiles": {
+              "description": "The files the item's change actually touches, once it has one. Preferred over files when present.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/path"
+              }
+            },
+            "priority": {
+              "description": "1 is the most urgent, 4 the least; null when it has none.",
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer",
+                  "enum": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "path": {
+        "type": "string",
+        "minLength": 1
       }
     }
   },

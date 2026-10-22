@@ -120,6 +120,32 @@ lane report treated as a claim to check. Without a session capability, the
 lead runs lanes as subagents or in sequence. Leases, including those held
 outside the epic, follow the same protocol.
 
+When a lane hands off, the state tool can suggest its next work. It ranks the
+planned work no other lane holds and the follow-ups, by their tracker
+references, leaving out anything queued, in review, completed or canceled.
+It lists five unless `--limit` says otherwise, and never assigns any of it;
+the lead still decides and sends:
+
+```bash
+python3 -B scripts/delivery_state.py --dir <state directory> next --lane <lane> --snapshot <tracker snapshot> --binding .agents/orchestration.json
+```
+
+Unblocked work comes first, by the tracker snapshot's `blockedBy`; then work
+whose files do not overlap what another open lane holds; then priority; then
+files the lane holds or has worked on. Each item comes with a one-line reason,
+which says whether the files compared were declared or what a change actually
+touched; work the snapshot does not list comes after work it shows
+unblocked. Paths are relative to the repository, and a glob's `*` crosses
+folders. The files and priorities come from a `work-hints/1` document (in
+`references/schemas.json`): each item's declared `files`, as paths, folders
+ending in `/` or globs; the `changedFiles` its change actually touches, once
+it has one, used in their place; and its `priority`, 1 the most urgent to 4,
+or null. The repository's own command produces it when the binding declares
+`state.workHints`, `{argv, timeoutSeconds?}`, run like `trackerSnapshot` with
+`{parent}`; how it learns files and priorities is the repository's choice. A
+`--hints` file is the fallback when the binding declares no command or the
+command fails, and the result says which was used and why.
+
 ## Findings and a broken base
 
 Triage every review finding with
