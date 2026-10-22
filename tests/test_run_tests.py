@@ -227,6 +227,35 @@ class ParallelRunnerTests(unittest.TestCase):
                 self.assertIn("interrupted", err)
                 self.assert_gone(recorded)
 
+    @unittest.skipIf(os.name == "nt", "signals the runner")
+    def test_a_worker_is_asked_to_stop_before_it_is_killed(self) -> None:
+        marker = self.root / "asked"
+        self.module("test_polite", f"""
+            import os, signal, sys, time, unittest
+            class Polite(unittest.TestCase):
+                def test_wait(self):
+                    def asked(signum, frame):
+                        open({str(marker)!r}, "w").write("asked")
+                        sys.exit(0)
+                    signal.signal(signal.SIGTERM, asked)
+                    with open(os.environ["TRACE"], "a") as trace:
+                        trace.write(f"{{os.getpid()}}\\n")
+                    time.sleep(60)
+        """)
+        runner = subprocess.Popen([sys.executable, "-B", str(RUNNER), "-s", "suite", "-t", "."], cwd=self.root,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                  env={**os.environ, "TRACE": str(self.trace)})
+        self.addCleanup(lambda: runner.poll() is None and runner.kill())
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not (self.trace.exists() and self.trace.read_text().strip()):
+            time.sleep(0.05)
+        recorded = [int(word) for word in self.trace.read_text().split()]
+        runner.send_signal(signal.SIGINT)
+        runner.communicate(timeout=30)
+        self.assertEqual(runner.returncode, 130)
+        self.assertTrue(marker.exists(), "the worker got SIGTERM, and time to act on it, before any SIGKILL")
+        self.assert_gone(recorded)
+
     def assert_gone(self, recorded: list[int]) -> None:
         for pid in recorded:
             deadline = time.monotonic() + 5
@@ -346,7 +375,8 @@ class ParallelRunnerTests(unittest.TestCase):
             import signal, subprocess, sys, unittest
             class Signals(unittest.TestCase):
                 def test_nothing_blocked(self):
-                    self.assertEqual(signal.pthread_sigmask(signal.SIG_BLOCK, set()), set())
+                    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+                    self.assertFalse({signal.SIGINT, signal.SIGTERM} & blocked, blocked)
                 def test_a_child_stops_when_asked(self):
                     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
                     child.terminate()

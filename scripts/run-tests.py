@@ -9,8 +9,8 @@ units of at most ``--chunk`` tests of one class. A class with its own
 fixture runs more often than under discover and every test is the one
 discover built. A module that skips itself as it is imported counts as one
 skipped test, as under discover. A test class imported into a module that
-has module fixtures also runs once more inside that module's unit; keep
-shared base classes in modules discover does not collect. A
+has module fixtures runs again inside that module's unit, wherever the class
+is defined. A
 class that sets ``run_serially = True``, or a module marked ``RUN_SERIALLY``,
 runs alone: no other worker is running while it does. Every unit runs in its
 own process, so a crash or a hang ends that unit only; the run then fails,
