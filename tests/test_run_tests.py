@@ -410,23 +410,82 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertLess(elapsed, 30)
         self.assert_gone([int(word) for word in self.trace.read_text().split()])
 
+    @unittest.skipIf(os.name == "nt", "process groups are POSIX here")
+    def test_a_run_whose_only_unit_hangs_times_out_named_by_its_tests(self) -> None:
+        self.module("test_only", """
+            import sys, time, unittest
+            class Hang(unittest.TestCase):
+                def test_first(self):
+                    print("about to hang", file=sys.stderr, flush=True)
+                    time.sleep(120)
+                def test_second(self):
+                    pass
+        """)
+        run = self.run_runner("--unit-timeout", "2", "--chunk", "1")
+        self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
+        self.assertNotIn("NO TESTS RAN", run.stdout)
+        self.assertIn("TIMED OUT suite.test_only.Hang[1/2] (after 2s)", run.stdout, "the live line")
+        self.assertIn("TIMED OUT: suite.test_only.Hang[1/2] after 2s", run.stdout)
+        self.assertIn("  suite.test_only.Hang.test_first", run.stdout, "named by its test, not its class")
+        self.assertIn("time.sleep(120)", run.stdout, "with its log, which shows where it hung")
+        self.assertIn("Ran 1 test", run.stdout)
+
+    @unittest.skipIf(os.name == "nt", "signals the runner")
+    def test_an_interrupt_while_a_unit_is_being_stopped_still_stops_the_run(self) -> None:
+        self.module("test_stubborn", """
+            import os, signal, time, unittest
+            class Stubborn(unittest.TestCase):
+                def test_hang(self):
+                    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                    with open(os.environ["TRACE"], "a") as trace:
+                        trace.write(f"{os.getpid()}\\n")
+                    time.sleep(120)
+            class Busy(unittest.TestCase):
+                def test_wait(self):
+                    time.sleep(30)
+        """)
+        runner = subprocess.Popen([sys.executable, "-B", str(RUNNER), "-s", "suite", "-t", ".", "--workers", "2",
+                                   "--unit-timeout", "1"], cwd=self.root, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True, env={**os.environ, "TRACE": str(self.trace)})
+        self.addCleanup(lambda: runner.poll() is None and runner.kill())
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not (self.trace.exists() and self.trace.read_text().strip()):
+            time.sleep(0.05)
+        recorded = [int(word) for word in self.trace.read_text().split()]
+        # The unit's limit passes at one second; its worker ignores SIGTERM, so its stop lasts the grace.
+        time.sleep(2.2)
+        started = time.monotonic()
+        runner.send_signal(signal.SIGINT)
+        _, err = runner.communicate(timeout=30)
+        self.assertEqual(runner.returncode, 130, err)
+        self.assertLess(time.monotonic() - started, 15, "not after the rest of the run")
+        self.assert_gone(recorded)
+
     def test_the_unit_timeout_defaults_from_earlier_timings_and_the_option_overrides_it(self) -> None:
         self.passing_suite()
         slow = {"testTimes": {"suite.test_beta.Four.test_g": 100.0, "suite.test_beta.Three.test_f": 20.0,
                               "suite.test_alpha.One.test_a": 1.0}}
+        # A unit whose recorded wall time, fixtures included, exceeds its tests' sum.
+        setup = {"testTimes": {"suite.test_alpha.One.test_a": 1.0}, "units": {"suite.test_alpha.One": 90.0}}
+        (self.root / "setup.json").write_text(json.dumps(setup))
         fast = {"testTimes": {"suite.test_alpha.One.test_a": 1.0}}
         (self.root / "slow.json").write_text(json.dumps(slow))
         (self.root / "fast.json").write_text(json.dumps(fast))
+        (self.root / "nothing.json").write_text(json.dumps({"testTimes": {"other.module.Test.test_x": 99.0}}))
         for extra, expected in ((("--timings-from", "slow.json"), "unit timeout: 600s"),
                                 (("--timings-from", "fast.json"), "unit timeout: 300s"),
                                 (("--timings-from", "slow.json", "--unit-timeout", "42"), "unit timeout: 42s"),
                                 ((), "unit timeout: 1800s"),
-                                (("--unit-timeout", "0"), "unit timeout: none")):
+                                (("--unit-timeout", "0"), "unit timeout: none"),
+                                (("--timings-from", "missing.json"), "unit timeout: 1800s"),
+                                (("--timings-from", "setup.json"), "unit timeout: 450s"),
+                                (("--timings-from", "nothing.json"), "records no current test")):
             with self.subTest(extra=extra):
                 run = self.run_runner(*extra)
                 self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
                 self.assertIn(expected, run.stdout)
-        self.assertEqual(self.run_runner("--unit-timeout", "-1").returncode, 2)
+        for bad in ("-1", "inf", "nan"):
+            self.assertEqual(self.run_runner("--unit-timeout", bad).returncode, 2, bad)
 
     def test_workers_below_one_are_a_usage_error(self) -> None:
         self.passing_suite()

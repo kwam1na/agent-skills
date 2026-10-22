@@ -20,7 +20,9 @@ A unit that runs longer than ``--unit-timeout`` seconds is stopped with its
 whole process group, as an interrupt stops it, and reported as timed out with
 its tests named; the rest of the run carries on and the run fails. The limit
 defaults to five times the slowest unit an earlier ``--timings-from`` file
-records, at least 300 seconds, or to 1800 seconds without one; 0 sets none.
+records, at least 300 seconds, or to 1800 seconds without one or when it
+records none of the current tests; 0 sets none. Only the unit's own process
+group is stopped: a child a test moved into a session of its own is not.
 
     .venv/bin/python scripts/run-tests.py                 # cores / 2 workers
     .venv/bin/python scripts/run-tests.py --workers 1     # one at a time
@@ -39,6 +41,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import math
 import os
 import shutil
 import signal
@@ -178,15 +181,17 @@ def _exited(process: subprocess.Popen) -> bool:
     return False
 
 
-def _stop_all(processes: list[subprocess.Popen]) -> None:
+def _stop_all(processes: list[subprocess.Popen], *, ignore_interrupts: bool = True) -> None:
     """Stop every worker and everything each started; each leads its own process group.
 
-    Further interrupts are ignored until it is done. Every group is asked to
-    stop, given one shared grace, then killed whatever its leader did, before
-    any worker is reaped, so a child left in a group is killed too.
+    By default further interrupts are ignored until it is done, as when an
+    interrupt is what is being handled. Every group is asked to stop, given
+    one shared grace, then killed whatever its leader did, before any worker
+    is reaped, so a child left in a group is killed too. A child a test moved
+    into a session of its own is outside the group and is not stopped.
     """
     ignored = {}
-    for signum in (signal.SIGINT, getattr(signal, "SIGTERM", None)):
+    for signum in (signal.SIGINT, getattr(signal, "SIGTERM", None)) if ignore_interrupts else ():
         if signum is not None:
             try:
                 ignored[signum] = signal.signal(signum, signal.SIG_IGN)
@@ -278,23 +283,35 @@ def run_suite(units: list[dict], *, workers: int, top: str, unit_timeout: float 
         print(f"{'FAIL' if bad else 'ok  '} {name} ({result['testsRun']} tests, {combined['units'][name]:.1f}s)",
               file=out, flush=True)
 
-    def expire(name: str) -> None:
-        process, _result, log_path, started, unit = running[name]
-        # Stopped as an interrupt stops it: asked, given the grace, then killed with its whole group.
-        _stop_all([process])
-        running.pop(name)
-        combined["units"][name] = round(time.perf_counter() - started, 3)
-        tail = log_path.read_text(encoding="utf-8", errors="replace")[-2000:]
-        combined["timedOut"].append({"unit": name, "seconds": unit_timeout, "tests": unit["ids"], "log": tail})
-        print(f"TIMED OUT {name} (after {unit_timeout:g}s)", file=out, flush=True)
+    def expire(names: list[str]) -> None:
+        # Out of the running set first: an interrupt then never signals a worker that is already reaped.
+        expired = {name: running.pop(name) for name in names}
+        # Stopped together, as an interrupt stops them: asked, one shared grace, then killed with their groups.
+        # An interrupt meanwhile is held, not lost, and is handled as soon as they are stopped.
+        held = hasattr(signal, "pthread_sigmask")
+        if held:
+            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+        try:
+            _stop_all([process for process, *_rest in expired.values()], ignore_interrupts=False)
+        finally:
+            if held:
+                signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
+        for name, (_process, _result, log_path, started, unit) in expired.items():
+            combined["units"][name] = round(time.perf_counter() - started, 3)
+            tail = log_path.read_text(encoding="utf-8", errors="replace")[-2000:]
+            combined["timedOut"].append({"unit": name, "seconds": unit_timeout, "tests": unit["ids"], "log": tail})
+            print(f"TIMED OUT {name} (after {unit_timeout:g}s)", file=out, flush=True)
 
     def drain(limit: int) -> None:
         while len(running) >= limit or (limit == 1 and running):
+            late = []
             for name, (process, _result, _log, started, _unit) in list(running.items()):
                 if process.poll() is not None:
                     finish(name)
                 elif unit_timeout and time.perf_counter() - started > unit_timeout:
-                    expire(name)
+                    late.append(name)
+            if late:
+                expire(late)
             if len(running) >= limit or (limit == 1 and running):
                 time.sleep(0.05)
 
@@ -394,25 +411,38 @@ def main(argv: list[str] | None = None) -> int:
         return run_unit(args.unit, args.result, args.top_level_dir)
     if args.workers < 1 or args.chunk < 1:
         parser.error("--workers and --chunk must be at least 1")
-    if args.unit_timeout is not None and args.unit_timeout < 0:
-        parser.error("--unit-timeout must not be negative")
+    if args.unit_timeout is not None and not (math.isfinite(args.unit_timeout) and args.unit_timeout >= 0):
+        parser.error("--unit-timeout must be a finite number of seconds, 0 for none")
     units = discover_units(os.path.abspath(args.start_directory), args.top_level_dir, args.pattern, args.chunk)
     if args.timings_from is not None:
         try:
-            earlier = json.loads(args.timings_from.read_text(encoding="utf-8")).get("testTimes", {})
+            document = json.loads(args.timings_from.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            earlier = {}
+            document = None
+        earlier = document.get("testTimes") if isinstance(document, dict) else None
+        earlier = {test: seconds for test, seconds in (earlier or {}).items()
+                   if isinstance(seconds, (int, float)) and not isinstance(seconds, bool)
+                   and math.isfinite(seconds) and seconds >= 0} if isinstance(earlier, dict) else {}
+
+        # A unit's own recorded wall time also counts its start-up and class or module fixtures.
+        earlier_units = document.get("units") if isinstance(document, dict) else None
+        earlier_units = {name: seconds for name, seconds in (earlier_units or {}).items()
+                         if isinstance(seconds, (int, float)) and not isinstance(seconds, bool)
+                         and math.isfinite(seconds) and seconds >= 0} if isinstance(earlier_units, dict) else {}
 
         def cost(unit: dict) -> float:
-            return sum(seconds for test, seconds in earlier.items()
-                       if any(test == name or test.startswith(name + ".") for name in unit["names"]))
+            tests = sum(seconds for test, seconds in earlier.items()
+                        if any(test == name or test.startswith(name + ".") for name in unit["names"]))
+            return max(tests, earlier_units.get(unit["name"], 0))
 
         units.sort(key=cost, reverse=True)
     if args.unit_timeout is not None:
         unit_timeout = args.unit_timeout or None
-    elif args.timings_from is not None:
-        unit_timeout = max(UNIT_TIMEOUT_FLOOR, UNIT_TIMEOUT_FACTOR * max((cost(unit) for unit in units), default=0))
+    elif args.timings_from is not None and any(cost(unit) for unit in units):
+        unit_timeout = max(UNIT_TIMEOUT_FLOOR, UNIT_TIMEOUT_FACTOR * max(cost(unit) for unit in units))
     else:
+        if args.timings_from is not None:
+            print(f"unit timeout: {args.timings_from.name} records no current test; using the default", flush=True)
         unit_timeout = UNIT_TIMEOUT_DEFAULT
     if args.list:
         for unit in units:

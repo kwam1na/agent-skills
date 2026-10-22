@@ -45,9 +45,10 @@ merge check may use it the same way:
 It exits 0 when every test passed, 1 when any failed, errored, passed
 unexpectedly, timed out or its worker crashed, 2 on a usage error, 5 when no
 test ran, and 130 when interrupted, after stopping every worker and what it
-started. A unit that hangs is stopped after `--unit-timeout` seconds and named;
-pass `--timings-from` with an earlier `--timings` file for a limit fitted to
-the suite.
+started. A unit that hangs is stopped after `--unit-timeout` seconds and named.
+Without the option the limit is five times the slowest unit an earlier
+`--timings-from` file records, at least 300 seconds, or 1800 seconds with no
+usable file; `0` sets no limit.
 
 Mark a test class `run_serially = True`, or a module `RUN_SERIALLY = True`,
 when it cannot share the machine: a fixed port, a fixed path outside its own
