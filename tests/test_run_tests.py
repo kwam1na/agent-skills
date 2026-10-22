@@ -385,6 +385,49 @@ class ParallelRunnerTests(unittest.TestCase):
         run = self.run_runner()
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
+    @unittest.skipIf(os.name == "nt", "process groups are POSIX here")
+    def test_a_hung_unit_times_out_named_and_the_rest_of_the_run_completes(self) -> None:
+        self.passing_suite()
+        self.module("test_hang", """
+            import os, signal, subprocess, sys, time, unittest
+            class Hang(unittest.TestCase):
+                def test_forever(self):
+                    # A child that ignores SIGTERM, in the worker's group: both must be gone afterwards.
+                    child = subprocess.Popen([sys.executable, "-c",
+                        "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(120)"])
+                    with open(os.environ["TRACE"], "a") as trace:
+                        trace.write(f"{os.getpid()} {child.pid}\\n")
+                    time.sleep(120)
+        """)
+        started = time.monotonic()
+        run = self.run_runner("--workers", "2", "--unit-timeout", "3")
+        elapsed = time.monotonic() - started
+        self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
+        self.assertIn("TIMED OUT: suite.test_hang.Hang after 3s", run.stdout)
+        self.assertIn("suite.test_hang.Hang.test_forever", run.stdout)
+        self.assertIn("timed out=1", run.stdout)
+        self.assertIn("Ran 7 tests", run.stdout, "every other unit completed")
+        self.assertLess(elapsed, 30)
+        self.assert_gone([int(word) for word in self.trace.read_text().split()])
+
+    def test_the_unit_timeout_defaults_from_earlier_timings_and_the_option_overrides_it(self) -> None:
+        self.passing_suite()
+        slow = {"testTimes": {"suite.test_beta.Four.test_g": 100.0, "suite.test_beta.Three.test_f": 20.0,
+                              "suite.test_alpha.One.test_a": 1.0}}
+        fast = {"testTimes": {"suite.test_alpha.One.test_a": 1.0}}
+        (self.root / "slow.json").write_text(json.dumps(slow))
+        (self.root / "fast.json").write_text(json.dumps(fast))
+        for extra, expected in ((("--timings-from", "slow.json"), "unit timeout: 600s"),
+                                (("--timings-from", "fast.json"), "unit timeout: 300s"),
+                                (("--timings-from", "slow.json", "--unit-timeout", "42"), "unit timeout: 42s"),
+                                ((), "unit timeout: 1800s"),
+                                (("--unit-timeout", "0"), "unit timeout: none")):
+            with self.subTest(extra=extra):
+                run = self.run_runner(*extra)
+                self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                self.assertIn(expected, run.stdout)
+        self.assertEqual(self.run_runner("--unit-timeout", "-1").returncode, 2)
+
     def test_workers_below_one_are_a_usage_error(self) -> None:
         self.passing_suite()
         self.assertEqual(self.run_runner("--workers", "0").returncode, 2)
