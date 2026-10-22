@@ -31,7 +31,7 @@ it through the state tool, then render the views.
   `field_not_owned`.
 - **Planned work and change requests are the lead's.** The optional
   `planned[]` list holds work under way but not yet handed to the queue,
-  `{subject, title, lane, stage: planned|review, changeRequest?}`, selected
+  `{subject, title, lane, stage: planned|building|review, changeRequest?}`, selected
   as `planned[subject=<subject>]`; a queue or planned element's optional
   `changeRequest` names its change request. `reconcile` maintains both from
   snapshots. A record that kept these under `extensions` moves them onto
@@ -403,6 +403,9 @@ Post on your own ticket, with your host's tracker tools:
 - at each finding you pass to the lead to defer, naming it; the lead's
   decision post links the follow-up;
 - at hand-off: the change request, the head, the rounds and the validation.
+
+When you begin, also move your ticket to started with the same tools: the
+next reconcile takes that alone to move its stop from planned to building.
 
 One attempt each, never a gate. With no tracker tools, carry on and say so
 in your hand-off.
