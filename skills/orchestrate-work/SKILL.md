@@ -219,10 +219,15 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   `base.repaired`; a candidate waiting for the lead to accept its hand-off is
   left alone, a refused one stops, and a killed `serve` is cleared by the next
   one. It reads the binding and checks the checkout once before taking
-  anything, and does not start when either is wrong. On the binding's
-  `state.refreshSeconds` it also reads the declared forge and tracker
-  snapshot commands and reconciles them, so the record follows both with no
-  lead step. It prints each result document on a line of its own as it writes it,
+  anything, and does not start when either is wrong. It checks them again
+  before each turn that takes work and after any stop or refusal other than
+  `queue_locked`: when they break while it runs, it sets `meta.hold` itself,
+  only where none is set, journals one blocker entry, and puts that
+  turn's candidates back to `queued`, except one whose merge had begun. On
+  the binding's `state.refreshSeconds` it also reads the declared forge and
+  tracker snapshot commands and reconciles them, so the record follows both
+  with no lead step. It prints each result document on a line of its own as
+  it writes it,
   and `state/results` keeps them all; `--until-idle` prints them together.
 - `release <ref> [--approved-by <text>]` runs the binding's release targets on
   the base tip or an ancestor of it.

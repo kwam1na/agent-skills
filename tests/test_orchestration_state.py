@@ -2644,6 +2644,32 @@ def planned(subject: str, lane_id: str | None = "lane-1") -> dict:
     return {"subject": subject, "title": f"Work {subject}", "lane": lane_id, "stage": "review"}
 
 
+class RunnerHoldTests(unittest.TestCase):
+    """The runner may hold serving when its setup breaks; only the lead changes or clears a hold."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name) / "state"
+        state_tool.init(self.directory, "Epic underway")
+
+    def write(self, writer: str, hold: object) -> None:
+        version = state_tool.read_state(self.directory)["version"]
+        state_tool.patch(self.directory, writer=writer, version=version, assignments={"/meta/hold": hold})
+
+    def test_the_runner_sets_a_hold_only_where_none_is_set(self) -> None:
+        held = {"reason": "serve cannot use its setup", "since": "2026-10-21T10:00:00Z"}
+        self.write("runner", held)
+        self.assertEqual(state_tool.read_state(self.directory)["meta"]["hold"], held)
+        for name, hold in (("change it", {**held, "reason": "something else"}), ("clear it", None)):
+            with self.subTest(name):
+                with self.assertRaises(state_tool.StateError) as caught:
+                    self.write("runner", hold)
+                self.assertEqual(caught.exception.code, "field_not_owned")
+        self.write("lead", None)
+        self.assertIsNone(state_tool.read_state(self.directory)["meta"]["hold"])
+
+
 class LaneWriterTests(unittest.TestCase):
     """A lane records its own hand-off, rounds and focus through the tool, and nothing that is not its own."""
 

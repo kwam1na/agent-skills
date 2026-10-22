@@ -622,6 +622,9 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
                 violations.append(f"/{field} belongs to the lead")
         for field in set(meta_before) | set(meta_after):
             if field not in RUNNER_META and field != "updatedAt" and meta_before.get(field) != meta_after.get(field):
+                # serve may hold itself when its setup breaks, but only where no hold is set; the lead clears it.
+                if field == "hold" and not meta_before.get("hold") and meta_after.get("hold"):
+                    continue
                 violations.append(f"/meta/{field} belongs to the lead")
         old, new = before.get("queue", []), after.get("queue", [])
         if [item.get("subject") for item in old] != [item.get("subject") for item in new]:

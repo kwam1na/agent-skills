@@ -2800,6 +2800,309 @@ class ServeTests(MergeQueueTestCase):
         self.assertEqual(list((adopter.state / "results").glob("*.json")), [])
         self.assertEqual(adopter.item("feature")["stage"], "queued")
 
+    def break_checkout(self, adopter: Adopter) -> Callable[[], None]:
+        """Take the operator's checkout away, as a removed clone would; the returned call puts it back."""
+        git, away = adopter.operator / ".git", adopter.operator / ".git-away"
+        git.rename(away)
+        return lambda: away.rename(git)
+
+    def blockers(self, adopter: Adopter) -> list[dict]:
+        return [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "blocker.recorded"]
+
+    def test_a_checkout_removed_between_turns_holds_serve_and_stops_nothing(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        real = queue.Runner.recover
+        restore: list[Callable[[], None]] = []
+
+        def break_after_startup(runner) -> None:
+            # The startup check has passed; the checkout goes before the first turn takes anything.
+            if not restore:
+                restore.append(self.break_checkout(adopter))
+            real(runner)
+
+        with mock.patch.object(queue.Runner, "recover", break_after_startup):
+            results = self.serve(adopter)
+        self.assertEqual(results, [])
+        hold = state_tool.read_state(adopter.state)["meta"]["hold"]
+        self.assertIn("top level of a checkout", hold["reason"])
+        self.assertEqual(len(self.blockers(adopter)), 1)
+        self.assertEqual([adopter.item(name)["stage"] for name in ("first", "second")], ["queued", "queued"])
+        self.assertNotIn("candidate.stopped", [entry["kind"] for entry in state_tool.read_journal(adopter.state)])
+        self.assertTrue(state_tool.show(adopter.state)["status"]["text"].startswith("Serving is paused: "))
+        # Repaired and released by the lead: the queue lands in order, with no lane handing anything off again.
+        restore[0]()
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="lead", version=current["version"], assignments={"/meta/hold": None})
+        self.assertEqual(self.outcomes(self.serve(adopter)), [("batch", "first", "merged"), ("batch", "second", "merged")])
+
+    def test_a_binding_made_invalid_mid_run_holds_serve_with_its_reason(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.recover
+        broken: list[bool] = []
+
+        def break_after_startup(runner) -> None:
+            if not broken:
+                broken.append(True)
+                adopter.advance_base({".agents/orchestration.json": "{ not json\n"})
+            real(runner)
+
+        with mock.patch.object(queue.Runner, "recover", break_after_startup):
+            self.serve(adopter)
+        hold = state_tool.read_state(adopter.state)["meta"]["hold"]
+        self.assertIn(".agents/orchestration.json", hold["reason"])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertEqual(len(self.blockers(adopter)), 1)
+
+    def test_a_setup_that_breaks_during_a_turn_holds_serve_without_stopping_its_candidates(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.run_command
+        restore: list[Callable[[], None]] = []
+
+        def break_then_run(runner, *args, **kwargs):
+            if not restore:
+                restore.append(self.break_checkout(adopter))
+            return real(runner, *args, **kwargs)
+
+        with mock.patch.object(queue.Runner, "run_command", break_then_run):
+            results = self.serve(adopter)
+        self.assertEqual(results[-1].document()["stop"]["reason"], "binding_invalid")
+        # The refusal was the setup's, not the candidate's: the candidate waits, and serving is held.
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertIn("top level of a checkout", state_tool.read_state(adopter.state)["meta"]["hold"]["reason"])
+        self.assertEqual(len(self.blockers(adopter)), 1)
+        restore[0]()
+
+    def release_hold(self, adopter: Adopter) -> None:
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="lead", version=current["version"], assignments={"/meta/hold": None})
+
+    def test_a_setup_that_breaks_between_sync_and_check_puts_the_candidate_back(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        restore: list[Callable[[], None]] = []
+
+        def break_once(runner, subject) -> None:
+            if not restore:
+                restore.append(self.break_checkout(adopter))
+
+        self.serve(adopter, seams={"after_sync": break_once})
+        item = adopter.item("feature")
+        # Synced, then the setup went: the candidate is queued again, not left synced or stopped.
+        self.assertEqual((item["stage"], item["checks"]), ("queued", []))
+        self.assertIn("top level of a checkout", state_tool.read_state(adopter.state)["meta"]["hold"]["reason"])
+        self.assertEqual(len(self.blockers(adopter)), 1)
+        restore[0]()
+        self.release_hold(adopter)
+        self.serve(adopter)
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+
+    def test_a_candidate_put_back_after_its_sync_was_pushed_merges_once_the_hold_is_cleared(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.check
+        restore: list[Callable[[], None]] = []
+
+        def break_then_check(runner, subject, result):
+            # Sync has pushed its synced head to the candidate's branch; the setup goes before the check.
+            if not restore:
+                restore.append(self.break_checkout(adopter))
+            return real(runner, subject, result)
+
+        with mock.patch.object(queue.Runner, "check", break_then_check):
+            self.serve(adopter)
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        restore[0]()
+        self.release_hold(adopter)
+        self.serve(adopter)
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+
+    def test_a_batch_put_back_after_a_member_was_pushed_merges_once_the_hold_is_cleared(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        real = queue.Runner.merge
+        restore: list[Callable[[], None]] = []
+
+        def break_then_merge(runner, subject, result, **kwargs):
+            # The batch has pushed its first member's synced head; the setup goes before that member's merge begins.
+            if not restore:
+                restore.append(self.break_checkout(adopter))
+            return real(runner, subject, result, **kwargs)
+
+        with mock.patch.object(queue.Runner, "merge", break_then_merge):
+            self.serve(adopter)
+        self.assertEqual([adopter.item(name)["stage"] for name in ("first", "second")], ["queued", "queued"])
+        restore[0]()
+        self.release_hold(adopter)
+        self.serve(adopter)
+        self.assertEqual([adopter.item(name)["stage"] for name in ("first", "second")], ["merged", "merged"])
+
+    def test_a_candidate_put_back_after_its_checks_ran_has_them_cleared(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        restore: list[Callable[[], None]] = []
+
+        def break_once(runner, subject) -> None:
+            if not restore:
+                restore.append(self.break_checkout(adopter))
+
+        self.serve(adopter, seams={"before_merge": break_once})
+        restore[0]()
+        item = adopter.item("feature")
+        # Checked, then the setup went before the merge began: back to queued, its checks to run again.
+        self.assertEqual((item["stage"], item["checks"]), ("queued", []))
+
+    def test_a_candidate_whose_check_failed_as_the_setup_broke_is_checked_again_and_named(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/app.txt": "FAIL\n"})
+        real = queue.Runner.check
+        restore: list[Callable[[], None]] = []
+
+        def check_then_break(runner, subject, result):
+            try:
+                return real(runner, subject, result)
+            finally:
+                if not restore:
+                    restore.append(self.break_checkout(adopter))
+
+        with mock.patch.object(queue.Runner, "check", check_then_break):
+            self.serve(adopter)
+        restore[0]()
+        # The failure may have been the setup's: it is put back, to be checked again, and the blocker says so.
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertIsNotNone(state_tool.read_state(adopter.state)["meta"]["hold"])
+        [blocker] = self.blockers(adopter)
+        self.assertIn("Put back to queued, to be taken again: feature.", blocker["summary"])
+
+    def test_a_candidate_the_lead_moved_during_the_turn_is_not_put_back(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.check
+        restore: list[Callable[[], None]] = []
+        newer: list[str] = []
+
+        def move_then_break(runner, subject, result):
+            if not restore:
+                newer.append(adopter.lane_commit("feature", {"src/app.txt": "app three\n"}))
+                adopter.lead_set("feature", head=newer[0])
+                restore.append(self.break_checkout(adopter))
+            return real(runner, subject, result)
+
+        with mock.patch.object(queue.Runner, "check", move_then_break):
+            self.serve(adopter)
+        restore[0]()
+        item = adopter.item("feature")
+        self.assertEqual(item["head"], newer[0])
+        self.assertNotEqual(item["stage"], "queued", "only the head serve took is put back")
+
+    def test_a_setup_that_breaks_during_a_batch_puts_its_members_back(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        restore: list[Callable[[], None]] = []
+
+        def break_once(runner, subject) -> None:
+            if not restore:
+                restore.append(self.break_checkout(adopter))
+
+        # Checked as a batch, then the setup goes before the first member lands.
+        self.serve(adopter, seams={"before_batch_landing": break_once})
+        self.assertEqual([adopter.item(name)["stage"] for name in ("first", "second")], ["queued", "queued"])
+        self.assertIsNotNone(state_tool.read_state(adopter.state)["meta"]["hold"])
+        restore[0]()
+        self.release_hold(adopter)
+        self.assertEqual(self.outcomes(self.serve(adopter)), [("batch", "first", "merged"), ("batch", "second", "merged")])
+
+    def test_a_candidate_whose_merge_had_begun_is_never_put_back(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.set_item
+        restore: list[Callable[[], None]] = []
+
+        def break_once_merging(runner, subject, **fields) -> None:
+            real(runner, subject, **fields)
+            if fields.get("stage") == "merging" and not restore:
+                # The forge may already have the merge: putting it back could merge it twice.
+                restore.append(self.break_checkout(adopter))
+
+        with mock.patch.object(queue.Runner, "set_item", break_once_merging):
+            self.serve(adopter)
+        restore[0]()
+        self.assertEqual(adopter.item("feature")["stage"], "stopped")
+        self.assertIsNotNone(state_tool.read_state(adopter.state)["meta"]["hold"])
+        [blocker] = self.blockers(adopter)
+        self.assertIn("feature", blocker["summary"])
+
+    def test_a_check_that_meets_another_runner_holds_nothing_and_stops_nothing(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        held = contextlib.ExitStack()
+        self.addCleanup(held.close)
+        real = queue.Runner.recover
+
+        def lock_after_startup(runner) -> None:
+            real(runner)
+            if not held._exit_callbacks:
+                held.enter_context(state_tool.file_lock(adopter.state / state_tool.QUEUE_LOCK))
+
+        with mock.patch.object(queue.Runner, "recover", lock_after_startup):
+            self.assertEqual(self.serve(adopter), [])
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"].get("hold"))
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+
+    def test_a_refusal_whose_cause_cannot_be_checked_stops_nothing(self) -> None:
+        adopter = self.adopter()
+        adopter.enqueue("first", adopter.lane_commit("first", {"src/lib.txt": "lib two\n"}), lead_inputs=["nope"])
+        held = contextlib.ExitStack()
+        self.addCleanup(held.close)
+        real = queue.Runner.run_command
+
+        def lock_after_the_turn(runner, *args, **kwargs):
+            taken = real(runner, *args, **kwargs)
+            held.enter_context(state_tool.file_lock(adopter.state / state_tool.QUEUE_LOCK))
+            return taken
+
+        with mock.patch.object(queue.Runner, "run_command", lock_after_the_turn):
+            self.serve(adopter)
+        held.close()
+        # Another runner held the queue, so the cause is unknown: the candidate waits for the next turn.
+        self.assertEqual(adopter.item("first")["stage"], "queued")
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"].get("hold"))
+
+    def test_the_hold_s_reason_is_one_short_line(self) -> None:
+        adopter = self.adopter()
+        detail = "\n  fatal: unable to access 'remote': " + "word " * 100 + "\n  Could not resolve host\n"
+        queue.hold_for_setup(adopter.state, detail)
+        reason = state_tool.read_state(adopter.state)["meta"]["hold"]["reason"]
+        self.assertNotIn("\n", reason)
+        self.assertNotIn("resolve host", reason, "only the first line")
+        self.assertLessEqual(len(reason), 240)
+        self.assertTrue(reason.endswith("word..."), reason[-20:])
+        self.assertTrue(reason.startswith("serve cannot use its setup: fatal: unable to access 'remote':"))
+
+    def test_a_candidate_whose_check_fails_stops_alone_and_holds_nothing(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/app.txt": "FAIL\n"}, name="first")
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        self.serve(adopter)
+        self.assertEqual((adopter.item("first")["stage"], adopter.item("second")["stage"]), ("stopped", "merged"))
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"].get("hold"))
+        self.assertEqual(self.blockers(adopter), [])
+
+    def test_a_hold_already_set_is_never_replaced_by_serve(self) -> None:
+        adopter = self.adopter()
+        lead_hold = {"reason": "release in progress", "since": "2026-10-21T10:00:00Z"}
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="lead", version=current["version"], changes={"meta": {"hold": lead_hold}})
+        # The lead held serving while a turn ran; that turn's setup refusal leaves the lead's hold as it is.
+        queue.hold_for_setup(adopter.state, "--repo must be the top level of a checkout")
+        self.assertEqual(state_tool.read_state(adopter.state)["meta"]["hold"], lead_hold)
+        self.assertEqual(self.blockers(adopter), [])
+
     def test_a_refused_candidate_stops_once_and_is_not_taken_again(self) -> None:
         adopter = self.adopter()
         # A lead input the binding does not declare: the runner refuses the candidate before doing anything.
