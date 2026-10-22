@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from agent_skills.release import build_release, verify_release
+from agent_skills.validate import canonical_json
 from tests.qualification_pending_support import pending, skip_if_pending
 
 
@@ -30,7 +30,6 @@ class BootstrapQualificationTests(unittest.TestCase):
         product = ROOT / "qualifications/product/bootstrap-orchestration-v1"
         archive = product.with_suffix(".zip")
         metadata = product.with_suffix(".release.json")
-        checked = json.loads(product.with_suffix(".json").read_text())
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             extracted = directory / "installed"
@@ -39,7 +38,8 @@ class BootstrapQualificationTests(unittest.TestCase):
                 release.archive_sha256,
                 "121aa7aba5cf928f1900bb5333022f8f9b099a9bd5cf2e34e40ab4dd35adb5fe",
             )
-            self.assertEqual(load_runner().qualify(archive, metadata), checked)
+            self.assertEqual(canonical_json(load_runner().qualify(archive, metadata)).encode(),
+                             product.with_suffix(".json").read_bytes(), "the record replays byte for byte")
             projected = build_release(
                 extracted, directory / "projected.zip", directory / "projected.json",
                 release_id=release.release_id, profile_id="bootstrap",
@@ -66,11 +66,9 @@ class BootstrapQualificationTests(unittest.TestCase):
                 profile_id="bootstrap",
             )
             replay = runner.qualify(archive, metadata)
-        checked = json.loads(
-            (ROOT / "qualifications/bootstrap-workflows-orchestration-v1.json").read_text()
-        )
+        checked = (ROOT / "qualifications/bootstrap-workflows-orchestration-v1.json").read_bytes()
         skip_if_pending(self, "bootstrap")
-        self.assertEqual(replay, checked)
+        self.assertEqual(canonical_json(replay).encode(), checked, "the record replays byte for byte")
 
     def test_bootstrap_profile_is_releasable_installable_and_qualified(self) -> None:
         runner = load_runner()

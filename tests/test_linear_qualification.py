@@ -948,8 +948,8 @@ class LinearQualificationTests(unittest.TestCase):
             ATTESTATION,
             BINDING,
         )
-        checked = json.loads(RECORD.read_text(encoding="utf-8"))
-        self.assertEqual(replay, checked)
+        self.assertEqual(_load_runner().canonical_json(replay).encode(), RECORD.read_bytes(),
+                         "the record replays byte for byte")
 
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
         current_products = {

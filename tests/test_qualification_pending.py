@@ -36,22 +36,26 @@ def corpus_copy(destination: Path) -> Path:
     return copy
 
 
-def run(script: str, *args: str) -> subprocess.CompletedProcess[str]:
+def run(script: str, *args: str, root: Path = ROOT) -> subprocess.CompletedProcess[str]:
+    """Run a checkout's own script from inside it, on its default root unless ``--root`` is passed."""
     return subprocess.run(
-        [sys.executable, "-B", str(ROOT / "scripts" / script), *args],
-        capture_output=True, text=True, check=False, cwd=ROOT,
+        [sys.executable, "-B", str(root / "scripts" / script), *args],
+        capture_output=True, text=True, check=False, cwd=root,
     )
 
 
 class QualificationPendingMarkerTests(unittest.TestCase):
-    def test_a_marker_this_checkout_carries_names_known_sets_with_a_reason(self) -> None:
-        # Every set is re-earned and the marker removed before a release; while one is pending, it says which and why.
+    def test_a_marker_names_known_sets_with_a_reason(self) -> None:
+        # The marker the gate tests write is a valid one, and so is any marker this checkout carries; a released
+        # checkout carries none, because every set is re-earned and the marker removed before a release.
+        with tempfile.TemporaryDirectory() as temporary:
+            write_marker(Path(temporary), PENDING)
+            self.assertEqual(qualification_pending.load_marker(Path(temporary)), PENDING)
+        self.assertEqual(set(PENDING["sets"]), set(qualification_pending.SETS))
         marker = qualification_pending.load_marker(ROOT)
-        if marker is None:
-            self.assertFalse(MARKER.exists())
-            return
-        self.assertTrue(set(marker["sets"]) <= set(qualification_pending.SETS))
-        self.assertTrue(marker["reason"].strip())
+        if marker is not None:
+            self.assertTrue(set(marker["sets"]) <= set(qualification_pending.SETS))
+            self.assertTrue(marker["reason"].strip())
 
     def test_the_marker_skips_only_the_sets_it_names(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -117,12 +121,15 @@ class QualificationPendingGateTests(unittest.TestCase):
             write_marker(copy, PENDING)
             archive = Path(temporary) / "release.zip"
             metadata = Path(temporary) / "release.json"
-            refused = run("build-release.py", "build", "--root", str(copy), "--archive", str(archive),
-                          "--metadata", str(metadata), "--release-id", "pending-check")
-            self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
-            self.assertEqual(json.loads(refused.stdout)["qualificationPending"], PENDING["sets"])
-            self.assertFalse(archive.exists())
-            self.assertFalse(metadata.exists())
+            # As a release is cut, on the default root, and with the root named.
+            for extra in ((), ("--root", str(copy))):
+                with self.subTest(extra=extra):
+                    refused = run("build-release.py", "build", *extra, "--archive", str(archive),
+                                  "--metadata", str(metadata), "--release-id", "pending-check", root=copy)
+                    self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+                    self.assertEqual(json.loads(refused.stdout)["qualificationPending"], PENDING["sets"])
+                    self.assertFalse(archive.exists())
+                    self.assertFalse(metadata.exists())
 
     def test_release_cli_builds_once_the_marker_is_gone_and_verifies_either_way(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -130,46 +137,46 @@ class QualificationPendingGateTests(unittest.TestCase):
             (copy / qualification_pending.MARKER).unlink(missing_ok=True)
             archive = Path(temporary) / "release.zip"
             metadata = Path(temporary) / "release.json"
-            built = run("build-release.py", "build", "--root", str(copy), "--archive", str(archive),
-                        "--metadata", str(metadata), "--release-id", "no-marker")
+            built = run("build-release.py", "build", "--archive", str(archive),
+                        "--metadata", str(metadata), "--release-id", "no-marker", root=copy)
             self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
             self.assertTrue(archive.is_file())
             # Verifying an existing release is unaffected by a marker.
             write_marker(copy, PENDING)
-            verified = subprocess.run(
-                [sys.executable, "-B", str(copy / "scripts" / "build-release.py"), "verify", "--archive", str(archive),
-                 "--metadata", str(metadata)], capture_output=True, text=True, check=False, cwd=copy)
+            verified = run("build-release.py", "verify", "--archive", str(archive), "--metadata", str(metadata), root=copy)
             self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
 
     def test_registry_validation_refuses_the_marker_only_for_the_default_branch(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             copy = corpus_copy(Path(temporary))
             write_marker(copy, PENDING)
-            root = ("--root", str(copy))
-            self.assertEqual(run("validate-registry.py", *root).returncode, 0)
-            for ref in ("main", "refs/heads/main"):
-                with self.subTest(ref=ref):
-                    refused = run("validate-registry.py", *root, "--target-base", ref)
+            # As CI runs it, on the default root, and with the root named.
+            for root in ((), ("--root", str(copy))):
+                with self.subTest(root=root):
+                    self.assertEqual(run("validate-registry.py", *root, root=copy).returncode, 0)
+                    for ref in ("main", "refs/heads/main"):
+                        refused = run("validate-registry.py", *root, "--target-base", ref, root=copy)
+                        self.assertEqual(refused.returncode, 1, refused.stdout)
+                        self.assertIn("qualificationPending", json.loads(refused.stdout))
+                    refused = run("validate-registry.py", *root, "--target-base=main", root=copy)
                     self.assertEqual(refused.returncode, 1, refused.stdout)
-                    self.assertIn("qualificationPending", json.loads(refused.stdout))
-            refused = run("validate-registry.py", *root, "--target-base=main")
-            self.assertEqual(refused.returncode, 1, refused.stdout)
-            # An abbreviation is not taken for --target-base.
-            abbreviated = run("validate-registry.py", *root, "--target", "main")
-            self.assertNotEqual(abbreviated.returncode, 0)
-            self.assertNotIn("qualificationPending", abbreviated.stdout)
-            integration = run("validate-registry.py", *root, "--target-base", "orchestration-workflow-integration")
-            self.assertEqual(integration.returncode, 0, integration.stdout)
-            self.assertEqual(integration.stdout, run("validate-registry.py", *root).stdout)
+                    # An abbreviation is not taken for --target-base.
+                    abbreviated = run("validate-registry.py", *root, "--target", "main", root=copy)
+                    self.assertNotEqual(abbreviated.returncode, 0)
+                    self.assertNotIn("qualificationPending", abbreviated.stdout)
+                    integration = run("validate-registry.py", *root, "--target-base", "orchestration-workflow-integration",
+                                      root=copy)
+                    self.assertEqual(integration.returncode, 0, integration.stdout)
+                    self.assertEqual(integration.stdout, run("validate-registry.py", *root, root=copy).stdout)
 
     def test_registry_validation_for_the_default_branch_passes_without_the_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             copy = corpus_copy(Path(temporary))
             (copy / qualification_pending.MARKER).unlink(missing_ok=True)
-            accepted = run("validate-registry.py", "--root", str(copy), "--target-base", "main")
+            accepted = run("validate-registry.py", "--target-base", "main", root=copy)
             self.assertEqual(accepted.returncode, 0, accepted.stdout)
             write_marker(copy, None, raw="{")
-            malformed = run("validate-registry.py", "--root", str(copy))
+            malformed = run("validate-registry.py", root=copy)
             self.assertEqual(malformed.returncode, 1, malformed.stdout)
 
     def test_ci_passes_the_target_base_for_default_branch_events(self) -> None:
