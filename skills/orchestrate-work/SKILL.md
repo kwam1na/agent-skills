@@ -247,8 +247,8 @@ The runner renders the views itself after each of its state writes, passing
 the binding's `state` member to the render wrapper; a failed render is noted
 in its result and never stops it. When the member declares no renderer and no
 publisher, the wrapper would write nothing, so the runner starts no wrapper: it
-checks the configuration and reads the record itself, and notes a failure of
-either as the wrapper would. The change log is the state tool's own, either
+reads the record itself, and notes a failure as the wrapper would. A member
+the wrapper would refuse still goes to the wrapper. The change log is the state tool's own, either
 way. After each of the lead's own state writes,
 render them with the wrapper, `scripts/render_state.py`, from an up-to-date
 checkout of the base, so the lead's views use the same renderers and

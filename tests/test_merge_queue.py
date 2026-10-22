@@ -3470,17 +3470,33 @@ class RenderingTests(MergeQueueTestCase):
                                    side_effect=state_tool.StateError("state_invalid", "unreadable")):
                 runner.render()
             self.assertEqual(runner.notes, ["rendering the state exited 2"])
-            # So is a configuration the wrapper refuses, which declares nothing it could render.
+            # A record the wrapper could not serialize is noted as its crash was.
             runner.notes = []
-            runner.binding["state"] = {"directory": "state", "renderers": [], "publishers": [], "colour": "blue"}
-            runner.render()
-            self.assertEqual(runner.notes, ["rendering the state exited 2"])
+            with mock.patch.object(queue.delivery_state, "dumps", side_effect=UnicodeEncodeError("utf-8", "\ud800", 0, 1, "x")):
+                runner.render()
+            self.assertEqual(runner.notes, ["rendering the state exited 1"])
             # A readable record and a sound configuration leave nothing to note.
             runner.notes = []
-            runner.binding = copy.deepcopy(adopter.binding)
             runner.render()
             self.assertEqual(runner.notes, [])
         self.assertEqual(started, [])
+        # A configuration the wrapper would refuse, or one that cannot be read, still goes to the wrapper.
+        for name, change in (("an unknown field", lambda state: state.update(colour="blue")),
+                             ("an unreadable schema", None)):
+            with self.subTest(name):
+                runner.notes = []
+                runner.binding = copy.deepcopy(adopter.binding)
+                counting, started = self.wrapper_runs()
+                if change is not None:
+                    change(runner.binding["state"])
+                    with counting:
+                        runner.render()
+                    self.assertEqual(runner.notes, ["rendering the state exited 2"])
+                else:
+                    with counting, mock.patch.object(queue.render_state, "parse_config", side_effect=OSError("gone")):
+                        runner.render()
+                    self.assertEqual(runner.notes, [])
+                self.assertEqual(len(started), 1)
 
     def test_the_state_member_takes_the_wrappers_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
