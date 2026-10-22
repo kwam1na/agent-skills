@@ -807,6 +807,119 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(sorted(report["subject"] for report in result["reports"]), ["work-now", "work-unknown"])
         self.assertEqual(self.bytes(), before)
 
+    def test_tracker_titles_and_summaries_are_kept_and_written_only_when_they_change(self) -> None:
+        def tracker(*items: dict) -> str:
+            return self.snapshot("tracker", list(items))
+
+        later = {"subject": "work-later", "title": "Later work", "state": "backlog",
+                 "summary": "Shows each ticket's summary on its card."}
+        now = {"subject": "work-now", "title": "Work in progress", "state": "started"}
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", tracker(later, now))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(sorted(change["subject"] for change in result["changes"]), ["work-later", "work-now"],
+                         "work added with its ticket is one change")
+        state = state_tool.show(self.directory)["state"]
+        # Only what adds to the record: a title the record already holds, with no summary, is not repeated.
+        self.assertEqual(state["tickets"], {
+            "work-later": {"title": "Later work", "summary": "Shows each ticket's summary on its card."},
+        })
+        # The same snapshot again: nothing is written.
+        version = state["version"]
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", tracker(later, now))
+        self.assertEqual((code, result["drift"]), (0, False))
+        self.assertEqual(state_tool.show(self.directory)["state"]["version"], version)
+        # An edited summary, a new one and a retitled ticket are written, each reported once.
+        edited = {**later, "summary": "Shows the tracker's summary, kept current."}
+        renamed = {**now, "title": "Work, renamed", "summary": "Now with a summary."}
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", tracker(edited, renamed))
+        self.assertEqual((code, result["drift"]), (0, True), result)
+        self.assertEqual(sorted(change["subject"] for change in result["changes"]), ["work-later", "work-now"])
+        self.assertEqual(state_tool.show(self.directory)["state"]["tickets"], {
+            "work-later": {"title": "Later work", "summary": "Shows the tracker's summary, kept current."},
+            "work-now": {"title": "Work, renamed", "summary": "Now with a summary."},
+        })
+        # A summary the tracker no longer gives is dropped; a ticket it no longer lists is kept.
+        code, result = run_tool(self.directory, "reconcile", "--snapshot",
+                                tracker({key: value for key, value in edited.items() if key != "summary"}))
+        self.assertEqual((code, result["drift"]), (0, True), result)
+        self.assertEqual(state_tool.show(self.directory)["state"]["tickets"], {
+            "work-now": {"title": "Work, renamed", "summary": "Now with a summary."},
+        })
+        code, result = run_tool(self.directory, "reconcile", "--snapshot",
+                                tracker({key: value for key, value in renamed.items() if key != "summary"}))
+        self.assertEqual((code, result["drift"]), (0, True), result)
+        self.assertEqual(state_tool.show(self.directory)["state"]["tickets"], {"work-now": {"title": "Work, renamed"}})
+        # Work the record does not hold gets no ticket.
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", tracker(
+            {"subject": "work-gone", "title": "Dropped", "state": "canceled", "summary": "Never shown."}))
+        self.assertEqual((code, result["drift"]), (0, False), result)
+
+    def test_a_ticket_listed_without_a_title_keeps_the_record_s_own(self) -> None:
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "planned"}]})
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot",
+                                self.snapshot("tracker", [{"subject": "work-now", "state": "started"}]))
+        self.assertEqual((code, result["drift"]), (0, False), result)
+        self.assertEqual(self.bytes(), before)
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot(
+            "tracker", [{"subject": "work-now", "state": "started", "summary": "What it does."}]))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(state_tool.show(self.directory)["state"]["tickets"],
+                         {"work-now": {"title": "Work", "summary": "What it does."}})
+
+    def test_forge_titles_and_summaries_are_not_the_tracker_s(self) -> None:
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "planned"}]})
+        forge = self.snapshot("forge", [{"subject": "work-now", "title": "A change request title", "state": "draft",
+                                         "summary": "The change request's own text."}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["drift"]), (0, False), result)
+        self.assertNotIn("tickets", state_tool.show(self.directory)["state"])
+
+    def test_an_over_long_summary_is_refused_and_nothing_is_written(self) -> None:
+        limit = state_tool.load_schema("work-snapshot/1")["properties"]["items"]["items"]["properties"]["summary"]["maxLength"]
+        before = self.bytes()
+        longest = self.snapshot("tracker", [{"subject": "x", "title": "X", "state": "backlog", "summary": "s" * limit}])
+        over = self.snapshot("tracker", [{"subject": "x", "title": "X", "state": "backlog", "summary": "s" * (limit + 1)}])
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", over)
+        self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"))
+        self.assertIn("summary", refused["error"])
+        self.assertEqual(self.bytes(), before)
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", longest)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(len(state_tool.show(self.directory)["state"]["tickets"]["x"]["summary"]), limit)
+        # Counted in characters, not in UTF-16 units.
+        wide = self.snapshot("tracker", [{"subject": "x", "title": "X", "state": "backlog",
+                                          "summary": "\U0001F600" * limit}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", wide)
+        self.assertEqual(code, 0, result)
+        wider = self.snapshot("tracker", [{"subject": "x", "title": "X", "state": "backlog",
+                                           "summary": "\U0001F600" * (limit + 1)}])
+        self.assertEqual(run_tool(self.directory, "reconcile", "--snapshot", wider)[1]["code"], "snapshot_invalid")
+
+    def test_a_blank_summary_is_none_and_text_that_cannot_be_stored_is_refused_up_front(self) -> None:
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "planned"}]})
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot(
+            "tracker", [{"subject": "work-now", "title": "Work", "state": "started", "summary": "  \n "}]))
+        self.assertEqual((code, result["drift"]), (0, False), result)
+        self.assertEqual(self.bytes(), before)
+        path = self.root / "lone surrogate.json"
+        path.write_text('{"takenAt": "%s", "source": "tracker", "items": [{"subject": "work-now", "title": "Work", '
+                        '"state": "started", "summary": "\\ud800"}]}' % taken(), encoding="utf-8")
+        code, refused = run_tool(self.directory, "reconcile", "--snapshot", str(path))
+        self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"))
+        self.assertEqual(self.bytes(), before)
+
+    def test_a_follow_up_id_that_names_queued_work_keeps_the_queue_s_title(self) -> None:
+        self.lead({"queue": [queue_item("work-a")],
+                   "followups": [{"id": "work-a", "title": "A follow-up's title", "reference": "work-f"}]})
+        before = self.bytes()
+        own = state_tool.show(self.directory)["state"]["queue"][0]["title"]
+        code, result = run_tool(self.directory, "reconcile", "--snapshot",
+                                self.snapshot("tracker", [{"subject": "work-a", "title": own, "state": "started"}]))
+        self.assertEqual((code, result["drift"]), (0, False), result)
+        self.assertEqual(self.bytes(), before)
+
     def test_a_stale_or_malformed_snapshot_is_refused_and_nothing_is_written(self) -> None:
         before = self.bytes()
         stale = self.snapshot("tracker", [{"subject": "x", "title": "X", "state": "started"}], age=901)
@@ -3641,8 +3754,11 @@ VALID_ENTRY = {"id": 1, "at": "2026-10-20T10:00:00Z", "kind": "candidate.merged"
                "subject": "pr-1", "summary": "Merged"}
 
 
+SNAPSHOT = {"takenAt": "2026-10-20T10:00:00Z", "source": "tracker",
+            "items": [{"subject": "pr-1", "title": "Candidate", "state": "started"}]}
 VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
+    "with tickets", "snapshot with a summary",
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
@@ -3684,6 +3800,11 @@ class SchemaAgreementTests(unittest.TestCase):
                  with_change(state, ("meta", "checking", "now", "steps"), [{"label": "x", "state": "?"}])),
                 ("finish met as text", with_change(state, ("finish", 0, "met"), "no")),
                 ("lease without holder", with_change(state, ("leases", 0), {"id": "x", "since": "2026-10-20T08:00:00Z"})),
+                ("with tickets", with_change(state, ("tickets",), {"pr-1": {"title": "Candidate", "summary": "What it does."},
+                                                                  "pr-2": {"title": "Title only"}})),
+                ("ticket without title", with_change(state, ("tickets",), {"pr-1": {"summary": "What it does."}})),
+                ("ticket with unknown field", with_change(state, ("tickets",), {"pr-1": {"title": "T", "body": "B"}})),
+                ("ticket summary over long", with_change(state, ("tickets",), {"pr-1": {"title": "T", "summary": "s" * 1001}})),
                 ("not an object", []),
             ],
             "delivery-journal/1": [
@@ -3697,6 +3818,12 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("missing subject", {key: value for key, value in VALID_ENTRY.items() if key != "subject"}),
                 ("extra field", {**VALID_ENTRY, "extra": 1}),
                 ("bad time", {**VALID_ENTRY, "at": "2026-10-20 10:00:00"}),
+            ],
+            "work-snapshot/1": [
+                ("valid", SNAPSHOT),
+                ("snapshot with a summary", with_change(SNAPSHOT, ("items", 0, "summary"), "s" * 1000)),
+                ("snapshot summary over long", with_change(SNAPSHOT, ("items", 0, "summary"), "s" * 1001)),
+                ("snapshot summary not text", with_change(SNAPSHOT, ("items", 0, "summary"), ["s"])),
             ],
         }
 

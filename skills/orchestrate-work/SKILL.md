@@ -305,8 +305,10 @@ run the sync loop in this order:
 
 1. **Snapshot.** List the epic's work and write it as `work-snapshot/1` files
    (in `references/schemas.json`): `{takenAt, source, items}`, where `source`
-   is `forge` or `tracker`. Each item is `{subject, title?, state,
-   changeRequest?, head?, blockedBy?}`. A tracker state is `backlog`,
+   is `forge` or `tracker`. Each item is `{subject, title?, summary?, state,
+   changeRequest?, head?, blockedBy?}`. A tracker item's `summary` is the
+   ticket's own summary as plain text, at most 1000 characters; whatever
+   makes the snapshot shortens a longer one. A tracker state is `backlog`,
    `started`, `completed` or `canceled`; a forge state is `open`, `draft`,
    `merged` or `closed`. The state tool never calls a forge or a tracker
    itself. Blockers are the tracker's: `blockedBy` on a forge item is
@@ -337,7 +339,7 @@ run the sync loop in this order:
      `list-work` for the epic's parent item, and write its normalized
      outcome as the snapshot: each item's `workReference`, `title`,
      `stateType` and `blockedBy` become its `subject`, `title`, `state` and
-     `blockedBy`.
+     `blockedBy`. It carries no summary, so the views show titles alone.
    - **Forge, with a bound command.** When the binding declares
      `state.forgeSnapshot`, `{argv, timeoutSeconds?}`, the same way, the state
      tool runs it with the same checks and the same single note on a failure:
@@ -374,6 +376,10 @@ run the sync loop in this order:
      as `backlog` in the snapshot: it then becomes a follow-up.
    - A change request is linked to its queue or planned item, and an open one
      moves planned work to review.
+   - Each ticket's tracker title and summary, for work the record holds, are
+     kept in the state's `tickets`, keyed by subject, and written only when
+     they change; the views show them in place of the lead's own text. A
+     title the record already has, with no summary, is not repeated.
    - A merge the runner never recorded is written as the runner's, with a
      `candidate.merged` journal entry saying so. The runner records its own
      merges, so this is a recovery path, not the normal one. A recovery a

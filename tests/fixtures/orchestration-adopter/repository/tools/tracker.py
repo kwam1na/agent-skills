@@ -3,7 +3,7 @@
 Usage: tracker.py <parent> <tracker data file>
 
 The data file maps each parent to its child items, as the tracker lists them:
-[{"reference", "title", "stateType", "blockedBy"}]. A parent the file does not
+[{"reference", "title", "stateType", "blockedBy", "summary"?}]. A parent the file does not
 hold is a tracker failure. The snapshot goes to stdout as work-snapshot/1.
 """
 
@@ -26,6 +26,9 @@ def main(argv: list[str]) -> int:
         item = {"subject": child["reference"], "title": child["title"], "state": child["stateType"]}
         if child.get("blockedBy"):
             item["blockedBy"] = child["blockedBy"]
+        if child.get("summary"):
+            # The tracker's own text, shortened to the snapshot's bound.
+            item["summary"] = child["summary"][:1000]
         items.append(item)
     taken = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(json.dumps({"takenAt": taken, "source": "tracker", "items": items}))
