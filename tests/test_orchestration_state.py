@@ -768,7 +768,7 @@ class ReconcileTests(unittest.TestCase):
         state = state_tool.show(self.directory)["state"]
         self.assertEqual(state["followups"], [{"id": "work-later", "title": "Later work", "reference": "work-later"}])
         self.assertEqual(state["planned"], [{"subject": "work-now", "title": "Work in progress", "lane": None,
-                                              "stage": "planned"}])
+                                              "stage": "building"}])
         self.assertEqual(len(result["changes"]), 2)
         again = self.snapshot("tracker", json.loads(Path(tracker).read_text())["items"])
         version = state["version"]
@@ -794,6 +794,54 @@ class ReconcileTests(unittest.TestCase):
         state, twin_state = state_tool.show(self.directory)["state"], state_tool.show(twin)["state"]
         self.assertEqual([state[key] for key in lead_view], [twin_state[key] for key in lead_view])
         self.assertNotIn("work-b", json.dumps(state), "a forge blocker never reaches the record")
+
+    def test_planned_work_the_tracker_shows_started_moves_to_building_once(self) -> None:
+        self.lead({"planned": [
+            {"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "planned"},
+            {"subject": "work-open", "title": "In review", "lane": "lane-2", "stage": "review"},
+        ]})
+        started = [{"subject": "work-now", "title": "Work", "state": "started"},
+                   {"subject": "work-open", "title": "In review", "state": "started"}]
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", started))
+        self.assertEqual(code, 0, result)
+        self.assertEqual([(change["subject"], change["change"]) for change in result["changes"]],
+                         [("work-now", "started in the tracker: now building")])
+        planned = {item["subject"]: item for item in state_tool.show(self.directory)["state"]["planned"]}
+        self.assertEqual((planned["work-now"]["stage"], planned["work-now"]["lane"]), ("building", "lane-1"))
+        self.assertEqual(planned["work-open"]["stage"], "review", "work in review stays in review")
+        # The same snapshot again: nothing is written, and nothing is journaled.
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", started))
+        self.assertEqual((code, result["drift"], result["changes"]), (0, False, []))
+        self.assertEqual(self.bytes(), before)
+
+    def test_started_work_the_record_lacks_is_added_building_and_settles_in_one_pass(self) -> None:
+        tracker = [{"subject": "work-new", "title": "New", "state": "started"}]
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", tracker))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(state_tool.show(self.directory)["state"]["planned"],
+                         [{"subject": "work-new", "title": "New", "lane": None, "stage": "building"}])
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", tracker))
+        self.assertEqual((code, result["drift"]), (0, False))
+        self.assertEqual(self.bytes(), before)
+
+    def test_building_work_the_tracker_shows_back_in_backlog_is_reported_not_reverted(self) -> None:
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "building"}]})
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot(
+            "tracker", [{"subject": "work-now", "title": "Work", "state": "backlog"}]))
+        self.assertEqual((code, result["drift"], result["changes"]), (0, False, []))
+        self.assertEqual(result["reports"], [{"subject": "work-now",
+                                               "note": "building in the record but back in the tracker's backlog: check it"}])
+        self.assertEqual(self.bytes(), before)
+
+    def test_an_open_change_request_moves_building_work_to_review(self) -> None:
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "building"}]})
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot(
+            "forge", [{"subject": "work-now", "state": "open", "changeRequest": "cr 5"}]))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(state_tool.show(self.directory)["state"]["planned"][0]["stage"], "review")
 
     def test_tracker_completion_the_record_has_not_seen_is_reported_not_written(self) -> None:
         self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "planned"}]})

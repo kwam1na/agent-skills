@@ -376,11 +376,16 @@ run the sync loop in this order:
    ```
 
    - A tracker child the record lacks is added: `backlog` as a follow-up,
-     `started` as planned work (the state's `planned` list). Planned work is
-     only what the approved plan covers, so write a started child outside it
-     as `backlog` in the snapshot: it then becomes a follow-up.
+     `started` as planned work at `building` (the state's `planned` list).
+     Planned work is only what the approved plan covers, so write a started
+     child outside it as `backlog` in the snapshot: it then becomes a
+     follow-up.
+   - Planned work at `planned` whose ticket the tracker shows `started` moves
+     to `building`, so a lane starting its ticket moves its stop with no lead
+     step. Work at `building` that the tracker shows back in `backlog` is
+     reported for the lead, never moved back.
    - A change request is linked to its queue or planned item, and an open one
-     moves planned work to review.
+     moves planned or building work to review.
    - Each ticket's tracker title and summary, for work the record holds, are
      kept in the state's `tickets`, keyed by subject, and written only when
      they change; the views show them in place of the lead's own text. A
