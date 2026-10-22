@@ -2575,6 +2575,87 @@ class LaneWriterTests(unittest.TestCase):
         [handed] = [entry for entry in state_tool.read_journal(self.directory) if entry["kind"] == "candidate.handed"]
         self.assertEqual((handed["lane"], handed["subject"]), ("lane-1", "work-a"))
 
+    @staticmethod
+    def evidence(**changes: object) -> dict:
+        found = {"check": "full", "definition": "sha256:" + "d" * 64, "head": "a" * 40, "tree": "e" * 40,
+                 "result": "passed"}
+        found.update(changes)
+        return found
+
+    def test_a_hand_off_records_the_lanes_suite_evidence_for_that_candidate(self) -> None:
+        item = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40,
+                                  change_request="cr", evidence=[self.evidence()])
+        [recorded] = item["evidence"]
+        self.assertEqual({key: recorded[key] for key in ("check", "definition", "head", "tree", "result")},
+                         self.evidence())
+        self.assertIn("recordedAt", recorded)
+        [handed] = [entry for entry in state_tool.read_journal(self.directory) if entry["kind"] == "candidate.handed"]
+        self.assertIn("suite evidence for full (passed)", handed["summary"])
+        # A hand-off at a new head replaces it: none given, none kept.
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-a]",
+                         assignments={"/stage": "stopped"})
+        again = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="b" * 40, change_request="cr")
+        self.assertNotIn("evidence", again)
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-a]",
+                         assignments={"/stage": "stopped"})
+        third = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="b" * 40, change_request="cr",
+                                   evidence=[self.evidence(head="b" * 40, result="failed")])
+        self.assertEqual([(entry["head"], entry["result"]) for entry in third["evidence"]], [("b" * 40, "failed")])
+
+    def test_malformed_suite_evidence_is_refused(self) -> None:
+        cases = {
+            "a missing tree": {key: value for key, value in self.evidence().items() if key != "tree"},
+            "a short head": self.evidence(head="abc"),
+            "an unknown result": self.evidence(result="flaky"),
+            "an unknown field": self.evidence(note="trust me"),
+            "a bare definition": self.evidence(definition="d" * 64),
+            "a short tree": self.evidence(tree="abc"),
+            "an empty check": self.evidence(check=""),
+            "the same check twice": None,
+        }
+        for name, entry in cases.items():
+            with self.subTest(name):
+                evidence = [self.evidence(), self.evidence()] if entry is None else [entry]
+                self.assertEqual(self.refused(lambda: state_tool.handoff(
+                    self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr",
+                    evidence=evidence)), "handoff_invalid")
+        with self.subTest("not a list"):
+            self.assertEqual(self.refused(lambda: state_tool.handoff(
+                self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr",
+                evidence=self.evidence())), "handoff_invalid")
+
+    def test_suite_evidence_is_written_only_by_a_hand_off(self) -> None:
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr",
+                           evidence=[self.evidence()])
+        recorded = next(entry for entry in state_tool.read_state(self.directory)["queue"]
+                        if entry["subject"] == "work-a")["evidence"]
+        forged = [{**recorded[0], "tree": "f" * 40}]
+        refusals = {
+            "the lead changing it": (lambda: self.lead({"evidence": forged}, selector="queue[subject=work-a]"),
+                                     "field_not_owned"),
+            "the lead removing it": (lambda: self.lead({"evidence": []}, selector="queue[subject=work-a]"),
+                                     "field_not_owned"),
+            "the lead adding it to another item": (
+                lambda: self.lead({"evidence": forged}, selector="queue[subject=work-q]"), "field_not_owned"),
+            "the runner changing it": (lambda: state_tool.patch(
+                self.directory, writer="runner", version=self.version(), selector="queue[subject=work-a]",
+                changes={"evidence": forged}), "field_not_owned"),
+            "a lane changing it": (lambda: self.as_lane("lane-1", {"evidence": forged}, selector="queue[subject=work-a]"),
+                                   "writer_not_owned"),
+        }
+        for name, (call, code) in refusals.items():
+            with self.subTest(name):
+                self.assertEqual(self.refused(call), code)
+        state = state_tool.read_state(self.directory)
+        new_item = {**queue_item("work-n", lane="lane-1", order=3), "evidence": forged}
+        self.assertEqual(self.refused(lambda: self.lead({"queue": [*state["queue"], new_item]})), "field_not_owned")
+        without = copy.deepcopy(state["queue"])
+        for item in without:
+            item.pop("evidence", None)
+        self.assertEqual(self.refused(lambda: self.lead({"queue": without})), "field_not_owned")
+        # The lead's own writes to a queue item that carries evidence still go through.
+        self.lead({"leadInputs": ["api"]}, selector="queue[subject=work-a]")
+
     def test_a_lane_hands_off_only_its_own_work(self) -> None:
         for name, subject, code in (("another lane's planned work", "work-b", "writer_not_owned"),
                                     ("unknown work", "work-z", "subject_unknown")):
@@ -2649,6 +2730,18 @@ class LaneWriterTests(unittest.TestCase):
                                 "--head", "a" * 40, "--change-request", "cr 9", "--rounds", "2")
         self.assertEqual(code, 0, handed)
         self.assertEqual(handed["item"]["stage"], "queued")
+        code, evidenced = run_tool(self.directory, "handoff", "--lane", "lane-2", "--subject", "work-b",
+                                   "--head", "c" * 40, "--change-request", "cr 10",
+                                   "--evidence", json.dumps(self.evidence(head="c" * 40)),
+                                   "--evidence", json.dumps(self.evidence(check="lint", head="c" * 40)))
+        self.assertEqual(code, 0, evidenced)
+        self.assertEqual([(entry["check"], entry["head"]) for entry in evidenced["item"]["evidence"]],
+                         [("full", "c" * 40), ("lint", "c" * 40)])
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-b]",
+                         assignments={"/stage": "stopped"})
+        code, refused = run_tool(self.directory, "handoff", "--lane", "lane-2", "--subject", "work-b",
+                                 "--head", "c" * 40, "--change-request", "cr 10", "--evidence", "not json")
+        self.assertEqual((code, refused["code"]), (1, "handoff_invalid"))
         code, focused = run_tool(self.directory, "focus", "--lane", "lane-2", "--text", "Reviewing round 2",
                                  "--state", "reviewing")
         self.assertEqual(code, 0, focused)
@@ -2726,6 +2819,13 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(state_tool.delivery_status(record, journal, at=self.NOW)["text"],
                          "Checking Batch of 2: work-a, work-b, 1 of 2 checks done · last landed work-z at "
                          "2026-10-21T11:40:00Z · blocked: lane-2 (waiting on lead), lane-3 · next: work-c, then 1 more")
+
+    def test_a_reused_check_counts_as_done(self) -> None:
+        now = {"subject": "work-a", "title": "Work A", "startedAt": "2026-10-21T11:50:00Z",
+               "steps": [{"label": "full", "state": "reused", "reusedFrom": "a" * 40},
+                         {"label": "lint", "state": "running"}]}
+        record = self.record(now=now, queue=[queue_item("work-a", stage="checking")])
+        self.assertIn("Checking Work A, 1 of 2 checks done", state_tool.delivery_status(record, [], at=self.NOW)["text"])
 
     def test_the_status_moves_with_the_queue(self) -> None:
         record = self.record(queue=[queue_item("work-a", stage="merged"), queue_item("work-c", order=2)])
@@ -3762,7 +3862,7 @@ VALID_FIXTURES = {
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
-    "check.retried", "candidate.merged", "candidate.stopped", "base.broken", "base.repaired",
+    "check.retried", "check.reused", "candidate.merged", "candidate.stopped", "base.broken", "base.repaired",
     "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed",
 ]
@@ -3870,7 +3970,7 @@ class SchemaAgreementTests(unittest.TestCase):
         self.assertEqual(state["properties"]["lanes"]["items"]["properties"]["state"]["enum"],
                          ["idle", "assigned", "working", "reviewing", "handed", "blocked", "done"])
         self.assertEqual(state["$defs"]["stepState"]["enum"],
-                         ["pending", "running", "passed", "failed", "skipped", "timed_out"])
+                         ["pending", "running", "passed", "failed", "skipped", "timed_out", "reused"])
         self.assertEqual(journal["properties"]["id"]["minimum"], 1)
         self.assertEqual(state["properties"]["version"]["minimum"], 1)
         for kind in JOURNAL_KINDS:
