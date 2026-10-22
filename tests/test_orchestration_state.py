@@ -820,6 +820,8 @@ class ReconcileTests(unittest.TestCase):
         tracker = [{"subject": "work-new", "title": "New", "state": "started"}]
         code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", tracker))
         self.assertEqual(code, 0, result)
+        self.assertEqual([change["change"] for change in result["changes"]],
+                         ["started in the tracker but not in the record: added as planned work, building"])
         self.assertEqual(state_tool.show(self.directory)["state"]["planned"],
                          [{"subject": "work-new", "title": "New", "lane": None, "stage": "building"}])
         before = self.bytes()
@@ -873,6 +875,24 @@ class ReconcileTests(unittest.TestCase):
                 code, again = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", tracker))
                 self.assertEqual((code, again["drift"], again["changes"]), (0, False, []))
                 self.assertEqual(self.bytes(), before)
+
+    def test_work_already_moved_adds_no_change_beside_one_that_moves(self) -> None:
+        # One item really moves, so the pass writes; the others must add nothing to its changes.
+        self.lead({"planned": [
+            {"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "planned"},
+            {"subject": "work-b", "title": "B", "lane": "lane-2", "stage": "building"},
+            {"subject": "work-c", "title": "C", "lane": "lane-3", "stage": "review", "changeRequest": "cr 3"},
+        ]})
+        code, result = run_tool(self.directory, "reconcile",
+                                "--snapshot", self.snapshot("tracker", [
+                                    {"subject": "work-a", "title": "A", "state": "started"},
+                                    {"subject": "work-b", "title": "B", "state": "started"},
+                                    {"subject": "work-c", "title": "C", "state": "started"}]),
+                                "--snapshot", self.snapshot("forge", [
+                                    {"subject": "work-c", "state": "open", "changeRequest": "cr 3"}]))
+        self.assertEqual(code, 0, result)
+        self.assertEqual([(change["subject"], change["change"]) for change in result["changes"]],
+                         [("work-a", "started in the tracker: now building")])
 
     def test_an_open_change_request_leaves_work_in_review_as_it_is(self) -> None:
         self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "review",
