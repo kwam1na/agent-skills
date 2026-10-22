@@ -105,6 +105,10 @@
                               "description": "The median of the step's last passing durations in the check history; absent with no history.",
                               "type": "integer",
                               "minimum": 0
+                            },
+                            "reusedFrom": {
+                              "description": "For a reused check: the head of the lane's run it was reused from.",
+                              "$ref": "#/$defs/commit"
                             }
                           }
                         }
@@ -494,6 +498,10 @@
                     "description": "The check's output, relative to the state directory.",
                     "type": "string",
                     "minLength": 1
+                  },
+                  "reusedFrom": {
+                    "description": "For a reused check: the head of the lane's run it was reused from.",
+                    "$ref": "#/$defs/commit"
                   }
                 }
               }
@@ -504,6 +512,46 @@
             "pending": {
               "description": "Set by a lane's hand-off when the binding needs the lead to accept it; the runner takes the candidate once the lead accepts. Absent otherwise.",
               "const": true
+            },
+            "evidence": {
+              "description": "Written only by a lane's hand-off: the lane's own runs of the binding's reusable checks, each with the head and tree it ran on and its definition's digest. The runner reuses a passing run only on that tree.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "check",
+                  "definition",
+                  "head",
+                  "tree",
+                  "result",
+                  "recordedAt"
+                ],
+                "properties": {
+                  "check": {
+                    "$ref": "#/$defs/name"
+                  },
+                  "definition": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "head": {
+                    "$ref": "#/$defs/commit"
+                  },
+                  "tree": {
+                    "$ref": "#/$defs/commit"
+                  },
+                  "result": {
+                    "enum": [
+                      "passed",
+                      "failed"
+                    ]
+                  },
+                  "recordedAt": {
+                    "$ref": "#/$defs/timestamp"
+                  }
+                }
+              }
             }
           }
         }
@@ -679,7 +727,8 @@
           "passed",
           "failed",
           "skipped",
-          "timed_out"
+          "timed_out",
+          "reused"
         ]
       }
     }
@@ -715,6 +764,7 @@
           "check.started",
           "check.finished",
           "check.retried",
+          "check.reused",
           "candidate.merged",
           "candidate.stopped",
           "base.broken",
@@ -1200,7 +1250,8 @@
                 "passed",
                 "failed",
                 "skipped",
-                "timed_out"
+                "timed_out",
+                "reused"
               ]
             },
             "exitCode": {
@@ -1289,6 +1340,27 @@
                       "type": "integer"
                     }
                   ]
+                }
+              }
+            },
+            "reusedFrom": {
+              "description": "For a reused check: the candidate whose lane ran it, the head it ran on, and the tree, which is the one checked here.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "subject",
+                "head",
+                "tree"
+              ],
+              "properties": {
+                "subject": {
+                  "$ref": "#/$defs/name"
+                },
+                "head": {
+                  "$ref": "#/$defs/commit"
+                },
+                "tree": {
+                  "$ref": "#/$defs/commit"
                 }
               }
             }
@@ -1971,6 +2043,13 @@
               "minLength": 1
             }
           }
+        }
+      },
+      "reusableChecks": {
+        "description": "Optional. Ids of the binding's own checks (alwaysRun or fallback) the runner may reuse from a lane's hand-off evidence when the tree it would check is exactly the tree the lane's passing run checked, under the same definition. None when absent.",
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/name"
         }
       }
     },
