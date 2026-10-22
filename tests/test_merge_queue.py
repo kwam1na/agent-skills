@@ -760,7 +760,10 @@ class SelectionTests(MergeQueueTestCase):
             with self.subTest(mode=mode):
                 shutil.rmtree(self.directory)
                 self.directory.mkdir()
-                adopter = self.adopter(mode=mode)
+                # The timeout case waits out the provider's whole timeout: keep it short.
+                provider = {"argv": [PY, "tools/provider.py"], "cwd": ".", "timeoutSeconds": 1,
+                            "providerInputs": ["tools/provider.py", "tools/provider-mode.txt"]}
+                adopter = self.adopter({"provider": provider} if mode == "timeout" else None, mode=mode)
                 self.candidate(adopter)
                 results = self.run_queue(adopter, "feature")
                 check = results[1].document()
