@@ -223,7 +223,7 @@ if mode == "escape":
 if mode == "ceiling":
     checks = [check("long", timeoutSeconds=999)]
 if mode == "slow-child":
-    checks = [check("slow", "--sleep-child", "src/app.txt", timeoutSeconds=1)]
+    checks = [check("slow", "--sleep-child", "src/app.txt", timeoutSeconds=2)]
 print(json.dumps({"checks": checks, "widened": False, "uncovered": uncovered}))
 """,
     "forge.py": """

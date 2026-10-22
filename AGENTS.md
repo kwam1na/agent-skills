@@ -36,7 +36,15 @@ python3 scripts/bootstrap-test-environment.py
 
 The full suite may run through `scripts/run-tests.py` instead of
 `unittest discover`; it gives the same verdict across worker processes, and a
-merge check may use it the same way. Mark a test class `run_serially = True`,
+merge check may use it the same way:
+
+```bash
+.venv/bin/python scripts/run-tests.py
+```
+
+It exits 0 when every test passed, 1 when any failed, errored, passed
+unexpectedly or its worker crashed, 2 on a usage error, 5 when no test ran,
+and 130 when interrupted, after stopping every worker and what it started. Mark a test class `run_serially = True`,
 or a module `RUN_SERIALLY = True`, when it cannot share the machine: a fixed
 port, a fixed path outside its own temporary folder, or process-wide state.
 

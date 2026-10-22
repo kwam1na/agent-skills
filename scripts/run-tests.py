@@ -4,8 +4,11 @@
 Tests are discovered as ``unittest discover`` finds them, then split into
 units of at most ``--chunk`` tests of one class. A class with its own
 ``setUpClass``/``tearDownClass`` is one unit, and a module with its own
-``setUpModule``/``tearDownModule``, or that marks itself ``RUN_SERIALLY =
-True``, is one unit, so no fixture runs more often than under discover. A
+``setUpModule``/``tearDownModule`` or ``load_tests``, or that marks itself
+``RUN_SERIALLY = True``, is one unit, loaded as discover loads it, so no
+fixture runs more often than under discover and every test is the one
+discover built. A module that skips itself as it is imported counts as one
+skipped test, as under discover. A
 class that sets ``run_serially = True``, or a module marked ``RUN_SERIALLY``,
 runs alone: no other worker is running while it does. Every unit runs in its
 own process, so a crash or a hang ends that unit only; the run then fails,
@@ -17,16 +20,19 @@ naming it. With ``--timings-from``, the slowest units start first.
     .venv/bin/python scripts/run-tests.py --timings-from timings.json
 
 The exit code is 0 when every test passed, 1 when any failed, errored, passed
-unexpectedly or its unit crashed, 2 on a usage error, and 130 when the run was
-interrupted, after every worker is stopped. ``--timings`` writes the total,
+unexpectedly or its unit crashed, 2 on a usage error, 5 when no test ran, as
+under discover, and 130 when the run was interrupted, after every worker and
+whatever it started is stopped. ``--timings`` writes the total,
 per-unit, per-module and per-test wall times. Standard library only.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -61,15 +67,15 @@ def discover_units(start: str, top: str, pattern: str, chunk: int = CHUNK) -> li
     suite = unittest.defaultTestLoader.discover(start, pattern=pattern, top_level_dir=top)
     groups: dict[str, dict] = {}
     for test in _flatten(suite):
-        if type(test).__name__ == "_FailedTest":
-            # A module that failed to import: its worker imports it again and reports the error.
-            prefix = "unittest.loader._FailedTest."
-            name = test.id()[len(prefix):] if test.id().startswith(prefix) else test.id()
+        if type(test).__name__ in ("_FailedTest", "ModuleSkipped"):
+            # A module that failed to import, or skipped itself as it was: its worker imports it again.
+            name = test.id().rsplit(f"{type(test).__name__}.", 1)[-1]
             groups.setdefault(name, {"name": name, "whole": True, "serial": False, "ids": []})["ids"].append(name)
             continue
         cls = type(test)
         module = sys.modules.get(cls.__module__)
         module_whole = module is not None and (hasattr(module, "setUpModule") or hasattr(module, "tearDownModule")
+                                               or hasattr(module, "load_tests")
                                                or getattr(module, SERIAL_MODULE, False))
         name = cls.__module__ if module_whole else f"{cls.__module__}.{cls.__qualname__}"
         group = groups.setdefault(name, {"name": name, "whole": module_whole or _own(cls, "setUpClass")
@@ -82,12 +88,12 @@ def discover_units(start: str, top: str, pattern: str, chunk: int = CHUNK) -> li
         if group["whole"] or len(group["ids"]) <= chunk:
             names = [group["name"]] if group["whole"] else group["ids"]
             units.append({"name": group["name"], "names": names, "serial": group["serial"],
-                          "tests": len(group["ids"])})
+                          "tests": len(group["ids"]), "pattern": pattern})
             continue
         parts = [group["ids"][index:index + chunk] for index in range(0, len(group["ids"]), chunk)]
         for number, part in enumerate(parts, start=1):
             units.append({"name": f"{group['name']}[{number}/{len(parts)}]", "names": part,
-                          "serial": group["serial"], "tests": len(part)})
+                          "serial": group["serial"], "tests": len(part), "pattern": pattern})
     return units
 
 
@@ -108,12 +114,30 @@ class _TimedResult(unittest.TextTestResult):
             self.timings[test.id()] = time.perf_counter() - started
 
 
-def run_unit(names_path: Path, result_path: Path, top: str) -> int:
-    """Worker mode: run one unit's tests, named in ``names_path``, and write its result as JSON."""
+def _load(name: str, pattern: str) -> unittest.TestSuite:
+    """A test id or class by name; a whole module as discover loads it, through its own load_tests."""
+    loader = unittest.defaultTestLoader
+    try:
+        module = importlib.import_module(name)
+    except ImportError:
+        return loader.loadTestsFromName(name)
+    return loader.loadTestsFromModule(module, pattern=pattern)
+
+
+def run_unit(spec_path: Path, result_path: Path, top: str) -> int:
+    """Worker mode: run one unit's tests, named in ``spec_path``, and write its result as JSON."""
     sys.path.insert(0, os.path.abspath(top))
-    names = json.loads(Path(names_path).read_text(encoding="utf-8"))
-    suite = unittest.defaultTestLoader.loadTestsFromNames(names)
+    spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
     runner = unittest.TextTestRunner(resultclass=_TimedResult, stream=sys.stderr, verbosity=0)
+    try:
+        suite = unittest.TestSuite(_load(name, spec["pattern"]) for name in spec["names"])
+    except unittest.SkipTest as skipped:
+        # A module that skips itself as it is imported: one skipped test, as under discover.
+        Path(result_path).write_text(json.dumps({
+            "testsRun": 1, "failures": [], "errors": [], "skipped": 1, "expectedFailures": 0,
+            "unexpectedSuccesses": [], "timings": {}, "note": str(skipped),
+        }), encoding="utf-8")
+        return 0
     result = runner.run(suite)
 
     def described(pairs) -> list[dict]:
@@ -131,28 +155,58 @@ def run_unit(names_path: Path, result_path: Path, top: str) -> int:
     return 0 if result.wasSuccessful() else 1
 
 
-def _stop(process: subprocess.Popen) -> None:
-    """Stop a worker and everything it started; it leads its own process group."""
-    if process.poll() is not None:
-        return
+def _exited(process: subprocess.Popen) -> bool:
+    """Whether a worker has exited, without reaping it: its pid keeps its group's id reserved."""
+    if hasattr(os, "waitid"):
+        try:
+            return os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+        except ChildProcessError:
+            return True
+    return False
+
+
+def _stop_all(processes: list[subprocess.Popen]) -> None:
+    """Stop every worker and everything each started; each leads its own process group.
+
+    Further interrupts are ignored until it is done. Every group is asked to
+    stop, given one shared grace, then killed whatever its leader did, before
+    any worker is reaped, so a child left in a group is killed too.
+    """
+    ignored = {}
+    for signum in (signal.SIGINT, getattr(signal, "SIGTERM", None)):
+        if signum is not None:
+            try:
+                ignored[signum] = signal.signal(signum, signal.SIG_IGN)
+            except ValueError:
+                pass  # not the main thread
     try:
-        if os.name == "nt":
-            process.terminate()
-        else:
-            os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=STOP_GRACE_SECONDS)
-    except (OSError, subprocess.TimeoutExpired):
-        try:
-            if os.name == "nt":
-                process.kill()
-            else:
-                os.killpg(process.pid, signal.SIGKILL)
-        except OSError:
-            pass
-        try:
-            process.wait(timeout=STOP_GRACE_SECONDS)
-        except subprocess.TimeoutExpired:
-            pass
+        for process in processes:
+            try:
+                if os.name == "nt":
+                    process.terminate()
+                else:
+                    os.killpg(process.pid, signal.SIGTERM)
+            except OSError:
+                pass
+        deadline = time.monotonic() + STOP_GRACE_SECONDS
+        while time.monotonic() < deadline and not all(_exited(process) for process in processes):
+            time.sleep(0.05)
+        for process in processes:
+            try:
+                if os.name == "nt":
+                    process.kill()
+                else:
+                    os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        for process in processes:
+            try:
+                process.wait(timeout=STOP_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
+        for signum, handler in ignored.items():
+            signal.signal(signum, handler)
 
 
 def run_suite(units: list[dict], *, workers: int, top: str, out=sys.stdout) -> dict:
@@ -169,15 +223,23 @@ def run_suite(units: list[dict], *, workers: int, top: str, out=sys.stdout) -> d
         index = len(combined["units"]) + len(running)
         result_path, log_path = scratch / f"{index}.json", scratch / f"{index}.log"
         names_path = scratch / f"{index}.names.json"
-        names_path.write_text(json.dumps(unit["names"]), encoding="utf-8")
-        with open(log_path, "wb") as log:
-            process = subprocess.Popen(
-                [sys.executable, "-B", os.path.abspath(__file__), "--unit", str(names_path),
-                 "--result", str(result_path), "--top-level-dir", top],
-                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, cwd=top,
-                **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
-                   else {"start_new_session": True}))
-        running[unit["name"]] = (process, result_path, log_path, time.perf_counter())
+        names_path.write_text(json.dumps({"names": unit["names"], "pattern": unit["pattern"]}), encoding="utf-8")
+        # An interrupt must not land between starting a worker and recording it: it would be left running.
+        blocked = hasattr(signal, "pthread_sigmask")
+        if blocked:
+            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+        try:
+            with open(log_path, "wb") as log:
+                process = subprocess.Popen(
+                    [sys.executable, "-B", os.path.abspath(__file__), "--unit", str(names_path),
+                     "--result", str(result_path), "--top-level-dir", top],
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, cwd=top,
+                    **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+                       else {"start_new_session": True}))
+            running[unit["name"]] = (process, result_path, log_path, time.perf_counter())
+        finally:
+            if blocked:
+                signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
 
     def finish(name: str) -> None:
         process, result_path, log_path, started = running.pop(name)
@@ -216,9 +278,10 @@ def run_suite(units: list[dict], *, workers: int, top: str, out=sys.stdout) -> d
             start(unit)
             drain(1)
     except BaseException:
-        for process, *_rest in running.values():
-            _stop(process)
+        _stop_all([process for process, *_rest in running.values()])
         raise
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
     return combined
 
 
@@ -239,6 +302,9 @@ def report(combined: dict, seconds: float, out=sys.stdout) -> bool:
         print(crash["log"], file=out)
     print("-" * 70, file=out)
     print(f"Ran {combined['testsRun']} tests in {seconds:.3f}s", file=out)
+    if not combined["testsRun"] and not combined["crashed"]:
+        print("NO TESTS RAN", file=out)
+        return False
     counts = [f"{name}={len(combined[key])}" for name, key in
               (("failures", "failures"), ("errors", "errors"), ("crashed", "crashed"),
                ("unexpected successes", "unexpectedSuccesses")) if combined[key]]
@@ -279,11 +345,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--unit", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--result", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    args.top_level_dir = os.path.abspath(args.top_level_dir)
     if args.unit:
         return run_unit(args.unit, args.result, args.top_level_dir)
     if args.workers < 1 or args.chunk < 1:
         parser.error("--workers and --chunk must be at least 1")
-    units = discover_units(args.start_directory, args.top_level_dir, args.pattern, args.chunk)
+    units = discover_units(os.path.abspath(args.start_directory), args.top_level_dir, args.pattern, args.chunk)
     if args.timings_from is not None:
         try:
             earlier = json.loads(args.timings_from.read_text(encoding="utf-8")).get("testTimes", {})
@@ -309,6 +376,8 @@ def main(argv: list[str] | None = None) -> int:
     passed = report(combined, seconds)
     if args.timings is not None:
         write_timings(args.timings, combined, seconds, args.workers)
+    if not combined["testsRun"] and not combined["crashed"]:
+        return 5
     return 0 if passed else 1
 
 

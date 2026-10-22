@@ -171,20 +171,21 @@ class ParallelRunnerTests(unittest.TestCase):
         # The others did share the machine.
         self.assertTrue(spans["A"][0] < spans["B"][1] and spans["B"][0] < spans["A"][1], spans)
 
-    @unittest.skipIf(os.name == "nt", "signals the runner with SIGINT")
-    def test_an_interrupt_stops_every_worker_and_exits_non_zero(self) -> None:
+    def interrupted_run(self, *signals: int) -> tuple[subprocess.Popen, str, list[int]]:
+        # Each worker ignores SIGTERM and leaves a grandchild in its group that ignores it too.
         self.module("test_slow", """
-            import os, time, unittest
+            import os, signal, subprocess, sys, time, unittest
+            def hold():
+                signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                child = subprocess.Popen([sys.executable, "-c",
+                    "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"])
+                with open(os.environ["TRACE"], "a") as trace:
+                    trace.write(f"{os.getpid()} {child.pid}\\n")
+                time.sleep(60)
             class Slow(unittest.TestCase):
-                def test_wait(self):
-                    with open(os.environ["TRACE"], "a") as trace:
-                        trace.write(f"{os.getpid()}\\n")
-                    time.sleep(60)
+                def test_wait(self): hold()
             class Slower(unittest.TestCase):
-                def test_wait(self):
-                    with open(os.environ["TRACE"], "a") as trace:
-                        trace.write(f"{os.getpid()}\\n")
-                    time.sleep(60)
+                def test_wait(self): hold()
         """)
         runner = subprocess.Popen([sys.executable, "-B", str(RUNNER), "-s", "suite", "-t", ".", "--workers", "2"],
                                   cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -204,15 +205,29 @@ class ParallelRunnerTests(unittest.TestCase):
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             if self.trace.exists():
-                recorded = [int(line) for line in self.trace.read_text().split()]
-                if len(recorded) == 2:
+                recorded[:] = [int(word) for word in self.trace.read_text().split()]
+                if len(recorded) == 4:
                     break
             time.sleep(0.05)
-        self.assertEqual(len(recorded), 2, "both workers started")
-        runner.send_signal(signal.SIGINT)
-        _, err = runner.communicate(timeout=20)
-        self.assertEqual(runner.returncode, 130, err)
-        self.assertIn("interrupted", err)
+        self.assertEqual(len(recorded), 4, "both workers and their children started")
+        for signum in signals:
+            runner.send_signal(signum)
+            time.sleep(0.3)
+        _, err = runner.communicate(timeout=30)
+        return runner, err, recorded
+
+    @unittest.skipIf(os.name == "nt", "signals the runner")
+    def test_an_interrupt_stops_every_worker_and_what_it_started_and_exits_non_zero(self) -> None:
+        for signals in ((signal.SIGINT,), (signal.SIGINT, signal.SIGINT), (signal.SIGTERM,)):
+            with self.subTest(signals=signals):
+                if self.trace.exists():
+                    self.trace.unlink()
+                runner, err, recorded = self.interrupted_run(*signals)
+                self.assertEqual(runner.returncode, 130, err)
+                self.assertIn("interrupted", err)
+                self.assert_gone(recorded)
+
+    def assert_gone(self, recorded: list[int]) -> None:
         for pid in recorded:
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
@@ -236,6 +251,94 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertEqual(set(timings["modules"]), {"suite.test_alpha", "suite.test_beta"})
         self.assertIn("suite.test_alpha.One.test_a", timings["testTimes"])
         self.assertGreater(timings["total"], 0)
+
+    def test_a_module_s_own_load_tests_builds_the_tests_it_runs(self) -> None:
+        self.passing_suite()
+        self.module("test_params", """
+            import unittest
+            class P(unittest.TestCase):
+                def __init__(self, n=0):
+                    super().__init__("runTest")
+                    self.n = n
+                def runTest(self):
+                    self.assertLess(self.n, 10)
+            def load_tests(loader, tests, pattern):
+                return unittest.TestSuite(P(n) for n in (1, 2, 30))
+        """)
+        run, reference = self.run_runner("--workers", "3"), self.discover()
+        self.assertEqual((run.returncode, reference.returncode), (1, 1), run.stdout)
+        self.assertIn("Ran 10 tests", run.stdout)
+        self.assertIn("FAILED (failures=1", run.stdout, "only the n=30 instance fails, as under discover")
+
+    def test_a_module_that_skips_itself_on_import_is_one_skipped_test(self) -> None:
+        self.passing_suite()
+        self.module("test_skipped", """
+            import unittest
+            raise unittest.SkipTest("not on this platform")
+        """)
+        run, reference = self.run_runner(), self.discover()
+        self.assertEqual((run.returncode, reference.returncode), (0, 0), run.stdout + run.stderr)
+        self.assertIn("Ran 8 tests", run.stdout)
+        self.assertIn("OK (skipped=2, expected failures=1)", run.stdout)
+
+    def test_the_run_leaves_no_files_behind(self) -> None:
+        self.passing_suite()
+        scratch = self.root / "tmp"
+        scratch.mkdir()
+        run = subprocess.run([sys.executable, "-B", str(RUNNER), "-s", "suite", "-t", "."], cwd=self.root,
+                             capture_output=True, text=True, timeout=120, env={**os.environ, "TMPDIR": str(scratch)})
+        self.assertEqual(run.returncode, 0, run.stdout)
+        self.assertEqual(list(scratch.iterdir()), [])
+
+    def test_a_relative_top_level_directory_means_the_same_to_every_worker(self) -> None:
+        nested = self.root / "sub"
+        nested.mkdir()
+        (self.root / "suite").rename(nested / "suite")
+        self.module = lambda name, body: (nested / "suite" / f"{name}.py").write_text(textwrap.dedent(body))
+        self.passing_suite()
+        run = subprocess.run([sys.executable, "-B", str(RUNNER), "-s", "sub/suite", "-t", "sub"], cwd=self.root,
+                             capture_output=True, text=True, timeout=120)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertIn("Ran 7 tests", run.stdout)
+
+    def test_no_tests_is_no_pass(self) -> None:
+        self.passing_suite()
+        run, reference = self.run_runner("-p", "nothing_*.py"), subprocess.run(
+            [sys.executable, "-B", "-m", "unittest", "discover", "-s", "suite", "-t", ".", "-p", "nothing_*.py"],
+            cwd=self.root, capture_output=True, text=True, timeout=120)
+        self.assertEqual((run.returncode, reference.returncode), (5, 5), run.stdout)
+        self.assertIn("NO TESTS RAN", run.stdout)
+
+    def test_a_serial_module_and_a_class_with_only_a_teardown_stay_whole(self) -> None:
+        self.module("test_serial_module", """
+            import unittest
+            RUN_SERIALLY = True
+            class First(unittest.TestCase):
+                def test_a(self): pass
+                def test_b(self): pass
+            class Second(unittest.TestCase):
+                def test_c(self): pass
+        """)
+        self.module("test_teardown", """
+            import unittest
+            class Closing(unittest.TestCase):
+                @classmethod
+                def tearDownClass(cls): pass
+                def test_x(self): pass
+                def test_y(self): pass
+        """)
+        listed = self.run_runner("--list", "--chunk", "1").stdout.splitlines()
+        self.assertIn("suite.test_serial_module  (serial)  3", listed)
+        self.assertIn("suite.test_teardown.Closing  2", listed)
+
+    def test_timings_from_start_the_slowest_unit_first(self) -> None:
+        self.passing_suite()
+        earlier = {"testTimes": {"suite.test_beta.Four.test_g": 50.0, "suite.test_alpha.One.test_a": 1.0}}
+        (self.root / "earlier.json").write_text(json.dumps(earlier))
+        run = self.run_runner("--timings-from", "earlier.json", "--workers", "1")
+        self.assertEqual(run.returncode, 0, run.stdout)
+        started = [line.split()[1] for line in run.stdout.splitlines() if line.startswith(("ok", "FAIL"))]
+        self.assertEqual(started[:2], ["suite.test_beta", "suite.test_alpha.One"], run.stdout)
 
     def test_workers_below_one_are_a_usage_error(self) -> None:
         self.passing_suite()
