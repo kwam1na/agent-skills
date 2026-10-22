@@ -22,9 +22,9 @@ from tests.qualification_pending_support import pending, skip_if_pending
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
 PRODUCT = ROOT / "qualifications" / "product"
-ATTESTATION = PRODUCT / "linear-concurrent-delivery-v1.attestation.json"
-RECORD = PRODUCT / "linear-concurrent-delivery-v1.json"
-BINDING = PRODUCT / "linear-concurrent-delivery-v1.collector-binding.json"
+ATTESTATION = PRODUCT / "linear-orchestration-v1.attestation.json"
+RECORD = PRODUCT / "linear-orchestration-v1.json"
+BINDING = PRODUCT / "linear-orchestration-v1.collector-binding.json"
 HISTORICAL_ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
 HISTORICAL_RECORD = PRODUCT / "linear-product-v1.json"
 HISTORICAL_BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
@@ -83,6 +83,18 @@ HISTORICAL_PRODUCT_SHA256 = {
     "linear-text-coherence-v1.json": "c311bb57dd18fc68bcacbe2efb4488b2e7a46184d91d7db9f82125beb09e2e1f",
     "linear-text-coherence-v1.release.json": "b45988a3e214fa573b96e5592f28364b1d2d60c9626a26e9e54494bd9cf9a050",
     "linear-text-coherence-v1.zip": "945fd9a246433c64f37fc3da5218203b64fa1275e3cc8e1a299cb9724062f679",
+    "bootstrap-concurrent-delivery-v1.json": "6295c741ef879b8ef603a99520a0aa537fbe180e36a2ad47c7b694e46ac412f0",
+    "bootstrap-concurrent-delivery-v1.release.json": "11cb4006c0ab1e9d26623be66ecd4b8162a885de6c8b56f1d3c81890fcaccf62",
+    "bootstrap-concurrent-delivery-v1.zip": "18183b739211ebcaabb684939afc9eb423f062f5a0f632787eb712cda93e165e",
+    "core-concurrent-delivery-v1.json": "3ce334f4feaf30384e639b6c9332f39124972c6e3638c808a23ec0e483e8b59e",
+    "core-concurrent-delivery-v1.release.json": "4614c1918e514b1ebe568d5a659c35cc96ac151093151a86eb42b0d791b4cb52",
+    "core-concurrent-delivery-v1.zip": "6b0e7ee069858b69ded91647d6ce3bd53d49af1ff2bac5b6ac495948720c3943",
+    "linear-concurrent-delivery-v1.attestation.json": "671e5f1ccb6f82a6c4991fa38822a43b1419bce06cc4fbd1eb329d7dc53d019e",
+    "linear-concurrent-delivery-v1.collector-binding.json": "449104fd1c333756f7ff903bf96754268e93860bb8031d14e0abb075cc1b750f",
+    "linear-concurrent-delivery-v1.json": "e79bab13ee94d46cd595c98d688d3421a7a7ae863438691448ad381416248606",
+    "linear-concurrent-delivery-v1.release.json": "d46f7f75e11b7f809f93e10b961954bfd7f8dc533f474074aa57b5594d39868e",
+    "linear-concurrent-delivery-v1.zip": "e63b1f2bb5516d55445aa7050f2a9366b05abdb9d8584bdeed4119abb5440578",
+    "provider-concurrent-delivery-v1.json": "99593af97d48acc4a68434671cb87030cc76184fba199d057c9680d82db93678",
 }
 
 
@@ -928,21 +940,21 @@ class LinearQualificationTests(unittest.TestCase):
         # it is re-earned with the pending linear set.
         skip_if_pending(self, "core", "linear")
         replay = _load_runner().qualify(
-            PRODUCT / "core-concurrent-delivery-v1.zip",
-            PRODUCT / "core-concurrent-delivery-v1.release.json",
-            PRODUCT / "core-concurrent-delivery-v1.json",
-            PRODUCT / "linear-concurrent-delivery-v1.zip",
-            PRODUCT / "linear-concurrent-delivery-v1.release.json",
+            PRODUCT / "core-orchestration-v1.zip",
+            PRODUCT / "core-orchestration-v1.release.json",
+            PRODUCT / "core-orchestration-v1.json",
+            PRODUCT / "linear-orchestration-v1.zip",
+            PRODUCT / "linear-orchestration-v1.release.json",
             ATTESTATION,
             BINDING,
         )
-        checked = json.loads(RECORD.read_text(encoding="utf-8"))
-        self.assertEqual(replay, checked)
+        self.assertEqual(_load_runner().canonical_json(replay).encode(), RECORD.read_bytes(),
+                         "the record replays byte for byte")
 
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
         current_products = {
-            "core": ("core-concurrent-delivery-v1", "6b0e7ee069858b69ded91647d6ce3bd53d49af1ff2bac5b6ac495948720c3943"),
-            "linear": ("linear-concurrent-delivery-v1", "e63b1f2bb5516d55445aa7050f2a9366b05abdb9d8584bdeed4119abb5440578"),
+            "core": ("core-orchestration-v1", "c91c2a07b00ee96d399af62f8c0fdee0ef47835826502cbdae50da0eb2dfc48f"),
+            "linear": ("linear-orchestration-v1", "b798ef4c832fd2abba0530dc42409f2c2bcd30f31909ea53d33fe4fd4d8cc2db"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -961,7 +973,7 @@ class LinearQualificationTests(unittest.TestCase):
                                         release_id=release.release_id, profile_id=profile)
                 if pending(profile) is None:
                     self.assertEqual(projected, current, "checked product workflows differ from current source")
-        self.assertIn("linear-concurrent-delivery-v1", (ROOT / "README.md").read_text())
+        self.assertIn("linear-orchestration-v1", (ROOT / "README.md").read_text())
         skip_if_pending(self, "core", "linear")
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:

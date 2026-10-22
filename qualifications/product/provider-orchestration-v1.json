@@ -1,0 +1,185 @@
+{
+  "installedProviderSha256": "67b03a26fbf4e8d3ccc4003b839d3b79bf240f3ef9c2d67aab1d25b0fd044021",
+  "proofBoundary": {
+    "external": "Host and connector provenance remains owned by the protected external run that supplies host events.",
+    "offline": "This record proves exact installed provider execution, retained evidence behavior, and deterministic replay; controlled host events do not independently prove external calls."
+  },
+  "protocolVersion": "delivery-provider-rails/1",
+  "redaction": {
+    "environmentCaptured": false,
+    "localPathsCaptured": false,
+    "opaqueReferencesCaptured": false,
+    "rawPayloadsCaptured": false
+  },
+  "release": {
+    "archiveSha256": "c91c2a07b00ee96d399af62f8c0fdee0ef47835826502cbdae50da0eb2dfc48f",
+    "metadataSha256": "f80d339b2470675679fa4ffb74ab5fd8abd698fc6d114c08408303b18a97b9ed",
+    "profile": "core",
+    "releaseId": "core-orchestration-v1"
+  },
+  "replay": "python3 scripts/qualify-provider.py --archive <archive> --metadata <metadata> --record <record>",
+  "scenarios": [
+    {
+      "assertionCount": 5,
+      "evidence": [
+        "exact candidate installation is current",
+        "qualification-owned repository exposes both fixed hosts",
+        "installed workflow graph and both new skills match the exact candidate",
+        "installed module starts with isolated Python module search",
+        "installed module negotiates the exact protocol"
+      ],
+      "id": "fresh-install-and-startup",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 13,
+      "evidence": [
+        "aligned installed workflow reaches success",
+        "all native operation names survive provider mapping",
+        "host references become distinct session-random opaque values",
+        "fresh comparison session completes the installed workflow",
+        "the same low-entropy host reference maps differently across fresh sessions",
+        "opaque references resist practical low-entropy dictionary recovery",
+        "installed provider writes the declared evidence manifest",
+        "evidence binds the requested candidate tree",
+        "evidence contains the declared non-empty claim",
+        "evidence names every completed required lens",
+        "evidence contains one approval per required lens and one review audit",
+        "all retained approval bytes match their digests",
+        "raw host references are absent from retained provider evidence"
+      ],
+      "id": "success-and-native-operations",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 5,
+      "evidence": [
+        "host blocker maps to terminal blocked",
+        "blocked retains an actionable blocker",
+        "blocked retains explicit retry guidance",
+        "blocked cannot emit green evidence",
+        "blocked retains no raw host reference"
+      ],
+      "id": "blocked",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 5,
+      "evidence": [
+        "host failure maps to terminal failed",
+        "failed retains an actionable blocker",
+        "failed retains explicit retry guidance",
+        "failed cannot emit green evidence",
+        "failed retains no raw host reference"
+      ],
+      "id": "failed",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 4,
+      "evidence": [
+        "deferred attempt is active before cancellation",
+        "active deferred attempt reaches cancelled",
+        "duplicate cancellation is correlated and idempotent",
+        "cancelled attempt emits no green evidence"
+      ],
+      "id": "cancelled",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 3,
+      "evidence": [
+        "host loss reaches indeterminate",
+        "interruption stays correlated to its attempt",
+        "interrupted attempt emits no green evidence"
+      ],
+      "id": "interrupted",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 3,
+      "evidence": [
+        "identical request replays the same accepted attempt",
+        "duplicate request preserves exact evidence bytes",
+        "caller-owned reconciliation is preserved without an internal retry"
+      ],
+      "id": "duplicate-and-reconciliation",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 3,
+      "evidence": [
+        "wrong expected release fails closed with a blocked terminal",
+        "release mismatch retains its typed blocker",
+        "release mismatch emits no green evidence"
+      ],
+      "id": "release-mismatch",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 4,
+      "evidence": [
+        "unsupported version fails negotiation closed",
+        "unsupported version selects no protocol",
+        "provider reports only its exact supported protocol",
+        "unsupported negotiation closes the session to later work"
+      ],
+      "id": "unsupported-version",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 2,
+      "evidence": [
+        "empty review evidence fails anti-vacuity checks",
+        "incomplete evidence cannot emit a manifest"
+      ],
+      "id": "evidence-completeness",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 29,
+      "evidence": [
+        "installed provider reopens at the original bound",
+        "replay evidence keeps the exact final candidate and base",
+        "replay preserves every obtained pass",
+        "iteration telemetry counts retained passes without charging the reopening to the bound",
+        "installed provider selects explicitly accepted v2",
+        "retained review history bytes match the manifest digest",
+        "retained review request keeps the original bound and required lenses",
+        "retained history keeps superseded dissent and replay identity",
+        "retained reduction keeps counted rounds and every obtained pass",
+        "superseded dissent remains historical rather than active reduction input",
+        "retained audit keeps the executed comparison reference and exact diff bytes",
+        "installed provider reopens at the original bound",
+        "replay evidence keeps the exact final candidate and base",
+        "replay preserves every obtained pass",
+        "iteration telemetry counts retained passes without charging the reopening to the bound",
+        "installed provider selects explicitly accepted v2",
+        "retained review history bytes match the manifest digest",
+        "retained review request keeps the original bound and required lenses",
+        "retained history keeps superseded dissent and replay identity",
+        "retained reduction keeps counted rounds and every obtained pass",
+        "superseded dissent remains historical rather than active reduction input",
+        "retained audit keeps the executed comparison reference and exact diff bytes",
+        "changing only retained historical evidence changes verifiable audit bytes",
+        "changed-diff cannot claim a base-move exclusion",
+        "changed-diff produces no approval manifest",
+        "unchanged-base cannot claim a base-move exclusion",
+        "unchanged-base produces no approval manifest",
+        "missing-lens cannot claim a base-move exclusion",
+        "missing-lens produces no approval manifest"
+      ],
+      "id": "base-move-reopening",
+      "result": "passed"
+    }
+  ],
+  "schemaVersion": "agent-skills-provider-qualification/1",
+  "summary": {
+    "assertionCount": 76,
+    "failedScenarioCount": 0,
+    "passedScenarioCount": 11,
+    "requiredScenarioCount": 11,
+    "result": "passed"
+  },
+  "workflowGraphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7"
+}
