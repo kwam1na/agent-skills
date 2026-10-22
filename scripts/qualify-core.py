@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -192,8 +193,8 @@ REQUIRED_SCENARIOS = (
     "authority-negative-handoffs",
     "orchestration-workflow",
 )
-# The orchestration tools these sensors load, each of which must come from the extracted candidate.
-ORCHESTRATION_MODULES = ("delivery_state", "merge_queue", "render_state_under_test")
+# The orchestration tool modules a sensor module holds, each of which must come from the extracted candidate.
+ORCHESTRATION_TOOLS = ("state_tool", "queue", "render_state")
 DELIVERY_RAILS_SENSOR = "tests/test_delivery_provider_rails_contract.py"
 PACKAGED_EVIDENCE_PATHS = {
     "bounded-review-failure": (
@@ -312,15 +313,14 @@ def _run_orchestration_sensors(checkpoint: Checkpoint, candidate_root: Path) -> 
     candidate_root = candidate_root.resolve()
     _run_sensors(checkpoint, "orchestration-workflow")
     for name in dict.fromkeys(sensor.split(".")[0] for sensor in SCENARIO_SENSORS["orchestration-workflow"]):
+        sensor = sys.modules[name]
+        # Each sensor's own scripts folder and the tool modules it holds, not whatever name was loaded last.
+        tools = [tool for tool in (getattr(sensor, attribute, None) for attribute in ORCHESTRATION_TOOLS)
+                 if isinstance(tool, types.ModuleType)]
         checkpoint.check(
-            sys.modules[name].PRODUCT_ROOT == candidate_root,
-            f"sensor reads the extracted candidate's skill: {name}",
-        )
-    for name in ORCHESTRATION_MODULES:
-        module = sys.modules.get(name)
-        checkpoint.check(
-            module is not None and Path(module.__file__).resolve().is_relative_to(candidate_root),
-            f"orchestration tool runs from the extracted candidate: {name}",
+            Path(sensor.SCRIPTS).resolve().is_relative_to(candidate_root) and bool(tools)
+            and all(Path(tool.__file__).resolve().is_relative_to(candidate_root) for tool in tools),
+            f"sensor runs the extracted candidate's orchestration tools: {name}",
         )
 
 

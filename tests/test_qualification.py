@@ -326,6 +326,7 @@ class QualificationTests(unittest.TestCase):
                     "rollback",
                     "missing-capability",
                     "bounded-review-failure",
+                    "orchestration-workflow",
                     *WORKFLOW_SCENARIOS,
                 },
             )
