@@ -24,11 +24,15 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
+import agent_skills
 from agent_skills.validate import LEAKAGE_PATTERNS
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "skills/orchestrate-work/scripts"
+# The product under test: this repository, or the extracted release candidate that
+# qualification puts first on the path, so its shipped scripts are the ones exercised.
+PRODUCT_ROOT = Path(agent_skills.__file__).resolve().parents[1]
+SCRIPTS = PRODUCT_ROOT / "skills/orchestrate-work/scripts"
 STATE_TOOL = SCRIPTS / "delivery_state.py"
 WRAPPER = SCRIPTS / "render_state.py"
 HEAD_A = "a" * 40

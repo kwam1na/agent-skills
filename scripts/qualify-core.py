@@ -120,6 +120,17 @@ SCENARIO_SENSORS = {
         "test_workflows.PlanningWorkflowTests.test_plan_without_tracker_completes_and_reports_selected_tracking_handoff",
         "test_tracker_contract.TrackerContractTests.test_missing_capability_is_typed_and_actionable",
     ),
+    "orchestration-workflow": (
+        "test_orchestration_state.StateToolTests.test_init_patch_show_round_trips",
+        "test_orchestration_state.StateToolTests.test_journal_ids_stay_sequential_across_restarts",
+        "test_orchestration_state.ReconcileTests.test_tracker_children_missing_from_the_record_are_added_and_a_second_run_finds_no_drift",
+        "test_orchestration_state.NextTests.test_unblocked_non_colliding_higher_priority_work_ranks_first_and_each_says_why",
+        "test_orchestration_render.WrapperTests.test_without_a_configuration_both_built_ins_render",
+        "test_orchestration_render.PinnedViewTests.test_the_built_in_views_of_a_fixed_state_are_byte_for_byte_unchanged",
+        "test_merge_queue.IsolationTests.test_a_second_runner_is_refused_by_the_lock",
+        "test_merge_queue.CandidatePinningTests.test_a_clean_candidate_merges_at_its_synced_head",
+        "test_merge_queue.SyncSafetyTests.test_an_undeclared_post_sync_change_stops",
+    ),
     "bounded-review-failure": (
         "test_review_and_compounding.ReviewWorkflowTests.test_unresolved_findings_at_loop_bound_block_honestly",
         "test_review_and_compounding.ReviewWorkflowTests.test_reviewer_failure_is_a_typed_blocked_outcome",
@@ -154,6 +165,9 @@ TRUSTED_EVIDENCE_PATHS = (
     "tests/scenarios/core/tracker-capability.json",
     "tests/test_delivery_provider_rails_contract.py",
     "tests/test_diagnosis.py",
+    "tests/test_merge_queue.py",
+    "tests/test_orchestration_render.py",
+    "tests/test_orchestration_state.py",
     "tests/test_review_and_compounding.py",
     "tests/test_review_base_reopening.py",
     "tests/test_review_orchestration.py",
@@ -176,7 +190,10 @@ REQUIRED_SCENARIOS = (
     "diagnosis-causal-evidence",
     "review-acquisition-exact-rounds",
     "authority-negative-handoffs",
+    "orchestration-workflow",
 )
+# The orchestration tools these sensors load, each of which must come from the extracted candidate.
+ORCHESTRATION_MODULES = ("delivery_state", "merge_queue", "render_state_under_test")
 DELIVERY_RAILS_SENSOR = "tests/test_delivery_provider_rails_contract.py"
 PACKAGED_EVIDENCE_PATHS = {
     "bounded-review-failure": (
@@ -288,6 +305,23 @@ def _run_sensors(checkpoint: Checkpoint, scenario_id: str, *_arguments) -> None:
         raise QualificationFailure("required scenario has no behavioral sensors")
     for sensor in SCENARIO_SENSORS[scenario_id]:
         _run_sensor(checkpoint, sensor)
+
+
+def _run_orchestration_sensors(checkpoint: Checkpoint, candidate_root: Path) -> None:
+    """The shipped state tool, render wrapper and merge-queue runner, run from the extracted candidate."""
+    candidate_root = candidate_root.resolve()
+    _run_sensors(checkpoint, "orchestration-workflow")
+    for name in dict.fromkeys(sensor.split(".")[0] for sensor in SCENARIO_SENSORS["orchestration-workflow"]):
+        checkpoint.check(
+            sys.modules[name].PRODUCT_ROOT == candidate_root,
+            f"sensor reads the extracted candidate's skill: {name}",
+        )
+    for name in ORCHESTRATION_MODULES:
+        module = sys.modules.get(name)
+        checkpoint.check(
+            module is not None and Path(module.__file__).resolve().is_relative_to(candidate_root),
+            f"orchestration tool runs from the extracted candidate: {name}",
+        )
 
 
 def _run_packaged_sensors(
@@ -600,6 +634,8 @@ def _internal_main(arguments: list[str]) -> int:
             )
         )
         if args.scenario in PACKAGED_EVIDENCE_PATHS
+        else (lambda checkpoint: _run_orchestration_sensors(checkpoint, args.candidate_root))
+        if args.scenario == "orchestration-workflow"
         else (lambda checkpoint: _run_sensors(checkpoint, args.scenario))
         if args.scenario in SCENARIO_SENSORS
         else (

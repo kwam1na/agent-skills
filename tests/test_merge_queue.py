@@ -19,11 +19,15 @@ from unittest import mock
 
 from jsonschema import Draft202012Validator
 
+import agent_skills
 from agent_skills.validate import LEAKAGE_PATTERNS
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL = ROOT / "skills/orchestrate-work"
+# The product under test: this repository, or the extracted release candidate that
+# qualification puts first on the path, so its shipped scripts are the ones exercised.
+PRODUCT_ROOT = Path(agent_skills.__file__).resolve().parents[1]
+SKILL = PRODUCT_ROOT / "skills/orchestrate-work"
 SCRIPTS = SKILL / "scripts"
 SCHEMA_FILE = SKILL / "references/schemas.json"
 

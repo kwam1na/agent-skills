@@ -22,14 +22,15 @@ from unittest import mock
 
 from jsonschema import Draft202012Validator
 
+import agent_skills
 from agent_skills.validate import LEAKAGE_PATTERNS, validate_corpus
-from tests.dependency_cases import CASES as DEPENDENCY_CASES
-from tests.dependency_cases import CYCLES as DEPENDENCY_CYCLES
-from tests.dependency_cases import ONCE as DEPENDENCY_ONCE
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL = ROOT / "skills/orchestrate-work"
+# The product under test: this repository, or the extracted release candidate that
+# qualification puts first on the path, so its shipped scripts are the ones exercised.
+PRODUCT_ROOT = Path(agent_skills.__file__).resolve().parents[1]
+SKILL = PRODUCT_ROOT / "skills/orchestrate-work"
 SCRIPTS = SKILL / "scripts"
 TOOL = SCRIPTS / "delivery_state.py"
 SCHEMA_FILE = SKILL / "references/schemas.json"
@@ -2119,6 +2120,11 @@ class TrackerSnapshotTests(unittest.TestCase):
         self.assertEqual((code, out.strip()), (0, b"x" * 1000))
 
     def test_every_dependency_shape_is_checked_in_a_tracker_snapshot(self) -> None:
+        # Imported here: release qualification runs this module beside a candidate's own tests package.
+        from tests.dependency_cases import CASES as DEPENDENCY_CASES
+        from tests.dependency_cases import CYCLES as DEPENDENCY_CYCLES
+        from tests.dependency_cases import ONCE as DEPENDENCY_ONCE
+
         for name, (parent, items, named) in DEPENDENCY_CASES.items():
             with self.subTest(name):
                 snapshot = {"takenAt": taken(), "source": "tracker", "items": [
