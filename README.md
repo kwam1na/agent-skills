@@ -29,12 +29,26 @@ python3 scripts/bootstrap-test-environment.py
 .venv/bin/python -m unittest discover -s tests -t . -p 'test_*.py'
 ```
 
-On Windows, use `.venv\Scripts\python.exe` for the three sensor commands.
+`scripts/run-tests.py` runs the same suite across worker processes, half the
+cores by default, and gives the same verdict as `unittest discover` in a
+fraction of the time. A test class that sets `run_serially = True`, or a
+module that sets `RUN_SERIALLY = True`, runs with nothing beside it.
+`--timings <file>` records per-test times, and `--timings-from <file>` starts
+the slowest work first. A unit that runs past `--unit-timeout` seconds, by
+default five times the slowest unit in the earlier timings and at least 300,
+or 1800 without them, is stopped with everything it started and reported as
+timed out, while the rest of the run carries on:
+
+```bash
+.venv/bin/python scripts/run-tests.py --timings .test-timings.json
+```
+
+On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
 
 Build and verify the core profile:
 
 ```bash
-python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-concurrent-delivery-v1
+python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-orchestration-v1
 python3 scripts/build-release.py verify \
   --archive /tmp/core.zip \
   --metadata /tmp/core.release.json \
@@ -64,7 +78,7 @@ source artifacts, and rolls back through installed bytes:
 python3 scripts/build-release.py build \
   --archive /tmp/bootstrap.zip \
   --metadata /tmp/bootstrap.release.json \
-  --release-id bootstrap-workflows-concurrent-delivery-v1 \
+  --release-id bootstrap-workflows-orchestration-v1 \
   --profile bootstrap
 python3 scripts/qualify-bootstrap.py \
   --archive /tmp/bootstrap.zip \
@@ -73,7 +87,7 @@ python3 scripts/qualify-bootstrap.py \
 ```
 
 The current checked qualification record is
-`qualifications/bootstrap-workflows-concurrent-delivery-v1.json`.
+`qualifications/bootstrap-workflows-orchestration-v1.json`.
 
 The detached release metadata authenticates the ZIP before it is parsed. The
 manifest then authenticates the complete payload and its single profile group.
@@ -132,7 +146,7 @@ named in the record remains the single release under qualification. That prior
 fixture is built only from the verified candidate extraction, never from the
 runner checkout corpus.
 The current workflow-only record is checked in at
-`qualifications/core-workflows-concurrent-delivery-v1.json`.
+`qualifications/core-workflows-orchestration-v1.json`.
 Historical records retain their original bytes under `qualifications/history/`.
 Historical product records such as `linear-product-v1` also remain immutable
 under `qualifications/product/`.
@@ -159,7 +173,7 @@ Each reference is an object with `schemaVersion` and `opaque`. Use fresh redacte
 opaque identities, not ticket identifiers, paths, or host payloads. Serialize the
 collector input and attestation with sorted keys, two-space indentation, and a
 final newline. The current checked input is
-`qualifications/product/linear-concurrent-delivery-v1.collector-binding.json`; it is not
+`qualifications/product/linear-orchestration-v1.collector-binding.json`; it is not
 part of either archive.
 Qualification also rebuilds the supplied Linear archive's core projection and
 requires its archive and metadata bytes to match the separately qualified core.
@@ -178,17 +192,17 @@ the independently frozen input to the offline driver:
 
 ```bash
 python3 scripts/qualify-linear.py \
-  --core-archive qualifications/product/core-concurrent-delivery-v1.zip \
-  --core-metadata qualifications/product/core-concurrent-delivery-v1.release.json \
-  --core-record qualifications/product/core-concurrent-delivery-v1.json \
-  --linear-archive qualifications/product/linear-concurrent-delivery-v1.zip \
-  --linear-metadata qualifications/product/linear-concurrent-delivery-v1.release.json \
-  --collector-binding qualifications/product/linear-concurrent-delivery-v1.collector-binding.json \
-  --attestation qualifications/product/linear-concurrent-delivery-v1.attestation.json \
+  --core-archive qualifications/product/core-orchestration-v1.zip \
+  --core-metadata qualifications/product/core-orchestration-v1.release.json \
+  --core-record qualifications/product/core-orchestration-v1.json \
+  --linear-archive qualifications/product/linear-orchestration-v1.zip \
+  --linear-metadata qualifications/product/linear-orchestration-v1.release.json \
+  --collector-binding qualifications/product/linear-orchestration-v1.collector-binding.json \
+  --attestation qualifications/product/linear-orchestration-v1.attestation.json \
   --record /tmp/linear.qualification.json
 ```
 
-The version-2 checked record at `qualifications/product/linear-concurrent-delivery-v1.json` binds the passing core
+The version-2 checked record at `qualifications/product/linear-orchestration-v1.json` binds the passing core
 qualification, both exact archive and metadata identities, canonical extracted
 source-tree digests, the frozen collector input and its digest, the exact retained
 attestation bytes, and its external receipt reference. Old unbound attestations,
@@ -230,7 +244,7 @@ written manifest and reviewer artifacts. Its deterministic record covers
 success, blocked, failed, cancelled, interrupted, duplicate, unsupported
 version, reconciliation, anti-vacuity, completeness, and redaction behavior
 while retaining no local paths or opaque host references. The checked record is
-`qualifications/provider-workflows-concurrent-delivery-v1.json`.
+`qualifications/provider-workflows-orchestration-v1.json`.
 Its `workflowGraphSha256` names the actual installed graph, and the installation
 scenario compares that graph and both new skill bodies with the verified
 candidate. A failed qualifier cannot leave an earlier success record at the
@@ -272,6 +286,38 @@ drained, the CLI returns `product.cancellation_incomplete`. Its diagnostic lists
 only PIDs still running through the direct child handle; when tree liveness
 cannot be observed, it reports `unknown` rather than inferring survivors from a
 cleanup exception.
+
+On POSIX the launcher also stops descendants that left the process group, which
+it knows by pid and start time. It finds them by ancestry, or by a per-launch
+`AGENT_SKILLS_LAUNCH_<key>` variable in their environment. On macOS, which
+discloses no environment for Apple system binaries such as `/bin/sh` and
+`/bin/sleep`, it also uses three more signals:
+
+- a fork watcher that sees each child as it is forked;
+- an inherited lifeline pipe;
+- the process group of a descendant that has exited.
+
+None of these macOS signals applies on Linux. Cleanup never stops pid 0 or 1,
+the launcher or any of its ancestors, another user's process on its own, or a
+process started before the run. A candidate that breaks that rule is never
+signalled, and the cancellation reports
+`product.cancellation_incomplete` with `cleanup=escaped-descendants-refused`.
+
+Accepted limits:
+
+- The fork watcher is best effort. A descendant can escape and be orphaned
+  between two observations, with no readable marker and no inherited lifeline,
+  before the watcher sees its fork. Such a descendant is not found.
+- On macOS the launcher tells processes apart by the kernel's unique id,
+  which is never reused, and finds a descendant by its parent's unique id even
+  after it is reparented. A pid reused by an unrelated process is therefore
+  never taken for one of the run's. One fallback still relies on no pid being
+  reused within the moment between a descendant's exit and the watcher seeing
+  it: a job found only through the group of a descendant that has exited,
+  because the process that forked the job was never seen. Where the unique id
+  cannot be read, start times stand in, with an hour of slack for a clock
+  stepped back, and the preview of cleanup targets reports
+  `identity: start-time` instead of `unique-id`.
 
 Mutation is an explicit repository-maintenance action. `apply` is the product
 installer entry point: it installs into an absent repository, updates a current

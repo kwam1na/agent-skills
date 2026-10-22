@@ -44,6 +44,13 @@ REFERENCED_KINDS: dict[str, tuple[str, ...]] = {
         "`review.round.closed`",
     ),
     "skills/review-work/SKILL.md": ("`review.round.closed`",),
+    # The delivery journal's own kinds share these two names. The guide's
+    # tracker-updates table and lead-authority rules name them as journal
+    # entries the state tool writes, never as run events to emit.
+    "skills/orchestrate-work/references/orchestration-guide.md": (
+        "`decision.recorded`",
+        "`blocker.recorded`",
+    ),
     "skills/execute-work/SKILL.md": (
         "`lens.selected`",
         "`review.round.opened`",

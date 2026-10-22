@@ -52,6 +52,15 @@ Map the neutral operations directly:
 - `update-status` uses update.
 - `attach-evidence` uses create.
 - `close-or-handoff` uses update.
+- `list-work` uses search for the parent's child items, then read for each
+  item's state type and blockers. It is read-only. Each item's workflow state
+  type folds into the normalized four: `triage`, `backlog` and `unstarted`
+  become `backlog`, and `started`, `completed` and `canceled` stay as they are.
+  A type outside these six makes the result `malformed`, never a guess.
+  Each item names each of its blockers once, never itself and never the
+  parent, even when the tracker lists a relation from both of its ends. The
+  parent is never one of the items, and a dependency cycle among them makes
+  the result `malformed`.
 - Reconciliation after an uncertain mutation uses reconciliation only.
 
 Do not substitute another provider operation or access path. Retain the resolved

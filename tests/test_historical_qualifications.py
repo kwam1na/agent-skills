@@ -25,6 +25,12 @@ PR66_QUALIFICATION_SHA256 = {
     "qualifications/provider-workflows-text-coherence-v1.json": "24fde39459310504ee20259e0d6b0dfdd95401a923a9db2d72eab6ce2a259098",
 }
 
+PR68_QUALIFICATION_SHA256 = {
+    "qualifications/bootstrap-workflows-concurrent-delivery-v1.json": "1cfe295842c0bd629d78640130530d900fa075f1b0f80dbd49d09716a293eed3",
+    "qualifications/core-workflows-concurrent-delivery-v1.json": "dd97a62d6a1ec629330d8c34275c8690c1cea05c77d7a9d5498b0bd5c00f1936",
+    "qualifications/provider-workflows-concurrent-delivery-v1.json": "8fe314672fccee7158b9649979ee5fd424e166fabadb67b4dec06bab72c513ca",
+}
+
 
 class HistoricalQualificationTests(unittest.TestCase):
     def test_prior_current_records_remain_byte_identical(self) -> None:
@@ -33,6 +39,7 @@ class HistoricalQualificationTests(unittest.TestCase):
             **PR64_QUALIFICATION_SHA256,
             **PR65_QUALIFICATION_SHA256,
             **PR66_QUALIFICATION_SHA256,
+            **PR68_QUALIFICATION_SHA256,
         }.items():
             with self.subTest(relative=relative):
                 self.assertEqual(

@@ -17,6 +17,7 @@ class InMemoryTrackerAdapter:
         *,
         supported_operations: Iterable[TrackerOperation] = tuple(TrackerOperation),
         scripted: Mapping[TrackerOperation, list[object]] | None = None,
+        work: Mapping[str, list[Mapping[str, object]]] | None = None,
     ) -> None:
         self.supported_operations = frozenset(supported_operations)
         self.scripted = {
@@ -24,6 +25,8 @@ class InMemoryTrackerAdapter:
             for operation, outcomes in (scripted or {}).items()
         }
         self.mutations: list[TrackerRequest] = []
+        # The child work items of each parent reference, for list-work.
+        self.work = {parent: [dict(item) for item in items] for parent, items in (work or {}).items()}
         self._completed: dict[tuple[TrackerOperation, str], AdapterOutcome] = {}
 
     def _complete(
@@ -63,6 +66,12 @@ class InMemoryTrackerAdapter:
             ):
                 return self._complete(request, key, outcome)
             return outcome
+        if request.operation is TrackerOperation.LIST_WORK:
+            parent = str(request.payload.get("parentReference", "parent"))
+            return AdapterOutcome.success(
+                request.operation,
+                {"parentReference": parent, "workItems": [dict(item) for item in self.work.get(parent, [])]},
+            )
         sequence = len(self.mutations) + 1
         outcome = AdapterOutcome.success(
             request.operation,

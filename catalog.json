@@ -293,6 +293,43 @@
     },
     {
       "capabilities": [
+        "orchestration-workflow",
+        "tracker-operations"
+      ],
+      "degradedBehavior": "Without session messaging the lead runs lanes as subagents or in sequence, and keeps undelivered messages in its own notes. Optional tracking may be absent; the delivery state and journal remain authoritative for where the epic stands.",
+      "dependencies": [
+        {
+          "id": "compound-learning",
+          "requirement": "required"
+        },
+        {
+          "id": "execute-work",
+          "requirement": "required"
+        },
+        {
+          "id": "plan-work",
+          "requirement": "required"
+        },
+        {
+          "id": "review-work",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "orchestrate-work",
+      "path": "skills/orchestrate-work/SKILL.md",
+      "profiles": [
+        "core",
+        "linear"
+      ],
+      "provenanceId": "orchestrate-work"
+    },
+    {
+      "capabilities": [
         "planning-workflow",
         "tracker-operations"
       ],

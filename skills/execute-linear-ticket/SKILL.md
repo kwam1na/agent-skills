@@ -42,6 +42,8 @@ provider-specific resolution of its own.
 - `update-status` moves the item as execution progresses.
 - `attach-evidence` records progress, validation evidence, and change-set links.
 - `close-or-handoff` ends the item as delivered or as an explicit handoff.
+- `list-work` reads a parent item's child items, when the item is one of many in
+  a larger delivery.
 
 Carry a stable idempotency key per mutation. When an outcome is not confirmed,
 stop and report it; never repeat the mutation. Consume only the normalized

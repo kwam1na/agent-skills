@@ -1,0 +1,138 @@
+{
+  "schemaVersion": "orchestration-binding/1",
+  "base": {
+    "remote": "upstream",
+    "ref": "trunk"
+  },
+  "workRoot": "@WORK_ROOT@",
+  "candidate": [
+    "@PYTHON@",
+    "-B",
+    "tools/candidate.py",
+    "{candidate}"
+  ],
+  "prepare": [],
+  "hooks": "bypass",
+  "regenerable": {
+    "paths": [
+      "generated/**"
+    ],
+    "regenerators": [
+      [
+        "@PYTHON@",
+        "-B",
+        "tools/regenerate.py"
+      ]
+    ]
+  },
+  "postSync": [],
+  "leadInputs": [],
+  "profiles": {},
+  "provider": {
+    "argv": [
+      "@PYTHON@",
+      "-B",
+      "tools/provider.py",
+      "{workRoot}"
+    ],
+    "cwd": ".",
+    "timeoutSeconds": 30,
+    "providerInputs": [
+      "tools/provider.py"
+    ]
+  },
+  "alwaysRun": [],
+  "fallback": [
+    {
+      "id": "full",
+      "argv": [
+        "@PYTHON@",
+        "-B",
+        "tools/full.py"
+      ],
+      "cwd": ".",
+      "reasons": [
+        "the provider could not select checks"
+      ],
+      "prerequisites": []
+    }
+  ],
+  "checkTimeoutSeconds": 60,
+  "checkTimeoutCeiling": 120,
+  "environment": {
+    "FIXTURE_REMOTE": "upstream",
+    "FIXTURE_LOG": "@LOG@",
+    "FIXTURE_STATE": "@STATE@",
+    "FIXTURE_SNAPSHOTS": "@SNAPSHOTS@"
+  },
+  "ready": [
+    "@PYTHON@",
+    "-B",
+    "tools/ready.py",
+    "{candidate}",
+    "{expectedHead}"
+  ],
+  "merge": [
+    "@PYTHON@",
+    "-B",
+    "tools/merge.py",
+    "{base}",
+    "{branch}",
+    "{expectedHead}",
+    "{baseHead}"
+  ],
+  "release": [
+    {
+      "id": "package",
+      "argv": [
+        "@PYTHON@",
+        "-B",
+        "tools/release_target.py",
+        "package",
+        "{ref}"
+      ],
+      "stopsOnFailure": true,
+      "requiresApproval": false
+    },
+    {
+      "id": "publish",
+      "argv": [
+        "@PYTHON@",
+        "-B",
+        "tools/release_target.py",
+        "publish",
+        "{ref}"
+      ],
+      "stopsOnFailure": true,
+      "requiresApproval": true
+    }
+  ],
+  "fullHealth": [
+    "@PYTHON@",
+    "-B",
+    "tools/lint.py",
+    "src"
+  ],
+  "leases": [],
+  "state": {
+    "directory": "@STATE@",
+    "renderers": [
+      {
+        "id": "markdown",
+        "builtin": "markdown",
+        "output": "delivery.md"
+      },
+      {
+        "id": "page",
+        "builtin": "static-page",
+        "output": "delivery.html"
+      }
+    ],
+    "publishers": [
+      {
+        "id": "live",
+        "kind": "host"
+      }
+    ]
+  }
+}

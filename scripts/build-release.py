@@ -8,9 +8,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from agent_skills.release import ReleaseError, build_release, verify_release
 from agent_skills.validate import canonical_json
+from qualification_pending import MarkerError, load_marker
 
 
 def main() -> int:
@@ -28,6 +30,23 @@ def main() -> int:
     verify.add_argument("--metadata", type=Path, required=True)
     verify.add_argument("--extract-to", type=Path)
     args = parser.parse_args()
+    if args.command == "build":
+        # A release is never cut while any qualification record is stale.
+        try:
+            marker = load_marker(args.root)
+        except MarkerError as error:
+            print(canonical_json({"error": str(error), "ok": False}), end="")
+            return 1
+        if marker is not None:
+            print(
+                canonical_json({
+                    "error": "qualification is pending; re-earn the named sets and delete the marker before cutting a release",
+                    "ok": False,
+                    "qualificationPending": marker["sets"],
+                }),
+                end="",
+            )
+            return 1
     try:
         if args.command == "build":
             result = build_release(

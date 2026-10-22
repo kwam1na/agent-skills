@@ -34,6 +34,46 @@ python3 scripts/bootstrap-test-environment.py
 .venv/bin/python -m unittest discover -s tests -t . -p 'test_*.py'
 ```
 
+The full suite may run through `scripts/run-tests.py` instead of
+`unittest discover`; it gives the same verdict across worker processes, and a
+merge check may use it the same way:
+
+```bash
+.venv/bin/python scripts/run-tests.py
+```
+
+It exits 0 when every test passed, 1 when any failed, errored, passed
+unexpectedly, timed out or its worker crashed, 2 on a usage error, 5 when no
+test ran, and 130 when interrupted, after stopping every worker and what it
+started. A unit that hangs is stopped after `--unit-timeout` seconds and named.
+Without the option the limit is five times the slowest unit an earlier
+`--timings-from` file records, at least 300 seconds, or 1800 seconds with no
+usable file; `0` sets no limit.
+
+Mark a test class `run_serially = True`, or a module `RUN_SERIALLY = True`,
+when it cannot share the machine: a fixed port, a fixed path outside its own
+temporary folder, or process-wide state.
+
+Refresh output digests with the provenance writer rather than by hand. It
+recomputes the sha256 of every output `provenance.lock.json` lists, changes
+nothing else, leaves a current lock byte for byte, and restores a lock in any
+other layout to canonical form; `--skill <id>` limits it
+to that catalog skill's entry, and `--check` lists stale outputs and exits 1
+without writing. A refusal exits 2 and writes nothing: a malformed lock, or a
+listed output that is missing or outside the corpus, so adding or removing an
+output stays a deliberate edit to the lock:
+
+```bash
+.venv/bin/python scripts/update-provenance.py
+```
+
+When a rebase or merge conflicts only in `provenance.lock.json`, take either
+side of the lock, run the writer, then validate the registry before continuing.
+The writer never adds or removes an output, so when one side added or removed a
+listed output, take that side; validating the registry reports any output the
+lock no longer lists. When both sides changed which outputs are listed, merge
+those lists by hand first, then run the writer.
+
 The `-t .` option enters the test package's dependency guard. Without the test
 extra, that guard reports one installation failure before importing the suite.
 On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
