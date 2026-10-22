@@ -605,11 +605,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
-    "delivery.html": "e5019251f6538c602d425de840c0391deddb1040845e5813a826369683025145",
+    "delivery.html": "3eb180eb4a654be51b61e0a8fcf716ac923aaba4da714bcf292cd0137c1177c6",
 }
 PINNED_VIEWS = {
     "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
-    "delivery.html": "dae6b9f265d099a98054fa6c8caf5a66e75a76bd4cc29cbc6acb0c7ea368aeeb",
+    "delivery.html": "a3c6d61688e4063d98e6c5c51231e154931560d19db40369f8e2b1e1341ca80a",
 }
 
 
