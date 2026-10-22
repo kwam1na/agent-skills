@@ -30,7 +30,8 @@ jobs:
           set -o pipefail
           python scripts/validate-registry.py --target-base "$TARGET_BASE" | tee validation-result.json
       - run: python tests/test_registry.py
-      - run: python -m unittest discover -s tests -t . -p "test_*.py"
+      # The parallel runner the merge checks use: discover's verdict, across worker processes.
+      - run: python scripts/run-tests.py
       - uses: actions/upload-artifact@v4
         with:
           name: validation-${{ matrix.os }}-py${{ matrix.python-version }}
