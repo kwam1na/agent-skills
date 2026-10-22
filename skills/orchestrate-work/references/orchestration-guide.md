@@ -193,8 +193,11 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   not declare. A stop or refusal whose cause is the setup, such as a removed
   checkout, a binding made invalid on the base or a remote that does not
   answer, stops nothing: `serve` holds itself with the setup error as the
-  hold's reason, journals `blocker.recorded`, and puts that turn's candidates
-  back to `queued`. Repair the setup, then clear `meta.hold`; the queue resumes
+  hold's reason, journals `blocker.recorded`, and puts every candidate that
+  turn stopped or refused back to `queued`, keeping its synced head and
+  clearing its checks; the blocker entry names them. A stop's code cannot say
+  whether the setup caused it, so a candidate whose check failed in that turn
+  is checked again. Repair the setup, then clear `meta.hold`; the queue resumes
   in order, with no lane handing off again. A brief network failure holds
   serving the same way, so clear the hold once the remote answers. A
   candidate whose merge had begun when the setup broke stays stopped, and

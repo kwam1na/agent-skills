@@ -2303,12 +2303,14 @@ def _refresh(repository: Path, state_directory: Path, member: dict) -> None:
         print(f"serve: the refresh of the forge and tracker failed: {error}", file=sys.stderr, flush=True)
 
 
-def hold_for_setup(state_directory: Path, detail: str, kept: Iterable[str] = ()) -> bool:
+def hold_for_setup(state_directory: Path, detail: str, kept: Iterable[str] = (),
+                   requeued: Iterable[str] = ()) -> bool:
     """Hold serving because its setup cannot be used, as the runner and only where no hold is set; journal it once.
 
     The candidates stay queued as they are: nothing was wrong with them, so no
     lane hands anything off again. The lead repairs the setup and clears the hold.
-    ``kept`` names candidates left stopped because their merge had begun.
+    ``requeued`` names candidates this turn put back, to be taken again;
+    ``kept`` names those left stopped because their merge had begun.
     """
     # The status line shows the reason: one line, short, never a whole stderr.
     line = " ".join(next((part for part in detail.splitlines() if part.strip()), "no detail").split())
@@ -2318,6 +2320,10 @@ def hold_for_setup(state_directory: Path, detail: str, kept: Iterable[str] = ())
     named = sorted(kept)
     stopped = (f" Stopped while it broke, after their merge began, so check the forge before handing them off again: "
                f"{', '.join(named)}." if named else "")
+    again = sorted(requeued)
+    if again:
+        # Its stop or refusal this turn may have been the setup's, so it is taken again, and says so.
+        stopped = f" Put back to queued, to be taken again: {', '.join(again)}." + stopped
     for _ in range(STATE_PATCH_ATTEMPTS):
         current = delivery_state.read_state(state_directory)
         if current["meta"].get("hold"):
@@ -2348,22 +2354,30 @@ def _requeue(subject: str, head: str | None) -> Callable[[dict], tuple[dict | No
     return build
 
 
-def _requeue_after_setup(runner: Runner, taken: list[Result], heads: dict[str, str]) -> list[str]:
-    """Put back what a broken setup refused or stopped this turn; name those whose merge had begun, left stopped."""
+def _requeue_after_setup(runner: Runner, taken: list[Result],
+                         heads: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Put back what this turn stopped or refused while the setup broke; leave stopped those whose merge had begun.
+
+    A stop's code cannot say whether the setup caused it (a removed checkout
+    can read as an unresolved candidate, or a failed check), so every such
+    candidate is taken again once the setup is repaired. Returns the subjects
+    put back and those left stopped.
+    """
     last: dict[str, Result] = {}
     for result in taken:
         if result.candidate is not None:
             last[result.candidate] = result
-    kept = []
+    requeued, kept = [], []
     for subject, result in last.items():
         if result.stop is None:
             continue
-        if subject in runner.merging or result.stop["reason"] in QUEUE_STOPPING:
+        if subject in runner.merging:
             kept.append(subject)
             continue
         with contextlib.suppress(Stop, delivery_state.StateError):
             runner.write(selector=f"queue[subject={subject}]", build=_requeue(subject, heads.get(subject)))
-    return kept
+            requeued.append(subject)
+    return requeued, kept
 
 
 def serve(
@@ -2479,8 +2493,8 @@ def serve(
                                  build=_refused_stop(result.candidate, heads.get(result.candidate)))
         if broken is not None:
             # None of this turn's candidates was at fault: back to queued, so no lane hands anything off again.
-            kept = _requeue_after_setup(runner, taken, heads)
-            hold_for_setup(state_directory, broken.stop["detail"], kept)
+            requeued, kept = _requeue_after_setup(runner, taken, heads)
+            hold_for_setup(state_directory, broken.stop["detail"], kept, requeued)
         for result in taken:
             # Reported only once every result is written and every refusal stopped, so a reader never loses them.
             if on_result is not None:

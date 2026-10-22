@@ -2941,6 +2941,64 @@ class ServeTests(MergeQueueTestCase):
         self.serve(adopter)
         self.assertEqual([adopter.item(name)["stage"] for name in ("first", "second")], ["merged", "merged"])
 
+    def test_a_candidate_put_back_after_its_checks_ran_has_them_cleared(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        restore: list[Callable[[], None]] = []
+
+        def break_once(runner, subject) -> None:
+            if not restore:
+                restore.append(self.break_checkout(adopter))
+
+        self.serve(adopter, seams={"before_merge": break_once})
+        restore[0]()
+        item = adopter.item("feature")
+        # Checked, then the setup went before the merge began: back to queued, its checks to run again.
+        self.assertEqual((item["stage"], item["checks"]), ("queued", []))
+
+    def test_a_candidate_whose_check_failed_as_the_setup_broke_is_checked_again_and_named(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, {"src/app.txt": "FAIL\n"})
+        real = queue.Runner.check
+        restore: list[Callable[[], None]] = []
+
+        def check_then_break(runner, subject, result):
+            try:
+                return real(runner, subject, result)
+            finally:
+                if not restore:
+                    restore.append(self.break_checkout(adopter))
+
+        with mock.patch.object(queue.Runner, "check", check_then_break):
+            self.serve(adopter)
+        restore[0]()
+        # The failure may have been the setup's: it is put back, to be checked again, and the blocker says so.
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertIsNotNone(state_tool.read_state(adopter.state)["meta"]["hold"])
+        [blocker] = self.blockers(adopter)
+        self.assertIn("Put back to queued, to be taken again: feature.", blocker["summary"])
+
+    def test_a_candidate_the_lead_moved_during_the_turn_is_not_put_back(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.check
+        restore: list[Callable[[], None]] = []
+        newer: list[str] = []
+
+        def move_then_break(runner, subject, result):
+            if not restore:
+                newer.append(adopter.lane_commit("feature", {"src/app.txt": "app three\n"}))
+                adopter.lead_set("feature", head=newer[0])
+                restore.append(self.break_checkout(adopter))
+            return real(runner, subject, result)
+
+        with mock.patch.object(queue.Runner, "check", move_then_break):
+            self.serve(adopter)
+        restore[0]()
+        item = adopter.item("feature")
+        self.assertEqual(item["head"], newer[0])
+        self.assertNotEqual(item["stage"], "queued", "only the head serve took is put back")
+
     def test_a_setup_that_breaks_during_a_batch_puts_its_members_back(self) -> None:
         adopter = self.adopter()
         self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
@@ -3017,11 +3075,13 @@ class ServeTests(MergeQueueTestCase):
 
     def test_the_hold_s_reason_is_one_short_line(self) -> None:
         adopter = self.adopter()
-        detail = "fatal: unable to access 'remote':\n  Could not resolve host\n" + "x " * 400
+        detail = "\n  fatal: unable to access 'remote': " + "word " * 100 + "\n  Could not resolve host\n"
         queue.hold_for_setup(adopter.state, detail)
         reason = state_tool.read_state(adopter.state)["meta"]["hold"]["reason"]
         self.assertNotIn("\n", reason)
+        self.assertNotIn("resolve host", reason, "only the first line")
         self.assertLessEqual(len(reason), 240)
+        self.assertTrue(reason.endswith("word..."), reason[-20:])
         self.assertTrue(reason.startswith("serve cannot use its setup: fatal: unable to access 'remote':"))
 
     def test_a_candidate_whose_check_fails_stops_alone_and_holds_nothing(self) -> None:
