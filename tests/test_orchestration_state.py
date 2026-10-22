@@ -809,6 +809,7 @@ class ReconcileTests(unittest.TestCase):
         planned = {item["subject"]: item for item in state_tool.show(self.directory)["state"]["planned"]}
         self.assertEqual((planned["work-now"]["stage"], planned["work-now"]["lane"]), ("building", "lane-1"))
         self.assertEqual(planned["work-open"]["stage"], "review", "work in review stays in review")
+        self.assertEqual(result["reports"], [])
         # The same snapshot again: nothing is written, and nothing is journaled.
         before = self.bytes()
         code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", started))
@@ -826,14 +827,41 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual((code, result["drift"]), (0, False))
         self.assertEqual(self.bytes(), before)
 
-    def test_building_work_the_tracker_shows_back_in_backlog_is_reported_not_reverted(self) -> None:
+    def test_work_under_way_the_tracker_shows_back_in_backlog_is_reported_not_reverted(self) -> None:
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "building"},
+                               {"subject": "work-open", "title": "Open", "lane": "lane-2", "stage": "review"},
+                               {"subject": "work-later", "title": "Later", "lane": None, "stage": "planned"}]})
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", [
+            {"subject": "work-now", "title": "Work", "state": "backlog"},
+            {"subject": "work-open", "title": "Open", "state": "backlog"},
+            {"subject": "work-later", "title": "Later", "state": "backlog"},
+        ]))
+        self.assertEqual((code, result["drift"], result["changes"]), (0, False, []))
+        self.assertEqual(result["reports"], [
+            {"subject": "work-now", "note": "building in the record but back in the tracker's backlog: check it"},
+            {"subject": "work-open", "note": "review in the record but back in the tracker's backlog: check it"},
+        ])
+        self.assertEqual(self.bytes(), before)
+
+    def test_building_work_the_tracker_still_shows_started_is_left_as_it_is(self) -> None:
         self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "building"}]})
         before = self.bytes()
         code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot(
-            "tracker", [{"subject": "work-now", "title": "Work", "state": "backlog"}]))
-        self.assertEqual((code, result["drift"], result["changes"]), (0, False, []))
-        self.assertEqual(result["reports"], [{"subject": "work-now",
-                                               "note": "building in the record but back in the tracker's backlog: check it"}])
+            "tracker", [{"subject": "work-now", "title": "Work", "state": "started"}]))
+        self.assertEqual((code, result["drift"], result["changes"], result["reports"]), (0, False, [], []))
+        self.assertEqual(self.bytes(), before)
+
+    def test_started_with_an_open_change_request_settles_in_review_in_one_pass(self) -> None:
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "planned"}]})
+        snapshots = lambda: ["--snapshot", self.snapshot("forge", [{"subject": "work-now", "state": "open", "changeRequest": "cr 5"}]),
+                             "--snapshot", self.snapshot("tracker", [{"subject": "work-now", "title": "Work", "state": "started"}])]
+        code, result = run_tool(self.directory, "reconcile", *snapshots())
+        self.assertEqual(code, 0, result)
+        self.assertEqual(state_tool.show(self.directory)["state"]["planned"][0]["stage"], "review")
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", *snapshots())
+        self.assertEqual((code, result["drift"]), (0, False))
         self.assertEqual(self.bytes(), before)
 
     def test_an_open_change_request_moves_building_work_to_review(self) -> None:

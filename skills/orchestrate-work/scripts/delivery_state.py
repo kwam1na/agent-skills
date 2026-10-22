@@ -1446,8 +1446,8 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
                     # A lane moves its ticket to started as it begins; that alone moves the stop.
                     planned(subject)["stage"] = "building"
                     change(subject, "started in the tracker: now building")
-                elif word == "backlog" and planned(subject) and planned(subject)["stage"] == "building":
-                    report(subject, "building in the record but back in the tracker's backlog: check it")
+                elif word == "backlog" and planned(subject) and planned(subject)["stage"] in ("building", "review"):
+                    report(subject, f"{planned(subject)['stage']} in the record but back in the tracker's backlog: check it")
                 elif word == "completed" and planned(subject):
                     report(subject, "completed in the tracker but still planned in the record: check the forge")
                 elif word == "canceled" and planned(subject):

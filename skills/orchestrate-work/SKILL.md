@@ -382,8 +382,8 @@ run the sync loop in this order:
      follow-up.
    - Planned work at `planned` whose ticket the tracker shows `started` moves
      to `building`, so a lane starting its ticket moves its stop with no lead
-     step. Work at `building` that the tracker shows back in `backlog` is
-     reported for the lead, never moved back.
+     step. Work at `building` or in review that the tracker shows back in
+     `backlog` is reported for the lead, never moved back.
    - A change request is linked to its queue or planned item, and an open one
      moves planned or building work to review.
    - Each ticket's tracker title and summary, for work the record holds, are
