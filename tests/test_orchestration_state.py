@@ -840,8 +840,57 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual((code, result["drift"], result["changes"]), (0, False, []))
         self.assertEqual(result["reports"], [
             {"subject": "work-now", "note": "building in the record but back in the tracker's backlog: check it"},
-            {"subject": "work-open", "note": "review in the record but back in the tracker's backlog: check it"},
+            {"subject": "work-open", "note": "in review in the record but back in the tracker's backlog: check it"},
         ])
+        self.assertEqual(self.bytes(), before)
+
+    def test_each_stage_against_each_tracker_state_settles_in_one_pass(self) -> None:
+        # (stage, tracker state) -> (stage after, change, report); a second pass writes nothing.
+        expected = {
+            ("planned", "backlog"): ("planned", None, None),
+            ("planned", "started"): ("building", "started in the tracker: now building", None),
+            ("planned", "completed"): ("planned", None, "completed in the tracker but still planned in the record: check the forge"),
+            ("planned", "canceled"): ("planned", None, "canceled in the tracker but still planned in the record"),
+            ("building", "backlog"): ("building", None, "building in the record but back in the tracker's backlog: check it"),
+            ("building", "started"): ("building", None, None),
+            ("building", "completed"): ("building", None, "completed in the tracker but still building in the record: check the forge"),
+            ("building", "canceled"): ("building", None, "canceled in the tracker but still building in the record"),
+            ("review", "backlog"): ("review", None, "in review in the record but back in the tracker's backlog: check it"),
+            ("review", "started"): ("review", None, None),
+            ("review", "completed"): ("review", None, "completed in the tracker but still in review in the record: check the forge"),
+            ("review", "canceled"): ("review", None, "canceled in the tracker but still in review in the record"),
+        }
+        for (stage, word), (after, change, note) in expected.items():
+            with self.subTest(stage=stage, tracker=word):
+                self.lead({"planned": [{"subject": "work-x", "title": "X", "lane": "lane-1", "stage": stage}]})
+                tracker = [{"subject": "work-x", "title": "X", "state": word}]
+                code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", tracker))
+                self.assertEqual(code, 0, result)
+                self.assertEqual([entry["change"] for entry in result["changes"]], [change] if change else [])
+                self.assertEqual([entry["note"] for entry in result["reports"]], [note] if note else [])
+                self.assertEqual(state_tool.show(self.directory)["state"]["planned"][0]["stage"], after)
+                before = self.bytes()
+                code, again = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", tracker))
+                self.assertEqual((code, again["drift"], again["changes"]), (0, False, []))
+                self.assertEqual(self.bytes(), before)
+
+    def test_an_open_change_request_leaves_work_in_review_as_it_is(self) -> None:
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "review",
+                                "changeRequest": "cr 5"}]})
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot(
+            "forge", [{"subject": "work-now", "state": "open", "changeRequest": "cr 5"}]))
+        self.assertEqual((code, result["drift"], result["changes"]), (0, False, []))
+        self.assertEqual(self.bytes(), before)
+
+    def test_a_follow_up_the_tracker_shows_started_is_reported_for_a_lane(self) -> None:
+        self.lead({"followups": [{"id": "work-f", "title": "Later", "reference": "work-f"}]})
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot(
+            "tracker", [{"subject": "work-f", "title": "Later", "state": "started"}]))
+        self.assertEqual((code, result["changes"]), (0, []))
+        self.assertEqual(result["reports"], [{"subject": "work-f",
+                                               "note": "a follow-up the tracker now shows started: assign it a lane"}])
         self.assertEqual(self.bytes(), before)
 
     def test_building_work_the_tracker_still_shows_started_is_left_as_it_is(self) -> None:
@@ -2368,7 +2417,7 @@ class SourceRefreshTests(unittest.TestCase):
         self.world("forge", [{"subject": "work-a", "state": "closed"}])
         self.refresh("tracker", "forge")
         reports = [{"subject": "work-a", "note": "its change request closed without merging"},
-                   {"subject": "work-p", "note": "canceled in the tracker but still planned in the record"}]
+                   {"subject": "work-p", "note": "canceled in the tracker but still in review in the record"}]
         self.assertEqual(state_tool.read_state(self.directory)["meta"]["sourceReports"], reports)
         self.assertEqual(state_tool.show(self.directory)["status"]["text"],
                          "next: work-a · for the lead: work-a: its change request closed without merging, then 1 more")

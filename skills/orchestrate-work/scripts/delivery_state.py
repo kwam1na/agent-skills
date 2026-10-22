@@ -1421,6 +1421,10 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
     def report(subject: str, text: str) -> None:
         reports.append({"subject": subject, "note": text})
 
+    def where(entry: dict) -> str:
+        """Where planned work stands, as a report names it."""
+        return "in review" if entry["stage"] == "review" else entry["stage"]
+
     # The tracker first, whatever the order given: work it adds is then there
     # for the forge to link, so one pass reaches the fixed point.
     for snapshot in sorted(snapshots, key=lambda snapshot: snapshot["source"] != "tracker"):
@@ -1437,7 +1441,7 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
                     elif word == "started":
                         # Started means under way, so it joins as building, settled in this one pass.
                         lead["planned"].append({"subject": subject, "title": title, "lane": None, "stage": "building"})
-                        change(subject, "started in the tracker but not in the record: added as planned work")
+                        change(subject, "started in the tracker but not in the record: added as planned work, building")
                     elif word == "completed":
                         report(subject, "completed in the tracker but never recorded")
                 elif word == "started" and not known:
@@ -1447,11 +1451,11 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
                     planned(subject)["stage"] = "building"
                     change(subject, "started in the tracker: now building")
                 elif word == "backlog" and planned(subject) and planned(subject)["stage"] in ("building", "review"):
-                    report(subject, f"{planned(subject)['stage']} in the record but back in the tracker's backlog: check it")
+                    report(subject, f"{where(planned(subject))} in the record but back in the tracker's backlog: check it")
                 elif word == "completed" and planned(subject):
-                    report(subject, "completed in the tracker but still planned in the record: check the forge")
+                    report(subject, f"completed in the tracker but still {where(planned(subject))} in the record: check the forge")
                 elif word == "canceled" and planned(subject):
-                    report(subject, "canceled in the tracker but still planned in the record")
+                    report(subject, f"canceled in the tracker but still {where(planned(subject))} in the record")
                 continue
             reference = item.get("changeRequest")
             entry = queued(subject) or planned(subject)
