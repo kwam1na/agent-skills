@@ -549,6 +549,26 @@
           }
         }
       },
+      "tickets": {
+        "description": "Each ticket's own title and summary from the tracker, keyed by subject, for the views. Optional; reconcile keeps it from tracker snapshots, writing only what changed.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "title"
+          ],
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string",
+              "maxLength": 1000
+            }
+          }
+        }
+      },
       "finish": {
         "type": "array",
         "items": {
@@ -2063,6 +2083,11 @@
             },
             "title": {
               "type": "string"
+            },
+            "summary": {
+              "description": "Tracker snapshots only: the ticket's summary as plain text, at most 1000 characters; the snapshot's maker shortens a longer one.",
+              "type": "string",
+              "maxLength": 1000
             },
             "state": {
               "enum": [

@@ -109,7 +109,7 @@ QUEUE_START = {"stage": "queued", "checks": [], "syncedHead": None}
 SCHEMA_FILE = Path(__file__).resolve().parent.parent / "references" / "schemas.json"
 SUPPORTED = frozenset({
     "type", "const", "enum", "properties", "required", "additionalProperties",
-    "items", "minLength", "minimum", "pattern", "anyOf", "$ref", "$defs",
+    "items", "minLength", "maxLength", "minimum", "pattern", "anyOf", "$ref", "$defs",
 })
 ANNOTATIONS = frozenset({"$id", "title", "description"})
 TYPES = frozenset({"null", "boolean", "integer", "number", "string", "array", "object"})
@@ -239,6 +239,8 @@ def _errors(value: object, node: object, root: dict, path: tuple[object, ...]) -
     if isinstance(value, str):
         if "minLength" in node and len(value) < node["minLength"]:
             errors.append(f"{where}: shorter than {node['minLength']}")
+        if "maxLength" in node and len(value) > node["maxLength"]:
+            errors.append(f"{where}: longer than {node['maxLength']} characters")
         if "pattern" in node and re.search(_ecma_anchors(node["pattern"]), value) is None:
             errors.append(f"{where}: does not match the required pattern")
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -1311,6 +1313,11 @@ def check_snapshot(snapshot: object, name: str, max_age: float, *, parent: str |
     """
     errors = validate(snapshot, load_schema("work-snapshot/1"))
     if not errors:
+        try:
+            _require_unicode(snapshot, "snapshot_invalid")
+        except StateError as error:
+            errors.append(str(error))
+    if not errors:
         allowed = SNAPSHOT_STATES[snapshot["source"]]
         errors = [f"/items/{index}/state: {item['state']} is not a {snapshot['source']} state"
                   for index, item in enumerate(snapshot["items"]) if item["state"] not in allowed]
@@ -1345,6 +1352,7 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
     changes: list[dict] = []
     reports: list[dict] = []
     recoveries: list[dict] = []
+    listed: dict[str, dict] = {}
 
     def queued(subject: str) -> dict | None:
         return next((item for item in lead["queue"] if item["subject"] == subject), None)
@@ -1368,6 +1376,7 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
             subject, word = item["subject"], item["state"]
             title = item.get("title") or subject
             if snapshot["source"] == "tracker":
+                listed[subject] = item
                 known = queued(subject) or planned(subject)
                 if not known and not followed(subject):
                     if word == "backlog":
@@ -1425,7 +1434,43 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
     if not lead["planned"] and "planned" not in state:
         del lead["planned"]
     changed = {key: value for key, value in lead.items() if value != state.get(key, [] if key == "planned" else None)}
+    tickets = _ticket_changes(state.get("tickets", {}), listed, lead)
+    if tickets:
+        changed["tickets"] = tickets
+        moved = {entry["subject"] for entry in changes}
+        for subject in tickets:
+            if subject not in moved:
+                change(subject, "its tracker title or summary changed")
     return changed, recoveries, changes, reports
+
+
+def _ticket_changes(tickets: dict, listed: dict[str, dict], lead: dict) -> dict:
+    """A merge patch of the tracker titles and summaries the record should change.
+
+    Kept only for work the record holds, and only when it adds to the record:
+    a summary, or a title other than the record's own. A ticket the tracker no
+    longer lists is left as it was.
+    """
+    own: dict[str, str] = {}
+    for item in [*lead["queue"], *lead.get("planned", [])]:
+        own[item["subject"]] = item["title"]
+    for item in lead["followups"]:
+        for key in (item["id"], item["reference"]):
+            if key is not None:
+                own.setdefault(key, item["title"])
+    patch: dict = {}
+    for subject, item in listed.items():
+        if subject not in own:
+            continue
+        # A ticket listed without a title keeps the record's own; a blank summary is none.
+        title = item.get("title") or own[subject]
+        summary = item["summary"] if (item.get("summary") or "").strip() else None
+        wanted = {"title": title, **({"summary": summary} if summary is not None else {})}
+        if summary is None and title == own[subject]:
+            wanted = None
+        if tickets.get(subject) != wanted:
+            patch[subject] = None if wanted is None else {"title": title, "summary": summary}
+    return patch
 
 
 def reconcile(
