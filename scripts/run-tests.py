@@ -8,7 +8,9 @@ units of at most ``--chunk`` tests of one class. A class with its own
 ``RUN_SERIALLY = True``, is one unit, loaded as discover loads it, so no
 fixture runs more often than under discover and every test is the one
 discover built. A module that skips itself as it is imported counts as one
-skipped test, as under discover. A
+skipped test, as under discover. A test class imported into a module that
+has module fixtures also runs once more inside that module's unit; keep
+shared base classes in modules discover does not collect. A
 class that sets ``run_serially = True``, or a module marked ``RUN_SERIALLY``,
 runs alone: no other worker is running while it does. Every unit runs in its
 own process, so a crash or a hang ends that unit only; the run then fails,
@@ -347,6 +349,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     args.top_level_dir = os.path.abspath(args.top_level_dir)
     if args.unit:
+        if hasattr(signal, "pthread_sigmask"):
+            # Started with interrupts blocked, so it was recorded before one could land; a child inherits
+            # its parent's signal mask, so lift it before any test, or anything a test starts, runs.
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
         return run_unit(args.unit, args.result, args.top_level_dir)
     if args.workers < 1 or args.chunk < 1:
         parser.error("--workers and --chunk must be at least 1")

@@ -340,6 +340,21 @@ class ParallelRunnerTests(unittest.TestCase):
         started = [line.split()[1] for line in run.stdout.splitlines() if line.startswith(("ok", "FAIL"))]
         self.assertEqual(started[:2], ["suite.test_beta", "suite.test_alpha.One"], run.stdout)
 
+    @unittest.skipIf(os.name == "nt", "signal masks are POSIX")
+    def test_a_test_runs_with_no_signal_blocked_and_can_stop_its_own_child(self) -> None:
+        self.module("test_signals", """
+            import signal, subprocess, sys, unittest
+            class Signals(unittest.TestCase):
+                def test_nothing_blocked(self):
+                    self.assertEqual(signal.pthread_sigmask(signal.SIG_BLOCK, set()), set())
+                def test_a_child_stops_when_asked(self):
+                    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+                    child.terminate()
+                    self.assertEqual(child.wait(timeout=10), -signal.SIGTERM)
+        """)
+        run = self.run_runner()
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
     def test_workers_below_one_are_a_usage_error(self) -> None:
         self.passing_suite()
         self.assertEqual(self.run_runner("--workers", "0").returncode, 2)
