@@ -31,11 +31,20 @@ it through the state tool, then render the views.
   `field_not_owned`.
 - **Planned work and change requests are the lead's.** The optional
   `planned[]` list holds work under way but not yet handed to the queue,
-  `{subject, title, lane, stage: planned|building|review, changeRequest?}`, selected
+  `{subject, title, lane, stage: planned|building|review, changeRequest?, runId?}`, selected
   as `planned[subject=<subject>]`; a queue or planned element's optional
   `changeRequest` names its change request. `reconcile` maintains both from
   snapshots. A record that kept these under `extensions` moves them onto
   these fields; no product tool writes `extensions`.
+- **Each candidate names the run that built it.** A queue element's `runId`
+  is the opaque id of that run in the adopter's delivery product, joining the
+  record to the run's history. The lane sets it at hand-off with
+  `handoff --run <id>`; it is null when the adopter records no runs. A
+  planned element may carry the same optional `runId`, written by your patch;
+  `reconcile` keeps it, and the hand-off carries it into the queue. Handing
+  off the same subject again keeps the stored run unless another is named.
+  `reportedRounds` is the fallback only when the journal holds no
+  `review.round` entries for the subject.
 - **Ticket titles and summaries come from the tracker.** The optional
   `tickets` map, `{<subject>: {title, summary?}}`, holds each ticket's own
   title and summary for work the record held when it was written; an entry
@@ -161,7 +170,7 @@ decision. Lanes post on their own tickets at the points the lane brief names.
 
 - Lanes write their own hand-off, review rounds and focus through the state
   tool (the lane brief says how). Its `handoff` command moves a lane's planned
-  work into `queue[]` at `queued`, with its head, change request and rounds,
+  work into `queue[]` at `queued`, with its head, change request, rounds and run,
   and any suite evidence the lane gives, sets the lane to `handed`, and
   journals `candidate.handed`; you do not. Only a hand-off writes evidence:
   a patch that changes `queue[i].evidence`, yours or the runner's, is refused.
@@ -426,8 +435,11 @@ the state tool; the lead no longer writes either for you:
 
 ```bash
 python3 -B <skill>/scripts/delivery_state.py --dir <state> focus --lane <lane> --text "<what you are doing>" [--state working|reviewing|blocked] [--waiting-on <who>]
-python3 -B <skill>/scripts/delivery_state.py --dir <state> handoff --lane <lane> --subject <subject> --head <reviewed head> --change-request <reference> --rounds <n> [--evidence '<evidence JSON>']
+python3 -B <skill>/scripts/delivery_state.py --dir <state> handoff --lane <lane> --subject <subject> --head <reviewed head> --change-request <reference> --rounds <n> [--run <run id>] [--evidence '<evidence JSON>']
 ```
+
+Add `--run` with the id of the run that built the work when your repository
+records runs; leave it out when it records none.
 
 When the binding lists a check in `reusableChecks` and you ran that check
 yourself, at a head you pushed, and it passed, add its evidence to the

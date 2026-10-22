@@ -732,6 +732,7 @@ def handoff(
     change_request: str,
     rounds: int | None = None,
     evidence: list[dict] | None = None,
+    run: str | None = None,
 ) -> dict:
     """A lane hands its reviewed work to the queue, and the hand-off is journaled.
 
@@ -739,6 +740,8 @@ def handoff(
     for a hand-off at a new head. Work in flight is never handed off again.
     ``evidence`` records the lane's own runs of the binding's reusable checks,
     each with the head and tree it ran on; a hand-off without it keeps none.
+    ``run`` names the run that built the work; a hand-off without it keeps the
+    run already stored, from an earlier hand-off or the lead's plan.
     """
     problems = evidence_errors(evidence or [])
     if problems:
@@ -765,12 +768,14 @@ def handoff(
             item = {
                 "order": max([entry["order"] for entry in state["queue"]], default=0) + 1,
                 "subject": subject, "title": planned["title"], "lane": lane, "stage": "queued", "head": head,
-                "syncedHead": None, "leadInputs": [], "reportedRounds": None, "runId": None, "checks": [],
-                "changeRequest": change_request,
+                "syncedHead": None, "leadInputs": [], "reportedRounds": None, "runId": planned.get("runId"),
+                "checks": [], "changeRequest": change_request,
             }
             state["queue"].append(item)
         if rounds is not None:
             item["reportedRounds"] = rounds
+        if run is not None:
+            item["runId"] = run
         item.pop("evidence", None)
         if evidence:
             item["evidence"] = [{**entry, "recordedAt": now()} for entry in evidence]
@@ -819,6 +824,8 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
         back = {"subject": subject, "title": item["title"], "lane": item["lane"], "stage": "review"}
         if "changeRequest" in item:
             back["changeRequest"] = item["changeRequest"]
+        if item.get("runId") is not None:
+            back["runId"] = item["runId"]
         state.setdefault("planned", []).append(back)
         if item["lane"] is not None:
             _set_lane_state(state, item["lane"], "working")
@@ -1485,7 +1492,7 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
                         "order": max([other["order"] for other in lead["queue"]] or [0]) + 1,
                         "subject": subject, "title": entry["title"], "lane": entry["lane"], "stage": "queued",
                         "head": item["head"], "syncedHead": None, "leadInputs": [], "reportedRounds": None,
-                        "runId": None, "checks": [],
+                        "runId": entry.get("runId"), "checks": [],
                     }
                     if entry.get("changeRequest"):
                         element["changeRequest"] = entry["changeRequest"]
@@ -2894,7 +2901,7 @@ def _handoff_command(args: argparse.Namespace) -> dict:
         except json.JSONDecodeError as error:
             raise StateError("handoff_invalid", f"--evidence is not JSON: {error}") from None
     return handoff(args.dir, lane=args.lane, subject=args.subject, head=args.head,
-                   change_request=args.change_request, rounds=args.rounds, evidence=evidence)
+                   change_request=args.change_request, rounds=args.rounds, evidence=evidence, run=args.run)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2932,6 +2939,7 @@ def main(argv: list[str] | None = None) -> int:
     hand.add_argument("--head")
     hand.add_argument("--change-request")
     hand.add_argument("--rounds", type=int)
+    hand.add_argument("--run", help="the id of the run that built the work; kept from before when left out")
     hand.add_argument("--evidence", action="append",
                       help="the lane's evidence of a reusable check's run, as merge_queue.py evidence prints it; once a check")
     headline = commands.add_parser("headline", help="the lead's status line, shown until it expires")

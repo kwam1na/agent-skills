@@ -309,15 +309,15 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "f54cae142d2d10c54902c2ca16008520e9f380657df3ebf94a794e8fe97e07ae"
+          "sha256": "f28dc77298297e98b88e9d78a40db677865739bcd427b619de08ab6de22a6530"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "37d3b757395bba2f1a0f4ae0d45056e96dee8d8a04253b3b0de78f71e3e39e41"
+          "sha256": "d0d0934ce6ecfffaeb8aab75886c074a04a27e70dee45cccd30a6efc2738c9db"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "344df99a7eb67b12a7d766aabb06689e69d832751037a85adaba43f937fa43f5"
+          "sha256": "4920c49c9d991ecea90c9d31ed3f0be78a7c4944694717210e5aae071db47f30"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
