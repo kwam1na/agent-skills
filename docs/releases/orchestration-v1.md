@@ -62,7 +62,7 @@ An epic can be delivered by a lead and several lanes, without the operator in th
 
 - The product launcher stops descendants that leave its process group. On macOS it identifies processes by the kernel's unique id, and it never selects a process outside its run.
 - A provenance lock writer, so rebases regenerate digests.
-- A parallel test runner (`scripts/run-tests.py`). It gives the same verdict as `unittest discover`, and records per-test timings.
+- A parallel test runner (`scripts/run-tests.py`). It gives the same verdict as `unittest discover`, and records per-test timings. With `--unit-timeout`, a hung unit is stopped with its process group and reported as timed out, naming its tests. The default limit comes from earlier timings, or is 1800 s.
 - Hosted CI runs the suite through `scripts/run-tests.py` instead of `unittest discover`, so it matches the merge checks when it is turned back on.
 - A fixture adopter runs the orchestration workflow end to end.
 
