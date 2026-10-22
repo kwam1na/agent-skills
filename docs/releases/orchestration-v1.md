@@ -58,7 +58,7 @@ An epic can be delivered by a lead and several lanes, without the operator in th
 
 **Routing and qualification**
 - The `orchestrate` workflow kind, routed from `deliver-work`.
-- Core and provider qualification now include an orchestration scenario. It runs the shipped state tool, the render wrapper and the merge-queue runner from the released archive.
+- Core qualification now includes an orchestration scenario. It runs the shipped state tool, the render wrapper and the merge-queue runner from the released archive. Provider qualification is unchanged.
 
 ### Product and tooling
 
