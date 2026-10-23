@@ -86,7 +86,7 @@ map; the line map links to it, and it links back to the binding's line map, as
 a file and, when served, at the line map's `/view/` address:
 
 ```json
-{ "id": "history", "argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/render.py", "history", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json"], "output": "delivery-history.html", "timeoutSeconds": 60 }
+{ "id": "history", "argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/render.py", "history", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json", "--state-dir", "{stateDirectory}"], "output": "delivery-history.html", "timeoutSeconds": 60 }
 ```
 
 It lists every run `runs list --json` shows, read with `runs show <id> --json`

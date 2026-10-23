@@ -925,7 +925,7 @@ def line_map(arguments: argparse.Namespace) -> int:
 
 
 def history(arguments: argparse.Namespace) -> int:
-    inputs = views_common.load_inputs(arguments.config, arguments.binding)
+    inputs = views_common.load_inputs(arguments.config, arguments.binding, state_dir=arguments.state_dir)
     try:
         document = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):

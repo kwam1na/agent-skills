@@ -321,6 +321,19 @@ class HistoryCommandTests(unittest.TestCase):
         for asset in ("history.css", "history.js", "run-summary.css", "run-summary.js"):
             self.assertIn((render.ASSETS / asset).read_text(encoding="utf-8"), page, asset)
 
+    def test_a_state_dir_holds_the_history_cache_and_the_bindings_directory_is_never_touched(self) -> None:
+        runs = Runs(self.root)
+        runs.answer({"runs list --json": inventory(listed("run-a")),
+                     "runs show run-a --json": run_export("run-a", "ABC-1", "2026-10-20T10:30:00Z")})
+        with tempfile.TemporaryDirectory() as elsewhere:
+            served = Path(elsewhere) / "record"
+            served.mkdir()
+            result = self.render({}, {"spec": views_common.CONFIG_SPEC, "runs": {"argv": runs.argv, "timeoutSeconds": 10}},
+                                 "--state-dir", str(served))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(list(views_common.read_runs_cache(views_common.runs_cache_path(served).with_name("history.json"))), ["run-a"])
+        self.assertFalse((self.root / "state").exists(), "the binding's directory is neither read nor written")
+
     def test_a_document_that_is_not_json_exits_non_zero(self) -> None:
         result = self.render(b"{not json", {"spec": views_common.CONFIG_SPEC})
         self.assertEqual(result.returncode, 1)
