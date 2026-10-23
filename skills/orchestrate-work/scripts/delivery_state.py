@@ -1532,6 +1532,10 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                 if word in ("open", "draft", "merged"):
                     report(subject, f"{'an' if word == 'open' else 'a'} {word} change request for work the record does not hold")
                 continue
+            if (entry.get("stage") == "merged" and reference and entry.get("changeRequest")
+                    and entry["changeRequest"] != reference):
+                report(subject, "forge change request differs from the terminal candidate: settle identity before linking")
+                continue
             if (word == "merged" and entry.get("stage") == "merged" and item.get("head")
                     and item["head"] != (entry.get("syncedHead") or entry.get("head"))):
                 report(subject, "merged forge head differs from the recorded head: settle identity before recovery")

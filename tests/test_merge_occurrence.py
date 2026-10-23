@@ -41,6 +41,22 @@ class MergeOccurrenceTests(unittest.TestCase):
         self.assertEqual(self.bytes(), recovered)
         self.assertEqual(len(state_tool.read_journal(self.directory)), 1)
 
+    def test_terminal_candidate_is_not_relinked_to_another_change_request(self):
+        self.lead({"queue": [queue_item("work-a", changeRequest="cr-original", runId="run-original")]})
+        state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                         selector="queue[subject=work-a]", changes={"stage": "merged"})
+        before = self.bytes()
+        for stage in ("draft", "open", "closed", "merged"):
+            with self.subTest(stage=stage):
+                fields = {"subject": "work-a", "state": stage, "changeRequest": "cr-follow-on", "head": HEAD_A}
+                if stage == "merged":
+                    fields["mergedAt"] = "2026-10-20T10:00:00Z"
+                result = state_tool.reconcile(self.directory, [Path(self.snapshot("forge", [fields]))])
+                self.assertFalse(result["drift"])
+                self.assertIn("change request differs", result["reports"][0]["note"])
+                self.assertEqual(self.bytes(), before)
+                self.assertFalse((self.directory / state_tool.RECOVERY_FILE).exists())
+
     def test_missing_source_time_is_unknown_but_normal_runner_entries_keep_their_time(self):
         self.lead({"queue": [queue_item("work-a")]})
         forge = Path(self.snapshot("forge", [{"subject": "work-a", "state": "merged", "head": HEAD_A}]))

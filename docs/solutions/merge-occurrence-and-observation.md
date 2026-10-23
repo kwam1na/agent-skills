@@ -24,3 +24,7 @@ A snapshot limited to one repository cannot discover a merge in another.
 Supply a fresh, verified source snapshot for that merge through reconciliation;
 do not invent run history or edit the live journal. Source aggregation remains
 separate from timestamp recovery.
+
+A later pull request for the same subject must not relabel a merged candidate.
+Reconciliation reports a different retained change request before linking or
+recovering it; the lead settles candidate identity through supported state operations.
