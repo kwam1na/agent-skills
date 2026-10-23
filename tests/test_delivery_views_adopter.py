@@ -322,13 +322,11 @@ class OutsideAdopterTests(unittest.TestCase):
         self.assertIn('<meta name="delivery-state-live">', text)
         self.assertNotIn("</script><img", text)
         shown = self.open_page(page, hostile)
-        # With no runs command and no exports, the history lists nothing, and links back to the line map;
-        # no other page and no provider other than Jira and Bitbucket is linked.
-        self.assertIn("line-map.html", shown["hrefs"])
-        for href in shown["hrefs"]:
-            with self.subTest(href=href):
-                self.assertRegex(href, r"^(#.*|line-map\.html|https://(eshyft\.atlassian\.net/browse/(SHFT|EDD)-[0-9]+"
-                                       r"|bitbucket\.org/eshyft/eshyftnew/(pull-requests/[0-9]+|commits/[0-9a-f]{40})))$")
+        # With no runs command and no exports, the history lists nothing and links only back to the line map.
+        # The record's text never reaches this page, so the checks below guard it rather than prove inertness;
+        # the line map's test proves the record's hostile text stays inert.
+        self.assertEqual(shown["hrefs"], ["line-map.html"])
+        self.assertNotIn("SHFT-12", text)
         self.assertNotIn(hostile, shown["head"])
         self.assertEqual(shown["elements"], 0)
         self.assert_no_credential(adopter.state)
