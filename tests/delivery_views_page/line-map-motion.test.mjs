@@ -108,11 +108,21 @@ test("a newly picked piece's panel eases to its height, a live redraw of the sam
   const withoutPush = moved((await openPage(page, { now: NOW, motion: {}, steps: [pick("PAY-2358"), pick("PAY-2363")] })).animations)
     .filter((animation) => animation.target === "detail").length;
   expect(afterPicks).toBe(withoutPush);
-  // The merge check's steps slide open too.
-  const merged = await openPage(page, { now: NOW, motion: {}, steps: [pick("PAY-2358"), { click: "#detail details.mh summary" }] });
-  expect(moved(merged.animations).some((animation) => animation.target === "mh")).toBe(true);
-  // A reader who asked for less motion sees every change at once.
-  const still = await openPage(page, { now: NOW, motion: { reduced: true }, steps: [pick("PAY-2363"), pick("PAY-2358"), { click: "#detail details.mh summary" }] });
+  // The merge check's steps slide open and stay open once the slide ends; a second click slides them closed.
+  const summary = { click: "#detail details.mh summary" };
+  const isOpen = (snapshot) => snapshot.app.querySelector("#detail details.mh")?.hasAttribute("open");
+  const merged = await openPage(page, { now: NOW, motion: {}, steps: [pick("PAY-2358"), summary, summary] });
+  expect(merged.slice(1).map(isOpen)).toEqual([false, true, false]);
+  const slides = moved(merged.animations).filter((animation) => animation.target === "mh");
+  // Opening grows the box; closing starts where opening ended and shrinks it back to its summary.
+  const [opening, closing] = slides.map((slide) => slide.keyframes.map((frame) => parseInt(frame.height, 10)));
+  expect(slides).toHaveLength(2);
+  expect(opening[1] > opening[0]).toBe(true);
+  expect(closing[0]).toBe(opening[1]);
+  expect(closing[1] < closing[0]).toBe(true);
+  // A reader who asked for less motion sees every change at once, the merge check's opening and closing included.
+  const still = await openPage(page, { now: NOW, motion: { reduced: true }, steps: [pick("PAY-2363"), pick("PAY-2358"), summary, summary] });
+  expect(still.slice(2).map(isOpen)).toEqual([false, true, false]);
   expect(still.animations).toEqual([]);
 });
 
