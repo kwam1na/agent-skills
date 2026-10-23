@@ -1274,7 +1274,8 @@ def render(directory: Path, config: object) -> tuple[int, dict]:
         if renderer["builtin"] is not None:
             outcome = _render_builtin(renderer["builtin"], document)
         else:
-            outcome = _execute(renderer["argv"], document, renderer["timeout"], needs_stdout=True)
+            argv = [part.replace("{stateDirectory}", str(directory.resolve())) for part in renderer["argv"]]
+            outcome = _execute(argv, document, renderer["timeout"], needs_stdout=True)
         error = outcome.error
         entry: dict = {"id": renderer["id"], "output": renderer["output"]}
         if outcome.truncated:

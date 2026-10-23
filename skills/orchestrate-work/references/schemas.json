@@ -1805,7 +1805,7 @@
             "$ref": "#/$defs/name"
           },
           "renderers": {
-            "description": "Each renderer is a built-in or an argv, never both. output is a relative path under the state directory.",
+            "description": "Each renderer is a built-in or an argv, never both. output is a relative path under the state directory. {stateDirectory} in an argv is the resolved state directory.",
             "type": "array",
             "items": {
               "anyOf": [
@@ -1914,7 +1914,7 @@
             "minimum": 1
           },
           "trackerSnapshot": {
-            "description": "Optional: the repository's command that prints a work-snapshot/1 tracker snapshot of the delivery's work, for tracker-snapshot to run. {parent} in argv is the record's meta.trackerParent.",
+            "description": "Optional: the repository's command that prints a work-snapshot/1 tracker snapshot of the delivery's work, for tracker-snapshot to run. {parent} in argv is the record's meta.trackerParent. {stateDirectory} is the resolved state directory the command runs for.",
             "type": "object",
             "additionalProperties": false,
             "required": [
@@ -1935,7 +1935,7 @@
             }
           },
           "forgeSnapshot": {
-            "description": "Optional: the repository's command that prints a work-snapshot/1 forge snapshot of the delivery's change requests, for forge-snapshot and serve's refresh to run. {parent} in argv is the record's meta.trackerParent.",
+            "description": "Optional: the repository's command that prints a work-snapshot/1 forge snapshot of the delivery's change requests, for forge-snapshot and serve's refresh to run. {parent} in argv is the record's meta.trackerParent. {stateDirectory} is the resolved state directory the command runs for.",
             "type": "object",
             "additionalProperties": false,
             "required": [
@@ -1956,7 +1956,7 @@
             }
           },
           "workHints": {
-            "description": "Optional: the repository's command that prints a work-hints/1 document of each item's files and priority, for next to run. {parent} in argv is the record's meta.trackerParent.",
+            "description": "Optional: the repository's command that prints a work-hints/1 document of each item's files and priority, for next to run. {parent} in argv is the record's meta.trackerParent. {stateDirectory} is the resolved state directory the command runs for.",
             "type": "object",
             "additionalProperties": false,
             "required": [
