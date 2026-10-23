@@ -191,16 +191,17 @@ class CollectHistoryTests(unittest.TestCase):
                     {name: {"sleep": 0.5, "then": run_export(name, "ABC-1", "2026-10-20T10:30:00Z")} for name in names})
         history = self.collect(deadline=render.DEFAULT_DEADLINE_SECONDS, exports=False)
         self.assertEqual([row["note"] for row in history["rows"]], [None] * len(names))
-        self.assertEqual(self.runs.most_at_once(), render.READ_WORKERS)
+        self.assertEqual(self.runs.most_at_once(), 6)
 
     def test_a_hanging_read_holds_only_its_own_run(self) -> None:
         names = ["run-hang"] + [f"run-{index}" for index in range(12)]
-        shows = {name: run_export(name, "ABC-1", "2026-10-20T10:30:00Z") for name in names}
-        shows["run-hang"] = {"sleep": 60, "then": shows["run-hang"]}
+        shows = {name: {"sleep": 0.5, "then": run_export(name, "ABC-1", "2026-10-20T10:30:00Z")} for name in names}
+        shows["run-hang"]["sleep"] = 60
         self.answer([listed(name) for name in names], shows)
         started = time.monotonic()
         rows = {row["key"]: row for row in self.collect(exports=False, timeout=2)["rows"]}
-        self.assertLess(time.monotonic() - started, 6)
+        # One at a time this takes about 8 s; six at a time, about 2 s.
+        self.assertLess(time.monotonic() - started, 4)
         self.assertEqual(rows["run-hang"]["note"], "Its run could not be read from the product.")
         self.assertEqual([rows[name]["note"] for name in names[1:]], [None] * (len(names) - 1))
 
