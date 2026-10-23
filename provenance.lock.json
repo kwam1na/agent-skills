@@ -181,11 +181,11 @@
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
-          "sha256": "240132a870217e1d589e40996b0238442c7cb407b0f6340aec47704415de0eff"
+          "sha256": "6f42f19be6c4f11aebcda331ae9e97c346e1ca9aa318475f7d441932cbdc4981"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.js",
-          "sha256": "1cfc200e81902eac73356f8f81094681ab7b667c6c87053b1f9943164044b701"
+          "sha256": "274fa7166c2445eb524230b05815c9d756a61c482dd00a53e1d0f095f3a61ab5"
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
