@@ -422,6 +422,17 @@ def journal_errors(entries: list[object]) -> list[str]:
                 # The pattern admits dates that do not exist; the stats read every time.
                 errors.append(f"entry {index + 1}/at: not a real time")
             errors.extend(f"entry {index + 1}: {problem}" for problem in _review_problems(entry))
+            if "occurredAt" in entry:
+                if entry["kind"] != "candidate.merged":
+                    errors.append(f"entry {index + 1}: only a merge carries occurredAt")
+                if entry["occurredAt"] is not None:
+                    try:
+                        if _parse_time(entry["occurredAt"], exact=True) > _parse_time(entry["at"], exact=True):
+                            errors.append(f"entry {index + 1}: occurrence follows observation")
+                    except ValueError:
+                        errors.append(f"entry {index + 1}/occurredAt: not a real time")
+            if "recovery" in entry and (entry["kind"] != "candidate.merged" or "occurredAt" not in entry):
+                errors.append(f"entry {index + 1}: only a recovered merge carries source identity")
     return errors
 
 
@@ -911,6 +922,9 @@ def append_journal(
     subject: str | None = None,
     review: dict | None = None,
     writer: str | None = None,
+    recovered: bool = False,
+    occurred_at: str | None = None,
+    recovery: dict | None = None,
 ) -> dict:
     """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset."""
     if writer == "runner" and kind == REVIEW_KIND:
@@ -936,6 +950,13 @@ def append_journal(
         }
         if review is not None:
             entry["review"] = review
+        if recovered:
+            entry["occurredAt"] = occurred_at
+        if recovery is not None:
+            entry["recovery"] = recovery
+            if not any(item["stage"] == "merged" and _same_recovered_merge(entry, item)
+                       for item in current["queue"]):
+                raise StateError("recovery_identity", "candidate identity changed before recovery journal append")
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
@@ -984,6 +1005,23 @@ def _seconds(start: str | None, end: str | None) -> int | None:
         return None
     elapsed = (_parse_time(end, exact=True) - _parse_time(start, exact=True)).total_seconds()
     return None if elapsed < 0 else int(elapsed)
+
+
+def event_time(entry: dict) -> str | None:
+    """Legacy/runner entries occurred when recorded; recovery explicitly carries a source time or unknown."""
+    return entry.get("occurredAt", entry["at"])
+
+
+def _same_recovered_merge(entry: dict, item: dict) -> bool:
+    return (entry["kind"] == "candidate.merged" and entry["subject"] == item["subject"]
+            and entry.get("recovery") == {"head": item.get("syncedHead") or item.get("head"),
+                                           "changeRequest": item.get("changeRequest")})
+
+
+def latest_merge(journal: list[dict]) -> dict | None:
+    """Latest known landing by occurrence, not by when an old merge was recovered."""
+    merges = [entry for entry in journal if entry["kind"] == "candidate.merged" and event_time(entry) is not None]
+    return max(merges, key=lambda entry: (_parse_time(event_time(entry), exact=True), entry["id"]), default=None)
 
 
 def _lane_assignment(subject: str, first_id: int, lane_entries: list[dict]) -> dict | None:
@@ -1037,6 +1075,8 @@ def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> d
         merged = ended
     elif handed is None:
         merged = next((entry for entry in reversed(own) if entry["kind"] == "candidate.merged"), None)
+        if merged is not None:
+            ended, outcome = merged, "merged"
     elif ended is None:
         merged = next((entry for entry in after_handing if entry["kind"] == "candidate.merged"), None)
         if merged is not None:
@@ -1044,8 +1084,17 @@ def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> d
     else:
         merged = None
 
+    if merged is None and item.get("stage") == "merged":
+        # A hand-off's append can arrive after recovery of that same head/PR.
+        merged = next((entry for entry in reversed(own) if _same_recovered_merge(entry, item)), None)
+        if merged is not None:
+            ended, outcome = merged, "merged"
+
     def at(entry: dict | None) -> str | None:
-        return entry["at"] if entry else None
+        return event_time(entry) if entry else None
+
+    late_handoff = (merged is not None and handed is not None
+                    and (at(merged) is None or _seconds(at(handed), at(merged)) is None))
 
     first_start = min((review["startedAt"] for review in rounds), key=lambda text: _parse_time(text, exact=True),
                       default=None)
@@ -1063,7 +1112,7 @@ def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> d
         "outcome": outcome,
         "buildSeconds": _seconds(at(assigned), first_start),
         "reviewSeconds": _seconds(first_start, last_finish),
-        "waitSeconds": _seconds(at(handed), at(checked)),
+        "waitSeconds": None if late_handoff else _seconds(at(handed), at(checked)),
         "checkToMergeSeconds": _seconds(at(checked), at(ended)),
         "totalSeconds": _seconds(at(assigned), at(merged)),
         "rounds": len(rounds) if rounds else reported,
@@ -1144,9 +1193,9 @@ def delivery_status(state: dict, journal: list[dict], at: str | None = None) -> 
             done = sum(1 for step in steps if step["state"] in FINISHED_STEPS)
             text += f", {done} of {len(steps)} checks done"
         parts.append(text)
-    landed = next((entry for entry in reversed(journal) if entry["kind"] == "candidate.merged"), None)
+    landed = latest_merge(journal)
     if landed is not None:
-        parts.append(f"last landed {landed['subject']} at {landed['at']}")
+        parts.append(f"last landed {landed['subject']} at {event_time(landed)}")
     blocked = [
         lane["id"] + (f" (waiting on {lane['waitingOn']})" if lane.get("waitingOn") else "")
         for lane in state["lanes"] if lane["state"] == "blocked"
@@ -1394,6 +1443,19 @@ def check_snapshot(snapshot: object, name: str, max_age: float, *, parent: str |
             _parse_time(snapshot["takenAt"], exact=True)
         except ValueError:
             errors.append("/takenAt: not a real time")
+    if not errors:
+        for index, item in enumerate(snapshot["items"]):
+            if "mergedAt" not in item:
+                continue
+            if snapshot["source"] != "forge" or item["state"] != "merged":
+                errors.append(f"/items/{index}/mergedAt: only a forge merge carries its occurrence time")
+            try:
+                if _parse_time(item["mergedAt"], exact=True) > _parse_time(snapshot["takenAt"], exact=True):
+                    errors.append(f"/items/{index}/mergedAt: merge follows snapshot")
+                if _parse_time(item["mergedAt"], exact=True) > _parse_time(now(), exact=True):
+                    errors.append(f"/items/{index}/mergedAt: merge follows observation clock")
+            except ValueError:
+                errors.append(f"/items/{index}/mergedAt: not a real time")
     if errors:
         raise StateError("snapshot_invalid", f"{name}: " + "; ".join(errors))
     age = (datetime.datetime.now(datetime.timezone.utc) - _parse_time(snapshot["takenAt"])).total_seconds()
@@ -1407,7 +1469,7 @@ def check_snapshot(snapshot: object, name: str, max_age: float, *, parent: str |
     return snapshot
 
 
-def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[dict], list[dict]]:
+def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict, list[dict], list[dict], list[dict]]:
     """The lead's changes, the merges to recover, and what to report, for one read of the state."""
     lead = {"queue": copy.deepcopy(state["queue"]), "planned": copy.deepcopy(state.get("planned", [])),
             "followups": copy.deepcopy(state["followups"])}
@@ -1473,6 +1535,14 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
                 if word in ("open", "draft", "merged"):
                     report(subject, f"{'an' if word == 'open' else 'a'} {word} change request for work the record does not hold")
                 continue
+            if (entry.get("stage") == "merged" and reference and entry.get("changeRequest")
+                    and entry["changeRequest"] != reference):
+                report(subject, "forge change request differs from the terminal candidate: settle identity before linking")
+                continue
+            if (word == "merged" and entry.get("stage") == "merged" and item.get("head")
+                    and item["head"] != (entry.get("syncedHead") or entry.get("head"))):
+                report(subject, "merged forge head differs from the recorded head: settle identity before recovery")
+                continue
             if reference and entry.get("changeRequest") != reference:
                 entry["changeRequest"] = reference
                 change(subject, f"linked change request {reference}")
@@ -1499,10 +1569,15 @@ def _plan(state: dict, snapshots: list[dict]) -> tuple[dict, list[dict], list[di
                     lead["queue"].append(element)
                     change(subject, "merged on the forge while still planned: added to the queue")
                     entry = element
-                if entry["stage"] != "merged":
+                effective_head = entry.get("syncedHead") or entry["head"]
+                if entry["stage"] == "merged" and item.get("head", effective_head) != effective_head:
+                    report(subject, "merged forge head differs from the recorded head: settle identity before recovery")
+                    continue
+                if entry["stage"] != "merged" or not _current_merge(journal, entry):
                     # ...and the merge the runner never saw is recovered as the runner's.
-                    recoveries.append({"subject": subject, "head": item.get("head") or entry["head"],
-                                       "changeRequest": entry.get("changeRequest"), "lane": entry.get("lane")})
+                    recoveries.append({"subject": subject, "head": item.get("head") or effective_head,
+                                       "changeRequest": entry.get("changeRequest"), "lane": entry.get("lane"),
+                                       "occurredAt": item.get("mergedAt")})
                     change(subject, "merged on the forge but not recorded by the runner: recorded as merged", True)
     if not lead["planned"] and "planned" not in state:
         del lead["planned"]
@@ -1582,7 +1657,7 @@ def reconcile(
     _finish_recovery(directory, finished, held)
     for attempt in range(1, RECONCILE_ATTEMPTS + 1):
         state = read_state(directory)
-        lead, recoveries, changes, reports = _plan(state, snapshots)
+        lead, recoveries, changes, reports = _plan(state, snapshots, read_journal(directory))
         changes[:0] = finished
         reports[:0] = held
         if not lead and not recoveries:
@@ -1605,6 +1680,20 @@ def reconcile(
         return {"ok": True, "drift": False, "changes": [], "reports": reports, "summary": "no drift"}
     return {"ok": True, "drift": True, "changes": changes, "reports": reports,
             "summary": f"{len(changes)} change{'s' if len(changes) != 1 else ''}"}
+
+
+def _current_merge(journal: list[dict], item: dict) -> bool:
+    """Respect attempt order, except a recovered identity survives its own delayed hand-off append."""
+    after_handoff = True
+    for entry in reversed(journal):
+        if entry["subject"] == item["subject"]:
+            if _same_recovered_merge(entry, item):
+                return True
+            if after_handoff and entry["kind"] == "candidate.merged":
+                return True
+            if entry["kind"] == "candidate.handed":
+                after_handoff = False
+    return False
 
 
 def _recover(directory: Path, recoveries: list[dict], changes: list[dict], reports: list[dict]) -> None:
@@ -1636,8 +1725,9 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
         except StateError as error:
             reports.append({"subject": None, "note": f"{error}: set aside as {_set_aside(directory)}"})
             pending = None
+        completed: list[dict] = []
         if pending is not None:
-            _finish_intent(directory, pending, changes)
+            _finish_intent(directory, pending, completed, reports)
             # Finished here after all, so no longer waiting.
             reports[:] = [report for report in reports
                           if not (report["subject"] == pending["subject"] and "waits for the queue lock" in report["note"])]
@@ -1646,8 +1736,16 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
             for _ in range(RECONCILE_ATTEMPTS):
                 state = read_state(directory)
                 item = next((item for item in state["queue"] if item["subject"] == recovery["subject"]), None)
-                if item is None or item["stage"] == "merged":
+                if item is None or (item["stage"] == "merged" and _current_merge(read_journal(directory), item)):
                     withdraw(recovery["subject"])
+                    break
+                if item.get("changeRequest") != recovery["changeRequest"]:
+                    withdraw(recovery["subject"])
+                    reports.append({"subject": item["subject"], "note": "candidate identity changed: settle change request before recovery"})
+                    break
+                if item["stage"] == "merged" and (item.get("syncedHead") or item["head"]) != recovery["head"]:
+                    withdraw(recovery["subject"])
+                    reports.append({"subject": item["subject"], "note": "recorded head changed: settle identity before recovery"})
                     break
                 where = f" as change request {recovery['changeRequest']}" if recovery["changeRequest"] else ""
                 intent = {
@@ -1655,28 +1753,41 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                     "summary": f"Recorded from a forge snapshot: merged{where} at {recovery['head']}, "
                                "not recorded by the runner",
                     "journalAfter": len(read_journal(directory)),
+                    "occurredAt": recovery["occurredAt"],
+                    "changeRequest": recovery["changeRequest"],
                 }
                 # The intent first: a crash after the state write and before
                 # the journal entry is then finished by the next reconcile.
                 _write_atomically(directory / RECOVERY_FILE, dumps(intent))
                 try:
-                    patch(directory, writer="runner", version=state["version"], selector=selector,
-                          changes={"stage": "merged", "syncedHead": recovery["head"]})
+                    if item["stage"] != "merged":
+                        patch(directory, writer="runner", version=state["version"], selector=selector,
+                              changes={"stage": "merged", "syncedHead": recovery["head"]})
                 except StateError as error:
                     (directory / RECOVERY_FILE).unlink(missing_ok=True)
                     if error.code != "version_stale":
                         raise
                     continue
-                _journal_recovery(directory, intent)
+                try:
+                    _journal_recovery(directory, intent)
+                except StateError as error:
+                    if error.code != "recovery_identity":
+                        raise
+                    withdraw(recovery["subject"])
+                    reports.append({"subject": item["subject"], "note": f"{error}: set aside as {_set_aside(directory)}"})
+                    break
                 (directory / RECOVERY_FILE).unlink(missing_ok=True)
                 break
             else:
                 raise StateError("version_stale", "the record kept changing while a merge was recovered")
+        changes.extend(completed)
 
 
 def _journal_recovery(directory: Path, intent: dict) -> dict:
     return append_journal(directory, kind="candidate.merged", subject=intent["subject"], lane=intent["lane"],
-                          summary=intent["summary"])
+                          summary=intent["summary"], recovered=True, occurred_at=intent.get("occurredAt"),
+                          recovery=({"head": intent["head"], "changeRequest": intent["changeRequest"]}
+                                    if "changeRequest" in intent else None))
 
 
 def _read_recovery(directory: Path) -> dict | None:
@@ -1687,10 +1798,16 @@ def _read_recovery(directory: Path) -> dict | None:
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise StateError("state_invalid", f"{RECOVERY_FILE} is not JSON") from None
     shape = {"subject": str, "head": str, "summary": str, "journalAfter": int}
-    if (not isinstance(intent, dict) or set(intent) != {*shape, "lane"}
+    if (not isinstance(intent, dict) or not {*shape, "lane"} <= set(intent)
+            or not set(intent) <= {*shape, "lane", "occurredAt", "changeRequest"}
             or not all(isinstance(intent[key], kind) and not isinstance(intent[key], bool) for key, kind in shape.items())
             or not (intent["lane"] is None or isinstance(intent["lane"], str))):
         raise StateError("state_invalid", f"{RECOVERY_FILE} is malformed")
+    probe = {"id": 1, "at": now(), "kind": "candidate.merged", "subject": intent["subject"],
+             "lane": intent["lane"], "summary": intent["summary"], "occurredAt": intent.get("occurredAt"),
+             "recovery": {"head": intent["head"], "changeRequest": intent.get("changeRequest")}}
+    if journal_errors([probe]):
+        raise StateError("state_invalid", f"{RECOVERY_FILE} has an invalid occurrence time")
     return intent
 
 
@@ -1723,7 +1840,7 @@ def _finish_recovery(directory: Path, finished: list[dict], held: list[dict]) ->
                                                    "item it names against the journal"})
             return
         if intent is not None:
-            _finish_intent(directory, intent, finished)
+            _finish_intent(directory, intent, finished, held)
 
 
 def _set_aside(directory: Path) -> str:
@@ -1748,7 +1865,7 @@ def _pending_subject(directory: Path) -> str | None:
     return intent["subject"] if intent else None
 
 
-def _finish_intent(directory: Path, intent: dict, finished: list[dict]) -> None:
+def _finish_intent(directory: Path, intent: dict, finished: list[dict], reports: list[dict]) -> None:
     """Finish one interrupted recovery; the caller holds the queue lock."""
     journal = read_journal(directory)
     # Any merge entry for the subject since the intent, whoever wrote it: the
@@ -1756,8 +1873,15 @@ def _finish_intent(directory: Path, intent: dict, finished: list[dict]) -> None:
     journaled = any(entry["id"] > intent["journalAfter"] and entry["kind"] == "candidate.merged"
                     and entry["subject"] == intent["subject"] for entry in journal)
     item = next((item for item in read_state(directory)["queue"] if item["subject"] == intent["subject"]), None)
-    if not journaled and item is not None and item["stage"] == "merged" and item["syncedHead"] == intent["head"]:
-        _journal_recovery(directory, intent)
+    if (not journaled and item is not None and item["stage"] == "merged"
+            and (item.get("syncedHead") or item["head"]) == intent["head"]):
+        try:
+            _journal_recovery(directory, intent)
+        except StateError as error:
+            if error.code != "recovery_identity":
+                raise
+            reports.append({"subject": intent["subject"], "note": f"{error}: set aside as {_set_aside(directory)}"})
+            return
         finished.append({"subject": intent["subject"], "recovery": True,
                          "change": "an interrupted recovery's journal entry: appended"})
     (directory / RECOVERY_FILE).unlink(missing_ok=True)

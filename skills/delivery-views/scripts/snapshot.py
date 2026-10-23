@@ -707,6 +707,8 @@ def github_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
     for subject in sorted(chosen):
         pull, state, _ = chosen[subject]
         item = {"subject": subject, "title": pull["title"], "state": state}
+        if state == "merged":
+            item["mergedAt"] = _moment(pull["merged_at"], "merge time").strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         href = pull.get("html_url")
         if isinstance(href, str) and _origin(href) == ("https", host, 443):
             item["changeRequest"] = href

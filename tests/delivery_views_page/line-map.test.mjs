@@ -804,9 +804,8 @@ test("links only the configured tracker's ids and the first forge's change reque
   expect(outside.every((link) => link.getAttribute("target") === "_blank" && link.getAttribute("rel") === "noopener noreferrer")).toBe(true);
 });
 
-test("labels a pull request URL by its number, naming any configured repository but the first forge's", async () => {
-  // Links follow the configuration: a later configured forge's pull request is labelled with its repository's
-  // name, and a pull request on a repository no forge configures stays text.
+test("labels same-forge pull request URLs by number with repository-aware accessible names", async () => {
+  // One configured origin/template supports arbitrary repositories without per-repository entries.
   const config = { ...CONFIG, forges: [...CONFIG.forges,
     { name: "GitHub", repository: "acme/tools", pullUrl: "https://github.com/{repository}/pull/{number}", commitUrl: "https://github.com/{repository}/commit/{sha}" },
     { name: "Bitbucket", repository: "acme/web", pullUrl: "https://bitbucket.org/{repository}/pull-requests/{number}", commitUrl: "https://bitbucket.org/{repository}/commits/{sha}" }] };
@@ -821,11 +820,16 @@ test("labels a pull request URL by its number, naming any configured repository 
   const number = (subject) => app.querySelector(`.stop-btn[data-subject="${subject}"]`).parentElement.querySelector(".pr-num");
   expect(subjects.map(number).map((node) => [node.tagName, node.textContent, node.getAttribute("href")])).toEqual([
     ["A", "#1147", "https://github.com/acme/shop/pull/1147"],
-    ["A", "tools#122", "https://github.com/acme/tools/pull/122"],
-    ["A", "web#42", "https://bitbucket.org/acme/web/pull-requests/42"],
+    ["A", "#122", "https://github.com/acme/tools/pull/122"],
+    ["A", "#42", "https://bitbucket.org/acme/web/pull-requests/42"],
     ["SPAN", "https://github.com.evil.example/acme/shop/pull/9", null],
-    ["SPAN", "https://github.com/acme/elsewhere/pull/7", null],
+    ["A", "#7", "https://github.com/acme/elsewhere/pull/7"],
   ]);
+  for (const [index, repository] of [[0, "acme/shop"], [1, "acme/tools"], [2, "acme/web"], [4, "acme/elsewhere"]]) {
+    const link = number(subjects[index]);
+    expect(link.getAttribute("title")).toBe(`${repository} ${link.textContent}`);
+    expect(link.getAttribute("aria-label")).toBe(`Open pull request ${repository} ${link.textContent}`);
+  }
 });
 
 test("leaves a pull request URL with a trailing slash, and a URL off the forge's pull path, as text", async () => {

@@ -323,7 +323,9 @@ run the sync loop in this order:
 1. **Snapshot.** List the epic's work and write it as `work-snapshot/1` files
    (in `references/schemas.json`): `{takenAt, source, items}`, where `source`
    is `forge` or `tracker`. Each item is `{subject, title?, summary?, state,
-   changeRequest?, head?, blockedBy?}`. A tracker item's `summary` is the
+   changeRequest?, head?, mergedAt?, blockedBy?}`. A forge merge's `mergedAt`
+   is its verified UTC source occurrence time, no later than `takenAt`; omit
+   it when unknown. A tracker item's `summary` is the
    ticket's own summary as plain text, at most 1000 characters; whatever
    makes the snapshot shortens a longer one. A tracker state is `backlog`,
    `started`, `completed` or `canceled`; a forge state is `open`, `draft`,
@@ -408,6 +410,17 @@ run the sync loop in this order:
      merges, so this is a recovery path, not the normal one. A recovery a
      crash interrupts leaves `recovery.json` in the state directory, and the
      next reconcile finishes it: the entry is never lost or written twice.
+     Recovery also fills a missing merge entry when the queue already says
+     `merged`. The entry's `at` remains the time it was appended; `occurredAt`
+     holds the snapshot's `mergedAt`, or null when the source time is unknown.
+     Existing entries and review provenance are never rewritten. A normal
+     runner entry and an old journal without `occurredAt` retain their `at`
+     semantics. Never backdate the clock or edit the journal to recover a merge.
+     Recovery retains the source head and change request as `recovery`, so a
+     delayed hand-off append cannot duplicate that same merge. A conflicting
+     already-merged head is reported for the lead to settle; absent source heads
+     use the recorded synced head, then the candidate head. A future source
+     occurrence is refused before writes, even within snapshot clock skew.
      `show` reports `recoveryPending` while one waits. One that cannot be
      read is set aside as `recovery.json.invalid` (numbered after the first)
      and reported; check the queue item it names against the journal, journal
@@ -538,6 +551,10 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind revi
   candidate handed again follows its latest attempt: its total runs to that
   attempt's merge and is null unless it merged. Times keep six fractional
   digits, dropping the rest, and durations are whole seconds.
+  Recovered merges use their source occurrence time. An unknown source time
+  stays unknown; a hand-off recorded after the merge supplies no wait or
+  check-to-merge duration. The last landing follows occurrence order, even
+  when an older merge is observed later.
 - Output is ASCII JSON on every platform and console; a patch read from
   stdin is UTF-8, with or without a byte-order mark. Text that has no UTF-8
   form, such as a lone surrogate, is refused. The state is UTF-8 and the

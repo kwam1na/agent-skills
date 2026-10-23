@@ -678,8 +678,17 @@ class GithubTests(SnapshotCase):
         document = self.checked(out)
         # The captured command lists its items in the tracker's order; the port sorts them by subject.
         by_subject = lambda items: sorted(items, key=lambda item: item["subject"])  # noqa: E731
-        self.assertEqual({**document, "items": by_subject(document["items"])},
+        legacy_items = [{key: value for key, value in item.items() if key != "mergedAt"} for item in document["items"]]
+        self.assertEqual({**document, "items": by_subject(legacy_items)},
                          {**CAPTURED["forge"], "items": by_subject(CAPTURED["forge"]["items"])})
+        for item in document["items"]:
+            if item["state"] == "merged":
+                source = next(pull for page in GITHUB.values() for pull in page
+                              if pull.get("html_url") == item["changeRequest"])
+                self.assertEqual(snapshot._moment(item["mergedAt"], "snapshot"),
+                                 snapshot._moment(source["merged_at"], "source"))
+            else:
+                self.assertNotIn("mergedAt", item)
         listing = urllib.parse.parse_qs(urllib.parse.urlsplit(transport.requests[0][0]).query)
         self.assertEqual(listing, {"state": ["all"], "sort": ["created"], "direction": ["desc"], "per_page": ["100"]})
         # The second page reaches a pull request made before the since time, so the third is never read.

@@ -1243,6 +1243,7 @@ class ReconcileTests(unittest.TestCase):
         })
         state_tool.patch(self.directory, writer="runner", version=state_tool.show(self.directory)["state"]["version"],
                          selector="queue[subject=work-done]", changes={"stage": "merged"})
+        state_tool.append_journal(self.directory, kind="candidate.merged", subject="work-done", summary="Runner merge")
         journal_before = state_tool.show(self.directory)["journal"]
         forge = self.snapshot("forge", [
             {"subject": "work-p", "state": "merged", "changeRequest": "change 21", "head": HEAD_B},
