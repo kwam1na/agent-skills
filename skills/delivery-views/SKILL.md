@@ -28,10 +28,13 @@ and may name one as the live server's front page:
 "liveHome": "line-map"
 ```
 
-Start `serve`, `live` and renders from inside the repository. The render
-wrapper passes no working directory of its own, so every script here resolves
-the repository top level from its working directory (`git rev-parse
---show-toplevel`) and resolves `--config`, `--binding`, `--state-dir` and `{root}` against it.
+Start `serve`, `live` and renders from the repository's top level: the
+binding names each script by its path in the repository, and the render
+wrapper and the snapshot runner pass no working directory of their own. Each
+script here then resolves the top level itself (`git rev-parse
+--show-toplevel`) and resolves `--config`, `--binding`, `--state-dir` and
+`{root}` against it, so run by hand it works from any directory inside the
+repository.
 A `--config` or `--binding` that is not found exits non-zero naming the path.
 The record is the binding's `state.directory` unless `--state-dir` names another;
 pass `--state-dir {stateDirectory}` in the renderer and snapshot argv so a
@@ -227,9 +230,9 @@ whose profile includes `delivery-views`, write `.agents/delivery-views.json`,
 and declare the snapshot commands, and the views, in the binding's `state`.
 It writes no view or snapshot code of its own.
 
-- **Start inside the repository.** Run `serve`, `live`, renders and the
-  snapshot commands from a directory inside the repository: every path in the
-  configuration and the binding is resolved from its top level.
+- **Start at the top level.** Run `serve`, `live` and renders from the
+  repository's top level, where the binding's script paths lead; the scripts
+  resolve every other path in the configuration and the binding from there.
 - **Credentials by environment variable.** Export each token the snapshot
   commands name before starting `serve`, which runs them; nothing goes in the
   committed binding or configuration. List the same variables in `scrubEnv`
@@ -272,11 +275,29 @@ It writes no view or snapshot code of its own.
 }
 ```
 
-In the binding's `state`, beside its renderers, with `{parent}` the record's
-`meta.trackerParent` (here the Jira epic's key):
+In the binding's `state`, with `{parent}` the record's `meta.trackerParent`
+(here the Jira epic's key):
 
 ```json
 {
+  "renderers": [
+    {
+      "id": "line-map",
+      "argv": [
+        "python3",
+        "-B",
+        ".agent-skills/current/skills/delivery-views/scripts/render.py",
+        "line-map",
+        "--config",
+        ".agents/delivery-views.json",
+        "--binding",
+        ".agents/orchestration.json"
+      ],
+      "output": "line-map.html",
+      "timeoutSeconds": 30
+    }
+  ],
+  "liveHome": "line-map",
   "trackerSnapshot": {
     "argv": [
       "python3",
@@ -384,6 +405,24 @@ identifier:
 
 ```json
 {
+  "renderers": [
+    {
+      "id": "line-map",
+      "argv": [
+        "python3",
+        "-B",
+        ".agent-skills/current/skills/delivery-views/scripts/render.py",
+        "line-map",
+        "--config",
+        ".agents/delivery-views.json",
+        "--binding",
+        ".agents/orchestration.json"
+      ],
+      "output": "line-map.html",
+      "timeoutSeconds": 30
+    }
+  ],
+  "liveHome": "line-map",
   "trackerSnapshot": {
     "argv": [
       "python3",

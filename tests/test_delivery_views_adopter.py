@@ -214,10 +214,77 @@ class OutsideAdopterTests(unittest.TestCase):
         self.assertNotIn(CREDENTIALS["JIRA_API_TOKEN"], json.dumps(result))
         self.assertNotIn(CREDENTIALS["JIRA_API_TOKEN"], (adopter.state / "journal.jsonl").read_text(encoding="utf-8"))
 
-    @unittest.skip("the page half lands with the line-map and history renderers")
-    def test_both_pages_render_from_the_release_with_only_tracker_and_forge_links(self) -> None:
-        """Renders the line map and the history page through the binding's renderers; hostile snapshot fields
-        render inert, and every link is a Jira or Bitbucket one."""
+    def recorded(self, *, hostile: str | None = None) -> None:
+        """The record after both snapshots, taken through the binding, are reconciled into it."""
+        adopter = self.adopter
+        jira, bitbucket = json.loads(json.dumps(JIRA)), json.loads(json.dumps(BITBUCKET))
+        if hostile is not None:
+            jira["page-1"]["issues"][1]["fields"]["summary"] = hostile
+            jira["page-1"]["issues"][0]["fields"]["description"] = {
+                "type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": hostile}]}]}
+            bitbucket["page-1"]["values"][2]["title"] = f"SHFT-12 {hostile}"
+        adopter.state_tool("init", "--headline", "Shift planner epic")
+        version = adopter.state_tool("show")["state"]["version"]
+        adopter.state_tool("patch", "--writer", "lead", "--version", str(version), "--patch",
+                           json.dumps({"meta": {"trackerParent": "SHFT-10"}}))
+        snapshots = adopter.root / "snapshots"
+        snapshots.mkdir(exist_ok=True)
+        adopter.state_tool("tracker-snapshot", "--binding", ".agents/orchestration.json", "--output",
+                           str(snapshots / "tracker.json"),
+                           replay=[_exchange(SEARCH, jira["page-1"]), _exchange(SEARCH, jira["page-2"])])
+        adopter.state_tool("reconcile", "--snapshot", str(snapshots / "tracker.json"))
+        adopter.state_tool("forge-snapshot", "--binding", ".agents/orchestration.json", "--output",
+                           str(snapshots / "forge.json"), replay=[
+                               _exchange(API + "pullrequests?", bitbucket["page-1"]),
+                               _exchange(API + "pullrequests?page=2", bitbucket["page-2"]),
+                               _exchange(API + "commit/aaaaaaaaaaaa", bitbucket["commit-a"]),
+                               _exchange(API + "commit/cccccccccccc", bitbucket["commit-c"]),
+                           ])
+        adopter.state_tool("reconcile", "--snapshot", str(snapshots / "tracker.json"), "--snapshot",
+                           str(snapshots / "forge.json"))
+
+    def open_page(self, page: Path, hostile: str) -> dict:
+        node = shutil.which("node")
+        if node is None:
+            self.fail("node is not installed: run python3 scripts/bootstrap-test-environment.py before running the suite.")
+        completed = subprocess.run([node, str(FIXTURE / "open-page.mjs"), str(page), hostile], cwd=ROOT,
+                                   capture_output=True, text=True, timeout=120)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return json.loads(completed.stdout)
+
+    def test_the_line_map_renders_from_the_release_with_only_tracker_and_forge_links(self) -> None:
+        hostile = "</script><img src=x onerror=alert(1)> <b>bold</b> & \"quoted\" <!--"
+        self.recorded(hostile=hostile)
+        adopter = self.adopter
+        # The render wrapper runs the binding's renderers from where the operator starts it: the top level,
+        # since the binding names each script by its path in the repository.
+        rendered = adopter.run(["python3", "-B", str(adopter.installed("orchestrate-work/scripts/render_state.py")),
+                                "--dir", str(adopter.state), "--binding", ".agents/orchestration.json"])
+        self.assertTrue(json.loads(rendered.stdout)["ok"], rendered.stdout)
+        page = adopter.state / "line-map.html"
+        text = page.read_text(encoding="utf-8")
+        self.assertIn('<meta name="delivery-state-live">', text)
+        self.assertIn("<title>Shift planner delivery</title>", text)
+        self.assertNotIn("</script><img", text)
+        shown = self.open_page(page, hostile)
+        # The planned piece opens a detail; the follow-up is listed with its ticket's link.
+        self.assertEqual(shown["subjects"], ["SHFT-12"])
+        outside = [href for href in shown["hrefs"] if not href.startswith("#")]
+        self.assertTrue(outside)
+        for href in outside:
+            with self.subTest(href=href):
+                self.assertRegex(href, r"^https://(eshyft\.atlassian\.net/browse/(SHFT|EDD)-[0-9]+"
+                                       r"|bitbucket\.org/eshyft/eshyftnew/(pull-requests/[0-9]+|commits/[0-9a-f]{40}))$")
+        for key in ("SHFT-10", "SHFT-11", "SHFT-12"):
+            self.assertIn(f"https://eshyft.atlassian.net/browse/{key}", outside)
+        self.assertIn("https://bitbucket.org/eshyft/eshyftnew/pull-requests/34", outside)
+        # The hostile titles and summaries reached the reader as text, and no markup in them became an element.
+        self.assertTrue(shown["shownAsText"])
+        self.assertEqual(shown["elements"], 0)
+
+    @unittest.skip("the history page lands with the history renderer")
+    def test_the_history_page_renders_from_the_release(self) -> None:
+        """Renders the history page through the binding's renderer, linked from the line map and back."""
 
 
 class AdopterGuideTests(unittest.TestCase):
@@ -235,7 +302,8 @@ class AdopterGuideTests(unittest.TestCase):
         self.assertEqual(config["scrubEnv"], ["JIRA_API_TOKEN", "JIRA_EMAIL", "BITBUCKET_TOKEN", "BITBUCKET_EMAIL"])
         state = json.loads((FIXTURE / "repository/.agents/orchestration.json").read_text(encoding="utf-8"))["state"]
         declared = [block for block in blocks if isinstance(block, dict) and "trackerSnapshot" in block]
-        self.assertIn({key: state[key] for key in ("trackerSnapshot", "forgeSnapshot")}, declared)
+        self.assertIn({key: state[key] for key in ("renderers", "liveHome", "trackerSnapshot", "forgeSnapshot")},
+                      declared)
 
     def test_the_linear_and_github_example_validates(self) -> None:
         spec = importlib.util.spec_from_file_location("views_common_for_guide",
@@ -253,6 +321,19 @@ class AdopterGuideTests(unittest.TestCase):
         kinds = {tuple(block[source]["argv"][block[source]["argv"].index("--kind") + 1] for source in
                        ("trackerSnapshot", "forgeSnapshot")) for block in declared}
         self.assertEqual(kinds, {("jira", "bitbucket"), ("linear", "github")})
+        # Each documented state block is one the render wrapper accepts.
+        spec = importlib.util.spec_from_file_location("render_state_for_guide",
+                                                      ROOT / "skills/orchestrate-work/scripts/render_state.py")
+        render_state = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = render_state
+        sys.path.insert(0, str(ROOT / "skills/orchestrate-work/scripts"))
+        try:
+            spec.loader.exec_module(render_state)
+        finally:
+            sys.path.remove(str(ROOT / "skills/orchestrate-work/scripts"))
+        for block in declared:
+            renderers, _ = render_state.parse_config({"directory": "delivery", "publishers": [], **block})
+            self.assertEqual([renderer["id"] for renderer in renderers], ["line-map"])
 
 
 if __name__ == "__main__":

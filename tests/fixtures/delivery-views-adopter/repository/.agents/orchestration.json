@@ -72,7 +72,24 @@
   "leases": [],
   "state": {
     "directory": "delivery",
-    "renderers": [],
+    "renderers": [
+      {
+        "id": "line-map",
+        "argv": [
+          "python3",
+          "-B",
+          ".agent-skills/current/skills/delivery-views/scripts/render.py",
+          "line-map",
+          "--config",
+          ".agents/delivery-views.json",
+          "--binding",
+          ".agents/orchestration.json"
+        ],
+        "output": "line-map.html",
+        "timeoutSeconds": 30
+      }
+    ],
+    "liveHome": "line-map",
     "publishers": [],
     "trackerSnapshot": {
       "argv": [
