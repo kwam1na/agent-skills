@@ -43,3 +43,9 @@ The cases:
 Real records, run listings and exports named the capturing machine's home
 directory; the capture replaced it with `~/` in its inputs before rendering, so
 inputs and goldens agree.
+
+The port is held to these with `history-config.json`, the line-map corpus's
+configuration with `exports` naming the source's export directory and skipping
+its delivery records. One output differs by design: the source linked its own
+file name and the live server's front page, and the port links the binding's
+line-map output as a file and at its `/view/` address.

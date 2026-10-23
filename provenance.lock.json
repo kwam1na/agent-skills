@@ -161,7 +161,15 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "48e6c98af9cf24f6ac4567c8d17b04633aa2a80906342eae2b5fa43f52755903"
+          "sha256": "3272b6b8b9f52e519b741fba238aa6e7db5e7115dcf6e5c6ff1d707837e91fc1"
+        },
+        {
+          "path": "skills/delivery-views/assets/history.css",
+          "sha256": "08ac41c4bd6b6cbffa87f56c90d57b3fafe99bb899c7ea8fad993c17e0b7aab5"
+        },
+        {
+          "path": "skills/delivery-views/assets/history.js",
+          "sha256": "950eb747f13c18fe20fb7006e5bfb9a553c7cf682ebbc7fe6921f6be276e5e1f"
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
@@ -181,7 +189,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "61e85755ce88c1a4138af2c892bbd9fac0d9283fef2422b8bc7f43caf9fb1df8"
+          "sha256": "3abab1923bb93b27f3559c398d98996ec4fd94de12aac2eb4036c3ea70045ecf"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",

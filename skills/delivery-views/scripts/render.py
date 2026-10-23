@@ -2,6 +2,7 @@
 """The delivery views' pages, printed from the delivery record on stdin.
 
     python3 -B render.py line-map --config .agents/delivery-views.json --binding .agents/orchestration.json
+    python3 -B render.py history --config .agents/delivery-views.json --binding .agents/orchestration.json
 
 ``line-map`` prints the live line map: one page whose style and program are
 inline, loading only its two typefaces from Google Fonts. The page carries the
@@ -9,7 +10,13 @@ live opt-in marker, so the state tool's live server serves it at
 ``/view/<output>`` and the page follows every record write by itself; opened
 as a file, it shows the record as it was rendered.
 
-The page's script and styles are the skill's ``assets/`` files, inlined as they are.
+``history`` prints the delivery history: every run the configured ``runs``
+command lists, read with ``runs show``, and every export in the configured
+``exports`` directory, newest first, each opening the line map's run summary.
+A run in both is listed once, from the product. It also opts in to the live
+stream, and links back to the binding's line map.
+
+Each page's script and styles are the skill's ``assets/`` files, inlined as they are.
 
 A stop whose queue or planned element names a ``runId`` also shows that run's
 summary, read through the configured ``runs`` command and cached per run in the
@@ -28,6 +35,7 @@ import argparse
 import base64
 import binascii
 import copy
+import fnmatch
 import hashlib
 import json
 import math
@@ -622,16 +630,217 @@ def page_links(document: object, runs: dict, config: dict) -> dict:
     return {"issues": issues, "changes": pulls, "commits": fixes}
 
 
-def _history_href(binding: dict) -> str | None:
-    """The history page's output, when the binding declares a history renderer."""
+def _renderer_output(binding: dict, subcommand: str) -> str | None:
+    """The output of the binding's ``render.py <subcommand>`` renderer, when it declares one."""
     state = binding.get("state") if _is_object(binding) else None
     for renderer in state.get("renderers", []) if _is_object(state) and isinstance(state.get("renderers"), list) else ():
         argv = renderer.get("argv") if _is_object(renderer) else None
-        if (isinstance(argv, list) and "history" in argv
+        if (isinstance(argv, list) and subcommand in argv
                 and any(isinstance(part, str) and PurePosixPath(part).name == SCRIPT for part in argv)
                 and isinstance(renderer.get("output"), str)):
             return renderer["output"]
     return None
+
+
+# The history
+
+
+def _unknown_summary(run_id: str | None) -> dict:
+    return {"runId": run_id, "ticket": None, "open": None, "status": None, "startedAt": None, "lastAt": None,
+            "durationSeconds": None, "rounds": None, "findings": None, "roundDetail": []}
+
+
+def summarize_run_export(exported: object) -> dict | None:
+    """A run export's summary for the history, or None when the value is not a run export."""
+    if not _is_object(exported) or not isinstance(exported.get("spec"), str) or not exported["spec"].startswith("delivery-run-export/"):
+        return None
+    summary = exported.get("summary") if _is_object(exported.get("summary")) else {}
+    readout = exported.get("readout") if _is_object(exported.get("readout")) else {}
+    events = [event for event in exported.get("events", []) if _is_object(event)] if isinstance(exported.get("events"), list) else []
+    detail = []
+    for event in events:
+        if event.get("kind") != "review.round.closed":
+            continue
+        payload = event.get("payload") if _is_object(event.get("payload")) else {}
+        detail.append({"round": _count(payload.get("round")), "at": _text(event.get("at")),
+                       "outcome": outcome_word(payload.get("outcome")), "findings": findings_of(payload.get("findings"))})
+    return {
+        "runId": _text(exported.get("runId")),
+        "ticket": _text(summary.get("ticket")),
+        "open": summary.get("open") if isinstance(summary.get("open"), bool) else None,
+        "status": _text(readout.get("status")),
+        "startedAt": _text(summary.get("startedAt")),
+        "lastAt": _text(summary.get("lastAt")),
+        "durationSeconds": _count(summary.get("durationSeconds")),
+        "rounds": _count(summary.get("roundsClosed")),
+        "findings": findings_of(summary.get("findings")),
+        "roundDetail": detail[-ROUNDS_KEPT:],
+    }
+
+
+def _branch_ticket(branch: str | None, tracker: dict | None) -> str | None:
+    """The tracker key a branch name carries, found by the key pattern without its anchors, in either case."""
+    if branch is None or tracker is None or not tracker.get("keyPattern"):
+        return None
+    pattern = tracker["keyPattern"]
+    try:
+        found = re.search(pattern.removeprefix("^").removesuffix("$"), branch, re.IGNORECASE)
+    except re.error:
+        return None
+    key = found.group(0).upper() if found else None
+    return key if key is not None and re.fullmatch(pattern.removeprefix("^").removesuffix("$"), key) else None
+
+
+def _legacy_summary(record: dict, tracker: dict | None) -> dict:
+    """An older delivery telemetry record (``schemaVersion: 1``), from before runs, as a summary."""
+    loop = record.get("reviewLoop") if _is_object(record.get("reviewLoop")) else {}
+    return {**_unknown_summary(None), "ticket": _branch_ticket(_text(record.get("branch")), tracker), "open": False,
+            "status": _text(record.get("status")), "lastAt": _text(record.get("generatedAt")),
+            "rounds": _count(loop.get("iterationCount")), "findings": findings_of(loop.get("findingCounts"))}
+
+
+def deliveries_of(document: object) -> dict[str, dict]:
+    """The deliveries the record names, by run id: its headline, tracker parent and the element's subject."""
+    state = document.get("state") if _is_object(document) and _is_object(document.get("state")) else {}
+    meta = state.get("meta") if _is_object(state.get("meta")) else {}
+    found: dict[str, dict] = {}
+    for key in ("queue", "planned"):
+        for element in state.get(key) if isinstance(state.get(key), list) else ():
+            run_id = _text(element.get("runId")) if _is_object(element) else None
+            if run_id and run_id not in found:
+                found[run_id] = {"headline": _text(meta.get("headline")), "parent": _text(meta.get("trackerParent")),
+                                 "subject": _text(element.get("subject"))}
+    return found
+
+
+def _export_files(config: dict, root: Path) -> list[tuple[str, str]]:
+    """The export directory's JSON files and their text, by name, skipping the configured patterns."""
+    exports = config.get("exports")
+    if exports is None:
+        return []
+    folder = root / exports["directory"]
+    try:
+        names = sorted(entry.name for entry in folder.iterdir() if entry.name.endswith(".json") and entry.is_file())
+    except OSError:
+        return []
+    files = []
+    for name in names:
+        if any(fnmatch.fnmatchcase(name, pattern) for pattern in exports["ignore"]):
+            continue
+        try:
+            files.append((name, (folder / name).read_text(encoding="utf-8")))
+        except (OSError, UnicodeDecodeError):
+            files.append((name, ""))
+    return files
+
+
+def _history_order(row: dict) -> tuple:
+    at = _milliseconds(row["summary"].get("lastAt") or row["summary"].get("startedAt"))
+    return (at is None, -(at or 0), row["key"])
+
+
+def collect_history(document: object, config: dict, root: Path, cache_path: Path, deadline: float, as_of: str) -> dict:
+    """The history: each listed run's summary from ``runs show`` (reused from the cache while the inventory shows
+    it unchanged), then each export not already listed, newest first."""
+    notes: list[str] = []
+    rows: dict[str, dict] = {}
+    deliveries = deliveries_of(document)
+
+    def row(key: str, source: str, summary: dict, *, file: str | None = None, label: str | None = None,
+            note: str | None = None) -> None:
+        rows[key] = {"key": key, "delivery": deliveries.get(summary.get("runId") or key), "source": source,
+                     "file": file, "label": label, "note": note, "summary": summary}
+
+    argv = views_common.runs_argv(config, root)
+    if argv is not None:
+        product = Product(argv, config["runs"]["timeoutSeconds"], config["scrubEnv"], root, deadline)
+        inventory = product("runs", "list", "--json")
+        if not _is_object(inventory) or not isinstance(inventory.get("runs"), list):
+            notes.append("The product's run list could not be read; only the tracked exports are listed.")
+            listed = []
+        else:
+            listed = [entry for entry in inventory["runs"] if _is_object(entry) and _text(entry.get("runId"))]
+        cached = views_common.read_runs_cache(cache_path)
+        kept = {}
+        for entry in listed:
+            run_id = entry["runId"]
+            size = entry.get("bytes") if _count(entry.get("bytes")) is not None else None
+            hit = cached.get(run_id)
+            if size is not None and _is_object(hit) and _number_equal(hit.get("bytes"), size) and _is_object(hit.get("summary")):
+                summary = hit["summary"]
+            else:
+                summary = summarize_run_export(product("runs", "show", run_id, "--json"))
+            if summary is not None:
+                if size is not None:
+                    kept[run_id] = {"bytes": size, "summary": summary}
+                row(run_id, "product", {**summary, "runId": run_id})
+                continue
+            row(run_id, "product", {**_unknown_summary(run_id),
+                                    "open": entry.get("open") if isinstance(entry.get("open"), bool) else None,
+                                    "status": _text(entry.get("status")),
+                                    "durationSeconds": _count(entry.get("durationSeconds"))},
+                note="Its run could not be read from the product.")
+        views_common.write_runs_cache(cache_path, kept)
+
+    for name, body in _export_files(config, root):
+        named = re.fullmatch(r"(run-[A-Za-z0-9_-]+)\.json", name)
+        named = named.group(1) if named else None
+        try:
+            parsed = json.loads(body)
+        except (json.JSONDecodeError, RecursionError):
+            if (named or name) not in rows:
+                row(named or name, "export", _unknown_summary(named), file=name, note="This export could not be read.")
+            continue
+        summary = summarize_run_export(parsed)
+        if summary is not None:
+            key = summary["runId"] or named or name
+            if key not in rows:
+                row(key, "export", {**summary, "runId": summary["runId"] or named}, file=name)
+        elif _is_object(parsed) and _number_equal(parsed.get("schemaVersion"), 1) and _text(parsed.get("branch")):
+            row(name, "telemetry", _legacy_summary(parsed, config["tracker"]), file=name, label=_text(parsed.get("branch")))
+        else:
+            row(name, "export", _unknown_summary(None), file=name, note="This file is not a run export.")
+    return {"asOf": as_of, "rows": sorted(rows.values(), key=_history_order), "notes": notes}
+
+
+def history_within_budget(history: dict, budget: int = PAGE_BUDGET_BYTES) -> dict:
+    """The history within the page budget: the oldest rows give up their summaries first."""
+    history = copy.deepcopy(history)
+    size = len(embed(history).encode("utf-8"))
+    for row in reversed(history["rows"]):
+        if size <= budget:
+            break
+        before = len(embed(row).encode("utf-8"))
+        row["summary"] = _unknown_summary(row["summary"].get("runId"))
+        row["note"] = "Its details are over the page's size budget."
+        size -= before - len(embed(row).encode("utf-8"))
+    return history
+
+
+def render_history(history: dict, config: dict, *, line_map: str | None) -> str:
+    view = {"lineMap": line_map, "exports": config["exports"]["directory"] if config.get("exports") else None,
+            "lenses": config["lenses"]}
+    return "\n".join([
+        "<!doctype html>",
+        '<html lang="en">',
+        "<head>",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        '<meta name="color-scheme" content="light dark">',
+        '<meta name="delivery-state-live">',
+        "<title>Delivery history</title>",
+        f'<link rel="stylesheet" href="{FONTS}">',
+        f"<style>\n{_asset('history.css')}{_asset('run-summary.css')}</style>",
+        "</head>",
+        "<body>",
+        '<main id="app"></main>',
+        f'<script type="application/json" id="delivery-history">{embed(history)}</script>',
+        f'<script type="application/json" id="delivery-history-view">{embed(view)}</script>',
+        f"<script>\n{_asset('run-summary.js')}{_asset('history.js')}</script>",
+        "</body>",
+        "</html>",
+        "",
+    ])
 
 
 # The page
@@ -707,8 +916,25 @@ def line_map(arguments: argparse.Namespace) -> int:
                         time.monotonic() + seconds)
     page = render_line_map(document, within_budget(runs, named_runs(document)), inputs.config,
                            theme_key=views_common.theme_key(inputs.state_directory),
-                           history=_history_href(inputs.binding))
+                           history=_renderer_output(inputs.binding, "history"))
     sys.stdout.write(page)
+    return 0
+
+
+def history(arguments: argparse.Namespace) -> int:
+    inputs = views_common.load_inputs(arguments.config, arguments.binding)
+    try:
+        document = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        print("history: the delivery document on stdin is not JSON", file=sys.stderr)
+        return 1
+    seconds = _runs_deadline(inputs.binding, "history", arguments.deadline_seconds)
+    as_of = arguments.now or datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    collected = collect_history(document, inputs.config, inputs.root,
+                                views_common.runs_cache_path(inputs.state_directory).with_name("history.json"),
+                                time.monotonic() + seconds, as_of)
+    sys.stdout.write(render_history(history_within_budget(collected), inputs.config,
+                                    line_map=_renderer_output(inputs.binding, "line-map")))
     return 0
 
 
@@ -719,9 +945,14 @@ def main(argv: list[str] | None = None) -> int:
     views_common.add_input_arguments(drawn)
     drawn.add_argument("--deadline-seconds", type=float, default=DEFAULT_DEADLINE_SECONDS,
                        help="the time all runs commands share, capped at the renderer's timeout less 5 seconds")
+    listed = commands.add_parser("history", help="the delivery history")
+    views_common.add_input_arguments(listed)
+    listed.add_argument("--deadline-seconds", type=float, default=DEFAULT_DEADLINE_SECONDS,
+                        help="the time all runs commands share, capped at the renderer's timeout less 5 seconds")
+    listed.add_argument("--now", help="the history's as-of time, for tests; the clock otherwise")
     arguments = parser.parse_args(argv)
     try:
-        return {"line-map": line_map}[arguments.command](arguments)
+        return {"line-map": line_map, "history": history}[arguments.command](arguments)
     except ConfigError as error:
         print(f"{arguments.command}: {error}", file=sys.stderr)
         return 2
@@ -729,7 +960,7 @@ def main(argv: list[str] | None = None) -> int:
 
 # Page assets
 
-# The line map's two faces are the only thing it loads; offline, the type falls back to the system's.
+# The pages' two faces are the only thing they load; offline, the type falls back to the system's.
 FONTS = "https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,500;12..96,700&family=Geist:wght@400;500;600&display=swap"
 THEME_SWITCH = ("<div class=\"theme-switch\" role=\"group\" aria-label=\"Theme\"><button type=\"button\" data-theme-pick=\"light\" aria-label=\"Light\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0\"/><path d=\"M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7\"/></svg></button><button type=\"button\" data-theme-pick=\"dark\" aria-label=\"Dark\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z\"/></svg></button></div>")
 
