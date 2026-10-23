@@ -506,7 +506,7 @@ class BitbucketTests(SnapshotCase):
                 transport = Transport()
                 code, _, err = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
                 self.assertNotEqual(code, 0)
-                self.failed(err, "record")
+                self.failed(err, "could not be read")
                 self.assertEqual(transport.requests, [])
         (self.state / "journal.jsonl").unlink()
         transport = Transport((API + "pullrequests?", 200, BITBUCKET["before-since"]),
