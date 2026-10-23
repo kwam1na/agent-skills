@@ -23,7 +23,7 @@ and may name one as the live server's front page:
 
 ```json
 "renderers": [
-  { "id": "line-map", "argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/line_map.py", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json"], "output": "line-map.html", "timeoutSeconds": 30 }
+  { "id": "line-map", "argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/render.py", "line-map", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json"], "output": "line-map.html", "timeoutSeconds": 30 }
 ],
 "liveHome": "line-map"
 ```
@@ -39,6 +39,39 @@ Check a configuration before declaring it:
 ```bash
 python3 -B .agent-skills/current/skills/delivery-views/scripts/views_common.py check --config .agents/delivery-views.json --binding .agents/orchestration.json
 ```
+
+## The line map
+
+`scripts/render.py line-map` reads the delivery record on stdin and prints one
+page: the delivery told in six chapters (now, the line, who, what's left, what
+happened, parked), with a detail panel for each piece of work. Its style and
+program are the skill's `assets/line-map.css`, `assets/line-map.js`,
+`assets/run-summary.css` and `assets/run-summary.js`, inlined into the page, and
+it loads only its two typefaces from Google Fonts. It
+opts in to the live stream, so `live` serves it at `/view/<output>` and the
+page follows every record write; opened as a file, it shows the record as it
+was rendered. A history renderer declared in the same binding (`render.py
+history`) is linked from its footer.
+
+A piece whose queue or planned element names a `runId` shows that run in its
+detail: its review rounds as a track, and a card for the picked round. With
+`runs` configured, the renderer appends these arguments to its argv and reads
+JSON from each: `runs list --json` once a render, `runs view <id> --json` for
+a run the list shows changed since its cached summary, and `runs artifact <id>
+<artifact> --json` for each round report the view references and each brief and
+result a report names. A run that cannot be read shows as unavailable; without
+`runs` there is no run section at all. All of a render's run commands share the
+deadline under "Runs, cache and storage" below; `--deadline-seconds` sets it.
+
+A round whose report names a `briefs` member shows, beside each reviewer, its
+brief and its result, each expanding in place as text: up to 64 KiB, cut at a
+character boundary with a note when longer, with "no brief recorded" for one
+the report names as null and "unavailable" for one that cannot be read. The
+embedded run data keeps within 4 MiB: run summaries come first, the oldest
+stops' runs becoming unavailable when they alone are over it, then brief and
+result texts from the newest round backwards. The record shows what was stored
+as each lens's brief and result, as stored; it does not prove the lens received
+or followed it.
 
 ## Configuration: `delivery-views-config/1`
 

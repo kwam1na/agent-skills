@@ -1,0 +1,145 @@
+{
+  "estimates": {},
+  "focus": {},
+  "journal": [
+    {
+      "at": "2026-10-23T03:20:06.059364Z",
+      "id": 1,
+      "kind": "candidate.handed",
+      "lane": "lane-line-map",
+      "subject": "V26-2835",
+      "summary": "lane-line-map handed V26-2835 at 2fd3bb6dd887df7ea5dff67e44e24eaa12ba42c7 (https://github.com/v26-technologies/athena/pull/1156) after 2 review rounds"
+    },
+    {
+      "at": "2026-10-23T03:20:06.124203Z",
+      "id": 2,
+      "kind": "candidate.handed",
+      "lane": "lane-line-map",
+      "subject": "V26-2836",
+      "summary": "lane-line-map handed V26-2836 at 2c8772e14a2083d3d9898466894d45b7c052697a (https://github.com/v26-technologies/athena/pull/1157) after 2 review rounds"
+    },
+    {
+      "at": "2026-10-23T03:20:11.047887Z",
+      "id": 3,
+      "kind": "candidate.merged",
+      "lane": null,
+      "subject": "V26-2835",
+      "summary": "V26-2835 merged by the lead"
+    },
+    {
+      "at": "2026-10-23T03:20:11.241630Z",
+      "id": 4,
+      "kind": "candidate.merged",
+      "lane": null,
+      "subject": "V26-2836",
+      "summary": "V26-2836 merged by the lead"
+    }
+  ],
+  "state": {
+    "extensions": {},
+    "finish": [],
+    "followups": [],
+    "lanes": [
+      {
+        "focus": "handed V26-2836",
+        "id": "lane-line-map",
+        "since": "2026-10-23T00:46:14Z",
+        "state": "handed",
+        "title": "Line map round card",
+        "waitingOn": null
+      }
+    ],
+    "leases": [],
+    "meta": {
+      "baseHead": null,
+      "checking": {
+        "next": [],
+        "now": null
+      },
+      "headline": "The line map's round card (V26-2835, V26-2836)",
+      "releasedHead": null,
+      "updatedAt": "2026-10-23T03:20:11.177255Z"
+    },
+    "planned": [],
+    "queue": [
+      {
+        "changeRequest": "https://github.com/v26-technologies/athena/pull/1156",
+        "checks": [],
+        "head": "2fd3bb6dd887df7ea5dff67e44e24eaa12ba42c7",
+        "lane": "lane-line-map",
+        "leadInputs": [],
+        "order": 1,
+        "reportedRounds": 2,
+        "runId": "run-6b558cfe2bfc9ff1",
+        "stage": "merged",
+        "subject": "V26-2835",
+        "syncedHead": null,
+        "title": "Show the line map's run as a round track and a card for the picked round"
+      },
+      {
+        "changeRequest": "https://github.com/v26-technologies/athena/pull/1157",
+        "checks": [],
+        "head": "2c8772e14a2083d3d9898466894d45b7c052697a",
+        "lane": "lane-line-map",
+        "leadInputs": [],
+        "order": 2,
+        "reportedRounds": 2,
+        "runId": "run-37483ff027a5a901",
+        "stage": "merged",
+        "subject": "V26-2836",
+        "syncedHead": null,
+        "title": "Closing a review round stores each finding with the run"
+      }
+    ],
+    "schemaVersion": "delivery-state/1",
+    "tickets": {
+      "V26-2835": {
+        "summary": "Show the line map's run as a round track and a card for the picked round.",
+        "title": "Land the line map's round card redesign"
+      },
+      "V26-2836": {
+        "summary": "Closing a review round stores each finding with the run, so the round card can list them.",
+        "title": "The line map's round card lists each finding and the fix that closed it"
+      }
+    },
+    "version": 7
+  },
+  "stats": {
+    "V26-2835": {
+      "assignedAt": null,
+      "buildSeconds": null,
+      "checkStartedAt": null,
+      "checkToMergeSeconds": null,
+      "endedAt": "2026-10-23T03:20:11.047887Z",
+      "findings": null,
+      "handedAt": "2026-10-23T03:20:06.059364Z",
+      "lastVerdicts": null,
+      "outcome": "merged",
+      "reviewSeconds": null,
+      "rounds": 2,
+      "roundsSource": "reported",
+      "totalSeconds": null,
+      "waitSeconds": null
+    },
+    "V26-2836": {
+      "assignedAt": null,
+      "buildSeconds": null,
+      "checkStartedAt": null,
+      "checkToMergeSeconds": null,
+      "endedAt": "2026-10-23T03:20:11.241630Z",
+      "findings": null,
+      "handedAt": "2026-10-23T03:20:06.124203Z",
+      "lastVerdicts": null,
+      "outcome": "merged",
+      "reviewSeconds": null,
+      "rounds": 2,
+      "roundsSource": "reported",
+      "totalSeconds": null,
+      "waitSeconds": null
+    }
+  },
+  "status": {
+    "source": "derived",
+    "text": "last landed V26-2836 at 2026-10-23T03:20:11.241630Z"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "spec": "delivery-views-config/1",
+  "tracker": {
+    "name": "Linear",
+    "issueUrl": "https://linear.app/v26-labs/issue/{key}",
+    "keyPattern": "^V26-[0-9]+$"
+  },
+  "forges": [
+    {
+      "name": "GitHub",
+      "repository": "v26-technologies/athena",
+      "pullUrl": "https://github.com/{repository}/pull/{number}",
+      "commitUrl": "https://github.com/{repository}/commit/{sha}"
+    },
+    {
+      "name": "GitHub",
+      "repository": "kwam1na/agent-skills",
+      "pullUrl": "https://github.com/{repository}/pull/{number}",
+      "commitUrl": "https://github.com/{repository}/commit/{sha}"
+    }
+  ],
+  "runs": {
+    "argv": [
+      "python3",
+      "-B",
+      "{root}/replay-runs.py",
+      "{root}/runs-commands.json"
+    ],
+    "timeoutSeconds": 10
+  },
+  "findings": {
+    "reportSpecs": [
+      "review-round-report/1",
+      "athena-review-round-report/1"
+    ]
+  },
+  "lenses": {
+    "lens.outcome-correctness": {
+      "name": "Correctness"
+    },
+    "lens.adversarial-testing": {
+      "name": "Testing"
+    }
+  }
+}
