@@ -1301,7 +1301,8 @@ class LiveTests(DeliveryStateFixture):
             source = f"import sys\nsys.stdout.write('<html><head><meta name=\"delivery-state-live\"></head><body>{renderer_id}</body></html>')\n"
             return {"id": renderer_id, "argv": python_argv(source, self.tools, renderer_id), "output": output}
         _, url = self.start("--state-config", self.config([opted("spaced", "delivery history.html"),
-                                                           opted("nested", "views/line-map.html")]))
+                                                           opted("nested", "views/line-map.html"),
+                                                           opted("percent", "a%41.html")]))
         client = self.client(url)
         deadline = time.monotonic() + 5
         status, page = client.get("view/delivery%20history.html")
@@ -1312,6 +1313,8 @@ class LiveTests(DeliveryStateFixture):
         self.assertIn(b"spaced", page)
         self.assertEqual(client.get("view/views/line-map.html")[0], 200)
         self.assertEqual(client.get("view/views/line%2Dmap.html")[0], 200)
+        # A name that holds a percent sign is linked with it encoded, and served by its own name.
+        self.assertEqual(client.get("view/a%2541.html")[0], 200)
         for path in ("view/..%2Fstate.json", "view/%2e%2e/state.json", "view/%2e%2e%2fstate.json",
                      "view/views%2Fline-map.html", "view/delivery%2520history.html", "view/views/..%2Fdelivery%20history.html",
                      "view/%2e/delivery%20history.html", "view/delivery%20history.html%00", "view/%ff.html"):

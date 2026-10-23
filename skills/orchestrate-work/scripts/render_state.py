@@ -883,18 +883,11 @@ def _safe_output(value: object) -> bool:
 
 
 def _view_name(requested: str) -> str | None:
-    """The output a ``/view/`` path names: each segment percent-decoded once, or None when a segment
-    decodes to a separator, a ``.`` or ``..``, a NUL, invalid UTF-8, or more percent-encoding."""
-    names = []
-    for segment in requested.split("/"):
-        try:
-            name = urllib.parse.unquote(segment, errors="strict")
-        except UnicodeDecodeError:
-            return None
-        if name in (".", "..") or any(mark in name for mark in ("/", "\\", "\0")) or urllib.parse.unquote(name) != name:
-            return None
-        names.append(name)
-    return "/".join(names)
+    """The output a ``/view/`` path names, each segment percent-decoded once, or None when a segment
+    decodes to a separator: an encoded ``/`` is part of no output's name. Only a configured output
+    is ever served, so anything else a path decodes to is refused when it is matched."""
+    names = [urllib.parse.unquote(segment) for segment in requested.split("/")]
+    return None if any("/" in name for name in names) else "/".join(names)
 
 
 def _view_target(directory: Path, output: str) -> Path:
