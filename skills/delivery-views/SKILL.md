@@ -77,10 +77,10 @@ result a report names. A run that cannot be read shows as unavailable; without
 `runs` there is no run section at all. All of a render's run commands share the
 deadline under "Runs, cache and storage" below; `--deadline-seconds` sets it.
 
-A round whose report names a `briefs` member shows, beside each reviewer, its
-brief and its result, each expanding in place as text: up to 64 KiB, cut at a
-character boundary with a note when longer, with "no brief recorded" for one
-the report names as null and "unavailable" for one that cannot be read. The
+A round whose report names a `briefs` member retains each reviewer's brief and
+result in its embedded evidence. The Brief / Result control row is hidden;
+reviewer verdicts, findings and fix closures remain visible. Stored evidence is
+not deleted. Text remains bounded to 64 KiB at a character boundary. The
 embedded run data keeps within 4 MiB: run summaries come first, the oldest
 stops' runs becoming unavailable when they alone are over it, then brief and
 result texts from the newest round backwards. The record shows what was stored

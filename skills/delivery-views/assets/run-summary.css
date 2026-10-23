@@ -37,6 +37,7 @@
 .run-finding.is-p3 { color: var(--soft, #5f676d); font-weight: 400; }
 .run-record { margin: 4px 0 6px; }
 .run-record-row { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 13px; }
+.run-record-row[hidden] { display: none; }
 .run-record-lens { font-weight: 500; }
 .run-record-pick { font: inherit; font-size: 13px; padding: 0; border: 0; background: none; color: var(--soft, #5f676d); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .run-record-pick[aria-expanded="true"] { color: var(--ink, #161a1d); }

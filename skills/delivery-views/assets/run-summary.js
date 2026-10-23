@@ -294,6 +294,7 @@ function runSummaryNode(summary, options) {
     var pair = briefs[lens] && typeof briefs[lens] === "object" ? briefs[lens] : {};
     var box = node("div", "run-record");
     var row = node("p", "run-record-row");
+    row.hidden = true;
     if (named) { row.appendChild(node("b", "run-record-lens", lensLabel(lens))); }
     box.appendChild(row);
     [["brief", "Brief"], ["result", "Result"]].forEach(function (part) {
