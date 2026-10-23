@@ -28,10 +28,14 @@ and may name one as the live server's front page:
 "liveHome": "line-map"
 ```
 
-Start `serve`, `live` and renders from inside the repository. The render
-wrapper passes no working directory of its own, so every script here resolves
-the repository top level from its working directory (`git rev-parse
---show-toplevel`) and resolves `--config`, `--binding`, `--state-dir` and `{root}` against it.
+Start `serve`, `live` and renders from the repository's top level: the
+binding names each script by its path in the repository, and the render
+wrapper and the state tool's snapshot commands pass no working directory of
+their own. Each
+script here then resolves the top level itself (`git rev-parse
+--show-toplevel`) and resolves `--config`, `--binding`, `--state-dir` and
+`{root}` against it, so run by hand it works from any directory inside the
+repository.
 A `--config` or `--binding` that is not found exits non-zero naming the path.
 The record is the binding's `state.directory` unless `--state-dir` names another;
 pass `--state-dir {stateDirectory}` in the renderer and snapshot argv so a
@@ -219,6 +223,292 @@ closed one `merged` when it merged and `closed` otherwise. `changeRequest` is
 its page, kept only on `--host`; `head` is its head commit, left out when it
 is not a full hash. A pull request created before the since time, for a
 ticket moved into the epic later, needs `--since`.
+
+## Adopting the views
+
+A repository adopts these views with configuration alone: install a release
+whose profile includes `delivery-views`, write `.agents/delivery-views.json`,
+and declare the snapshot commands, and the views, in the binding's `state`.
+It writes no view or snapshot code of its own.
+
+- **Start at the top level.** Run `serve`, `live` and renders from the
+  repository's top level, where the binding's script paths lead; the scripts
+  resolve every other path in the configuration and the binding from there.
+- **Credentials by environment variable.** Export each token the snapshot
+  commands name before starting `serve`, which runs them; nothing goes in the
+  committed binding or configuration. List the same variables in `scrubEnv`
+  so no `runs` child sees them, and start `live`, which runs no snapshot
+  command, without them.
+- **Check before declaring.** `views_common.py check`, above, validates the
+  configuration and names where the views read and write.
+- **The record's start.** A forge snapshot takes pull requests created since
+  the record's first journal entry. A new record's journal is empty, so give
+  `--since` until it has one, and for a ticket moved into the epic with older
+  pull requests.
+
+### Jira and Bitbucket
+
+`.agents/delivery-views.json`:
+
+```json
+{
+  "spec": "delivery-views-config/1",
+  "title": "Shift planner delivery",
+  "tracker": {
+    "name": "Jira",
+    "issueUrl": "https://eshyft.atlassian.net/browse/{key}",
+    "keyPattern": "^(SHFT|EDD)-[0-9]+$"
+  },
+  "forges": [
+    {
+      "name": "Bitbucket",
+      "repository": "eshyft/eshyftnew",
+      "pullUrl": "https://bitbucket.org/{repository}/pull-requests/{number}",
+      "commitUrl": "https://bitbucket.org/{repository}/commits/{sha}"
+    }
+  ],
+  "scrubEnv": [
+    "JIRA_API_TOKEN",
+    "JIRA_EMAIL",
+    "BITBUCKET_TOKEN",
+    "BITBUCKET_EMAIL"
+  ]
+}
+```
+
+In the binding's `state`, with `{parent}` the record's `meta.trackerParent`
+(here the Jira epic's key):
+
+```json
+{
+  "renderers": [
+    {
+      "id": "line-map",
+      "argv": [
+        "python3",
+        "-B",
+        ".agent-skills/current/skills/delivery-views/scripts/render.py",
+        "line-map",
+        "--config",
+        ".agents/delivery-views.json",
+        "--binding",
+        ".agents/orchestration.json",
+        "--state-dir",
+        "{stateDirectory}"
+      ],
+      "output": "line-map.html",
+      "timeoutSeconds": 30
+    },
+    {
+      "id": "history",
+      "argv": [
+        "python3",
+        "-B",
+        ".agent-skills/current/skills/delivery-views/scripts/render.py",
+        "history",
+        "--config",
+        ".agents/delivery-views.json",
+        "--binding",
+        ".agents/orchestration.json",
+        "--state-dir",
+        "{stateDirectory}"
+      ],
+      "output": "delivery-history.html",
+      "timeoutSeconds": 60
+    }
+  ],
+  "liveHome": "line-map",
+  "trackerSnapshot": {
+    "argv": [
+      "python3",
+      "-B",
+      ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
+      "--kind",
+      "jira",
+      "--site",
+      "https://eshyft.atlassian.net",
+      "--parent",
+      "{parent}",
+      "--user-env",
+      "JIRA_EMAIL",
+      "--token-env",
+      "JIRA_API_TOKEN",
+      "--canceled-statuses",
+      "Won't Do,Duplicate",
+      "--timeout-seconds",
+      "25"
+    ],
+    "timeoutSeconds": 30
+  },
+  "forgeSnapshot": {
+    "argv": [
+      "python3",
+      "-B",
+      ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
+      "--kind",
+      "bitbucket",
+      "--workspace",
+      "eshyft",
+      "--repo",
+      "eshyftnew",
+      "--binding",
+      ".agents/orchestration.json",
+      "--state-dir",
+      "{stateDirectory}",
+      "--subject-pattern",
+      "(SHFT|EDD)-[0-9]+",
+      "--token-env",
+      "BITBUCKET_TOKEN",
+      "--user-env",
+      "BITBUCKET_EMAIL",
+      "--since",
+      "2026-10-19T00:00:00Z",
+      "--timeout-seconds",
+      "25"
+    ],
+    "timeoutSeconds": 30
+  }
+}
+```
+
+Export `JIRA_EMAIL` and `JIRA_API_TOKEN` (an Atlassian API token) and
+`BITBUCKET_EMAIL` and `BITBUCKET_TOKEN` (an API token used with the email for
+Basic authorization; leave out `--user-env` and `BITBUCKET_EMAIL` to use a
+workspace or repository access token as Bearer instead).
+
+### Linear and GitHub
+
+`.agents/delivery-views.json`, here with the delivery harness's runs and run
+exports:
+
+```json
+{
+  "spec": "delivery-views-config/1",
+  "title": "Delivery",
+  "tracker": {
+    "name": "Linear",
+    "issueUrl": "https://linear.app/example-team/issue/{key}",
+    "keyPattern": "^ENG-[0-9]+$"
+  },
+  "forges": [
+    {
+      "name": "GitHub",
+      "repository": "example-org/example-repo",
+      "pullUrl": "https://github.com/{repository}/pull/{number}",
+      "commitUrl": "https://github.com/{repository}/commit/{sha}"
+    }
+  ],
+  "runs": {
+    "argv": [
+      "python3",
+      "-B",
+      ".agent-skills/current",
+      "--root",
+      "{root}",
+      "harness"
+    ],
+    "timeoutSeconds": 10
+  },
+  "scrubEnv": [
+    "LINEAR_API_KEY",
+    "GITHUB_TOKEN"
+  ],
+  "exports": {
+    "directory": "telemetry/delivery-runs",
+    "ignore": [
+      "delivery-record--*"
+    ]
+  }
+}
+```
+
+In the binding's `state`, with `{parent}` the Linear parent issue's
+identifier:
+
+```json
+{
+  "renderers": [
+    {
+      "id": "line-map",
+      "argv": [
+        "python3",
+        "-B",
+        ".agent-skills/current/skills/delivery-views/scripts/render.py",
+        "line-map",
+        "--config",
+        ".agents/delivery-views.json",
+        "--binding",
+        ".agents/orchestration.json",
+        "--state-dir",
+        "{stateDirectory}"
+      ],
+      "output": "line-map.html",
+      "timeoutSeconds": 30
+    },
+    {
+      "id": "history",
+      "argv": [
+        "python3",
+        "-B",
+        ".agent-skills/current/skills/delivery-views/scripts/render.py",
+        "history",
+        "--config",
+        ".agents/delivery-views.json",
+        "--binding",
+        ".agents/orchestration.json",
+        "--state-dir",
+        "{stateDirectory}"
+      ],
+      "output": "delivery-history.html",
+      "timeoutSeconds": 60
+    }
+  ],
+  "liveHome": "line-map",
+  "trackerSnapshot": {
+    "argv": [
+      "python3",
+      "-B",
+      ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
+      "--kind",
+      "linear",
+      "--parent",
+      "{parent}",
+      "--token-env",
+      "LINEAR_API_KEY",
+      "--timeout-seconds",
+      "25"
+    ],
+    "timeoutSeconds": 30
+  },
+  "forgeSnapshot": {
+    "argv": [
+      "python3",
+      "-B",
+      ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
+      "--kind",
+      "github",
+      "--owner",
+      "example-org",
+      "--repo",
+      "example-repo",
+      "--binding",
+      ".agents/orchestration.json",
+      "--state-dir",
+      "{stateDirectory}",
+      "--subject-pattern",
+      "^ENG-[0-9]+$",
+      "--token-env",
+      "GITHUB_TOKEN",
+      "--timeout-seconds",
+      "25"
+    ],
+    "timeoutSeconds": 30
+  }
+}
+```
+
+Export `LINEAR_API_KEY` (a personal API key) and `GITHUB_TOKEN` (a token that
+can read the repository's pull requests).
 
 ## Round reports: `review-round-report/1`
 
