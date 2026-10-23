@@ -365,25 +365,34 @@ def _moment(value: object, where: str) -> datetime.datetime:
     return moment.astimezone(datetime.timezone.utc)
 
 
-def _record(binding: str, cwd: Path | None) -> tuple[set[str], datetime.datetime]:
-    """The subjects the record holds and the time of its first journal entry."""
+def _record(binding: str, cwd: Path | None, since: str | None) -> tuple[set[str], datetime.datetime]:
+    """The subjects the record holds, and the since time: ``since`` when given, else the time of the
+    record's first journal entry."""
     try:
         root = repository_root(cwd)
         bound = json.loads((root / binding).read_text(encoding="utf-8"))
         directory = root / bound["state"]["directory"]
         state = json.loads((directory / "state.json").read_text(encoding="utf-8"))
-        with (directory / "journal.jsonl").open(encoding="utf-8") as journal:
-            first = json.loads(journal.readline())
         subjects = {item["subject"] for item in state.get("queue", []) + state.get("planned", [])}
         subjects |= set(state.get("tickets", {}))
         subjects |= {item["id"] for item in state.get("followups", [])}
-        started = _moment(first["at"], "the journal's first entry")
+        first = None
+        if not since:
+            with (directory / "journal.jsonl").open(encoding="utf-8") as journal:
+                line = journal.readline()
+            # Only an empty journal has no first entry: a damaged first line is an unreadable record.
+            first = json.loads(line)["at"] if line else None
     except (ConfigError, OSError, UnicodeDecodeError, ValueError, KeyError, TypeError, AttributeError,
             RecursionError) as error:
         raise Failure(f"the record could not be read through --binding {binding}: {type(error).__name__}") from None
     if not all(isinstance(subject, str) and subject for subject in subjects):
         raise Failure("the record holds a subject that is not text")
-    return subjects, started
+    if since:
+        return subjects, _moment(since, "--since")
+    if first is None:
+        # A new record's journal is empty until its first entry.
+        raise Failure("the record's journal has no entry to take the since time from: pass --since")
+    return subjects, _moment(first, "the journal's first entry")
 
 
 def bitbucket_snapshot(args: argparse.Namespace, environ: dict, transport: Transport, deadline: float,
@@ -393,9 +402,7 @@ def bitbucket_snapshot(args: argparse.Namespace, environ: dict, transport: Trans
     except re.error:
         raise Failure("--subject-pattern does not compile") from None
     host = args.host.lower()
-    subjects, since = _record(args.binding, cwd)
-    if args.since:
-        since = _moment(args.since, "--since")
+    subjects, since = _record(args.binding, cwd, args.since)
     client = Client(BITBUCKET_API, _authorization(environ, args.token_env, args.user_env), transport, deadline,
                     clock, sleep)
     repository = f"{urllib.parse.quote(args.workspace, safe='')}/{urllib.parse.quote(args.repo, safe='')}"
@@ -638,9 +645,7 @@ def github_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
     except re.error:
         raise Failure("--subject-pattern does not compile") from None
     host = args.host.lower()
-    subjects, since = _record(args.binding, cwd)
-    if args.since:
-        since = _moment(args.since, "--since")
+    subjects, since = _record(args.binding, cwd, args.since)
     client = Client(GITHUB_API, f"Bearer {_credential(environ, args.token_env)}", transport, deadline, clock, sleep,
                     headers=GITHUB_HEADERS)
     repository = f"{urllib.parse.quote(args.owner, safe='')}/{urllib.parse.quote(args.repo, safe='')}"

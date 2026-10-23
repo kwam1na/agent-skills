@@ -491,6 +491,31 @@ class BitbucketTests(SnapshotCase):
                 self.failed(err, "record")
                 self.assertEqual(transport.requests, [])
 
+    def test_the_since_time_of_a_new_record(self) -> None:
+        # A new record's journal is empty: the since time must then be given, and once given the journal is not read.
+        (self.state / "journal.jsonl").write_text("", encoding="utf-8")
+        transport = Transport()
+        code, _, err = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "--since")
+        self.assertEqual(transport.requests, [])
+        # A damaged first line is an unreadable record, not an empty one.
+        for line in ("\n", "[]\n", "{}\n", "{\n"):
+            with self.subTest(first_line=line):
+                (self.state / "journal.jsonl").write_text(line, encoding="utf-8")
+                transport = Transport()
+                code, _, err = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
+                self.assertNotEqual(code, 0)
+                self.failed(err, "could not be read")
+                self.assertEqual(transport.requests, [])
+        (self.state / "journal.jsonl").unlink()
+        transport = Transport((API + "pullrequests?", 200, BITBUCKET["before-since"]),
+                              (API + "commit/121212121212", 200, BITBUCKET["commit-1"]))
+        code, out, _ = self.run_kind(self.args("--since", "2026-10-19T00:00:00Z"), transport, self.environ,
+                                     cwd=self.root)
+        self.assertEqual(code, 0)
+        self.assertEqual([item["subject"] for item in json.loads(out)["items"]], ["SHFT-14"])
+
     def test_a_next_page_on_another_origin_is_refused(self) -> None:
         for next_link in ("https://evil.example/2.0/repositories/eshyft/eshyftnew/pullrequests",
                           "http://api.bitbucket.org/2.0/repositories/eshyft/eshyftnew/pullrequests?page=2"):
@@ -654,6 +679,14 @@ class GithubTests(SnapshotCase):
         self.assertTrue(all(headers["Accept"] == "application/vnd.github+json"
                             and headers["X-GitHub-Api-Version"] == "2022-11-28" for _, headers in transport.requests))
         self.assertEqual(transport.methods, ["GET", "GET"])
+
+    def test_a_new_record_needs_since(self) -> None:
+        (self.root / "delivery/journal.jsonl").write_text("", encoding="utf-8")
+        transport = Transport()
+        code, _, err = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "--since")
+        self.assertEqual(transport.requests, [])
 
     def test_since_includes_an_older_pull_request(self) -> None:
         transport = Transport((PULLS, 200, GITHUB["page-1"], {"Link": f'<{PULLS}page=2>; rel="next"'}),
