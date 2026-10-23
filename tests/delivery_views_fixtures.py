@@ -98,7 +98,12 @@ with open(sys.argv[1] + ".calls", "a", encoding="utf-8") as calls:
     calls.write(key + "\n")
 answer = table.get(key)
 if isinstance(answer, dict) and "sleep" in answer:
+    # Each slow read leaves its start and end, so a test can count how many ran at once.
+    with open(sys.argv[1] + ".spans", "a", encoding="utf-8") as spans:
+        spans.write(f"1 {time.time()}\n")
     time.sleep(answer["sleep"])
+    with open(sys.argv[1] + ".spans", "a", encoding="utf-8") as spans:
+        spans.write(f"-1 {time.time()}\n")
     answer = answer.get("then")
 if isinstance(answer, dict) and "bytes" in answer:
     sys.stdout.write("x" * answer["bytes"])
@@ -123,13 +128,23 @@ class Runs:
 
     def answer(self, table: dict) -> None:
         self.table.write_text(json.dumps(table), encoding="utf-8")
-        calls = Path(str(self.table) + ".calls")
-        if calls.exists():
-            calls.unlink()
+        for suffix in (".calls", ".spans"):
+            Path(str(self.table) + suffix).unlink(missing_ok=True)
 
     def calls(self) -> list[str]:
         calls = Path(str(self.table) + ".calls")
         return calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+
+    def most_at_once(self) -> int:
+        """The most slow reads that were running at the same time."""
+        spans = Path(str(self.table) + ".spans")
+        events = sorted((float(at), int(step)) for step, at in
+                        (line.split() for line in spans.read_text(encoding="utf-8").splitlines())) if spans.exists() else []
+        running = most = 0
+        for _, step in events:
+            running += step
+            most = max(most, running)
+        return most
 
     @property
     def argv(self) -> list[str]:

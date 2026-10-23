@@ -444,7 +444,7 @@ class PathTests(unittest.TestCase):
             self.assertEqual(views.read_runs_cache(cache), {})
             views.write_runs_cache(cache, {"run-a": {"x": 1}})
             self.assertEqual(views.read_runs_cache(cache), {"run-a": {"x": 1}})
-            self.assertEqual(json.loads(cache.read_text())["spec"], "delivery-views-runs/1")
+            self.assertEqual(json.loads(cache.read_text())["spec"], "delivery-views-runs/2")
             cache.write_text("{corrupt", encoding="utf-8")
             self.assertEqual(views.read_runs_cache(cache), {})
             cache.write_text(json.dumps({"spec": "delivery-views-runs/0", "runs": {"a": 1}}), encoding="utf-8")

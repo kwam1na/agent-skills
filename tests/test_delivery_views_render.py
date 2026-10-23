@@ -344,7 +344,7 @@ class CollectRunsTests(unittest.TestCase):
         self.runs.answer(table(self.LISTED, {"run-7": VIEW}))
         self.collect(document_naming(["run-7"]))
         self.assertEqual(self.runs.calls(), ["runs list --json", "runs view run-7 --json"])
-        self.assertEqual(json.loads(self.cache.read_text())["spec"], "delivery-views-runs/1")
+        self.assertEqual(json.loads(self.cache.read_text())["spec"], "delivery-views-runs/2")
 
     def test_a_cache_read_with_other_report_specs_is_read_again(self) -> None:
         older = report(1, spec="older-report/1")
@@ -439,18 +439,29 @@ class CollectRunsTests(unittest.TestCase):
         self.assertEqual(json.loads(self.cache.read_text())["runs"], {})
 
     def test_runs_past_the_deadline_are_unavailable_and_stay_uncached(self) -> None:
-        names = [f"run-{index}" for index in range(6)]
+        # Six at a time, two rounds of reads fit the deadline and the third does not.
+        names = [f"run-{index}" for index in range(18)]
         listed = [{"runId": name, "bytes": 1} for name in names]
         self.runs.answer(table(listed, {name: {"sleep": 1, "then": VIEW} for name in names}))
         started = time.monotonic()
-        runs = self.collect(document_naming(names), deadline=3.5)
-        self.assertLess(time.monotonic() - started, 6)
+        runs = self.collect(document_naming(names), deadline=2.5)
+        self.assertLess(time.monotonic() - started, 5)
         unavailable = [name for name in names if runs[name].get("unavailable")]
         self.assertTrue(unavailable and unavailable == names[-len(unavailable):], runs)
         self.assertTrue(set(json.loads(self.cache.read_text())["runs"]).isdisjoint(unavailable))
         # The next render reads them again.
         self.runs.answer(table(listed, {name: VIEW for name in names}))
         self.assertFalse(any(run.get("unavailable") for run in self.collect(document_naming(names)).values()))
+
+    def test_runs_are_read_six_at_a_time(self) -> None:
+        names = [f"run-{index}" for index in range(13)]
+        listed = [{"runId": name, "bytes": 1} for name in names]
+        self.runs.answer(table(listed, {name: {"sleep": 0.5, "then": VIEW} for name in names}))
+        started = time.monotonic()
+        runs = self.collect(document_naming(names))
+        self.assertLess(time.monotonic() - started, 0.5 * len(names) / 2)
+        self.assertEqual(self.runs.most_at_once(), render.READ_WORKERS)
+        self.assertFalse(any(run.get("unavailable") for run in runs.values()))
 
 
 class LinkTests(unittest.TestCase):

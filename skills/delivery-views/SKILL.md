@@ -144,10 +144,12 @@ timeout, oversize output, a non-zero exit or output that is not JSON makes
 that run unavailable and never fails the render. All of a render's runs share
 one deadline: the renderer's `--deadline-seconds`, 20 when absent, capped at
 the renderer's declared `timeoutSeconds`, read through `--binding`, less 5
-seconds.
+seconds. Runs are read six at a time, so one slow or hanging run holds only
+its own slot. The line map keeps a run's latest 12 rounds; the history keeps
+every round.
 
 The run cache is `<state directory>/.cache/delivery-views/runs.json`, spec
-`delivery-views-runs/1`, written atomically; a corrupt cache is rebuilt and an
+`delivery-views-runs/2`, written atomically; a corrupt cache is rebuilt and an
 unwritable one only costs a re-read. A page keeps its theme under
 `delivery-views:<first 16 hex of the SHA-256 of the resolved state
 directory>:theme`, so two repositories served from one address never share it.

@@ -42,6 +42,7 @@ import math
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
@@ -58,6 +59,8 @@ PAGE_BUDGET_BYTES = 4 * 1024 * 1024
 TEXT_LIMIT_BYTES = 64 * 1024
 SEVERITIES = ("P0", "P1", "P2", "P3")
 ROUNDS_KEPT = 12
+# How many runs are read at once; every read still shares the render's one deadline.
+READ_WORKERS = 6
 NOTES_KEPT = 5
 FIELDS_KEPT = 4
 VALUE_LENGTH = 90
@@ -499,7 +502,7 @@ def collect_runs(document: object, config: dict, root: Path, cache_path: Path, d
         return {run_id: _unavailable(run_id) for run_id in named}
     rows = {row["runId"]: row for row in inventory["runs"] if _is_object(row) and isinstance(row.get("runId"), str)}
     cached = views_common.read_runs_cache(cache_path)
-    kept, runs = {}, {}
+    kept, runs, unread = {}, {}, []
     for run_id in named:
         row = rows.get(run_id)
         if row is None:
@@ -516,14 +519,22 @@ def collect_runs(document: object, config: dict, root: Path, cache_path: Path, d
             kept[run_id] = {"bytes": size, "reportSpecs": specs, "summary": summary}
             runs[run_id] = summary
             continue
-        product.late = False
-        summary = _read_run(product, run_id, row, specs)
-        if summary is None:
-            runs[run_id] = _unavailable(run_id)
-            continue
-        if size is not None and not product.late:
-            kept[run_id] = {"bytes": size, "reportSpecs": specs, "summary": summary}
-        runs[run_id] = summary
+        unread.append((run_id, row, size))
+
+    def read(item: tuple) -> tuple:
+        run_id, row, _ = item
+        # Each run reads through its own product, so one run's late read never marks another's.
+        own = Product(argv, config["runs"]["timeoutSeconds"], config["scrubEnv"], root, deadline)
+        return _read_run(own, run_id, row, specs), own.late
+
+    with ThreadPoolExecutor(max_workers=READ_WORKERS) as pool:
+        for (run_id, _, size), (summary, late) in zip(unread, pool.map(read, unread)):
+            if summary is None:
+                runs[run_id] = _unavailable(run_id)
+                continue
+            if size is not None and not late:
+                kept[run_id] = {"bytes": size, "reportSpecs": specs, "summary": summary}
+            runs[run_id] = summary
     views_common.write_runs_cache(cache_path, kept)
     return {run_id: runs[run_id] for run_id in named}
 
@@ -674,7 +685,7 @@ def summarize_run_export(exported: object) -> dict | None:
         "durationSeconds": _count(summary.get("durationSeconds")),
         "rounds": _count(summary.get("roundsClosed")),
         "findings": findings_of(summary.get("findings")),
-        "roundDetail": detail[-ROUNDS_KEPT:],
+        "roundDetail": detail,
     }
 
 
@@ -762,14 +773,22 @@ def collect_history(document: object, config: dict, root: Path, cache_path: Path
         listed = [entry for entry in inventory["runs"] if _is_object(entry) and _text(entry.get("runId"))] if readable else []
         cached = views_common.read_runs_cache(cache_path)
         kept = {}
+
+        def fresh(entry: dict) -> bool:
+            size, hit = entry.get("bytes"), cached.get(entry["runId"])
+            return (_count(size) is not None and _is_object(hit) and _number_equal(hit.get("bytes"), size)
+                    and _is_object(hit.get("summary")))
+
+        unread = [entry["runId"] for entry in listed if not fresh(entry)]
+        with ThreadPoolExecutor(max_workers=READ_WORKERS) as pool:
+            shown = dict(zip(unread, pool.map(lambda run_id: product("runs", "show", run_id, "--json"), unread)))
         for entry in listed:
             run_id = entry["runId"]
             size = entry.get("bytes") if _count(entry.get("bytes")) is not None else None
-            hit = cached.get(run_id)
-            if size is not None and _is_object(hit) and _number_equal(hit.get("bytes"), size) and _is_object(hit.get("summary")):
-                summary = hit["summary"]
+            if run_id not in shown:
+                summary = cached[run_id]["summary"]
             else:
-                summary = summarize_run_export(product("runs", "show", run_id, "--json"))
+                summary = summarize_run_export(shown[run_id])
             if summary is not None:
                 if size is not None:
                     kept[run_id] = {"bytes": size, "summary": summary}
