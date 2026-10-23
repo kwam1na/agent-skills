@@ -288,9 +288,8 @@ def _pull_path(template: str) -> re.Pattern:
         elif piece in seen:
             pattern += f"(?P={piece})"
         else:
-            # Canonical owner/repository segments: no encoded separators,
-            # browser-normalized escapes, credentials or empty segments.
-            capture = r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" if piece == "repository" else "[0-9]+"
+            segment = r"(?:[A-Za-z0-9_.~-]|%[0-9A-F]{2})+"
+            capture = f"{segment}/{segment}" if piece == "repository" else "[0-9]+"
             pattern += f"(?P<{piece}>{capture})"
             seen.add(piece)
     return re.compile(pattern)
@@ -321,9 +320,22 @@ def change_request_identity(value: str, forges: list[dict]) -> dict[str, str] | 
         match = _pull_path(forge["pullUrl"]).fullmatch(parts.path)
         if not match or "number" not in match.groupdict():
             continue
-        repository = match.groupdict().get("repository", forge["repository"])
-        if any(segment in (".", "..") for segment in repository.split("/")):
-            continue
+        encoded_repository = match.groupdict().get("repository")
+        repository = forge["repository"]
+        if encoded_repository is not None:
+            try:
+                segments = [urllib.parse.unquote(segment, errors="strict")
+                            for segment in encoded_repository.split("/")]
+            except UnicodeDecodeError:
+                continue
+            if any(segment in (".", "..") or "/" in segment or "\\" in segment
+                   or CONTROL.search(segment) for segment in segments):
+                continue
+            repository = "/".join(segments)
+            # Match the existing template encoder exactly: reject alternate
+            # spellings and escapes which browsers might normalize differently.
+            if _encode("repository", repository) != encoded_repository:
+                continue
         return {"href": value, "number": match.group("number"), "repository": repository}
     return None
 

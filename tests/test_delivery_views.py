@@ -281,6 +281,24 @@ class LinkTests(unittest.TestCase):
                     self.assertEqual(views.change_request_identity(url, [forge]),
                                      {"href": url, "number": "207", "repository": repository})
 
+    def test_canonical_encoded_repository_segments_keep_identity_without_escapes(self) -> None:
+        forge = {"name": "Configured forge", "repository": "original/project",
+                 "pullUrl": "https://forge.example/{repository}/pull/{number}",
+                 "commitUrl": "https://forge.example/{repository}/commit/{sha}"}
+        for repository, encoded in (("équipe/client app", "%C3%A9quipe/client%20app"),
+                                    ("team/~service", "team/~service")):
+            url = f"https://forge.example/{encoded}/pull/180"
+            with self.subTest(repository=repository):
+                self.assertEqual(views.change_request_identity(url, [forge]),
+                                 {"href": url, "number": "180", "repository": repository})
+                self.assertEqual(views.change_request_link(url, [forge]), url)
+        for encoded in ("team/%2E", "team/%2E%2E", "team/x%2Fy", "team/x%5Cy",
+                        "team/x%00y", "team/x%C2%85y", "team/x%E2%80%A8y", "team/%FF",
+                        "team/%C3", "%74eam/repo", "team/%7Erepo", "%c3%a9quipe/repo",
+                        "team/%", "team/%GG", "team//repo"):
+            with self.subTest(encoded=encoded):
+                self.assertIsNone(views.change_request_identity(f"https://forge.example/{encoded}/pull/180", [forge]))
+
     def test_cross_repository_identity_keeps_origin_and_canonical_path_boundary(self) -> None:
         forge = {"name": "GitHub", "repository": "v26-technologies/athena",
                  "pullUrl": "https://github.com/{repository}/pull/{number}",
