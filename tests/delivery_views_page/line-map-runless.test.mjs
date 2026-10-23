@@ -12,6 +12,18 @@ function document() {
     reviewEvidence:{'WORK-1':{candidateRef:B,digest:'d'.repeat(64),outcomes:[result(1,A,true),result(2,B,false)]}}};
 }
 const config={spec:'delivery-views-config/1'};
+test('closure explanations start collapsed and expand without hiding the settlement summary',async()=>{
+  const [closed,opened,first,last]=await openPage(pageWithRuns(document(),{}, {config}),{steps:[
+    {toggle:'.run-closures'}, {click:'.run-pick',index:0}, {click:'.run-pick',index:1}
+  ]});
+  expect(closed.app.querySelector('.run-closures').hasAttribute('open')).toBe(false);
+  expect(closed.app.querySelector('.run-closures > summary').textContent).toContain('Closure details');
+  expect(closed.app.querySelector('.run-settled').closest('details')).toBeNull();
+  expect(opened.app.querySelector('.run-closures').hasAttribute('open')).toBe(true);
+  expect(opened.app.querySelector('.run-closure').textContent).toContain('Original reviewer confirmed <b>the fix</b>.');
+  expect(first.app.querySelector('.run-closures')).toBeNull();
+  expect(last.app.querySelector('.run-closures').hasAttribute('open')).toBe(false);
+});
 test('runless actual rounds share cards, escaped findings and originating closure text', async()=>{
   const page=pageWithRuns(document(),{}, {config});
   expect(page).not.toContain('</script><img');

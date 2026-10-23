@@ -390,11 +390,15 @@ function runSummaryNode(summary, options) {
       if (told) { box.appendChild(told); }
       var settled = Array.isArray(round.settled) ? round.settled : [];
       if (settled.length) { box.appendChild(settledNode(settled)); }
-      settled.forEach(function (entry) {
-        if (summary.observational && typeof entry.resolution === "string") {
-          box.appendChild(node("p", "run-closure", entry.id + " · " + lensName(entry.lens) + ": " + entry.resolution));
-        }
-      });
+      var closures = settled.filter(function (entry) { return summary.observational && typeof entry.resolution === "string"; });
+      if (closures.length) {
+        var disclosure = node("details", "run-closures");
+        disclosure.appendChild(node("summary", "", "Closure details · " + closures.length));
+        closures.forEach(function (entry) {
+          disclosure.appendChild(node("p", "run-closure", entry.id + " · " + lensName(entry.lens) + ": " + entry.resolution));
+        });
+        box.appendChild(disclosure);
+      }
       return box;
     }
     var names = Object.keys(verdicts).sort();

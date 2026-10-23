@@ -141,7 +141,7 @@
       "capabilities": [
         "delivery-views"
       ],
-      "degradedBehavior": "Without a configuration the views are not declared and the core workflow's built-in pages remain; a view that cannot read a run, a report or a snapshot shows it as unavailable rather than failing the render. Recovered landing times use source occurrence, while the activity feed retains observation time. Unknown phase times remain unavailable; configured forge templates recognize validated cross-repository pull requests with compact labels and retained repository identity. Native review observations retain actual reports without a run; missing or candidate-mismatched artifacts stay unavailable and carry no admission authority.",
+      "degradedBehavior": "Without a configuration the views are not declared and the core workflow's built-in pages remain; a view that cannot read a run, a report or a snapshot shows it as unavailable rather than failing the render. Recovered landing times use source occurrence, while the activity feed retains observation time. Unknown phase times remain unavailable; configured forge templates recognize validated cross-repository pull requests with compact labels and retained repository identity. Native review observations retain actual reports without a run; missing or candidate-mismatched artifacts stay unavailable and carry no admission authority. Originating closure explanations remain available through a collapsed keyboard-accessible disclosure, with settlement summaries visible.",
       "dependencies": [
         {
           "id": "orchestrate-work",

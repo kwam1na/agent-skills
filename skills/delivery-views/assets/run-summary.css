@@ -72,3 +72,10 @@ a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in s
   .run-bead .run-dot { transition: transform .18s var(--ease, ease); }
   .run-pick:hover .run-dot { transform: scale(1.1); }
 }
+.run-closures { font-size: 13px; line-height: 1.5; }
+.run-closures > summary { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--faint, #8f979c); cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 6px; }
+.run-closures > summary::-webkit-details-marker { display: none; }
+.run-closures > summary::before { content: ""; width: 5px; height: 5px; margin: 0 2px 1px 0; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); }
+.run-closures[open] > summary::before { transform: rotate(45deg); margin-bottom: 3px; }
+.run-closures > summary:hover, .run-closures > summary:focus-visible { color: var(--soft, #5f676d); }
+.run-closures .run-closure { margin-top: 12px; overflow-wrap: anywhere; color: var(--soft, #5f676d); }
