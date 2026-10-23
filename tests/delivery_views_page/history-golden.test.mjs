@@ -55,3 +55,27 @@ test("the line map link is the binding's line-map output as a file and its /view
   assert.deepEqual([...file.app.querySelectorAll(".kicker a")].map((link) => link.getAttribute("href")), ["line-map.html"]);
   assert.deepEqual([...served.app.querySelectorAll(".kicker a")].map((link) => link.getAttribute("href")), ["/view/line-map.html"]);
 });
+
+test("a line map output in a folder keeps its separators, as a file and when served", async () => {
+  const renderers = [
+    { id: "line-map", argv: ["python3", "-B", "render.py", "line-map"], output: "views/line map.html", timeoutSeconds: 30 },
+    { id: "history", argv: ["python3", "-B", "render.py", "history"], output: "views/history.html", timeoutSeconds: 60 },
+  ];
+  const page = renderHistoryPage({}, { config: { spec: "delivery-views-config/1" }, renderers });
+  const [file] = await openPage(page);
+  const [served] = await openPage(page, { rendered: page });
+  assert.equal(file.app.querySelector(".kicker a").getAttribute("href"), "views/line%20map.html");
+  assert.equal(served.app.querySelector(".kicker a").getAttribute("href"), "/view/views/line%20map.html");
+});
+
+test("the page names only the sources the configuration gives it", async () => {
+  const say = async (config) => (await openPage(renderHistoryPage({}, { config, now: "2026-10-22T12:00:00Z" })))[0].app.querySelector(".say").textContent;
+  const runs = { argv: ["python3", "-c", "print('[]')"] };
+  const exports = { directory: "exported" };
+  assert.equal(await say({ spec: "delivery-views-config/1", runs, exports }),
+    "Runs from the delivery product and the exports tracked under exported, as of 2026-10-22 12:00 UTC. Reload for newer.");
+  assert.equal(await say({ spec: "delivery-views-config/1", runs }), "Runs from the delivery product, as of 2026-10-22 12:00 UTC. Reload for newer.");
+  assert.equal(await say({ spec: "delivery-views-config/1", exports }),
+    "Runs from the exports tracked under exported, as of 2026-10-22 12:00 UTC. Reload for newer.");
+  assert.equal(await say({ spec: "delivery-views-config/1" }), "No runs command or export directory is configured.");
+});

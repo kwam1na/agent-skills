@@ -64,6 +64,10 @@ class ExportSummaryTests(unittest.TestCase):
         self.assertIsNone(render._legacy_summary(legacy("claude/realign-finish-line"), TRACKER)["ticket"])
         self.assertIsNone(render._legacy_summary(legacy("codex/abc-12-review-scope"), None)["ticket"])
 
+    def test_a_lowercase_key_pattern_still_finds_the_key(self) -> None:
+        lowercase = {**TRACKER, "keyPattern": "^abc-[0-9]+$"}
+        self.assertEqual(render._legacy_summary(legacy("codex/abc-12-review-scope"), lowercase)["ticket"], "ABC-12")
+
 
 class CollectHistoryTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -154,6 +158,63 @@ class CollectHistoryTests(unittest.TestCase):
         self.assertEqual(self.collect()["rows"][0]["summary"]["lastAt"], "2026-10-21T10:30:00Z")
         self.assertEqual(self.runs.calls(), ["runs list --json", "runs show run-a --json"])
 
+    def test_an_unreadable_run_list_keeps_the_cache_and_a_run_no_longer_listed_leaves_it(self) -> None:
+        self.answer([listed("run-a"), listed("run-b")], {
+            "run-a": run_export("run-a", "ABC-1", "2026-10-20T10:30:00Z"),
+            "run-b": run_export("run-b", "ABC-2", "2026-10-21T10:30:00Z")})
+        self.collect()
+        self.runs.answer({"runs list --json": None})
+        self.collect()
+        self.assertEqual(sorted(views_common.read_runs_cache(self.cache)), ["run-a", "run-b"])
+        self.answer([listed("run-a")], {})
+        self.assertEqual([row["key"] for row in self.collect()["rows"]], ["run-a"])
+        self.assertEqual(self.runs.calls(), ["runs list --json"])
+        self.assertEqual(sorted(views_common.read_runs_cache(self.cache)), ["run-a"])
+
+    def test_shows_past_the_deadline_are_noted_and_not_cached(self) -> None:
+        slow = {"sleep": 2, "then": run_export("run-b", "ABC-2", "2026-10-21T10:30:00Z")}
+        self.answer([listed("run-a"), listed("run-b"), listed("run-c")], {
+            "run-a": run_export("run-a", "ABC-1", "2026-10-20T10:30:00Z"), "run-b": slow, "run-c": slow})
+        rows = {row["key"]: row for row in self.collect(deadline=1)["rows"]}
+        self.assertIsNone(rows["run-a"]["note"])
+        for run_id in ("run-b", "run-c"):
+            self.assertEqual(rows[run_id]["note"], "Its run could not be read from the product.")
+        self.assertEqual(sorted(views_common.read_runs_cache(self.cache)), ["run-a"])
+
+    def test_a_missing_export_directory_lists_nothing_and_fails_nothing(self) -> None:
+        self.exports.rmdir()
+        self.assertEqual(self.collect(runs=False)["rows"], [])
+
+    def test_an_export_that_is_not_text_or_too_deep_is_noted_and_a_directory_is_not_an_export(self) -> None:
+        (self.exports / "binary.json").write_bytes(b"\xff\xfe{}")
+        self.write("deep.json", "[" * 100000)
+        (self.exports / "d.json").mkdir()
+        rows = {row["key"]: row["note"] for row in self.collect(runs=False)["rows"]}
+        self.assertEqual(rows, {"binary.json": "This export could not be read.", "deep.json": "This export could not be read."})
+
+    def test_an_unreadable_export_of_a_listed_run_leaves_the_products_row(self) -> None:
+        self.answer([listed("run-a")], {"run-a": run_export("run-a", "ABC-1", "2026-10-20T10:30:00Z")})
+        self.write("run-a.json", "{ not json")
+        [row] = self.collect()["rows"]
+        self.assertEqual((row["key"], row["source"], row["note"]), ("run-a", "product", None))
+
+    def test_a_run_export_without_a_run_id_takes_its_file_name(self) -> None:
+        exported = run_export("run-z", "ABC-1", "2026-10-20T10:30:00Z")
+        del exported["runId"]
+        self.write("run-z.json", exported)
+        [row] = self.collect(runs=False)["rows"]
+        self.assertEqual((row["key"], row["summary"]["runId"]), ("run-z", "run-z"))
+
+    def test_a_telemetry_record_without_a_branch_is_not_a_run_export(self) -> None:
+        self.write("old.json", {"schemaVersion": 1, "generatedAt": "2026-08-13T17:38:52.076Z"})
+        [row] = self.collect(runs=False)["rows"]
+        self.assertEqual((row["source"], row["note"]), ("export", "This file is not a run export."))
+
+    def test_tied_rows_are_ordered_by_key_in_code_point_order(self) -> None:
+        for run_id in ("run-a", "run-B", "run_c"):
+            self.write(f"{run_id}.json", run_export(run_id, "ABC-1", "2026-10-20T10:30:00Z"))
+        self.assertEqual([row["key"] for row in self.collect(runs=False)["rows"]], ["run-B", "run-a", "run_c"])
+
     def test_a_run_past_the_deadline_is_noted_unread_and_asked_for_again(self) -> None:
         self.answer([listed("run-a")], {"run-a": run_export("run-a", "ABC-1", "2026-10-20T10:30:00Z")})
         history = self.collect(deadline=0)
@@ -181,6 +242,18 @@ class HistoryBudgetTests(unittest.TestCase):
         self.assertEqual(kept["rows"][3]["summary"]["roundDetail"], [])
         self.assertLessEqual(len(render.embed(kept).encode("utf-8")), full - 10)
         self.assertEqual(render.history_within_budget(history, budget=full), history)
+
+    def test_a_row_with_an_oversized_label_still_keeps_the_page_within_the_budget(self) -> None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        root = Path(folder.name)
+        (root / "exports").mkdir()
+        (root / "exports" / "big.json").write_text(json.dumps(legacy("codex/" + "x" * (5 * 1024 * 1024))), encoding="utf-8")
+        chosen = config(exports={"directory": "exports"})
+        history = render.collect_history({}, chosen, root, root / "cache.json", time.monotonic() + FAR, "2026-10-22T12:00:00Z")
+        kept = render.history_within_budget(history)
+        self.assertLessEqual(len(render.embed(kept).encode("utf-8")), render.PAGE_BUDGET_BYTES)
+        self.assertIsNone(kept["rows"][0]["label"])
 
 
 class HistoryCommandTests(unittest.TestCase):
@@ -220,9 +293,27 @@ class HistoryCommandTests(unittest.TestCase):
         result = self.render({}, {"spec": views_common.CONFIG_SPEC}, renderers=[self.RENDERERS[1]])
         self.assertEqual(result.returncode, 0, result.stderr)
         page = result.stdout.decode("utf-8")
-        view = block(page, "delivery-history-view")
-        self.assertEqual((view["lineMap"], view["exports"]), (None, None))
+        self.assertEqual(block(page, "delivery-history-view"), {"lineMap": None, "runs": False, "exports": None})
         self.assertRegex(block(page, "delivery-history")["asOf"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$")
+
+    def test_the_renderers_declared_timeout_caps_every_runs_command(self) -> None:
+        runs = Runs(self.root)
+        runs.answer({"runs list --json": inventory(listed("run-a")),
+                     "runs show run-a --json": {"sleep": 30, "then": run_export("run-a", "ABC-1", "2026-10-20T10:30:00Z")}})
+        renderers = [{**self.RENDERERS[1], "timeoutSeconds": 6}]
+        started = time.monotonic()
+        result = self.render({}, {"spec": views_common.CONFIG_SPEC, "runs": {"argv": runs.argv, "timeoutSeconds": 10}},
+                             renderers=renderers)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertLess(time.monotonic() - started, 10)
+        [row] = block(result.stdout.decode("utf-8"), "delivery-history")["rows"]
+        self.assertEqual(row["note"], "Its run could not be read from the product.")
+
+    def test_the_page_inlines_its_own_and_the_run_summarys_assets(self) -> None:
+        result = self.render({}, {"spec": views_common.CONFIG_SPEC})
+        page = result.stdout.decode("utf-8")
+        for asset in ("history.css", "history.js", "run-summary.css", "run-summary.js"):
+            self.assertIn((render.ASSETS / asset).read_text(encoding="utf-8"), page, asset)
 
     def test_a_document_that_is_not_json_exits_non_zero(self) -> None:
         result = self.render(b"{not json", {"spec": views_common.CONFIG_SPEC})

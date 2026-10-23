@@ -40,13 +40,15 @@
   var lineMap = null;
   if (text(VIEW.lineMap)) {
     lineMap = el("a", null, "Back to the line map");
-    lineMap.setAttribute("href", served ? "/view/" + encodeURIComponent(VIEW.lineMap) : VIEW.lineMap);
+    // Each path segment is encoded and the separators kept, as the live server names a view by its output.
+    lineMap.setAttribute("href", (served ? "/view/" : "") + VIEW.lineMap.split("/").map(encodeURIComponent).join("/"));
   }
-  var sources = text(VIEW.exports) ? "Runs from the delivery product and the exports tracked under " + VIEW.exports : "Runs from the delivery product";
+  var sources = [VIEW.runs === true ? "the delivery product" : null, text(VIEW.exports) ? "the exports tracked under " + VIEW.exports : null].filter(Boolean);
   var page = add(el("div", "page"),
     add(el("div", "kicker"), el("span", null, "Delivery history"), lineMap),
     el("h1", "title", "Past deliveries and runs, newest first."),
-    el("p", "say", sources + ", as of " + at(history.asOf) + " UTC. Reload for newer."));
+    el("p", "say", sources.length ? "Runs from " + sources.join(" and ") + ", as of " + at(history.asOf) + " UTC. Reload for newer."
+      : "No runs command or export directory is configured."));
   var notes = list(history.notes);
   if (notes.length) { page.appendChild(add.apply(null, [el("ul", "notes")].concat(notes.map(function (note) { return el("li", null, text(note)); })))); }
   var runs = add(el("div", "runs"), add(el("div", "head"),
@@ -78,7 +80,7 @@
     detail.hidden = true;
     button.addEventListener("click", function () {
       var opening = detail.hidden;
-      if (opening && !detail.firstChild) { detail.appendChild(runSummaryNode(summary, { lenses: VIEW.lenses })); }
+      if (opening && !detail.firstChild) { detail.appendChild(runSummaryNode(summary)); }
       detail.hidden = !opening;
       button.setAttribute("aria-expanded", opening ? "true" : "false");
     });

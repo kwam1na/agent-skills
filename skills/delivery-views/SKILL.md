@@ -93,7 +93,8 @@ It lists every run `runs list --json` shows, read with `runs show <id> --json`
 (reused from its own cache in the state directory while the inventory shows
 the run unchanged), then every `.json` file in the `exports` directory that no
 `ignore` pattern matches and the product has not already listed: a run export,
-or an older telemetry record whose branch carries a tracker key. A run or file
+or an older telemetry record (`schemaVersion: 1` with a branch), its ticket
+read from the branch by the tracker's key pattern. A run or file
 that cannot be read is listed with a note. The record on stdin only names the
 delivery each run belongs to. Its run commands share the render's deadline, and
 past the 4 MiB page budget the oldest rows give up their summaries first.

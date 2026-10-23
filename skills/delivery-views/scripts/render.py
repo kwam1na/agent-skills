@@ -688,7 +688,7 @@ def _branch_ticket(branch: str | None, tracker: dict | None) -> str | None:
     except re.error:
         return None
     key = found.group(0).upper() if found else None
-    return key if key is not None and re.fullmatch(pattern.removeprefix("^").removesuffix("$"), key) else None
+    return key if key is not None and re.fullmatch(pattern.removeprefix("^").removesuffix("$"), key, re.IGNORECASE) else None
 
 
 def _legacy_summary(record: dict, tracker: dict | None) -> dict:
@@ -755,11 +755,11 @@ def collect_history(document: object, config: dict, root: Path, cache_path: Path
     if argv is not None:
         product = Product(argv, config["runs"]["timeoutSeconds"], config["scrubEnv"], root, deadline)
         inventory = product("runs", "list", "--json")
-        if not _is_object(inventory) or not isinstance(inventory.get("runs"), list):
-            notes.append("The product's run list could not be read; only the tracked exports are listed.")
-            listed = []
-        else:
-            listed = [entry for entry in inventory["runs"] if _is_object(entry) and _text(entry.get("runId"))]
+        readable = _is_object(inventory) and isinstance(inventory.get("runs"), list)
+        if not readable:
+            notes.append("The product's run list could not be read; only the tracked exports are listed."
+                         if config.get("exports") else "The product's run list could not be read.")
+        listed = [entry for entry in inventory["runs"] if _is_object(entry) and _text(entry.get("runId"))] if readable else []
         cached = views_common.read_runs_cache(cache_path)
         kept = {}
         for entry in listed:
@@ -780,7 +780,9 @@ def collect_history(document: object, config: dict, root: Path, cache_path: Path
                                     "status": _text(entry.get("status")),
                                     "durationSeconds": _count(entry.get("durationSeconds"))},
                 note="Its run could not be read from the product.")
-        views_common.write_runs_cache(cache_path, kept)
+        # An unreadable inventory leaves the cache as it was, so the next render need not read every run again.
+        if readable:
+            views_common.write_runs_cache(cache_path, kept)
 
     for name, body in _export_files(config, root):
         named = re.fullmatch(r"(run-[A-Za-z0-9_-]+)\.json", name)
@@ -812,14 +814,15 @@ def history_within_budget(history: dict, budget: int = PAGE_BUDGET_BYTES) -> dic
             break
         before = len(embed(row).encode("utf-8"))
         row["summary"] = _unknown_summary(row["summary"].get("runId"))
+        row["label"], row["delivery"] = None, None
         row["note"] = "Its details are over the page's size budget."
         size -= before - len(embed(row).encode("utf-8"))
     return history
 
 
 def render_history(history: dict, config: dict, *, line_map: str | None) -> str:
-    view = {"lineMap": line_map, "exports": config["exports"]["directory"] if config.get("exports") else None,
-            "lenses": config["lenses"]}
+    view = {"lineMap": line_map, "runs": config["runs"] is not None,
+            "exports": config["exports"]["directory"] if config.get("exports") else None}
     return "\n".join([
         "<!doctype html>",
         '<html lang="en">',

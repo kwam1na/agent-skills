@@ -48,4 +48,9 @@ The port is held to these with `history-config.json`, the line-map corpus's
 configuration with `exports` naming the source's export directory and skipping
 its delivery records. One output differs by design: the source linked its own
 file name and the live server's front page, and the port links the binding's
-line-map output as a file and at its `/view/` address.
+line-map output as a file and at its `/view/` address. Beyond what the corpus
+exercises, the port also differs by design: a run summary keeps its latest 12
+rounds, an older telemetry record's ticket is read by the tracker's key pattern,
+file names and tied keys sort by code point rather than locale, summaries are
+cached while the inventory shows a run unchanged, and the page keeps a size
+budget and one deadline for its runs commands.
