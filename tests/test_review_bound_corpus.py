@@ -93,6 +93,22 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " or by that lens's withdrawal with its reason, never by a later deferral",
         "a finding the lens filed as a deferral is discharged by that deferral",
         "A new finding outside the delta is filed only at P0",
+        "and its approval condition against the delta the lens derives itself,"
+        " and the executor adds no list",
+        "and a P1 first filed outside the delta in a delivery-review verification"
+        " round",
+        "a change adopted differently from its approval condition, or declined,"
+        " is re-checked like any carried finding",
+        "The approval conditions add to the carried-finding re-check and the"
+        " late-finding marking; they replace neither",
+        "That out-of-delta rule is delivery review's; plan review, the"
+        " `unbounded` case, has no deferral path and files such a finding at P0"
+        " or P1",
+        "Every lens result ends its `evidence` with approval conditions: for each"
+        " finding it raises, deferrals included, whether the change that finding"
+        " proposes, adopted as written, resolves it",
+        "Approval conditions are report text inside `evidence`;"
+        " `review-lens-result/1` does not change, and nothing enforces them",
         "recorded as a deferral with a follow-up item",
         "belong in `evidence` as deferrals with a follow-up item",
         "A deferral's follow-up is a tracked item, and the executor records it, not"
@@ -201,6 +217,26 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "The lens names the reviewed tree SHA and both successful identity checks"
         " in its evidence",
     ),
+    "skills/obtain-review/references/round-brief-template.md": (
+        "a new finding outside the delta is filed only at P0",
+        "for delivery review, a new finding outside the delta is filed only at"
+        " P0, and a P1 becomes a deferral with a follow-up item; for plan review"
+        " (`unbounded`), it is filed at P0 or P1, with no deferral",
+        "re-check every carried finding and its approval condition against the"
+        " delta this lens derives itself from its most recent result-carrying"
+        " entry and this round, then review that delta; the executor adds no"
+        " list",
+        "for delivery review, the deferrable findings",
+        "A change adopted differently from its approval condition, or declined,"
+        " is re-checked like any carried finding",
+        "The approval conditions add to the carried-finding re-check and the"
+        " late-finding marking; they replace neither",
+        "End `evidence` with the approval conditions: for each finding this"
+        " result raises, deferrals included, whether the change that finding proposes,"
+        " adopted as written, resolves it",
+        "Approval conditions are report text inside `evidence`; the result shape"
+        " does not change, and nothing enforces them",
+    ),
     "skills/execute-work/SKILL.md": (
         "state the bound in effect for the delivery",
         "The mandated lenses are the two the delivery product ships, correctness"
@@ -257,6 +293,14 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "skills/plan-work/SKILL.md": (
         "Plan review carries no round bound",
+        "Every plan-review lens ends its result's `evidence` with approval"
+        " conditions: for each finding, whether the change it proposes, adopted"
+        " as written, resolves it",
+        "re-checks each carried finding and its approval condition against the"
+        " delta the lens derives itself, and a change adopted differently or declined"
+        " is re-checked like any carried finding",
+        "In a follow-up round, a new finding against unchanged plan text is"
+        " raised only at P0 or P1, because a plan has no deferral path",
         "it runs until its lenses align unless the operator ends it by decision,"
         " and no round count ends it",
         "Plan review is separate from the delivery review that `$review-work`"
