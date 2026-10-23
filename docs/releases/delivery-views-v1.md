@@ -40,7 +40,7 @@ A repository that delivers epics through orchestrate-work gets ready-made views 
 **Runs:**
 - Runs are read through the configured `runs` command and read six at a time.
 - Each command is bounded, and all of a render's reads share one deadline, so a slow or hanging run holds only its own slot.
-- Results are cached in the state directory, within a 4 MiB page budget.
+- Results are cached in the state directory, and each page embeds them within a 4 MiB budget.
 
 **Snapshot commands** (`scripts/snapshot.py --kind jira|bitbucket|linear|github`), each printing a `work-snapshot/1`:
 - Credentials come only from named environment variables and go only to the provider's origin.
@@ -91,5 +91,5 @@ Every review lens ends its result with approval conditions: for each finding, wh
   - The attestation comes from the owner-approved live host run on two disposable issues, both canceled at the end. Its receipt is on the canceled primary issue and on the release's tracking issue.
   - `qualify-linear.py` passes all seven scenarios against the frozen input and the exact core and linear product archives.
 - **delivery-views profile:** this product ships unqualified, for two reasons.
-  - The core qualifier is bound to the core profile and refuses a superset. The profile's included core is the qualified `core-delivery-views-v1`.
+  - The core qualifier is bound to the core profile and refuses a superset. The core skills it includes are byte-identical to those in the qualified `core-delivery-views-v1`.
   - What the views add is covered by the corpus's own tests (golden, page-lane, renderer, snapshot and outside-adopter suites), not by a qualification record.
