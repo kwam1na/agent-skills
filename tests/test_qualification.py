@@ -38,7 +38,7 @@ class QualificationTests(unittest.TestCase):
     def test_checked_product_core_replays_exactly(self) -> None:
         skip_if_pending(self, "core")
         product = ROOT / "qualifications/product"
-        current = "core-orchestration-v1"
+        current = "core-delivery-views-v1"
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             output = directory / "core.json"
@@ -280,7 +280,7 @@ class QualificationTests(unittest.TestCase):
             first_metadata = directory / "first.release.json"
             second_archive = directory / "second.zip"
             second_metadata = directory / "second.release.json"
-            release_id = "core-workflows-orchestration-v1"
+            release_id = "core-workflows-delivery-views-v1"
             first = build_release(
                 ROOT,
                 first_archive,
@@ -341,7 +341,7 @@ class QualificationTests(unittest.TestCase):
             if pending("core") is None:
                 self.assertEqual(
                     record_path.read_bytes(),
-                    (ROOT / "qualifications" / "core-workflows-orchestration-v1.json").read_bytes(),
+                    (ROOT / "qualifications" / "core-workflows-delivery-views-v1.json").read_bytes(),
                 )
 
             replay = self._run_qualification(
@@ -439,7 +439,7 @@ class QualificationTests(unittest.TestCase):
         skip_if_pending(self, "core")
         runner = _load_runner()
         recorded = json.loads(
-            (ROOT / "qualifications" / "core-workflows-orchestration-v1.json").read_text(encoding="utf-8")
+            (ROOT / "qualifications" / "core-workflows-delivery-views-v1.json").read_text(encoding="utf-8")
         )
         self.assertEqual(
             recorded["qualificationDriverSha256"],
