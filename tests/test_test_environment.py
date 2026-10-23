@@ -120,6 +120,18 @@ class TestEnvironmentTests(unittest.TestCase):
                 self.assertTrue(Path(lines[2]).is_relative_to(resolved))
                 self.assertTrue(Path(lines[3]).is_relative_to(resolved / ".venv"))
 
+    def test_page_lane_without_node_fails_naming_node_before_creating_anything(self) -> None:
+        bootstrap = _load_bootstrap()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "worktree"
+            root.mkdir()
+            (root / "package-lock.json").write_text("{}\n", encoding="utf-8")
+            with mock.patch.object(bootstrap.shutil, "which", return_value=None):
+                with self.assertRaises(SystemExit) as raised:
+                    bootstrap.bootstrap(root)
+            self.assertIn("Node.js 20 or newer", str(raised.exception.code))
+            self.assertFalse((root / ".venv").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

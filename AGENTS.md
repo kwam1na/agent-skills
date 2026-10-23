@@ -76,6 +76,14 @@ those lists by hand first, then run the writer.
 
 The `-t .` option enters the test package's dependency guard. Without the test
 extra, that guard reports one installation failure before importing the suite.
+
+The page-behaviour lane runs the delivery views' page scripts under Node's
+built-in test runner with `jsdom`, through `tests/test_delivery_views_page.py`.
+It is development-only: bootstrap needs Node.js 20 or newer with npm and runs
+`npm ci --ignore-scripts` against the committed `package-lock.json`, installing
+into the checkout's own `node_modules/`. No release archive carries the lane's
+package files.
+
 On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
 
 A corpus pin asserts that its phrase is present in the whitespace-normalized

@@ -1,0 +1,11 @@
+{
+  "name": "agent-skills-page-tests",
+  "private": true,
+  "description": "Development-only page-behaviour test lane; never shipped in a release.",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  }
+}
