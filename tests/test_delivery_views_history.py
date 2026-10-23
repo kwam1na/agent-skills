@@ -148,6 +148,10 @@ class CollectHistoryTests(unittest.TestCase):
         self.assertEqual([row["key"] for row in history["rows"]], ["run-c"])
         self.assertEqual(history["notes"], ["The product's run list could not be read; only the tracked exports are listed."])
 
+    def test_without_exports_the_run_list_note_names_no_exports(self) -> None:
+        self.runs.answer({"runs list --json": None})
+        self.assertEqual(self.collect(exports=False)["notes"], ["The product's run list could not be read."])
+
     def test_an_unchanged_run_is_not_read_again_and_a_moved_one_is(self) -> None:
         self.answer([listed("run-a")], {"run-a": run_export("run-a", "ABC-1", "2026-10-20T10:30:00Z")})
         first = self.collect()
@@ -232,7 +236,8 @@ class CollectHistoryTests(unittest.TestCase):
 
 class HistoryBudgetTests(unittest.TestCase):
     def test_the_oldest_rows_give_up_their_summaries_first(self) -> None:
-        rows = [{"key": f"run-{index}", "source": "product", "file": None, "label": None, "note": None, "delivery": None,
+        rows = [{"key": f"run-{index}", "source": "product", "file": None, "label": None, "note": None,
+                 "delivery": {"headline": "Epic", "parent": None, "subject": "ABC-1"},
                  "summary": render.summarize_run_export(run_export(f"run-{index}", "ABC-1", "2026-10-20T10:30:00Z", rounds=12))}
                 for index in range(4)]
         history = {"asOf": "2026-10-22T12:00:00Z", "rows": rows, "notes": []}
@@ -240,6 +245,7 @@ class HistoryBudgetTests(unittest.TestCase):
         kept = render.history_within_budget(history, budget=full - 10)
         self.assertEqual([row["note"] for row in kept["rows"]], [None, None, None, "Its details are over the page's size budget."])
         self.assertEqual(kept["rows"][3]["summary"]["roundDetail"], [])
+        self.assertIsNone(kept["rows"][3]["delivery"])
         self.assertLessEqual(len(render.embed(kept).encode("utf-8")), full - 10)
         self.assertEqual(render.history_within_budget(history, budget=full), history)
 
