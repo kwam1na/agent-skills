@@ -562,3 +562,37 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind revi
   everywhere.
 - `extensions` holds a repository's own fields. It is validated as an object
   only.
+
+
+## Review observations without a product run
+
+When a lane has no product run, keep its actual native reducer outcomes through
+`capture-review` after hand-off. Supply the complete sequence, one file per
+round in order; each retains its binding and actual `review-lens-result/1`
+reports, including originating `resolvedFindings` (or native `resolutions`),
+with `resolution` or `reason` text. Candidate references are
+exact opaque strings; the final reference must match the retained queue head
+(or synced head) before the view can show approval.
+
+```sh
+python3 -B scripts/delivery_state.py --dir <state directory> capture-review \
+  --subject <subject> --candidate <reviewed candidate> \
+  --outcome <round-1.json> --outcome <round-2.json>
+```
+
+The command stores original outcome bytes in a digest-addressed
+`review-artifacts/` file and appends a `review.evidence` observation. Repeating
+the same capture or an older exact prefix does not append another event or
+replace newer history. An extension must retain every prior source byte;
+rewritten prior rounds are refused. It never creates a run,
+backdates a round, supplies product admission evidence, or converts journal
+counts into approval. Keep the original outcomes too. The artifact is bounded
+at 4 MiB, each source at 1 MiB, at most 32 rounds and 16 lenses; reading all
+observations has an 8 MiB total budget, including failed reads. Symlink artifacts are refused. Missing,
+malformed, changed or mismatched evidence is unavailable; a planned candidate
+with no head is unbound until hand-off. Existing product runs keep their own
+capture and evidence path. This optional display path does not qualify a release.
+
+A later journal review makes an earlier capture unavailable until its extended
+outcomes are captured. Originating reopenings remain unresolved; deferrals need
+a tracked follow-up and cannot discharge a carried P0 or P1.

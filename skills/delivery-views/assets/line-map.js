@@ -43,6 +43,8 @@
   // What the page last showed, so a change can be animated rather than just swapped in.
   var prev = { stages: null, feed: null, progress: null, lanes: null, open: null, byLane: null, parked: null, dots: null, selected: null };
   var lastGood = null;
+  var nativeReviews = {};
+  try { nativeReviews = JSON.parse(document.getElementById("delivery-reviews").textContent); } catch (error) { nativeReviews = {}; }
   var runs = {};
   try { runs = JSON.parse(document.getElementById("delivery-runs").textContent); } catch (error) { runs = {}; }
   if (runs === null || typeof runs !== "object" || Array.isArray(runs)) { runs = {}; }
@@ -998,8 +1000,24 @@
   // The run that built the stop, as the product's run view summarized it when the page was rendered.
   // A round the view gives no lens verdicts for takes them from the record's own review.round entry.
   function runFor(doc, item) {
-    // With no runs command configured, the page has no run section at all.
-    if (VIEW.runs !== true || typeof item.runId !== "string" || item.runId === "") { return null; }
+    if (typeof item.runId !== "string" || item.runId === "") {
+      var native = Object.prototype.hasOwnProperty.call(nativeReviews, item.subject) ? nativeReviews[item.subject] : null;
+      var events = journalFor(doc, item.subject, { "review.round": true, "review.evidence": true });
+      var boundary = events.reduce(function (last, event) { return Math.max(last, event.id || 0); }, 0);
+      var evidence = events.filter(function (event) { return event.kind === "review.evidence"; }).slice(-1)[0];
+      var observation = isObject(doc.reviewEvidence) ? doc.reviewEvidence[item.subject] : undefined;
+      if (!native && !events.length) { return null; }
+      if (!isObject(native) || native.unavailable === true || native.candidateRef !== (item.syncedHead || item.head)
+          || native.journalId !== boundary
+          || (evidence && (!isObject(evidence.reviewArtifact) || evidence.reviewArtifact.digest !== native.digest))
+          || (isObject(doc.reviewEvidence) && (!isObject(observation) || observation.unavailable === true || observation.digest !== native.digest))) {
+        return el("div", "d-run-none", "Review evidence unavailable or stale for this candidate.");
+      }
+      var nativeBox = el("div", "d-run");
+      nativeBox.appendChild(runSummaryNode(native, { lenses: VIEW.lenses }));
+      return nativeBox;
+    }
+    if (VIEW.runs !== true) { return null; }
     var summary = Object.prototype.hasOwnProperty.call(runs, item.runId) ? runs[item.runId] : null;
     if (!isObject(summary) || summary.unavailable === true) { return el("div", "d-run-none", "Run " + item.runId + " unavailable."); }
     var journaled = {};
@@ -1026,6 +1044,8 @@
         var next = found ? JSON.parse(found[1]) : null;
         var linked = /<script type="application\/json" id="delivery-links">([^<]*)<\/script>/.exec(page);
         if (linked) { readLinks(JSON.parse(linked[1])); }
+        var reviews = /<script type="application\/json" id="delivery-reviews">([^<]*)<\/script>/.exec(page);
+        if (reviews) { nativeReviews = JSON.parse(reviews[1]); }
         if (isObject(next)) { runs = next; safely(lastGood || shown); }
       }).catch(function () { /* the runs already shown stay */ });
     }, 3000);

@@ -324,6 +324,11 @@ function runSummaryNode(summary, options) {
     var outcome = outcomeOf(round);
     var box = node("div", "run-card is-" + outcome);
     var head = node("p", "run-card-head");
+    if (summary.observational && typeof round.candidateRef === "string") {
+      var candidate = node("p", "run-quiet", "Reviewed candidate " + short(round.candidateRef));
+      candidate.title = round.candidateRef;
+      box.appendChild(candidate);
+    }
     head.appendChild(node("b", null, "Round " + numberOf(round, index)));
     var pill = outcome === "approve" ? "Approved" : outcome === "changes" ? "Changes requested" : outcomeWords(round);
     head.appendChild(node("span", "run-card-outcome", pill.charAt(0).toUpperCase() + pill.slice(1)));
@@ -385,6 +390,11 @@ function runSummaryNode(summary, options) {
       if (told) { box.appendChild(told); }
       var settled = Array.isArray(round.settled) ? round.settled : [];
       if (settled.length) { box.appendChild(settledNode(settled)); }
+      settled.forEach(function (entry) {
+        if (summary.observational && typeof entry.resolution === "string") {
+          box.appendChild(node("p", "run-closure", entry.id + " · " + lensName(entry.lens) + ": " + entry.resolution));
+        }
+      });
       return box;
     }
     var names = Object.keys(verdicts).sort();
@@ -416,10 +426,11 @@ function runSummaryNode(summary, options) {
   }
 
   var box = node("div", "run-summary");
+  if (summary.observational) { box.appendChild(node("p", "run-quiet", "Recorded reviewer reports · display only")); }
   var rounds = Array.isArray(summary.roundDetail) ? summary.roundDetail.filter(function (round) { return round && typeof round === "object"; }) : [];
   box.appendChild(node("p", "run-story", rounds.length ? story(rounds) : "No review rounds yet"));
   if (rounds.length) {
-    var key = typeof summary.runId === "string" ? summary.runId : "";
+    var key = typeof summary.runId === "string" ? summary.runId : (summary.observationKey || "");
     var picked = typeof runRoundPicked[key] === "number" && runRoundPicked[key] < rounds.length ? runRoundPicked[key] : rounds.length - 1;
     var track = node("ol", "run-track");
     var buttons = [];

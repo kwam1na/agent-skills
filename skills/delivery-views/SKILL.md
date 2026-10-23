@@ -551,3 +551,16 @@ A round's findings record, one canonical JSON document per closed round:
 
 `report_problem` in `scripts/views_common.py` checks a report and names the
 first problem's key path.
+
+
+## Native reviews without a run
+
+The line map also reads the validated `reviewEvidence` observations supplied by
+`delivery_state.py show`. Use orchestrate-work's `capture-review` command with
+actual outcome files after hand-off; do not manufacture a `runId`. Shared round
+cards show the real lens verdicts, findings, reviewed candidate for each round,
+and originating closure text. These reports are for display only. Current
+approval requires the final candidate to match the stop's retained head;
+missing, tampered, oversized or stale evidence says unavailable. Live candidate
+changes invalidate the displayed approval immediately. Brief / Result controls
+remain hidden. Run-backed cards continue to read the configured run store.

@@ -783,7 +783,8 @@
           "finish.met",
           "decision.recorded",
           "blocker.recorded",
-          "delivery.closed"
+          "delivery.closed",
+          "review.evidence"
         ]
       },
       "lane": {
@@ -910,6 +911,25 @@
                 "minLength": 1
               }
             ]
+          }
+        }
+      },
+      "reviewArtifact": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "digest",
+          "candidateRef"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "candidateRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
           }
         }
       }
