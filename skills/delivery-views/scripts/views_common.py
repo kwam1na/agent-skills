@@ -496,7 +496,7 @@ def read_runs_cache(path: Path) -> dict:
     """The cached runs, or an empty cache when it is absent, corrupt or of another spec."""
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         return {}
     if not isinstance(value, dict) or value.get("spec") != RUNS_CACHE_SPEC or not isinstance(value.get("runs"), dict):
         return {}

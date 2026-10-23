@@ -1,0 +1,354 @@
+{
+  "now": "2026-10-23T03:20:11.177255Z",
+  "timeZone": "UTC",
+  "blocks": {
+    "delivery-state": {
+      "estimates": {},
+      "focus": {},
+      "journal": [
+        {
+          "at": "2026-10-23T03:20:06.059364Z",
+          "id": 1,
+          "kind": "candidate.handed",
+          "lane": "lane-line-map",
+          "subject": "V26-2835",
+          "summary": "lane-line-map handed V26-2835 at 2fd3bb6dd887df7ea5dff67e44e24eaa12ba42c7 (https://github.com/v26-technologies/athena/pull/1156) after 2 review rounds"
+        },
+        {
+          "at": "2026-10-23T03:20:06.124203Z",
+          "id": 2,
+          "kind": "candidate.handed",
+          "lane": "lane-line-map",
+          "subject": "V26-2836",
+          "summary": "lane-line-map handed V26-2836 at 2c8772e14a2083d3d9898466894d45b7c052697a (https://github.com/v26-technologies/athena/pull/1157) after 2 review rounds"
+        },
+        {
+          "at": "2026-10-23T03:20:11.047887Z",
+          "id": 3,
+          "kind": "candidate.merged",
+          "lane": null,
+          "subject": "V26-2835",
+          "summary": "V26-2835 merged by the lead"
+        },
+        {
+          "at": "2026-10-23T03:20:11.241630Z",
+          "id": 4,
+          "kind": "candidate.merged",
+          "lane": null,
+          "subject": "V26-2836",
+          "summary": "V26-2836 merged by the lead"
+        }
+      ],
+      "state": {
+        "extensions": {},
+        "finish": [],
+        "followups": [],
+        "lanes": [
+          {
+            "focus": "handed V26-2836",
+            "id": "lane-line-map",
+            "since": "2026-10-23T00:46:14Z",
+            "state": "handed",
+            "title": "Line map round card",
+            "waitingOn": null
+          }
+        ],
+        "leases": [],
+        "meta": {
+          "baseHead": null,
+          "checking": {
+            "next": [],
+            "now": null
+          },
+          "headline": "The line map's round card (V26-2835, V26-2836)",
+          "releasedHead": null,
+          "updatedAt": "2026-10-23T03:20:11.177255Z"
+        },
+        "planned": [],
+        "queue": [
+          {
+            "changeRequest": "https://github.com/v26-technologies/athena/pull/1156",
+            "checks": [],
+            "head": "2fd3bb6dd887df7ea5dff67e44e24eaa12ba42c7",
+            "lane": "lane-line-map",
+            "leadInputs": [],
+            "order": 1,
+            "reportedRounds": 2,
+            "runId": "run-6b558cfe2bfc9ff1",
+            "stage": "merged",
+            "subject": "V26-2835",
+            "syncedHead": null,
+            "title": "Show the line map's run as a round track and a card for the picked round"
+          },
+          {
+            "changeRequest": "https://github.com/v26-technologies/athena/pull/1157",
+            "checks": [],
+            "head": "2c8772e14a2083d3d9898466894d45b7c052697a",
+            "lane": "lane-line-map",
+            "leadInputs": [],
+            "order": 2,
+            "reportedRounds": 2,
+            "runId": "run-37483ff027a5a901",
+            "stage": "merged",
+            "subject": "V26-2836",
+            "syncedHead": null,
+            "title": "Closing a review round stores each finding with the run"
+          }
+        ],
+        "schemaVersion": "delivery-state/1",
+        "tickets": {
+          "V26-2835": {
+            "summary": "Show the line map's run as a round track and a card for the picked round.",
+            "title": "Land the line map's round card redesign"
+          },
+          "V26-2836": {
+            "summary": "Closing a review round stores each finding with the run, so the round card can list them.",
+            "title": "The line map's round card lists each finding and the fix that closed it"
+          }
+        },
+        "version": 7
+      },
+      "stats": {
+        "V26-2835": {
+          "assignedAt": null,
+          "buildSeconds": null,
+          "checkStartedAt": null,
+          "checkToMergeSeconds": null,
+          "endedAt": "2026-10-23T03:20:11.047887Z",
+          "findings": null,
+          "handedAt": "2026-10-23T03:20:06.059364Z",
+          "lastVerdicts": null,
+          "outcome": "merged",
+          "reviewSeconds": null,
+          "rounds": 2,
+          "roundsSource": "reported",
+          "totalSeconds": null,
+          "waitSeconds": null
+        },
+        "V26-2836": {
+          "assignedAt": null,
+          "buildSeconds": null,
+          "checkStartedAt": null,
+          "checkToMergeSeconds": null,
+          "endedAt": "2026-10-23T03:20:11.241630Z",
+          "findings": null,
+          "handedAt": "2026-10-23T03:20:06.124203Z",
+          "lastVerdicts": null,
+          "outcome": "merged",
+          "reviewSeconds": null,
+          "rounds": 2,
+          "roundsSource": "reported",
+          "totalSeconds": null,
+          "waitSeconds": null
+        }
+      },
+      "status": {
+        "source": "derived",
+        "text": "last landed V26-2836 at 2026-10-23T03:20:11.241630Z"
+      }
+    },
+    "delivery-runs": {
+      "run-6b558cfe2bfc9ff1": {
+        "runId": "run-6b558cfe2bfc9ff1",
+        "ticket": null,
+        "open": false,
+        "status": "incomplete",
+        "startedAt": null,
+        "lastAt": null,
+        "durationSeconds": 832,
+        "rounds": 2,
+        "findings": null,
+        "roundDetail": [
+          {
+            "round": 1,
+            "at": "2026-10-23T00:31:16Z",
+            "outcome": "changes",
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 4,
+              "P3": 9
+            },
+            "verdicts": {}
+          },
+          {
+            "round": 2,
+            "at": "2026-10-23T00:40:10Z",
+            "outcome": "approve",
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 1
+            },
+            "verdicts": {}
+          }
+        ],
+        "waits": [],
+        "work": [],
+        "activity": null
+      },
+      "run-37483ff027a5a901": {
+        "runId": "run-37483ff027a5a901",
+        "ticket": null,
+        "open": false,
+        "status": "incomplete",
+        "startedAt": null,
+        "lastAt": "2026-10-23T00:44:19Z",
+        "durationSeconds": 1106,
+        "rounds": 2,
+        "findings": null,
+        "roundDetail": [
+          {
+            "round": 1,
+            "at": "2026-10-23T00:42:16Z",
+            "outcome": "changes",
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 1,
+              "P3": 4
+            },
+            "verdicts": {
+              "lens.adversarial-testing": "changes",
+              "lens.outcome-correctness": "changes"
+            },
+            "raised": [
+              {
+                "id": "r1-f1",
+                "lens": "lens.outcome-correctness",
+                "severity": "P3",
+                "summary": "A changed-file rerun that changes a severity prints two warnings, and the second wrongly says the run lacks review.round.closed",
+                "state": "resolved",
+                "deferredIssue": null
+              },
+              {
+                "id": "r1-f2",
+                "lens": "lens.adversarial-testing",
+                "severity": "P2",
+                "summary": "The fixed-without-a-commit refusal test passes on the unknown-id check, so removing the fixCommit rule goes undetected",
+                "state": "resolved",
+                "deferredIssue": null
+              },
+              {
+                "id": "r1-f3",
+                "lens": "lens.adversarial-testing",
+                "severity": "P3",
+                "summary": "The duplicate resolution id refusal has no test",
+                "state": "resolved",
+                "deferredIssue": null
+              },
+              {
+                "id": "r1-f4",
+                "lens": "lens.adversarial-testing",
+                "severity": "P3",
+                "summary": "The 280-code-point summary limit is only tested from above, so counting UTF-16 units goes undetected",
+                "state": "resolved",
+                "deferredIssue": null
+              },
+              {
+                "id": "r1-f5",
+                "lens": "lens.adversarial-testing",
+                "severity": "P3",
+                "summary": "mkdtemp runs outside the try, so a temp-directory failure escapes and can change harness:review-outcome's exit code",
+                "state": "resolved",
+                "deferredIssue": null
+              }
+            ],
+            "settled": []
+          },
+          {
+            "round": 2,
+            "at": "2026-10-23T00:44:16Z",
+            "outcome": "approve",
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            },
+            "verdicts": {
+              "lens.adversarial-testing": "approve",
+              "lens.outcome-correctness": "approve"
+            },
+            "raised": [],
+            "settled": [
+              {
+                "id": "r1-f1",
+                "state": "fixed",
+                "fixCommit": "61f086d4a23b50bab1ee78433b1aa8e0e604267a",
+                "deferredIssue": null
+              },
+              {
+                "id": "r1-f2",
+                "state": "fixed",
+                "fixCommit": "61f086d4a23b50bab1ee78433b1aa8e0e604267a",
+                "deferredIssue": null
+              },
+              {
+                "id": "r1-f3",
+                "state": "fixed",
+                "fixCommit": "61f086d4a23b50bab1ee78433b1aa8e0e604267a",
+                "deferredIssue": null
+              },
+              {
+                "id": "r1-f4",
+                "state": "fixed",
+                "fixCommit": "61f086d4a23b50bab1ee78433b1aa8e0e604267a",
+                "deferredIssue": null
+              },
+              {
+                "id": "r1-f5",
+                "state": "fixed",
+                "fixCommit": "61f086d4a23b50bab1ee78433b1aa8e0e604267a",
+                "deferredIssue": null
+              }
+            ]
+          }
+        ],
+        "waits": [],
+        "work": [],
+        "activity": {
+          "label": "review · completed (reported)",
+          "at": "2026-10-23T00:44:19Z"
+        }
+      }
+    },
+    "delivery-links": {
+      "tracker": {
+        "issue": "https://linear.app/v26-labs/issue/",
+        "id": "^V26-[0-9]+$"
+      },
+      "ownRepository": "v26-technologies/athena",
+      "forges": [
+        {
+          "origin": "https://github.com/",
+          "pullPath": "pull",
+          "commitPath": "commit"
+        },
+        {
+          "origin": "https://bitbucket.org/",
+          "pullPath": "pull-requests",
+          "commitPath": "commits"
+        }
+      ]
+    }
+  },
+  "initialText": "NowThe lineWhoWhat's leftWhat happenedParkedThe line map's round card (V26-2835, V26-2836)Every piece has landed.Last landed: The line map's round card lists each finding and the fix that closed it, just now.StartPieces landedSaved view · updated just nowThe lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Line map round card2 of 2 landedV26-2835#1156V26-2836#1157Line-map laneLand the line map's round card redesignV26-2835 · #1156 · Landed just nowShow the line map's run as a round track and a card for the picked round.Approved on round 2 · 4 moderate notes, 10 minor notes raised11312:31 am219 min laterRound 2Approved1 note1 minor2 review roundsMerge check · Landed just now · 2 steps3:20 amlane-line-map handed V26-2835 at 2fd3bb6dd887df7ea5dff67e44e24eaa12ba42c7 (https://github.com/v26-technologies/athena/pull/1156) after 2 review rounds3:20 amV26-2835 merged by the leadLandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedBoth landedWho's doing what1 lane is working on this.Each lane is a separate session working in parallel on its own part of the work.Line map round cardhanded V26-2836Handed overfor 2h 33mWhat's left0pieces to go2 of 2 pieces have landed.What happenedThe story so far, newest first.●Landed◐Ready to check◆Decision▲Problem·Other updateEverythingDecisionsLandedProblems3:20 am●V26-2836 merged by the leadLanded · V26-28363:20 am●V26-2835 merged by the leadLanded · V26-28353:20 am◐lane-line-map handed V26-2836 at 2c8772e14a2083d3d9898466894d45b7c052697a (https://github.com/v26-technologies/athena/pull/1157) after 2 review roundsHanded over · Line map round card · V26-28363:20 am◐lane-line-map handed V26-2835 at 2fd3bb6dd887df7ea5dff67e44e24eaa12ba42c7 (https://github.com/v26-technologies/athena/pull/1156) after 2 review roundsHanded over · Line map round card · V26-2835Parked for laterNothing parked.Past deliveries and runs",
+  "details": {
+    "V26-2835": {
+      "detail": "Line-map laneLand the line map's round card redesignV26-2835 · #1156 · Landed just nowShow the line map's run as a round track and a card for the picked round.Approved on round 2 · 4 moderate notes, 10 minor notes raised11312:31 am219 min laterRound 2Approved1 note1 minor2 review roundsMerge check · Landed just now · 2 steps3:20 amlane-line-map handed V26-2835 at 2fd3bb6dd887df7ea5dff67e44e24eaa12ba42c7 (https://github.com/v26-technologies/athena/pull/1156) after 2 review rounds3:20 amV26-2835 merged by the lead",
+      "rounds": [
+        "Round 1Changes requested13 notes4 moderate9 minor",
+        "Round 2Approved1 note1 minor"
+      ]
+    },
+    "V26-2836": {
+      "detail": "Line-map laneThe line map's round card lists each finding and the fix that closed itV26-2836 · #1157 · Landed just nowClosing a review round stores each finding with the run, so the round card can list them.Approved on round 2 · 1 moderate note, 4 minor notes raised1512:42 am22 min laterRound 2ApprovedTestingCorrectnessNothing new raisedConfirmed 5 earlier notes fixed in 61f086d2 review roundsMerge check · Landed just now · 2 steps3:20 amlane-line-map handed V26-2836 at 2c8772e14a2083d3d9898466894d45b7c052697a (https://github.com/v26-technologies/athena/pull/1157) after 2 review rounds3:20 amV26-2836 merged by the lead",
+      "rounds": [
+        "Round 1Changes requestedTestingModerateThe fixed-without-a-commit refusal test passes on the unknown-id check, so removing the fixCommit rule goes undetected.Minor · 3The duplicate resolution id refusal has no test.The 280-code-point summary limit is only tested from above, so counting UTF-16 units goes undetected.mkdtemp runs outside the try, so a temp-directory failure escapes and can change harness:review-outcome's exit code.CorrectnessMinorA changed-file rerun that changes a severity prints two warnings, and the second wrongly says the run lacks review.round.closed.All 5 fixed in 61f086d · confirmed round 2",
+        "Round 2ApprovedTestingCorrectnessNothing new raisedConfirmed 5 earlier notes fixed in 61f086d"
+      ]
+    }
+  }
+}

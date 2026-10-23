@@ -809,6 +809,24 @@ class LinearQualificationTests(unittest.TestCase):
             )
             runner.inspect_candidate_transport_boundary(harmless, core_candidate, contract)
 
+            # The delivery views are outside the boundary: their pages and snapshot commands reach the providers
+            # they are configured for. The same actions anywhere else in the linear profile still fail.
+            views = directory / "delivery-views-transport"
+            shutil.copytree(linear_candidate, views)
+            for name, source in (("extra.js", 'fetch("/view/line-map.html");\n'),
+                                 ("extra.py", 'urllib.request.urlopen("https://api.linear.app/graphql")\n')):
+                (views / "skills/delivery-views/scripts" / name).write_text(source, encoding="utf-8")
+            runner.inspect_candidate_transport_boundary(views, core_candidate, contract)
+            for relative in ("skills/orchestrate-work/scripts/extra.js", "skills/linear-tracker-adapter/extra.py"):
+                with self.subTest(outside=relative):
+                    mutated = directory / f"outside-{Path(relative).name}"
+                    shutil.copytree(linear_candidate, mutated)
+                    (mutated / relative).write_text(
+                        'fetch("/view/line-map.html");\n' if relative.endswith(".js") else 'urllib.request.urlopen("https://example.invalid")\n',
+                        encoding="utf-8")
+                    with self.assertRaisesRegex(runner.QualificationFailure, "http-client-action"):
+                        runner.inspect_candidate_transport_boundary(mutated, core_candidate, contract)
+
             hostile = (
                 (
                     "python-direct-endpoint",
@@ -992,6 +1010,8 @@ class LinearQualificationTests(unittest.TestCase):
                 for path in (ROOT / root_name).rglob("*")
                 if path.is_file() and path.suffix in {".json", ".md", ".py"}
                 and not any(path.is_relative_to(ROOT / "docs" / kind) for kind in ("plans", "delivery"))
+                # The line map's golden corpus is recorded delivery records, which keep their ticket ids.
+                and not path.is_relative_to(ROOT / "tests" / "fixtures" / "delivery-views" / "line-map")
             )
         plan_unit = re.compile(r"\bU\d+[A-Za-z]?\b")
         ticket_id = re.compile(r"\b[A-Z]\d{2,}-\d+\b")

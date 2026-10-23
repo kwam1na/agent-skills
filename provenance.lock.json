@@ -161,7 +161,27 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "dccfeccf4185830a6b2e338faa1c5f4a4d4b67a90aa5c6b8b5a30ab2c21634fd"
+          "sha256": "4d274035831a49860e8c60d61ffe92854a5fd23139f1740c4d31e9cf6685a049"
+        },
+        {
+          "path": "skills/delivery-views/assets/line-map.css",
+          "sha256": "eb5605f84c2b09f6a1b2c2ba70b56e33b36f78d5efedd0585c79754f7e2f877a"
+        },
+        {
+          "path": "skills/delivery-views/assets/line-map.js",
+          "sha256": "aadadd82371f1c20fefdf91ac9e6674ae5d001e24c185083428224858598acba"
+        },
+        {
+          "path": "skills/delivery-views/assets/run-summary.css",
+          "sha256": "74ce5d91a286ebd03b0e328bb58659dcd83e5c2262923cbbe43587fa11ea0281"
+        },
+        {
+          "path": "skills/delivery-views/assets/run-summary.js",
+          "sha256": "b32a557f4d4b155005be59a914b9518780fb7cbebe3ba5a83dc2c38d575715f3"
+        },
+        {
+          "path": "skills/delivery-views/scripts/render.py",
+          "sha256": "8a6e97cbd71cd13b5db116e19f455f0707493adf3310d3d47d36d323c8a6ed8d"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
@@ -169,7 +189,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
-          "sha256": "039166d7f4904f6b1fb7258ebcd3de93e66ce48760a997003afeaf89cb108b59"
+          "sha256": "188978ee7943286c7959d43f345c997a7e4e1dfffe1b7595dcb351b8281c588a"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -179,7 +199,7 @@
           "owner": "delivery-agent/user-delegated",
           "reference": "plan-review:the approved configurable delivery views plan"
         },
-        "rationale": "Authored from the approved plan that makes the delivery line map a configurable product view, not copied from adopter source."
+        "rationale": "Authored from the approved plan that makes the delivery line map a configurable product view. Under that plan the line map's page program and style are carried over from the owner's own line map, with its adopter-specific addresses, names and storage keys made configuration; the rest is not copied from adopter source."
       }
     },
     {

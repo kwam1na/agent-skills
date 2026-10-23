@@ -1,0 +1,10 @@
+{"at":"2026-10-22T03:05:00Z","id":1,"kind":"lane.assigned","lane":"payments","subject":"PAY-2358","summary":"payments assigned PAY-2358"}
+{"at":"2026-10-22T04:10:00Z","id":2,"kind":"candidate.handed","lane":"payments","subject":"PAY-2358","summary":"payments handed PAY-2358 at 1111111 (shop#1101) after 2 review rounds"}
+{"at":"2026-10-22T04:12:00Z","id":3,"kind":"check.started","lane":"payments","subject":"PAY-2358","summary":"Checking Hold the cart through a payment redirect"}
+{"at":"2026-10-22T04:26:00Z","id":4,"kind":"candidate.merged","lane":"payments","subject":"PAY-2358","summary":"Merged PAY-2358 at 2222222"}
+{"at":"2026-10-22T04:30:00Z","id":5,"kind":"check.started","lane":"storefront","subject":"PAY-2360","summary":"Checking Show a calm message when the card is declined"}
+{"at":"2026-10-22T04:44:00Z","id":6,"kind":"candidate.stopped","lane":"storefront","subject":"PAY-2360","summary":"Stopped PAY-2360: checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)"}
+{"at":"2026-10-22T04:45:00Z","id":7,"kind":"lease.granted","lane":null,"subject":null,"summary":"dev-backend leased to lead for convex codegen"}
+{"at":"2026-10-22T04:50:00Z","id":8,"kind":"blocker.recorded","lane":"backend","subject":"PAY-2365","summary":"backend is blocked on the dev backend lease"}
+{"at":"2026-10-22T05:00:00Z","id":9,"kind":"decision.recorded","lane":null,"subject":null,"summary":"Payments retries land before the copy changes"}
+{"at":"2026-10-22T05:04:00Z","id":10,"kind":"check.started","lane":"payments","subject":"PAY-2361","summary":"Checking Retry card payments once on a dropped connection"}

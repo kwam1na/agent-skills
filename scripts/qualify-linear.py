@@ -543,6 +543,10 @@ def inspect_candidate_transport_boundary(
         relative = path.relative_to(linear_candidate).as_posix()
         if relative == CONTRACT_PATH:
             continue
+        # The boundary guards how the workflow's tracker operations reach Linear; the delivery views are a
+        # separate configured skill whose pages and snapshot commands talk to the providers they are set up for.
+        if relative.startswith("skills/delivery-views/"):
+            continue
         executable = path.suffix in EXECUTABLE_SUFFIXES
         actionable_document = relative == f"{ADAPTER_ROOT}/SKILL.md"
         if not executable and not actionable_document:

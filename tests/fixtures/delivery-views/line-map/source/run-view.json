@@ -1,0 +1,98 @@
+{
+  "spec": "run-view/1",
+  "historical": false,
+  "asOf": "2026-10-22T05:09:00.000Z",
+  "authority": "Self-attested observations. Applicability unknown; no permission or candidate authority is granted.",
+  "sections": [
+    {
+      "id": "waiting",
+      "title": "Waiting and required action",
+      "empty": "No current waiting observation. Unreported waits remain unknown.",
+      "items": [
+        {
+          "id": "wait-1",
+          "label": "Lead input",
+          "fields": [
+            { "label": "Waiting on", "value": "lead" },
+            { "label": "Reason", "value": "Needs the payment sandbox key" },
+            { "label": "Since", "value": "2026-10-22T04:50:00Z" },
+            { "label": "Candidate", "value": "1111111111111111111111111111111111111111" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "work",
+      "title": "Current work",
+      "empty": "No current work observation.",
+      "items": [
+        {
+          "id": "command-9",
+          "label": "command-9",
+          "fields": [
+            { "label": "Owner", "value": "delivery-harness.cli" },
+            { "label": "Phase", "value": "verify" },
+            { "label": "State", "value": "running" },
+            { "label": "Freshness", "value": "fresh" },
+            { "label": "Last observed", "value": "2026-10-22T05:05:00Z" },
+            { "label": "Elapsed since start", "value": "4m 10s" },
+            { "label": "Next step", "value": "Wait for the gate" },
+            { "label": "Candidate", "value": "1111111111111111111111111111111111111111" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "reviews",
+      "title": "Reviewer attempts and history",
+      "empty": "No reviewer attempts.",
+      "items": [
+        { "id": "round-1", "label": "Declared review round", "fields": [
+          { "label": "Round", "value": "1" }, { "label": "Round ID", "value": "lane-round-1" }, { "label": "Bound", "value": "4" },
+          { "label": "Candidate", "value": "1111111111111111111111111111111111111111" } ] },
+        { "id": "attempt-1a", "label": "lens.outcome-correctness", "fields": [
+          { "label": "Attempt", "value": "round1-outcome" }, { "label": "Round", "value": "1" }, { "label": "Owner", "value": "reviewer" },
+          { "label": "State", "value": "completed" }, { "label": "Verdict", "value": "approved" } ] },
+        { "id": "attempt-1b", "label": "lens.adversarial-testing", "fields": [
+          { "label": "Attempt", "value": "round1-testing" }, { "label": "Round", "value": "1" }, { "label": "Owner", "value": "reviewer" },
+          { "label": "State", "value": "completed" }, { "label": "Verdict", "value": "changes-requested" } ] },
+        { "id": "round-2", "label": "Declared review round", "fields": [
+          { "label": "Round", "value": "2" }, { "label": "Round ID", "value": "lane-round-2" }, { "label": "Bound", "value": "4" } ] },
+        { "id": "attempt-2a", "label": "lens.outcome-correctness", "fields": [
+          { "label": "Round", "value": "2" }, { "label": "Verdict", "value": "approved" } ] },
+        { "id": "attempt-2b", "label": "lens.adversarial-testing", "fields": [
+          { "label": "Round", "value": "2" }, { "label": "Verdict", "value": "approved" } ] }
+      ]
+    },
+    { "id": "findings", "title": "Current unresolved findings", "empty": "No unresolved findings.", "items": [] },
+    {
+      "id": "evidence",
+      "title": "Evidence and candidate",
+      "empty": "No evidence.",
+      "items": [
+        { "id": "7", "label": "command.completed", "fields": [
+          { "label": "Reported at", "value": "2026-10-22T04:20:00Z" },
+          { "label": "Observation", "value": "{\"command\":\"prepare\",\"outcome\":\"passed\",\"durationMs\":1500}" } ] },
+        { "id": "12", "label": "review.round.closed", "fields": [
+          { "label": "Reported at", "value": "2026-10-22T04:40:00Z" },
+          { "label": "Observation", "value": "{\"round\":1,\"roundId\":\"lane-round-1\",\"outcome\":\"changes-requested\",\"findings\":{\"P0\":0,\"P1\":1,\"P2\":2,\"P3\":0}}" } ] },
+        { "id": "15", "label": "review.round.closed", "fields": [
+          { "label": "Reported at", "value": "2026-10-22T04:58:00Z" },
+          { "label": "Observation", "value": "{\"round\":2,\"roundId\":\"lane-round-2\",\"outcome\":\"approved\",\"findings\":{\"P0\":0,\"P1\":0,\"P2\":0,\"P3\":1}}" } ] }
+      ]
+    },
+    {
+      "id": "activity-history",
+      "title": "Activity history",
+      "empty": "No activity.",
+      "items": [
+        { "id": "command-1", "label": "command-1", "fields": [
+          { "label": "Phase", "value": "prepare" }, { "label": "State", "value": "completed (reported)" }, { "label": "Last observed", "value": "2026-10-22T04:20:00Z" } ] },
+        { "id": "command-9", "label": "command-9", "fields": [
+          { "label": "Phase", "value": "verify" }, { "label": "State", "value": "running" }, { "label": "Last observed", "value": "2026-10-22T05:05:00Z" } ] },
+        { "id": "command-4", "label": "command-4", "fields": [
+          { "label": "Phase", "value": "review" }, { "label": "State", "value": "completed (reported)" }, { "label": "Last observed", "value": "2026-10-22T04:58:00Z" } ] }
+      ]
+    }
+  ]
+}

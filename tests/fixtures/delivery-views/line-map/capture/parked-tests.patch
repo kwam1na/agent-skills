@@ -1,0 +1,90 @@
+diff --git a/scripts/delivery-live-view.test.ts b/scripts/delivery-live-view.test.ts
+index 22dc8903a..d4c0ee99b 100644
+--- a/scripts/delivery-live-view.test.ts
++++ b/scripts/delivery-live-view.test.ts
+@@ -126,7 +126,9 @@ describe("delivery live view", () => {
+     // The detail starts on what is being checked, in the tracker's own words.
+     const detail = line.querySelector("#detail")!.textContent!;
+     expect(detail).toContain("Retry card payments once on a dropped connection");
+-    expect(detail).toContain("Being checked before merge · Payments · V26-2361 · #1106 · head 5555555");
++    // The building lane labels the panel; under the title, the ticket, the change request and where the piece stands.
++    expect(line.querySelector("#detail .d-owner")?.textContent).toBe("Payments lane");
++    expect(line.querySelector("#detail .d-meta")?.textContent).toBe("V26-2361 · #1106 · Being checked before merge");
+     expect(line.querySelector('#detail a.pr-num')?.getAttribute("href")).toBe("https://github.com/v26-technologies/athena/pull/1106");
+     expect(line.querySelector('.stop-label a[data-ticket="V26-2361"]')?.getAttribute("href")).toBe("https://linear.app/v26-labs/issue/V26-2361");
+     expect(detail).toContain("A dropped connection during card payment retries once, without charging twice.");
+@@ -371,7 +373,8 @@ describe("delivery live view", () => {
+     expect([...picked!.app.querySelectorAll("#detail .run-pick")].map((pick) => pick.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
+     expect(run.querySelector(".run-live.is-waiting")?.textContent).toBe("Waiting on Lead input");
+     expect(text).toContain("Now: verify");
+-    expect(text).toContain("run 7");
++    // The run's own id is the product's, not the reader's, so the block does not show it.
++    expect(run.querySelector(".run-id")).toBeNull();
+     // The timing bar below says how long it took in all, so the run block does not repeat it.
+     expect(text).not.toContain("In all");
+     // A stop with no run shows the state alone, as before.
+@@ -394,7 +397,7 @@ describe("delivery live view", () => {
+     // The push redraws at once, with the runs the page already has...
+     expect(pushed!.app.querySelector("#detail .d-run")).toBeNull();
+     // ...and the runs follow from the re-rendered view.
+-    expect(refreshed!.app.querySelector("#detail .d-run .run-id")?.getAttribute("title")).toBe("run-7");
++    expect(refreshed!.app.querySelector("#detail .d-run .run-story")?.textContent).toBe("Approved on round 2 · 1 serious note, 2 moderate notes, 1 minor note raised");
+   });
+ 
+   it("says quietly that a run is unavailable when it could not be read, and still draws the page", () => {
+@@ -442,15 +445,17 @@ describe("delivery live view", () => {
+     const [latest, first] = open(fixtureDocument(), { steps: [{ click: "#detail .run-pick" }] }, page);
+     const findings = (card: Element) => [...card.querySelectorAll(".run-reviewer")].map((group) => [
+       group.querySelector(".run-lens-name")?.textContent,
+-      [...group.querySelectorAll(".run-finding")].map((item) => [item.querySelector(".run-dot-sev")?.className, item.querySelector(".run-finding-text")?.textContent,
+-        item.querySelector(".run-fate")?.getAttribute("aria-label")]),
++      [...group.querySelectorAll(".run-finding")].map((item) => [item.className, item.querySelector(".run-finding-text")?.textContent,
++        item.querySelector(".run-fate")?.textContent ?? null]),
+     ]);
+     // Round 1 lists each reviewer's findings, worst first, with what became of each, and says it once below.
+     const one = first!.app.querySelector("#detail .run-card")!;
+     expect(findings(one)).toEqual([
+-      ["Testing", [["run-dot-sev is-p1", "A retry after a timeout charges twice", "fixed"], ["run-dot-sev is-p2", "No test covers a dropped second attempt", "open"]]],
+-      ["Correctness", [["run-dot-sev is-p2", "The receipt keeps the first attempt's total", "dropped"]]],
++      ["Testing", [["run-finding is-p1", "A retry after a timeout charges twice.", "\u2713 fixed"], ["run-finding is-p2", "No test covers a dropped second attempt.", "open"]]],
++      ["Correctness", [["run-finding is-p2", "The receipt keeps the first attempt's total.", "dropped"]]],
+     ]);
++    // Each severity is said once, as a band over its findings.
++    expect([...one.querySelectorAll(".run-band")].map((band) => band.textContent)).toEqual(["Serious", "Moderate", "Moderate"]);
+     expect(one.querySelector(".run-settled")?.textContent).toBe("1 of 3 fixed in abc1234 · confirmed round 2 · 1 open");
+     // Counts are the findings' own, so the card does not repeat them.
+     expect(one.querySelector(".run-card-notes")).toBeNull();
+@@ -458,7 +463,8 @@ describe("delivery live view", () => {
+     const two = latest!.app.querySelector("#detail .run-card")!;
+     expect(findings(two)).toEqual([
+       ["Testing", []],
+-      ["Correctness", [["run-dot-sev is-p3", "The retry log line repeats the order id", "open"]]],
++      // Every finding on the round is still open, so the line says it once and the finding carries no state.
++      ["Correctness", [["run-finding is-p3", "The retry log line repeats the order id.", null]]],
+     ]);
+     expect(two.querySelector(".run-reviewer .run-quiet")?.textContent).toBe("nothing raised");
+     expect(two.querySelector(".run-settled")?.textContent).toBe("Confirmed 1 earlier note fixed in abc1234, 1 earlier note settled otherwise");
+@@ -486,7 +492,8 @@ describe("delivery live view", () => {
+     const card = app.querySelector("#detail .run-card")!;
+     expect(card.querySelector("img")).toBeNull();
+     expect([...card.querySelectorAll("b")].filter((node) => node.textContent === "bold")).toHaveLength(0);
+-    expect(card.querySelector(".run-finding-text")?.textContent).toBe(HOSTILE);
++    // A summary stored without a full stop gets one.
++    expect(card.querySelector(".run-finding-text")?.textContent).toBe(`${HOSTILE}.`);
+     expect(card.querySelector(".run-fate")?.textContent).toBe(HOSTILE);
+     // The javascript-shaped commit stays text; only the real commit id is linked.
+     expect([...card.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([`https://github.com/${LINK_TARGETS.ownRepository}/commit/${FIX}`]);
+@@ -741,9 +748,11 @@ describe("delivery live view", () => {
+   it("keeps the chosen stop, the open history and keyboard focus through an update", () => {
+     const later = fixtureDocument() as { state: Record<string, any> };
+     later.state.meta.headline = "Later";
+-    const [, chosen, opened, pushed] = open(fixtureDocument(), {
++    // Opening the history by its summary moves focus there; focus goes back to the stop before the update.
++    const [, chosen, opened, , pushed] = open(fixtureDocument(), {
+       store: { read: "pending" },
+-      steps: [{ click: '.stop-btn[data-subject="V26-2358"]' }, { toggle: "#detail details.mh" }, { push: later }],
++      steps: [{ click: '.stop-btn[data-subject="V26-2358"]' }, { click: "#detail details.mh summary" },
++        { click: '.stop-btn[data-subject="V26-2358"]' }, { push: later }],
+     });
+     const pressed = (snapshot: { app: Element }) => [...snapshot.app.querySelectorAll('.stop-btn[aria-pressed="true"]')].map((stop) => stop.getAttribute("data-subject"));
+     expect(pressed(chosen!)).toEqual(["V26-2358"]);

@@ -1,0 +1,559 @@
+{
+  "now": "2026-10-22T05:10:00Z",
+  "timeZone": "UTC",
+  "blocks": {
+    "delivery-state": {
+      "state": {
+        "schemaVersion": "delivery-state/1",
+        "version": 42,
+        "meta": {
+          "headline": "Checkout resilience",
+          "updatedAt": "2026-10-22T05:10:00Z",
+          "baseHead": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "releasedHead": null,
+          "trackerParent": "V26-2354",
+          "checking": {
+            "now": {
+              "subject": "V26-2361",
+              "title": "Retry card payments once on a dropped connection",
+              "startedAt": "2026-10-22T05:04:00Z",
+              "steps": [
+                {
+                  "label": "selecting checks",
+                  "state": "passed",
+                  "startedAt": "2026-10-22T05:04:00Z",
+                  "finishedAt": "2026-10-22T05:04:40Z"
+                },
+                {
+                  "label": "webapp typecheck",
+                  "state": "passed",
+                  "startedAt": "2026-10-22T05:04:40Z",
+                  "finishedAt": "2026-10-22T05:06:10Z",
+                  "expectedSeconds": 95
+                },
+                {
+                  "label": "checkout unit tests",
+                  "state": "passed",
+                  "startedAt": "2026-10-22T05:06:10Z",
+                  "finishedAt": "2026-10-22T05:07:30Z",
+                  "expectedSeconds": 70
+                },
+                {
+                  "label": "convex audit",
+                  "state": "reused",
+                  "reusedFrom": "cccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "label": "storefront build",
+                  "state": "running",
+                  "startedAt": "2026-10-22T05:07:30Z",
+                  "expectedSeconds": 240
+                },
+                {
+                  "label": "checkout end-to-end",
+                  "state": "pending",
+                  "expectedSeconds": 420
+                },
+                {
+                  "label": "payments behavior scenarios",
+                  "state": "pending"
+                }
+              ]
+            },
+            "next": [
+              "V26-2362",
+              "V26-2363"
+            ]
+          },
+          "checkHistory": {
+            "checks": {},
+            "runs": [
+              900,
+              840,
+              960
+            ]
+          },
+          "sources": {
+            "tracker": {
+              "status": "observed",
+              "since": "2026-10-22T05:07:00Z"
+            },
+            "forge": {
+              "status": "stale",
+              "since": "2026-10-22T05:01:00Z",
+              "lastReadAt": "2026-10-22T04:58:00Z",
+              "reason": "gh answered HTTP 502"
+            }
+          },
+          "sourceReports": [
+            {
+              "subject": "V26-2359",
+              "note": "its change request closed without merging"
+            }
+          ]
+        },
+        "lanes": [
+          {
+            "id": "payments",
+            "title": "Payments",
+            "focus": "V26-2361 card retry, in the merge queue",
+            "state": "handed",
+            "waitingOn": null,
+            "since": "2026-10-22T04:40:00Z"
+          },
+          {
+            "id": "storefront",
+            "title": "Storefront",
+            "focus": "V26-2364 checkout copy, review round 2",
+            "state": "reviewing",
+            "waitingOn": null,
+            "since": "2026-10-22T04:30:00Z"
+          },
+          {
+            "id": "backend",
+            "title": "Backend",
+            "focus": "V26-2365 webhook replay",
+            "state": "blocked",
+            "waitingOn": "the dev backend lease",
+            "since": "2026-10-22T04:50:00Z"
+          },
+          {
+            "id": "ops",
+            "title": "Operations",
+            "focus": "",
+            "state": "idle",
+            "waitingOn": null,
+            "since": "2026-10-22T03:00:00Z"
+          }
+        ],
+        "queue": [
+          {
+            "order": 1,
+            "subject": "V26-2358",
+            "title": "Hold the cart through a payment redirect",
+            "lane": "payments",
+            "stage": "merged",
+            "head": "1111111111111111111111111111111111111111",
+            "syncedHead": "2222222222222222222222222222222222222222",
+            "leadInputs": [],
+            "reportedRounds": 2,
+            "runId": null,
+            "checks": [
+              {
+                "id": "checkout unit tests",
+                "state": "passed"
+              }
+            ],
+            "changeRequest": "athena#1101"
+          },
+          {
+            "order": 2,
+            "subject": "V26-2360",
+            "title": "Show a calm message when the card is declined",
+            "lane": "storefront",
+            "stage": "stopped",
+            "head": "3333333333333333333333333333333333333333",
+            "syncedHead": "4444444444444444444444444444444444444444",
+            "leadInputs": [],
+            "reportedRounds": 1,
+            "runId": null,
+            "changeRequest": "athena#1104",
+            "checks": [
+              {
+                "id": "checkout end-to-end",
+                "state": "failed",
+                "failures": [
+                  "declined card shows the retry button",
+                  "declined card keeps the cart"
+                ],
+                "log": "logs/V26-2360-e2e.log"
+              }
+            ]
+          },
+          {
+            "order": 3,
+            "subject": "V26-2361",
+            "title": "Retry card payments once on a dropped connection",
+            "lane": "payments",
+            "stage": "checking",
+            "head": "5555555555555555555555555555555555555555",
+            "syncedHead": "6666666666666666666666666666666666666666",
+            "leadInputs": [],
+            "reportedRounds": 3,
+            "runId": "run-7",
+            "changeRequest": "athena#1106",
+            "checks": [
+              {
+                "id": "webapp typecheck",
+                "state": "passed"
+              },
+              {
+                "id": "storefront build",
+                "state": "running"
+              }
+            ]
+          },
+          {
+            "order": 4,
+            "subject": "V26-2362",
+            "title": "Keep the order number on the receipt page",
+            "lane": "storefront",
+            "stage": "syncing",
+            "head": "7777777777777777777777777777777777777777",
+            "syncedHead": null,
+            "leadInputs": [
+              "convex codegen"
+            ],
+            "reportedRounds": 2,
+            "runId": null,
+            "checks": [],
+            "changeRequest": "athena#1107"
+          },
+          {
+            "order": 5,
+            "subject": "V26-2363",
+            "title": "Record the payment provider's reference",
+            "lane": "backend",
+            "stage": "queued",
+            "head": "8888888888888888888888888888888888888888",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": 1,
+            "runId": null,
+            "checks": [],
+            "changeRequest": "athena#1108"
+          }
+        ],
+        "planned": [
+          {
+            "subject": "V26-2364",
+            "title": "Checkout copy for every payment state",
+            "lane": "storefront",
+            "stage": "review",
+            "changeRequest": "athena#1109"
+          },
+          {
+            "subject": "V26-2365",
+            "title": "Replay a missed payment webhook",
+            "lane": "backend",
+            "stage": "building"
+          },
+          {
+            "subject": "V26-2366",
+            "title": "Refund a partial payment",
+            "lane": null,
+            "stage": "planned"
+          }
+        ],
+        "finish": [
+          {
+            "id": "finish-1",
+            "text": "A dropped connection during payment never charges twice",
+            "met": true
+          },
+          {
+            "id": "finish-2",
+            "text": "Every payment state shows a clear next step",
+            "met": false
+          },
+          {
+            "id": "finish-3",
+            "text": "The webhook replay recovers a missed payment",
+            "met": false
+          }
+        ],
+        "followups": [
+          {
+            "id": "V26-2370",
+            "title": "Measure checkout drop-off by payment state",
+            "reference": "V26-2370"
+          }
+        ],
+        "leases": [
+          {
+            "id": "dev-backend",
+            "holder": "lead",
+            "since": "2026-10-22T04:45:00Z"
+          }
+        ],
+        "tickets": {
+          "V26-2361": {
+            "title": "Retry card payments once on a dropped connection",
+            "summary": "A dropped connection during card payment retries once, without charging twice."
+          }
+        },
+        "extensions": {}
+      },
+      "journal": [
+        {
+          "at": "2026-10-22T03:05:00Z",
+          "id": 1,
+          "kind": "lane.assigned",
+          "lane": "payments",
+          "subject": "V26-2358",
+          "summary": "payments assigned V26-2358"
+        },
+        {
+          "at": "2026-10-22T04:10:00Z",
+          "id": 2,
+          "kind": "candidate.handed",
+          "lane": "payments",
+          "subject": "V26-2358",
+          "summary": "payments handed V26-2358 at 1111111 (athena#1101) after 2 review rounds"
+        },
+        {
+          "at": "2026-10-22T04:12:00Z",
+          "id": 3,
+          "kind": "check.started",
+          "lane": "payments",
+          "subject": "V26-2358",
+          "summary": "Checking Hold the cart through a payment redirect"
+        },
+        {
+          "at": "2026-10-22T04:26:00Z",
+          "id": 4,
+          "kind": "candidate.merged",
+          "lane": "payments",
+          "subject": "V26-2358",
+          "summary": "Merged V26-2358 at 2222222"
+        },
+        {
+          "at": "2026-10-22T04:30:00Z",
+          "id": 5,
+          "kind": "check.started",
+          "lane": "storefront",
+          "subject": "V26-2360",
+          "summary": "Checking Show a calm message when the card is declined"
+        },
+        {
+          "at": "2026-10-22T04:44:00Z",
+          "id": 6,
+          "kind": "candidate.stopped",
+          "lane": "storefront",
+          "subject": "V26-2360",
+          "summary": "Stopped V26-2360: checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)"
+        },
+        {
+          "at": "2026-10-22T04:45:00Z",
+          "id": 7,
+          "kind": "lease.granted",
+          "lane": null,
+          "subject": null,
+          "summary": "dev-backend leased to lead for convex codegen"
+        },
+        {
+          "at": "2026-10-22T04:50:00Z",
+          "id": 8,
+          "kind": "blocker.recorded",
+          "lane": "backend",
+          "subject": "V26-2365",
+          "summary": "backend is blocked on the dev backend lease"
+        },
+        {
+          "at": "2026-10-22T05:00:00Z",
+          "id": 9,
+          "kind": "decision.recorded",
+          "lane": null,
+          "subject": null,
+          "summary": "Payments retries land before the copy changes"
+        },
+        {
+          "at": "2026-10-22T05:04:00Z",
+          "id": 10,
+          "kind": "check.started",
+          "lane": "payments",
+          "subject": "V26-2361",
+          "summary": "Checking Retry card payments once on a dropped connection"
+        }
+      ],
+      "status": {
+        "source": "derived",
+        "text": "Checking Retry card payments once on a dropped connection, 3 of 6 checks done · last landed V26-2358 at 2026-10-22T04:26:00Z · blocked: backend (waiting on the dev backend lease) · stopped: V26-2360 · next: V26-2363"
+      },
+      "focus": {},
+      "stats": {
+        "V26-2358": {
+          "rounds": 2,
+          "roundsSource": "reported",
+          "waitSeconds": 120,
+          "checkToMergeSeconds": 840,
+          "totalSeconds": 4860,
+          "outcome": "merged"
+        },
+        "V26-2361": {
+          "rounds": 3,
+          "roundsSource": "reported",
+          "waitSeconds": 60
+        }
+      },
+      "estimates": {
+        "V26-2363": {
+          "position": 1,
+          "expectedStart": "2026-10-22T05:19:22Z"
+        }
+      }
+    },
+    "delivery-runs": {
+      "run-7": {
+        "runId": "run-7",
+        "ticket": null,
+        "open": true,
+        "status": "incomplete",
+        "startedAt": null,
+        "lastAt": "2026-10-22T05:05:00Z",
+        "durationSeconds": 3000,
+        "rounds": 2,
+        "findings": null,
+        "roundDetail": [
+          {
+            "round": 1,
+            "at": "2026-10-22T04:40:00Z",
+            "outcome": "changes",
+            "findings": {
+              "P0": 0,
+              "P1": 1,
+              "P2": 2,
+              "P3": 0
+            },
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "changes"
+            },
+            "raised": [
+              {
+                "id": "r1-f1",
+                "lens": "lens.adversarial-testing",
+                "severity": "P1",
+                "summary": "A retry after a timeout charges twice",
+                "state": "resolved",
+                "deferredIssue": null
+              },
+              {
+                "id": "r1-f2",
+                "lens": "lens.outcome-correctness",
+                "severity": "P2",
+                "summary": "The receipt keeps the first attempt's total",
+                "state": "resolved",
+                "deferredIssue": null
+              },
+              {
+                "id": "r1-f3",
+                "lens": "lens.adversarial-testing",
+                "severity": "P2",
+                "summary": "No test covers a dropped second attempt",
+                "state": "unresolved",
+                "deferredIssue": null
+              }
+            ],
+            "settled": []
+          },
+          {
+            "round": 2,
+            "at": "2026-10-22T04:58:00Z",
+            "outcome": "approve",
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 1
+            },
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "raised": [
+              {
+                "id": "r2-f1",
+                "lens": "lens.outcome-correctness",
+                "severity": "P3",
+                "summary": "The retry log line repeats the order id",
+                "state": "unresolved",
+                "deferredIssue": null
+              }
+            ],
+            "settled": [
+              {
+                "id": "r1-f1",
+                "state": "fixed",
+                "fixCommit": "abc1234000000000000000000000000000000000",
+                "deferredIssue": null
+              },
+              {
+                "id": "r1-f2",
+                "state": "dropped",
+                "fixCommit": null,
+                "deferredIssue": null
+              }
+            ]
+          }
+        ],
+        "waits": [
+          {
+            "label": "Lead input",
+            "detail": "Waiting on: lead · Reason: Needs the payment sandbox key · Since: 2026-10-22T04:50:00Z"
+          }
+        ],
+        "work": [
+          {
+            "label": "verify",
+            "detail": "State: running · Next step: Wait for the gate"
+          }
+        ],
+        "activity": {
+          "label": "verify · running",
+          "at": "2026-10-22T05:05:00Z"
+        }
+      }
+    },
+    "delivery-links": {
+      "tracker": {
+        "issue": "https://linear.app/v26-labs/issue/",
+        "id": "^V26-[0-9]+$"
+      },
+      "ownRepository": "v26-technologies/athena",
+      "forges": [
+        {
+          "origin": "https://github.com/",
+          "pullPath": "pull",
+          "commitPath": "commit"
+        },
+        {
+          "origin": "https://bitbucket.org/",
+          "pullPath": "pull-requests",
+          "commitPath": "commits"
+        }
+      ]
+    }
+  },
+  "initialText": "NowThe lineWhoWhat's leftWhat happenedParkedCheckout resilience · V26-23541 of 8 pieces have landed.Last landed: Hold the cart through a payment redirect, 44m ago.Being checked nowRetry card payments once on a dropped connection✓ webapp typecheck✓ checkout unit tests✓ convex auditstorefront buildcheckout end-to-endpayments behavior scenariosRunning storefront build · 2m 30s of about 4m3 of 6 checks done · started 6m agoUp next: Keep the order number on the receipt page · Record the payment provider's referenceNeeds attention▲Show a calm message when the card is declined stoppedcheckout end-to-end failed: declined card shows the retry button, declined card keeps the cart◇Backend is blockedWaiting on the dev backend lease◇V26-2359its change request closed without merging◇The forge is not answeringgh answered HTTP 502. Last read 12m ago.StartPieces landedFinish line metSaved view · updated just now · base aaaaaaaThe lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Payments1 of 2 landedV26-2358#1101V26-2361#1106Storefront0 of 3 landedV26-2360#1104V26-2362#1107V26-2364#1109Backend0 of 2 landedV26-2363#1108V26-2365Not yet assigned0 of 1 landedV26-2366Payments laneRetry card payments once on a dropped connectionV26-2361 · #1106 · Being checked before mergeA dropped connection during card payment retries once, without charging twice.Approved on round 2 · 1 serious note, 2 moderate notes, 1 minor note raised134:40 am2118 min laterRound 2ApprovedTestingnothing raisedCorrectnessMinorThe retry log line repeats the order id.Still openConfirmed 1 earlier note fixed in abc1234, 1 earlier note settled otherwiseWaiting on Lead inputNow: verifyWaiting · 1m3 review roundsMerge check · Check started 6 minutes ago · 1 step5:04 amChecking Retry card payments once on a dropped connectionLandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedBoth landedWho's doing what3 of 4 lanes are working right now.Each lane is a separate session working in parallel on its own part of the work.PaymentsV26-2361 card retry, in the merge queueHanded overfor 30mStorefrontV26-2364 checkout copy, review round 2In reviewfor 40mBackendV26-2365 webhook replayBlockedwaiting on the dev backend leaseOperationsStanding byfor 2h 10mLeasesdev-backend held by lead for 25mWhat's left7pieces to go1 of 8 pieces have landed.3with Storefront1with Payments2with Backend1not yet assignedThe finish lineMetA dropped connection during payment never charges twiceNextEvery payment state shows a clear next stepThenThe webhook replay recovers a missed paymentWhat happenedThe story so far, newest first.●Landed◐Ready to check◆Decision▲Problem·Other updateEverythingDecisionsLandedProblems5:04 am·Checking Retry card payments once on a dropped connectionCheck started · Payments · V26-23615:00 am◆Payments retries land before the copy changesDecision4:50 am▲backend is blocked on the dev backend leaseBlocker · Backend · V26-23654:45 am·dev-backend leased to lead for convex codegenLease granted4:44 am▲Stopped V26-2360: checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)Stopped · Storefront · V26-23604:30 am·Checking Show a calm message when the card is declinedCheck started · Storefront · V26-23604:26 am●Merged V26-2358 at 2222222Landed · Payments · V26-23584:12 am·Checking Hold the cart through a payment redirectCheck started · Payments · V26-2358Show all 10Parked for later1 thing found and set aside.V26-2370Measure checkout drop-off by payment statePast deliveries and runs",
+  "details": {
+    "V26-2358": {
+      "detail": "Payments laneHold the cart through a payment redirectV26-2358 · #1101 · Landed 44 minutes agoWaiting · 2mCheck to merge · 14m2 review roundsIn all: 1h 21mMerge check · Landed 44 minutes ago · 3 steps4:10 ampayments handed V26-2358 at 1111111 (athena#1101) after 2 review rounds4:12 amChecking Hold the cart through a payment redirect4:26 amMerged V26-2358 at 2222222"
+    },
+    "V26-2361": {
+      "detail": "Payments laneRetry card payments once on a dropped connectionV26-2361 · #1106 · Being checked before mergeA dropped connection during card payment retries once, without charging twice.Approved on round 2 · 1 serious note, 2 moderate notes, 1 minor note raised134:40 am2118 min laterRound 2ApprovedTestingnothing raisedCorrectnessMinorThe retry log line repeats the order id.Still openConfirmed 1 earlier note fixed in abc1234, 1 earlier note settled otherwiseWaiting on Lead inputNow: verifyWaiting · 1m3 review roundsMerge check · Check started 6 minutes ago · 1 step5:04 amChecking Retry card payments once on a dropped connection",
+      "rounds": [
+        "Round 1Changes requestedTestingSeriousA retry after a timeout charges twice.✓ fixedModerateNo test covers a dropped second attempt.openCorrectnessapprovedModerateThe receipt keeps the first attempt's total.dropped1 of 3 fixed in abc1234 · confirmed round 2 · 1 open",
+        "Round 2ApprovedTestingnothing raisedCorrectnessMinorThe retry log line repeats the order id.Still openConfirmed 1 earlier note fixed in abc1234, 1 earlier note settled otherwise"
+      ]
+    },
+    "V26-2360": {
+      "detail": "Storefront laneShow a calm message when the card is declinedV26-2360 · #1104 · Stopped, waiting for its lanecheckout end-to-end failed: declined card shows the retry button, declined card keeps the cartMerge check · Stopped 26 minutes ago · 2 steps4:30 amChecking Show a calm message when the card is declined4:44 amStopped V26-2360: checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)"
+    },
+    "V26-2362": {
+      "detail": "Storefront laneKeep the order number on the receipt pageV26-2362 · #1107 · Being checked before mergeNeeds the lead first: convex codegen"
+    },
+    "V26-2364": {
+      "detail": "Storefront laneCheckout copy for every payment stateV26-2364 · #1109 · In review"
+    },
+    "V26-2363": {
+      "detail": "Backend laneRecord the payment provider's referenceV26-2363 · #1108 · Ready, waiting to be checkedPosition 1 in line · starts around 5:19 am (estimate)"
+    },
+    "V26-2365": {
+      "detail": "Backend laneReplay a missed payment webhookV26-2365 · Being built"
+    },
+    "V26-2366": {
+      "detail": "Not yet assignedRefund a partial paymentV26-2366 · Not started"
+    }
+  }
+}
