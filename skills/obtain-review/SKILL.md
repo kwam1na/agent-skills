@@ -197,15 +197,15 @@ it raises, deferrals included, whether the change that finding proposes, adopted
 as written, resolves it. Approval conditions are report text inside `evidence`;
 `review-lens-result/1` does not change, and nothing enforces them. A
 verification round re-checks each carried finding and its approval condition
-against the delta the lens derives itself; a change adopted differently from its
-approval condition, or declined, is re-checked like any carried finding. The
-approval conditions add to the carried-finding re-check and the late-finding
-marking; they replace neither.
+against the delta the lens derives itself, and the executor adds no list; a
+change adopted differently from its approval condition, or declined, is
+re-checked like any carried finding. The approval conditions add to the
+carried-finding re-check and the late-finding marking; they replace neither.
 
 Only P0 and P1 findings inside the round's scope are actionable. Deferrable
 findings, P2 and P3 under the charter's severity vocabulary and a P1 first filed
-outside the delta in a verification round, belong in `evidence` as deferrals
-with a follow-up item rather than in `findings`. A carried finding's filed
+outside the delta in a delivery-review verification round, belong in `evidence`
+as deferrals with a follow-up item rather than in `findings`. A carried finding's filed
 severity and in-scope status are a floor: the filing lens may raise them on
 re-check and never lower them, and a raised finding is treated as filed at the
 new severity from that round, so a carried deferral raised to P0 blocks under

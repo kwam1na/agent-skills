@@ -93,7 +93,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " or by that lens's withdrawal with its reason, never by a later deferral",
         "a finding the lens filed as a deferral is discharged by that deferral",
         "A new finding outside the delta is filed only at P0",
-        "and its approval condition against the delta the lens derives itself",
+        "and its approval condition against the delta the lens derives itself,"
+        " and the executor adds no list",
+        "and a P1 first filed outside the delta in a delivery-review verification"
+        " round",
         "a change adopted differently from its approval condition, or declined,"
         " is re-checked like any carried finding",
         "The approval conditions add to the carried-finding re-check and the"
@@ -220,13 +223,16 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " P0, and a P1 becomes a deferral with a follow-up item; for plan review"
         " (`unbounded`), it is filed at P0 or P1, with no deferral",
         "re-check every carried finding and its approval condition against the"
-        " delta this lens derives",
-        "a change adopted differently from its approval condition, or declined,"
+        " delta this lens derives itself from its most recent result-carrying"
+        " entry and this round, then review that delta; the executor adds no"
+        " list",
+        "for delivery review, the deferrable findings",
+        "A change adopted differently from its approval condition, or declined,"
         " is re-checked like any carried finding",
         "The approval conditions add to the carried-finding re-check and the"
         " late-finding marking; they replace neither",
-        "and, at the end, the approval conditions: for each finding this result"
-        " raises, deferrals included, whether the change that finding proposes,"
+        "End `evidence` with the approval conditions: for each finding this"
+        " result raises, deferrals included, whether the change that finding proposes,"
         " adopted as written, resolves it",
         "Approval conditions are report text inside `evidence`; the result shape"
         " does not change, and nothing enforces them",
@@ -291,7 +297,7 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " conditions: for each finding, whether the change it proposes, adopted"
         " as written, resolves it",
         "re-checks each carried finding and its approval condition against the"
-        " delta it derives itself, and a change adopted differently or declined"
+        " delta the lens derives itself, and a change adopted differently or declined"
         " is re-checked like any carried finding",
         "In a follow-up round, a new finding against unchanged plan text is"
         " raised only at P0 or P1, because a plan has no deferral path",
