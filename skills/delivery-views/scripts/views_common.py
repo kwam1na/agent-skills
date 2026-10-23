@@ -278,19 +278,26 @@ def commit_link(sha: str, forge: dict | None) -> str | None:
     return link(forge["commitUrl"], {"repository": forge["repository"], "sha": sha})
 
 
-def _pull_path(template: str, forge: dict) -> re.Pattern:
+def _pull_path(template: str) -> re.Pattern:
     path = urllib.parse.urlsplit(PLACEHOLDER.sub("\0\\1\0", template)).path
     pattern = ""
+    seen: set[str] = set()
     for index, piece in enumerate(path.split("\0")):
         if index % 2 == 0:
             pattern += re.escape(piece)
+        elif piece in seen:
+            pattern += f"(?P={piece})"
         else:
-            pattern += re.escape(_encode("repository", forge["repository"])) if piece == "repository" else "[0-9]+"
+            # Canonical owner/repository segments: no encoded separators,
+            # browser-normalized escapes, credentials or empty segments.
+            capture = r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" if piece == "repository" else "[0-9]+"
+            pattern += f"(?P<{piece}>{capture})"
+            seen.add(piece)
     return re.compile(pattern)
 
 
-def change_request_link(value: str, forges: list[dict]) -> str | None:
-    """A change request's link: ``#<n>`` or ``<repo name>#<n>`` on the first forge, or a URL a forge's pullUrl parses."""
+def change_request_identity(value: str, forges: list[dict]) -> dict[str, str] | None:
+    """Resolve a configured forge's pull path, retaining its actual repository."""
     if not forges or not isinstance(value, str) or CONTROL.search(value) or value != value.strip():
         return None
     first = forges[0]
@@ -298,7 +305,9 @@ def change_request_link(value: str, forges: list[dict]) -> str | None:
     if match:
         name, number = match.groups()
         if name in ("", first["repository"], first["repository"].rsplit("/", 1)[-1]):
-            return link(first["pullUrl"], {"repository": first["repository"], "number": number})
+            href = link(first["pullUrl"], {"repository": first["repository"], "number": number})
+            if href:
+                return {"href": href, "number": number, "repository": first["repository"]}
         return None
     try:
         parts = urllib.parse.urlsplit(value)
@@ -307,9 +316,22 @@ def change_request_link(value: str, forges: list[dict]) -> str | None:
     if parts.query or parts.fragment:
         return None
     for forge in forges:
-        if same_origin(value, forge["pullUrl"]) and _pull_path(forge["pullUrl"], forge).fullmatch(parts.path):
-            return value
+        if not same_origin(value, forge["pullUrl"]):
+            continue
+        match = _pull_path(forge["pullUrl"]).fullmatch(parts.path)
+        if not match or "number" not in match.groupdict():
+            continue
+        repository = match.groupdict().get("repository", forge["repository"])
+        if any(segment in (".", "..") for segment in repository.split("/")):
+            continue
+        return {"href": value, "number": match.group("number"), "repository": repository}
     return None
+
+
+def change_request_link(value: str, forges: list[dict]) -> str | None:
+    """A short reference on the first repository, or a recognized forge pull URL."""
+    identity = change_request_identity(value, forges)
+    return identity["href"] if identity else None
 
 
 # Bounded commands

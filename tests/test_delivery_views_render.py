@@ -506,9 +506,26 @@ class LinkTests(unittest.TestCase):
                                            "SHFT-12": "https://eshyft.atlassian.net/browse/SHFT-12",
                                            "EDD-3": "https://eshyft.atlassian.net/browse/EDD-3"})
         self.assertEqual(links["changes"], {
-            "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34": {"label": "#34", "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34"},
-            "#35": {"label": "#35", "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/35"}})
+            "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34": {"label": "#34", "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34", "repository": "eshyft/eshyftnew"},
+            "#35": {"label": "#35", "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/35", "repository": "eshyft/eshyftnew"},
+            "https://bitbucket.org/someone/else/pull-requests/1": {"label": "#1", "href": "https://bitbucket.org/someone/else/pull-requests/1", "repository": "someone/else"}})
         self.assertEqual(links["commits"], {sha: f"https://bitbucket.org/eshyft/eshyftnew/commits/{sha}"})
+
+    def test_cross_repository_github_links_have_short_labels_and_repository_metadata(self) -> None:
+        forge = {"name": "GitHub", "repository": "v26-technologies/athena",
+                 "pullUrl": "https://github.com/{repository}/pull/{number}",
+                 "commitUrl": "https://github.com/{repository}/commit/{sha}"}
+        urls = [f"https://github.com/v26-technologies/agent-delivery-harness/pull/{n}" for n in (180, 181)]
+        unknown = "https://unknown.test/a/b/pull/180"
+        wrong_path = "https://github.com/a/b/issues/180"
+        document = {"state": {"queue": [{"changeRequest": value} for value in [*urls, unknown, wrong_path]]}}
+        links = render.page_links(document, {}, config(forges=[forge, self.ESHYFT["forges"][0]]))["changes"]
+        self.assertEqual(links, {url: {"label": f"#{n}", "href": url, "repository": "v26-technologies/agent-delivery-harness"}
+                                 for n, url in zip((180, 181), urls)})
+        other = "https://bitbucket.org/another/repo/pull-requests/180"
+        links = render.page_links({"state": {"planned": [{"changeRequest": other}]}}, {},
+                                  config(forges=[forge, self.ESHYFT["forges"][0]]))["changes"]
+        self.assertEqual(links[other], {"label": "#180", "href": other, "repository": "another/repo"})
 
     def test_with_no_tracker_or_forge_nothing_is_linked(self) -> None:
         document = {"state": {"queue": [{"subject": "SHFT-12", "changeRequest": "#34"}]}}

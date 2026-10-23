@@ -268,6 +268,29 @@ class LinkTests(unittest.TestCase):
                 self.assertIsNone(views.change_request_link(value, forges))
         self.assertIsNone(views.change_request_link("#34", []))
 
+    def test_cross_repository_identity_keeps_origin_and_canonical_path_boundary(self) -> None:
+        forge = {"name": "GitHub", "repository": "v26-technologies/athena",
+                 "pullUrl": "https://github.com/{repository}/pull/{number}",
+                 "commitUrl": "https://github.com/{repository}/commit/{sha}"}
+        for number in ("180", "181"):
+            url = f"https://github.com/v26-technologies/agent-delivery-harness/pull/{number}"
+            self.assertEqual(views.change_request_identity(url, [forge]),
+                             {"href": url, "number": number, "repository": "v26-technologies/agent-delivery-harness"})
+        for tail in ("a/../pull/180", "./repo/pull/180", "a/%2e%2e/pull/180",
+                     "a%2fb/repo/pull/180", "a//repo/pull/180", "a/repo/pull/180/",
+                     "a/repo/issues/180", "a/repo/pull/180?x=1", "a/repo/pull/180#x",
+                     "a/repo/pull/180/../../other", "a/repo%5cother/pull/180"):
+            with self.subTest(tail=tail):
+                self.assertIsNone(views.change_request_identity("https://github.com/" + tail, [forge]))
+        for origin in ("http://github.com", "https://github.com:444", "https://github.com.evil.test",
+                       "https://user@github.com", "https://gitlab.com"):
+            with self.subTest(origin=origin):
+                self.assertIsNone(views.change_request_identity(origin + "/a/repo/pull/180", [forge]))
+        self.assertIsNotNone(views.change_request_identity("https://GITHUB.com:443/a/repo/pull/180", [forge]))
+        literal = {**forge, "pullUrl": "https://github.com/fixed/repo/pull/{number}", "repository": "fixed/repo"}
+        self.assertIsNone(views.change_request_identity("https://github.com/a/repo/pull/180", [literal]))
+        self.assertEqual(views.change_request_identity("https://github.com/fixed/repo/pull/180", [literal])["repository"], "fixed/repo")
+
 
 class BoundedCommandTests(unittest.TestCase):
     def python(self, code: str) -> list[str]:

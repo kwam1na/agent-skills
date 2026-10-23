@@ -590,18 +590,6 @@ def _texts_order(texts: dict, named: list[str]) -> list:
 # Links
 
 
-def _forge_label(value: str, forges: list[dict]) -> str | None:
-    """A change request's label: ``#<n>`` on the first forge's repository, else ``<repository name>#<n>``."""
-    short = re.fullmatch(r"([^#\s]*)#([0-9]+)", value)
-    if short:
-        return "#" + short.group(2)
-    for index, forge in enumerate(forges):
-        number = re.search(r"([0-9]+)$", value)
-        if number and views_common.change_request_link(value, [forge]):
-            return ("" if index == 0 else forge["repository"].rsplit("/", 1)[-1]) + "#" + number.group(1)
-    return None
-
-
 def page_links(document: object, runs: dict, config: dict) -> dict:
     """The links the page may open, worked out here so the page holds no link rules of its own:
     ticket ids by key, change requests by value and fix commits by hash."""
@@ -632,10 +620,10 @@ def page_links(document: object, runs: dict, config: dict) -> dict:
     pulls = {}
     for value in changes:
         if isinstance(value, str) and value not in pulls:
-            href = views_common.change_request_link(value, forges)
-            label = _forge_label(value, forges) if href else None
-            if href and label:
-                pulls[value] = {"label": label, "href": href}
+            identity = views_common.change_request_identity(value, forges)
+            if identity:
+                pulls[value] = {"label": "#" + identity["number"], "href": identity["href"],
+                                "repository": identity["repository"]}
     fixes = {sha: href for sha in commits if isinstance(sha, str)
              for href in [views_common.commit_link(sha, forges[0] if forges else None)] if href}
     return {"issues": issues, "changes": pulls, "commits": fixes}
