@@ -10,6 +10,22 @@ through `$orchestrate-work`. The repository writes configuration; it writes no
 view or snapshot code of its own. This skill holds everything provider- or
 web-specific, so the core workflow stays neutral.
 
+GitHub snapshots retain `mergedAt` from the source. The line map uses a recovered
+merge's `occurredAt` for landing times and retains journal `at` as observation
+time in the activity feed. A missing source time is shown as unknown. Recovery
+does not extend a single-repository snapshot to other repositories: supply a
+separate verified forge snapshot for work that the configured repository cannot
+list, then reconcile it through the state tool.
+
+Detail times follow the work item's current stage and recorded attempt:
+building shows the recorded assignment as Started, review its round start,
+queued its hand-off, checking its latest check start, checked its matching
+finish, stopped its stop, and landed its merge occurrence. Exact timestamps
+and their source appear in tooltips and accessible labels. Missing times stay
+unknown; planned work has no start label, and a mutable lane focus time never
+supplies a work item's start. The journey's intermediate milestone label uses
+its own row so it cannot collide with the finish label.
+
 ## Dependencies
 
 - `$orchestrate-work` owns the delivery state, its binding, the render wrapper
@@ -70,10 +86,10 @@ result a report names. A run that cannot be read shows as unavailable; without
 `runs` there is no run section at all. All of a render's run commands share the
 deadline under "Runs, cache and storage" below; `--deadline-seconds` sets it.
 
-A round whose report names a `briefs` member shows, beside each reviewer, its
-brief and its result, each expanding in place as text: up to 64 KiB, cut at a
-character boundary with a note when longer, with "no brief recorded" for one
-the report names as null and "unavailable" for one that cannot be read. The
+A round whose report names a `briefs` member retains each reviewer's brief and
+result in its embedded evidence. The Brief / Result control row is hidden;
+reviewer verdicts, findings and fix closures remain visible. Stored evidence is
+not deleted. Text remains bounded to 64 KiB at a character boundary. The
 embedded run data keeps within 4 MiB: run summaries come first, the oldest
 stops' runs becoming unavailable when they alone are over it, then brief and
 result texts from the newest round backwards. The record shows what was stored
@@ -135,6 +151,11 @@ only when its scheme, host and port equal the template's, `:443` counting as
 no port; otherwise the value renders as text. A change request is linked when
 it is `#<n>` or `<repository name>#<n>` on the first forge, or a URL one
 forge's `pullUrl` matches; a fix commit only when it is 40 lowercase hex.
+A matching URL may name any safe canonical owner/repository on that configured
+origin and template; no per-repository configuration is needed. Shared link
+metadata carries the number, decoded repository and URL. The page shows `#N`
+with the repository in its title and accessible name. Unknown origins, paths
+or unsafe encodings remain text.
 
 ## Runs, cache and storage
 

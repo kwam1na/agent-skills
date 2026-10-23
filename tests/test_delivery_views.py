@@ -268,6 +268,60 @@ class LinkTests(unittest.TestCase):
                 self.assertIsNone(views.change_request_link(value, forges))
         self.assertIsNone(views.change_request_link("#34", []))
 
+    def test_repository_names_and_forge_routes_are_configuration_driven(self) -> None:
+        for origin, route in (("https://github.com", "pull"),
+                              ("https://bitbucket.org", "pull-requests"),
+                              ("https://forge.example.test:8443", "changes")):
+            forge = {"name": "Configured forge", "repository": "original/project",
+                     "pullUrl": origin + "/projects/{repository}/" + route + "/{number}",
+                     "commitUrl": origin + "/projects/{repository}/commit/{sha}"}
+            for repository in ("team-one/service-api", "different_org/client.web", "another/Tools_2"):
+                with self.subTest(origin=origin, repository=repository):
+                    url = f"{origin}/projects/{repository}/{route}/207"
+                    self.assertEqual(views.change_request_identity(url, [forge]),
+                                     {"href": url, "number": "207", "repository": repository})
+
+    def test_canonical_encoded_repository_segments_keep_identity_without_escapes(self) -> None:
+        forge = {"name": "Configured forge", "repository": "original/project",
+                 "pullUrl": "https://forge.example/{repository}/pull/{number}",
+                 "commitUrl": "https://forge.example/{repository}/commit/{sha}"}
+        for repository, encoded in (("équipe/client app", "%C3%A9quipe/client%20app"),
+                                    ("team/~service", "team/~service")):
+            url = f"https://forge.example/{encoded}/pull/180"
+            with self.subTest(repository=repository):
+                self.assertEqual(views.change_request_identity(url, [forge]),
+                                 {"href": url, "number": "180", "repository": repository})
+                self.assertEqual(views.change_request_link(url, [forge]), url)
+        for encoded in ("team/%2E", "team/%2E%2E", "team/x%2Fy", "team/x%5Cy",
+                        "team/x%00y", "team/x%C2%85y", "team/x%E2%80%A8y", "team/%FF",
+                        "team/%C3", "%74eam/repo", "team/%7Erepo", "%c3%a9quipe/repo",
+                        "team/%", "team/%GG", "team//repo"):
+            with self.subTest(encoded=encoded):
+                self.assertIsNone(views.change_request_identity(f"https://forge.example/{encoded}/pull/180", [forge]))
+
+    def test_cross_repository_identity_keeps_origin_and_canonical_path_boundary(self) -> None:
+        forge = {"name": "GitHub", "repository": "v26-technologies/athena",
+                 "pullUrl": "https://github.com/{repository}/pull/{number}",
+                 "commitUrl": "https://github.com/{repository}/commit/{sha}"}
+        for number in ("180", "181"):
+            url = f"https://github.com/v26-technologies/agent-delivery-harness/pull/{number}"
+            self.assertEqual(views.change_request_identity(url, [forge]),
+                             {"href": url, "number": number, "repository": "v26-technologies/agent-delivery-harness"})
+        for tail in ("a/../pull/180", "./repo/pull/180", "a/%2e%2e/pull/180",
+                     "a%2fb/repo/pull/180", "a//repo/pull/180", "a/repo/pull/180/",
+                     "a/repo/issues/180", "a/repo/pull/180?x=1", "a/repo/pull/180#x",
+                     "a/repo/pull/180/../../other", "a/repo%5cother/pull/180"):
+            with self.subTest(tail=tail):
+                self.assertIsNone(views.change_request_identity("https://github.com/" + tail, [forge]))
+        for origin in ("http://github.com", "https://github.com:444", "https://github.com.evil.test",
+                       "https://user@github.com", "https://gitlab.com"):
+            with self.subTest(origin=origin):
+                self.assertIsNone(views.change_request_identity(origin + "/a/repo/pull/180", [forge]))
+        self.assertIsNotNone(views.change_request_identity("https://GITHUB.com:443/a/repo/pull/180", [forge]))
+        literal = {**forge, "pullUrl": "https://github.com/fixed/repo/pull/{number}", "repository": "fixed/repo"}
+        self.assertIsNone(views.change_request_identity("https://github.com/a/repo/pull/180", [literal]))
+        self.assertEqual(views.change_request_identity("https://github.com/fixed/repo/pull/180", [literal])["repository"], "fixed/repo")
+
 
 class BoundedCommandTests(unittest.TestCase):
     def python(self, code: str) -> list[str]:

@@ -141,7 +141,7 @@
       "capabilities": [
         "delivery-views"
       ],
-      "degradedBehavior": "Without a configuration the views are not declared and the core workflow's built-in pages remain; a view that cannot read a run, a report or a snapshot shows it as unavailable rather than failing the render.",
+      "degradedBehavior": "Without a configuration the views are not declared and the core workflow's built-in pages remain; a view that cannot read a run, a report or a snapshot shows it as unavailable rather than failing the render. Recovered landing times use source occurrence, while the activity feed retains observation time. Unknown phase times remain unavailable; configured forge templates recognize validated cross-repository pull requests with compact labels and retained repository identity.",
       "dependencies": [
         {
           "id": "orchestrate-work",
@@ -326,7 +326,7 @@
         "orchestration-workflow",
         "tracker-operations"
       ],
-      "degradedBehavior": "Without session messaging the lead runs lanes as subagents or in sequence, and keeps undelivered messages in its own notes. Optional tracking may be absent; the delivery state and journal remain authoritative for where the epic stands.",
+      "degradedBehavior": "Without session messaging the lead runs lanes as subagents or in sequence, and keeps undelivered messages in its own notes. Optional tracking may be absent; the delivery state and journal remain authoritative for where the epic stands. Recovered merges preserve source occurrence separately from observation; unavailable source times remain unknown.",
       "dependencies": [
         {
           "id": "compound-learning",

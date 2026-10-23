@@ -40,6 +40,8 @@ test("each reviewer's brief and result expand in place, and a missing one says s
     { click: "#detail .run-reviewer .run-record-pick" },
   ] });
   const testing = reviewer(first, "Testing");
+  expect(testing.querySelector(".run-record-row").hidden).toBe(true);
+  expect(testing.textContent).toContain("A retry charges twice.");
   expect([...testing.querySelectorAll(".run-record-pick")].map((pick) => [pick.textContent, pick.getAttribute("aria-expanded")]))
     .toEqual([["Brief", "false"], ["Result", "false"]]);
   expect(testing.querySelector(".run-record-text")).toBeNull();
