@@ -189,7 +189,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "9c7d30699c501ebd413ef088df28cd569d342253f4a247dde3767fc46f28d370"
+          "sha256": "3e3e8ff7571d9e88c79219956a5ccd2e27956f4c24f5103d0aaf6dc79d156414"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",

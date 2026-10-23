@@ -74,3 +74,13 @@ test('a fresh matching render restores the observed verdict after immediate inva
   expect(pending.app.querySelector('.d-run-none').textContent).toContain('unavailable or stale');
   expect(fresh.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
 });
+test('malformed journal boundary data yields unavailable evidence without crashing the renderer',async()=>{
+  for(const journal of [null,[null],[42],['row'],[{id:null,kind:'review.evidence',subject:'WORK-1'}],
+    [{id:'1',kind:'review.round',subject:'WORK-1'}], [{id:true,kind:'review.round',subject:'WORK-1'}],
+    [{id:1,kind:'review.evidence',subject:'WORK-1',reviewArtifact:null}]]){
+    const doc=document();doc.journal=journal;
+    const [shown]=await openPage(renderPage(doc,{config}));
+    expect(shown.app.querySelector('.d-run-none').textContent).toContain('unavailable or stale');
+    expect(shown.app.querySelector('.run-card')).toBeNull();
+  }
+});

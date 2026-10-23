@@ -509,8 +509,13 @@ def native_review_summaries(document: dict) -> dict:
             review_state.validate_review_outcomes(observation.get("outcomes"), subject, observation.get("candidateRef"))
             if len(embed(observation).encode("utf-8")) > review_state.REVIEW_ARTIFACT_LIMIT:
                 raise ValueError("oversized review observation")
-            events = [entry for entry in document.get("journal", []) if entry.get("subject") == subject
+            journal = document.get("journal", [])
+            if not isinstance(journal, list) or any(not isinstance(entry, dict) for entry in journal):
+                raise ValueError("malformed review journal")
+            events = [entry for entry in journal if entry.get("subject") == subject
                       and entry.get("kind") in ("review.round", "review.evidence")]
+            if any(type(entry.get("id")) is not int or not 0 < entry["id"] <= SAFE_INTEGER for entry in events):
+                raise ValueError("malformed review journal boundary")
             evidence = next((entry for entry in reversed(events) if entry["kind"] == "review.evidence"), None)
             boundary = max((entry.get("id", 0) for entry in events), default=0)
             if evidence is not None and (evidence.get("reviewArtifact") != {
