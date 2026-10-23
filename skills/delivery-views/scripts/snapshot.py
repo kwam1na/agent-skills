@@ -5,6 +5,9 @@
         [--canceled-statuses "Won't Do,Duplicate"] [--blocks-link Blocks]
     python3 -B snapshot.py --kind bitbucket --workspace <w> --repo <r> --binding <path> --subject-pattern <regex>
         --token-env <name> [--user-env <name>] [--since <ISO time>] [--host bitbucket.org]
+    python3 -B snapshot.py --kind linear --parent <identifier> --token-env <name>
+    python3 -B snapshot.py --kind github --owner <o> --repo <r> --binding <path> --subject-pattern <regex>
+        --token-env <name> [--since <ISO time>] [--host github.com]
 
 Every kind also takes ``--timeout-seconds`` (one deadline for the whole run)
 and ``--now`` (the snapshot's time, for tests). On success the snapshot is the
@@ -63,7 +66,8 @@ class Response:
     body: bytes
 
 
-Transport = Callable[[str, str, dict, float], Response]
+# method, url, headers, timeout and an optional body.
+Transport = Callable[..., Response]
 
 
 def _origin(url: str) -> tuple[str, str, int]:
@@ -75,9 +79,12 @@ class Client:
     """JSON over HTTPS to one origin, within one deadline, retrying only what may pass on a retry."""
 
     def __init__(self, base: str, authorization: str, transport: Transport, deadline: float,
-                 clock: Callable[[], float], sleep: Callable[[float], None]) -> None:
+                 clock: Callable[[], float], sleep: Callable[[float], None], headers: dict | None = None) -> None:
         self.origin = _origin(base)
         self.authorization = authorization
+        self.headers = headers or {"Accept": "application/json"}
+        # The headers of the last answer read, for links a provider pages by.
+        self.last_headers: dict = {}
         self.transport = transport
         self.deadline = deadline
         self.clock = clock
@@ -88,6 +95,12 @@ class Client:
 
     def get(self, url: str, *, missing_ok: bool = False) -> object | None:
         """The JSON at ``url``; None for a 404 when ``missing_ok``."""
+        return self.request("GET", url, missing_ok=missing_ok)
+
+    def post(self, url: str, document: object) -> object | None:
+        return self.request("POST", url, json.dumps(document).encode("utf-8"))
+
+    def request(self, method: str, url: str, body: bytes | None = None, *, missing_ok: bool = False) -> object | None:
         retries = 0
         redirects = 0
         while True:
@@ -96,8 +109,10 @@ class Client:
             remaining = self.remaining()
             if remaining <= 0:
                 raise Failure("the deadline passed before the snapshot was complete")
-            response = self.transport("GET", url, {"Authorization": self.authorization,
-                                                   "Accept": "application/json"}, remaining)
+            headers = {**self.headers, "Authorization": self.authorization}
+            if body is not None:
+                headers["Content-Type"] = "application/json"
+            response = self.transport(method, url, headers, remaining, body)
             status = response.status
             if status in (301, 302, 303, 307, 308):
                 location = response.headers.get("location")
@@ -126,6 +141,7 @@ class Client:
                 raise Failure(f"the provider answered HTTP {status}")
             if self.remaining() <= 0:
                 raise Failure("the deadline passed before the snapshot was complete")
+            self.last_headers = response.headers
             try:
                 return json.loads(response.body.decode("utf-8"))
             except (UnicodeDecodeError, ValueError, RecursionError):
@@ -146,7 +162,7 @@ def _retry_after(value: str | None, retries: int) -> float:
     return max(0.0, seconds) if seconds == seconds else 0.0
 
 
-def urllib_transport(method: str, url: str, headers: dict, timeout: float) -> Response:
+def urllib_transport(method: str, url: str, headers: dict, timeout: float, body: bytes | None = None) -> Response:
     """The network: one request, redirects left to the client, the body read within a bound."""
 
     class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -154,7 +170,7 @@ def urllib_transport(method: str, url: str, headers: dict, timeout: float) -> Re
             return None
 
     opener = urllib.request.build_opener(NoRedirect)
-    request = urllib.request.Request(url, method=method, headers=headers)
+    request = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
         response = opener.open(request, timeout=timeout)
     except urllib.error.HTTPError as error:
@@ -448,6 +464,251 @@ def bitbucket_snapshot(args: argparse.Namespace, environ: dict, transport: Trans
     return {"source": "forge", "items": items}
 
 
+# Linear
+
+LINEAR_API = "https://api.linear.app/graphql"
+LINEAR_PAGE_SIZE = 100
+LINEAR_STATES = {"triage": "backlog", "backlog": "backlog", "unstarted": "backlog", "started": "started",
+                 "completed": "completed", "canceled": "canceled"}
+# Linear's personal keys: any of them in a refusal is taken out, not only the one in use.
+LINEAR_KEY = re.compile(r"lin_api_[A-Za-z0-9]+", re.IGNORECASE)
+LINEAR_QUERY = f"""query Children($parent: String!, $after: String) {{
+  issue(id: $parent) {{
+    createdAt
+    children(first: {LINEAR_PAGE_SIZE}, after: $after) {{
+      nodes {{
+        identifier
+        createdAt
+        title
+        description
+        state {{ type }}
+        inverseRelations(first: 50) {{ nodes {{ type issue {{ identifier }} }} }}
+      }}
+      pageInfo {{ hasNextPage endCursor }}
+    }}
+  }}
+}}"""
+# A follow-up often opens with where it came from; its summary says what the work is.
+PROVENANCE = re.compile(r"^(Deferred from|Proposed by|Filed by|These are the|Split out of|Moved from)\b", re.ASCII)
+# JavaScript's whitespace, which its \s and trim() share: the summary is read as the
+# tracker command it ports read it, so Python's own whitespace set is not used.
+JS_SPACE = "\t\n\v\f\r    -     　﻿"
+JS_SPACE_CHARS = "\t\n\v\f\r   " + "".join(map(chr, range(0x2000, 0x200b))) \
+    + "    　﻿"
+# The longest paragraph the summary's patterns read: past it they would take far longer
+# than the deadline allows, and only the first SUMMARY_LIMIT characters are kept anyway.
+MAX_SUMMARY_SOURCE = 8 * SUMMARY_LIMIT
+
+
+def summary_of(description: object) -> str | None:
+    """A ticket's summary: the first paragraph under its "## Summary" heading, as plain text,
+    within the snapshot's bound; None when there is no such paragraph."""
+    lines = (description if isinstance(description, str) else "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    fenced = False
+    heading = -1
+    for index, line in enumerate(lines):
+        # A heading inside a fenced code block is code, not the ticket's heading.
+        if re.match(f"^[{JS_SPACE}]*(```|~~~)", line):
+            fenced = not fenced
+        if not fenced and re.match(f"^##[{JS_SPACE}]*Summary[{JS_SPACE}]*$", line.strip(JS_SPACE_CHARS),
+                                   re.IGNORECASE | re.ASCII):
+            heading = index
+            break
+    if heading < 0:
+        return None
+    paragraph: list[str] = []
+    for line in lines[heading + 1:]:
+        if re.match(f"^#{{1,6}}[{JS_SPACE}]", line.strip(JS_SPACE_CHARS)):
+            break
+        if not line.strip(JS_SPACE_CHARS):
+            if paragraph:
+                break
+            continue
+        # A list item's marker is markup, not text.
+        paragraph.append(re.sub(f"^[{JS_SPACE}]*(?:[-*+]|[0-9]+[.)])[{JS_SPACE}]+", "", line, count=1))
+    text = " ".join(paragraph)[:MAX_SUMMARY_SOURCE]
+    text = re.sub(r"</?[A-Za-z][^>]*>", "", text)
+    text = re.sub(f"!?\\[((?:[^[\\]]|\\[[^\\]]*\\])+)\\]\\((?:[^(){JS_SPACE}]|\\([^()]*\\))*\\)", r"\1", text)
+    text = re.sub(r"`|\*\*|(?<!\w)_|_(?!\w)", "", text, flags=re.ASCII)
+    text = re.sub(f"[{JS_SPACE}]+", " ", text).strip(JS_SPACE_CHARS)
+    while PROVENANCE.match(text):
+        following = re.search(f"\\.[{JS_SPACE}]+(?=[A-Z`])", text)
+        if not following:
+            break
+        text = text[following.end():]
+    if not text:
+        return None
+    if len(text) <= SUMMARY_LIMIT:
+        return text
+    head = text[:SUMMARY_LIMIT]
+    cut = head.rfind(". ")
+    # The ported command measured the cut in UTF-16 units.
+    if cut >= 0 and len(head[:cut].encode("utf-16-le")) // 2 > 80:
+        return head[:cut + 1]
+    return text[:SUMMARY_LIMIT - 1] + "…"
+
+
+def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transport, deadline: float,
+                    clock: Callable[[], float], sleep: Callable[[float], None]) -> dict:
+    # A personal key goes in the Authorization header as it is.
+    client = Client(LINEAR_API, _credential(environ, args.token_env), transport, deadline, clock, sleep)
+    items: list[dict] = []
+    seen: set[str] = set()
+    cursors: set[str] = set()
+    after = None
+    while True:
+        answer = client.post(LINEAR_API, {"query": LINEAR_QUERY, "variables": {"parent": args.parent, "after": after}})
+        if not isinstance(answer, dict):
+            raise Failure("Linear's answer could not be read")
+        errors = answer.get("errors")
+        if errors:
+            messages = [error.get("message") if isinstance(error, dict) else None for error in errors] \
+                if isinstance(errors, list) else [None]
+            raise Failure("Linear refused: " + "; ".join(_shown(message or "error") for message in messages))
+        data = answer.get("data")
+        issue = data.get("issue") if isinstance(data, dict) else None
+        if issue is None:
+            raise Failure(f"the tracker has no issue {_shown(args.parent)}")
+        try:
+            children = issue["children"]
+            nodes = children["nodes"]
+            page = children["pageInfo"]
+            for node in nodes:
+                if client.remaining() <= 0:
+                    raise Failure("the deadline passed before the snapshot was complete")
+                identifier = _text(node["identifier"], "a child's identifier")
+                # A child listed on two pages is kept once, as the tracker first listed it.
+                if identifier in seen:
+                    continue
+                seen.add(identifier)
+                state = LINEAR_STATES.get(node["state"]["type"])
+                if state is None:
+                    raise Failure(f"{_shown(identifier)} has a state type the snapshot does not know: "
+                                  f"{_shown(node['state']['type'])}")
+                blockers: list[str] = []
+                for relation in node["inverseRelations"]["nodes"]:
+                    if relation["issue"] is None:
+                        continue
+                    blocker = _text(relation["issue"]["identifier"], f"a blocker of {_shown(identifier)}")
+                    # A child blocked by the parent itself is no dependency the record can hold.
+                    if relation["type"] == "blocks" and blocker not in (identifier, args.parent) \
+                            and blocker not in blockers:
+                        blockers.append(blocker)
+                item = {"subject": identifier, "title": _text(node["title"], f"{_shown(identifier)}'s title")}
+                summary = summary_of(node.get("description"))
+                if summary is not None:
+                    item["summary"] = summary
+                item["state"] = state
+                if blockers:
+                    item["blockedBy"] = blockers
+                items.append(item)
+                _check_cap(len(items))
+            has_next = page["hasNextPage"]
+            after = page.get("endCursor")
+            if not isinstance(has_next, bool):
+                raise TypeError("hasNextPage")
+        except (KeyError, TypeError, AttributeError):
+            raise Failure("Linear's answer is not the shape of a children listing") from None
+        if has_next is not True:
+            return {"source": "tracker", "items": items}
+        # A page that names no new place to go on from would be read forever.
+        if not isinstance(after, str) or not after or after in cursors:
+            raise Failure(f"Linear gave no next page for the children of {_shown(args.parent)}")
+        cursors.add(after)
+
+
+# GitHub
+
+GITHUB_API = "https://api.github.com"
+GITHUB_HEADERS = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+GITHUB_RANK = {"open": 0, "draft": 0, "merged": 1, "closed": 2}
+LINK_NEXT = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
+
+
+def _bracketed(title: str) -> list[str]:
+    """The subjects a title names in its opening brackets, as ``[A-1]: ...`` or ``[A-1, A-2]: ...``."""
+    named = re.match(r"^\[([^\]]+)\]", title.strip())
+    return [part for part in re.split(r"[\s,]+", named.group(1)) if part] if named else []
+
+
+def github_snapshot(args: argparse.Namespace, environ: dict, transport: Transport, deadline: float,
+                    clock: Callable[[], float], sleep: Callable[[float], None], cwd: Path | None) -> dict:
+    try:
+        pattern = re.compile(args.subject_pattern)
+    except re.error:
+        raise Failure("--subject-pattern does not compile") from None
+    host = args.host.lower()
+    subjects, since = _record(args.binding, cwd)
+    if args.since:
+        since = _moment(args.since, "--since")
+    client = Client(GITHUB_API, f"Bearer {_credential(environ, args.token_env)}", transport, deadline, clock, sleep,
+                    headers=GITHUB_HEADERS)
+    repository = f"{urllib.parse.quote(args.owner, safe='')}/{urllib.parse.quote(args.repo, safe='')}"
+    query = urllib.parse.urlencode({"state": "all", "sort": "created", "direction": "desc", "per_page": "100"})
+    url: str | None = f"{GITHUB_API}/repos/{repository}/pulls?{query}"
+    chosen: dict[str, tuple[dict, str, str]] = {}
+    count = 0
+    read: set[str] = set()
+    while url:
+        if url in read:
+            raise Failure("the pull request listing named a page it had already given")
+        read.add(url)
+        page = client.get(url)
+        if not isinstance(page, list):
+            raise Failure("the pull request answer is not a list")
+        reached_since = False
+        for pull in page:
+            if not isinstance(pull, dict):
+                raise Failure("a pull request is not an object")
+            where = f"pull request {_shown(pull.get('number'))}"
+            if _moment(pull.get("created_at"), f"{where}'s created_at") < since:
+                # Newest first: everything after this was made before the since time too.
+                reached_since = True
+                continue
+            # Only pull requests in the window count toward the cap.
+            count += 1
+            _check_cap(count)
+            raw_state = pull.get("state")
+            if raw_state == "open":
+                state = "draft" if pull.get("draft") is True else "open"
+            elif raw_state == "closed":
+                state = "merged" if pull.get("merged_at") else "closed"
+            else:
+                raise Failure(f"{where} is in a state the snapshot does not know: {_shown(raw_state)}")
+            title = _text(pull.get("title"), f"{where}'s title")
+            # The latest of a kind by when it merged or closed, not by a later comment.
+            when = pull.get("merged_at") or pull.get("closed_at") or pull.get("updated_at")
+            when_moment = _moment(when, f"{where}'s merged_at, closed_at or updated_at").isoformat()
+            for subject in _bracketed(title):
+                if subject not in subjects or not pattern.search(subject):
+                    continue
+                current = chosen.get(subject)
+                if current is None or GITHUB_RANK[state] < GITHUB_RANK[current[1]] or (
+                        GITHUB_RANK[state] == GITHUB_RANK[current[1]] and when_moment > current[2]):
+                    chosen[subject] = (pull, state, when_moment)
+        if reached_since:
+            break
+        link = client.last_headers.get("link") or ""
+        following = LINK_NEXT.search(link)
+        if following is None and 'rel="next"' in link:
+            raise Failure("the pull request listing's next link could not be read")
+        url = following.group(1) if following else None
+    items = []
+    for subject in sorted(chosen):
+        pull, state, _ = chosen[subject]
+        item = {"subject": subject, "title": pull["title"], "state": state}
+        href = pull.get("html_url")
+        if isinstance(href, str) and _origin(href) == ("https", host, 443):
+            item["changeRequest"] = href
+        head = pull.get("head")
+        sha = head.get("sha") if isinstance(head, dict) else None
+        # A head that is not a full commit, such as a deleted fork's, is left out.
+        if isinstance(sha, str) and COMMIT.match(sha):
+            item["head"] = sha
+        items.append(item)
+    return {"source": "forge", "items": items}
+
+
 # Command line
 
 
@@ -458,7 +719,7 @@ class _Parser(argparse.ArgumentParser):
 
 def _parser() -> argparse.ArgumentParser:
     parser = _Parser(description="Print a delivery's tracker or forge snapshot.", add_help=False)
-    parser.add_argument("--kind", required=True, choices=("jira", "bitbucket"))
+    parser.add_argument("--kind", required=True, choices=("jira", "bitbucket", "linear", "github"))
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--now")
     parser.add_argument("--token-env", required=True)
@@ -472,11 +733,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--binding")
     parser.add_argument("--subject-pattern")
     parser.add_argument("--since")
-    parser.add_argument("--host", default="bitbucket.org")
+    parser.add_argument("--owner")
+    parser.add_argument("--host")
     return parser
 
 
-REQUIRED = {"jira": ("site", "parent", "user_env"), "bitbucket": ("workspace", "repo", "binding", "subject_pattern")}
+REQUIRED = {"jira": ("site", "parent", "user_env"), "bitbucket": ("workspace", "repo", "binding", "subject_pattern"),
+            "linear": ("parent",), "github": ("owner", "repo", "binding", "subject_pattern")}
+# The web host a forge's change request links are kept on, unless --host names another.
+HOSTS = {"bitbucket": "bitbucket.org", "github": "github.com"}
 
 
 def run(argv: list[str], *, environ: dict, transport: Transport = urllib_transport,
@@ -502,10 +767,15 @@ def run(argv: list[str], *, environ: dict, transport: Transport = urllib_transpo
             raise Failure("usage: --timeout-seconds must be above 0 and at most 600")
         now = _moment(args.now, "--now") if args.now else datetime.datetime.now(datetime.timezone.utc)
         deadline = clock() + args.timeout_seconds
+        args.host = args.host or HOSTS.get(args.kind)
         if args.kind == "jira":
             document = jira_snapshot(args, environ, transport, deadline, clock, sleep)
-        else:
+        elif args.kind == "bitbucket":
             document = bitbucket_snapshot(args, environ, transport, deadline, clock, sleep, cwd)
+        elif args.kind == "linear":
+            document = linear_snapshot(args, environ, transport, deadline, clock, sleep)
+        else:
+            document = github_snapshot(args, environ, transport, deadline, clock, sleep, cwd)
         snapshot = {"takenAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"), **document}
         try:
             json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
@@ -519,6 +789,7 @@ def run(argv: list[str], *, environ: dict, transport: Transport = urllib_transpo
         text = " ".join(str(failure).split())
         for secret in secrets:
             text = text.replace(secret, "[redacted]")
+        text = LINEAR_KEY.sub("[redacted]", text)
         return 1, "", f"snapshot: {text[:300]}\n"
     except Exception as error:  # Only the type: an exception's text may hold what it was given.
         return 1, "", f"snapshot: unexpected failure ({type(error).__name__})\n"
