@@ -151,6 +151,11 @@ only when its scheme, host and port equal the template's, `:443` counting as
 no port; otherwise the value renders as text. A change request is linked when
 it is `#<n>` or `<repository name>#<n>` on the first forge, or a URL one
 forge's `pullUrl` matches; a fix commit only when it is 40 lowercase hex.
+A matching URL may name any safe canonical owner/repository on that configured
+origin and template; no per-repository configuration is needed. Shared link
+metadata carries the number, decoded repository and URL. The page shows `#N`
+with the repository in its title and accessible name. Unknown origins, paths
+or unsafe encodings remain text.
 
 ## Runs, cache and storage
 
