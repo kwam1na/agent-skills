@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_skills.release import (
+    SUPPORTED_PROFILES,
     ReleaseError,
     _path_digest,
     build_release,
@@ -70,6 +71,33 @@ class ReleaseArchiveTests(unittest.TestCase):
             )
             self.assertFalse(any("linear" in name for name in names))
             self.assertNotIn("skills/bootstrap-agent-harness/SKILL.md", names)
+
+    def test_archives_hold_no_node_package_files(self) -> None:
+        # The page-test lane's package files and installed packages sit in the
+        # checkout; no profile's archive may carry them.
+        with tempfile.TemporaryDirectory() as temporary:
+            for profile in sorted(SUPPORTED_PROFILES):
+                archive = Path(temporary) / f"{profile}.zip"
+                build_release(
+                    ROOT,
+                    archive,
+                    Path(temporary) / f"{profile}.release.json",
+                    release_id=f"{profile}-v1",
+                    profile_id=profile,
+                )
+                with zipfile.ZipFile(archive) as release:
+                    names = release.namelist()
+                with self.subTest(profile=profile):
+                    self.assertTrue(names)
+                    self.assertEqual(
+                        [
+                            name
+                            for name in names
+                            if Path(name).name in {"package.json", "package-lock.json"}
+                            or "node_modules" in Path(name).parts
+                        ],
+                        [],
+                    )
 
     def test_archive_checksum_tamper_rejects_before_parsing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
