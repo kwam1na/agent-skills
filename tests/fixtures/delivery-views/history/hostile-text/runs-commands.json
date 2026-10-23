@@ -1,0 +1,4 @@
+{
+  "runs list --json": "{\"spec\":\"run-inventory/1\",\"runs\":[{\"runId\":\"run-h\",\"status\":\"complete\",\"open\":false,\"durationSeconds\":60,\"bytes\":10}]}",
+  "runs show run-h --json": "{\"spec\":\"delivery-run-export/2\",\"runId\":\"run-h\",\"events\":[{\"kind\":\"run.started\",\"at\":\"2026-10-21T09:00:00Z\"},{\"kind\":\"review.round.closed\",\"at\":\"2026-10-21T10:00:00Z\",\"payload\":{\"round\":1,\"outcome\":\"</script><img src=x onerror=alert(1)> <b>bold</b> next line & \\\"quoted\\\" <!--<script>\",\"findings\":{\"P0\":0,\"P1\":1,\"P2\":0,\"P3\":2}}}],\"summary\":{\"ticket\":\"</script><img src=x onerror=alert(1)> <b>bold</b> next line & \\\"quoted\\\" <!--<script>\",\"open\":false,\"startedAt\":\"2026-10-21T09:00:00Z\",\"lastAt\":\"2026-10-21T10:00:00Z\",\"durationSeconds\":5400,\"roundsClosed\":1,\"findings\":{\"P0\":0,\"P1\":1,\"P2\":0,\"P3\":2}},\"readout\":{\"status\":\"complete\"}}"
+}

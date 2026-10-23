@@ -546,9 +546,10 @@ class RendererTests(unittest.TestCase):
     def test_the_history_link_names_the_declared_history_renderers_output(self) -> None:
         line_map = {"argv": ["python3", "-B", "scripts/render.py", "line-map"], "output": "line-map.html"}
         history = {"argv": ["python3", "-B", "scripts/render.py", "history"], "output": "delivery-history.html"}
-        self.assertEqual(render._history_href({"state": {"renderers": [line_map, history]}}), "delivery-history.html")
-        self.assertIsNone(render._history_href({"state": {"renderers": [line_map]}}))
-        self.assertIsNone(render._history_href({"state": {"renderers": [{**history, "argv": ["python3", "other.py", "history"]}]}}))
+        self.assertEqual(render._renderer_output({"state": {"renderers": [line_map, history]}}, "history"), "delivery-history.html")
+        self.assertEqual(render._renderer_output({"state": {"renderers": [line_map, history]}}, "line-map"), "line-map.html")
+        self.assertIsNone(render._renderer_output({"state": {"renderers": [line_map]}}, "history"))
+        self.assertIsNone(render._renderer_output({"state": {"renderers": [{**history, "argv": ["python3", "other.py", "history"]}]}}, "history"))
 
     def test_the_runs_deadline_is_capped_by_this_renderers_declared_timeout(self) -> None:
         binding = {"state": {"renderers": [

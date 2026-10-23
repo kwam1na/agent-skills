@@ -76,6 +76,30 @@ result texts from the newest round backwards. The record shows what was stored
 as each lens's brief and result, as stored; it does not prove the lens received
 or followed it.
 
+## The history
+
+`scripts/render.py history` prints the delivery history: past deliveries and
+runs, newest first, each opening the line map's run summary in place. Its
+style and program are `assets/history.css` and `assets/history.js` with the
+run summary's two assets, inlined into the page. Declare it beside the line
+map; the line map links to it, and it links back to the binding's line map, as
+a file and, when served, at the line map's `/view/` address:
+
+```json
+{ "id": "history", "argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/render.py", "history", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json", "--state-dir", "{stateDirectory}"], "output": "delivery-history.html", "timeoutSeconds": 60 }
+```
+
+It lists every run `runs list --json` shows, read with `runs show <id> --json`
+(reused from its own cache in the state directory while the inventory shows
+the run unchanged), then every `.json` file in the `exports` directory that no
+`ignore` pattern matches and the product has not already listed: a run export,
+or an older telemetry record (`schemaVersion: 1` with a branch), its ticket
+read from the branch by the tracker's key pattern. A run or file
+that cannot be read is listed with a note. The record on stdin only names the
+delivery each run belongs to. Its run commands share the render's deadline, and
+past the 4 MiB page budget the oldest rows give up their summaries first.
+`--now` fixes the history's as-of time, for tests.
+
 ## Configuration: `delivery-views-config/1`
 
 `.agents/delivery-views.json`; every key but `spec` is optional.

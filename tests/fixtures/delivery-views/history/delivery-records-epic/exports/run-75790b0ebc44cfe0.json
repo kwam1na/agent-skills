@@ -1,0 +1,382 @@
+{
+  "spec": "delivery-run-export/1",
+  "labels": "self-attested; observability, not evidence; unbound to a record",
+  "runId": "run-75790b0ebc44cfe0",
+  "events": [
+    {
+      "version": "run-event/1",
+      "runId": "run-75790b0ebc44cfe0",
+      "seq": 1,
+      "at": "2026-09-23T01:16:30Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "run.started",
+      "actor": {
+        "role": "executor"
+      },
+      "ticket": "V26-2120",
+      "attestation": "self",
+      "payload": {
+        "ticket": "V26-2120",
+        "host": "claude-code",
+        "workflow": {
+          "releaseId": "linear-concurrent-delivery-v1",
+          "profile": "linear"
+        }
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-75790b0ebc44cfe0",
+      "seq": 2,
+      "at": "2026-09-23T01:16:31Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "context.saved",
+      "actor": {
+        "role": "executor"
+      },
+      "candidateTreeSha": "0b1b4c7e8a7d09d68001bf39cc7af5d360ae7b4c",
+      "attestation": "self",
+      "payload": {
+        "spec": "ordinary-run-context/1",
+        "contract": {
+          "objective": "Keep short numeric tokens and drop availability pronouns in the assistant catalogue tokeniser (V26-2120)",
+          "acceptanceCriteria": [
+            "tokenizeAssistantCatalogQuery keeps purely numeric tokens of any length and otherwise keeps tokens longer than two characters that are not stop words",
+            "one, ones and stock are on ASSISTANT_SEARCH_STOP_WORDS in alphabetical order",
+            "Which ones do you have in stock? tokenizes to no tokens so the route reports exhaustive false",
+            "Tokeniser tests flip 14 and 20 to kept, add the availability-question and one-character cases, and a seeded-store test shows a bare length number matches the 14-inch product",
+            "No price ordering, attribute filtering, or assistant_catalog.v1 wire-shape change"
+          ],
+          "finishLine": "PR merged to main with passing gate and unanimous review"
+        },
+        "stage": "implementation",
+        "candidateTreeSha": "0b1b4c7e8a7d09d68001bf39cc7af5d360ae7b4c",
+        "candidateBinding": {
+          "deliverableDigest": "e2237102fd417ccbab2d60ae9249a631946df4171d150cc3c0fbb14e0bc52908",
+          "identity": "deliverable-tree/v1",
+          "baseRef": "origin/main",
+          "baseTipSha": "a1e40ec02d5615a30ddd4ad9287c9a4223863270",
+          "mergeBaseSha": "a1e40ec02d5615a30ddd4ad9287c9a4223863270",
+          "workspaceId": "77d6e9a2ef0ea5ca182ef6c9b8dcabe26b1477814ce7b72ae3f399ebd681a93b"
+        },
+        "policyDigest": "1dd70381b10a325aaaf69ac741cff234a2fc6c7c623e08134b54fd72be12183c",
+        "release": {
+          "runtimeVersion": "0.5.0",
+          "releaseId": "linear-scoped-validation-diagnostics-v1",
+          "profile": "linear",
+          "archiveSha256": "ea924e59affe501c0022c26c11032f48219b939ad4948b75a0205abab8eb9e01"
+        }
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-75790b0ebc44cfe0",
+      "seq": 3,
+      "at": "2026-09-23T01:16:47Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "command.completed",
+      "actor": {
+        "role": "cli"
+      },
+      "attestation": "self",
+      "payload": {
+        "command": "review-context",
+        "outcome": "ok",
+        "durationMs": 618
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-75790b0ebc44cfe0",
+      "seq": 4,
+      "at": "2026-09-23T01:19:15Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "lens.selected",
+      "actor": {
+        "role": "executor"
+      },
+      "attestation": "self",
+      "payload": {
+        "mandated": [
+          "lens.outcome-correctness",
+          "lens.adversarial-testing"
+        ],
+        "selected": [
+          "lens.outcome-correctness",
+          "lens.adversarial-testing",
+          "athena.ce-correctness-reviewer"
+        ],
+        "rationale": "the repository-mandated pair plus the single additional reviewer .agents/review-selection.json names"
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-75790b0ebc44cfe0",
+      "seq": 5,
+      "at": "2026-09-23T01:19:22Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "review.round.opened",
+      "actor": {
+        "role": "executor"
+      },
+      "candidateTreeSha": "0b1b4c7e8a7d09d68001bf39cc7af5d360ae7b4c",
+      "attestation": "self",
+      "payload": {
+        "round": 1,
+        "candidateTreeSha": "0b1b4c7e8a7d09d68001bf39cc7af5d360ae7b4c",
+        "lenses": [
+          "lens.outcome-correctness",
+          "lens.adversarial-testing",
+          "athena.ce-correctness-reviewer"
+        ]
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-75790b0ebc44cfe0",
+      "seq": 6,
+      "at": "2026-09-23T01:21:06Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "command.completed",
+      "actor": {
+        "role": "cli"
+      },
+      "attestation": "self",
+      "payload": {
+        "command": "verify",
+        "outcome": "policy",
+        "durationMs": 424
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-75790b0ebc44cfe0",
+      "seq": 7,
+      "at": "2026-09-23T01:22:50Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "command.completed",
+      "actor": {
+        "role": "cli"
+      },
+      "attestation": "self",
+      "payload": {
+        "command": "emit-review-evidence",
+        "outcome": "ok",
+        "durationMs": 659
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-75790b0ebc44cfe0",
+      "seq": 8,
+      "at": "2026-09-23T01:22:55Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "command.completed",
+      "actor": {
+        "role": "cli"
+      },
+      "attestation": "self",
+      "payload": {
+        "command": "submit-evidence",
+        "outcome": "ok",
+        "durationMs": 705
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-75790b0ebc44cfe0",
+      "seq": 9,
+      "at": "2026-09-23T01:23:05Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "review.round.closed",
+      "actor": {
+        "role": "executor"
+      },
+      "candidateTreeSha": "0b1b4c7e8a7d09d68001bf39cc7af5d360ae7b4c",
+      "attestation": "self",
+      "payload": {
+        "round": 1,
+        "candidateTreeSha": "0b1b4c7e8a7d09d68001bf39cc7af5d360ae7b4c",
+        "outcome": "aligned",
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 2,
+          "P3": 0
+        },
+        "cost": {
+          "unit": "subagent-tokens",
+          "total": 248282,
+          "reportedBy": "claude-code",
+          "coverage": "complete"
+        }
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-75790b0ebc44cfe0",
+      "seq": 10,
+      "at": "2026-09-23T01:24:11Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "context.saved",
+      "actor": {
+        "role": "executor"
+      },
+      "candidateTreeSha": "0b1b4c7e8a7d09d68001bf39cc7af5d360ae7b4c",
+      "attestation": "self",
+      "payload": {
+        "spec": "ordinary-run-context/1",
+        "contract": {
+          "objective": "Keep short numeric tokens and drop availability pronouns in the assistant catalogue tokeniser (V26-2120)",
+          "acceptanceCriteria": [
+            "tokenizeAssistantCatalogQuery keeps purely numeric tokens of any length and otherwise keeps tokens longer than two characters that are not stop words",
+            "one, ones and stock are on ASSISTANT_SEARCH_STOP_WORDS in alphabetical order",
+            "Which ones do you have in stock? tokenizes to no tokens so the route reports exhaustive false",
+            "Tokeniser tests flip 14 and 20 to kept, add the availability-question and one-character cases, and a seeded-store test shows a bare length number matches the 14-inch product",
+            "No price ordering, attribute filtering, or assistant_catalog.v1 wire-shape change"
+          ],
+          "finishLine": "PR merged to main with passing gate and unanimous review"
+        },
+        "stage": "athena-gate",
+        "candidateTreeSha": "0b1b4c7e8a7d09d68001bf39cc7af5d360ae7b4c",
+        "candidateBinding": {
+          "deliverableDigest": "e2237102fd417ccbab2d60ae9249a631946df4171d150cc3c0fbb14e0bc52908",
+          "identity": "deliverable-tree/v1",
+          "baseRef": "origin/main",
+          "baseTipSha": "a1e40ec02d5615a30ddd4ad9287c9a4223863270",
+          "mergeBaseSha": "a1e40ec02d5615a30ddd4ad9287c9a4223863270",
+          "workspaceId": "77d6e9a2ef0ea5ca182ef6c9b8dcabe26b1477814ce7b72ae3f399ebd681a93b"
+        },
+        "policyDigest": "1dd70381b10a325aaaf69ac741cff234a2fc6c7c623e08134b54fd72be12183c",
+        "release": {
+          "runtimeVersion": "0.5.0",
+          "releaseId": "linear-scoped-validation-diagnostics-v1",
+          "profile": "linear",
+          "archiveSha256": "ea924e59affe501c0022c26c11032f48219b939ad4948b75a0205abab8eb9e01"
+        }
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-75790b0ebc44cfe0",
+      "seq": 11,
+      "at": "2026-09-23T01:51:03Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "command.completed",
+      "actor": {
+        "role": "cli"
+      },
+      "attestation": "self",
+      "payload": {
+        "command": "gate",
+        "outcome": "ok",
+        "durationMs": 1611309,
+        "digest": "0dd5a218cc09eaca8449121e0e97038a076b98b06f2dca5ecaaabe240ff44001"
+      }
+    }
+  ],
+  "summary": {
+    "ticket": "V26-2120",
+    "open": true,
+    "startedAt": "2026-09-23T01:16:30Z",
+    "lastAt": "2026-09-23T01:51:03Z",
+    "durationSeconds": 2073,
+    "phases": {
+      "implementationSeconds": 172,
+      "reviewSeconds": 223,
+      "tailSeconds": 1678,
+      "rounds": 1,
+      "gate": {
+        "totalMs": 1611309,
+        "counted": 1,
+        "unreadable": 0,
+        "unseen": false
+      }
+    },
+    "roundsOpened": 1,
+    "roundsClosed": 1,
+    "findings": {
+      "P0": 0,
+      "P1": 0,
+      "P2": 2,
+      "P3": 0
+    },
+    "gate": {
+      "outcome": "ok",
+      "writer": "cli"
+    }
+  },
+  "costs": {
+    "review": {
+      "coverage": "complete",
+      "unreportedEntries": 0,
+      "totals": [
+        {
+          "unit": "subagent-tokens",
+          "total": 248282,
+          "reportedBy": "claude-code"
+        }
+      ]
+    },
+    "run": {
+      "coverage": "unreported"
+    }
+  },
+  "readout": {
+    "status": "incomplete",
+    "present": [
+      "run.started",
+      "lens.selected",
+      "review.round.opened",
+      "review.round.closed",
+      "command.completed:gate"
+    ],
+    "missing": [
+      "ticket.read",
+      "posture.declared",
+      "command.completed:record",
+      "pr.opened",
+      "run.ended"
+    ],
+    "violations": []
+  },
+  "refusedAppends": [
+    {
+      "kind": "review.round.opened",
+      "code": "unknown_member",
+      "at": "2026-09-23T01:19:15Z"
+    },
+    {
+      "kind": "review.round.closed",
+      "code": "not_an_object",
+      "at": "2026-09-23T01:22:49Z"
+    },
+    {
+      "kind": "review.round.closed",
+      "code": "missing_member",
+      "at": "2026-09-23T01:22:54Z"
+    }
+  ]
+}

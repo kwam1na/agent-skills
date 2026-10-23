@@ -1,0 +1,13 @@
+{
+  "state": {
+    "meta": {
+      "headline": "</script><img src=x onerror=alert(1)> <b>bold</b> next line & \"quoted\" <!--<script>"
+    },
+    "queue": [
+      {
+        "subject": "</script><img src=x onerror=alert(1)> <b>bold</b> next line & \"quoted\" <!--<script>",
+        "runId": "run-h"
+      }
+    ]
+  }
+}

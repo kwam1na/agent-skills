@@ -1012,6 +1012,8 @@ class LinearQualificationTests(unittest.TestCase):
                 and not any(path.is_relative_to(ROOT / "docs" / kind) for kind in ("plans", "delivery"))
                 # The line map's golden corpus is recorded delivery records, which keep their ticket ids.
                 and not path.is_relative_to(ROOT / "tests" / "fixtures" / "delivery-views" / "line-map")
+                # The history page's golden corpus is recorded delivery records, which keep their ticket ids.
+                and not path.is_relative_to(ROOT / "tests" / "fixtures" / "delivery-views" / "history")
             )
         plan_unit = re.compile(r"\bU\d+[A-Za-z]?\b")
         ticket_id = re.compile(r"\b[A-Z]\d{2,}-\d+\b")

@@ -80,6 +80,8 @@ class ReleaseIntegrationTests(unittest.TestCase):
             "profiles/linear.json",
             "skills/delivery-views/SKILL.md",
             "skills/delivery-views/scripts/snapshot.py",
+            "skills/delivery-views/assets/history.css",
+            "skills/delivery-views/assets/history.js",
             "skills/delivery-views/assets/line-map.css",
             "skills/delivery-views/assets/line-map.js",
             "skills/delivery-views/assets/run-summary.css",

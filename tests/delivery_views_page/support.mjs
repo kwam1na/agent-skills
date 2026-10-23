@@ -63,6 +63,30 @@ export function renderPage(document, { config, runsCommands = null } = {}) {
   }
 }
 
+export const HISTORY_CORPUS = path.join(ROOT, "tests", "fixtures", "delivery-views", "history");
+
+/**
+ * Renders `render.py history` in a throwaway repository: `exports` maps file names to the text they hold in the
+ * configured export directory, and `now` is the history's as-of time. Fails on a non-zero exit.
+ */
+export function renderHistoryPage(document, { config, runsCommands = null, exports = {}, now, renderers = null } = {}) {
+  const root = repository({ config, runsCommands, renderers });
+  try {
+    if (config.exports) {
+      const folder = path.join(root, config.exports.directory);
+      mkdirSync(folder, { recursive: true });
+      for (const [file, text] of Object.entries(exports)) writeFileSync(path.join(folder, file), text);
+    }
+    const result = spawnSync(PYTHON, ["-B", RENDER, "history", "--config", ".agents/delivery-views.json",
+      "--binding", ".agents/orchestration.json", ...(now ? ["--now", now] : [])],
+      { cwd: root, input: JSON.stringify(document), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    if (result.status !== 0) throw new Error(`render.py history exited ${result.status}: ${result.stderr}`);
+    return result.stdout;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 /** One embedded JSON block of a page, parsed. */
 export function block(page, id) {
   const found = new RegExp(`<script type="application/json" id="${id}">([^<]*)</script>`).exec(page);
