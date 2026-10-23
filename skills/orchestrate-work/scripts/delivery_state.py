@@ -1936,11 +1936,17 @@ def work_hints_config(member: dict) -> dict | None:
     return {"argv": argv, "timeoutSeconds": timeout}
 
 
-def hints_from_command(config: dict, parent: str | None) -> tuple[dict | None, str | None]:
+def _fill(argv: list[str], parent: str | None, directory: Path) -> list[str]:
+    """A state command's argv with ``{parent}`` and ``{stateDirectory}`` filled in."""
+    return [part.replace("{parent}", parent or "").replace("{stateDirectory}", str(Path(directory).resolve()))
+            for part in argv]
+
+
+def hints_from_command(config: dict, parent: str | None, directory: Path) -> tuple[dict | None, str | None]:
     """The binding command's ``work-hints/1``, run like the tracker snapshot command; or None and why not."""
     if any("{parent}" in part for part in config["argv"]) and not parent:
         return None, "the hints command needs {parent}, and the record names no meta.trackerParent"
-    argv = [part.replace("{parent}", parent or "") for part in config["argv"]]
+    argv = _fill(config["argv"], parent, directory)
     code, out, detail = _run_bounded(argv, config["timeoutSeconds"], WORK_HINTS_OUTPUT_BYTES)
     if code is None:
         return None, f"the hints command {detail}"
@@ -2107,7 +2113,7 @@ def suggest_next(directory: Path, lane: str, snapshot_path: Path, hints_path: Pa
     state = read_state(directory)
     hints, source, note = None, "none", None
     if config is not None:
-        hints, note = hints_from_command(config, state["meta"].get("trackerParent"))
+        hints, note = hints_from_command(config, state["meta"].get("trackerParent"), directory)
         source = "command" if hints is not None else source
     if hints is None and hints_path is not None:
         hints, source = read_hints(hints_path), "file"
@@ -2587,7 +2593,7 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
     if any("{parent}" in part for part in config["argv"]) and not parent:
         reason = "the command needs {parent}, and the record names no meta.trackerParent"
     else:
-        argv = [part.replace("{parent}", parent or "") for part in config["argv"]]
+        argv = _fill(config["argv"], parent, directory)
         code, out, detail = _run_bounded(argv, config["timeoutSeconds"], TRACKER_SNAPSHOT_OUTPUT_BYTES, cwd,
                                          cleanup=cleanup)
         if code is None:

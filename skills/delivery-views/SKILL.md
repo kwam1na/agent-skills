@@ -23,7 +23,7 @@ and may name one as the live server's front page:
 
 ```json
 "renderers": [
-  { "id": "line-map", "argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/render.py", "line-map", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json"], "output": "line-map.html", "timeoutSeconds": 30 }
+  { "id": "line-map", "argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/render.py", "line-map", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json", "--state-dir", "{stateDirectory}"], "output": "line-map.html", "timeoutSeconds": 30 }
 ],
 "liveHome": "line-map"
 ```
@@ -31,8 +31,11 @@ and may name one as the live server's front page:
 Start `serve`, `live` and renders from inside the repository. The render
 wrapper passes no working directory of its own, so every script here resolves
 the repository top level from its working directory (`git rev-parse
---show-toplevel`) and resolves `--config`, `--binding` and `{root}` against it.
+--show-toplevel`) and resolves `--config`, `--binding`, `--state-dir` and `{root}` against it.
 A `--config` or `--binding` that is not found exits non-zero naming the path.
+The record is the binding's `state.directory` unless `--state-dir` names another;
+pass `--state-dir {stateDirectory}` in the renderer and snapshot argv so a
+repository serving several records reads, and caches runs for, the one served.
 
 Check a configuration before declaring it:
 
@@ -152,8 +155,8 @@ characters is the summary, and `blockedBy` holds the other children linked
 inward by the blocks link type.
 
 **Bitbucket Cloud** (forge): `--kind bitbucket --workspace <workspace>
---repo <repository> --binding .agents/orchestration.json --subject-pattern
-"<regex>" --token-env BITBUCKET_TOKEN [--user-env BITBUCKET_EMAIL]
+--repo <repository> --binding .agents/orchestration.json --state-dir
+{stateDirectory} --subject-pattern "<regex>" --token-env BITBUCKET_TOKEN [--user-env BITBUCKET_EMAIL]
 [--since <ISO time>] [--host bitbucket.org]`. With `--user-env` it uses
 Basic (an API token with its email), without it Bearer (a workspace or
 repository access token). Pull requests in any state created on or after the
@@ -179,8 +182,8 @@ as plain text, at most 1000 characters, and `blockedBy` holds the issues
 related to it as blockers, other than the parent. Any `lin_api_` key in a refusal is redacted.
 
 **GitHub** (forge): `--kind github --owner <owner> --repo <repository>
---binding .agents/orchestration.json --subject-pattern "<regex>" --token-env
-GITHUB_TOKEN [--since <ISO time>] [--host github.com]`. Pull requests come
+--binding .agents/orchestration.json --state-dir {stateDirectory}
+--subject-pattern "<regex>" --token-env GITHUB_TOKEN [--since <ISO time>] [--host github.com]`. Pull requests come
 from the REST API, newest first, paged by the `Link` header, with a Bearer
 token, until one was created before the since time (`--since`, else the
 record's first journal entry). A pull request counts for each subject its

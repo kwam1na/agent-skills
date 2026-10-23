@@ -365,13 +365,17 @@ def _moment(value: object, where: str) -> datetime.datetime:
     return moment.astimezone(datetime.timezone.utc)
 
 
-def _record(binding: str, cwd: Path | None, since: str | None) -> tuple[set[str], datetime.datetime]:
+def _record(binding: str, cwd: Path | None, since: str | None,
+            state_dir: str | None = None) -> tuple[set[str], datetime.datetime]:
     """The subjects the record holds, and the since time: ``since`` when given, else the time of the
-    record's first journal entry."""
+    record's first journal entry. The record is ``state_dir`` when given, else the binding's."""
     try:
         root = repository_root(cwd)
-        bound = json.loads((root / binding).read_text(encoding="utf-8"))
-        directory = root / bound["state"]["directory"]
+        if state_dir:
+            directory = root / state_dir
+        else:
+            bound = json.loads((root / binding).read_text(encoding="utf-8"))
+            directory = root / bound["state"]["directory"]
         state = json.loads((directory / "state.json").read_text(encoding="utf-8"))
         subjects = {item["subject"] for item in state.get("queue", []) + state.get("planned", [])}
         subjects |= set(state.get("tickets", {}))
@@ -384,7 +388,8 @@ def _record(binding: str, cwd: Path | None, since: str | None) -> tuple[set[str]
             first = json.loads(line)["at"] if line else None
     except (ConfigError, OSError, UnicodeDecodeError, ValueError, KeyError, TypeError, AttributeError,
             RecursionError) as error:
-        raise Failure(f"the record could not be read through --binding {binding}: {type(error).__name__}") from None
+        source = f"--state-dir {state_dir}" if state_dir else f"--binding {binding}"
+        raise Failure(f"the record could not be read through {source}: {type(error).__name__}") from None
     if not all(isinstance(subject, str) and subject for subject in subjects):
         raise Failure("the record holds a subject that is not text")
     if since:
@@ -402,7 +407,7 @@ def bitbucket_snapshot(args: argparse.Namespace, environ: dict, transport: Trans
     except re.error:
         raise Failure("--subject-pattern does not compile") from None
     host = args.host.lower()
-    subjects, since = _record(args.binding, cwd, args.since)
+    subjects, since = _record(args.binding, cwd, args.since, args.state_dir)
     client = Client(BITBUCKET_API, _authorization(environ, args.token_env, args.user_env), transport, deadline,
                     clock, sleep)
     repository = f"{urllib.parse.quote(args.workspace, safe='')}/{urllib.parse.quote(args.repo, safe='')}"
@@ -645,7 +650,7 @@ def github_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
     except re.error:
         raise Failure("--subject-pattern does not compile") from None
     host = args.host.lower()
-    subjects, since = _record(args.binding, cwd, args.since)
+    subjects, since = _record(args.binding, cwd, args.since, args.state_dir)
     client = Client(GITHUB_API, f"Bearer {_credential(environ, args.token_env)}", transport, deadline, clock, sleep,
                     headers=GITHUB_HEADERS)
     repository = f"{urllib.parse.quote(args.owner, safe='')}/{urllib.parse.quote(args.repo, safe='')}"
@@ -736,6 +741,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace")
     parser.add_argument("--repo")
     parser.add_argument("--binding")
+    parser.add_argument("--state-dir")
     parser.add_argument("--subject-pattern")
     parser.add_argument("--since")
     parser.add_argument("--owner")

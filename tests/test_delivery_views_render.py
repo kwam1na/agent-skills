@@ -523,6 +523,18 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, b"")
 
+    def test_a_state_dir_wins_over_the_bindings_directory_which_is_never_touched(self) -> None:
+        repository = self.repository()
+        self.runs.answer(table([LISTED], {"run-7": VIEW}))
+        with tempfile.TemporaryDirectory() as elsewhere:
+            served = Path(elsewhere) / "record"
+            served.mkdir()
+            result = repository.render(document_naming(["run-7"]), "--state-dir", str(served))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(views_common.runs_cache_path(served).is_file())
+            self.assertIn(views_common.theme_key(served), result.stdout.decode())
+        self.assertFalse((self.root / "state").exists(), "the binding's directory is neither read nor written")
+
     def test_two_state_directories_have_distinct_cache_files_and_theme_keys(self) -> None:
         first, second = self.root / "one", self.root / "two"
         self.assertNotEqual(views_common.runs_cache_path(first), views_common.runs_cache_path(second))

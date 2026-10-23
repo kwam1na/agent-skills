@@ -1906,6 +1906,53 @@ class BindingMaxAgeTests(unittest.TestCase):
                 self.assertEqual((code, refused["code"]), (1, "binding_invalid"), refused)
 
 
+class StateDirectoryPlaceholderTests(unittest.TestCase):
+    """``{stateDirectory}`` in a snapshot or hints command is the resolved state directory it runs for."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.directory = self.root / "served"
+        state_tool.init(self.directory, "Epic underway")
+        state_tool.patch(self.directory, writer="lead", version=state_tool.show(self.directory)["state"]["version"],
+                         changes={"lanes": [{"id": "lane-1", "title": "Lane", "focus": "", "state": "idle",
+                                             "waitingOn": None, "since": "2026-10-20T10:00:00Z"}]})
+        self.seen = self.root / "seen.jsonl"
+        self.tool = self.root / "recorder.py"
+        self.tool.write_text(textwrap.dedent(f"""
+            import datetime, json, sys
+            with open({str(self.seen)!r}, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(sys.argv[2:]) + "\\n")
+            if sys.argv[1] == "hints":
+                print(json.dumps({{"items": {{}}}}))
+            else:
+                taken = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                print(json.dumps({{"takenAt": taken, "source": sys.argv[1], "items": []}}))
+        """), encoding="utf-8")
+
+    def argv(self, kind: str) -> list[str]:
+        return [sys.executable, "-B", str(self.tool), kind, "--state-dir", "{stateDirectory}", "{stateDirectory}/x"]
+
+    def test_snapshot_and_hints_commands_get_the_resolved_state_directory(self) -> None:
+        # The binding names another directory: the placeholder follows the one the command runs for.
+        binding = self.root / "binding.json"
+        binding.write_text(json.dumps({"state": {"directory": "elsewhere", "renderers": [], "publishers": [],
+                                                 "trackerSnapshot": {"argv": self.argv("tracker")},
+                                                 "forgeSnapshot": {"argv": self.argv("forge")},
+                                                 "workHints": {"argv": self.argv("hints")}}}), encoding="utf-8")
+        for command, source in (("tracker-snapshot", "tracker"), ("forge-snapshot", "forge")):
+            code, result = run_tool(self.directory, command, "--binding", str(binding),
+                                    "--output", str(self.root / f"{source}.json"))
+            self.assertEqual((code, result["taken"]), (0, True), result)
+        code, result = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot",
+                                str(self.root / "tracker.json"), "--binding", str(binding))
+        self.assertEqual((code, result.get("hints")), (0, "command"), result)
+        resolved = str(self.directory.resolve())
+        seen = [json.loads(line) for line in self.seen.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(seen, [["--state-dir", resolved, f"{resolved}/x"]] * 3)
+
+
 class TrackerSnapshotTests(unittest.TestCase):
     """The binding's own command takes the tracker snapshot; a failure keeps the last one."""
 

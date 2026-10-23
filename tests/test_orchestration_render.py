@@ -1586,6 +1586,15 @@ class ChangeNotificationTests(DeliveryStateFixture):
 
 
 class WrapperTests(DeliveryStateFixture):
+    def test_a_renderer_argv_gets_the_resolved_state_directory(self) -> None:
+        argv = python_argv("import sys\nsys.stdout.write(repr(sys.argv[1:]))\n", self.tools, "where")
+        renderers = [{"id": "where", "argv": [*argv, "{stateDirectory}", "--state-dir={stateDirectory}"],
+                      "output": "where.txt"}]
+        code, result = render_state.render(self.state_dir, json.loads(self.config(renderers)))
+        self.assertEqual(code, 0, result)
+        resolved = str(self.state_dir.resolve())
+        self.assertEqual((self.state_dir / "where.txt").read_text(), repr([resolved, f"--state-dir={resolved}"]))
+
     def test_a_built_in_view_that_fails_keeps_its_previous_view(self) -> None:
         renderers = [{"id": "summary", "builtin": "markdown", "output": "delivery.md"}]
         code, result = wrapper(self.state_dir, "--state-config", self.config(renderers))
