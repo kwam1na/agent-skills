@@ -271,15 +271,22 @@ class OutsideAdopterTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return json.loads(completed.stdout)
 
-    def test_the_line_map_renders_from_the_release_with_only_tracker_and_forge_links(self) -> None:
-        hostile = "</script><img src=x onerror=alert(1)> <b>bold</b> & \"quoted\" <!--"
+    def rendered(self, hostile: str) -> None:
+        """Both pages, rendered from the record by the binding's renderers."""
         self.recorded(hostile=hostile)
         adopter = self.adopter
         # The render wrapper runs the binding's renderers from where the operator starts it: the top level,
         # since the binding names each script by its path in the repository.
         rendered = adopter.run(["python3", "-B", str(adopter.installed("orchestrate-work/scripts/render_state.py")),
                                 "--dir", str(adopter.state), "--binding", ".agents/orchestration.json"])
-        self.assertTrue(json.loads(rendered.stdout)["ok"], rendered.stdout)
+        result = json.loads(rendered.stdout)
+        self.assertTrue(result["ok"], rendered.stdout)
+        self.assertEqual([renderer["id"] for renderer in result["renderers"]], ["line-map", "history"])
+
+    def test_the_line_map_renders_from_the_release_with_only_tracker_and_forge_links(self) -> None:
+        hostile = "</script><img src=x onerror=alert(1)> <b>bold</b> & \"quoted\" <!--"
+        self.rendered(hostile)
+        adopter = self.adopter
         page = adopter.state / "line-map.html"
         text = page.read_text(encoding="utf-8")
         self.assertIn('<meta name="delivery-state-live">', text)
@@ -288,7 +295,9 @@ class OutsideAdopterTests(unittest.TestCase):
         shown = self.open_page(page, hostile)
         # The planned piece opens a detail; the follow-up is listed with its ticket's link.
         self.assertEqual(shown["subjects"], ["SHFT-12"])
-        outside = [href for href in shown["hrefs"] if not href.startswith("#")]
+        # Besides its own chapters, the line map links only the history page beside it and Jira and Bitbucket.
+        self.assertIn("delivery-history.html", shown["hrefs"])
+        outside = [href for href in shown["hrefs"] if not href.startswith("#") and href != "delivery-history.html"]
         self.assertTrue(outside)
         for href in outside:
             with self.subTest(href=href):
@@ -304,9 +313,25 @@ class OutsideAdopterTests(unittest.TestCase):
         self.assert_no_credential(adopter.state)
         self.assertEqual(shown["elements"], 0)
 
-    @unittest.skip("the history page lands with the history renderer")
-    def test_the_history_page_renders_from_the_release(self) -> None:
-        """Renders the history page through the binding's renderer, linked from the line map and back."""
+    def test_the_history_page_renders_from_the_release_linked_with_the_line_map(self) -> None:
+        hostile = "</script><img src=x onerror=alert(1)> <b>bold</b> & \"quoted\" <!--"
+        self.rendered(hostile)
+        adopter = self.adopter
+        page = adopter.state / "delivery-history.html"
+        text = page.read_text(encoding="utf-8")
+        self.assertIn('<meta name="delivery-state-live">', text)
+        self.assertNotIn("</script><img", text)
+        shown = self.open_page(page, hostile)
+        # With no runs command and no exports, the history lists nothing, and links back to the line map;
+        # no other page and no provider other than Jira and Bitbucket is linked.
+        self.assertIn("line-map.html", shown["hrefs"])
+        for href in shown["hrefs"]:
+            with self.subTest(href=href):
+                self.assertRegex(href, r"^(#.*|line-map\.html|https://(eshyft\.atlassian\.net/browse/(SHFT|EDD)-[0-9]+"
+                                       r"|bitbucket\.org/eshyft/eshyftnew/(pull-requests/[0-9]+|commits/[0-9a-f]{40})))$")
+        self.assertNotIn(hostile, shown["head"])
+        self.assertEqual(shown["elements"], 0)
+        self.assert_no_credential(adopter.state)
 
 
 class AdopterGuideTests(unittest.TestCase):
@@ -369,7 +394,7 @@ class AdopterGuideTests(unittest.TestCase):
             sys.path.remove(str(ROOT / "skills/orchestrate-work/scripts"))
         for block in declared:
             renderers, _ = render_state.parse_config({"directory": "delivery", "publishers": [], **block})
-            self.assertEqual([renderer["id"] for renderer in renderers], ["line-map"])
+            self.assertEqual([renderer["id"] for renderer in renderers], ["line-map", "history"])
 
 
 if __name__ == "__main__":

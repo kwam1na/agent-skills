@@ -292,10 +292,29 @@ In the binding's `state`, with `{parent}` the record's `meta.trackerParent`
         "--config",
         ".agents/delivery-views.json",
         "--binding",
-        ".agents/orchestration.json"
+        ".agents/orchestration.json",
+        "--state-dir",
+        "{stateDirectory}"
       ],
       "output": "line-map.html",
       "timeoutSeconds": 30
+    },
+    {
+      "id": "history",
+      "argv": [
+        "python3",
+        "-B",
+        ".agent-skills/current/skills/delivery-views/scripts/render.py",
+        "history",
+        "--config",
+        ".agents/delivery-views.json",
+        "--binding",
+        ".agents/orchestration.json",
+        "--state-dir",
+        "{stateDirectory}"
+      ],
+      "output": "delivery-history.html",
+      "timeoutSeconds": 60
     }
   ],
   "liveHome": "line-map",
@@ -334,6 +353,8 @@ In the binding's `state`, with `{parent}` the record's `meta.trackerParent`
       "eshyftnew",
       "--binding",
       ".agents/orchestration.json",
+      "--state-dir",
+      "{stateDirectory}",
       "--subject-pattern",
       "(SHFT|EDD)-[0-9]+",
       "--token-env",
@@ -417,10 +438,29 @@ identifier:
         "--config",
         ".agents/delivery-views.json",
         "--binding",
-        ".agents/orchestration.json"
+        ".agents/orchestration.json",
+        "--state-dir",
+        "{stateDirectory}"
       ],
       "output": "line-map.html",
       "timeoutSeconds": 30
+    },
+    {
+      "id": "history",
+      "argv": [
+        "python3",
+        "-B",
+        ".agent-skills/current/skills/delivery-views/scripts/render.py",
+        "history",
+        "--config",
+        ".agents/delivery-views.json",
+        "--binding",
+        ".agents/orchestration.json",
+        "--state-dir",
+        "{stateDirectory}"
+      ],
+      "output": "delivery-history.html",
+      "timeoutSeconds": 60
     }
   ],
   "liveHome": "line-map",
@@ -453,6 +493,8 @@ identifier:
       "example-repo",
       "--binding",
       ".agents/orchestration.json",
+      "--state-dir",
+      "{stateDirectory}",
       "--subject-pattern",
       "^ENG-[0-9]+$",
       "--token-env",

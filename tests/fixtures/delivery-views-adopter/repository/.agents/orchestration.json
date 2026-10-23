@@ -83,10 +83,29 @@
           "--config",
           ".agents/delivery-views.json",
           "--binding",
-          ".agents/orchestration.json"
+          ".agents/orchestration.json",
+          "--state-dir",
+          "{stateDirectory}"
         ],
         "output": "line-map.html",
         "timeoutSeconds": 30
+      },
+      {
+        "id": "history",
+        "argv": [
+          "python3",
+          "-B",
+          ".agent-skills/current/skills/delivery-views/scripts/render.py",
+          "history",
+          "--config",
+          ".agents/delivery-views.json",
+          "--binding",
+          ".agents/orchestration.json",
+          "--state-dir",
+          "{stateDirectory}"
+        ],
+        "output": "delivery-history.html",
+        "timeoutSeconds": 60
       }
     ],
     "liveHome": "line-map",
@@ -126,6 +145,8 @@
         "eshyftnew",
         "--binding",
         ".agents/orchestration.json",
+        "--state-dir",
+        "{stateDirectory}",
         "--subject-pattern",
         "(SHFT|EDD)-[0-9]+",
         "--token-env",
