@@ -657,7 +657,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                     )
                     parent = root / "parent.py"
                     # SIGQUIT's default action dumps core, and macOS writes a
-                    # crash report for each one; the parent records it instead.
+                    # crash report for each one; the parent records it and exits.
                     parent.write_text(
                         "import os, signal, subprocess, sys\nfrom pathlib import Path\n"
                         "def received(signum, _frame):\n"
@@ -684,6 +684,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                             self.assertTrue((root / "worker.sig").is_file(), "worker never received the forwarded signal")
                             self.assertEqual((root / "worker.sig").read_text(), str(signum))
                         if signum == signal.SIGQUIT:
+                            self.assertTrue((root / "parent.sig").is_file(), "parent never received the forwarded SIGQUIT")
                             self.assertEqual((root / "parent.sig").read_text(), str(signum))
                         deadline = time.monotonic() + 2
                         while time.monotonic() < deadline:
