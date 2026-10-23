@@ -293,7 +293,9 @@ class CollectRunsTests(unittest.TestCase):
     def test_summarizes_each_stops_run_through_the_runs_view_joined_on_run_id(self) -> None:
         self.runs.answer(table(self.LISTED, {"run-7": VIEW, "run-8": VIEW}))
         runs = self.collect(document_naming(["run-7", None], ["run-8"]))
-        self.assertEqual(self.runs.calls(), ["runs list --json", "runs view run-7 --json", "runs view run-8 --json"])
+        calls = self.runs.calls()
+        self.assertEqual(calls[0], "runs list --json")
+        self.assertCountEqual(calls[1:], ["runs view run-7 --json", "runs view run-8 --json"])
         self.assertEqual(runs, {"run-7": render.summarize_run_view(VIEW, self.LISTED[0]),
                                 "run-8": render.summarize_run_view(VIEW, self.LISTED[1])})
 
@@ -344,7 +346,7 @@ class CollectRunsTests(unittest.TestCase):
         self.runs.answer(table(self.LISTED, {"run-7": VIEW}))
         self.collect(document_naming(["run-7"]))
         self.assertEqual(self.runs.calls(), ["runs list --json", "runs view run-7 --json"])
-        self.assertEqual(json.loads(self.cache.read_text())["spec"], "delivery-views-runs/1")
+        self.assertEqual(json.loads(self.cache.read_text())["spec"], "delivery-views-runs/2")
 
     def test_a_cache_read_with_other_report_specs_is_read_again(self) -> None:
         older = report(1, spec="older-report/1")
@@ -439,18 +441,51 @@ class CollectRunsTests(unittest.TestCase):
         self.assertEqual(json.loads(self.cache.read_text())["runs"], {})
 
     def test_runs_past_the_deadline_are_unavailable_and_stay_uncached(self) -> None:
-        names = [f"run-{index}" for index in range(6)]
+        # Six at a time, two rounds of reads fit the deadline and the third does not.
+        names = [f"run-{index}" for index in range(18)]
         listed = [{"runId": name, "bytes": 1} for name in names]
         self.runs.answer(table(listed, {name: {"sleep": 1, "then": VIEW} for name in names}))
         started = time.monotonic()
-        runs = self.collect(document_naming(names), deadline=3.5)
-        self.assertLess(time.monotonic() - started, 6)
+        runs = self.collect(document_naming(names), deadline=2.5)
+        self.assertLess(time.monotonic() - started, 5)
         unavailable = [name for name in names if runs[name].get("unavailable")]
         self.assertTrue(unavailable and unavailable == names[-len(unavailable):], runs)
         self.assertTrue(set(json.loads(self.cache.read_text())["runs"]).isdisjoint(unavailable))
         # The next render reads them again.
         self.runs.answer(table(listed, {name: VIEW for name in names}))
         self.assertFalse(any(run.get("unavailable") for run in self.collect(document_naming(names)).values()))
+
+    def test_runs_are_read_six_at_a_time(self) -> None:
+        names = [f"run-{index}" for index in range(13)]
+        listed = [{"runId": name, "bytes": 1} for name in names]
+        self.runs.answer(table(listed, {name: {"sleep": 0.5, "then": VIEW} for name in names}))
+        started = time.monotonic()
+        runs = self.collect(document_naming(names))
+        self.assertLess(time.monotonic() - started, 0.5 * len(names) / 2)
+        self.assertEqual(self.runs.most_at_once(), 6)
+        self.assertFalse(any(run.get("unavailable") for run in runs.values()))
+
+    def test_one_runs_failed_read_does_not_keep_a_concurrent_run_from_the_cache(self) -> None:
+        listed = [{"runId": "run-bad", "bytes": 1}, {"runId": "run-good", "bytes": 1}]
+        self.runs.answer(table(listed, {"run-good": {"sleep": 0.5, "then": VIEW}}))
+        runs = self.collect(document_naming(["run-bad", "run-good"]))
+        self.assertTrue(runs["run-bad"].get("unavailable"))
+        self.assertFalse(runs["run-good"].get("unavailable"))
+        self.assertEqual(sorted(json.loads(self.cache.read_text())["runs"]), ["run-good"])
+
+    def test_a_hanging_read_holds_only_its_own_run(self) -> None:
+        names = ["run-hang"] + [f"run-{index}" for index in range(12)]
+        listed = [{"runId": name, "bytes": 1} for name in names]
+        views = {name: {"sleep": 0.5, "then": VIEW} for name in names}
+        views["run-hang"] = {"sleep": 60, "then": VIEW}
+        self.runs.answer(table(listed, views))
+        started = time.monotonic()
+        runs = self.collect(document_naming(names), timeout=2)
+        # One at a time this takes about 8 s; six at a time, about 2 s.
+        self.assertLess(time.monotonic() - started, 4)
+        self.assertTrue(runs["run-hang"].get("unavailable"))
+        self.assertFalse(any(runs[name].get("unavailable") for name in names[1:]))
+        self.assertEqual(sorted(json.loads(self.cache.read_text())["runs"]), sorted(names[1:]))
 
 
 class LinkTests(unittest.TestCase):

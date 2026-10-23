@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { HISTORY_CORPUS, block, openPage, readJson, renderHistoryPage } from "./support.mjs";
+import { HISTORY_CORPUS, REPLAYED_RUNS, block, openPage, readJson, renderHistoryPage } from "./support.mjs";
 
 process.env.TZ = "UTC";
 
@@ -78,4 +78,31 @@ test("the page names only the sources the configuration gives it", async () => {
   assert.equal(await say({ spec: "delivery-views-config/1", exports }),
     "Runs from the exports tracked under exported, as of 2026-10-22 12:00 UTC. Reload for newer.");
   assert.equal(await say({ spec: "delivery-views-config/1" }), "No runs command or export directory is configured.");
+});
+
+test("a run with more than 12 rounds opens a card whose beads and totals equal its row", async () => {
+  const rounds = Array.from({ length: 22 }, (_, index) => ({
+    kind: "review.round.closed", at: `2026-10-20T${String(index).padStart(2, "0")}:30:00Z`,
+    payload: { round: index + 1, outcome: index === 21 ? "approved" : "changes-requested", findings: { P0: index === 0 ? 1 : 0, P1: 1 } },
+  }));
+  const exported = {
+    spec: "delivery-run-export/2", runId: "run-long", events: rounds,
+    summary: { ticket: "ABC-1", open: false, startedAt: "2026-10-20T00:00:00Z", lastAt: "2026-10-20T21:30:00Z",
+      durationSeconds: 77400, roundsClosed: 22, findings: { P0: 1, P1: 22, P2: 0, P3: 0 } },
+    readout: { status: "complete" },
+  };
+  const page = renderHistoryPage({}, {
+    config: { spec: "delivery-views-config/1", runs: REPLAYED_RUNS }, now: "2026-10-22T12:00:00Z",
+    runsCommands: {
+      "runs list --json": JSON.stringify({ spec: "run-inventory/1", runs: [{ runId: "run-long", status: "complete", open: false, bytes: 1 }] }),
+      "runs show run-long --json": JSON.stringify(exported),
+    },
+  });
+  const [, opened] = await openPage(page, { now: "2026-10-22T12:00:00Z", steps: [{ click: "[data-run] > button", index: 0 }] });
+  const row = opened.app.querySelector("[data-run]");
+  assert.match(row.textContent, /Rounds\s*22/);
+  assert.match(row.textContent, /1\/22\/0\/0/);
+  const card = row.nextElementSibling;
+  assert.equal(card.querySelectorAll(".run-dot").length, 22);
+  assert.match(card.textContent, /Approved on round 22 · 1 critical note, 22 serious notes raised/);
 });

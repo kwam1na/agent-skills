@@ -51,9 +51,9 @@ class ExportSummaryTests(unittest.TestCase):
             "roundDetail": [{"round": 1, "at": "2026-10-20T10:30:00Z", "outcome": "approve",
                              "findings": {"P0": 0, "P1": 1, "P2": 0, "P3": 0}}]})
 
-    def test_keeps_the_latest_rounds_however_many_closed(self) -> None:
-        detail = render.summarize_run_export(run_export("run-a", "ABC-1", "2026-10-20T10:30:00Z", rounds=20))["roundDetail"]
-        self.assertEqual([entry["round"] for entry in detail], list(range(9, 21)))
+    def test_keeps_every_round_however_many_closed(self) -> None:
+        detail = render.summarize_run_export(run_export("run-a", "ABC-1", "2026-10-20T10:30:00Z", rounds=22))["roundDetail"]
+        self.assertEqual([entry["round"] for entry in detail], list(range(1, 23)))
 
     def test_anything_that_is_not_a_run_export_has_no_summary(self) -> None:
         for value in (None, [], {"spec": "run-view/1"}, {"spec": 7}, legacy("codex/abc-1-x")):
@@ -84,8 +84,8 @@ class CollectHistoryTests(unittest.TestCase):
     def write(self, name: str, value: object) -> None:
         (self.exports / name).write_text(value if isinstance(value, str) else json.dumps(value), encoding="utf-8")
 
-    def collect(self, document=None, *, deadline=FAR, runs=True, exports=True, ignore=("delivery-record--*",)):
-        overrides = {"tracker": TRACKER}
+    def collect(self, document=None, *, deadline=FAR, runs=True, exports=True, ignore=("delivery-record--*",), timeout=10):
+        overrides = {"tracker": TRACKER, "timeout": timeout}
         if exports:
             overrides["exports"] = {"directory": "exports", "ignore": list(ignore)}
         chosen = config(self.runs if runs else None, **overrides)
@@ -184,6 +184,26 @@ class CollectHistoryTests(unittest.TestCase):
         for run_id in ("run-b", "run-c"):
             self.assertEqual(rows[run_id]["note"], "Its run could not be read from the product.")
         self.assertEqual(sorted(views_common.read_runs_cache(self.cache)), ["run-a"])
+
+    def test_47_slow_runs_are_read_within_the_default_deadline_six_at_a_time(self) -> None:
+        names = [f"run-{index:02d}" for index in range(47)]
+        self.answer([listed(name) for name in names],
+                    {name: {"sleep": 0.5, "then": run_export(name, "ABC-1", "2026-10-20T10:30:00Z")} for name in names})
+        history = self.collect(deadline=render.DEFAULT_DEADLINE_SECONDS, exports=False)
+        self.assertEqual([row["note"] for row in history["rows"]], [None] * len(names))
+        self.assertEqual(self.runs.most_at_once(), 6)
+
+    def test_a_hanging_read_holds_only_its_own_run(self) -> None:
+        names = ["run-hang"] + [f"run-{index}" for index in range(12)]
+        shows = {name: {"sleep": 0.5, "then": run_export(name, "ABC-1", "2026-10-20T10:30:00Z")} for name in names}
+        shows["run-hang"]["sleep"] = 60
+        self.answer([listed(name) for name in names], shows)
+        started = time.monotonic()
+        rows = {row["key"]: row for row in self.collect(exports=False, timeout=2)["rows"]}
+        # One at a time this takes about 8 s; six at a time, about 2 s.
+        self.assertLess(time.monotonic() - started, 4)
+        self.assertEqual(rows["run-hang"]["note"], "Its run could not be read from the product.")
+        self.assertEqual([rows[name]["note"] for name in names[1:]], [None] * (len(names) - 1))
 
     def test_a_missing_export_directory_lists_nothing_and_fails_nothing(self) -> None:
         self.exports.rmdir()

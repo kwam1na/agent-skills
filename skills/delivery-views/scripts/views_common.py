@@ -27,7 +27,7 @@ from pathlib import Path, PurePosixPath
 
 CONFIG_SPEC = "delivery-views-config/1"
 REPORT_SPEC = "review-round-report/1"
-RUNS_CACHE_SPEC = "delivery-views-runs/1"
+RUNS_CACHE_SPEC = "delivery-views-runs/2"
 DEFAULT_TITLE = "Delivery"
 # The icons the pages ship; a lens with no icon shows its initial.
 ICONS = frozenset({"bullseye", "spy", "shield", "bug", "gauge", "lock", "book"})

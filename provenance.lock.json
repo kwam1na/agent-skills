@@ -161,7 +161,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "2436618f829b8df05cd9877d41ea151842658bfdc9d6e128bd1b9e7087757851"
+          "sha256": "4ff7b3b281e74107d3d34e9cdf21e97b35986b279ee45cb45146168fa5c925b2"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -189,7 +189,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "50f88a6f043c760f5e3b24723c7c0718211edbdf07af929e63998247bc033d36"
+          "sha256": "5b370a4555fc2a5ec879f7ccafae39dfe5c96df6a1fe877ead713be2cb055552"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
@@ -197,7 +197,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
-          "sha256": "95a7e707b155f838d508a279a47a3869534594162e5c6dbed111c6f520b73d0b"
+          "sha256": "113e7fcb59e2c53c417f1377d9e962348baa6c34b2bca449d3c56faeddcc813c"
         }
       ],
       "owner": "delivery-agent/user-delegated",
