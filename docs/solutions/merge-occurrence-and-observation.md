@@ -28,3 +28,8 @@ separate from timestamp recovery.
 A later pull request for the same subject must not relabel a merged candidate.
 Reconciliation reports a different retained change request before linking or
 recovering it; the lead settles candidate identity through supported state operations.
+
+Revalidate recovered identity inside the journal append state lock, including
+crash completion; a concurrent correction quarantines the stale intent and
+reports it without a false merge event. Keep lifetime duration statistics
+separate from the current-attempt assignment shown in a building detail.

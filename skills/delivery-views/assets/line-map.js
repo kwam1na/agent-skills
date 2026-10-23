@@ -901,7 +901,10 @@
     var checks = attempt.slice(stoppedIndex + 1);
     function last(kind, rows) { return (rows || attempt).filter(function (entry) { return entry.kind === kind; }).pop(); }
     var event, label, basis, at = null;
-    if (item.stage === "building") { label = "Started"; basis = "Recorded work assignment"; at = stats.assignedAt; }
+    if (item.stage === "building") {
+      label = "Started"; basis = "Recorded work assignment"; event = last("lane.assigned");
+      at = event ? event.at : (handedIndex < 0 ? stats.assignedAt : null);
+    }
     else if (item.stage === "review") {
       label = "In review since"; basis = "Recorded review round start";
       event = last("review.round"); at = event && isObject(event.review) ? event.review.startedAt : null;

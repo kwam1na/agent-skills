@@ -96,3 +96,20 @@ test("recovered landings show source time, unknowns, and retain observation in t
   expect(unknown.app.querySelector("#detail .d-meta").textContent).toContain("Landed · time unknown");
   expect(initial.app.querySelector('.feed time[datetime="2026-10-22T07:09:00Z"]') !== null).toEqual(true);
 });
+
+
+test("building uses the current assignment after a rejected handoff, or reports it unknown", async () => {
+  for (const assigned of [true, false]) {
+    const doc = { state: { lanes: [], queue: [], planned: [{ subject: "PAY-1", stage: "building", title: "Payment" }] },
+      stats: { "PAY-1": { assignedAt: "2026-10-22T04:00:00Z" } },
+      journal: [
+        { id: 1, kind: "lane.assigned", subject: "PAY-1", at: "2026-10-22T04:00:00Z" },
+        { id: 2, kind: "candidate.handed", subject: "PAY-1", at: "2026-10-22T05:00:00Z" },
+        { id: 3, kind: "candidate.rejected", subject: "PAY-1", at: "2026-10-22T05:10:00Z" },
+        ...(assigned ? [{ id: 4, kind: "lane.assigned", subject: "PAY-1", at: "2026-10-22T06:00:00Z" }] : []),
+      ] };
+    const [shown] = await openPage(pageWithRuns(doc, {}, { config: { spec: "delivery-views-config/1" } }), { now: "2026-10-22T07:10:00Z" });
+    const timing = shown.app.querySelector("#detail .d-stage-time");
+    expect(timing.title).toBe("Recorded work assignment: " + (assigned ? "2026-10-22T06:00:00Z" : "unknown"));
+  }
+});

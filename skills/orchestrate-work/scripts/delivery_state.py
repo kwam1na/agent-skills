@@ -954,6 +954,9 @@ def append_journal(
             entry["occurredAt"] = occurred_at
         if recovery is not None:
             entry["recovery"] = recovery
+            if not any(item["stage"] == "merged" and _same_recovered_merge(entry, item)
+                       for item in current["queue"]):
+                raise StateError("recovery_identity", "candidate identity changed before recovery journal append")
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
@@ -1724,7 +1727,7 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
             pending = None
         completed: list[dict] = []
         if pending is not None:
-            _finish_intent(directory, pending, completed)
+            _finish_intent(directory, pending, completed, reports)
             # Finished here after all, so no longer waiting.
             reports[:] = [report for report in reports
                           if not (report["subject"] == pending["subject"] and "waits for the queue lock" in report["note"])]
@@ -1735,6 +1738,10 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                 item = next((item for item in state["queue"] if item["subject"] == recovery["subject"]), None)
                 if item is None or (item["stage"] == "merged" and _current_merge(read_journal(directory), item)):
                     withdraw(recovery["subject"])
+                    break
+                if item.get("changeRequest") != recovery["changeRequest"]:
+                    withdraw(recovery["subject"])
+                    reports.append({"subject": item["subject"], "note": "candidate identity changed: settle change request before recovery"})
                     break
                 if item["stage"] == "merged" and (item.get("syncedHead") or item["head"]) != recovery["head"]:
                     withdraw(recovery["subject"])
@@ -1761,7 +1768,14 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                     if error.code != "version_stale":
                         raise
                     continue
-                _journal_recovery(directory, intent)
+                try:
+                    _journal_recovery(directory, intent)
+                except StateError as error:
+                    if error.code != "recovery_identity":
+                        raise
+                    withdraw(recovery["subject"])
+                    reports.append({"subject": item["subject"], "note": f"{error}: set aside as {_set_aside(directory)}"})
+                    break
                 (directory / RECOVERY_FILE).unlink(missing_ok=True)
                 break
             else:
@@ -1772,7 +1786,8 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
 def _journal_recovery(directory: Path, intent: dict) -> dict:
     return append_journal(directory, kind="candidate.merged", subject=intent["subject"], lane=intent["lane"],
                           summary=intent["summary"], recovered=True, occurred_at=intent.get("occurredAt"),
-                          recovery={"head": intent["head"], "changeRequest": intent.get("changeRequest")})
+                          recovery=({"head": intent["head"], "changeRequest": intent["changeRequest"]}
+                                    if "changeRequest" in intent else None))
 
 
 def _read_recovery(directory: Path) -> dict | None:
@@ -1825,7 +1840,7 @@ def _finish_recovery(directory: Path, finished: list[dict], held: list[dict]) ->
                                                    "item it names against the journal"})
             return
         if intent is not None:
-            _finish_intent(directory, intent, finished)
+            _finish_intent(directory, intent, finished, held)
 
 
 def _set_aside(directory: Path) -> str:
@@ -1850,7 +1865,7 @@ def _pending_subject(directory: Path) -> str | None:
     return intent["subject"] if intent else None
 
 
-def _finish_intent(directory: Path, intent: dict, finished: list[dict]) -> None:
+def _finish_intent(directory: Path, intent: dict, finished: list[dict], reports: list[dict]) -> None:
     """Finish one interrupted recovery; the caller holds the queue lock."""
     journal = read_journal(directory)
     # Any merge entry for the subject since the intent, whoever wrote it: the
@@ -1860,7 +1875,13 @@ def _finish_intent(directory: Path, intent: dict, finished: list[dict]) -> None:
     item = next((item for item in read_state(directory)["queue"] if item["subject"] == intent["subject"]), None)
     if (not journaled and item is not None and item["stage"] == "merged"
             and (item.get("syncedHead") or item["head"]) == intent["head"]):
-        _journal_recovery(directory, intent)
+        try:
+            _journal_recovery(directory, intent)
+        except StateError as error:
+            if error.code != "recovery_identity":
+                raise
+            reports.append({"subject": intent["subject"], "note": f"{error}: set aside as {_set_aside(directory)}"})
+            return
         finished.append({"subject": intent["subject"], "recovery": True,
                          "change": "an interrupted recovery's journal entry: appended"})
     (directory / RECOVERY_FILE).unlink(missing_ok=True)

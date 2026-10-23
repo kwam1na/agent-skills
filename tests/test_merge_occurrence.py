@@ -174,3 +174,52 @@ class MergeOccurrenceTests(unittest.TestCase):
         state_tool.reconcile(self.directory, [later])
         self.assertEqual(len([e for e in state_tool.read_journal(self.directory) if e["kind"] == "candidate.merged"]), 2)
         self.assertFalse(state_tool.reconcile(self.directory, [later])["drift"])
+
+    def prepare_terminal_identity(self):
+        self.lead({"queue": [queue_item("work-a", changeRequest="pr-original")]})
+        state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                         selector="queue[subject=work-a]", changes={"stage": "merged"})
+
+    def correct_identity(self):
+        state_tool.patch(self.directory, writer="lead", version=state_tool.read_state(self.directory)["version"],
+                         selector="queue[subject=work-a]", changes={"changeRequest": "pr-corrected"})
+
+    def test_identity_changed_after_planning_is_reported_before_intent(self):
+        self.prepare_terminal_identity()
+        recover = state_tool._recover
+        def change_then_recover(*args):
+            self.correct_identity()
+            return recover(*args)
+        with mock.patch.object(state_tool, "_recover", side_effect=change_then_recover):
+            result = state_tool.reconcile(self.directory, [self.forge(changeRequest="pr-original")])
+        self.assertFalse(result["drift"])
+        self.assertIn("identity", result["reports"][0]["note"])
+        self.assertEqual(state_tool.read_journal(self.directory), [])
+        self.assertFalse((self.directory / state_tool.RECOVERY_FILE).exists())
+
+    def test_identity_changed_immediately_before_append_is_quarantined(self):
+        self.prepare_terminal_identity()
+        append = state_tool._journal_recovery
+        def change_then_append(*args):
+            self.correct_identity()
+            return append(*args)
+        with mock.patch.object(state_tool, "_journal_recovery", side_effect=change_then_append):
+            result = state_tool.reconcile(self.directory, [self.forge(changeRequest="pr-original")])
+        self.assertFalse(result["drift"])
+        self.assertIn("identity", result["reports"][0]["note"])
+        self.assertEqual(state_tool.read_journal(self.directory), [])
+        self.assertFalse((self.directory / state_tool.RECOVERY_FILE).exists())
+        self.assertTrue(state_tool._set_aside_intents(self.directory))
+
+    def test_identity_changed_after_crash_is_quarantined_not_journaled(self):
+        self.prepare_terminal_identity()
+        with mock.patch.object(state_tool, "_journal_recovery", side_effect=RuntimeError("crash")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge(changeRequest="pr-original")])
+        self.correct_identity()
+        result = state_tool.reconcile(self.directory, [Path(self.snapshot("tracker", []))])
+        self.assertFalse(result["drift"])
+        self.assertIn("identity", result["reports"][0]["note"])
+        self.assertEqual(state_tool.read_journal(self.directory), [])
+        self.assertFalse((self.directory / state_tool.RECOVERY_FILE).exists())
+        self.assertTrue(state_tool._set_aside_intents(self.directory))
