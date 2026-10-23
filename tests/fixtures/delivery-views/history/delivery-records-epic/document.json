@@ -1,0 +1,1369 @@
+{
+  "estimates": {},
+  "focus": {},
+  "journal": [
+    {
+      "at": "2026-10-22T22:04:23.891286Z",
+      "id": 1,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "Approved plan = epic V26-2829, its Linear design document (operator decision 2026-10-22) and its seven filed tickets; no separate plan document."
+    },
+    {
+      "at": "2026-10-22T22:04:23.955806Z",
+      "id": 2,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "V26-2821 lives in agent-skills: its lane delivers there; the lead merges it and cuts the release there, outside the Athena runner. The runner's sync and regenerators replace the epic's suggested single integration change set."
+    },
+    {
+      "at": "2026-10-22T22:04:24.020743Z",
+      "id": 3,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "Lanes started before V26-2823 merges follow today's AGENTS.md epic rules (recording off, Run: none, push --no-verify); later lanes follow the rules it lands. No ticket touches convex/, so no dev-backend lease."
+    },
+    {
+      "at": "2026-10-22T22:04:24.086042Z",
+      "id": 4,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "Operator: finish line is merged into main, no deploys; focused posture; no close-out full-health run."
+    },
+    {
+      "at": "2026-10-22T22:04:24.149924Z",
+      "id": 5,
+      "kind": "lane.assigned",
+      "lane": "lane-skills",
+      "subject": "V26-2821",
+      "summary": "V26-2821 assigned to lane-skills"
+    },
+    {
+      "at": "2026-10-22T22:04:24.216156Z",
+      "id": 6,
+      "kind": "lane.assigned",
+      "lane": "lane-recorder",
+      "subject": "V26-2822",
+      "summary": "V26-2822 assigned to lane-recorder"
+    },
+    {
+      "at": "2026-10-22T22:04:24.281805Z",
+      "id": 7,
+      "kind": "lane.assigned",
+      "lane": "lane-runs",
+      "subject": "V26-2823",
+      "summary": "V26-2823 assigned to lane-runs"
+    },
+    {
+      "at": "2026-10-22T22:04:24.345896Z",
+      "id": 8,
+      "kind": "lane.assigned",
+      "lane": "lane-history",
+      "subject": "V26-2826",
+      "summary": "V26-2826 assigned to lane-history"
+    },
+    {
+      "at": "2026-10-22T22:05:47.079450Z",
+      "id": 9,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "tracker-snapshot: the command exited with 1; the last snapshot stands"
+    },
+    {
+      "at": "2026-10-22T22:05:47.310154Z",
+      "id": 10,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "forge-snapshot: the command exited with 1; the last snapshot stands"
+    },
+    {
+      "at": "2026-10-22T22:10:58.594796Z",
+      "id": 11,
+      "kind": "review.round",
+      "lane": "lane-runs",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 2
+        },
+        "finishedAt": "2026-10-22T22:11:30Z",
+        "round": 1,
+        "startedAt": "2026-10-22T22:09:04Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2823",
+      "summary": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/2"
+    },
+    {
+      "at": "2026-10-22T22:11:15.121182Z",
+      "id": 12,
+      "kind": "review.round",
+      "lane": "lane-runs",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        },
+        "finishedAt": "2026-10-22T22:11:15Z",
+        "round": 2,
+        "startedAt": "2026-10-22T22:10:40Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2823",
+      "summary": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+    },
+    {
+      "at": "2026-10-22T22:13:32.729189Z",
+      "id": 13,
+      "kind": "candidate.handed",
+      "lane": "lane-runs",
+      "subject": "V26-2823",
+      "summary": "lane-runs handed V26-2823 at d48bf11f991a4fff7a4dccd2f80ee344acfc43f5 (https://github.com/v26-technologies/athena/pull/1147) after 2 review rounds"
+    },
+    {
+      "at": "2026-10-22T22:14:20.278650Z",
+      "id": 14,
+      "kind": "lane.assigned",
+      "lane": "lane-runs",
+      "subject": "V26-2831",
+      "summary": "V26-2831 assigned to lane-runs"
+    },
+    {
+      "at": "2026-10-22T22:14:20.430804Z",
+      "id": 15,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": "V26-2831",
+      "summary": "Main fails harness:test: stale harness-app-registry pins after #1146 (V26-2819). Fix forward as V26-2831 on lane-runs (free after handing off V26-2823). V26-2823 stays queued: no approved work is held; its docs mention the recorder's marker read one merge ahead of V26-2822, accepted."
+    },
+    {
+      "at": "2026-10-22T22:15:12.923649Z",
+      "id": 16,
+      "kind": "check.started",
+      "lane": "lane-runs",
+      "subject": "V26-2823",
+      "summary": "Checking Epic lanes record runs"
+    },
+    {
+      "at": "2026-10-22T22:15:20.849019Z",
+      "id": 17,
+      "kind": "review.round",
+      "lane": "lane-skills",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 1,
+          "P3": 1
+        },
+        "finishedAt": "2026-10-22T22:16:30Z",
+        "round": 1,
+        "startedAt": "2026-10-22T22:12:30Z",
+        "verdicts": {
+          "lens.adversarial-testing": "changes",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2821",
+      "summary": "Round 1: lens.adversarial-testing changes, lens.outcome-correctness approve; findings 0/0/1/1"
+    },
+    {
+      "at": "2026-10-22T22:15:53.511463Z",
+      "id": 18,
+      "kind": "review.round",
+      "lane": "lane-skills",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        },
+        "finishedAt": "2026-10-22T22:15:53Z",
+        "round": 2,
+        "startedAt": "2026-10-22T22:15:30Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2821",
+      "summary": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+    },
+    {
+      "at": "2026-10-22T22:16:03.358016Z",
+      "id": 19,
+      "kind": "review.round",
+      "lane": "lane-recorder",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 1
+        },
+        "finishedAt": "2026-10-22T22:16:03Z",
+        "round": 1,
+        "startedAt": "2026-10-22T22:13:52Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2822",
+      "summary": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/1"
+    },
+    {
+      "at": "2026-10-22T22:16:24.058461Z",
+      "id": 20,
+      "kind": "review.round",
+      "lane": "lane-history",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 5
+        },
+        "finishedAt": "2026-10-22T22:16:23Z",
+        "round": 1,
+        "startedAt": "2026-10-22T22:14:06Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2826",
+      "summary": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/5"
+    },
+    {
+      "at": "2026-10-22T22:16:41.077894Z",
+      "id": 21,
+      "kind": "review.round",
+      "lane": "lane-recorder",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        },
+        "finishedAt": "2026-10-22T22:16:41Z",
+        "round": 2,
+        "startedAt": "2026-10-22T22:16:03Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2822",
+      "summary": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+    },
+    {
+      "at": "2026-10-22T22:17:09.252440Z",
+      "id": 22,
+      "kind": "candidate.handed",
+      "lane": "lane-recorder",
+      "subject": "V26-2822",
+      "summary": "lane-recorder handed V26-2822 at 5bf8aeeca2bcea5759f46f34164d836096b120e1 (https://github.com/v26-technologies/athena/pull/1148) after 2 review rounds"
+    },
+    {
+      "at": "2026-10-22T22:17:32.745026Z",
+      "id": 23,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": "V26-2822",
+      "summary": "V26-2822 hand-off checked (PR #1148 head 5bf8aee, 2 rounds, both lenses approve) and queued. lane-recorder left handed: no unblocked work (V26-2824 needs 2821+2823, V26-2825 needs 2821, V26-2827 needs 2822+2824); it gets the first of those to unblock."
+    },
+    {
+      "at": "2026-10-22T22:19:07.479173Z",
+      "id": 24,
+      "kind": "review.round",
+      "lane": "lane-history",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 2
+        },
+        "finishedAt": "2026-10-22T22:19:07Z",
+        "round": 2,
+        "startedAt": "2026-10-22T22:16:24Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2826",
+      "summary": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/2"
+    },
+    {
+      "at": "2026-10-22T22:19:20.816288Z",
+      "id": 25,
+      "kind": "candidate.handed",
+      "lane": "lane-history",
+      "subject": "V26-2826",
+      "summary": "lane-history handed V26-2826 at eec4becf7d7366aebd9071ddc5fe45ba2171de1b (https://github.com/v26-technologies/athena/pull/1149) after 2 review rounds"
+    },
+    {
+      "at": "2026-10-22T22:19:29.149547Z",
+      "id": 26,
+      "kind": "candidate.handed",
+      "lane": "lane-history",
+      "subject": "V26-2826",
+      "summary": "lane-history handed V26-2826 at eec4becf707366aebd9071ddc5fe45ba2171de1b (https://github.com/v26-technologies/athena/pull/1149) after 2 review rounds"
+    },
+    {
+      "at": "2026-10-22T22:19:54.881889Z",
+      "id": 27,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": "V26-2826",
+      "summary": "V26-2826 hand-off checked (PR #1149 head eec4bec, 2 rounds, both lenses approve) and queued; the earlier hand-off entry at a mistyped head is superseded. P3 left open by both lenses (1+N runs show processes per render, ~6s for 37 runs, inside the 60s timeout): dropped, no ticket; V26-2825 touches the same summary code and may batch it if it bites. lane-history left handed: no unblocked work."
+    },
+    {
+      "at": "2026-10-22T22:27:45.833244Z",
+      "id": 28,
+      "kind": "review.round",
+      "lane": "lane-runs",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 1,
+          "P3": 0
+        },
+        "finishedAt": "2026-10-22T22:27:45Z",
+        "round": 1,
+        "startedAt": "2026-10-22T22:16:20Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2831",
+      "summary": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/1/0"
+    },
+    {
+      "at": "2026-10-22T22:43:54.825402Z",
+      "id": 29,
+      "kind": "candidate.handed",
+      "lane": "lane-skills",
+      "subject": "V26-2821",
+      "summary": "lane-skills handed V26-2821 at c96e2dd1f99d5f583e839b97f9555ff122768c1c (https://github.com/kwam1na/agent-skills/pull/122) after 2 review rounds"
+    },
+    {
+      "at": "2026-10-22T22:44:52.155071Z",
+      "id": 30,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": "V26-2821",
+      "summary": "V26-2821 hand-off checked (agent-skills PR #122 head c96e2dd, 2 rounds; round 1 adversarial changes P2+P3 fixed, round 2 both approve). Removed from the Athena queue: the runner serves Athena only. The lead merges #122 in agent-skills once its CI matches main's pre-existing failures, then cuts the release. Round 1's journaled finishedAt (22:16:30Z) is the lane's estimate; the true finish was about 22:14:20Z."
+    },
+    {
+      "at": "2026-10-22T22:47:48.067618Z",
+      "id": 31,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": "V26-2831",
+      "summary": "Widened V26-2831 to all of main's #1146 breakage the queue hit on V26-2823: static-product-metadata title test and motionInventory literal timings (both reproduced on clean main), plus any behavior or e2e scenario that fails on main for a #1146 reason. It lands first; queued candidates wait on it."
+    },
+    {
+      "at": "2026-10-22T22:54:07.933307Z",
+      "id": 32,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": "V26-2821",
+      "summary": "V26-2821 merged by the lead in agent-skills: PR #122 squash 122c12f at reviewed head c96e2dd. CI failures identical to main 22f90b8 (7 failures, 54 errors, pre-existing). Release linear-orchestration-v1.2-unqualified built and verified from 122c12f: ~/delivery-artifacts/agent-skills-releases/linear-orchestration-v1.2-unqualified (zip sha256 f80af864..., 123 entries). V26-2825 is unblocked."
+    },
+    {
+      "at": "2026-10-22T22:54:08.510812Z",
+      "id": 33,
+      "kind": "lane.assigned",
+      "lane": "lane-skills",
+      "subject": "V26-2825",
+      "summary": "V26-2825 assigned to lane-skills"
+    },
+    {
+      "at": "2026-10-22T23:06:30.397413Z",
+      "id": 34,
+      "kind": "review.round",
+      "lane": "lane-runs",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 1,
+          "P2": 1,
+          "P3": 0
+        },
+        "finishedAt": "2026-10-22T23:06:30Z",
+        "round": 2,
+        "startedAt": "2026-10-22T22:59:30Z",
+        "verdicts": {
+          "lens.adversarial-testing": "changes",
+          "lens.outcome-correctness": "changes"
+        }
+      },
+      "subject": "V26-2831",
+      "summary": "Round 2: lens.adversarial-testing changes, lens.outcome-correctness changes; findings 0/1/1/0"
+    },
+    {
+      "at": "2026-10-22T23:06:57.498537Z",
+      "id": 35,
+      "kind": "review.round",
+      "lane": "lane-runs",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        },
+        "finishedAt": "2026-10-22T23:06:57Z",
+        "round": 3,
+        "startedAt": "2026-10-22T23:03:30Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2831",
+      "summary": "Round 3: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+    },
+    {
+      "at": "2026-10-22T23:09:43.458466Z",
+      "id": 36,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "Operator (2026-10-22): focused tests only, no full suites. The lead stopped merge_queue serve mid-check of V26-2823 (it had pushed its sync, head 74d36b3) and removed its checkouts. Lanes drop harness:test: touched test files plus harness:check only. The lead now acts as the runner: per candidate, sync with origin/main in a detached checkout, regenerate generated artifacts and refresh solution-note fingerprints, run the lane-named focused tests plus harness:check and the Convex generated-API check, push, then merge with github:pr-merge --expected-head. Accepted risk: no broad cross-candidate check before merge."
+    },
+    {
+      "at": "2026-10-22T23:11:08.608314Z",
+      "id": 37,
+      "kind": "candidate.handed",
+      "lane": "lane-runs",
+      "subject": "V26-2831",
+      "summary": "lane-runs handed V26-2831 at ef3e4793f13b1d15a367c9050eb202eb97acd207 (https://github.com/v26-technologies/athena/pull/1151) after 3 review rounds"
+    },
+    {
+      "at": "2026-10-22T23:11:33.026047Z",
+      "id": 38,
+      "kind": "candidate.merged",
+      "lane": null,
+      "subject": "V26-2823",
+      "summary": "V26-2823 merged by the lead (manual, focused): PR #1147 synced at 4ab4f4e317ea8b07d2ec0e8a0f688e1f167e0a6a, squash fa373d7493472edb6a9de916de1ecf55b037f7cc on main. Checks: worktree-manager, github-pr-merge, pr-athena-guidance-contract tests, harness:check, convex-generated-api, all pass."
+    },
+    {
+      "at": "2026-10-22T23:11:33.394618Z",
+      "id": 39,
+      "kind": "lane.assigned",
+      "lane": "lane-recorder",
+      "subject": "V26-2824",
+      "summary": "V26-2824 assigned to lane-recorder"
+    },
+    {
+      "at": "2026-10-22T23:11:50.951761Z",
+      "id": 40,
+      "kind": "review.round",
+      "lane": "lane-skills",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 1,
+          "P3": 3
+        },
+        "finishedAt": "2026-10-22T23:10:00Z",
+        "round": 1,
+        "startedAt": "2026-10-22T23:07:29Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "changes"
+        }
+      },
+      "subject": "V26-2825",
+      "summary": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness changes; findings 0/0/1/3"
+    },
+    {
+      "at": "2026-10-22T23:13:01.558521Z",
+      "id": 41,
+      "kind": "candidate.merged",
+      "lane": null,
+      "subject": "V26-2822",
+      "summary": "V26-2822 merged by the lead (manual, focused): PR #1148 synced at c6b98c246116b20364d1f4fec338c8334844c778, squash 996b310b9f028563c70032591173d8b74c790646 on main. Checks: delivery-run-recorder, worktree-manager tests, harness:check, convex-generated-api, all pass."
+    },
+    {
+      "at": "2026-10-22T23:14:22.206633Z",
+      "id": 42,
+      "kind": "candidate.merged",
+      "lane": null,
+      "subject": "V26-2826",
+      "summary": "V26-2826 merged by the lead (manual, focused): PR #1149 synced at 33140d0d8262124ff4ed8490f3199d8a22ad2190, squash 26b53015832841f8b85e3962a79a608a426b91e1 on main. Checks: delivery-history-view, delivery-run-summary, delivery-live-view, delivery-live tests, harness:check, convex-generated-api, all pass."
+    },
+    {
+      "at": "2026-10-22T23:14:22.277767Z",
+      "id": 43,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "lane-history idle after V26-2826 merged: no unblocked work (V26-2827 needs V26-2824, in progress on lane-recorder; V26-2825 on lane-skills; V26-2831 on lane-runs)."
+    },
+    {
+      "at": "2026-10-22T23:16:07.717181Z",
+      "id": 44,
+      "kind": "review.round",
+      "lane": "lane-recorder",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 2
+        },
+        "finishedAt": "2026-10-22T23:16:07Z",
+        "round": 1,
+        "startedAt": "2026-10-22T23:13:35Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2824",
+      "summary": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/2"
+    },
+    {
+      "at": "2026-10-22T23:16:50.748772Z",
+      "id": 45,
+      "kind": "review.round",
+      "lane": "lane-recorder",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        },
+        "finishedAt": "2026-10-22T23:16:50Z",
+        "round": 2,
+        "startedAt": "2026-10-22T23:16:17Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2824",
+      "summary": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+    },
+    {
+      "at": "2026-10-22T23:17:11.749349Z",
+      "id": 46,
+      "kind": "candidate.merged",
+      "lane": null,
+      "subject": "V26-2831",
+      "summary": "V26-2831 merged by the lead (manual, focused): PR #1151 synced at 3780cabfb7dc5947ba87771170f0412910b03746, squash c0129301daf91a3ff3aa9e959a95f46b44670dc2 on main. Checks: 5 harness registry/contract tests, static-product-metadata, motionInventory, components/auth, routes/login, harness:check, convex-generated-api, all pass."
+    },
+    {
+      "at": "2026-10-22T23:17:11.822754Z",
+      "id": 47,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": "V26-2831",
+      "summary": "Lead accepts lane-runs' call on the landing's motion: motionInventory exempts src/components/marketing/ (the public landing keeps its own motion profile outside Motion Studio) rather than retiming #1146's shipped landing onto --motion-* profiles. Pre-existing storefront-composition fixture break (since #1018) filed as V26-2832 and assigned to lane-runs, which diagnosed it; the e2e webServer 120s timeout is environmental (tsc 144s under load before and after #1146): no action."
+    },
+    {
+      "at": "2026-10-22T23:17:12.191451Z",
+      "id": 48,
+      "kind": "lane.assigned",
+      "lane": "lane-runs",
+      "subject": "V26-2832",
+      "summary": "V26-2832 assigned to lane-runs"
+    },
+    {
+      "at": "2026-10-22T23:17:14.880712Z",
+      "id": 49,
+      "kind": "candidate.handed",
+      "lane": "lane-recorder",
+      "subject": "V26-2824",
+      "summary": "lane-recorder handed V26-2824 at ffb41cef5b32596c3d058366fb7e730be8a882f7 (https://github.com/v26-technologies/athena/pull/1152) after 2 review rounds"
+    },
+    {
+      "at": "2026-10-22T23:17:30.338963Z",
+      "id": 50,
+      "kind": "review.round",
+      "lane": "lane-skills",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        },
+        "finishedAt": "2026-10-22T23:16:38Z",
+        "round": 2,
+        "startedAt": "2026-10-22T23:11:50Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2825",
+      "summary": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+    },
+    {
+      "at": "2026-10-22T23:17:55.991915Z",
+      "id": 51,
+      "kind": "candidate.handed",
+      "lane": "lane-skills",
+      "subject": "V26-2825",
+      "summary": "lane-skills handed V26-2825 at 84f92469e4a7388e39def6cb4149b9774622d689 (https://github.com/v26-technologies/athena/pull/1153) after 2 review rounds"
+    },
+    {
+      "at": "2026-10-22T23:18:49.127784Z",
+      "id": 52,
+      "kind": "candidate.merged",
+      "lane": null,
+      "subject": "V26-2824",
+      "summary": "V26-2824 merged by the lead (manual, focused): PR #1152 synced at cec7101b4e540ba1adbcc97a44536a59f25b63da, squash a184f2ff52ab95cc0678ebfa1d1753ed6a0086cf on main. Checks: pr-athena-guidance-contract test, policy:check, delivery:status, harness:check, convex-generated-api, all pass."
+    },
+    {
+      "at": "2026-10-22T23:18:49.504510Z",
+      "id": 53,
+      "kind": "lane.assigned",
+      "lane": "lane-recorder",
+      "subject": "V26-2827",
+      "summary": "V26-2827 assigned to lane-recorder"
+    },
+    {
+      "at": "2026-10-22T23:20:00.847373Z",
+      "id": 54,
+      "kind": "candidate.handed",
+      "lane": "lane-skills",
+      "subject": "V26-2825",
+      "summary": "lane-skills handed V26-2825 at 7d39b2620567a45b7ec079c6f135d5ae96e7490f (https://github.com/v26-technologies/athena/pull/1153) after 2 review rounds"
+    },
+    {
+      "at": "2026-10-22T23:20:44.084673Z",
+      "id": 55,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": "V26-2825",
+      "summary": "V26-2825 moved after hand-off (84f9246 -> 7d39b26): the lane rebased onto a184f2f and restamped its note fingerprint. The branch-own scripts patch is identical (patch-id a409bbc), so the lead accepts 7d39b26 as the reviewed head."
+    },
+    {
+      "at": "2026-10-22T23:22:18.637061Z",
+      "id": 56,
+      "kind": "candidate.merged",
+      "lane": null,
+      "subject": "V26-2825",
+      "summary": "V26-2825 merged by the lead (manual, focused): PR #1153 synced at 7d39b2620567a45b7ec079c6f135d5ae96e7490f, squash 096428d328e3066f5f05098a41d477b5f09f098a on main. Checks: delivery-run-summary, delivery-line-map-runs, delivery-live-view, delivery-history-view tests, harness:check, convex-generated-api, all pass."
+    },
+    {
+      "at": "2026-10-22T23:22:18.710750Z",
+      "id": 57,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "lane-skills idle after V26-2825 merged: the only open tickets, V26-2827 (lane-recorder) and V26-2832 (lane-runs), are assigned."
+    },
+    {
+      "at": "2026-10-22T23:22:31.877893Z",
+      "id": 58,
+      "kind": "review.round",
+      "lane": "lane-runs",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 1
+        },
+        "finishedAt": "2026-10-22T23:22:30Z",
+        "round": 1,
+        "startedAt": "2026-10-22T23:19:54Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2832",
+      "summary": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/1"
+    },
+    {
+      "at": "2026-10-22T23:22:52.215138Z",
+      "id": 59,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "tracker-snapshot: taken again"
+    },
+    {
+      "at": "2026-10-22T23:22:53.545547Z",
+      "id": 60,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "forge-snapshot: taken again"
+    },
+    {
+      "at": "2026-10-22T23:23:34.083704Z",
+      "id": 61,
+      "kind": "review.round",
+      "lane": "lane-runs",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        },
+        "finishedAt": "2026-10-22T23:23:33Z",
+        "round": 2,
+        "startedAt": "2026-10-22T23:22:32Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2832",
+      "summary": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+    },
+    {
+      "at": "2026-10-22T23:24:41.477362Z",
+      "id": 62,
+      "kind": "candidate.handed",
+      "lane": "lane-runs",
+      "subject": "V26-2832",
+      "summary": "lane-runs handed V26-2832 at 10c94bda8f50a10c17f2d36fd221a031e228a7ce (https://github.com/v26-technologies/athena/pull/1154) after 2 review rounds"
+    },
+    {
+      "at": "2026-10-22T23:27:15.478148Z",
+      "id": 63,
+      "kind": "candidate.merged",
+      "lane": null,
+      "subject": "V26-2832",
+      "summary": "V26-2832 merged by the lead (manual, focused): PR #1154 synced at 10c94bda8f50a10c17f2d36fd221a031e228a7ce, squash 0cac8e9b744e82c965319b0a018c934c157f19d2 on main. Checks: storefront-composition scenario x3, storefront-failure-visibility scenario, compound:check, harness:check, convex-generated-api, all pass."
+    },
+    {
+      "at": "2026-10-22T23:27:15.551714Z",
+      "id": 64,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "lane-runs idle after V26-2832 merged: the only open ticket, V26-2827, is on lane-recorder."
+    },
+    {
+      "at": "2026-10-22T23:31:57.026703Z",
+      "id": 65,
+      "kind": "review.round",
+      "lane": "lane-recorder",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 1
+        },
+        "finishedAt": "2026-10-22T23:31:56Z",
+        "round": 1,
+        "startedAt": "2026-10-22T23:30:15Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2827",
+      "summary": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/1"
+    },
+    {
+      "at": "2026-10-22T23:32:20.133107Z",
+      "id": 66,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "summary": "Operator: Linear and GitHub must refresh automatically. The lead restarted merge_queue serve under meta.hold: it takes and merges nothing, but refreshes the tracker and forge snapshots every 180s and reconciles the record. Merges stay manual (focused posture)."
+    },
+    {
+      "at": "2026-10-22T23:32:56.347394Z",
+      "id": 67,
+      "kind": "review.round",
+      "lane": "lane-recorder",
+      "review": {
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        },
+        "finishedAt": "2026-10-22T23:32:55Z",
+        "round": 2,
+        "startedAt": "2026-10-22T23:32:25Z",
+        "verdicts": {
+          "lens.adversarial-testing": "approve",
+          "lens.outcome-correctness": "approve"
+        }
+      },
+      "subject": "V26-2827",
+      "summary": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+    },
+    {
+      "at": "2026-10-22T23:33:08.201041Z",
+      "id": 68,
+      "kind": "candidate.handed",
+      "lane": "lane-recorder",
+      "subject": "V26-2827",
+      "summary": "lane-recorder handed V26-2827 at f3d097ebec0637b2d1599d931ca20cad82f743b4 (https://github.com/v26-technologies/athena/pull/1155) after 2 review rounds"
+    },
+    {
+      "at": "2026-10-22T23:35:00.671438Z",
+      "id": 69,
+      "kind": "candidate.merged",
+      "lane": null,
+      "subject": "V26-2827",
+      "summary": "V26-2827 merged by the lead (manual, focused): PR #1155 synced at f5dacc1a145399a796ec18af444ba729732634eb, squash 5c450a16bc1d8915acdbf69f9ac5ea04a049bf4b on main. Checks: delivery-records-agreement, delivery-run-recorder, harness-blocker-inventory, harness-blockers, pr-athena-guidance-contract tests, compound:check, delivery:records-agreement on the epic's state, harness:check, convex-generated-api, all pass."
+    },
+    {
+      "at": "2026-10-22T23:35:00.746937Z",
+      "id": 70,
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": "V26-2827",
+      "summary": "Lead ruling: V26-2827 reads runs with the product's runs show --json instead of the ticket's runs view --json (runs view embeds a closed round's payload as a JSON string inside a display field). Both are product commands, so the ticket's no-store-reads rule holds; both lenses accepted it."
+    },
+    {
+      "at": "2026-10-22T23:36:01.634859Z",
+      "id": 71,
+      "kind": "finish.met",
+      "lane": null,
+      "subject": null,
+      "summary": "line-map-runs: Live line map on main 5c450a1: stops V26-2824, V26-2832 and V26-2827 each show their run (run-1a53c64e, run-04c54d36, run-8cbfe446) with rounds, verdicts, P0-P3 counts and timings; earlier stops predate run recording."
+    },
+    {
+      "at": "2026-10-22T23:36:01.705355Z",
+      "id": 72,
+      "kind": "finish.met",
+      "lane": null,
+      "subject": null,
+      "summary": "rounds-agree: bun run delivery:records-agreement -- --dir ~/athena-delivery on main 5c450a1: 'Delivery records agree: 3 candidates with a run, every review round in both.' exit 0."
+    },
+    {
+      "at": "2026-10-22T23:36:01.778677Z",
+      "id": 73,
+      "kind": "finish.met",
+      "lane": null,
+      "subject": null,
+      "summary": "history-lists: /view/athena-history.html lists 40 runs newest first; this epic's three runs appear beside earlier runs, each naming the V26-2829 delivery."
+    },
+    {
+      "at": "2026-10-22T23:36:01.849788Z",
+      "id": 74,
+      "kind": "finish.met",
+      "lane": null,
+      "subject": null,
+      "summary": "merged: All children merged: V26-2821 agent-skills 122c12f + release linear-orchestration-v1.2-unqualified; Athena main fa373d7 (2823), 996b310 (2822), 26b5301 (2826), c012930 (2831), a184f2f (2824), 096428d (2825), 0cac8e9 (2832), 5c450a1 (2827). No deploys."
+    },
+    {
+      "at": "2026-10-22T23:38:12.841558Z",
+      "id": 75,
+      "kind": "delivery.closed",
+      "lane": null,
+      "subject": null,
+      "summary": "V26-2829 closed. Finish line met: every child merged into main (agent-skills 122c12f + release v1.2; Athena through 5c450a1), no deploys. Plus base fixes V26-2831 and V26-2832. Operator direction: focused posture (queue stopped at 23:05Z, lead merged by hand after sync + focused checks), no full-health run. All four finish lines met with evidence. Lane worktrees removed."
+    }
+  ],
+  "state": {
+    "extensions": {},
+    "finish": [
+      {
+        "id": "line-map-runs",
+        "met": true,
+        "text": "A real epic delivery shows each stop's run on the line map"
+      },
+      {
+        "id": "rounds-agree",
+        "met": true,
+        "text": "Its review rounds agree between run and state"
+      },
+      {
+        "id": "history-lists",
+        "met": true,
+        "text": "The history page lists it beside earlier runs"
+      },
+      {
+        "id": "merged",
+        "met": true,
+        "text": "Every child merged into main (agent-skills main plus release for V26-2821); no deploys"
+      }
+    ],
+    "followups": [],
+    "lanes": [
+      {
+        "focus": "V26-2825: review round 1",
+        "id": "lane-skills",
+        "since": "2026-10-22T23:17:55.985827Z",
+        "state": "handed",
+        "title": "V26-2825 Line map shows each stop's run",
+        "waitingOn": null
+      },
+      {
+        "focus": "assigned V26-2827",
+        "id": "lane-recorder",
+        "since": "2026-10-22T23:33:08.193888Z",
+        "state": "handed",
+        "title": "V26-2827 Agreement sensor for review rounds",
+        "waitingOn": null
+      },
+      {
+        "focus": "assigned V26-2832",
+        "id": "lane-runs",
+        "since": "2026-10-22T23:24:41.470362Z",
+        "state": "handed",
+        "title": "V26-2832 Storefront-composition fixture gets admission context",
+        "waitingOn": null
+      },
+      {
+        "focus": "Handed off #1149; available if the queue sends it back",
+        "id": "lane-history",
+        "since": "2026-10-22T22:20:04.542800Z",
+        "state": "idle",
+        "title": "V26-2826 history page",
+        "waitingOn": null
+      }
+    ],
+    "leases": [],
+    "meta": {
+      "baseHead": "5c450a16bc1d8915acdbf69f9ac5ea04a049bf4b",
+      "checking": {
+        "next": [],
+        "now": null
+      },
+      "headline": "Delivery records: state is the present, runs are the history (V26-2829)",
+      "hold": {
+        "reason": "Operator: focused posture. The lead merges by hand; serve runs held only to refresh Linear and GitHub snapshots.",
+        "since": "2026-10-22T23:32:03Z"
+      },
+      "releasedHead": null,
+      "sourceReports": [],
+      "sources": {
+        "forge": {
+          "since": "2026-10-22T23:23:29.923617Z",
+          "status": "observed"
+        },
+        "tracker": {
+          "since": "2026-10-22T23:23:29.923593Z",
+          "status": "observed"
+        }
+      },
+      "trackerParent": "V26-2829",
+      "updatedAt": "2026-10-22T23:36:01.566268Z"
+    },
+    "planned": [],
+    "queue": [
+      {
+        "changeRequest": "https://github.com/v26-technologies/athena/pull/1147",
+        "checks": [],
+        "head": "d48bf11f991a4fff7a4dccd2f80ee344acfc43f5",
+        "lane": "lane-runs",
+        "leadInputs": [],
+        "order": 1,
+        "reportedRounds": 2,
+        "runId": null,
+        "stage": "merged",
+        "subject": "V26-2823",
+        "syncedHead": "4ab4f4e317ea8b07d2ec0e8a0f688e1f167e0a6a",
+        "title": "Epic lanes record runs"
+      },
+      {
+        "changeRequest": "https://github.com/v26-technologies/athena/pull/1148",
+        "checks": [],
+        "head": "5bf8aeeca2bcea5759f46f34164d836096b120e1",
+        "lane": "lane-recorder",
+        "leadInputs": [],
+        "order": 2,
+        "reportedRounds": 2,
+        "runId": null,
+        "stage": "merged",
+        "subject": "V26-2822",
+        "syncedHead": "c6b98c246116b20364d1f4fec338c8334844c778",
+        "title": "One review-round write lands in the run and the journal"
+      },
+      {
+        "changeRequest": "https://github.com/v26-technologies/athena/pull/1149",
+        "checks": [],
+        "head": "eec4becf707366aebd9071ddc5fe45ba2171de1b",
+        "lane": "lane-history",
+        "leadInputs": [],
+        "order": 3,
+        "reportedRounds": 2,
+        "runId": null,
+        "stage": "merged",
+        "subject": "V26-2826",
+        "syncedHead": "33140d0d8262124ff4ed8490f3199d8a22ad2190",
+        "title": "History page of deliveries and runs"
+      },
+      {
+        "changeRequest": "https://github.com/v26-technologies/athena/pull/1151",
+        "checks": [],
+        "head": "ef3e4793f13b1d15a367c9050eb202eb97acd207",
+        "lane": "lane-runs",
+        "leadInputs": [],
+        "order": 4,
+        "reportedRounds": 3,
+        "runId": null,
+        "stage": "merged",
+        "subject": "V26-2831",
+        "syncedHead": "3780cabfb7dc5947ba87771170f0412910b03746",
+        "title": "Repin the harness app registry (base fix)"
+      },
+      {
+        "changeRequest": "https://github.com/v26-technologies/athena/pull/1152",
+        "checks": [],
+        "head": "ffb41cef5b32596c3d058366fb7e730be8a882f7",
+        "lane": "lane-recorder",
+        "leadInputs": [],
+        "order": 5,
+        "reportedRounds": 2,
+        "runId": "run-1a53c64ed093cc1a",
+        "stage": "merged",
+        "subject": "V26-2824",
+        "syncedHead": "cec7101b4e540ba1adbcc97a44536a59f25b63da",
+        "title": "Install the release; lanes hand off naming their run"
+      },
+      {
+        "changeRequest": "https://github.com/v26-technologies/athena/pull/1153",
+        "checks": [],
+        "head": "7d39b2620567a45b7ec079c6f135d5ae96e7490f",
+        "lane": "lane-skills",
+        "leadInputs": [],
+        "order": 6,
+        "reportedRounds": 2,
+        "runId": null,
+        "stage": "merged",
+        "subject": "V26-2825",
+        "syncedHead": "7d39b2620567a45b7ec079c6f135d5ae96e7490f",
+        "title": "Line map shows each stop's run"
+      },
+      {
+        "changeRequest": "https://github.com/kwam1na/agent-skills/pull/122",
+        "checks": [],
+        "head": "c96e2dd1f99d5f583e839b97f9555ff122768c1c",
+        "lane": "lane-skills",
+        "leadInputs": [],
+        "order": 7,
+        "reportedRounds": 2,
+        "runId": null,
+        "stage": "merged",
+        "subject": "V26-2821",
+        "syncedHead": "122c12f0d7daa84a621bcad74337d8b7ebe59006",
+        "title": "Delivery state links each candidate to its run"
+      },
+      {
+        "changeRequest": "https://github.com/v26-technologies/athena/pull/1154",
+        "checks": [],
+        "head": "10c94bda8f50a10c17f2d36fd221a031e228a7ce",
+        "lane": "lane-runs",
+        "leadInputs": [],
+        "order": 8,
+        "reportedRounds": 2,
+        "runId": "run-04c54d3687d661b5",
+        "stage": "merged",
+        "subject": "V26-2832",
+        "syncedHead": "10c94bda8f50a10c17f2d36fd221a031e228a7ce",
+        "title": "Storefront-composition fixture gets admission context"
+      },
+      {
+        "changeRequest": "https://github.com/v26-technologies/athena/pull/1155",
+        "checks": [],
+        "head": "f3d097ebec0637b2d1599d931ca20cad82f743b4",
+        "lane": "lane-recorder",
+        "leadInputs": [],
+        "order": 9,
+        "reportedRounds": 2,
+        "runId": "run-8cbfe446d9bbc79b",
+        "stage": "merged",
+        "subject": "V26-2827",
+        "syncedHead": "f5dacc1a145399a796ec18af444ba729732634eb",
+        "title": "Agreement sensor for review rounds"
+      }
+    ],
+    "schemaVersion": "delivery-state/1",
+    "tickets": {
+      "V26-2821": {
+        "summary": "delivery-state/1 already has a runId on each queue element, but nothing sets it: delivery_state.py always writes null, and handoff has no way to name a run. The records design joins the delivery state (the present tense) to the adopter's runs (the history) on this field. This ticket makes the join real, in a form any adopter can use.",
+        "title": "Delivery state links each candidate to its run: `handoff --run`, `runId` on planned work"
+      },
+      "V26-2822": {
+        "summary": "A review round is recorded twice today, by different hands:",
+        "title": "One review-round write lands in the run and in the delivery state's journal"
+      },
+      "V26-2823": {
+        "summary": "Epic lanes record no runs today:",
+        "title": "Epic lanes record runs: drop `ATHENA_DELIVERY_RECORDING=off` and `Run: none`, mark lane worktrees"
+      },
+      "V26-2824": {
+        "summary": "Once the agent-skills release carrying handoff --run (V26-2821) is out, Athena installs it, and lanes name their run at hand-off. Each queue element's runId then points at the run that built it, and the line map and the agreement sensor can follow it.",
+        "title": "Install the release with `handoff --run`; lanes hand off naming their run"
+      },
+      "V26-2825": {
+        "summary": "The line map (scripts/delivery-live-view.ts, served by bun scripts/delivery-live.ts) becomes the operator's run surface. A stop whose queue or planned element has a runId shows that run's story beside the state:",
+        "title": "The line map shows each stop's run: rounds, findings, waits and timings"
+      },
+      "V26-2826": {
+        "summary": "The line map shows one delivery as it stands now. Once it is the run surface, the operator also needs the past: earlier deliveries and the runs recorded before any delivery state existed. This includes single-ticket deliveries and older epics. Without that, the history recorded so far drops out of view.",
+        "title": "A history page lists past deliveries and runs, including runs with no delivery state"
+      },
+      "V26-2827": {
+        "summary": "The recorder writes each review round to both the run and the delivery state's journal (V26-2822). Two copies can still drift: a write fails, or a round is journaled by hand. This sensor proves they agree, so the line map's stats and the run's history tell the same story.",
+        "title": "A sensor confirms each candidate's review rounds agree between its run and the delivery state"
+      },
+      "V26-2831": {
+        "summary": "Main fails harness:test. #1146 (V26-2819) changed packages/athena-webapp/package.json and index.html without repinning scripts/harness-app-registry.ts. The failing tests are harness-app-registry (\"keeps every pinned digest in the registry current\", \"keeps every guard on … the root package.json current\"), the agent-browser contract, the report-caching pin and harness-contract-preflight. This ticket repins them so the base is green again. Lane-runs found it during V26-2823 (epic V26-2829), and the lead reproduced it on origin/main 225f83b72.",
+        "title": "Repin the harness app registry after the landing-page rebuild"
+      },
+      "V26-2832": {
+        "summary": "bun run harness:behavior --scenario athena-convex-storefront-composition has failed deterministically (3 of 3) since #1018 (2026-10-17). The fixture scripts/harness-behavior-fixtures/athena-runtime-app.ts mounts storefrontRoutes without admission context, so /storefront returns 500 with \"null is not an object (evaluating 'admitted.admission.actor')\" at admittedCustomer.ts:59, and the browser phase times out waiting for its selector. Found by lane-runs during V26-2831 (epic V26-2829), after the merge queue's checks on V26-2823 ran the scenario. It is pre-existing and not caused by #1146.",
+        "title": "The storefront-composition behavior scenario mounts storefront routes with admission context again"
+      }
+    },
+    "version": 131
+  },
+  "stats": {
+    "V26-2821": {
+      "assignedAt": "2026-10-22T22:04:24.149924Z",
+      "buildSeconds": 485,
+      "checkStartedAt": null,
+      "checkToMergeSeconds": null,
+      "endedAt": null,
+      "findings": {
+        "P0": 0,
+        "P1": 0,
+        "P2": 1,
+        "P3": 1
+      },
+      "handedAt": "2026-10-22T22:43:54.825402Z",
+      "lastVerdicts": {
+        "lens.adversarial-testing": "approve",
+        "lens.outcome-correctness": "approve"
+      },
+      "outcome": null,
+      "reviewSeconds": 240,
+      "rounds": 2,
+      "roundsSource": "journal",
+      "totalSeconds": null,
+      "waitSeconds": null
+    },
+    "V26-2822": {
+      "assignedAt": "2026-10-22T22:04:24.216156Z",
+      "buildSeconds": 567,
+      "checkStartedAt": null,
+      "checkToMergeSeconds": null,
+      "endedAt": "2026-10-22T23:13:01.558521Z",
+      "findings": {
+        "P0": 0,
+        "P1": 0,
+        "P2": 0,
+        "P3": 1
+      },
+      "handedAt": "2026-10-22T22:17:09.252440Z",
+      "lastVerdicts": {
+        "lens.adversarial-testing": "approve",
+        "lens.outcome-correctness": "approve"
+      },
+      "outcome": "merged",
+      "reviewSeconds": 169,
+      "rounds": 2,
+      "roundsSource": "journal",
+      "totalSeconds": 4117,
+      "waitSeconds": null
+    },
+    "V26-2823": {
+      "assignedAt": "2026-10-22T22:04:24.281805Z",
+      "buildSeconds": 279,
+      "checkStartedAt": "2026-10-22T22:15:12.923649Z",
+      "checkToMergeSeconds": 3380,
+      "endedAt": "2026-10-22T23:11:33.026047Z",
+      "findings": {
+        "P0": 0,
+        "P1": 0,
+        "P2": 0,
+        "P3": 2
+      },
+      "handedAt": "2026-10-22T22:13:32.729189Z",
+      "lastVerdicts": {
+        "lens.adversarial-testing": "approve",
+        "lens.outcome-correctness": "approve"
+      },
+      "outcome": "merged",
+      "reviewSeconds": 146,
+      "rounds": 2,
+      "roundsSource": "journal",
+      "totalSeconds": 4028,
+      "waitSeconds": 100
+    },
+    "V26-2824": {
+      "assignedAt": "2026-10-22T23:11:33.394618Z",
+      "buildSeconds": 121,
+      "checkStartedAt": null,
+      "checkToMergeSeconds": null,
+      "endedAt": "2026-10-22T23:18:49.127784Z",
+      "findings": {
+        "P0": 0,
+        "P1": 0,
+        "P2": 0,
+        "P3": 2
+      },
+      "handedAt": "2026-10-22T23:17:14.880712Z",
+      "lastVerdicts": {
+        "lens.adversarial-testing": "approve",
+        "lens.outcome-correctness": "approve"
+      },
+      "outcome": "merged",
+      "reviewSeconds": 195,
+      "rounds": 2,
+      "roundsSource": "journal",
+      "totalSeconds": 435,
+      "waitSeconds": null
+    },
+    "V26-2825": {
+      "assignedAt": "2026-10-22T22:54:08.510812Z",
+      "buildSeconds": 800,
+      "checkStartedAt": null,
+      "checkToMergeSeconds": null,
+      "endedAt": "2026-10-22T23:22:18.637061Z",
+      "findings": {
+        "P0": 0,
+        "P1": 0,
+        "P2": 1,
+        "P3": 3
+      },
+      "handedAt": "2026-10-22T23:20:00.847373Z",
+      "lastVerdicts": {
+        "lens.adversarial-testing": "approve",
+        "lens.outcome-correctness": "approve"
+      },
+      "outcome": "merged",
+      "reviewSeconds": 549,
+      "rounds": 2,
+      "roundsSource": "journal",
+      "totalSeconds": 1690,
+      "waitSeconds": null
+    },
+    "V26-2826": {
+      "assignedAt": "2026-10-22T22:04:24.345896Z",
+      "buildSeconds": 581,
+      "checkStartedAt": null,
+      "checkToMergeSeconds": null,
+      "endedAt": "2026-10-22T23:14:22.206633Z",
+      "findings": {
+        "P0": 0,
+        "P1": 0,
+        "P2": 0,
+        "P3": 7
+      },
+      "handedAt": "2026-10-22T22:19:29.149547Z",
+      "lastVerdicts": {
+        "lens.adversarial-testing": "approve",
+        "lens.outcome-correctness": "approve"
+      },
+      "outcome": "merged",
+      "reviewSeconds": 301,
+      "rounds": 2,
+      "roundsSource": "journal",
+      "totalSeconds": 4197,
+      "waitSeconds": null
+    },
+    "V26-2827": {
+      "assignedAt": "2026-10-22T23:18:49.504510Z",
+      "buildSeconds": 685,
+      "checkStartedAt": null,
+      "checkToMergeSeconds": null,
+      "endedAt": "2026-10-22T23:35:00.671438Z",
+      "findings": {
+        "P0": 0,
+        "P1": 0,
+        "P2": 0,
+        "P3": 1
+      },
+      "handedAt": "2026-10-22T23:33:08.201041Z",
+      "lastVerdicts": {
+        "lens.adversarial-testing": "approve",
+        "lens.outcome-correctness": "approve"
+      },
+      "outcome": "merged",
+      "reviewSeconds": 160,
+      "rounds": 2,
+      "roundsSource": "journal",
+      "totalSeconds": 971,
+      "waitSeconds": null
+    },
+    "V26-2831": {
+      "assignedAt": "2026-10-22T22:14:20.278650Z",
+      "buildSeconds": 119,
+      "checkStartedAt": null,
+      "checkToMergeSeconds": null,
+      "endedAt": "2026-10-22T23:17:11.749349Z",
+      "findings": {
+        "P0": 0,
+        "P1": 1,
+        "P2": 2,
+        "P3": 0
+      },
+      "handedAt": "2026-10-22T23:11:08.608314Z",
+      "lastVerdicts": {
+        "lens.adversarial-testing": "approve",
+        "lens.outcome-correctness": "approve"
+      },
+      "outcome": "merged",
+      "reviewSeconds": 3037,
+      "rounds": 3,
+      "roundsSource": "journal",
+      "totalSeconds": 3771,
+      "waitSeconds": null
+    },
+    "V26-2832": {
+      "assignedAt": "2026-10-22T23:17:12.191451Z",
+      "buildSeconds": 161,
+      "checkStartedAt": null,
+      "checkToMergeSeconds": null,
+      "endedAt": "2026-10-22T23:27:15.478148Z",
+      "findings": {
+        "P0": 0,
+        "P1": 0,
+        "P2": 0,
+        "P3": 1
+      },
+      "handedAt": "2026-10-22T23:24:41.477362Z",
+      "lastVerdicts": {
+        "lens.adversarial-testing": "approve",
+        "lens.outcome-correctness": "approve"
+      },
+      "outcome": "merged",
+      "reviewSeconds": 219,
+      "rounds": 2,
+      "roundsSource": "journal",
+      "totalSeconds": 603,
+      "waitSeconds": null
+    }
+  },
+  "status": {
+    "source": "derived",
+    "text": "Serving is paused: Operator: focused posture. The lead merges by hand; serve runs held only to refresh Linear and GitHub snapshots. · last landed V26-2827 at 2026-10-22T23:35:00.671438Z"
+  }
+}

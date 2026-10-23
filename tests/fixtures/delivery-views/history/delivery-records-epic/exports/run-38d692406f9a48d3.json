@@ -1,0 +1,264 @@
+{
+  "spec": "delivery-run-export/1",
+  "labels": "self-attested; observability, not evidence; unbound to a record",
+  "runId": "run-38d692406f9a48d3",
+  "events": [
+    {
+      "version": "run-event/1",
+      "runId": "run-38d692406f9a48d3",
+      "seq": 1,
+      "at": "2026-09-11T18:44:18Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "run.started",
+      "actor": {
+        "role": "executor"
+      },
+      "ticket": "V26-2054",
+      "attestation": "self",
+      "payload": {
+        "ticket": "V26-2054",
+        "host": "codex",
+        "workflow": {
+          "releaseId": "linear-concurrent-delivery-v1",
+          "profile": "linear"
+        }
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-38d692406f9a48d3",
+      "seq": 2,
+      "at": "2026-09-11T18:44:35Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "context.saved",
+      "actor": {
+        "role": "executor"
+      },
+      "candidateTreeSha": "c1e582256e017ffec26024a63863507a371ff07c",
+      "attestation": "self",
+      "payload": {
+        "spec": "ordinary-run-context/1",
+        "contract": {
+          "objective": "Resolve recurring Athena QA smoke failures (V26-2054)",
+          "acceptanceCriteria": [
+            "Calendar-independent SKU journeys preserve all products",
+            "Resolve confirmed demo navigation redirect cause",
+            "Required validation and GitHub QA smoke pass"
+          ],
+          "finishLine": "Merge, root fast-forward, and verified GitHub QA smoke"
+        },
+        "stage": "investigation",
+        "candidateTreeSha": "c1e582256e017ffec26024a63863507a371ff07c",
+        "candidateBinding": {
+          "deliverableDigest": "0c219bfb4facfdd2d97cd1ad7f31034b181e0bfabe30421e9d6ecf687a0c69ff",
+          "identity": "deliverable-tree/v1",
+          "baseRef": "origin/main",
+          "baseTipSha": "11a69ce0a380c332d8932c669cac6322ce52a36a",
+          "mergeBaseSha": "11a69ce0a380c332d8932c669cac6322ce52a36a",
+          "workspaceId": "ed6e4957dde402f8cf49ee1873086e91e76e44e9319fc89fd4347cf7f65223e4"
+        },
+        "policyDigest": "362d993302c010601eecfa155f0f79c7439f63e44ae6a8ed6002f981092c87d2",
+        "release": {
+          "runtimeVersion": "0.5.0",
+          "releaseId": "linear-concurrent-delivery-v1",
+          "profile": "linear",
+          "archiveSha256": "e63b1f2bb5516d55445aa7050f2a9366b05abdb9d8584bdeed4119abb5440578"
+        }
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-38d692406f9a48d3",
+      "seq": 3,
+      "at": "2026-09-11T18:49:52Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "command.completed",
+      "actor": {
+        "role": "cli"
+      },
+      "attestation": "self",
+      "payload": {
+        "command": "prepare",
+        "outcome": "policy",
+        "durationMs": 593
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-38d692406f9a48d3",
+      "seq": 4,
+      "at": "2026-09-11T18:52:56Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "command.completed",
+      "actor": {
+        "role": "cli"
+      },
+      "attestation": "self",
+      "payload": {
+        "command": "prepare",
+        "outcome": "policy",
+        "durationMs": 134948
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-38d692406f9a48d3",
+      "seq": 5,
+      "at": "2026-09-11T18:57:05Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "command.completed",
+      "actor": {
+        "role": "cli"
+      },
+      "attestation": "self",
+      "payload": {
+        "command": "prepare",
+        "outcome": "ok",
+        "durationMs": 133634
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-38d692406f9a48d3",
+      "seq": 6,
+      "at": "2026-09-11T18:57:30Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "command.completed",
+      "actor": {
+        "role": "cli"
+      },
+      "attestation": "self",
+      "payload": {
+        "command": "review-context",
+        "outcome": "ok",
+        "durationMs": 594
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-38d692406f9a48d3",
+      "seq": 7,
+      "at": "2026-09-11T18:57:44Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "context.saved",
+      "actor": {
+        "role": "executor"
+      },
+      "candidateTreeSha": "fbff46964419253f24b0206e92e340aa8d120106",
+      "attestation": "self",
+      "payload": {
+        "spec": "ordinary-run-context/1",
+        "contract": {
+          "objective": "Resolve recurring Athena QA smoke failures (V26-2054)",
+          "acceptanceCriteria": [
+            "Calendar-independent SKU journeys preserve all products",
+            "Resolve confirmed demo navigation redirect cause",
+            "Required validation and GitHub QA smoke pass"
+          ],
+          "finishLine": "Merge, root fast-forward, and verified GitHub QA smoke"
+        },
+        "stage": "athena-gate",
+        "candidateTreeSha": "fbff46964419253f24b0206e92e340aa8d120106",
+        "candidateBinding": {
+          "deliverableDigest": "bd9f2610f06e80359825538684426b0ab47e746308784fd5a19b826b81f40795",
+          "identity": "deliverable-tree/v1",
+          "baseRef": "origin/main",
+          "baseTipSha": "11a69ce0a380c332d8932c669cac6322ce52a36a",
+          "mergeBaseSha": "11a69ce0a380c332d8932c669cac6322ce52a36a",
+          "workspaceId": "ed6e4957dde402f8cf49ee1873086e91e76e44e9319fc89fd4347cf7f65223e4"
+        },
+        "policyDigest": "362d993302c010601eecfa155f0f79c7439f63e44ae6a8ed6002f981092c87d2",
+        "release": {
+          "runtimeVersion": "0.5.0",
+          "releaseId": "linear-concurrent-delivery-v1",
+          "profile": "linear",
+          "archiveSha256": "e63b1f2bb5516d55445aa7050f2a9366b05abdb9d8584bdeed4119abb5440578"
+        }
+      }
+    },
+    {
+      "version": "run-event/1",
+      "runId": "run-38d692406f9a48d3",
+      "seq": 8,
+      "at": "2026-09-11T19:21:15Z",
+      "repo": {
+        "commonDir": "~/athena/.git"
+      },
+      "kind": "command.completed",
+      "actor": {
+        "role": "cli"
+      },
+      "attestation": "self",
+      "payload": {
+        "command": "gate",
+        "outcome": "ok",
+        "durationMs": 1410505,
+        "digest": "9069efa325cd90c2769f9bce7154f71936e76a86e5eeb0718063d8befc6639f4"
+      }
+    }
+  ],
+  "summary": {
+    "ticket": "V26-2054",
+    "open": true,
+    "startedAt": "2026-09-11T18:44:18Z",
+    "lastAt": "2026-09-11T19:21:15Z",
+    "durationSeconds": 2217,
+    "roundsOpened": 0,
+    "roundsClosed": 0,
+    "findings": {
+      "P0": 0,
+      "P1": 0,
+      "P2": 0,
+      "P3": 0
+    },
+    "gate": {
+      "outcome": "ok",
+      "writer": "cli"
+    }
+  },
+  "costs": {
+    "review": {
+      "coverage": "unreported",
+      "unreportedEntries": 0,
+      "totals": []
+    },
+    "run": {
+      "coverage": "unreported"
+    }
+  },
+  "readout": {
+    "status": "incomplete",
+    "present": [
+      "run.started",
+      "command.completed:gate"
+    ],
+    "missing": [
+      "ticket.read",
+      "posture.declared",
+      "lens.selected",
+      "review.round.opened",
+      "review.round.closed",
+      "command.completed:record",
+      "pr.opened",
+      "run.ended"
+    ],
+    "violations": [
+      "gate-before-closed-round"
+    ]
+  },
+  "refusedAppends": []
+}
