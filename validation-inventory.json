@@ -1,6 +1,6 @@
 {
   "expectedLifecycleScenarioCount": 30,
-  "expectedScenarioCount": 14,
+  "expectedScenarioCount": 15,
   "lifecycleScenarios": [
     {
       "id": "activation-boundary-fault-recovery",
@@ -539,6 +539,15 @@
       "id": "linear-profile-selects-linear-tracker-adapter",
       "profile": "linear",
       "skill": "linear-tracker-adapter"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "delivery-views-profile-selects-delivery-views",
+      "profile": "delivery-views",
+      "skill": "delivery-views"
     }
   ],
   "schemaVersion": "agent-skills-validation-inventory/1"

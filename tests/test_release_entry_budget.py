@@ -19,7 +19,7 @@ from agent_skills.release import MAX_ENTRIES, RUNTIME_FILES, build_release
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PROFILES = ("bootstrap", "core", "linear")
+PROFILES = ("bootstrap", "core", "delivery-views", "linear")
 
 
 def workflow_entries(root: Path, profile: str) -> int:

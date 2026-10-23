@@ -1,0 +1,34 @@
+{
+  "description": "Ready-made delivery views and snapshot commands layered on the complete core profile: a live line map, a delivery history page and tracker and forge snapshots, configured rather than coded.",
+  "expectedFiles": [
+    "skills/compound-delivery-kernel/SKILL.md",
+    "skills/compound-learning/SKILL.md",
+    "skills/deliver-work/SKILL.md",
+    "skills/deliver-work/agents/openai.yaml",
+    "skills/deliver-work/references/capability-contract.md",
+    "skills/delivery-views/SKILL.md",
+    "skills/delivery-views/scripts/views_common.py",
+    "skills/diagnose-work/SKILL.md",
+    "skills/execute-work/SKILL.md",
+    "skills/execute-work/references/run-observation-contract.md",
+    "skills/execute-work/scripts/report_observation.py",
+    "skills/obtain-review/SKILL.md",
+    "skills/obtain-review/references/round-brief-template.md",
+    "skills/orchestrate-work/SKILL.md",
+    "skills/orchestrate-work/references/orchestration-guide.md",
+    "skills/orchestrate-work/references/schemas.json",
+    "skills/orchestrate-work/scripts/delivery_state.py",
+    "skills/orchestrate-work/scripts/merge_queue.py",
+    "skills/orchestrate-work/scripts/render_state.py",
+    "skills/plan-work/SKILL.md",
+    "skills/review-work/SKILL.md"
+  ],
+  "id": "delivery-views",
+  "includes": [
+    "core"
+  ],
+  "members": [
+    "delivery-views"
+  ],
+  "schemaVersion": "agent-skills-profile/1"
+}

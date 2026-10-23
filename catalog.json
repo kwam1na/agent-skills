@@ -30,6 +30,7 @@
       "path": "skills/compound-delivery-kernel/SKILL.md",
       "profiles": [
         "core",
+        "delivery-views",
         "linear"
       ],
       "provenanceId": "compound-delivery-kernel"
@@ -53,6 +54,7 @@
       "path": "skills/compound-learning/SKILL.md",
       "profiles": [
         "core",
+        "delivery-views",
         "linear"
       ],
       "provenanceId": "compound-learning"
@@ -130,9 +132,34 @@
       "path": "skills/deliver-work/SKILL.md",
       "profiles": [
         "core",
+        "delivery-views",
         "linear"
       ],
       "provenanceId": "deliver-work"
+    },
+    {
+      "capabilities": [
+        "delivery-views"
+      ],
+      "degradedBehavior": "Without a configuration the views are not declared and the core workflow's built-in pages remain; a view that cannot read a run, a report or a snapshot shows it as unavailable rather than failing the render.",
+      "dependencies": [
+        {
+          "id": "orchestrate-work",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "delivery-views",
+      "path": "skills/delivery-views/SKILL.md",
+      "profiles": [
+        "delivery-views",
+        "linear"
+      ],
+      "provenanceId": "delivery-views"
     },
     {
       "capabilities": [
@@ -153,6 +180,7 @@
       "path": "skills/diagnose-work/SKILL.md",
       "profiles": [
         "core",
+        "delivery-views",
         "linear"
       ],
       "provenanceId": "diagnose-work"
@@ -227,6 +255,7 @@
       "path": "skills/execute-work/SKILL.md",
       "profiles": [
         "core",
+        "delivery-views",
         "linear"
       ],
       "provenanceId": "execute-work"
@@ -287,6 +316,7 @@
       "path": "skills/obtain-review/SKILL.md",
       "profiles": [
         "core",
+        "delivery-views",
         "linear"
       ],
       "provenanceId": "obtain-review"
@@ -324,6 +354,7 @@
       "path": "skills/orchestrate-work/SKILL.md",
       "profiles": [
         "core",
+        "delivery-views",
         "linear"
       ],
       "provenanceId": "orchestrate-work"
@@ -349,6 +380,7 @@
       "path": "skills/plan-work/SKILL.md",
       "profiles": [
         "core",
+        "delivery-views",
         "linear"
       ],
       "provenanceId": "plan-work"
@@ -375,6 +407,7 @@
       "path": "skills/review-work/SKILL.md",
       "profiles": [
         "core",
+        "delivery-views",
         "linear"
       ],
       "provenanceId": "review-work"

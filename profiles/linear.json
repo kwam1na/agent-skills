@@ -10,6 +10,8 @@
     "skills/deliver-work/SKILL.md",
     "skills/deliver-work/agents/openai.yaml",
     "skills/deliver-work/references/capability-contract.md",
+    "skills/delivery-views/SKILL.md",
+    "skills/delivery-views/scripts/views_common.py",
     "skills/diagnose-work/SKILL.md",
     "skills/execute-linear-ticket/SKILL.md",
     "skills/execute-linear-ticket/agents/openai.yaml",
@@ -31,7 +33,8 @@
   ],
   "id": "linear",
   "includes": [
-    "core"
+    "core",
+    "delivery-views"
   ],
   "members": [
     "create-linear-ticket",

@@ -378,7 +378,13 @@ class LinearProfileTests(unittest.TestCase):
                         for alias in node.names
                     )
                     self.assertTrue(forbidden_imports.isdisjoint(imported))
-            self.assertEqual(python_sources, core_python_sources)
+            # The linear profile also includes the delivery-views profile, whose
+            # views and snapshot commands are not the tracker adapter's transport.
+            self.assertEqual(
+                {name: source for name, source in python_sources.items()
+                 if not name.startswith("skills/delivery-views/")},
+                core_python_sources,
+            )
             self.assertEqual(
                 set(adapter_files),
                 {

@@ -25,7 +25,7 @@ class ProfileInventoryTests(unittest.TestCase):
                 self.assertEqual(set(row["hosts"]), {"codex", "claude-code"})
 
     def test_every_profile_archive_validates_with_its_own_inventory(self) -> None:
-        for profile in ("bootstrap", "core", "linear"):
+        for profile in ("bootstrap", "core", "delivery-views", "linear"):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory() as temporary:
                 directory = Path(temporary)
                 archive = directory / "candidate.zip"

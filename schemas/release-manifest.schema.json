@@ -19,6 +19,7 @@
     "profile": {
       "enum": [
         "core",
+        "delivery-views",
         "linear"
       ]
     },
