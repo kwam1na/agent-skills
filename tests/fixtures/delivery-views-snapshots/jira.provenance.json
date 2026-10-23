@@ -1,0 +1,7 @@
+{
+  "endpoint": "GET /rest/api/3/search/jql (Jira Cloud platform REST API, enhanced JQL search)",
+  "apiVersion": "3",
+  "captureDate": "2026-10-22",
+  "capture": "Constructed from the documented response shape of the enhanced JQL search, with nextPageToken and isLast paging and Atlassian Document Format descriptions; not captured from a live site, since no delivery lane holds a provider token.",
+  "redactions": "None needed: the site, keys, people and texts are invented."
+}

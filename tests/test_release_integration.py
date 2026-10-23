@@ -79,6 +79,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             "profiles/delivery-views.json",
             "profiles/linear.json",
             "skills/delivery-views/SKILL.md",
+            "skills/delivery-views/scripts/snapshot.py",
             "skills/delivery-views/scripts/views_common.py",
             "skills/create-linear-ticket/SKILL.md",
             "skills/create-linear-ticket/agents/openai.yaml",

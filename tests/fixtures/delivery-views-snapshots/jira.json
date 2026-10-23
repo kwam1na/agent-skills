@@ -1,0 +1,277 @@
+{
+  "page-1": {
+    "issues": [
+      {
+        "id": "11",
+        "key": "SHFT-11",
+        "self": "https://eshyft.atlassian.net/rest/api/3/issue/11",
+        "fields": {
+          "summary": "Rails for the views",
+          "description": {
+            "type": "doc",
+            "version": 1,
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Shared "
+                  },
+                  {
+                    "type": "text",
+                    "text": "config",
+                    "marks": [
+                      {
+                        "type": "strong"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "text": " and link helpers."
+                  }
+                ]
+              },
+              {
+                "type": "bulletList",
+                "content": [
+                  {
+                    "type": "listItem",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "first point"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "listItem",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "second"
+                          },
+                          {
+                            "type": "hardBreak"
+                          },
+                          {
+                            "type": "text",
+                            "text": "line"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "mention",
+                    "attrs": {
+                      "id": "abc",
+                      "text": "@Ama"
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " owns it."
+                  }
+                ]
+              }
+            ]
+          },
+          "status": {
+            "name": "To Do",
+            "statusCategory": {
+              "id": 2,
+              "key": "new",
+              "name": "New"
+            }
+          },
+          "issuelinks": []
+        }
+      },
+      {
+        "id": "12",
+        "key": "SHFT-12",
+        "self": "https://eshyft.atlassian.net/rest/api/3/issue/12",
+        "fields": {
+          "summary": "Line map renderer",
+          "description": null,
+          "status": {
+            "name": "In Progress",
+            "statusCategory": {
+              "id": 2,
+              "key": "indeterminate",
+              "name": "Indeterminate"
+            }
+          },
+          "issuelinks": [
+            {
+              "id": "1",
+              "type": {
+                "id": "10000",
+                "name": "Blocks",
+                "inward": "is blocked by",
+                "outward": "blocks"
+              },
+              "inwardIssue": {
+                "key": "SHFT-11"
+              }
+            },
+            {
+              "id": "2",
+              "type": {
+                "id": "10000",
+                "name": "Blocks",
+                "inward": "is blocked by",
+                "outward": "blocks"
+              },
+              "outwardIssue": {
+                "key": "SHFT-13"
+              }
+            },
+            {
+              "id": "3",
+              "type": {
+                "id": "10003",
+                "name": "Relates",
+                "inward": "relates to",
+                "outward": "relates to"
+              },
+              "inwardIssue": {
+                "key": "SHFT-14"
+              }
+            },
+            {
+              "id": "4",
+              "type": {
+                "id": "10000",
+                "name": "Blocks",
+                "inward": "is blocked by",
+                "outward": "blocks"
+              },
+              "inwardIssue": {
+                "key": "OTHER-1"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "nextPageToken": "token-page-2",
+    "isLast": false
+  },
+  "page-2": {
+    "issues": [
+      {
+        "id": "13",
+        "key": "SHFT-13",
+        "self": "https://eshyft.atlassian.net/rest/api/3/issue/13",
+        "fields": {
+          "summary": "Snapshot adapters",
+          "description": {
+            "type": "doc",
+            "version": 1,
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  }
+                ]
+              }
+            ]
+          },
+          "status": {
+            "name": "Done",
+            "statusCategory": {
+              "id": 2,
+              "key": "done",
+              "name": "Done"
+            }
+          },
+          "issuelinks": []
+        }
+      },
+      {
+        "id": "14",
+        "key": "SHFT-14",
+        "self": "https://eshyft.atlassian.net/rest/api/3/issue/14",
+        "fields": {
+          "summary": "Dropped idea",
+          "description": {
+            "type": "doc",
+            "version": 1,
+            "content": []
+          },
+          "status": {
+            "name": "Won't Do",
+            "statusCategory": {
+              "id": 2,
+              "key": "done",
+              "name": "Done"
+            }
+          },
+          "issuelinks": []
+        }
+      }
+    ],
+    "isLast": true
+  },
+  "unknown-category": {
+    "issues": [
+      {
+        "id": "15",
+        "key": "SHFT-15",
+        "self": "https://eshyft.atlassian.net/rest/api/3/issue/15",
+        "fields": {
+          "summary": "Odd",
+          "description": null,
+          "status": {
+            "name": "Limbo",
+            "statusCategory": {
+              "id": 2,
+              "key": "undefined",
+              "name": "Undefined"
+            }
+          },
+          "issuelinks": []
+        }
+      }
+    ],
+    "isLast": true
+  },
+  "missing-status": {
+    "issues": [
+      {
+        "id": "16",
+        "key": "SHFT-16",
+        "fields": {
+          "summary": "No status",
+          "issuelinks": []
+        }
+      }
+    ],
+    "isLast": true
+  },
+  "unauthorized": {
+    "errorMessages": [
+      "Client must be authenticated to access this resource."
+    ],
+    "errors": {}
+  }
+}

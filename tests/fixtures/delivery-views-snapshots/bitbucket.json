@@ -1,0 +1,302 @@
+{
+  "page-1": {
+    "pagelen": 50,
+    "values": [
+      {
+        "id": 31,
+        "title": "SHFT-11: shared rails",
+        "state": "MERGED",
+        "draft": false,
+        "source": {
+          "branch": {
+            "name": "feature/shft-11"
+          },
+          "commit": {
+            "hash": "aaaaaaaaaaaa",
+            "type": "commit"
+          }
+        },
+        "destination": {
+          "branch": {
+            "name": "main"
+          }
+        },
+        "links": {
+          "html": {
+            "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/31"
+          }
+        },
+        "created_on": "2026-10-20T09:00:00.000000+00:00",
+        "updated_on": "2026-10-21T10:00:00.000000+00:00"
+      },
+      {
+        "id": 32,
+        "title": "SHFT-11: follow-up",
+        "state": "DECLINED",
+        "draft": false,
+        "source": {
+          "branch": {
+            "name": "feature/shft-11-b"
+          },
+          "commit": {
+            "hash": "bbbbbbbbbbbb",
+            "type": "commit"
+          }
+        },
+        "destination": {
+          "branch": {
+            "name": "main"
+          }
+        },
+        "links": {
+          "html": {
+            "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/32"
+          }
+        },
+        "created_on": "2026-10-20T10:00:00.000000+00:00",
+        "updated_on": "2026-10-21T12:00:00.000000+00:00"
+      },
+      {
+        "id": 34,
+        "title": "Line map renderer",
+        "state": "OPEN",
+        "draft": false,
+        "source": {
+          "branch": {
+            "name": "SHFT-12-line-map"
+          },
+          "commit": {
+            "hash": "cccccccccccc",
+            "type": "commit"
+          }
+        },
+        "destination": {
+          "branch": {
+            "name": "main"
+          }
+        },
+        "links": {
+          "html": {
+            "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34"
+          }
+        },
+        "created_on": "2026-10-20T11:00:00.000000+00:00",
+        "updated_on": "2026-10-21T13:00:00.000000+00:00"
+      },
+      {
+        "id": 35,
+        "title": "SHFT-12 older open",
+        "state": "OPEN",
+        "draft": false,
+        "source": {
+          "branch": {
+            "name": "SHFT-12-older"
+          },
+          "commit": {
+            "hash": "dddddddddddd",
+            "type": "commit"
+          }
+        },
+        "destination": {
+          "branch": {
+            "name": "main"
+          }
+        },
+        "links": {
+          "html": {
+            "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/35"
+          }
+        },
+        "created_on": "2026-10-20T11:30:00.000000+00:00",
+        "updated_on": "2026-10-21T08:00:00.000000+00:00"
+      }
+    ],
+    "page": 1,
+    "next": "https://api.bitbucket.org/2.0/repositories/eshyft/eshyftnew/pullrequests?page=2"
+  },
+  "page-2": {
+    "pagelen": 50,
+    "values": [
+      {
+        "id": 36,
+        "title": "EDD-7: draft work",
+        "state": "OPEN",
+        "draft": true,
+        "source": {
+          "branch": {
+            "name": "edd-7"
+          },
+          "commit": {
+            "hash": "eeeeeeeeeeee",
+            "type": "commit"
+          }
+        },
+        "destination": {
+          "branch": {
+            "name": "main"
+          }
+        },
+        "links": {
+          "html": {
+            "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/36"
+          }
+        },
+        "created_on": "2026-10-20T12:00:00.000000+00:00",
+        "updated_on": "2026-10-21T14:00:00.000000+00:00"
+      },
+      {
+        "id": 37,
+        "title": "SHFT-13: superseded",
+        "state": "SUPERSEDED",
+        "draft": false,
+        "source": {
+          "branch": {
+            "name": "shft-13"
+          },
+          "commit": {
+            "hash": "ffffffffffff",
+            "type": "commit"
+          }
+        },
+        "destination": {
+          "branch": {
+            "name": "main"
+          }
+        },
+        "links": {
+          "html": {
+            "href": "https://bitbucket.org.evil.com/eshyft/eshyftnew/pull-requests/37"
+          }
+        },
+        "created_on": "2026-10-20T13:00:00.000000+00:00",
+        "updated_on": "2026-10-21T15:00:00.000000+00:00"
+      },
+      {
+        "id": 38,
+        "title": "SHFT-99: not in the record",
+        "state": "OPEN",
+        "draft": false,
+        "source": {
+          "branch": {
+            "name": "shft-99"
+          },
+          "commit": {
+            "hash": "999999999999",
+            "type": "commit"
+          }
+        },
+        "destination": {
+          "branch": {
+            "name": "main"
+          }
+        },
+        "links": {
+          "html": {
+            "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/38"
+          }
+        },
+        "created_on": "2026-10-20T13:00:00.000000+00:00",
+        "updated_on": "2026-10-21T15:00:00.000000+00:00"
+      }
+    ],
+    "page": 2
+  },
+  "before-since": {
+    "pagelen": 50,
+    "values": [
+      {
+        "id": 30,
+        "title": "SHFT-14: made before the epic",
+        "state": "OPEN",
+        "draft": false,
+        "source": {
+          "branch": {
+            "name": "shft-14"
+          },
+          "commit": {
+            "hash": "121212121212",
+            "type": "commit"
+          }
+        },
+        "destination": {
+          "branch": {
+            "name": "main"
+          }
+        },
+        "links": {
+          "html": {
+            "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/30"
+          }
+        },
+        "created_on": "2026-10-19T23:59:59.000000+00:00",
+        "updated_on": "2026-10-21T15:00:00.000000+00:00"
+      }
+    ],
+    "page": 1
+  },
+  "unknown-state": {
+    "pagelen": 50,
+    "values": [
+      {
+        "id": 39,
+        "title": "SHFT-11: odd",
+        "state": "LIMBO",
+        "draft": false,
+        "source": {
+          "branch": {
+            "name": "shft-11"
+          },
+          "commit": {
+            "hash": "aaaaaaaaaaaa",
+            "type": "commit"
+          }
+        },
+        "destination": {
+          "branch": {
+            "name": "main"
+          }
+        },
+        "links": {
+          "html": {
+            "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/39"
+          }
+        },
+        "created_on": "2026-10-20T13:00:00.000000+00:00",
+        "updated_on": "2026-10-21T15:00:00.000000+00:00"
+      }
+    ],
+    "page": 1
+  },
+  "commit-a": {
+    "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "type": "commit"
+  },
+  "commit-c": {
+    "hash": "cccccccccccccccccccccccc0123456789abcdef",
+    "type": "commit"
+  },
+  "commit-e": {
+    "hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "type": "commit"
+  },
+  "commit-f": {
+    "hash": "ffffffffffffffffffffffffffffffffffffffff",
+    "type": "commit"
+  },
+  "commit-1": {
+    "hash": "1212121212121212121212121212121212121212",
+    "type": "commit"
+  },
+  "not-found": {
+    "type": "error",
+    "error": {
+      "message": "No such commit"
+    }
+  },
+  "unauthorized": {
+    "type": "error",
+    "error": {
+      "message": "Unauthorized"
+    }
+  }
+}
