@@ -304,7 +304,8 @@ python3 -B scripts/render_state.py live --dir <state directory> --binding .agent
   publisher: those run only when the lead renders.
 - It serves the built-in static page in its live mode, with a quiet live or
   disconnected indicator, and any HTML view whose head carries
-  `<meta name="delivery-state-live">`, at `/view/<output>`. The binding's
+  `<meta name="delivery-state-live">`, at `/view/<output>`, the output's
+  path segments percent-encoded as a browser sends them. The binding's
   `state.liveHome`, a renderer's id, makes that renderer's view the front
   page instead of the built-in page. A record caught half-written is never
   served: the last valid one stands until the next one reads cleanly.
