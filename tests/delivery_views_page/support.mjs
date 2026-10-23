@@ -131,9 +131,12 @@ export async function openPage(page, scenario = {}) {
           configurable: true, get() { return 10 + 10 * (this.tagName === "DETAILS" && !this.open
             ? [...this.children].filter((part) => part.tagName === "SUMMARY").reduce((sum, part) => sum + 1 + shown(part), 0)
             : shown(this)); } });
+        // Each animation finishes at once, as a browser's would once its duration passed, so what a page does
+        // when one ends takes place before the next snapshot.
         window.Element.prototype.animate = function (keyframes, options) {
           animations.push({ target: this.id || this.className, keyframes, options });
-          return { cancel() {}, finish() {} };
+          return { cancel() {}, finish() {}, oncancel: null, get onfinish() { return null; },
+            set onfinish(done) { if (typeof done === "function") queueMicrotask(done); } };
         };
       }
       if (scenario.storage === false) {

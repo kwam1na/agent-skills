@@ -32,6 +32,7 @@ test("each stage has its icon, and only a piece being built shows the meshed gea
   const pieces = [...document.state.queue, ...document.state.planned].map((item) => [item.subject, item.stage]);
   expect(pieces.map(([, stage]) => stage).sort()).toEqual(["building", "checking", "merged", "planned", "queued", "review", "stopped", "syncing"]);
   const page = pageWithRuns(document, {}, { config: CONFIG });
+  const drawn = {};
   for (const [subject, stage] of pieces) {
     const [, shown] = await openPage(page, { now: NOW, steps: [pick(subject)] });
     const icon = shown.app.querySelector("#detail .d-stage svg");
@@ -50,8 +51,13 @@ test("each stage has its icon, and only a piece being built shows the meshed gea
     } else {
       expect(gears).toHaveLength(0);
       expect(icon.querySelectorAll("path").length > 0).toBe(true);
+      drawn[stage] = JSON.stringify([...icon.querySelectorAll("path")].map((part) => part.getAttribute("d")));
     }
   }
+  // Each stage draws its own icon; syncing and checking share the checking icon by design.
+  expect(drawn.syncing).toBe(drawn.checking);
+  const icons = Object.entries(drawn).filter(([stage]) => stage !== "syncing").map(([, paths]) => paths);
+  expect(new Set(icons).size).toBe(icons.length);
   // A stage the page does not know gets no icon.
   const unknown = record();
   unknown.state.queue[2].stage = "mystery";
@@ -91,7 +97,7 @@ test("a newly picked piece's panel eases to its height, a live redraw of the sam
   const eased = moved(opened.animations).filter((animation) => animation.target === "detail");
   // The first view eases in its own pick, then each new pick eases once; the push of the same piece adds nothing.
   const afterPicks = eased.length;
-  expect(afterPicks >= 2).toBe(true);
+  expect(afterPicks).toBe(3);
   const last = eased[eased.length - 1];
   const [from, to] = last.keyframes.map((frame) => frame.height);
   expect(from === to).toBe(false);
@@ -107,7 +113,7 @@ test("a newly picked piece's panel eases to its height, a live redraw of the sam
   expect(moved(merged.animations).some((animation) => animation.target === "mh")).toBe(true);
   // A reader who asked for less motion sees every change at once.
   const still = await openPage(page, { now: NOW, motion: { reduced: true }, steps: [pick("PAY-2363"), pick("PAY-2358"), { click: "#detail details.mh summary" }] });
-  expect(moved(still.animations)).toEqual([]);
+  expect(still.animations).toEqual([]);
 });
 
 test("nothing on the page carries a native tooltip, whichever part a reader opens", async () => {
@@ -122,6 +128,9 @@ test("nothing on the page carries a native tooltip, whichever part a reader open
     pick("PAY-2358"),
     { click: "#detail details.mh summary" },
     { hover: `[data-subject="${withRun.subject}"]` },
+    // The ticket card the page shows in place of a tooltip, and a filtered story.
+    { hover: "#detail .issue-link" },
+    { click: '[data-tab="problems"]' },
     { click: '[data-theme-pick="dark"]' },
   ] });
   expect(snapshots[1].app.querySelector("#detail .run-card")).not.toBeNull();
