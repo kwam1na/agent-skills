@@ -268,6 +268,19 @@ class LinkTests(unittest.TestCase):
                 self.assertIsNone(views.change_request_link(value, forges))
         self.assertIsNone(views.change_request_link("#34", []))
 
+    def test_repository_names_and_forge_routes_are_configuration_driven(self) -> None:
+        for origin, route in (("https://github.com", "pull"),
+                              ("https://bitbucket.org", "pull-requests"),
+                              ("https://forge.example.test:8443", "changes")):
+            forge = {"name": "Configured forge", "repository": "original/project",
+                     "pullUrl": origin + "/projects/{repository}/" + route + "/{number}",
+                     "commitUrl": origin + "/projects/{repository}/commit/{sha}"}
+            for repository in ("team-one/service-api", "different_org/client.web", "another/Tools_2"):
+                with self.subTest(origin=origin, repository=repository):
+                    url = f"{origin}/projects/{repository}/{route}/207"
+                    self.assertEqual(views.change_request_identity(url, [forge]),
+                                     {"href": url, "number": "207", "repository": repository})
+
     def test_cross_repository_identity_keeps_origin_and_canonical_path_boundary(self) -> None:
         forge = {"name": "GitHub", "repository": "v26-technologies/athena",
                  "pullUrl": "https://github.com/{repository}/pull/{number}",
