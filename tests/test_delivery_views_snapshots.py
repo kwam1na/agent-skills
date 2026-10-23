@@ -218,6 +218,19 @@ class JiraTests(SnapshotCase):
                 page["issues"][0]["fields"]["status"]["statusCategory"]["key"] = value
                 code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
                 self.assertNotEqual(code, 0)
+        # A long reflected token is redacted before the line is capped.
+        long_token = "L" * 192
+        page = copy.deepcopy(JIRA["unknown-category"])
+        page["issues"][0]["fields"]["status"]["statusCategory"]["key"] = "x" * 40 + long_token
+        code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), {**JIRA_ENV, "JIRA_API_TOKEN": long_token})
+        self.assertNotEqual(code, 0)
+        self.assertNotIn("L" * 20, err)
+        # The user's email is not a credential: a snapshot that names it still prints.
+        page = copy.deepcopy(JIRA["page-2"])
+        page["issues"][0]["fields"]["summary"] = f"Ask {EMAIL}"
+        code, out, _ = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
+        self.assertEqual(code, 0)
+        self.assertIn(EMAIL, out)
         page = copy.deepcopy(JIRA["page-2"])
         page["issues"][0]["fields"]["summary"] = f"title {TOKEN}"
         code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)

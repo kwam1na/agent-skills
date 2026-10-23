@@ -165,7 +165,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
-          "sha256": "0ac38667b080837fa219fbfafa1c7f97ef7a8bb93c7b1959e7c45a53f4caaf47"
+          "sha256": "2bfae3a8ca7b5194f0663c48a92f624912367d56f660b96eb519d30872de0442"
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",

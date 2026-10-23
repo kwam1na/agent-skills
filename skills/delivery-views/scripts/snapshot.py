@@ -51,8 +51,9 @@ class Failure(Exception):
 
 
 def _shown(value: object) -> str:
-    """A provider value as a refusal quotes it: escaped and short, so it stays on one line."""
-    return repr(value)[:80]
+    """A provider value as a refusal quotes it: escaped, so it stays on one line. The line is capped
+    only after redaction, so a cut never leaves part of a credential unmatched."""
+    return repr(value)
 
 
 @dataclass(frozen=True)
@@ -482,16 +483,18 @@ def run(argv: list[str], *, environ: dict, transport: Transport = urllib_transpo
         clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
         cwd: Path | None = None) -> tuple[int, str, str]:
     """The exit code, stdout and stderr of one snapshot."""
+    credentials: list[str] = []
     secrets: list[str] = []
     try:
         args = _parser().parse_args(argv)
-        # Whatever a provider echoes back, a credential never reaches either stream.
-        named = [environ.get(name) for name in (args.token_env, args.user_env) if name]
-        secrets = [value for value in named if value]
-        if len(secrets) == 2:
-            secrets.append(base64.b64encode(f"{secrets[1]}:{secrets[0]}".encode("utf-8")).decode("ascii"))
-        secrets += [base64.b64encode(value.encode("utf-8")).decode("ascii") for value in named if value]
-        secrets.sort(key=len, reverse=True)
+        # Whatever a provider echoes back, the token never reaches stdout, and
+        # neither the token nor the user reaches stderr.
+        token = environ.get(args.token_env or "")
+        user = environ.get(args.user_env or "") if args.user_env else None
+        encode = lambda text: base64.b64encode(text.encode("utf-8")).decode("ascii")  # noqa: E731
+        if token:
+            credentials = [token, encode(token)] + ([encode(f"{user}:{token}")] if user else [])
+        secrets = sorted(credentials + ([user, encode(user)] if user else []), key=len, reverse=True)
         for name in REQUIRED[args.kind]:
             if not getattr(args, name):
                 raise Failure(f"usage: --{name.replace('_', '-')} is required for --kind {args.kind}")
@@ -509,14 +512,14 @@ def run(argv: list[str], *, environ: dict, transport: Transport = urllib_transpo
         except UnicodeEncodeError:
             raise Failure("the provider's text holds a character that is not Unicode") from None
         out = json.dumps(snapshot, ensure_ascii=True, sort_keys=True) + "\n"
-        if any(secret in out for secret in secrets):
+        if any(credential in out for credential in credentials):
             raise Failure("the provider's answer holds a credential")
         return 0, out, ""
     except Failure as failure:
         text = " ".join(str(failure).split())
         for secret in secrets:
             text = text.replace(secret, "[redacted]")
-        return 1, "", f"snapshot: {text}\n"
+        return 1, "", f"snapshot: {text[:300]}\n"
     except Exception as error:  # Only the type: an exception's text may hold what it was given.
         return 1, "", f"snapshot: unexpected failure ({type(error).__name__})\n"
 
