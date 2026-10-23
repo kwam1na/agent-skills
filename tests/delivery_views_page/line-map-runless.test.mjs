@@ -1,0 +1,44 @@
+import { test } from 'node:test';
+import { expect, openPage, pageWithRuns } from './support.mjs';
+const A = 'a'.repeat(40), B = 'b'.repeat(40);
+function document() {
+  const result = (round, candidate, finding) => ({round, outcome: finding ? 'unresolved' : 'aligned', entries: [{
+    lens: 'lens.outcome-correctness', state: 'obtained', binding: {candidateRef:candidate}, result: {
+      outcome: finding ? 'changes-requested' : 'aligned', findings: finding ? [{id:'F1',severity:'P1',summary:'</script><img src=x onerror=alert(1)>',state:'open'}] : [],
+      resolvedFindings: finding ? [] : [{id:'F1',state:'closed',fixCommit:B,resolution:'Original reviewer confirmed <b>the fix</b>.'}]
+    }}]});
+  return {state:{lanes:[],queue:[{subject:'WORK-1',title:'Work',stage:'merged',head:B,runId:null}]},journal:[],
+    reviewEvidence:{'WORK-1':{candidateRef:B,digest:'d'.repeat(64),outcomes:[result(1,A,true),result(2,B,false)]}}};
+}
+const config={spec:'delivery-views-config/1'};
+test('runless actual rounds share cards, escaped findings and originating closure text', async()=>{
+  const page=pageWithRuns(document(),{}, {config});
+  expect(page).not.toContain('</script><img');
+  const [last,first]=await openPage(page,{steps:[{click:'.run-pick',index:0}]});
+  expect(last.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
+  expect(last.app.querySelector('.run-closure').textContent).toContain('Original reviewer confirmed <b>the fix</b>.');
+  expect(last.app.querySelector('.run-card .run-quiet').title).toBe(B);
+  expect(first.app.querySelector('.run-card-outcome').textContent).toBe('Changes requested');
+  expect(first.app.querySelector('.run-finding-text').textContent).toContain('<img');
+  expect(first.app.querySelector('.run-settled').textContent).toContain('confirmed round 2');
+  expect(first.app.querySelector('img')).toBeNull();
+  expect(first.app.querySelector('.run-record-row')).toBeNull();
+});
+test('missing or stale runless reports stay visibly unavailable without approval from journal counts',async()=>{
+  for(const mode of ['missing','stale','damaged']){
+    const doc=document();
+    doc.journal=[{kind:'review.round',subject:'WORK-1',review:{round:2,verdicts:{'lens.outcome-correctness':'approve'}}}];
+    if(mode==='missing') delete doc.reviewEvidence;
+    if(mode==='stale') doc.state.queue[0].head=A;
+    if(mode==='damaged') doc.reviewEvidence['WORK-1']={unavailable:true};
+    const [shown]=await openPage(pageWithRuns(doc,{}, {config}));
+    expect(shown.app.querySelector('.d-run-none').textContent).toContain('unavailable or stale');
+    expect(shown.app.querySelector('.run-card')).toBeNull();
+  }
+});
+test('candidate changes in a live push invalidate retained native approval immediately',async()=>{
+  const doc=document(),changed=structuredClone(doc);changed.state.queue[0].head=A;
+  const [,shown]=await openPage(pageWithRuns(doc,{}, {config}),{steps:[{push:changed}]});
+  expect(shown.app.querySelector('.d-run-none').textContent).toContain('unavailable or stale');
+  expect(shown.app.querySelector('.run-card')).toBeNull();
+});

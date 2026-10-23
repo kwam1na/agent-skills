@@ -488,6 +488,54 @@ def _read_run(product: Product, run_id: str, row: dict, specs: list[str]) -> dic
     return with_round_reports(summary, view, readings, specs)
 
 
+def native_review_summaries(document: dict) -> dict:
+    """Project verified state observations into the existing cards; never invent a run."""
+    observed = document.get("reviewEvidence", {})
+    summaries = {}
+    for subject, observation in observed.items() if isinstance(observed, dict) else ():
+        if not isinstance(observation, dict) or observation.get("unavailable"):
+            summaries[subject] = {"unavailable": True}
+            continue
+        rounds, states = [], {}
+        for outcome in observation.get("outcomes", []):
+            raised, settled, verdicts = [], [], {}
+            candidate, complete = None, True
+            for entry in outcome["entries"]:
+                lens, binding = entry["lens"], entry["binding"]
+                candidate = binding["candidateRef"]
+                if entry["state"] != "obtained":
+                    verdicts[lens], complete = "unavailable", False
+                    continue
+                result = entry["result"]
+                verdicts[lens] = outcome_word(result["outcome"])
+                for finding in result["findings"]:
+                    state = "deferred" if finding.get("state") == "deferred" else "unresolved"
+                    states[finding["id"]] = state
+                    raised.append({"id": finding["id"], "lens": lens, "severity": finding["severity"],
+                                   "summary": _plain(finding["summary"])[:SUMMARY_LENGTH], "state": state,
+                                   "deferredIssue": _issue(finding.get("deferredIssue"))})
+                for closure in result.get("resolvedFindings", result.get("resolutions", [])):
+                    state = {"closed": "fixed", "fixed": "fixed", "withdrawn": "dropped", "dropped": "dropped",
+                             "deferred": "deferred", "open": "open"}[closure["state"]]
+                    states[closure["id"]] = "resolved" if state in ("fixed", "dropped") else "deferred" if state == "deferred" else "unresolved"
+                    settled.append({"id": closure["id"], "lens": lens, "state": state,
+                                    "fixCommit": closure.get("fixCommit"), "deferredIssue": _issue(closure.get("deferredIssue")),
+                                    "resolution": _plain(closure.get("resolution", closure.get("reason", "")))[:2048]})
+            counts = {severity: sum(note["severity"] == severity for note in raised) for severity in SEVERITIES}
+            approved = complete and outcome.get("outcome") == "aligned" and all(word == "approve" for word in verdicts.values())
+            rounds.append({"round": outcome["round"], "candidateRef": candidate, "at": None,
+                           "outcome": "approve" if approved else "changes" if "changes" in verdicts.values() else None,
+                           "findings": counts, "verdicts": verdicts, "raised": raised, "settled": settled,
+                           "detailsUnavailable": not complete})
+        for row in rounds:
+            for raised in row["raised"]:
+                raised["state"] = states[raised["id"]]
+        summaries[subject] = {"observationKey": subject + ":" + observation["digest"],
+                              "candidateRef": observation["candidateRef"], "roundDetail": rounds,
+                              "observational": True, "open": False}
+    return within_budget(summaries, list(summaries))
+
+
 def collect_runs(document: object, config: dict, root: Path, cache_path: Path, deadline: float) -> dict:
     """Each named run's summary, or its unavailability, keyed by run id. A run is read only when the
     inventory shows it changed since its cached summary; a run read past the deadline stays uncached."""
@@ -857,6 +905,8 @@ def render_history(history: dict, config: dict, *, line_map: str | None) -> str:
 
 
 def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None) -> str:
+    reviews = native_review_summaries(document)
+    document = {key: value for key, value in document.items() if key != "reviewEvidence"}
     view = {
         "title": config["title"],
         "themeKey": theme_key,
@@ -881,6 +931,7 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         '<main id="app" data-source="embedded"></main>',
         f'<script type="application/json" id="delivery-state">{embed(document)}</script>',
         f'<script type="application/json" id="delivery-runs">{embed(runs)}</script>',
+        f'<script type="application/json" id="delivery-reviews">{embed(reviews)}</script>',
         f'<script type="application/json" id="delivery-links">{embed(page_links(document, runs, config))}</script>',
         f'<script type="application/json" id="delivery-view">{embed(view)}</script>',
         f"<script>\n{_asset('run-summary.js')}{_asset('line-map.js')}</script>",

@@ -22,6 +22,8 @@ import sys
 sys.dont_write_bytecode = True
 
 import argparse
+import base64
+import hashlib
 import contextlib
 import copy
 import datetime
@@ -422,6 +424,8 @@ def journal_errors(entries: list[object]) -> list[str]:
                 # The pattern admits dates that do not exist; the stats read every time.
                 errors.append(f"entry {index + 1}/at: not a real time")
             errors.extend(f"entry {index + 1}: {problem}" for problem in _review_problems(entry))
+            if (entry["kind"] == "review.evidence") != ("reviewArtifact" in entry) or (entry["kind"] == "review.evidence" and entry["subject"] is None):
+                errors.append(f"entry {index + 1}: review.evidence names its subject and artifact")
             if "occurredAt" in entry:
                 if entry["kind"] != "candidate.merged":
                     errors.append(f"entry {index + 1}: only a merge carries occurredAt")
@@ -925,6 +929,7 @@ def append_journal(
     recovered: bool = False,
     occurred_at: str | None = None,
     recovery: dict | None = None,
+    review_artifact: dict | None = None,
 ) -> dict:
     """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset."""
     if writer == "runner" and kind == REVIEW_KIND:
@@ -957,6 +962,8 @@ def append_journal(
             if not any(item["stage"] == "merged" and _same_recovered_merge(entry, item)
                        for item in current["queue"]):
                 raise StateError("recovery_identity", "candidate identity changed before recovery journal append")
+        if review_artifact is not None:
+            entry["reviewArtifact"] = review_artifact
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
@@ -971,6 +978,175 @@ def append_journal(
             os.fsync(stream.fileno())
         _note_change(directory, "journal", version=current["version"], journal=entry["id"])
     return entry
+
+
+# Native review observations: independent of product runs and admission.
+REVIEW_ARTIFACT_LIMIT = 4 * 1024 * 1024
+REVIEW_SOURCE_LIMIT = 1024 * 1024
+REVIEW_READ_BUDGET = 8 * 1024 * 1024
+
+
+def _review_json(data: bytes) -> object:
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = value
+        return result
+    return json.loads(data.decode("utf-8"), object_pairs_hook=unique)
+
+
+def _review_outcomes(payload: dict, subject: str, candidate: str) -> list[dict]:
+    """Validate identity and originating dispositions, without granting admission."""
+    def require(ok):
+        if not ok:
+            raise StateError("review_artifact_invalid", "native review outcome identity or report is invalid")
+    require(isinstance(payload, dict) and payload.get("spec") == "delivery-review-observation/1"
+            and payload.get("subjectRef") == subject and payload.get("candidateRef") == candidate)
+    sources = payload.get("outcomes")
+    require(isinstance(sources, list) and 1 <= len(sources) <= 32)
+    outcomes, selected, origins, open_findings = [], None, {}, set()
+    for number, encoded in enumerate(sources, 1):
+        require(isinstance(encoded, str) and len(encoded) <= REVIEW_SOURCE_LIMIT * 2)
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+            require(len(raw) <= REVIEW_SOURCE_LIMIT)
+            outcome = _review_json(raw)
+            _require_unicode(outcome, "review_artifact_invalid")
+        except (ValueError, UnicodeError, RecursionError) as error:
+            raise StateError("review_artifact_invalid", "native review outcome is not bounded JSON") from error
+        require(isinstance(outcome, dict) and type(outcome.get("round")) is int and outcome["round"] == number)
+        entries = outcome.get("entries")
+        require(isinstance(entries, list) and 1 <= len(entries) <= 16)
+        lenses, round_candidate = [], None
+        for entry in entries:
+            require(isinstance(entry, dict))
+            lens, binding = entry.get("lens"), entry.get("binding")
+            require(isinstance(lens, str) and 0 < len(lens) <= 200 and lens not in lenses and isinstance(binding, dict))
+            lenses.append(lens)
+            ref = binding.get("candidateRef")
+            require(binding.get("subjectRef") == subject and type(binding.get("round")) is int
+                    and binding["round"] == number and isinstance(ref, str) and 0 < len(ref) <= 2048)
+            require(round_candidate is None or round_candidate == ref)
+            round_candidate = ref
+            if entry.get("state") != "obtained":
+                require(entry.get("state") in ("failed", "missing", "indeterminate") and "result" not in entry)
+                continue
+            result = entry.get("result")
+            require(isinstance(result, dict) and result.get("schemaVersion") == "review-lens-result/1"
+                    and result.get("lensId") == lens and result.get("subjectRef") == subject
+                    and result.get("candidateRef") == ref and type(result.get("round")) is int
+                    and result["round"] == number and result.get("outcome") in ("aligned", "changes-requested")
+                    and bool(result.get("evidence")))
+            require(not ("resolvedFindings" in result and "resolutions" in result))
+            findings = result.get("findings")
+            closures = result.get("resolvedFindings", result.get("resolutions", []))
+            require(isinstance(findings, list) and isinstance(closures, list) and len(findings) <= 200 and len(closures) <= 200)
+            for finding in findings:
+                require(isinstance(finding, dict) and isinstance(finding.get("id"), str) and bool(finding["id"])
+                        and finding.get("severity") in SEVERITIES and isinstance(finding.get("summary"), str)
+                        and bool(finding["summary"]))
+                identifier = finding["id"]
+                require(identifier not in origins or origins[identifier] == lens)
+                origins[identifier] = lens
+                if finding.get("state") != "deferred":
+                    open_findings.add(identifier)
+            for closure in closures:
+                require(isinstance(closure, dict) and isinstance(closure.get("id"), str) and origins.get(closure["id"]) == lens
+                        and closure.get("originatingLens", lens) == lens
+                        and closure.get("state") in ("closed", "fixed", "withdrawn", "dropped", "deferred", "open")
+                        and isinstance(closure.get("resolution", closure.get("reason")), str))
+                if closure["state"] in ("closed", "fixed", "withdrawn", "dropped", "deferred"):
+                    open_findings.discard(closure["id"])
+        if outcome.get("outcome") == "aligned":
+            require(not open_findings and all(entry.get("state") == "obtained"
+                    and entry["result"]["outcome"] == "aligned" for entry in entries))
+        require(selected is None or set(selected) == set(lenses))
+        selected = lenses
+        if number == len(sources):
+            require(round_candidate == candidate)
+        outcomes.append(outcome)
+    return outcomes
+
+
+def _review_artifact_path(directory: Path, digest: str) -> Path:
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise StateError("review_artifact_invalid", "invalid review digest")
+    folder = directory / "review-artifacts"
+    path = folder / (digest + ".json")
+    if folder.is_symlink() or path.is_symlink():
+        raise StateError("review_artifact_invalid", "review artifacts must not be symlinks")
+    return path
+
+
+def _read_review_file(path: Path, limit: int) -> bytes:
+    if not path.is_file() or path.is_symlink():
+        raise StateError("review_artifact_invalid", "review artifact is not a regular file")
+    with path.open("rb") as stream:
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise StateError("review_artifact_invalid", "review artifact exceeds its byte limit")
+    return data
+
+
+def capture_review(directory: Path, *, subject: str, candidate: str, outcomes: list[Path]) -> dict:
+    """Keep exact native outcome bytes and append their observational reference once."""
+    try:
+        if not 1 <= len(outcomes) <= 32:
+            raise StateError("review_artifact_invalid", "capture needs one to 32 outcome files")
+        payload = {"spec": "delivery-review-observation/1", "subjectRef": subject, "candidateRef": candidate,
+                   "outcomes": [base64.b64encode(_read_review_file(Path(path), REVIEW_SOURCE_LIMIT)).decode("ascii")
+                                for path in outcomes]}
+        _review_outcomes(payload, subject, candidate)
+        raw = dumps(payload).encode("utf-8")
+        if len(raw) > REVIEW_ARTIFACT_LIMIT:
+            raise StateError("review_artifact_invalid", "review artifact exceeds its byte limit")
+        digest = hashlib.sha256(raw).hexdigest()
+        reference = {"digest": digest, "candidateRef": candidate}
+        with file_lock(directory / "review-capture.lock"):
+            state = read_state(directory)
+            item = next((item for item in [*state["queue"], *state.get("planned", [])] if item["subject"] == subject), None)
+            if item is None or item.get("runId"):
+                raise StateError("review_artifact_invalid", "capture names existing work without a product run")
+            path = _review_artifact_path(directory, digest)
+            path.parent.mkdir(exist_ok=True)
+            if path.exists() and _read_review_file(path, REVIEW_ARTIFACT_LIMIT) != raw:
+                raise StateError("review_artifact_invalid", "existing review artifact differs from its digest")
+            if not path.exists():
+                _write_atomically(path, raw.decode("utf-8"))
+            previous = next((entry for entry in reversed(read_journal(directory))
+                             if entry["subject"] == subject and entry["kind"] == "review.evidence"), None)
+            if previous is not None and previous.get("reviewArtifact") == reference:
+                return previous
+            return append_journal(directory, kind="review.evidence", subject=subject, lane=item.get("lane"),
+                                  summary="Native review outcomes captured for display; no admission authority",
+                                  review_artifact=reference)
+    except OSError as error:
+        raise StateError("review_artifact_invalid", "native review artifact could not be read or stored") from error
+
+
+def review_observations(directory: Path, state: dict, journal: list[dict]) -> dict:
+    references = {entry["subject"]: entry["reviewArtifact"] for entry in journal if entry["kind"] == "review.evidence"}
+    observed, remaining = {}, REVIEW_READ_BUDGET
+    items = {item["subject"]: item for item in [*state["queue"], *state.get("planned", [])]}
+    for subject, reference in references.items():
+        if subject not in items or items[subject].get("runId"):
+            continue
+        candidate = reference["candidateRef"]
+        try:
+            item = items[subject]
+            if (item.get("syncedHead") or item.get("head")) != candidate:
+                raise StateError("review_artifact_invalid", "review candidate is stale or unknown")
+            data = _read_review_file(_review_artifact_path(directory, reference["digest"]), min(REVIEW_ARTIFACT_LIMIT, remaining))
+            remaining -= len(data)
+            if hashlib.sha256(data).hexdigest() != reference["digest"]:
+                raise StateError("review_artifact_invalid", "review artifact digest mismatch")
+            outcomes = _review_outcomes(_review_json(data), subject, candidate)
+            observed[subject] = {"candidateRef": candidate, "digest": reference["digest"], "outcomes": outcomes}
+        except (StateError, OSError, ValueError, UnicodeError, RecursionError):
+            observed[subject] = {"candidateRef": candidate, "unavailable": True}
+    return observed
 
 
 def show(directory: Path, *, between_reads: Callable[[], None] | None = None) -> dict:
@@ -990,7 +1166,8 @@ def show(directory: Path, *, between_reads: Callable[[], None] | None = None) ->
         if between_reads is not None:
             between_reads()
         journal = read_journal(directory)
-    return {"state": state, "journal": journal, "stats": delivery_stats(state, journal),
+        reviews = review_observations(directory, state, journal)
+    return {**({"reviewEvidence": reviews} if reviews else {}), "state": state, "journal": journal, "stats": delivery_stats(state, journal),
             "estimates": queue_estimates(state), "status": delivery_status(state, journal),
             "focus": lane_focus(state)}
 
@@ -3059,6 +3236,10 @@ def main(argv: list[str] | None = None) -> int:
     entry.add_argument("--subject")
     entry.add_argument("--writer", choices=("lead", "lane"), default="lead",
                        help="lane: a lane journals a review round of its own work")
+    capture = commands.add_parser("capture-review", help="retain native review outcomes for display without a run")
+    capture.add_argument("--subject", required=True)
+    capture.add_argument("--candidate", required=True)
+    capture.add_argument("--outcome", type=Path, action="append", required=True, help="actual outcome file, once per round in order")
     hand = commands.add_parser("handoff", help="a lane hands its work to the queue, or the lead accepts or rejects it")
     decide = hand.add_mutually_exclusive_group()
     decide.add_argument("--accept", metavar="SUBJECT", help="accept a hand-off waiting for the lead")
@@ -3153,6 +3334,8 @@ def main(argv: list[str] | None = None) -> int:
             if age < 1:
                 raise StateError("patch_invalid", "--max-age is at least 1 second")
             result = {"ok": True, "state": set_status_override(args.dir, None if args.clear else args.text, age)}
+        elif args.command == "capture-review":
+            result = {"ok": True, "entry": capture_review(args.dir, subject=args.subject, candidate=args.candidate, outcomes=args.outcome)}
         elif args.command == "handoff":
             result = {"ok": True, "item": _handoff_command(args)}
         elif args.command == "focus":
