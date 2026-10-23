@@ -42,7 +42,6 @@ def run_lane(node: str, files: list[Path]) -> str | None:
             "--test",
             f"--test-reporter={REPORTER.as_uri()}",
             "--test-reporter-destination=stdout",
-            "--test-timeout=60000",
             *(str(path) for path in files),
         ],
         cwd=ROOT,
