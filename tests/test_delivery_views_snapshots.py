@@ -426,6 +426,15 @@ class BitbucketTests(SnapshotCase):
             (API + "commit/ffffffffffff", 200, BITBUCKET["commit-f"]),
         )
 
+    def test_a_state_dir_reads_that_record_and_never_the_bindings(self) -> None:
+        self.state.rename(self.root / "served")
+        code, out, _ = self.run_kind(self.args("--state-dir", "served"), self.full(), self.environ, cwd=self.root)
+        self.assertEqual(code, 0)
+        self.assertEqual([item["subject"] for item in json.loads(out)["items"]], ["EDD-7", "SHFT-11", "SHFT-12", "SHFT-13"])
+        code, _, err = self.run_kind(self.args("--state-dir", "gone"), self.full(), self.environ, cwd=self.root)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "the record could not be read through --state-dir gone")
+
     def test_pull_requests_map_to_the_record_subjects(self) -> None:
         transport = self.full()
         code, out, _ = self.run_kind(self.args(), transport, self.environ, cwd=self.root / ".agents")
@@ -679,6 +688,17 @@ class GithubTests(SnapshotCase):
         self.assertTrue(all(headers["Accept"] == "application/vnd.github+json"
                             and headers["X-GitHub-Api-Version"] == "2022-11-28" for _, headers in transport.requests))
         self.assertEqual(transport.methods, ["GET", "GET"])
+
+    def test_a_state_dir_reads_that_record_and_never_the_bindings(self) -> None:
+        (self.root / "delivery").rename(self.root / "served")
+        code, out, _ = self.run_kind(self.args("--state-dir", "served"), self.pages(), self.environ, cwd=self.root)
+        self.assertEqual(code, 0)
+        self.assertEqual({item["subject"] for item in json.loads(out)["items"]},
+                         {item["subject"] for item in CAPTURED["forge"]["items"]})
+        # The binding's directory is gone, so without --state-dir there is no record to read.
+        code, _, err = self.run_kind(self.args(), self.pages(), self.environ, cwd=self.root)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "the record could not be read")
 
     def test_a_new_record_needs_since(self) -> None:
         (self.root / "delivery/journal.jsonl").write_text("", encoding="utf-8")

@@ -1,0 +1,5 @@
+{
+  "runs list --json": "{\"spec\":\"run-inventory/1\",\"runs\":[{\"runId\":\"run-a\",\"status\":\"complete\",\"open\":false,\"durationSeconds\":60,\"bytes\":10},{\"runId\":\"run-x\",\"status\":\"incomplete\",\"open\":true,\"durationSeconds\":7260,\"bytes\":10}]}",
+  "runs show run-a --json": "{\"spec\":\"delivery-run-export/2\",\"runId\":\"run-a\",\"events\":[{\"kind\":\"run.started\",\"at\":\"2026-10-20T09:00:00Z\"},{\"kind\":\"review.round.closed\",\"at\":\"2026-10-20T10:30:00Z\",\"payload\":{\"round\":1,\"outcome\":\"aligned\",\"findings\":{\"P0\":0,\"P1\":1,\"P2\":0,\"P3\":2}}}],\"summary\":{\"ticket\":\"V26-2822\",\"open\":false,\"startedAt\":\"2026-10-20T09:00:00Z\",\"lastAt\":\"2026-10-20T10:30:00Z\",\"durationSeconds\":5400,\"roundsClosed\":1,\"findings\":{\"P0\":0,\"P1\":1,\"P2\":0,\"P3\":2}},\"readout\":{\"status\":\"complete\"}}",
+  "runs show run-x --json": null
+}

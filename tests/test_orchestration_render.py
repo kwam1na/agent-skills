@@ -1296,6 +1296,31 @@ class LiveTests(DeliveryStateFixture):
         self.assertEqual(client.get("view/plain.html")[0], 404)
         self.assertEqual(client.get("view/../state.json")[0], 404)
 
+    def test_a_view_named_with_characters_a_browser_encodes_is_served_and_nothing_else_is(self) -> None:
+        def opted(renderer_id: str, output: str) -> dict:
+            source = f"import sys\nsys.stdout.write('<html><head><meta name=\"delivery-state-live\"></head><body>{renderer_id}</body></html>')\n"
+            return {"id": renderer_id, "argv": python_argv(source, self.tools, renderer_id), "output": output}
+        _, url = self.start("--state-config", self.config([opted("spaced", "delivery history.html"),
+                                                           opted("nested", "views/line-map.html"),
+                                                           opted("percent", "a%41.html")]))
+        client = self.client(url)
+        deadline = time.monotonic() + 5
+        status, page = client.get("view/delivery%20history.html")
+        while status != 200 and time.monotonic() < deadline:
+            time.sleep(0.2)
+            status, page = client.get("view/delivery%20history.html")
+        self.assertEqual(status, 200)
+        self.assertIn(b"spaced", page)
+        self.assertEqual(client.get("view/views/line-map.html")[0], 200)
+        self.assertEqual(client.get("view/views/line%2Dmap.html")[0], 200)
+        # A name that holds a percent sign is linked with it encoded, and served by its own name.
+        self.assertEqual(client.get("view/a%2541.html")[0], 200)
+        for path in ("view/..%2Fstate.json", "view/%2e%2e/state.json", "view/%2e%2e%2fstate.json",
+                     "view/views%2Fline-map.html", "view/delivery%2520history.html", "view/views/..%2Fdelivery%20history.html",
+                     "view/%2e/delivery%20history.html", "view/delivery%20history.html%00", "view/%ff.html"):
+            with self.subTest(path=path):
+                self.assertEqual(client.get(path)[0], 404)
+
     def test_the_binding_s_home_view_is_the_front_page(self) -> None:
         own = {"id": "own", "argv": python_argv(
             "import sys\nsys.stdout.write('<html><head><meta name=\"delivery-state-live\"></head><body>own home</body></html>')\n",
@@ -1586,6 +1611,15 @@ class ChangeNotificationTests(DeliveryStateFixture):
 
 
 class WrapperTests(DeliveryStateFixture):
+    def test_a_renderer_argv_gets_the_resolved_state_directory(self) -> None:
+        argv = python_argv("import sys\nsys.stdout.write(repr(sys.argv[1:]))\n", self.tools, "where")
+        renderers = [{"id": "where", "argv": [*argv, "{stateDirectory}", "--state-dir={stateDirectory}"],
+                      "output": "where.txt"}]
+        code, result = render_state.render(self.state_dir, json.loads(self.config(renderers)))
+        self.assertEqual(code, 0, result)
+        resolved = str(self.state_dir.resolve())
+        self.assertEqual((self.state_dir / "where.txt").read_text(), repr([resolved, f"--state-dir={resolved}"]))
+
     def test_a_built_in_view_that_fails_keeps_its_previous_view(self) -> None:
         renderers = [{"id": "summary", "builtin": "markdown", "output": "delivery.md"}]
         code, result = wrapper(self.state_dir, "--state-config", self.config(renderers))

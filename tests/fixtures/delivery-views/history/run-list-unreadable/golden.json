@@ -1,0 +1,146 @@
+{
+  "asOf": "2026-10-22T12:00:00Z",
+  "now": "2026-10-22T12:00:00Z",
+  "timeZone": "UTC",
+  "blocks": {
+    "delivery-history": {
+      "asOf": "2026-10-22T12:00:00Z",
+      "rows": [
+        {
+          "key": "run-b",
+          "delivery": null,
+          "source": "export",
+          "file": "run-b.json",
+          "label": null,
+          "note": null,
+          "summary": {
+            "runId": "run-b",
+            "ticket": "V26-STALE",
+            "open": false,
+            "status": "complete",
+            "startedAt": "2026-10-21T09:00:00Z",
+            "lastAt": "2026-10-21T09:10:00Z",
+            "durationSeconds": 5400,
+            "rounds": 1,
+            "findings": {
+              "P0": 0,
+              "P1": 1,
+              "P2": 0,
+              "P3": 2
+            },
+            "roundDetail": [
+              {
+                "round": 1,
+                "at": "2026-10-21T09:10:00Z",
+                "outcome": "approve",
+                "findings": {
+                  "P0": 0,
+                  "P1": 1,
+                  "P2": 0,
+                  "P3": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "run-c",
+          "delivery": {
+            "headline": "Delivery records split (V26-2829)",
+            "parent": "V26-2829",
+            "subject": "V26-2825"
+          },
+          "source": "export",
+          "file": "run-c.json",
+          "label": null,
+          "note": null,
+          "summary": {
+            "runId": "run-c",
+            "ticket": "V26-2825",
+            "open": false,
+            "status": "complete",
+            "startedAt": "2026-10-19T09:00:00Z",
+            "lastAt": "2026-10-19T10:00:00Z",
+            "durationSeconds": 5400,
+            "rounds": 1,
+            "findings": {
+              "P0": 0,
+              "P1": 1,
+              "P2": 0,
+              "P3": 2
+            },
+            "roundDetail": [
+              {
+                "round": 1,
+                "at": "2026-10-19T10:00:00Z",
+                "outcome": "approve",
+                "findings": {
+                  "P0": 0,
+                  "P1": 1,
+                  "P2": 0,
+                  "P3": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "2026-08-13T17-38-52-076Z-codex-v26-1212-review-scope.json",
+          "delivery": null,
+          "source": "telemetry",
+          "file": "2026-08-13T17-38-52-076Z-codex-v26-1212-review-scope.json",
+          "label": "codex/v26-1212-review-scope",
+          "note": null,
+          "summary": {
+            "runId": null,
+            "ticket": "V26-1212",
+            "open": false,
+            "status": "pass",
+            "startedAt": null,
+            "lastAt": "2026-08-13T17:38:52.076Z",
+            "durationSeconds": null,
+            "rounds": 5,
+            "findings": {
+              "P0": 0,
+              "P1": 1,
+              "P2": 2,
+              "P3": 3
+            },
+            "roundDetail": []
+          }
+        }
+      ],
+      "notes": [
+        "The product's run list could not be read; only the tracked exports are listed."
+      ]
+    }
+  },
+  "initialText": "Delivery historyBack to the line mapPast deliveries and runs, newest first.Runs from the delivery product and the exports tracked under telemetry/delivery-runs, as of 2026-10-22 12:00 UTC. Reload for newer.The product's run list could not be read; only the tracked exports are listed.TicketStateStartedLast seenDurationRoundsFindings P0/P1/P2/P3DeliveryV26-STALErun-bState EndedStarted 2026-10-21 09:00Last seen 2026-10-21 09:10Duration 1h 30mRounds 1Findings 0/1/0/2Delivery —V26-2825run-cState EndedStarted 2026-10-19 09:00Last seen 2026-10-19 10:00Duration 1h 30mRounds 1Findings 0/1/0/2Delivery Delivery records split (V26-2829) · V26-2825V26-1212telemetry record · codex/v26-1212-review-scopeState EndedStarted —Last seen 2026-08-13 17:38Duration —Rounds 5Findings 0/1/2/3Delivery —",
+  "lineMapHref": {
+    "file": [
+      "athena-live.html"
+    ],
+    "served": [
+      "/"
+    ]
+  },
+  "rows": [
+    "run-b",
+    "run-c",
+    "2026-08-13T17-38-52-076Z-codex-v26-1212-review-scope.json"
+  ],
+  "details": {
+    "run-b": {
+      "detail": "Approved on the first round · 1 serious note, 2 minor notes raised13yesterday 9:10 amRound 1Approved3 notes1 serious2 minorRan yesterday 9:00 am – 9:10 am · evidence recorded",
+      "closed": true
+    },
+    "run-c": {
+      "detail": "Approved on the first round · 1 serious note, 2 minor notes raised13Oct 19, 10:00 amRound 1Approved3 notes1 serious2 minorRan Oct 19, 9:00 am – 10:00 am · evidence recorded",
+      "closed": true
+    },
+    "2026-08-13T17-38-52-076Z-codex-v26-1212-review-scope.json": {
+      "detail": "No review rounds yet",
+      "closed": true
+    }
+  }
+}

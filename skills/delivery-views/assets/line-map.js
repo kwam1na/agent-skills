@@ -1037,24 +1037,6 @@
     });
     summary.addEventListener("click", function (event) { event.preventDefault(); slide(!box.open); });
     add(box, summary, ol);
-    // A native disclosure snaps open; the list grows and fades instead (at once under reduced motion).
-    summary.addEventListener("click", function (event) {
-      if (reduced() || typeof ol.animate !== "function") { return; }
-      event.preventDefault();
-      if (box.getAttribute("data-moving")) { return; }
-      box.setAttribute("data-moving", "1");
-      var settle = function () { box.removeAttribute("data-moving"); ol.style.overflow = ""; };
-      ol.style.overflow = "hidden";
-      var height = ol.scrollHeight;
-      if (!box.open) {
-        box.open = true;
-        height = ol.scrollHeight;
-        ol.animate([{ height: "0px", opacity: 0, marginTop: "0px" }, { height: height + "px", opacity: 1, marginTop: "8px" }], { duration: 220, easing: "cubic-bezier(.2,.7,.2,1)" }).onfinish = settle;
-      } else {
-        ol.animate([{ height: height + "px", opacity: 1, marginTop: "8px" }, { height: "0px", opacity: 0, marginTop: "0px" }], { duration: 180, easing: "cubic-bezier(.2,.7,.2,1)" })
-          .onfinish = function () { box.open = false; settle(); };
-      }
-    });
     return box;
   }
 

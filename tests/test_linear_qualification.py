@@ -22,9 +22,9 @@ from tests.qualification_pending_support import pending, skip_if_pending
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
 PRODUCT = ROOT / "qualifications" / "product"
-ATTESTATION = PRODUCT / "linear-orchestration-v1.attestation.json"
-RECORD = PRODUCT / "linear-orchestration-v1.json"
-BINDING = PRODUCT / "linear-orchestration-v1.collector-binding.json"
+ATTESTATION = PRODUCT / "linear-delivery-views-v1.attestation.json"
+RECORD = PRODUCT / "linear-delivery-views-v1.json"
+BINDING = PRODUCT / "linear-delivery-views-v1.collector-binding.json"
 HISTORICAL_ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
 HISTORICAL_RECORD = PRODUCT / "linear-product-v1.json"
 HISTORICAL_BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
@@ -95,6 +95,18 @@ HISTORICAL_PRODUCT_SHA256 = {
     "linear-concurrent-delivery-v1.release.json": "d46f7f75e11b7f809f93e10b961954bfd7f8dc533f474074aa57b5594d39868e",
     "linear-concurrent-delivery-v1.zip": "e63b1f2bb5516d55445aa7050f2a9366b05abdb9d8584bdeed4119abb5440578",
     "provider-concurrent-delivery-v1.json": "99593af97d48acc4a68434671cb87030cc76184fba199d057c9680d82db93678",
+    "bootstrap-orchestration-v1.json": "13e9a73ae69a5faeb0f0983e2f0766746054cd4af7029f4863897a9a46eaf1af",
+    "bootstrap-orchestration-v1.release.json": "62468bf20eb75ecb17ac6a17c14c04d17560e3d4fdd9172404916cfa157a0662",
+    "bootstrap-orchestration-v1.zip": "121aa7aba5cf928f1900bb5333022f8f9b099a9bd5cf2e34e40ab4dd35adb5fe",
+    "core-orchestration-v1.json": "806e0e8f76800afb1888e11d0c68a82dadbf7a9ab5d74d042df09f685152cd93",
+    "core-orchestration-v1.release.json": "f80d339b2470675679fa4ffb74ab5fd8abd698fc6d114c08408303b18a97b9ed",
+    "core-orchestration-v1.zip": "c91c2a07b00ee96d399af62f8c0fdee0ef47835826502cbdae50da0eb2dfc48f",
+    "linear-orchestration-v1.attestation.json": "60333797a7d214ef946d086fc002c068b581a847f4187f5c947b01938e358eca",
+    "linear-orchestration-v1.collector-binding.json": "6ac0eff3690db7ff9937e7db41f9b4ae56d82e0b846892862fe7fc2b38160404",
+    "linear-orchestration-v1.json": "3d655161eb30f3bffbcdbd6aa779a575460d505e94b0ff8701c88d6117878551",
+    "linear-orchestration-v1.release.json": "d3ffb5519df3528001b5bad2b10f9919ef20e32912093d23d75be9a404d3bfac",
+    "linear-orchestration-v1.zip": "b798ef4c832fd2abba0530dc42409f2c2bcd30f31909ea53d33fe4fd4d8cc2db",
+    "provider-orchestration-v1.json": "9d9ea213eaeb4b775bdb24b4b1d5ff0c1db6477681445fbf920f196350f9728c",
 }
 
 
@@ -958,11 +970,11 @@ class LinearQualificationTests(unittest.TestCase):
         # it is re-earned with the pending linear set.
         skip_if_pending(self, "core", "linear")
         replay = _load_runner().qualify(
-            PRODUCT / "core-orchestration-v1.zip",
-            PRODUCT / "core-orchestration-v1.release.json",
-            PRODUCT / "core-orchestration-v1.json",
-            PRODUCT / "linear-orchestration-v1.zip",
-            PRODUCT / "linear-orchestration-v1.release.json",
+            PRODUCT / "core-delivery-views-v1.zip",
+            PRODUCT / "core-delivery-views-v1.release.json",
+            PRODUCT / "core-delivery-views-v1.json",
+            PRODUCT / "linear-delivery-views-v1.zip",
+            PRODUCT / "linear-delivery-views-v1.release.json",
             ATTESTATION,
             BINDING,
         )
@@ -971,8 +983,8 @@ class LinearQualificationTests(unittest.TestCase):
 
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
         current_products = {
-            "core": ("core-orchestration-v1", "c91c2a07b00ee96d399af62f8c0fdee0ef47835826502cbdae50da0eb2dfc48f"),
-            "linear": ("linear-orchestration-v1", "b798ef4c832fd2abba0530dc42409f2c2bcd30f31909ea53d33fe4fd4d8cc2db"),
+            "core": ("core-delivery-views-v1", "5bba40d91fa363cc7ec9517782d5dbf19e699fbe375509ac20c8d550c9e2db03"),
+            "linear": ("linear-delivery-views-v1", "47407f1e51e461d27bc1ed1130aad2455c2a36f56ef7072c54fe6add7c6a5d9f"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -991,7 +1003,7 @@ class LinearQualificationTests(unittest.TestCase):
                                         release_id=release.release_id, profile_id=profile)
                 if pending(profile) is None:
                     self.assertEqual(projected, current, "checked product workflows differ from current source")
-        self.assertIn("linear-orchestration-v1", (ROOT / "README.md").read_text())
+        self.assertIn("linear-delivery-views-v1", (ROOT / "README.md").read_text())
         skip_if_pending(self, "core", "linear")
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
@@ -1012,6 +1024,8 @@ class LinearQualificationTests(unittest.TestCase):
                 and not any(path.is_relative_to(ROOT / "docs" / kind) for kind in ("plans", "delivery"))
                 # The line map's golden corpus is recorded delivery records, which keep their ticket ids.
                 and not path.is_relative_to(ROOT / "tests" / "fixtures" / "delivery-views" / "line-map")
+                # The history page's golden corpus is recorded delivery records, which keep their ticket ids.
+                and not path.is_relative_to(ROOT / "tests" / "fixtures" / "delivery-views" / "history")
             )
         plan_unit = re.compile(r"\bU\d+[A-Za-z]?\b")
         ticket_id = re.compile(r"\b[A-Z]\d{2,}-\d+\b")

@@ -1,0 +1,147 @@
+{
+  "asOf": "2026-10-22T12:00:00Z",
+  "now": "2026-10-22T12:00:00Z",
+  "timeZone": "UTC",
+  "blocks": {
+    "delivery-history": {
+      "asOf": "2026-10-22T12:00:00Z",
+      "rows": [
+        {
+          "key": "run-a",
+          "delivery": {
+            "headline": "Delivery records split (V26-2829)",
+            "parent": "V26-2829",
+            "subject": "V26-2822"
+          },
+          "source": "product",
+          "file": null,
+          "label": null,
+          "note": null,
+          "summary": {
+            "runId": "run-a",
+            "ticket": "V26-2822",
+            "open": false,
+            "status": "complete",
+            "startedAt": "2026-10-20T09:00:00Z",
+            "lastAt": "2026-10-20T10:30:00Z",
+            "durationSeconds": 5400,
+            "rounds": 1,
+            "findings": {
+              "P0": 0,
+              "P1": 1,
+              "P2": 0,
+              "P3": 2
+            },
+            "roundDetail": [
+              {
+                "round": 1,
+                "at": "2026-10-20T10:30:00Z",
+                "outcome": "approve",
+                "findings": {
+                  "P0": 0,
+                  "P1": 1,
+                  "P2": 0,
+                  "P3": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "notes.json",
+          "delivery": null,
+          "source": "export",
+          "file": "notes.json",
+          "label": null,
+          "note": "This file is not a run export.",
+          "summary": {
+            "runId": null,
+            "ticket": null,
+            "open": null,
+            "status": null,
+            "startedAt": null,
+            "lastAt": null,
+            "durationSeconds": null,
+            "rounds": null,
+            "findings": null,
+            "roundDetail": []
+          }
+        },
+        {
+          "key": "run-broken",
+          "delivery": null,
+          "source": "export",
+          "file": "run-broken.json",
+          "label": null,
+          "note": "This export could not be read.",
+          "summary": {
+            "runId": "run-broken",
+            "ticket": null,
+            "open": null,
+            "status": null,
+            "startedAt": null,
+            "lastAt": null,
+            "durationSeconds": null,
+            "rounds": null,
+            "findings": null,
+            "roundDetail": []
+          }
+        },
+        {
+          "key": "run-x",
+          "delivery": null,
+          "source": "product",
+          "file": null,
+          "label": null,
+          "note": "Its run could not be read from the product.",
+          "summary": {
+            "runId": "run-x",
+            "ticket": null,
+            "open": true,
+            "status": "incomplete",
+            "startedAt": null,
+            "lastAt": null,
+            "durationSeconds": 7260,
+            "rounds": null,
+            "findings": null,
+            "roundDetail": []
+          }
+        }
+      ],
+      "notes": []
+    }
+  },
+  "initialText": "Delivery historyBack to the line mapPast deliveries and runs, newest first.Runs from the delivery product and the exports tracked under telemetry/delivery-runs, as of 2026-10-22 12:00 UTC. Reload for newer.TicketStateStartedLast seenDurationRoundsFindings P0/P1/P2/P3DeliveryV26-2822run-aState EndedStarted 2026-10-20 09:00Last seen 2026-10-20 10:30Duration 1h 30mRounds 1Findings 0/1/0/2Delivery Delivery records split (V26-2829) · V26-2822notes.jsonState UnknownStarted —Last seen —Duration —Rounds —Findings —Delivery —This file is not a run export.run-brokenState UnknownStarted —Last seen —Duration —Rounds —Findings —Delivery —This export could not be read.run-xState OpenStarted —Last seen —Duration 2h 1mRounds —Findings —Delivery —Its run could not be read from the product.",
+  "lineMapHref": {
+    "file": [
+      "athena-live.html"
+    ],
+    "served": [
+      "/"
+    ]
+  },
+  "rows": [
+    "run-a",
+    "notes.json",
+    "run-broken",
+    "run-x"
+  ],
+  "details": {
+    "run-a": {
+      "detail": "Approved on the first round · 1 serious note, 2 minor notes raised13Oct 20, 10:30 amRound 1Approved3 notes1 serious2 minorRan Oct 20, 9:00 am – 10:30 am · evidence recorded",
+      "closed": true
+    },
+    "notes.json": {
+      "detail": "No review rounds yet",
+      "closed": true
+    },
+    "run-broken": {
+      "detail": "No review rounds yet",
+      "closed": true
+    },
+    "run-x": {
+      "detail": "No review rounds yet",
+      "closed": true
+    }
+  }
+}

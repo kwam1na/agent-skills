@@ -1,0 +1,25 @@
+{
+  "state": {
+    "meta": {
+      "headline": "Delivery records split (V26-2829)",
+      "trackerParent": "V26-2829"
+    },
+    "queue": [
+      {
+        "subject": "V26-2822",
+        "lane": "lane-recorder",
+        "stage": "merged",
+        "runId": "run-a"
+      }
+    ],
+    "planned": [
+      {
+        "subject": "V26-2825",
+        "lane": "lane-map",
+        "stage": "planned",
+        "runId": "run-c"
+      }
+    ]
+  },
+  "journal": []
+}

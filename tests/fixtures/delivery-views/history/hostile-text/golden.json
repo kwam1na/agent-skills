@@ -1,0 +1,102 @@
+{
+  "asOf": "2026-10-22T12:00:00Z",
+  "now": "2026-10-22T12:00:00Z",
+  "timeZone": "UTC",
+  "blocks": {
+    "delivery-history": {
+      "asOf": "2026-10-22T12:00:00Z",
+      "rows": [
+        {
+          "key": "run-h",
+          "delivery": {
+            "headline": "</script><img src=x onerror=alert(1)> <b>bold</b> next line & \"quoted\" <!--<script>",
+            "parent": null,
+            "subject": "</script><img src=x onerror=alert(1)> <b>bold</b> next line & \"quoted\" <!--<script>"
+          },
+          "source": "product",
+          "file": null,
+          "label": null,
+          "note": null,
+          "summary": {
+            "runId": "run-h",
+            "ticket": "</script><img src=x onerror=alert(1)> <b>bold</b> next line & \"quoted\" <!--<script>",
+            "open": false,
+            "status": "complete",
+            "startedAt": "2026-10-21T09:00:00Z",
+            "lastAt": "2026-10-21T10:00:00Z",
+            "durationSeconds": 5400,
+            "rounds": 1,
+            "findings": {
+              "P0": 0,
+              "P1": 1,
+              "P2": 0,
+              "P3": 2
+            },
+            "roundDetail": [
+              {
+                "round": 1,
+                "at": "2026-10-21T10:00:00Z",
+                "outcome": "</script><img src=x onerror=alert(1)> <b>bold</b> next line & \"quoted\" <!--<script>",
+                "findings": {
+                  "P0": 0,
+                  "P1": 1,
+                  "P2": 0,
+                  "P3": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "x.json",
+          "delivery": null,
+          "source": "telemetry",
+          "file": "x.json",
+          "label": "codex/v26-9-</script><img src=x onerror=alert(1)> <b>bold</b> next line & \"quoted\" <!--<script>",
+          "note": null,
+          "summary": {
+            "runId": null,
+            "ticket": "V26-9",
+            "open": false,
+            "status": "pass",
+            "startedAt": null,
+            "lastAt": "2026-08-13T17:38:52.076Z",
+            "durationSeconds": null,
+            "rounds": 5,
+            "findings": {
+              "P0": 0,
+              "P1": 1,
+              "P2": 2,
+              "P3": 3
+            },
+            "roundDetail": []
+          }
+        }
+      ],
+      "notes": []
+    }
+  },
+  "initialText": "Delivery historyBack to the line mapPast deliveries and runs, newest first.Runs from the delivery product and the exports tracked under telemetry/delivery-runs, as of 2026-10-22 12:00 UTC. Reload for newer.TicketStateStartedLast seenDurationRoundsFindings P0/P1/P2/P3Delivery</script><img src=x onerror=alert(1)> <b>bold</b> next line & \"quoted\" <!--<script>run-hState EndedStarted 2026-10-21 09:00Last seen 2026-10-21 10:00Duration 1h 30mRounds 1Findings 0/1/0/2Delivery </script><img src=x onerror=alert(1)> <b>bold</b> next line & \"quoted\" <!--<script> · </script><img src=x onerror=alert(1)> <b>bold</b> next line & \"quoted\" <!--<script>V26-9telemetry record · codex/v26-9-</script><img src=x onerror=alert(1)> <b>bold</b> next line & \"quoted\" <!--<script>State EndedStarted —Last seen 2026-08-13 17:38Duration —Rounds 5Findings 0/1/2/3Delivery —",
+  "lineMapHref": {
+    "file": [
+      "athena-live.html"
+    ],
+    "served": [
+      "/"
+    ]
+  },
+  "rows": [
+    "run-h",
+    "x.json"
+  ],
+  "details": {
+    "run-h": {
+      "detail": "1 review round · 1 serious note, 2 minor notes raised13yesterday 10:00 amRound 1Reported as </script><img src=x onerror=alert(1)> <b>bold</b> next line & \"quoted\" <!--<script>3 notes1 serious2 minorRan yesterday 9:00 am – 10:00 am · evidence recorded",
+      "closed": true
+    },
+    "x.json": {
+      "detail": "No review rounds yet",
+      "closed": true
+    }
+  }
+}

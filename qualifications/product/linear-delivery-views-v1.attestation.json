@@ -1,0 +1,195 @@
+{
+  "auditReferences": [
+    "linear-audit:77198c85f536a8b02ab04fc8374d5fb7",
+    "linear-audit:8cf417916aaaa50ae3a18380d45ab05a"
+  ],
+  "collector": {
+    "kind": "trusted-host-side",
+    "transport": "host-native-linear-mcp"
+  },
+  "collectorBinding": {
+    "candidateRef": {
+      "opaque": "ca780e34e60a7206f60563d402911278",
+      "schemaVersion": "workflow-candidate-ref/1"
+    },
+    "graphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7",
+    "releases": {
+      "core": {
+        "archiveSha256": "5bba40d91fa363cc7ec9517782d5dbf19e699fbe375509ac20c8d550c9e2db03",
+        "metadataSha256": "153d79ff046b59865ff9a1c194a7e52216dc0522093b6fe4a62d1842fc0c9264",
+        "profile": "core",
+        "releaseId": "core-delivery-views-v1"
+      },
+      "linear": {
+        "archiveSha256": "47407f1e51e461d27bc1ed1130aad2455c2a36f56ef7072c54fe6add7c6a5d9f",
+        "metadataSha256": "daad256ce872027823de290051d104cc29c8ddbebe3c50645a66d4855bbb8a08",
+        "profile": "linear",
+        "releaseId": "linear-delivery-views-v1"
+      }
+    },
+    "schemaVersion": "agent-skills-linear-collector-binding/1",
+    "subjectRef": {
+      "opaque": "13dbaa1c30341ba890b181d0c7d8cd17",
+      "schemaVersion": "workflow-subject-ref/1"
+    }
+  },
+  "entities": [
+    {
+      "auditReference": "linear-audit:77198c85f536a8b02ab04fc8374d5fb7",
+      "finalStatus": "canceled",
+      "operationMarker": "linear-operation:d15a0b0b94825debe6fa0837e2b4f382",
+      "role": "primary"
+    },
+    {
+      "auditReference": "linear-audit:8cf417916aaaa50ae3a18380d45ab05a",
+      "finalStatus": "canceled",
+      "operationMarker": "linear-operation:ab7cd9c78f28d0c5b3085ade2aa2c4df",
+      "role": "dependency"
+    }
+  ],
+  "events": [
+    {
+      "eventReference": "linear-event:597d6457778ed6017696487e5c32e9b0",
+      "operation": "search",
+      "outcome": "miss",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 1
+    },
+    {
+      "eventReference": "linear-event:33711d29a677e2a1dec52a24a889f5be",
+      "operation": "search",
+      "outcome": "miss",
+      "roles": [
+        "dependency"
+      ],
+      "sequence": 2
+    },
+    {
+      "eventReference": "linear-event:acc004c8fc827fe09ed067d1a2c50380",
+      "operation": "create",
+      "outcome": "success",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 3
+    },
+    {
+      "eventReference": "linear-event:95008ca3d04db0210d8499d3dd854112",
+      "operation": "create",
+      "outcome": "success",
+      "roles": [
+        "dependency"
+      ],
+      "sequence": 4
+    },
+    {
+      "eventReference": "linear-event:46aa273e96eb1acd80f9c844b0abdcbc",
+      "operation": "read",
+      "outcome": "success",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 5
+    },
+    {
+      "eventReference": "linear-event:76e885021144514edb9ce09c0d57f129",
+      "operation": "read",
+      "outcome": "success",
+      "roles": [
+        "dependency"
+      ],
+      "sequence": 6
+    },
+    {
+      "eventReference": "linear-event:89eeb52ec9a91092380944bb00d86cb2",
+      "operation": "update",
+      "outcome": "success",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 7
+    },
+    {
+      "eventReference": "linear-event:7a5c0b32156587d41d512c580b4a245e",
+      "operation": "update",
+      "outcome": "success",
+      "roles": [
+        "dependency"
+      ],
+      "sequence": 8
+    },
+    {
+      "eventReference": "linear-event:1dbc31122a0cf0a7e50bbd6ea240921a",
+      "operation": "relations",
+      "outcome": "success",
+      "roles": [
+        "primary",
+        "dependency"
+      ],
+      "sequence": 9
+    },
+    {
+      "eventReference": "linear-event:68d5244ffb329efa5b02dc3a31cf936e",
+      "operation": "read",
+      "outcome": "relation-observed",
+      "roles": [
+        "primary",
+        "dependency"
+      ],
+      "sequence": 10
+    },
+    {
+      "eventReference": "linear-event:e725135e71d4a9fd9e07d4b5e3143551",
+      "operation": "reconciliation",
+      "outcome": "unique-match",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 11
+    },
+    {
+      "eventReference": "linear-event:ad780f05a7463687f2f0ce6052efbd22",
+      "operation": "update",
+      "outcome": "canceled",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 12
+    },
+    {
+      "eventReference": "linear-event:b3b5991dae9ce24ed1b127125da5ae2d",
+      "operation": "update",
+      "outcome": "canceled",
+      "roles": [
+        "dependency"
+      ],
+      "sequence": 13
+    },
+    {
+      "eventReference": "linear-event:79fbcc57b0806db5ea196d3005f2319b",
+      "operation": "read",
+      "outcome": "cleanup-confirmed",
+      "roles": [
+        "primary"
+      ],
+      "sequence": 14
+    },
+    {
+      "eventReference": "linear-event:8e83e9474fe979333fe731ec0e6ca20a",
+      "operation": "read",
+      "outcome": "cleanup-confirmed",
+      "roles": [
+        "dependency"
+      ],
+      "sequence": 15
+    }
+  ],
+  "receipt": {
+    "externalSystem": "linear",
+    "reference": "linear-receipt:57c2dad7233cd2a2d49141a17e3baadb"
+  },
+  "schemaVersion": "agent-skills-linear-host-attestation/2",
+  "sessionReference": "linear-session:ee18e83c3972727eb1dad092332a781e"
+}

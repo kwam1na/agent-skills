@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-29T01:28:25.020Z",
+  "branch": "codex/V26-1429-portable-kernel-canary",
+  "headSha": "bcdab8a823bdf19c3183a76acc80ef72c98fb5c3",
+  "deliverableDiffFingerprint": "ce62b4ce36f3849020a9467a88a262524456d9d9962cb4a766d1f6292d37c317",
+  "status": "pass",
+  "proofState": "proof_recorded",
+  "summary": {
+    "commandCount": 5,
+    "failedCommandCount": 0,
+    "duplicateCommandCount": 0,
+    "duplicatePackageSuiteCount": 0,
+    "providerSkippedCount": 0,
+    "gateDecisionCount": 2,
+    "totalDurationMs": 654840.603624
+  },
+  "reviewLoop": {
+    "providerId": "execute",
+    "runId": "v26-1429-final-20260829T012000Z",
+    "finalPassId": "pass-5",
+    "recordedAt": "2026-08-29T01:17:01.262Z",
+    "iterationCount": 5,
+    "findingCounts": {
+      "P0": 0,
+      "P1": 1,
+      "P2": 6,
+      "P3": 0
+    },
+    "deferredExpansionCount": 0,
+    "deferredIssueIds": []
+  }
+}

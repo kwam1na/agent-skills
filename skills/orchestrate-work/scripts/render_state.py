@@ -102,6 +102,7 @@ import tempfile
 import threading
 import time
 import unicodedata
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Callable
@@ -881,6 +882,14 @@ def _safe_output(value: object) -> bool:
     )
 
 
+def _view_name(requested: str) -> str | None:
+    """The output a ``/view/`` path names, each segment percent-decoded once, or None when a segment
+    decodes to a separator: an encoded ``/`` is part of no output's name. Only a configured output
+    is ever served, so anything else a path decodes to is refused when it is matched."""
+    names = [urllib.parse.unquote(segment) for segment in requested.split("/")]
+    return None if any("/" in name for name in names) else "/".join(names)
+
+
 def _view_target(directory: Path, output: str) -> Path:
     """Where a view may be written, or a refusal when a link would carry it
     out of the state directory or onto a file the state tool owns.
@@ -1274,7 +1283,8 @@ def render(directory: Path, config: object) -> tuple[int, dict]:
         if renderer["builtin"] is not None:
             outcome = _render_builtin(renderer["builtin"], document)
         else:
-            outcome = _execute(renderer["argv"], document, renderer["timeout"], needs_stdout=True)
+            argv = [part.replace("{stateDirectory}", str(directory.resolve())) for part in renderer["argv"]]
+            outcome = _execute(argv, document, renderer["timeout"], needs_stdout=True)
         error = outcome.error
         entry: dict = {"id": renderer["id"], "output": renderer["output"]}
         if outcome.truncated:
@@ -1503,7 +1513,12 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool]) -> type:
             elif path == "/events":
                 self._events()
             elif path.startswith("/view/"):
-                self._view(path[len("/view/"):])
+                # A browser encodes an output's name; only a configured output is ever matched.
+                name = _view_name(path[len("/view/"):])
+                if name is None:
+                    self._plain(404, b"not found\n")
+                else:
+                    self._view(name)
             else:
                 self._plain(404, b"not found\n")
 

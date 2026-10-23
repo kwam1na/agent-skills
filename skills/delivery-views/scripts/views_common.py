@@ -27,7 +27,7 @@ from pathlib import Path, PurePosixPath
 
 CONFIG_SPEC = "delivery-views-config/1"
 REPORT_SPEC = "review-round-report/1"
-RUNS_CACHE_SPEC = "delivery-views-runs/1"
+RUNS_CACHE_SPEC = "delivery-views-runs/2"
 DEFAULT_TITLE = "Delivery"
 # The icons the pages ship; a lens with no icon shows its initial.
 ICONS = frozenset({"bullseye", "spy", "shield", "bug", "gauge", "lock", "book"})
@@ -460,8 +460,11 @@ def _read_json(root: Path, given: str | None, option: str) -> dict:
     return value
 
 
-def load_inputs(config: str | None, binding: str | None, cwd: Path | None = None) -> Inputs:
-    """The validated configuration and the binding, both resolved against the repository top level."""
+def load_inputs(config: str | None, binding: str | None, cwd: Path | None = None,
+                state_dir: str | None = None) -> Inputs:
+    """The validated configuration and the binding, both resolved against the repository top level.
+
+    ``state_dir``, when given, is the record being drawn and wins over the binding's ``state.directory``."""
     root = repository_root(cwd)
     document = _read_json(root, config, "--config")
     bound = _read_json(root, binding, "--binding")
@@ -472,12 +475,14 @@ def load_inputs(config: str | None, binding: str | None, cwd: Path | None = None
         validated = validate_config(document)
     except ConfigError as error:
         raise ConfigError(f"--config {config}: {error}") from None
-    return Inputs(root, validated, bound, (root / directory).resolve())
+    return Inputs(root, validated, bound, (root / (state_dir or directory)).resolve())
 
 
 def add_input_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", help="the delivery-views configuration, relative to the repository top level")
     parser.add_argument("--binding", help="the orchestration binding, relative to the repository top level")
+    parser.add_argument("--state-dir", help="the state directory being drawn, relative to the repository top level unless absolute, "
+                             "over the binding's state.directory")
 
 
 # Cache and storage
@@ -640,7 +645,7 @@ def main(argv: list[str] | None = None) -> int:
     add_input_arguments(commands.add_parser("check", help="validate the configuration and binding"))
     args = parser.parse_args(argv)
     try:
-        inputs = load_inputs(args.config, args.binding)
+        inputs = load_inputs(args.config, args.binding, state_dir=args.state_dir)
     except ConfigError as error:
         print(f"delivery-views: {error}", file=sys.stderr)
         return 2

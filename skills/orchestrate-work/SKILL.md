@@ -304,7 +304,8 @@ python3 -B scripts/render_state.py live --dir <state directory> --binding .agent
   publisher: those run only when the lead renders.
 - It serves the built-in static page in its live mode, with a quiet live or
   disconnected indicator, and any HTML view whose head carries
-  `<meta name="delivery-state-live">`, at `/view/<output>`. The binding's
+  `<meta name="delivery-state-live">`, at `/view/<output>`, the output's
+  path segments percent-encoded as a browser sends them. The binding's
   `state.liveHome`, a renderer's id, makes that renderer's view the front
   page instead of the built-in page. A record caught half-written is never
   served: the last valid one stands until the next one reads cleanly.
@@ -336,7 +337,8 @@ run the sync loop in this order:
    - **Tracker, with a bound command.** When the binding declares
      `state.trackerSnapshot`, `{argv, timeoutSeconds?}`, run it through the
      state tool. The repository's command prints the snapshot for the record's
-     `meta.trackerParent`, which `{parent}` in its argv names. A command that
+     `meta.trackerParent`, which `{parent}` in its argv names; `{stateDirectory}`
+     names the resolved state directory, in a renderer's or `workHints` argv too. A command that
      fails, or prints anything but a fresh tracker snapshot, keeps the last
      snapshot and journals why once, and reconcile then refuses that snapshot
      once it is too old. The command runs in its own process group with a

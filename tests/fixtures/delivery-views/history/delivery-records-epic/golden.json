@@ -1,0 +1,329 @@
+{
+  "asOf": "2026-10-22T23:36:01.566268Z",
+  "now": "2026-10-22T23:36:01.566268Z",
+  "timeZone": "UTC",
+  "blocks": {
+    "delivery-history": {
+      "asOf": "2026-10-22T23:36:01.566268Z",
+      "rows": [
+        {
+          "key": "run-8cbfe446d9bbc79b",
+          "delivery": {
+            "headline": "Delivery records: state is the present, runs are the history (V26-2829)",
+            "parent": "V26-2829",
+            "subject": "V26-2827"
+          },
+          "source": "product",
+          "file": null,
+          "label": null,
+          "note": null,
+          "summary": {
+            "runId": "run-8cbfe446d9bbc79b",
+            "ticket": "V26-2827",
+            "open": false,
+            "status": "incomplete",
+            "startedAt": "2026-10-22T23:19:13Z",
+            "lastAt": "2026-10-22T23:34:22Z",
+            "durationSeconds": 909,
+            "rounds": 2,
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 1
+            },
+            "roundDetail": [
+              {
+                "round": 1,
+                "at": "2026-10-22T23:31:56Z",
+                "outcome": "approve",
+                "findings": {
+                  "P0": 0,
+                  "P1": 0,
+                  "P2": 0,
+                  "P3": 1
+                }
+              },
+              {
+                "round": 2,
+                "at": "2026-10-22T23:32:55Z",
+                "outcome": "approve",
+                "findings": {
+                  "P0": 0,
+                  "P1": 0,
+                  "P2": 0,
+                  "P3": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "run-04c54d3687d661b5",
+          "delivery": {
+            "headline": "Delivery records: state is the present, runs are the history (V26-2829)",
+            "parent": "V26-2829",
+            "subject": "V26-2832"
+          },
+          "source": "product",
+          "file": null,
+          "label": null,
+          "note": null,
+          "summary": {
+            "runId": "run-04c54d3687d661b5",
+            "ticket": "V26-2832",
+            "open": false,
+            "status": "incomplete",
+            "startedAt": "2026-10-22T23:17:31Z",
+            "lastAt": "2026-10-22T23:26:54Z",
+            "durationSeconds": 563,
+            "rounds": 2,
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 1
+            },
+            "roundDetail": [
+              {
+                "round": 1,
+                "at": "2026-10-22T23:22:30Z",
+                "outcome": "approve",
+                "findings": {
+                  "P0": 0,
+                  "P1": 0,
+                  "P2": 0,
+                  "P3": 1
+                }
+              },
+              {
+                "round": 2,
+                "at": "2026-10-22T23:23:33Z",
+                "outcome": "approve",
+                "findings": {
+                  "P0": 0,
+                  "P1": 0,
+                  "P2": 0,
+                  "P3": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "run-1a53c64ed093cc1a",
+          "delivery": {
+            "headline": "Delivery records: state is the present, runs are the history (V26-2829)",
+            "parent": "V26-2829",
+            "subject": "V26-2824"
+          },
+          "source": "product",
+          "file": null,
+          "label": null,
+          "note": null,
+          "summary": {
+            "runId": "run-1a53c64ed093cc1a",
+            "ticket": "V26-2824",
+            "open": false,
+            "status": "incomplete",
+            "startedAt": "2026-10-22T23:12:10Z",
+            "lastAt": "2026-10-22T23:18:28Z",
+            "durationSeconds": 378,
+            "rounds": 2,
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 2
+            },
+            "roundDetail": [
+              {
+                "round": 1,
+                "at": "2026-10-22T23:16:07Z",
+                "outcome": "approve",
+                "findings": {
+                  "P0": 0,
+                  "P1": 0,
+                  "P2": 0,
+                  "P3": 2
+                }
+              },
+              {
+                "round": 2,
+                "at": "2026-10-22T23:16:50Z",
+                "outcome": "approve",
+                "findings": {
+                  "P0": 0,
+                  "P1": 0,
+                  "P2": 0,
+                  "P3": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "run-75790b0ebc44cfe0",
+          "delivery": null,
+          "source": "export",
+          "file": "run-75790b0ebc44cfe0.json",
+          "label": null,
+          "note": null,
+          "summary": {
+            "runId": "run-75790b0ebc44cfe0",
+            "ticket": "V26-2120",
+            "open": true,
+            "status": "incomplete",
+            "startedAt": "2026-09-23T01:16:30Z",
+            "lastAt": "2026-09-23T01:51:03Z",
+            "durationSeconds": 2073,
+            "rounds": 1,
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 2,
+              "P3": 0
+            },
+            "roundDetail": [
+              {
+                "round": 1,
+                "at": "2026-09-23T01:23:05Z",
+                "outcome": "approve",
+                "findings": {
+                  "P0": 0,
+                  "P1": 0,
+                  "P2": 2,
+                  "P3": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "run-38d692406f9a48d3",
+          "delivery": null,
+          "source": "export",
+          "file": "run-38d692406f9a48d3.json",
+          "label": null,
+          "note": null,
+          "summary": {
+            "runId": "run-38d692406f9a48d3",
+            "ticket": "V26-2054",
+            "open": true,
+            "status": "incomplete",
+            "startedAt": "2026-09-11T18:44:18Z",
+            "lastAt": "2026-09-11T19:21:15Z",
+            "durationSeconds": 2217,
+            "rounds": 0,
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            },
+            "roundDetail": []
+          }
+        },
+        {
+          "key": "2026-09-02T00-27-43-827Z-claude-realign-mvp-finish-line.json",
+          "delivery": null,
+          "source": "telemetry",
+          "file": "2026-09-02T00-27-43-827Z-claude-realign-mvp-finish-line.json",
+          "label": "claude/realign-mvp-finish-line",
+          "note": null,
+          "summary": {
+            "runId": null,
+            "ticket": null,
+            "open": false,
+            "status": "pass",
+            "startedAt": null,
+            "lastAt": "2026-09-02T00:27:43.827Z",
+            "durationSeconds": null,
+            "rounds": 2,
+            "findings": {
+              "P0": 0,
+              "P1": 1,
+              "P2": 0,
+              "P3": 0
+            },
+            "roundDetail": []
+          }
+        },
+        {
+          "key": "2026-08-29T01-28-25-020Z-codex-v26-1429-portable-kernel-canary.json",
+          "delivery": null,
+          "source": "telemetry",
+          "file": "2026-08-29T01-28-25-020Z-codex-v26-1429-portable-kernel-canary.json",
+          "label": "codex/V26-1429-portable-kernel-canary",
+          "note": null,
+          "summary": {
+            "runId": null,
+            "ticket": "V26-1429",
+            "open": false,
+            "status": "pass",
+            "startedAt": null,
+            "lastAt": "2026-08-29T01:28:25.020Z",
+            "durationSeconds": null,
+            "rounds": 5,
+            "findings": {
+              "P0": 0,
+              "P1": 1,
+              "P2": 6,
+              "P3": 0
+            },
+            "roundDetail": []
+          }
+        }
+      ],
+      "notes": []
+    }
+  },
+  "initialText": "Delivery historyBack to the line mapPast deliveries and runs, newest first.Runs from the delivery product and the exports tracked under telemetry/delivery-runs, as of 2026-10-22 23:36 UTC. Reload for newer.TicketStateStartedLast seenDurationRoundsFindings P0/P1/P2/P3DeliveryV26-2827run-8cbfe446d9bbc79bState EndedStarted 2026-10-22 23:19Last seen 2026-10-22 23:34Duration 15mRounds 2Findings 0/0/0/1Delivery Delivery records: state is the present, runs are the history (V26-2829) · V26-2827V26-2832run-04c54d3687d661b5State EndedStarted 2026-10-22 23:17Last seen 2026-10-22 23:26Duration 9mRounds 2Findings 0/0/0/1Delivery Delivery records: state is the present, runs are the history (V26-2829) · V26-2832V26-2824run-1a53c64ed093cc1aState EndedStarted 2026-10-22 23:12Last seen 2026-10-22 23:18Duration 6mRounds 2Findings 0/0/0/2Delivery Delivery records: state is the present, runs are the history (V26-2829) · V26-2824V26-2120run-75790b0ebc44cfe0State OpenStarted 2026-09-23 01:16Last seen 2026-09-23 01:51Duration 34mRounds 1Findings 0/0/2/0Delivery —V26-2054run-38d692406f9a48d3State OpenStarted 2026-09-11 18:44Last seen 2026-09-11 19:21Duration 36mRounds 0Findings 0/0/0/0Delivery —claude/realign-mvp-finish-linetelemetry recordState EndedStarted —Last seen 2026-09-02 00:27Duration —Rounds 2Findings 0/1/0/0Delivery —V26-1429telemetry record · codex/V26-1429-portable-kernel-canaryState EndedStarted —Last seen 2026-08-29 01:28Duration —Rounds 5Findings 0/1/6/0Delivery —",
+  "lineMapHref": {
+    "file": [
+      "athena-live.html"
+    ],
+    "served": [
+      "/"
+    ]
+  },
+  "rows": [
+    "run-8cbfe446d9bbc79b",
+    "run-04c54d3687d661b5",
+    "run-1a53c64ed093cc1a",
+    "run-75790b0ebc44cfe0",
+    "run-38d692406f9a48d3",
+    "2026-09-02T00-27-43-827Z-claude-realign-mvp-finish-line.json",
+    "2026-08-29T01-28-25-020Z-codex-v26-1429-portable-kernel-canary.json"
+  ],
+  "details": {
+    "run-8cbfe446d9bbc79b": {
+      "detail": "Approved on round 2 · 1 minor note raised1111:31 pm21 min laterRound 2ApprovedNothing raisedRan 11:19 pm – 11:34 pm",
+      "closed": true
+    },
+    "run-04c54d3687d661b5": {
+      "detail": "Approved on round 2 · 1 minor note raised1111:22 pm21 min laterRound 2ApprovedNothing raisedRan 11:17 pm – 11:26 pm",
+      "closed": true
+    },
+    "run-1a53c64ed093cc1a": {
+      "detail": "Approved on round 2 · 2 minor notes raised1211:16 pm21 min laterRound 2ApprovedNothing raisedRan 11:12 pm – 11:18 pm",
+      "closed": true
+    },
+    "run-75790b0ebc44cfe0": {
+      "detail": "Approved on the first round · 2 moderate notes raised12Sep 23, 1:23 amRound 1Approved2 notes2 moderateRunning since Sep 23, 1:16 am",
+      "closed": true
+    },
+    "run-38d692406f9a48d3": {
+      "detail": "No review rounds yetRunning since Sep 11, 6:44 pm",
+      "closed": true
+    },
+    "2026-09-02T00-27-43-827Z-claude-realign-mvp-finish-line.json": {
+      "detail": "No review rounds yet",
+      "closed": true
+    },
+    "2026-08-29T01-28-25-020Z-codex-v26-1429-portable-kernel-canary.json": {
+      "detail": "No review rounds yet",
+      "closed": true
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-02T00:27:43.827Z",
+  "branch": "claude/realign-mvp-finish-line",
+  "headSha": "bc7d8a8c322d0f85857c136eb37eb145bc3fb6d9",
+  "deliverableDiffFingerprint": "5d0d9f843d7715202fc22ebe7984eb91b3d0bdbfd11982eaeff4686175bde524",
+  "status": "pass",
+  "proofState": "proof_recorded",
+  "summary": {
+    "commandCount": 5,
+    "failedCommandCount": 0,
+    "duplicateCommandCount": 0,
+    "duplicatePackageSuiteCount": 0,
+    "providerSkippedCount": 0,
+    "gateDecisionCount": 2,
+    "totalDurationMs": 1049060.154333
+  },
+  "reviewLoop": {
+    "providerId": "execute",
+    "runId": "v26-1531",
+    "finalPassId": "round-2",
+    "recordedAt": "2026-09-02T00:06:59.675Z",
+    "iterationCount": 2,
+    "findingCounts": {
+      "P0": 0,
+      "P1": 1,
+      "P2": 0,
+      "P3": 0
+    },
+    "deferredExpansionCount": 0,
+    "deferredIssueIds": []
+  }
+}
