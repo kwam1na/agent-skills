@@ -101,18 +101,41 @@ const VIEW_ADDRESS = "http://localhost/view/line-map.html";
  * "reject" | "manual" | <document>, subscribeThrows?, onStatusThrows? }); `server: { document }` stands in for
  * the live server's adapter; `rendered: <page>` serves the page at its /view/ address as the server's next
  * render. Steps: { push }, { status }, { resolve }, { event }, { dropped }, { hover }, { leave },
- * { click, index? } (focus, then click), { toggle } or { wait }. Each snapshot is { app, text, focused, source }.
+ * { click, index? } (focus, then click), { toggle } or { wait }. Each snapshot is { app, text, focused, source,
+ * titled }, titled counting the elements anywhere in the document that carry a title attribute.
+ *
+ * `motion: { reduced? }` stands in for what jsdom lacks to move things: elements get a height that grows with what
+ * they hold, `matchMedia` answers the reduced-motion query as `reduced` says, and each `animate` call is recorded, as
+ * { target, keyframes, options }, in the result's `animations`.
  */
 export async function openPage(page, scenario = {}) {
   const listeners = { push: [], status: [] };
   const stream = { document: [], error: [] };
   let answerRead = null;
+  const animations = [];
   const dom = new JSDOM(page, {
     ...(scenario.rendered ? { url: VIEW_ADDRESS } : {}),
     runScripts: "dangerously",
     beforeParse(window) {
       if (scenario.now) window.Date.now = () => Date.parse(scenario.now);
       window.setInterval = () => 0;
+      if (scenario.motion) {
+        const reduced = Boolean(scenario.motion.reduced);
+        window.matchMedia = (query) => ({ media: query, matches: query.includes("prefers-reduced-motion: reduce") && reduced,
+          addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
+        // A height that grows with what a reader would see: a closed <details> shows only its summary.
+        const shown = (node) => [...node.children].reduce((sum, child) => sum + 1 + (child.tagName === "DETAILS" && !child.open
+          ? [...child.children].filter((part) => part.tagName === "SUMMARY").reduce((inner, part) => inner + 1 + shown(part), 0)
+          : shown(child)), 0);
+        Object.defineProperty(window.HTMLElement.prototype, "offsetHeight", {
+          configurable: true, get() { return 10 + 10 * (this.tagName === "DETAILS" && !this.open
+            ? [...this.children].filter((part) => part.tagName === "SUMMARY").reduce((sum, part) => sum + 1 + shown(part), 0)
+            : shown(this)); } });
+        window.Element.prototype.animate = function (keyframes, options) {
+          animations.push({ target: this.id || this.className, keyframes, options });
+          return { cancel() {}, finish() {} };
+        };
+      }
       if (scenario.storage === false) {
         Object.defineProperty(window, "localStorage", { get() { throw new Error("storage blocked"); } });
       }
@@ -154,7 +177,8 @@ export async function openPage(page, scenario = {}) {
   };
   const snapshot = () => {
     const copy = new JSDOM(`<main>${app.innerHTML}</main>`).window.document.querySelector("main");
-    return { app: copy, text: copy.textContent ?? "", focused: focused(), source: app.getAttribute("data-source") };
+    return { app: copy, text: copy.textContent ?? "", focused: focused(), source: app.getAttribute("data-source"),
+      titled: document.querySelectorAll("[title]").length };
   };
   const snapshots = [snapshot()];
   for (const step of scenario.steps || []) {
@@ -172,7 +196,7 @@ export async function openPage(page, scenario = {}) {
   }
   const storedTheme = (() => { try { return { ...dom.window.localStorage }; } catch { return null; } })();
   dom.window.close();
-  return Object.assign(snapshots, { storage: storedTheme });
+  return Object.assign(snapshots, { storage: storedTheme, animations });
 }
 
 const TOOLS = path.join(ROOT, "tests", "delivery_views_page", "page_tools.py");
