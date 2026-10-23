@@ -102,6 +102,7 @@ import tempfile
 import threading
 import time
 import unicodedata
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Callable
@@ -881,6 +882,21 @@ def _safe_output(value: object) -> bool:
     )
 
 
+def _view_name(requested: str) -> str | None:
+    """The output a ``/view/`` path names: each segment percent-decoded once, or None when a segment
+    decodes to a separator, a ``.`` or ``..``, a NUL, invalid UTF-8, or more percent-encoding."""
+    names = []
+    for segment in requested.split("/"):
+        try:
+            name = urllib.parse.unquote(segment, errors="strict")
+        except UnicodeDecodeError:
+            return None
+        if name in (".", "..") or any(mark in name for mark in ("/", "\\", "\0")) or urllib.parse.unquote(name) != name:
+            return None
+        names.append(name)
+    return "/".join(names)
+
+
 def _view_target(directory: Path, output: str) -> Path:
     """Where a view may be written, or a refusal when a link would carry it
     out of the state directory or onto a file the state tool owns.
@@ -1504,7 +1520,12 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool]) -> type:
             elif path == "/events":
                 self._events()
             elif path.startswith("/view/"):
-                self._view(path[len("/view/"):])
+                # A browser encodes an output's name; only a configured output is ever matched.
+                name = _view_name(path[len("/view/"):])
+                if name is None:
+                    self._plain(404, b"not found\n")
+                else:
+                    self._view(name)
             else:
                 self._plain(404, b"not found\n")
 
