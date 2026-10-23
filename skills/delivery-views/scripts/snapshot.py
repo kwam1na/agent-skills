@@ -489,7 +489,15 @@ LINEAR_QUERY = f"""query Children($parent: String!, $after: String) {{
   }}
 }}"""
 # A follow-up often opens with where it came from; its summary says what the work is.
-PROVENANCE = re.compile(r"^(Deferred from|Proposed by|Filed by|These are the|Split out of|Moved from)\b")
+PROVENANCE = re.compile(r"^(Deferred from|Proposed by|Filed by|These are the|Split out of|Moved from)\b", re.ASCII)
+# JavaScript's whitespace, which its \s and trim() share: the summary is read as the
+# tracker command it ports read it, so Python's own whitespace set is not used.
+JS_SPACE = "\t\n\v\f\r    -     　﻿"
+JS_SPACE_CHARS = "\t\n\v\f\r   " + "".join(map(chr, range(0x2000, 0x200b))) \
+    + "    　﻿"
+# The longest paragraph the summary's patterns read: past it they would take far longer
+# than the deadline allows, and only the first SUMMARY_LIMIT characters are kept anyway.
+MAX_SUMMARY_SOURCE = 8 * SUMMARY_LIMIT
 
 
 def summary_of(description: object) -> str | None:
@@ -500,30 +508,31 @@ def summary_of(description: object) -> str | None:
     heading = -1
     for index, line in enumerate(lines):
         # A heading inside a fenced code block is code, not the ticket's heading.
-        if re.match(r"^\s*(```|~~~)", line):
+        if re.match(f"^[{JS_SPACE}]*(```|~~~)", line):
             fenced = not fenced
-        if not fenced and re.match(r"^##\s*Summary\s*$", line.strip(), re.IGNORECASE):
+        if not fenced and re.match(f"^##[{JS_SPACE}]*Summary[{JS_SPACE}]*$", line.strip(JS_SPACE_CHARS),
+                                   re.IGNORECASE | re.ASCII):
             heading = index
             break
     if heading < 0:
         return None
     paragraph: list[str] = []
     for line in lines[heading + 1:]:
-        if re.match(r"^#{1,6}\s", line.strip()):
+        if re.match(f"^#{{1,6}}[{JS_SPACE}]", line.strip(JS_SPACE_CHARS)):
             break
-        if not line.strip():
+        if not line.strip(JS_SPACE_CHARS):
             if paragraph:
                 break
             continue
         # A list item's marker is markup, not text.
-        paragraph.append(re.sub(r"^\s*(?:[-*+]|\d+[.)])\s+", "", line, count=1))
-    text = " ".join(paragraph)
+        paragraph.append(re.sub(f"^[{JS_SPACE}]*(?:[-*+]|[0-9]+[.)])[{JS_SPACE}]+", "", line, count=1))
+    text = " ".join(paragraph)[:MAX_SUMMARY_SOURCE]
     text = re.sub(r"</?[A-Za-z][^>]*>", "", text)
-    text = re.sub(r"!?\[((?:[^[\]]|\[[^\]]*\])+)\]\((?:[^()\s]|\([^()]*\))*\)", r"\1", text)
+    text = re.sub(f"!?\\[((?:[^[\\]]|\\[[^\\]]*\\])+)\\]\\((?:[^(){JS_SPACE}]|\\([^()]*\\))*\\)", r"\1", text)
     text = re.sub(r"`|\*\*|(?<!\w)_|_(?!\w)", "", text, flags=re.ASCII)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(f"[{JS_SPACE}]+", " ", text).strip(JS_SPACE_CHARS)
     while PROVENANCE.match(text):
-        following = re.search(r"\.\s+(?=[A-Z`])", text)
+        following = re.search(f"\\.[{JS_SPACE}]+(?=[A-Z`])", text)
         if not following:
             break
         text = text[following.end():]
@@ -533,7 +542,8 @@ def summary_of(description: object) -> str | None:
         return text
     head = text[:SUMMARY_LIMIT]
     cut = head.rfind(". ")
-    if cut > 80:
+    # The ported command measured the cut in UTF-16 units.
+    if cut >= 0 and len(head[:cut].encode("utf-16-le")) // 2 > 80:
         return head[:cut + 1]
     return text[:SUMMARY_LIMIT - 1] + "…"
 
@@ -564,6 +574,8 @@ def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
             nodes = children["nodes"]
             page = children["pageInfo"]
             for node in nodes:
+                if client.remaining() <= 0:
+                    raise Failure("the deadline passed before the snapshot was complete")
                 identifier = _text(node["identifier"], "a child's identifier")
                 # A child listed on two pages is kept once, as the tracker first listed it.
                 if identifier in seen:
@@ -575,8 +587,11 @@ def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
                                   f"{_shown(node['state']['type'])}")
                 blockers: list[str] = []
                 for relation in node["inverseRelations"]["nodes"]:
-                    blocker = (relation.get("issue") or {}).get("identifier")
-                    if relation.get("type") == "blocks" and isinstance(blocker, str) and blocker != identifier \
+                    if relation["issue"] is None:
+                        continue
+                    blocker = _text(relation["issue"]["identifier"], f"a blocker of {_shown(identifier)}")
+                    # A child blocked by the parent itself is no dependency the record can hold.
+                    if relation["type"] == "blocks" and blocker not in (identifier, args.parent) \
                             and blocker not in blockers:
                         blockers.append(blocker)
                 item = {"subject": identifier, "title": _text(node["title"], f"{_shown(identifier)}'s title")}
@@ -590,6 +605,8 @@ def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
                 _check_cap(len(items))
             has_next = page["hasNextPage"]
             after = page.get("endCursor")
+            if not isinstance(has_next, bool):
+                raise TypeError("hasNextPage")
         except (KeyError, TypeError, AttributeError):
             raise Failure("Linear's answer is not the shape of a children listing") from None
         if has_next is not True:
@@ -631,12 +648,14 @@ def github_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
     url: str | None = f"{GITHUB_API}/repos/{repository}/pulls?{query}"
     chosen: dict[str, tuple[dict, str, str]] = {}
     count = 0
+    read: set[str] = set()
     while url:
+        if url in read:
+            raise Failure("the pull request listing named a page it had already given")
+        read.add(url)
         page = client.get(url)
         if not isinstance(page, list):
             raise Failure("the pull request answer is not a list")
-        count += len(page)
-        _check_cap(count)
         reached_since = False
         for pull in page:
             if not isinstance(pull, dict):
@@ -646,6 +665,9 @@ def github_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
                 # Newest first: everything after this was made before the since time too.
                 reached_since = True
                 continue
+            # Only pull requests in the window count toward the cap.
+            count += 1
+            _check_cap(count)
             raw_state = pull.get("state")
             if raw_state == "open":
                 state = "draft" if pull.get("draft") is True else "open"
@@ -666,7 +688,10 @@ def github_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
                     chosen[subject] = (pull, state, when_moment)
         if reached_since:
             break
-        following = LINK_NEXT.search(client.last_headers.get("link") or "")
+        link = client.last_headers.get("link") or ""
+        following = LINK_NEXT.search(link)
+        if following is None and 'rel="next"' in link:
+            raise Failure("the pull request listing's next link could not be read")
         url = following.group(1) if following else None
     items = []
     for subject in sorted(chosen):

@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import urllib.parse
 from pathlib import Path
@@ -72,11 +73,13 @@ class Transport:
         self.script = list(script)
         self.requests: list[tuple[str, dict]] = []
         self.bodies: list[bytes | None] = []
+        self.methods: list[str] = []
         self.mismatches: list[str] = []
         self.clock = 0.0
 
     def __call__(self, method: str, url: str, headers: dict, timeout: float, sent: bytes | None = None):
         self.requests.append((url, dict(headers)))
+        self.methods.append(method)
         self.bodies.append(sent)
         if not self.script:
             self.mismatches.append(f"unscripted request {url}")
@@ -535,6 +538,8 @@ class LinearTests(SnapshotCase):
         self.assertEqual(variables, [{"parent": "ENG-100", "after": None}, {"parent": "ENG-100", "after": "cursor-1"}])
         self.assertTrue(all(headers["Authorization"] == LINEAR_ENV["LINEAR_API_KEY"]
                             for _, headers in transport.requests))
+        self.assertEqual(transport.methods, ["POST", "POST"])
+        self.assertTrue(all(headers["Content-Type"] == "application/json" for _, headers in transport.requests))
 
     def test_refusals(self) -> None:
         for label, script, needle in (
@@ -543,11 +548,56 @@ class LinearTests(SnapshotCase):
             ("refused query", [(GRAPHQL, 200, LINEAR["refused"])], "Entity not found"),
             ("no next page", [(GRAPHQL, 200, LINEAR["page-1"]), (GRAPHQL, 200, LINEAR["repeated-cursor"])], "next page"),
             ("not JSON", [(GRAPHQL, 200, b"<html>")], "JSON"),
+            ("next page as text", [(GRAPHQL, 200, self.changed(lambda info: info.update(hasNextPage="true")))], "shape"),
+            ("blocker without an identifier", [(GRAPHQL, 200, self.blocked_by({"identifier": 5}))], "blocker"),
         ):
             with self.subTest(label):
                 code, _, err = self.run_kind(LINEAR_ARGS, Transport(*script), LINEAR_ENV)
                 self.assertNotEqual(code, 0)
                 self.failed(err, needle)
+
+    def changed(self, edit) -> dict:
+        page = copy.deepcopy(LINEAR["page-1"])
+        edit(page["data"]["issue"]["children"]["pageInfo"])
+        return page
+
+    def blocked_by(self, issue: object) -> dict:
+        page = copy.deepcopy(LINEAR["unknown-state"])
+        node = page["data"]["issue"]["children"]["nodes"][0]
+        node["state"]["type"] = "started"
+        node["inverseRelations"]["nodes"] = [{"type": "blocks", "issue": issue}]
+        return page
+
+    def test_a_child_blocked_by_the_parent_keeps_no_such_blocker(self) -> None:
+        code, out, _ = self.run_kind(LINEAR_ARGS, Transport((GRAPHQL, 200, self.blocked_by({"identifier": "ENG-100"}))),
+                                     LINEAR_ENV)
+        self.assertEqual(code, 0)
+        self.assertNotIn("blockedBy", json.loads(out)["items"][0])
+        self.checked(out, parent="ENG-100")
+
+    def test_a_hostile_summary_stays_inside_the_deadline(self) -> None:
+        page = self.blocked_by({"identifier": "ENG-1"})
+        page["data"]["issue"]["children"]["nodes"][0]["description"] = "## Summary\n" + "[a[b]c" * 40000
+        started = time.monotonic()
+        code, _, _ = self.run_kind(LINEAR_ARGS, Transport((GRAPHQL, 200, page)), LINEAR_ENV)
+        self.assertEqual(code, 0)
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_summaries_read_text_as_the_ported_command_did(self) -> None:
+        cases = (
+            # JavaScript's \b is ASCII: the opener is still stripped before a letter it does not know.
+            ("## Summary\nDeferred from\u00e9 review. Real text.", "Real text."),
+            ("## Summary\n\u0661. item", "\u0661. item"),
+            ("## Summary\n\ufeffword\ufeff", "word"),
+            ("## \u017fummary\nNot a heading.", None),
+            ("## Summary\n\x1cword", "\x1cword"),
+        )
+        for description, expected in cases:
+            with self.subTest(description=description):
+                self.assertEqual(snapshot.summary_of(description), expected)
+        # The sentence cut is measured in UTF-16 units: 60 emoji are 120 of them.
+        long = "\U0001F600" * 60 + ". " + "y" * 1100
+        self.assertEqual(snapshot.summary_of("## Summary\n" + long), "\U0001F600" * 60 + ".")
 
     def test_a_reflected_key_is_redacted_in_any_form(self) -> None:
         reflected = {"errors": [{"message": f"bad key {LINEAR_ENV['LINEAR_API_KEY']} or lin_api_someotherkey9"}]}
@@ -592,7 +642,7 @@ class GithubTests(SnapshotCase):
         code, out, _ = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
         self.assertEqual(code, 0)
         document = self.checked(out)
-        # The captured command lists its items in the tracker's order; the port in the record's.
+        # The captured command lists its items in the tracker's order; the port sorts them by subject.
         by_subject = lambda items: sorted(items, key=lambda item: item["subject"])  # noqa: E731
         self.assertEqual({**document, "items": by_subject(document["items"])},
                          {**CAPTURED["forge"], "items": by_subject(CAPTURED["forge"]["items"])})
@@ -601,6 +651,9 @@ class GithubTests(SnapshotCase):
         # The second page reaches a pull request made before the since time, so the third is never read.
         self.assertEqual(len(transport.requests), 2)
         self.assertTrue(all(headers["Authorization"] == f"Bearer {TOKEN}" for _, headers in transport.requests))
+        self.assertTrue(all(headers["Accept"] == "application/vnd.github+json"
+                            and headers["X-GitHub-Api-Version"] == "2022-11-28" for _, headers in transport.requests))
+        self.assertEqual(transport.methods, ["GET", "GET"])
 
     def test_since_includes_an_older_pull_request(self) -> None:
         transport = Transport((PULLS, 200, GITHUB["page-1"], {"Link": f'<{PULLS}page=2>; rel="next"'}),
@@ -611,6 +664,39 @@ class GithubTests(SnapshotCase):
         items = {item["subject"]: item for item in json.loads(out)["items"]}
         # An open request made before the epic now wins for its subject.
         self.assertEqual(items["ENG-101"]["changeRequest"], "https://github.com/example-org/example-repo/pull/10")
+
+    def test_the_cap_counts_only_pull_requests_in_the_window(self) -> None:
+        recent = [{**GITHUB["page-1"][0], "number": index, "title": f"[ENG-{index}]: x"} for index in range(450)]
+        older = [{**pull, "number": 1000 + index, "created_at": "2026-10-01T00:00:00Z"}
+                 for index, pull in enumerate(recent[:100])]
+        code, _, _ = self.run_kind(self.args(), Transport((PULLS, 200, recent + older)), self.environ, cwd=self.root)
+        self.assertEqual(code, 0)
+
+    def test_paging_refusals(self) -> None:
+        for label, link in (("unreadable next link", f'<{PULLS}page=2>; type="x"; rel="next"'),
+                            ("a page that names itself", f'<{PULLS}state=all&sort=created&direction=desc&per_page=100>; rel="next"')):
+            with self.subTest(label):
+                transport = Transport((PULLS, 200, GITHUB["page-1"][:1], {"Link": link}),
+                                      (PULLS, 200, GITHUB["page-1"][:1], {"Link": link}))
+                code, _, err = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
+                self.assertNotEqual(code, 0)
+                self.assertLessEqual(len(transport.requests), 1)
+
+    def test_a_link_off_the_host_and_the_merge_time_tie_break(self) -> None:
+        merged_later = {**GITHUB["page-1"][-1], "number": 41, "title": "[ENG-106]: merged later",
+                        "created_at": "2026-10-20T20:00:00Z", "merged_at": "2026-10-21T09:00:00Z",
+                        "closed_at": "2026-10-21T09:00:00Z", "state": "closed",
+                        "html_url": "https://evil.example/example-org/example-repo/pull/41"}
+        merged_first = {**merged_later, "number": 40, "title": "[ENG-106]: merged first",
+                        "created_at": "2026-10-20T21:00:00Z", "merged_at": "2026-10-21T08:00:00Z",
+                        "closed_at": "2026-10-21T08:00:00Z", "html_url": "https://github.com/example-org/example-repo/pull/40"}
+        code, out, _ = self.run_kind(self.args(), Transport((PULLS, 200, [merged_first, merged_later])), self.environ,
+                                     cwd=self.root)
+        self.assertEqual(code, 0)
+        item = json.loads(out)["items"][0]
+        # The later merge wins although it was created earlier, and its link off github.com is dropped.
+        self.assertEqual(item["title"], "[ENG-106]: merged later")
+        self.assertNotIn("changeRequest", item)
 
     def test_refusals(self) -> None:
         unknown = copy.deepcopy(GITHUB["page-1"])

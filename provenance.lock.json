@@ -161,11 +161,11 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "3f3d91ce15209ac3d45d5d0f5eceaba6748d41d9938c4ae6055b510048610c7e"
+          "sha256": "dccfeccf4185830a6b2e338faa1c5f4a4d4b67a90aa5c6b8b5a30ab2c21634fd"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
-          "sha256": "a4b0c7802d0b70f1a72e286dcbc4a93e9a49c15ec49d9bf79e1ea5e0c214f0c6"
+          "sha256": "03f128ce63ad5cce2029ffa45ab16e0da0fa4fbe1ee050b2d82a7430f439a717"
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",

@@ -143,7 +143,7 @@ twice is kept once. State types map `triage`, `backlog` and `unstarted` to
 `backlog`, and `started`, `completed` and `canceled` to themselves. The
 summary is the first paragraph under the description's `## Summary` heading,
 as plain text, at most 1000 characters, and `blockedBy` holds the issues
-related to it as blockers. Any `lin_api_` key in a refusal is redacted.
+related to it as blockers, other than the parent. Any `lin_api_` key in a refusal is redacted.
 
 **GitHub** (forge): `--kind github --owner <owner> --repo <repository>
 --binding .agents/orchestration.json --subject-pattern "<regex>" --token-env
@@ -157,7 +157,8 @@ one wins, else the latest merged, else the latest closed, by when it merged
 or closed. An open pull request is `open` (`draft` when marked draft), a
 closed one `merged` when it merged and `closed` otherwise. `changeRequest` is
 its page, kept only on `--host`; `head` is its head commit, left out when it
-is not a full hash.
+is not a full hash. A pull request created before the since time, for a
+ticket moved into the epic later, needs `--since`.
 
 ## Round reports: `review-round-report/1`
 
