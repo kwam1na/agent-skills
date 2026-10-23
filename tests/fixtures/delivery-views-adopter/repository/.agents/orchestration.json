@@ -1,0 +1,126 @@
+{
+  "schemaVersion": "orchestration-binding/1",
+  "base": {
+    "remote": "origin",
+    "ref": "main"
+  },
+  "workRoot": ".orchestration-work",
+  "candidate": [
+    "npm",
+    "run",
+    "--silent",
+    "delivery:candidate",
+    "--",
+    "{candidate}"
+  ],
+  "prepare": [
+    [
+      "npm",
+      "ci"
+    ]
+  ],
+  "hooks": "bypass",
+  "regenerable": {
+    "paths": [],
+    "regenerators": []
+  },
+  "postSync": [],
+  "leadInputs": [],
+  "profiles": {},
+  "provider": null,
+  "alwaysRun": [],
+  "fallback": [
+    {
+      "id": "test",
+      "argv": [
+        "npm",
+        "test"
+      ],
+      "cwd": ".",
+      "reasons": [
+        "every candidate runs the whole suite"
+      ],
+      "prerequisites": []
+    }
+  ],
+  "checkTimeoutSeconds": 600,
+  "checkTimeoutCeiling": 1200,
+  "environment": {},
+  "ready": [
+    "npm",
+    "run",
+    "--silent",
+    "delivery:ready",
+    "--",
+    "{candidate}",
+    "{expectedHead}"
+  ],
+  "merge": [
+    "npm",
+    "run",
+    "--silent",
+    "delivery:merge",
+    "--",
+    "{branch}",
+    "{expectedHead}"
+  ],
+  "release": [],
+  "fullHealth": [
+    "npm",
+    "test"
+  ],
+  "leases": [],
+  "state": {
+    "directory": "delivery",
+    "renderers": [],
+    "publishers": [],
+    "trackerSnapshot": {
+      "argv": [
+        "python3",
+        "-B",
+        ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
+        "--kind",
+        "jira",
+        "--site",
+        "https://eshyft.atlassian.net",
+        "--parent",
+        "{parent}",
+        "--user-env",
+        "JIRA_EMAIL",
+        "--token-env",
+        "JIRA_API_TOKEN",
+        "--canceled-statuses",
+        "Won't Do,Duplicate",
+        "--timeout-seconds",
+        "25"
+      ],
+      "timeoutSeconds": 30
+    },
+    "forgeSnapshot": {
+      "argv": [
+        "python3",
+        "-B",
+        ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
+        "--kind",
+        "bitbucket",
+        "--workspace",
+        "eshyft",
+        "--repo",
+        "eshyftnew",
+        "--binding",
+        ".agents/orchestration.json",
+        "--subject-pattern",
+        "(SHFT|EDD)-[0-9]+",
+        "--token-env",
+        "BITBUCKET_TOKEN",
+        "--user-env",
+        "BITBUCKET_EMAIL",
+        "--since",
+        "2026-10-19T00:00:00Z",
+        "--timeout-seconds",
+        "25"
+      ],
+      "timeoutSeconds": 30
+    }
+  }
+}

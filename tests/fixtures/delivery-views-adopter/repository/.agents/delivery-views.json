@@ -1,0 +1,23 @@
+{
+  "spec": "delivery-views-config/1",
+  "title": "Shift planner delivery",
+  "tracker": {
+    "name": "Jira",
+    "issueUrl": "https://eshyft.atlassian.net/browse/{key}",
+    "keyPattern": "^(SHFT|EDD)-[0-9]+$"
+  },
+  "forges": [
+    {
+      "name": "Bitbucket",
+      "repository": "eshyft/eshyftnew",
+      "pullUrl": "https://bitbucket.org/{repository}/pull-requests/{number}",
+      "commitUrl": "https://bitbucket.org/{repository}/commits/{sha}"
+    }
+  ],
+  "scrubEnv": [
+    "JIRA_API_TOKEN",
+    "JIRA_EMAIL",
+    "BITBUCKET_TOKEN",
+    "BITBUCKET_EMAIL"
+  ]
+}
