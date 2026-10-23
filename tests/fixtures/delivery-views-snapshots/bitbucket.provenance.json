@@ -1,0 +1,7 @@
+{
+  "endpoint": "GET /2.0/repositories/{workspace}/{repo_slug}/pullrequests and GET /2.0/repositories/{workspace}/{repo_slug}/commit/{commit} (Bitbucket Cloud REST API 2.0)",
+  "apiVersion": "2.0",
+  "captureDate": "2026-10-22",
+  "capture": "Constructed from the documented paginated pull request and commit response shapes, with next links, 12-character source commit hashes and the draft flag; not captured from a live workspace, since no delivery lane holds a provider token.",
+  "redactions": "None needed: the workspace, repository, pull requests and hashes are invented."
+}

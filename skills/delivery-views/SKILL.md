@@ -88,6 +88,54 @@ unwritable one only costs a re-read. A page keeps its theme under
 `delivery-views:<first 16 hex of the SHA-256 of the resolved state
 directory>:theme`, so two repositories served from one address never share it.
 
+## Snapshot commands
+
+`scripts/snapshot.py --kind <kind>` prints one `work-snapshot/1` for the
+binding's `trackerSnapshot` or `forgeSnapshot`, exits 0, and prints nothing
+else; on failure stdout is empty, the exit code is non-zero and stderr holds
+one line naming the cause. Every kind takes `--timeout-seconds`, one deadline
+for the whole run (25 when absent; set it below the binding's
+`timeoutSeconds`), and `--now`, the snapshot's time, for tests.
+
+- Credentials come only from the environment variables `--token-env` and
+  `--user-env` name; a missing one fails naming it. Requests carry them only
+  to the provider's own origin, and a redirect or next page on another origin
+  is refused. No token, nor its encoded form, is ever printed.
+- Paging runs until done; reaching 500 items fails. HTTP 429 and 5xx are
+  retried at most twice, honouring `Retry-After` within the deadline; 401 and
+  403 fail at once.
+- A field the mapping needs that is missing or unrecognised fails the
+  snapshot; nothing is defaulted.
+
+**Jira Cloud** (tracker): `--kind jira --site https://<site>.atlassian.net
+--parent {parent} --user-env JIRA_EMAIL --token-env JIRA_API_TOKEN
+[--canceled-statuses "Won't Do,Duplicate"] [--blocks-link Blocks]`. The
+parent's children come from the enhanced JQL search, paged by
+`nextPageToken`, with Basic email and API token. A status listed as canceled
+is `canceled`; otherwise its category maps `new` to `backlog`,
+`indeterminate` to `started` and `done` to `completed`. The issue's summary
+is the title, its description flattened to plain text of at most 1000
+characters is the summary, and `blockedBy` holds the other children linked
+inward by the blocks link type.
+
+**Bitbucket Cloud** (forge): `--kind bitbucket --workspace <workspace>
+--repo <repository> --binding .agents/orchestration.json --subject-pattern
+"<regex>" --token-env BITBUCKET_TOKEN [--user-env BITBUCKET_EMAIL]
+[--since <ISO time>] [--host bitbucket.org]`. With `--user-env` it uses
+Basic (an API token with its email), without it Bearer (a workspace or
+repository access token). Pull requests in any state created on or after the
+since time (`--since`, else the record's first journal entry) are matched to
+a subject the record holds by the pattern on the title, then on the source
+branch. For a subject with several, the most recently updated open one wins,
+else the most recently updated merged one, else the most recently updated.
+`OPEN` is `open` (`draft` when marked draft), `MERGED` is `merged`, and
+`DECLINED` and `SUPERSEDED` are `closed`. `changeRequest` is the pull
+request's page, kept only on `--host`; `head` is the source commit resolved
+to its full hash, left out when it cannot be resolved. A pull request created
+before the since time, for a ticket moved into the epic later, needs
+`--since`. Keep `--subject-pattern` simple: it runs against every pull
+request's title and branch.
+
 ## Round reports: `review-round-report/1`
 
 A round's findings record, one canonical JSON document per closed round:
