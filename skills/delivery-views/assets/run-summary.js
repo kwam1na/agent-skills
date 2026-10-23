@@ -391,14 +391,26 @@ function runSummaryNode(summary, options) {
       var settled = Array.isArray(round.settled) ? round.settled : [];
       if (settled.length) { box.appendChild(settledNode(settled)); }
       var closures = settled.filter(function (entry) { return summary.observational && typeof entry.resolution === "string"; });
-      if (closures.length) {
-        var disclosure = node("details", "run-closures");
-        disclosure.appendChild(node("summary", "", "Closure details · " + closures.length));
-        closures.forEach(function (entry) {
-          disclosure.appendChild(node("p", "run-closure", entry.id + " · " + lensName(entry.lens) + ": " + entry.resolution));
+      var closureLenses = [];
+      closures.forEach(function (entry) { if (closureLenses.indexOf(entry.lens) < 0) { closureLenses.push(entry.lens); } });
+      closureLenses.sort().forEach(function (lens) {
+        var group = node("div", "run-reviewer run-closure-reviewer");
+        group.appendChild(reviewerHead("run-reviewer-head", lens, verdictOf(verdicts, lens), outcome));
+        var list = node("ul", "run-findings");
+        closures.filter(function (entry) { return entry.lens === lens; }).forEach(function (entry) {
+          var item = node("li", "");
+          var disclosure = node("details", "run-closures");
+          var preview = node("summary", "run-finding");
+          preview.appendChild(node("span", "run-finding-text", entry.resolution));
+          preview.appendChild(node("span", "run-fate", entry.state === "fixed" ? "fixed" : entry.state === "dropped" ? "withdrawn" : entry.state));
+          disclosure.appendChild(preview);
+          disclosure.appendChild(node("p", "run-closure", entry.id + " · " + entry.resolution));
+          item.appendChild(disclosure);
+          list.appendChild(item);
         });
-        box.appendChild(disclosure);
-      }
+        group.appendChild(list);
+        box.appendChild(group);
+      });
       return box;
     }
     var names = Object.keys(verdicts).sort();

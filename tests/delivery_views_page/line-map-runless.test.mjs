@@ -17,7 +17,7 @@ test('closure explanations start collapsed and expand without hiding the settlem
     {toggle:'.run-closures'}, {click:'.run-pick',index:0}, {click:'.run-pick',index:1}
   ]});
   expect(closed.app.querySelector('.run-closures').hasAttribute('open')).toBe(false);
-  expect(closed.app.querySelector('.run-closures > summary').textContent).toContain('Closure details');
+  expect(closed.app.querySelector('.run-closures > summary').textContent).toContain('Original reviewer confirmed');
   expect(closed.app.querySelector('.run-settled').closest('details')).toBeNull();
   expect(opened.app.querySelector('.run-closures').hasAttribute('open')).toBe(true);
   expect(opened.app.querySelector('.run-closure').textContent).toContain('Original reviewer confirmed <b>the fix</b>.');
