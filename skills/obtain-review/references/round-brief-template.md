@@ -41,8 +41,13 @@ State exactly one kind and its scope:
 - `assessment round`: this lens's first result-carrying round; review the whole
   subject and carry no prior entries or candidate resolution pairs. The whole
   subject is the delivered diff for delivery review or the plan for plan review.
-- `verification round`: re-check every carried finding and then review the delta
-  derived from this lens's most recent result-carrying entry and this round.
+- `verification round`: re-check every carried finding and its approval condition
+  against the delta this lens derives, then review that delta, derived from this
+  lens's most recent result-carrying entry and this round. A change adopted as
+  its approval condition proposed is verified against that delta; a change
+  adopted differently from its approval condition, or declined, is re-checked
+  like any carried finding. The approval conditions add to the carried-finding
+  re-check and the late-finding marking; they replace neither.
 
 A reopened round keeps its original kind and scope. A grace round is a
 verification round.
@@ -111,9 +116,9 @@ optional `lateFindings`.
 - `outcome`: `aligned` or `changes-requested`. Only `changes-requested` carries
   nonempty findings; both carry evidence.
 - `findings`: only P0 and P1 findings inside the round's scope are actionable.
-  In a verification round a new finding outside the delta is filed only at P0,
-  and a P1 first filed outside the delta is recorded as a deferral with a
-  follow-up item rather than as a finding.
+  In a verification round, for delivery review, a new finding outside the delta
+  is filed only at P0, and a P1 becomes a deferral with a follow-up item; for
+  plan review (`unbounded`), it is filed at P0 or P1, with no deferral.
 - `evidence`: the reviewed tree SHA and the successful start and end identity
   checks; the re-check of every carried finding of this lens, deferrals
   included, each reported closed, open, raised with its new severity, withdrawn
@@ -121,7 +126,11 @@ optional `lateFindings`.
   its follow-up item must say, that item's outcome, the deferral's identifier,
   and this lens; and the model class the lens ran under. When this lens was
   realized by the host convention, also record the realization basis
-  `host-convention`; otherwise record the harness-supplied basis.
+  `host-convention`; otherwise record the harness-supplied basis; and, at the
+  end, the approval conditions: for each finding this result raises, deferrals
+  included, whether the change that finding proposes, adopted as written,
+  resolves it. Approval conditions are report text inside `evidence`; the result
+  shape does not change, and nothing enforces them.
 - `lateFindings`: each names one of this same result's own `findings` that the
   lens raised late. A lens carries none on its assessment round. A late finding
   the out-of-delta rule keeps out of `findings` is marked late in the deferral

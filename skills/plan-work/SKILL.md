@@ -69,6 +69,14 @@ finding it could already state spends a round the plan did not need. Each
 plan-review lens carries this mandate in its own round brief, so a lens holding
 only its brief can act on it.
 
+Every plan-review lens ends its result's `evidence` with approval conditions:
+for each finding, whether the change it proposes, adopted as written, resolves
+it. A follow-up round re-checks each carried finding and its approval condition
+against the delta it derives itself, and a change adopted differently or
+declined is re-checked like any carried finding. In a follow-up round, a new
+finding against unchanged plan text is raised only at P0 or P1, because a plan
+has no deferral path.
+
 ## Plan Extension Pins and Shared Resources
 
 For each unit that extends a registry, enum, or counted collection, search the

@@ -276,11 +276,11 @@
       "outputs": [
         {
           "path": "skills/obtain-review/SKILL.md",
-          "sha256": "d719e8dee9a959b5f941268d8a809dd4bf611277f42a2b97f7054ae5fe97fe6e"
+          "sha256": "adcb997a474c7494e3aca6707fff555b27d06f8a1eb743eac7148ba3191ce27b"
         },
         {
           "path": "skills/obtain-review/references/round-brief-template.md",
-          "sha256": "5323b73e9f7173ab20d005beddcb29a33d99d2c2a9288b196afaa17ef93488eb"
+          "sha256": "7484eec9e58a6b4888b8dfc89d80bb226ab09b5e31923f3a6e87aeec0e493d34"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -804,7 +804,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "101838d8b559f8cfb530784b4deecd8b5e870b1f93ac1cc99b819bc5325b7f67"
+          "sha256": "a79106e5155acb9fce2c0d12171b1caa4c1750a4c7d700defc2550c71f5c60f7"
         }
       ],
       "owner": "agent-skills-corpus",

@@ -188,7 +188,19 @@ finding of its own, deferrals included, and report each one closed, open, raised
 with its new severity, withdrawn with its reason, or still deferred, and only
 then to review the delta between the previous round's candidate and this one. A
 new finding outside the delta is filed only at P0; a P1 first filed outside the
-delta is recorded as a deferral with a follow-up item.
+delta is recorded as a deferral with a follow-up item. That out-of-delta rule is
+delivery review's; plan review, the `unbounded` case, has no deferral path and
+files such a finding at P0 or P1.
+
+Every lens result ends its `evidence` with approval conditions: for each finding
+it raises, deferrals included, whether the change that finding proposes, adopted
+as written, resolves it. Approval conditions are report text inside `evidence`;
+`review-lens-result/1` does not change, and nothing enforces them. A
+verification round re-checks each carried finding and its approval condition
+against the delta the lens derives itself; a change adopted differently from its
+approval condition, or declined, is re-checked like any carried finding. The
+approval conditions add to the carried-finding re-check and the late-finding
+marking; they replace neither.
 
 Only P0 and P1 findings inside the round's scope are actionable. Deferrable
 findings, P2 and P3 under the charter's severity vocabulary and a P1 first filed
