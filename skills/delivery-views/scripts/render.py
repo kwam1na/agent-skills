@@ -37,6 +37,7 @@ import binascii
 import copy
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import math
 import re
@@ -50,6 +51,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import views_common  # noqa: E402
 from views_common import ConfigError, RunUnavailable  # noqa: E402
+
+# Delivery views ship over core, which owns the native observation grammar.
+_state_spec = importlib.util.spec_from_file_location(
+    "delivery_review_state", Path(__file__).resolve().parents[2] / "orchestrate-work" / "scripts" / "delivery_state.py")
+review_state = importlib.util.module_from_spec(_state_spec)
+_state_spec.loader.exec_module(review_state)
 
 
 SCRIPT = "render.py"
@@ -496,6 +503,23 @@ def native_review_summaries(document: dict) -> dict:
         if not isinstance(observation, dict) or observation.get("unavailable"):
             summaries[subject] = {"unavailable": True}
             continue
+        try:
+            if not isinstance(observation.get("digest"), str) or not re.fullmatch(r"[0-9a-f]{64}", observation["digest"]):
+                raise ValueError("invalid review digest")
+            review_state.validate_review_outcomes(observation.get("outcomes"), subject, observation.get("candidateRef"))
+            if len(embed(observation).encode("utf-8")) > review_state.REVIEW_ARTIFACT_LIMIT:
+                raise ValueError("oversized review observation")
+            events = [entry for entry in document.get("journal", []) if entry.get("subject") == subject
+                      and entry.get("kind") in ("review.round", "review.evidence")]
+            evidence = next((entry for entry in reversed(events) if entry["kind"] == "review.evidence"), None)
+            boundary = max((entry.get("id", 0) for entry in events), default=0)
+            if evidence is not None and (evidence.get("reviewArtifact") != {
+                    "digest": observation["digest"], "candidateRef": observation["candidateRef"]}
+                    or evidence.get("id", 0) != boundary):
+                raise ValueError("review observation is stale")
+        except (review_state.StateError, ValueError, TypeError, UnicodeError, RecursionError):
+            summaries[subject] = {"unavailable": True}
+            continue
         rounds, states = [], {}
         for outcome in observation.get("outcomes", []):
             raised, settled, verdicts = [], [], {}
@@ -531,9 +555,11 @@ def native_review_summaries(document: dict) -> dict:
             for raised in row["raised"]:
                 raised["state"] = states[raised["id"]]
         summaries[subject] = {"observationKey": subject + ":" + observation["digest"],
+                              "digest": observation["digest"],
+                              "journalId": boundary,
                               "candidateRef": observation["candidateRef"], "roundDetail": rounds,
                               "observational": True, "open": False}
-    return within_budget(summaries, list(summaries))
+    return summaries
 
 
 def collect_runs(document: object, config: dict, root: Path, cache_path: Path, deadline: float) -> dict:
@@ -617,8 +643,9 @@ def within_budget(runs: dict, named: list[str], budget: int = PAGE_BUDGET_BYTES)
             break
         if run_id in runs and not runs[run_id].get("unavailable"):
             # Each run is measured once; swapping it for its unavailability changes the page by the difference.
-            size -= len(embed(runs[run_id]).encode("utf-8")) - len(embed(_unavailable(run_id)).encode("utf-8"))
-            runs[run_id] = _unavailable(run_id)
+            unavailable = _unavailable(runs[run_id]["runId"]) if runs[run_id].get("runId") else {"unavailable": True}
+            size -= len(embed(runs[run_id]).encode("utf-8")) - len(embed(unavailable).encode("utf-8"))
+            runs[run_id] = unavailable
     for slot in _texts_order(texts, named):
         run_id, index, lens, part = slot
         if runs.get(run_id, {}).get("unavailable"):
@@ -906,6 +933,19 @@ def render_history(history: dict, config: dict, *, line_map: str | None) -> str:
 
 def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None) -> str:
     reviews = native_review_summaries(document)
+    # One review payload budget, in stop order, regardless of its backing store.
+    combined = {**{"run:" + key: value for key, value in runs.items()},
+                **{"native:" + key: value for key, value in reviews.items()}}
+    ordered = []
+    state = document.get("state", {})
+    for item in [*state.get("queue", []), *state.get("planned", [])]:
+        key = "run:" + item["runId"] if item.get("runId") else "native:" + item.get("subject", "")
+        if key in combined and key not in ordered:
+            ordered.append(key)
+    ordered.extend(key for key in combined if key not in ordered)
+    bounded = within_budget(combined, ordered, PAGE_BUDGET_BYTES - 2)
+    runs = {key: bounded["run:" + key] for key in runs}
+    reviews = {key: bounded["native:" + key] for key in reviews}
     document = {key: value for key, value in document.items() if key != "reviewEvidence"}
     view = {
         "title": config["title"],
@@ -975,7 +1015,7 @@ def line_map(arguments: argparse.Namespace) -> int:
     seconds = _runs_deadline(inputs.binding, "line-map", arguments.deadline_seconds)
     runs = collect_runs(document, inputs.config, inputs.root, views_common.runs_cache_path(inputs.state_directory),
                         time.monotonic() + seconds)
-    page = render_line_map(document, within_budget(runs, named_runs(document)), inputs.config,
+    page = render_line_map(document, runs, inputs.config,
                            theme_key=views_common.theme_key(inputs.state_directory),
                            history=_renderer_output(inputs.binding, "history"))
     sys.stdout.write(page)

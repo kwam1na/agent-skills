@@ -1002,8 +1002,15 @@
   function runFor(doc, item) {
     if (typeof item.runId !== "string" || item.runId === "") {
       var native = Object.prototype.hasOwnProperty.call(nativeReviews, item.subject) ? nativeReviews[item.subject] : null;
-      if (!native && !journalFor(doc, item.subject, { "review.round": true, "review.evidence": true }).length) { return null; }
-      if (!isObject(native) || native.unavailable === true || native.candidateRef !== (item.syncedHead || item.head)) {
+      var events = journalFor(doc, item.subject, { "review.round": true, "review.evidence": true });
+      var boundary = events.reduce(function (last, event) { return Math.max(last, event.id || 0); }, 0);
+      var evidence = events.filter(function (event) { return event.kind === "review.evidence"; }).slice(-1)[0];
+      var observation = isObject(doc.reviewEvidence) ? doc.reviewEvidence[item.subject] : undefined;
+      if (!native && !events.length) { return null; }
+      if (!isObject(native) || native.unavailable === true || native.candidateRef !== (item.syncedHead || item.head)
+          || native.journalId !== boundary
+          || (evidence && (!isObject(evidence.reviewArtifact) || evidence.reviewArtifact.digest !== native.digest))
+          || (isObject(doc.reviewEvidence) && (!isObject(observation) || observation.unavailable === true || observation.digest !== native.digest))) {
         return el("div", "d-run-none", "Review evidence unavailable or stale for this candidate.");
       }
       var nativeBox = el("div", "d-run");
