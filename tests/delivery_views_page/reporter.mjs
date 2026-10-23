@@ -10,6 +10,7 @@ export default async function* reporter(source) {
       name: data.name,
       nesting: data.nesting,
       suite: data.details?.type === "suite",
+      skipped: data.skip !== undefined || data.todo !== undefined,
       error: error ? String(error.cause ?? error.message ?? error) : null,
     })}\n`;
   }

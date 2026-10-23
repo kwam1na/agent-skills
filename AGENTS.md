@@ -83,6 +83,7 @@ It is development-only: bootstrap needs Node.js 20 or newer with npm and runs
 `npm ci --ignore-scripts` against the committed `package-lock.json`, installing
 into the checkout's own `node_modules/`. No release archive carries the lane's
 package files.
+
 On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
 
 A corpus pin asserts that its phrase is present in the whitespace-normalized

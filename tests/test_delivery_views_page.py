@@ -42,6 +42,7 @@ def run_lane(node: str, files: list[Path]) -> str | None:
             "--test",
             f"--test-reporter={REPORTER.as_uri()}",
             "--test-reporter-destination=stdout",
+            "--test-timeout=60000",
             *(str(path) for path in files),
         ],
         cwd=ROOT,
@@ -63,6 +64,9 @@ def run_lane(node: str, files: list[Path]) -> str | None:
             if event["outcome"] == "fail" and not event["suite"]
         ]
         return "The page tests failed:\n" + "\n".join(failed or [result.stderr.strip()])
+    skipped = [event["name"] for event in events if event["skipped"]]
+    if skipped:
+        return "Page tests were skipped or marked todo: " + ", ".join(skipped)
     # Node reports each file as a top-level entry of its own; only the tests
     # declared inside a file count as executed tests.
     executed = [
@@ -119,12 +123,10 @@ class PageLaneFailureTests(unittest.TestCase):
 
     def test_missing_node_fails_with_one_setup_message(self) -> None:
         environment = os.environ.copy()
-        environment["PATH"] = str(Path(sys.executable).parent)
         with tempfile.TemporaryDirectory() as temporary:
-            # An empty directory on PATH hides every Node installation.
-            environment["PATH"] = os.pathsep.join((temporary, environment["PATH"]))
-            if shutil.which("node", path=environment["PATH"]) is not None:
-                self.skipTest("Node shares the interpreter's directory")
+            # An empty PATH hides every Node installation; the interpreter
+            # starts by its absolute path.
+            environment["PATH"] = temporary
             result = subprocess.run(
                 [
                     sys.executable,
@@ -178,6 +180,20 @@ class PageLaneFailureTests(unittest.TestCase):
             failure = run_lane(find_node(), [listed])
         self.assertIsNotNone(failure)
         self.assertIn("ran but unlisted ['unlisted.test.mjs']", failure)
+
+    def test_skipped_and_todo_tests_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            deferred = self.write(
+                Path(temporary),
+                "deferred.test.mjs",
+                'import { test } from "node:test";\n'
+                'test.skip("skipped page check", () => {});\n'
+                'test.todo("todo page check", () => { throw new Error("broken todo"); });\n',
+            )
+            failure = run_lane(find_node(), [deferred])
+        self.assertEqual(
+            failure, "Page tests were skipped or marked todo: skipped page check, todo page check"
+        )
 
     def test_failing_page_test_fails_the_lane(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
