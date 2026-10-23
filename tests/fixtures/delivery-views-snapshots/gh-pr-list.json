@@ -1,0 +1,79 @@
+[
+  {
+    "number": 11,
+    "title": "[ENG-101]: rails",
+    "state": "MERGED",
+    "isDraft": false,
+    "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "url": "https://github.com/example-org/example-repo/pull/11",
+    "updatedAt": "2026-10-21T13:00:00Z",
+    "mergedAt": "2026-10-21T10:00:00Z",
+    "closedAt": "2026-10-21T10:00:00Z"
+  },
+  {
+    "number": 12,
+    "title": "[ENG-101]: redo",
+    "state": "MERGED",
+    "isDraft": false,
+    "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "url": "https://github.com/example-org/example-repo/pull/12",
+    "updatedAt": "2026-10-21T12:30:00Z",
+    "mergedAt": "2026-10-21T12:00:00Z",
+    "closedAt": "2026-10-21T12:00:00Z"
+  },
+  {
+    "number": 13,
+    "title": "[ENG-102, ENG-103]: shared",
+    "state": "OPEN",
+    "isDraft": true,
+    "headRefOid": "cccccccccccccccccccccccccccccccccccccccc",
+    "url": "https://github.com/example-org/example-repo/pull/13",
+    "updatedAt": "2026-10-21T14:00:00Z",
+    "mergedAt": null,
+    "closedAt": null
+  },
+  {
+    "number": 14,
+    "title": "[ENG-103]: closed attempt",
+    "state": "CLOSED",
+    "isDraft": false,
+    "headRefOid": "dddddddddddddddddddddddddddddddddddddddd",
+    "url": "https://github.com/example-org/example-repo/pull/14",
+    "updatedAt": "2026-10-21T15:00:00Z",
+    "mergedAt": null,
+    "closedAt": "2026-10-21T15:00:00Z"
+  },
+  {
+    "number": 15,
+    "title": "ENG-104 without brackets",
+    "state": "OPEN",
+    "isDraft": false,
+    "headRefOid": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "url": "https://github.com/example-org/example-repo/pull/15",
+    "updatedAt": "2026-10-21T15:00:00Z",
+    "mergedAt": null,
+    "closedAt": null
+  },
+  {
+    "number": 16,
+    "title": "[ENG-105]: deleted fork",
+    "state": "CLOSED",
+    "isDraft": false,
+    "headRefOid": "",
+    "url": "https://github.com/example-org/example-repo/pull/16",
+    "updatedAt": "2026-10-21T16:00:00Z",
+    "mergedAt": null,
+    "closedAt": "2026-10-21T16:00:00Z"
+  },
+  {
+    "number": 17,
+    "title": "[ENG-999]: not in the epic",
+    "state": "OPEN",
+    "isDraft": false,
+    "headRefOid": "ffffffffffffffffffffffffffffffffffffffff",
+    "url": "https://github.com/example-org/example-repo/pull/17",
+    "updatedAt": "2026-10-21T16:00:00Z",
+    "mergedAt": null,
+    "closedAt": null
+  }
+]

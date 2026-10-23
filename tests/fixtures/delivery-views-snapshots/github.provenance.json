@@ -1,0 +1,7 @@
+{
+  "endpoint": "GET https://api.github.com/repos/{owner}/{repo}/pulls?state=all&sort=created&direction=desc&per_page=100 (GitHub REST API), paged by the Link header",
+  "apiVersion": "2022-11-28",
+  "captureDate": "2026-10-22",
+  "capture": "Constructed in the documented pull request list shape; the same pull requests appear in gh-pr-list.json in the form the existing forge snapshot command reads through gh. Not captured from a live repository, since no delivery lane holds a provider token.",
+  "redactions": "None needed: the organisation, repository, pull requests and hashes are invented."
+}

@@ -41,6 +41,10 @@ snapshot = _load("snapshot", SCRIPTS / "snapshot.py")
 delivery_state = _load("delivery_state", PRODUCT_ROOT / "skills/orchestrate-work/scripts/delivery_state.py")
 
 JIRA = json.loads((FIXTURES / "jira.json").read_text(encoding="utf-8"))
+LINEAR = json.loads((FIXTURES / "linear.json").read_text(encoding="utf-8"))
+GITHUB = json.loads((FIXTURES / "github.json").read_text(encoding="utf-8"))
+# What the existing TypeScript commands printed for the same issues and pull requests.
+CAPTURED = json.loads((FIXTURES / "athena-snapshots.json").read_text(encoding="utf-8"))
 BITBUCKET = json.loads((FIXTURES / "bitbucket.json").read_text(encoding="utf-8"))
 NOW = "2026-10-22T12:00:00Z"
 EMAIL = "lead@example.com"
@@ -67,11 +71,13 @@ class Transport:
     def __init__(self, *script: tuple) -> None:
         self.script = list(script)
         self.requests: list[tuple[str, dict]] = []
+        self.bodies: list[bytes | None] = []
         self.mismatches: list[str] = []
         self.clock = 0.0
 
-    def __call__(self, method: str, url: str, headers: dict, timeout: float):
+    def __call__(self, method: str, url: str, headers: dict, timeout: float, sent: bytes | None = None):
         self.requests.append((url, dict(headers)))
+        self.bodies.append(sent)
         if not self.script:
             self.mismatches.append(f"unscripted request {url}")
             raise OSError("connection refused")
@@ -510,6 +516,173 @@ class BitbucketTests(SnapshotCase):
         code, out, _ = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
         self.assertEqual(code, 0)
         self.assertNotIn("head", json.loads(out)["items"][0])
+
+
+GRAPHQL = "https://api.linear.app/graphql"
+LINEAR_ENV = {"LINEAR_API_KEY": "lin_api_" + TOKEN.replace("-", "")}
+LINEAR_ARGS = ["--kind", "linear", "--parent", "ENG-100", "--token-env", "LINEAR_API_KEY", "--now", NOW]
+PULLS = "https://api.github.com/repos/example-org/example-repo/pulls?"
+
+
+class LinearTests(SnapshotCase):
+    def test_the_tracker_snapshot_equals_the_captured_command_output(self) -> None:
+        transport = Transport((GRAPHQL, 200, LINEAR["page-1"]), (GRAPHQL, 200, LINEAR["page-2"]))
+        code, out, _ = self.run_kind(LINEAR_ARGS, transport, LINEAR_ENV)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), CAPTURED["tracker"])
+        self.checked(out, parent="ENG-100")
+        variables = [json.loads(body)["variables"] for body in transport.bodies]
+        self.assertEqual(variables, [{"parent": "ENG-100", "after": None}, {"parent": "ENG-100", "after": "cursor-1"}])
+        self.assertTrue(all(headers["Authorization"] == LINEAR_ENV["LINEAR_API_KEY"]
+                            for _, headers in transport.requests))
+
+    def test_refusals(self) -> None:
+        for label, script, needle in (
+            ("unknown state", [(GRAPHQL, 200, LINEAR["unknown-state"])], "limbo"),
+            ("no issue", [(GRAPHQL, 200, LINEAR["no-issue"])], "ENG-100"),
+            ("refused query", [(GRAPHQL, 200, LINEAR["refused"])], "Entity not found"),
+            ("no next page", [(GRAPHQL, 200, LINEAR["page-1"]), (GRAPHQL, 200, LINEAR["repeated-cursor"])], "next page"),
+            ("not JSON", [(GRAPHQL, 200, b"<html>")], "JSON"),
+        ):
+            with self.subTest(label):
+                code, _, err = self.run_kind(LINEAR_ARGS, Transport(*script), LINEAR_ENV)
+                self.assertNotEqual(code, 0)
+                self.failed(err, needle)
+
+    def test_a_reflected_key_is_redacted_in_any_form(self) -> None:
+        reflected = {"errors": [{"message": f"bad key {LINEAR_ENV['LINEAR_API_KEY']} or lin_api_someotherkey9"}]}
+        code, _, err = self.run_kind(LINEAR_ARGS, Transport((GRAPHQL, 200, reflected)), LINEAR_ENV)
+        self.assertNotEqual(code, 0)
+        self.assertNotIn("lin_api_", err)
+        self.assertIn("[redacted]", err)
+
+
+class GithubTests(SnapshotCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name) / "repo"
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        (self.root / ".agents").mkdir()
+        (self.root / ".agents/orchestration.json").write_text(json.dumps(
+            {"state": {"directory": "delivery", "renderers": [], "publishers": []}}), encoding="utf-8")
+        state = self.root / "delivery"
+        state.mkdir()
+        (state / "state.json").write_text(json.dumps({
+            "queue": [{"subject": "ENG-101"}, {"subject": "ENG-102"}],
+            "planned": [{"subject": "ENG-103"}],
+            "tickets": {"ENG-104": {}, "ENG-105": {}, "ENG-106": {}},
+            "followups": [],
+        }), encoding="utf-8")
+        (state / "journal.jsonl").write_text(json.dumps({"at": "2026-10-20T08:00:00Z", "id": 1}) + "\n",
+                                             encoding="utf-8")
+        self.environ = {"GITHUB_TOKEN": TOKEN}
+
+    def args(self, *extra: str) -> list[str]:
+        return ["--kind", "github", "--owner", "example-org", "--repo", "example-repo", "--binding",
+                ".agents/orchestration.json", "--subject-pattern", "^ENG-[0-9]+$", "--token-env", "GITHUB_TOKEN",
+                "--now", NOW, *extra]
+
+    def pages(self) -> Transport:
+        return Transport((PULLS, 200, GITHUB["page-1"], {"Link": f'<{PULLS}page=2>; rel="next", <{PULLS}page=2>; rel="last"'}),
+                         (PULLS + "page=2", 200, GITHUB["page-2"], {"Link": f'<{PULLS}page=3>; rel="next"'}))
+
+    def test_the_forge_snapshot_equals_the_captured_command_output(self) -> None:
+        transport = self.pages()
+        code, out, _ = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
+        self.assertEqual(code, 0)
+        document = self.checked(out)
+        # The captured command lists its items in the tracker's order; the port in the record's.
+        by_subject = lambda items: sorted(items, key=lambda item: item["subject"])  # noqa: E731
+        self.assertEqual({**document, "items": by_subject(document["items"])},
+                         {**CAPTURED["forge"], "items": by_subject(CAPTURED["forge"]["items"])})
+        listing = urllib.parse.parse_qs(urllib.parse.urlsplit(transport.requests[0][0]).query)
+        self.assertEqual(listing, {"state": ["all"], "sort": ["created"], "direction": ["desc"], "per_page": ["100"]})
+        # The second page reaches a pull request made before the since time, so the third is never read.
+        self.assertEqual(len(transport.requests), 2)
+        self.assertTrue(all(headers["Authorization"] == f"Bearer {TOKEN}" for _, headers in transport.requests))
+
+    def test_since_includes_an_older_pull_request(self) -> None:
+        transport = Transport((PULLS, 200, GITHUB["page-1"], {"Link": f'<{PULLS}page=2>; rel="next"'}),
+                              (PULLS + "page=2", 200, GITHUB["page-2"]))
+        code, out, _ = self.run_kind(self.args("--since", "2026-10-19T00:00:00Z"), transport, self.environ,
+                                     cwd=self.root)
+        self.assertEqual(code, 0)
+        items = {item["subject"]: item for item in json.loads(out)["items"]}
+        # An open request made before the epic now wins for its subject.
+        self.assertEqual(items["ENG-101"]["changeRequest"], "https://github.com/example-org/example-repo/pull/10")
+
+    def test_refusals(self) -> None:
+        unknown = copy.deepcopy(GITHUB["page-1"])
+        unknown[0]["state"] = "limbo"
+        foreign = {"Link": '<https://evil.example/repos/example-org/example-repo/pulls?page=2>; rel="next"'}
+        for label, script, needle in (
+            ("unknown state", [(PULLS, 200, unknown)], "limbo"),
+            ("not a list", [(PULLS, 200, {"message": "x"})], "list"),
+            ("next page on another origin", [(PULLS, 200, GITHUB["page-1"], foreign)], "origin"),
+        ):
+            with self.subTest(label):
+                code, _, err = self.run_kind(self.args(), Transport(*script), self.environ, cwd=self.root)
+                self.assertNotEqual(code, 0)
+                self.failed(err, needle)
+
+
+class SharedRuleTests(SnapshotCase):
+    """The failure, bounds and credential rules, for each kind added after the first two."""
+
+    def kinds(self):
+        github = GithubTests("test_refusals")
+        github.setUp()
+        self.addCleanup(github.temporary.cleanup)
+        return (("linear", LINEAR_ARGS, GRAPHQL, LINEAR_ENV, None),
+                ("github", github.args(), PULLS, github.environ, github.root))
+
+    def test_shared_failures(self) -> None:
+        for kind, argv, url, environ, cwd in self.kinds():
+            for label, script, needle in (
+                ("unauthorized", [(url, 401, b"{}")], "401"),
+                ("server errors", [(url, 503, b"")] * 3, "503"),
+                ("malformed JSON", [(url, 200, b"{")], "JSON"),
+                ("cross-origin redirect", [(url, 302, b"", {"Location": "https://evil.example/x"})], "redirect"),
+                ("unexpected", [(url, 200, RuntimeError(f"boom {TOKEN}"))], "unexpected"),
+            ):
+                with self.subTest(kind=kind, case=label):
+                    code, _, err = self.run_kind(argv, Transport(*script), environ, cwd=cwd)
+                    self.assertNotEqual(code, 0)
+                    self.failed(err, needle)
+            with self.subTest(kind=kind, case="rate limited then success"):
+                first = LINEAR["page-1"] if kind == "linear" else GITHUB["page-1"]
+                second = LINEAR["page-2"] if kind == "linear" else GITHUB["page-2"]
+                script = [(url, 429, b"", {"Retry-After": "1"}), (url, 200, first,
+                          {} if kind == "linear" else {"Link": f'<{PULLS}page=2>; rel="next"'}), (url, 200, second)]
+                code, _, _ = self.run_kind(argv, Transport(*script), environ, cwd=cwd)
+                self.assertEqual(code, 0)
+            with self.subTest(kind=kind, case="missing variable"):
+                code, _, err = self.run_kind(argv, Transport(), {}, cwd=cwd)
+                self.assertNotEqual(code, 0)
+                self.failed(err, next(iter(environ)))
+            with self.subTest(kind=kind, case="deadline"):
+                code, _, err = self.run_kind([*argv, "--timeout-seconds", "5"], Transport((url, 200, b"{}", {}, 30)),
+                                             environ, cwd=cwd)
+                self.assertNotEqual(code, 0)
+                self.failed(err, "deadline")
+
+    def test_the_item_cap(self) -> None:
+        node = LINEAR["page-2"]["data"]["issue"]["children"]["nodes"][1]
+        nodes = [{**node, "identifier": f"ENG-{index}"} for index in range(1000, 1500)]
+        page = {"data": {"issue": {"createdAt": "2026-10-20T08:00:00.000Z",
+                                   "children": {"nodes": nodes, "pageInfo": {"hasNextPage": False}}}}}
+        code, _, err = self.run_kind(LINEAR_ARGS, Transport((GRAPHQL, 200, page)), LINEAR_ENV)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "500")
+        pull = GITHUB["page-1"][0]
+        pulls = [{**pull, "number": index} for index in range(500)]
+        github = GithubTests("test_refusals")
+        github.setUp()
+        self.addCleanup(github.temporary.cleanup)
+        code, _, err = self.run_kind(github.args(), Transport((PULLS, 200, pulls)), github.environ, cwd=github.root)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "500")
 
 
 if __name__ == "__main__":

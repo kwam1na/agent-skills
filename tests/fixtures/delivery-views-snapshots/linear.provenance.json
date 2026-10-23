@@ -1,0 +1,7 @@
+{
+  "endpoint": "POST https://api.linear.app/graphql, the children query of the tracker snapshot command",
+  "apiVersion": "Linear GraphQL API (unversioned)",
+  "captureDate": "2026-10-22",
+  "capture": "Constructed in the GraphQL response shape the existing tracker snapshot command reads (children nodes with state type and inverse relations, paged by pageInfo); not captured from a live workspace, since no delivery lane holds a provider token. The same responses were fed to that command to record athena-snapshots.json.",
+  "redactions": "None needed: the issues, identifiers and texts are invented."
+}

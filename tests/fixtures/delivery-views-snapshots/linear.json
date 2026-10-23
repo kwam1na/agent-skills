@@ -1,0 +1,204 @@
+{
+  "page-1": {
+    "data": {
+      "issue": {
+        "createdAt": "2026-10-20T08:00:00.000Z",
+        "children": {
+          "nodes": [
+            {
+              "identifier": "ENG-101",
+              "createdAt": "2026-10-20T09:00:00.000Z",
+              "title": "Rails for the views",
+              "description": "## Summary\n\nShared **config** and [link building](https://example.org/doc) helpers, with `code`, <b>markup</b> and _emphasis_.\n\n## Scope\n\nNot this.",
+              "state": {
+                "type": "unstarted"
+              },
+              "inverseRelations": {
+                "nodes": []
+              }
+            },
+            {
+              "identifier": "ENG-102",
+              "createdAt": "2026-10-20T09:10:00.000Z",
+              "title": "Line map renderer",
+              "description": "```\n## Summary\nnot the heading\n```\n\n## Summary\n- Deferred from ENG-90 review. Port the renderer to Python.\n- Keep the design.\n\nMore text.",
+              "state": {
+                "type": "started"
+              },
+              "inverseRelations": {
+                "nodes": [
+                  {
+                    "type": "blocks",
+                    "issue": {
+                      "identifier": "ENG-101"
+                    }
+                  },
+                  {
+                    "type": "related",
+                    "issue": {
+                      "identifier": "ENG-103"
+                    }
+                  },
+                  {
+                    "type": "blocks",
+                    "issue": {
+                      "identifier": "ENG-102"
+                    }
+                  },
+                  {
+                    "type": "blocks",
+                    "issue": {
+                      "identifier": "ENG-101"
+                    }
+                  },
+                  {
+                    "type": "blocks",
+                    "issue": {
+                      "identifier": "OTHER-5"
+                    }
+                  },
+                  {
+                    "type": "blocks",
+                    "issue": null
+                  }
+                ]
+              }
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": true,
+            "endCursor": "cursor-1"
+          }
+        }
+      }
+    }
+  },
+  "page-2": {
+    "data": {
+      "issue": {
+        "createdAt": "2026-10-20T08:00:00.000Z",
+        "children": {
+          "nodes": [
+            {
+              "identifier": "ENG-103",
+              "createdAt": "2026-10-20T09:20:00.000Z",
+              "title": "Snapshot adapters",
+              "description": "## Summary\nSentence number 0 explains one more part of the adapter work. Sentence number 1 explains one more part of the adapter work. Sentence number 2 explains one more part of the adapter work. Sentence number 3 explains one more part of the adapter work. Sentence number 4 explains one more part of the adapter work. Sentence number 5 explains one more part of the adapter work. Sentence number 6 explains one more part of the adapter work. Sentence number 7 explains one more part of the adapter work. Sentence number 8 explains one more part of the adapter work. Sentence number 9 explains one more part of the adapter work. Sentence number 10 explains one more part of the adapter work. Sentence number 11 explains one more part of the adapter work. Sentence number 12 explains one more part of the adapter work. Sentence number 13 explains one more part of the adapter work. Sentence number 14 explains one more part of the adapter work. Sentence number 15 explains one more part of the adapter work. Sentence number 16 explains one more part of the adapter work. Sentence number 17 explains one more part of the adapter work. Sentence number 18 explains one more part of the adapter work. Sentence number 19 explains one more part of the adapter work. Sentence number 20 explains one more part of the adapter work. Sentence number 21 explains one more part of the adapter work. Sentence number 22 explains one more part of the adapter work. Sentence number 23 explains one more part of the adapter work. Sentence number 24 explains one more part of the adapter work. Sentence number 25 explains one more part of the adapter work. Sentence number 26 explains one more part of the adapter work. Sentence number 27 explains one more part of the adapter work. Sentence number 28 explains one more part of the adapter work. Sentence number 29 explains one more part of the adapter work. Sentence number 30 explains one more part of the adapter work. Sentence number 31 explains one more part of the adapter work. Sentence number 32 explains one more part of the adapter work. Sentence number 33 explains one more part of the adapter work. Sentence number 34 explains one more part of the adapter work. Sentence number 35 explains one more part of the adapter work. Sentence number 36 explains one more part of the adapter work. Sentence number 37 explains one more part of the adapter work. Sentence number 38 explains one more part of the adapter work. Sentence number 39 explains one more part of the adapter work.",
+              "state": {
+                "type": "completed"
+              },
+              "inverseRelations": {
+                "nodes": []
+              }
+            },
+            {
+              "identifier": "ENG-104",
+              "createdAt": "2026-10-20T09:30:00.000Z",
+              "title": "Dropped idea",
+              "description": null,
+              "state": {
+                "type": "canceled"
+              },
+              "inverseRelations": {
+                "nodes": []
+              }
+            },
+            {
+              "identifier": "ENG-105",
+              "createdAt": "2026-10-20T09:40:00.000Z",
+              "title": "Triage item",
+              "description": "No summary heading here.",
+              "state": {
+                "type": "triage"
+              },
+              "inverseRelations": {
+                "nodes": []
+              }
+            },
+            {
+              "identifier": "ENG-106",
+              "createdAt": "2026-10-20T09:50:00.000Z",
+              "title": "Unbroken text",
+              "description": "## Summary\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "state": {
+                "type": "backlog"
+              },
+              "inverseRelations": {
+                "nodes": []
+              }
+            },
+            {
+              "identifier": "ENG-101",
+              "createdAt": "2026-10-20T09:00:00.000Z",
+              "title": "Rails for the views",
+              "description": "## Summary\n\nListed again on the next page.",
+              "state": {
+                "type": "unstarted"
+              },
+              "inverseRelations": {
+                "nodes": []
+              }
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": "cursor-2"
+          }
+        }
+      }
+    }
+  },
+  "unknown-state": {
+    "data": {
+      "issue": {
+        "createdAt": "2026-10-20T08:00:00.000Z",
+        "children": {
+          "nodes": [
+            {
+              "identifier": "ENG-107",
+              "createdAt": "2026-10-20T09:00:00.000Z",
+              "title": "Odd",
+              "description": "## Summary\nOdd.",
+              "state": {
+                "type": "limbo"
+              },
+              "inverseRelations": {
+                "nodes": []
+              }
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          }
+        }
+      }
+    }
+  },
+  "no-issue": {
+    "data": {
+      "issue": null
+    }
+  },
+  "refused": {
+    "errors": [
+      {
+        "message": "Entity not found: Issue"
+      }
+    ]
+  },
+  "repeated-cursor": {
+    "data": {
+      "issue": {
+        "createdAt": "2026-10-20T08:00:00.000Z",
+        "children": {
+          "nodes": [],
+          "pageInfo": {
+            "hasNextPage": true,
+            "endCursor": "cursor-1"
+          }
+        }
+      }
+    }
+  }
+}

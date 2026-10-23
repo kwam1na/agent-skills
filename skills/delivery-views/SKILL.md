@@ -90,7 +90,7 @@ directory>:theme`, so two repositories served from one address never share it.
 
 ## Snapshot commands
 
-`scripts/snapshot.py --kind <kind>` prints one `work-snapshot/1` for the
+`scripts/snapshot.py --kind jira|bitbucket|linear|github` prints one `work-snapshot/1` for the
 binding's `trackerSnapshot` or `forgeSnapshot`, exits 0, and prints nothing
 else; on failure stdout is empty, the exit code is non-zero and stderr holds
 one line naming the cause. Every kind takes `--timeout-seconds`, one deadline
@@ -135,6 +135,29 @@ to its full hash, left out when it cannot be resolved. A pull request created
 before the since time, for a ticket moved into the epic later, needs
 `--since`. Keep `--subject-pattern` simple: it runs against every pull
 request's title and branch.
+
+**Linear** (tracker): `--kind linear --parent {parent} --token-env
+LINEAR_API_KEY`. The parent's children come from Linear's GraphQL API, paged
+by cursor, with the personal key as the Authorization header; a child listed
+twice is kept once. State types map `triage`, `backlog` and `unstarted` to
+`backlog`, and `started`, `completed` and `canceled` to themselves. The
+summary is the first paragraph under the description's `## Summary` heading,
+as plain text, at most 1000 characters, and `blockedBy` holds the issues
+related to it as blockers. Any `lin_api_` key in a refusal is redacted.
+
+**GitHub** (forge): `--kind github --owner <owner> --repo <repository>
+--binding .agents/orchestration.json --subject-pattern "<regex>" --token-env
+GITHUB_TOKEN [--since <ISO time>] [--host github.com]`. Pull requests come
+from the REST API, newest first, paged by the `Link` header, with a Bearer
+token, until one was created before the since time (`--since`, else the
+record's first journal entry). A pull request counts for each subject its
+title names in opening brackets, as `[A-1]: ...` or `[A-1, A-2]: ...`, that
+the record holds and the pattern matches. For a subject with several, an open
+one wins, else the latest merged, else the latest closed, by when it merged
+or closed. An open pull request is `open` (`draft` when marked draft), a
+closed one `merged` when it merged and `closed` otherwise. `changeRequest` is
+its page, kept only on `--host`; `head` is its head commit, left out when it
+is not a full hash.
 
 ## Round reports: `review-round-report/1`
 

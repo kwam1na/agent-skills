@@ -1,0 +1,7 @@
+{
+  "endpoint": "gh pr list --state all --json number,title,state,isDraft,headRefOid,url,updatedAt,mergedAt,closedAt",
+  "apiVersion": "gh's JSON fields for pull requests",
+  "captureDate": "2026-10-22",
+  "capture": "Constructed in the shape the existing forge snapshot command reads from gh; the same pull requests appear in github.json in the REST API's form. Not captured from a live repository.",
+  "redactions": "None needed: the pull requests and hashes are invented."
+}

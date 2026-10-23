@@ -1,0 +1,94 @@
+{
+  "tracker": {
+    "takenAt": "2026-10-22T12:00:00Z",
+    "source": "tracker",
+    "items": [
+      {
+        "subject": "ENG-101",
+        "title": "Rails for the views",
+        "summary": "Shared config and link building helpers, with code, markup and emphasis.",
+        "state": "backlog"
+      },
+      {
+        "subject": "ENG-102",
+        "title": "Line map renderer",
+        "summary": "Port the renderer to Python. Keep the design.",
+        "state": "started",
+        "blockedBy": [
+          "ENG-101",
+          "OTHER-5"
+        ]
+      },
+      {
+        "subject": "ENG-103",
+        "title": "Snapshot adapters",
+        "summary": "Sentence number 0 explains one more part of the adapter work. Sentence number 1 explains one more part of the adapter work. Sentence number 2 explains one more part of the adapter work. Sentence number 3 explains one more part of the adapter work. Sentence number 4 explains one more part of the adapter work. Sentence number 5 explains one more part of the adapter work. Sentence number 6 explains one more part of the adapter work. Sentence number 7 explains one more part of the adapter work. Sentence number 8 explains one more part of the adapter work. Sentence number 9 explains one more part of the adapter work. Sentence number 10 explains one more part of the adapter work. Sentence number 11 explains one more part of the adapter work. Sentence number 12 explains one more part of the adapter work. Sentence number 13 explains one more part of the adapter work. Sentence number 14 explains one more part of the adapter work. Sentence number 15 explains one more part of the adapter work.",
+        "state": "completed"
+      },
+      {
+        "subject": "ENG-104",
+        "title": "Dropped idea",
+        "state": "canceled"
+      },
+      {
+        "subject": "ENG-105",
+        "title": "Triage item",
+        "state": "backlog"
+      },
+      {
+        "subject": "ENG-106",
+        "title": "Unbroken text",
+        "summary": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
+        "state": "backlog"
+      }
+    ]
+  },
+  "forge": {
+    "takenAt": "2026-10-22T12:00:00Z",
+    "source": "forge",
+    "items": [
+      {
+        "subject": "ENG-101",
+        "title": "[ENG-101]: redo",
+        "state": "merged",
+        "changeRequest": "https://github.com/example-org/example-repo/pull/12",
+        "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "subject": "ENG-102",
+        "title": "[ENG-102, ENG-103]: shared",
+        "state": "draft",
+        "changeRequest": "https://github.com/example-org/example-repo/pull/13",
+        "head": "cccccccccccccccccccccccccccccccccccccccc"
+      },
+      {
+        "subject": "ENG-103",
+        "title": "[ENG-102, ENG-103]: shared",
+        "state": "draft",
+        "changeRequest": "https://github.com/example-org/example-repo/pull/13",
+        "head": "cccccccccccccccccccccccccccccccccccccccc"
+      },
+      {
+        "subject": "ENG-105",
+        "title": "[ENG-105]: deleted fork",
+        "state": "closed",
+        "changeRequest": "https://github.com/example-org/example-repo/pull/16"
+      }
+    ]
+  },
+  "ghCommand": [
+    "gh",
+    "pr",
+    "list",
+    "--repo",
+    "example-org/example-repo",
+    "--state",
+    "all",
+    "--limit",
+    "1000",
+    "--search",
+    "created:>=2026-10-20",
+    "--json",
+    "number,title,state,isDraft,headRefOid,url,updatedAt,mergedAt,closedAt"
+  ]
+}
