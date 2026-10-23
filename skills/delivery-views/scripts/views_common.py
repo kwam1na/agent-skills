@@ -120,6 +120,8 @@ def _template(value: object, where: str, placeholders: set[str]) -> str:
         raise ConfigError(f"{where}: must be an https URL, not {scheme or 'a relative one'}")
     if _origin(sample) is None:
         raise ConfigError(f"{where}: must name a host")
+    if _origin(sample) != _origin(PLACEHOLDER.sub("y", template)):
+        raise ConfigError(f"{where}: the host must not hold a placeholder")
     return template
 
 
@@ -206,7 +208,8 @@ def validate_config(value: object) -> dict:
         if not isinstance(lens, str) or len(lens) > 128 or not PROVIDER_ID.match(lens):
             raise ConfigError(f"{where}: is not a lens id")
         entry = _object(entry, where, {"name", "icon"}, {"name"})
-        lenses[lens] = {"name": _text(entry["name"], f"{where}.name", MAX_NAME), "icon": None}
+        lenses[lens] = {"name": _text(entry["name"], f"{where}.name", MAX_NAME),
+                        "icon": DEFAULT_LENSES.get(lens, {}).get("icon")}
         if "icon" in entry:
             if entry["icon"] not in ICONS:
                 raise ConfigError(f"{where}.icon: must be one of {', '.join(sorted(ICONS))}")
@@ -232,17 +235,13 @@ def validate_config(value: object) -> dict:
 # Links
 
 
-def _encode(name: str, value: str) -> str:
-    def segment(part: str) -> str:
-        # A segment of dots alone would move the path; encode it.
-        if part and set(part) == {"."}:
-            return "%2E" * len(part)
-        return urllib.parse.quote(part, safe="")
+def _segments(name: str, value: str) -> list[str]:
+    # A repository keeps its single slash: owner/name.
+    return value.split("/", 1) if name == "repository" else [value]
 
-    if name == "repository":
-        # A repository keeps its single slash: owner/name.
-        return "/".join(segment(part) for part in value.split("/", 1))
-    return segment(value)
+
+def _encode(name: str, value: str) -> str:
+    return "/".join(urllib.parse.quote(part, safe="") for part in _segments(name, value))
 
 
 def fill(template: str, values: dict[str, str]) -> str:
@@ -257,7 +256,10 @@ def same_origin(url: str, template: str) -> bool:
 
 
 def link(template: str, values: dict[str, str]) -> str | None:
-    """The filled template, or None when it leaves the template's origin; the value then renders as text."""
+    """The filled template, or None when it leaves the template's origin or a value is a dot
+    segment, which a browser would follow even encoded; the value then renders as text."""
+    if any(part in (".", "..") for name, value in values.items() for part in _segments(name, value)):
+        return None
     url = fill(template, values)
     return url if same_origin(url, template) else None
 
@@ -265,7 +267,7 @@ def link(template: str, values: dict[str, str]) -> str | None:
 def issue_link(key: str, tracker: dict | None) -> str | None:
     if tracker is None or not key:
         return None
-    if tracker["keyPattern"] is not None and not re.search(tracker["keyPattern"], key):
+    if tracker["keyPattern"] is not None and not re.fullmatch(tracker["keyPattern"], key):
         return None
     return link(tracker["issueUrl"], {"key": key})
 
@@ -289,7 +291,7 @@ def _pull_path(template: str, forge: dict) -> re.Pattern:
 
 def change_request_link(value: str, forges: list[dict]) -> str | None:
     """A change request's link: ``#<n>`` or ``<repo name>#<n>`` on the first forge, or a URL a forge's pullUrl parses."""
-    if not forges or not isinstance(value, str):
+    if not forges or not isinstance(value, str) or CONTROL.search(value) or value != value.strip():
         return None
     first = forges[0]
     match = re.fullmatch(r"([^#\s]*)#([0-9]+)", value)
@@ -378,15 +380,18 @@ def run_json(argv: list[str], *, timeout: float, scrub: list[str] = (), cwd: Pat
         with contextlib.suppress(subprocess.TimeoutExpired):
             process.wait(1)
         reader.join(1)
-        with contextlib.suppress(OSError):
-            process.stdout.close()
+        # A descendant that left the group may still hold stdout; closing it would
+        # wait for that descendant, so the daemon reader is left behind instead.
+        if not reader.is_alive():
+            with contextlib.suppress(OSError):
+                process.stdout.close()
     if over.is_set():
         raise RunUnavailable("output over 16 MiB")
     if code != 0:
         raise RunUnavailable(f"exited with {code}")
     try:
         return json.loads(bytes(kept).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         raise RunUnavailable("output is not JSON") from None
 
 
@@ -552,8 +557,10 @@ def report_problem(value: object, spec: str = REPORT_SPEC) -> str | None:
         return f"spec: must be {spec}"
     for key, cap in (("runId", 128), ("ticket", 64), ("roundId", 128)):
         text = value[key]
+        if key == "ticket" and text is None:
+            continue
         if not isinstance(text, str) or not 1 <= len(text) <= cap or CONTROL.search(text):
-            return f"{key}: must be text of 1 to {cap} characters"
+            return f"{key}: must be text of 1 to {cap} characters" + (" or null" if key == "ticket" else "")
     round_number = value["round"]
     if isinstance(round_number, bool) or not isinstance(round_number, int) or round_number < 1:
         return "round: must be a whole number from 1"

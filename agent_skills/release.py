@@ -125,7 +125,9 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
             document = _packaged_document(root, f"profiles/{selected_profile}.json")
         except ReleaseError as error:
             raise ReleaseError(f"release.profile: profile {selected_profile} is unavailable") from error
-        if document.get("id") != selected_profile or not isinstance(document.get("includes"), list):
+        includes = document.get("includes")
+        if (document.get("id") != selected_profile or not isinstance(includes, list)
+                or not all(isinstance(included, str) for included in includes)):
             raise ReleaseError(f"release.profile: profile {selected_profile} is malformed")
         profile_documents[selected_profile] = document
         pending.extend(document["includes"])

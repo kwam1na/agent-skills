@@ -6,6 +6,7 @@ snapshot adapters that use them carry their own tests.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import importlib.util
 import json
@@ -57,7 +58,7 @@ CONFIG = {
     "exports": {"directory": "telemetry/delivery-runs", "ignore": ["delivery-record--*"]},
 }
 
-# Two reports the existing recorder wrote, verbatim but for their spec.
+# Two reports the existing recorder wrote, verbatim but for their spec and work item.
 RAISED_REPORT = {
     "candidateTreeSha": "d3f076a3a8f68433e178966f27daa3ce9d83ae57",
     "closedAt": "2026-10-23T00:42:16Z",
@@ -74,7 +75,7 @@ RAISED_REPORT = {
     "roundId": "round-1",
     "runId": "run-37483ff027a5a901",
     "spec": "review-round-report/1",
-    "ticket": "V26-2836",
+    "ticket": "SHFT-2836",
 }
 RESOLVED_REPORT = {
     "candidateTreeSha": "ed011ee841be5d14e5449b3d8017ea7254e95a7d",
@@ -88,7 +89,7 @@ RESOLVED_REPORT = {
     "roundId": "round-2",
     "runId": "run-37483ff027a5a901",
     "spec": "review-round-report/1",
-    "ticket": "V26-2836",
+    "ticket": "SHFT-2836",
 }
 
 
@@ -119,6 +120,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["lenses"]["lens.outcome-correctness"]["icon"], "bullseye")
         self.assertEqual(config["lenses"]["lens.adversarial-testing"]["icon"], "spy")
         self.assertEqual(config["lenses"]["lens.security"], {"name": "Security", "icon": "shield"})
+        renamed = views.validate_config(self.changed(
+            lambda c: c["lenses"].update({"lens.outcome-correctness": {"name": "Correctness"}})))
+        self.assertEqual(renamed["lenses"]["lens.outcome-correctness"], {"name": "Correctness", "icon": "bullseye"})
+        self.assertIsNone(views.validate_config(self.changed(
+            lambda c: c["lenses"].update({"lens.other": {"name": "Other"}})))["lenses"]["lens.other"]["icon"])
         minimal = views.validate_config({"spec": "delivery-views-config/1"})
         self.assertEqual(minimal["title"], "Delivery")
         self.assertEqual(minimal["findings"], {"reportSpecs": ["review-round-report/1"]})
@@ -145,6 +151,8 @@ class ConfigTests(unittest.TestCase):
              self.changed(lambda c: c["forges"][0].update(commitUrl="https://bitbucket.org/{repository}/commits/{hash}"))),
             ("tracker.issueUrl", "placeholder of another key",
              self.changed(lambda c: c["tracker"].update(issueUrl="https://eshyft.atlassian.net/{repository}/{key}"))),
+            ("tracker.issueUrl", "placeholder in the host",
+             self.changed(lambda c: c["tracker"].update(issueUrl="https://{key}/browse"))),
             ("runs.argv[3]", "unknown argv placeholder",
              self.changed(lambda c: c["runs"]["argv"].__setitem__(3, "{home}"))),
             ("tracker.keyPattern", "long pattern",
@@ -181,6 +189,7 @@ class LinkTests(unittest.TestCase):
     def test_configured_links(self) -> None:
         self.assertEqual(views.issue_link("SHFT-12", self.tracker), "https://eshyft.atlassian.net/browse/SHFT-12")
         self.assertIsNone(views.issue_link("OTHER-12", self.tracker))
+        self.assertIsNone(views.issue_link("notes SHFT-12 x", {**self.tracker, "keyPattern": "SHFT-[0-9]+"}))
         sha = "0123456789abcdef0123456789abcdef01234567"
         self.assertEqual(views.commit_link(sha, self.forge), f"https://bitbucket.org/eshyft/eshyftnew/commits/{sha}")
         self.assertIsNone(views.commit_link(sha.upper(), self.forge))
@@ -192,9 +201,8 @@ class LinkTests(unittest.TestCase):
             ("x/y", "x%2Fy"),
             ("x?y", "x%3Fy"),
             ("x#y", "x%23y"),
-            ("..", "%2E%2E"),
-            (".", "%2E"),
             ("x%2Fy", "x%252Fy"),
+            ("..x", "..x"),
         ):
             with self.subTest(value=value):
                 self.assertEqual(views.fill(template, {"key": value}), f"https://example.org/a/{expected}/b")
@@ -203,8 +211,15 @@ class LinkTests(unittest.TestCase):
                          "https://example.org/team/repo/commits/a")
         self.assertEqual(views.fill(repository, {"repository": "team/../x?y", "sha": "a#b"}),
                          "https://example.org/team/..%2Fx%3Fy/commits/a%23b")
-        self.assertEqual(views.fill(repository, {"repository": "../repo", "sha": "a"}),
-                         "https://example.org/%2E%2E/repo/commits/a")
+        # A dot segment moves a browser's path even encoded, so it renders as text.
+        for values in ({"key": ".."}, {"key": "."}):
+            with self.subTest(values=values):
+                self.assertIsNone(views.link(template, values))
+        self.assertIsNone(views.link(repository, {"repository": "../repo", "sha": "a"}))
+        self.assertIsNone(views.link(repository, {"repository": "team/..", "sha": "a"}))
+        self.assertIsNone(views.link(repository, {"repository": "team/repo", "sha": ".."}))
+        self.assertEqual(views.link(repository, {"repository": "team/../x", "sha": "a"}),
+                         "https://example.org/team/..%2Fx/commits/a")
 
     def test_a_produced_url_off_the_template_origin_renders_as_text(self) -> None:
         template = self.forge["pullUrl"]
@@ -244,6 +259,10 @@ class LinkTests(unittest.TestCase):
             "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34/../../x",
             "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34?x=1",
             "javascript:alert(1)",
+            "\x00https://bitbucket.org/eshyft/eshyftnew/pull-requests/34",
+            " https://bitbucket.org/eshyft/eshyftnew/pull-requests/34",
+            "https://bitbucket.org/eshyft/eshy\tftnew/pull-requests/34",
+            "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34\n",
         ):
             with self.subTest(value=value):
                 self.assertIsNone(views.change_request_link(value, forges))
@@ -263,6 +282,7 @@ class BoundedCommandTests(unittest.TestCase):
             ("non-JSON", self.python("print('not json')"), "not JSON"),
             ("oversize", self.python("import sys; sys.stdout.write('[' + '1,' * (9 * 1024 * 1024) + '1]')"), "16 MiB"),
             ("unstartable", ["/nonexistent/command"], "could not start"),
+            ("deeply nested", self.python("print('[' * 200000)"), "not JSON"),
         )
         for label, argv, reason in cases:
             with self.subTest(label):
@@ -319,6 +339,16 @@ class BoundedCommandTests(unittest.TestCase):
         started = time.monotonic()
         self.assertEqual(views.run_json(self.python(code), timeout=20), {})
         self.assertLess(time.monotonic() - started, 10)
+
+    @unittest.skipIf(os.name == "nt", "process groups are POSIX here")
+    def test_a_descendant_that_left_the_group_does_not_hold_the_run(self) -> None:
+        escaped = "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)\n"
+        for label, tail, timeout in (("hang", "time.sleep(60)\n", 2), ("exit", "print('{}')\n", 20)):
+            with self.subTest(label):
+                started = time.monotonic()
+                with contextlib.suppress(views.RunUnavailable):
+                    views.run_json(self.python("import subprocess, sys, time\n" + escaped + tail), timeout=timeout)
+                self.assertLess(time.monotonic() - started, 10)
 
     def test_the_runs_argv_takes_the_repository_root(self) -> None:
         config = views.validate_config(copy.deepcopy(CONFIG))
@@ -474,6 +504,11 @@ class RoundReportTests(unittest.TestCase):
             ("dropped with commit", resolved(state="dropped"), "resolved[0].fixCommit"),
             ("resolution of a later round", resolved(id="r2-f1"), "resolved[0].id"),
             ("resolved twice", resolved(id="r1-f2"), "resolved[1].id"),
+            ("resolved deferral without issue", resolved(state="deferred", fixCommit=None), "resolved[0].deferredIssue"),
+            ("issue with a line break", raised(state="deferred", deferredIssue="SHFT-1\n"), "raised[0].deferredIssue"),
+            ("line separator in summary", raised(summary="a\u2028b"), "raised[0].summary"),
+            ("bad briefs lens", {**RAISED_REPORT, "briefs": {"Bad Lens": {"brief": None, "result": None}}},
+             "briefs.Bad Lens"),
             ("bad briefs", {**RAISED_REPORT, "briefs": {"lens.a": {"brief": "x"}}}, "briefs.lens.a"),
             ("bad artifact id", {**RAISED_REPORT, "briefs": {"lens.a": {"brief": "a b", "result": None}}},
              "briefs.lens.a.brief"),
@@ -485,6 +520,7 @@ class RoundReportTests(unittest.TestCase):
                 self.assertTrue(problem.startswith(path), problem)
         # A summary of 280 code points, beyond 280 UTF-16 units, is still within the cap.
         self.assertIsNone(views.report_problem(raised(summary="\U0001F600" * 280)))
+        self.assertIsNone(views.report_problem({**RAISED_REPORT, "ticket": None}))
         deferred = raised(state="deferred", deferredIssue="SHFT-99 follow-up")
         self.assertIsNone(views.report_problem(deferred))
 
@@ -539,6 +575,10 @@ class ReleaseTests(unittest.TestCase):
             from agent_skills import release
 
             with self.assertRaisesRegex(ReleaseError, "delivery-views"):
+                release._release_view(copy_root.resolve(), "linear")
+            _write_json(copy_root / "profiles/delivery-views.json",
+                        {"id": "delivery-views", "includes": [{"x": 1}], "members": []})
+            with self.assertRaisesRegex(ReleaseError, "delivery-views is malformed"):
                 release._release_view(copy_root.resolve(), "linear")
 
 

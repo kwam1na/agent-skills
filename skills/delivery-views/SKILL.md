@@ -48,7 +48,7 @@ python3 -B .agent-skills/current/skills/delivery-views/scripts/views_common.py c
 | --- | --- |
 | `spec` | `delivery-views-config/1`. |
 | `title` | The pages' title, at most 80 characters; `Delivery` when absent. |
-| `tracker` | `{name, issueUrl, keyPattern?}`. `issueUrl` takes `{key}`; an item is linked only when `keyPattern`, at most 200 characters, matches it. |
+| `tracker` | `{name, issueUrl, keyPattern?}`. `issueUrl` takes `{key}`; an item is linked only when `keyPattern`, at most 200 characters, matches the whole key. The host takes no placeholder. |
 | `forges` | Each `{name, repository, pullUrl, commitUrl}`. `pullUrl` takes `{repository}` and `{number}`; `commitUrl` takes `{repository}` and `{sha}`. |
 | `runs` | `{argv, timeoutSeconds?}`: the command that prints a delivery run, `{root}` being the repository top level; `timeoutSeconds` is 10 when absent. Absent: no run section and no command run. |
 | `findings` | `{reportSpecs}`: the round report specs read, in preference order; `["review-round-report/1"]` when absent. |
@@ -64,8 +64,9 @@ text over its cap.
 
 ## Links
 
-Placeholder values are percent-encoded as path segments; `repository` keeps
-its single `/`, and a segment of dots alone is encoded. A produced URL is used
+Placeholder values are percent-encoded as path segments, and `repository`
+keeps its single `/`. A value, or a repository segment, of `.` or `..` renders
+as text, since a browser follows such a segment even when encoded. A produced URL is used
 only when its scheme, host and port equal the template's, `:443` counting as
 no port; otherwise the value renders as text. A change request is linked when
 it is `#<n>` or `<repository name>#<n>` on the first forge, or a URL one
@@ -95,7 +96,7 @@ A round's findings record, one canonical JSON document per closed round:
 | --- | --- |
 | `spec` | `review-round-report/1`. |
 | `runId`, `roundId` | The run and the round, text of at most 128 characters. |
-| `ticket` | The work item, free text of at most 64 characters. |
+| `ticket` | The work item, free text of at most 64 characters, or null. |
 | `round` | The round number, from 1. |
 | `candidateTreeSha` | The reviewed tree, lowercase hex. |
 | `closedAt` | When the round closed, a UTC timestamp. |
