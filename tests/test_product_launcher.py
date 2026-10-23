@@ -656,7 +656,16 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                         + "Path('worker.pid').write_text(str(os.getpid()))\nwhile True: time.sleep(1)\n"
                     )
                     parent = root / "parent.py"
-                    parent.write_text("import subprocess, sys\nsubprocess.run([sys.executable, 'worker.py'])\n")
+                    # SIGQUIT's default action dumps core, and macOS writes a
+                    # crash report for each one; the parent records it instead.
+                    parent.write_text(
+                        "import os, signal, subprocess, sys\nfrom pathlib import Path\n"
+                        "def received(signum, _frame):\n"
+                        "    Path('parent.sig').write_text(str(signum))\n"
+                        "    os._exit(0)\n"
+                        "signal.signal(signal.SIGQUIT, received)\n"
+                        "subprocess.run([sys.executable, 'worker.py'])\n"
+                    )
                     launcher = subprocess.Popen([sys.executable, "-c",
                         "from pathlib import Path; from agent_skills.product import _run_command; import sys; "
                         "raise SystemExit(_run_command([sys.executable, 'parent.py'], Path(sys.argv[1])))", str(root)],
@@ -674,6 +683,8 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                         if not resistant:
                             self.assertTrue((root / "worker.sig").is_file(), "worker never received the forwarded signal")
                             self.assertEqual((root / "worker.sig").read_text(), str(signum))
+                        if signum == signal.SIGQUIT:
+                            self.assertEqual((root / "parent.sig").read_text(), str(signum))
                         deadline = time.monotonic() + 2
                         while time.monotonic() < deadline:
                             state = subprocess.run(["ps", "-o", "stat=", "-p", str(worker_pid)], capture_output=True, text=True).stdout.strip()
