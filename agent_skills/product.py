@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -1152,13 +1153,31 @@ def _stop_posix_group(child: subprocess.Popen, interrupted: int, tracker: _Desce
         )
 
 
-def _run_command(arguments: list[str], root: Path, *, preview=None) -> int:
+def _validate_pass_fds(pass_fds: tuple[int, ...]) -> None:
+    """Borrow caller-owned POSIX pipes/sockets without replacing native stdio."""
+    if pass_fds and os.name == "nt":
+        raise ValueError("product.descriptors_unsupported: inherited channels require POSIX")
+    if len(pass_fds) > 8 or len(set(pass_fds)) != len(pass_fds):
+        raise ValueError("product.descriptors_invalid: at most eight distinct descriptors")
+    for fd in pass_fds:
+        if isinstance(fd, bool) or not isinstance(fd, int) or fd < 3:
+            raise ValueError("product.descriptors_invalid: descriptors must be integers above stderr")
+        try:
+            mode = os.fstat(fd).st_mode
+        except OSError as error:
+            raise ValueError("product.descriptors_invalid: descriptor is not open") from error
+        if not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)):
+            raise ValueError("product.descriptors_invalid: descriptor must be a pipe or socket")
+
+
+def _run_command(arguments: list[str], root: Path, *, preview=None, pass_fds: tuple[int, ...] = ()) -> int:
     """Keep native process-group cancellation inside the installed launcher.
 
     With ``preview``, a POSIX cancellation signals nothing: ``preview`` is
     called with what cleanup would stop (``_DescendantTracker.preview``) and
     the command is left running for the caller to stop.
     """
+    _validate_pass_fds(pass_fds)
     interrupted = 0
     child = None
     tracker = None
@@ -1197,15 +1216,15 @@ def _run_command(arguments: list[str], root: Path, *, preview=None) -> int:
             # launcher keeps open. Descendants inherit it unless they close
             # their descriptors, and it shows where the environment is hidden.
             darwin = sys.platform == "darwin"
-            passed: tuple[int, ...] = ()
+            owned: tuple[int, ...] = ()
             if darwin:
                 read_end, lifeline_end = os.pipe()
-                passed = (read_end,)
+                owned = (read_end,)
             try:
                 child = subprocess.Popen(arguments, cwd=root, start_new_session=True,
-                                         env=dict(os.environ, **{key: "1"}), pass_fds=passed)
+                                         env=dict(os.environ, **{key: "1"}), pass_fds=(*pass_fds, *owned))
             finally:
-                for fd in passed:
+                for fd in owned:
                     os.close(fd)
             write_end = lifeline_end
             tracker = _DescendantTracker(
@@ -1273,13 +1292,14 @@ def _run_command(arguments: list[str], root: Path, *, preview=None) -> int:
             signal.signal(sig, handler)
 
 
-def run_runtime(lifecycle: Lifecycle, arguments: list[str]) -> int:
+def run_runtime(lifecycle: Lifecycle, arguments: list[str], *, pass_fds: tuple[int, ...] = ()) -> int:
     # Share the existing maintenance lock: commands can run together, but a
     # generation cannot change between readiness and completion.
+    _validate_pass_fds(pass_fds)
     with RepositoryLock(lifecycle.lock_path, shared=True):
         runtime = runtime_root(lifecycle)
         reconcile_policy(lifecycle, check=True)
         return _run_command([
             "node", "--experimental-strip-types", "--import", (runtime / "bootstrap.mjs").resolve().as_uri(),
             str(runtime / "cli.mjs"), *arguments,
-        ], lifecycle.root)
+        ], lifecycle.root, pass_fds=pass_fds)

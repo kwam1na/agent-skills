@@ -52,6 +52,18 @@ charters. Other provenance and comparison adjudications are preserved.
 Runtime commands share the existing lifecycle lock so maintenance cannot switch
 the selected generation while a command executes.
 
+On POSIX, a caller can lend explicit pipe or socket descriptors to a native
+command without replacing stdin, stdout or stderr. Discover support with
+`harness --capabilities`, which returns `agent-skills-harness-capabilities/1`
+and `passFileDescriptors`. Then place each `--pass-fd <integer>` before the
+runtime command, for example `harness --pass-fd 3 --pass-fd 4 gate`. At most
+eight distinct open descriptors above stderr are accepted; regular files and
+stdio are refused. The caller owns and closes these channels. The launcher
+borrows them only for that command, retains ordinary readiness checks and
+cancellation, and assigns no authority to their contents. An unsupported
+platform or older launcher requires the caller's ordinary fresh-computation
+path; it must not substitute a cached result file.
+
 For the first compile, the adopter supplies
 `.agents/policy/repository-policy.json`, `.agents/policy/adapters.json`, and
 `.agents/policy/bootstrap-inputs.json`. The bootstrap-inputs document contains

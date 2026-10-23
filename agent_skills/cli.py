@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 from pathlib import Path
 
@@ -32,6 +33,8 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("status")
     harness = commands.add_parser("harness", add_help=False)
     harness.add_argument("--help", "-h", action="store_true", dest="runtime_help")
+    harness.add_argument("--capabilities", action="store_true")
+    harness.add_argument("--pass-fd", type=int, action="append", default=[])
     harness.add_argument("arguments", nargs=argparse.REMAINDER)
     commands.add_parser("recovery-plan")
     validate = commands.add_parser("validate")
@@ -92,7 +95,13 @@ def main(arguments: list[str] | None = None) -> int:
             return 0
         lifecycle = Lifecycle(args.root)
         if args.command == "harness":
-            return run_runtime(lifecycle, (["--help"] if args.runtime_help else []) + args.arguments)
+            if args.capabilities:
+                if args.arguments or args.pass_fd or args.runtime_help:
+                    raise ValueError("product.capabilities_arguments: capabilities accepts no command or descriptors")
+                print(canonical_json({"schemaVersion": "agent-skills-harness-capabilities/1", "passFileDescriptors": os.name != "nt"}), end="")
+                return 0
+            return run_runtime(lifecycle, (["--help"] if args.runtime_help else []) + args.arguments,
+                               pass_fds=tuple(args.pass_fd))
         if args.product and args.command in {"apply", "install", "update"}:
             version = inspect_release(args.archive, args.metadata)
             if "runtime/runtime.json" not in {record["path"] for record in version["files"]}:
