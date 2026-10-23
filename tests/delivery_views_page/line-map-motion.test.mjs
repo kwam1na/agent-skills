@@ -63,6 +63,13 @@ test("each stage has its icon, and only a piece being built shows the meshed gea
   unknown.state.queue[2].stage = "mystery";
   const [, shown] = await openPage(pageWithRuns(unknown, {}, { config: CONFIG }), { now: NOW, steps: [pick(unknown.state.queue[2].subject)] });
   expect(shown.app.querySelector("#detail .d-stage svg")).toBeNull();
+  // A stage the fixture does not hold still draws its own icon, not another's.
+  const checked = record();
+  checked.state.queue[2].stage = "checked";
+  const [, done] = await openPage(pageWithRuns(checked, {}, { config: CONFIG }), { now: NOW, steps: [pick(checked.state.queue[2].subject)] });
+  const icon = done.app.querySelector("#detail .d-stage svg");
+  expect(icon?.getAttribute("class")).toBe("d-stage-icon is-checked");
+  expect(JSON.stringify([...icon.querySelectorAll("path")].map((part) => part.getAttribute("d"))) === drawn.queued).toBe(false);
 });
 
 test("the gears turn only for a reader who has not asked for less motion", () => {
