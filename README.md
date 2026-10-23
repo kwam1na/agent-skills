@@ -97,6 +97,11 @@ catalog, selected profile closure, provenance, schemas, inventory, and selected
 skills. Core excludes optional profile bodies; Linear adds its adapter and the two
 tracking workflows that call the adapter to the complete core closure.
 
+An installed product verifies an incoming release against its own limits, so
+raising a limit takes a stepping-stone release. The release that raises a limit
+must itself fit the old limit, and adopters install it before any release that
+exceeds the old limit.
+
 The default `core` profile contains the portable delivery posture, normalized
 router, neutral tracker capability contract, bounded planning and execution
 workflows, evidence-first diagnosis, exact caller-selected review acquisition,

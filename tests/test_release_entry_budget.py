@@ -4,6 +4,11 @@ An installed product refuses to update to a release with more than
 ``MAX_ENTRIES`` archive entries, so a release over the limit could never be
 installed by an existing adopter. A product release carries the profile's
 workflow files, the release manifest and the runtime files.
+
+The limit can be raised only through a stepping-stone release. An installed
+product verifies an incoming release against its own limit, so a release that
+raises the limit must itself fit the old limit, and adopters install it before
+any release that exceeds the old limit.
 """
 
 from __future__ import annotations
@@ -42,7 +47,9 @@ def budget_problem(profile: str, entries: int) -> str | None:
         return None
     return (
         f"the {profile} product would hold {entries} archive entries, {entries - MAX_ENTRIES} over the "
-        f"{MAX_ENTRIES} an installed product accepts; consolidate files rather than raise the limit"
+        f"{MAX_ENTRIES} an installed product accepts; raise the limit only through a stepping-stone "
+        "release that itself fits the old limit and that adopters install before any release that "
+        "exceeds it"
     )
 
 
@@ -70,7 +77,8 @@ class EntryBudgetTests(unittest.TestCase):
         self.assertEqual(
             budget_problem("linear", entries),
             f"the linear product would hold {MAX_ENTRIES + 1} archive entries, 1 over the {MAX_ENTRIES} "
-            "an installed product accepts; consolidate files rather than raise the limit",
+            "an installed product accepts; raise the limit only through a stepping-stone release that "
+            "itself fits the old limit and that adopters install before any release that exceeds it",
         )
         self.assertIsNone(budget_problem("linear", MAX_ENTRIES))
 

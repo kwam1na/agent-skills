@@ -9,10 +9,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import warnings
 import zipfile
 from pathlib import Path
 from unittest import mock
 
+from agent_skills import release
 from agent_skills.release import (
     SUPPORTED_PROFILES,
     ReleaseError,
@@ -259,6 +261,49 @@ class ReleaseArchiveTests(unittest.TestCase):
             self._rewrite_archive(archive, entries)
             self._rewrite_checksum(archive, metadata)
             with self.assertRaisesRegex(ReleaseError, "release.file_limit"):
+                verify_release(archive, metadata)
+
+    def build_with_entries(self, directory: Path, total: int) -> tuple[Path, Path]:
+        """Build a valid core release padded with registered files to ``total`` entries."""
+        original = release._release_view
+        baseline = len(original(ROOT, "core")) + 1  # the manifest is one more entry
+
+        def padded(root: Path, profile_id: str) -> dict[str, bytes]:
+            files = original(root, profile_id)
+            for index in range(total - baseline):
+                files[f"skills/padding/file-{index}.txt"] = b"x"
+            return files
+
+        with mock.patch.object(release, "_release_view", padded):
+            archive, metadata = self.build(directory)
+        with zipfile.ZipFile(archive) as opened:
+            self.assertEqual(len(opened.infolist()), total)
+        return archive, metadata
+
+    def test_entry_limit_accepts_up_to_the_limit_and_refuses_beyond_it(self) -> None:
+        for total in (129, 512):
+            with self.subTest(total=total), tempfile.TemporaryDirectory() as temporary:
+                archive, metadata = self.build_with_entries(Path(temporary), total)
+                verify_release(archive, metadata)
+        with tempfile.TemporaryDirectory() as temporary:
+            archive, metadata = self.build_with_entries(Path(temporary), 513)
+            with self.assertRaisesRegex(ReleaseError, "release.entry_limit"):
+                verify_release(archive, metadata)
+
+    def test_duplicate_entries_reject(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive, metadata = self.build(Path(temporary))
+            with zipfile.ZipFile(archive) as source:
+                name = source.namelist()[0]
+                contents = source.read(name)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with zipfile.ZipFile(archive, "a") as target:
+                    target.writestr(name, contents)
+            with zipfile.ZipFile(archive) as opened:
+                self.assertEqual([info.filename for info in opened.infolist()].count(name), 2)
+            self._rewrite_checksum(archive, metadata)
+            with self.assertRaisesRegex(ReleaseError, "release.entry_limit"):
                 verify_release(archive, metadata)
 
     def test_incorrect_group_digest_and_path_escape_reject(self) -> None:

@@ -14,7 +14,7 @@ from .catalog import resolve_profile
 from .validate import canonical_json, safe_relative_path, validate_corpus
 
 
-MAX_ENTRIES = 128
+MAX_ENTRIES = 512
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
