@@ -22,3 +22,22 @@ test("a page read just after local midnight says yesterday for the evening befor
   expect(first.app.querySelector("#detail .d-meta").textContent).toContain("Landed yesterday at 10:00 pm");
   expect(second.app.querySelector("#detail .d-meta").textContent).toContain("Landed 15 minutes ago");
 });
+
+test("recovered landings show source time, unknowns, and retain observation in the feed", async () => {
+  const document = { state: { lanes: [], queue: [
+    { subject: "PAY-1", title: "Earlier merge", stage: "merged", order: 1 },
+    { subject: "PAY-2", title: "Latest merge", stage: "merged", order: 2 },
+    { subject: "PAY-3", title: "Unknown merge", stage: "merged", order: 3 },
+  ] }, journal: [
+    { at: "2026-10-22T06:55:00Z", id: 1, kind: "candidate.merged", subject: "PAY-2", summary: "Normal merge" },
+    { at: "2026-10-22T07:09:00Z", occurredAt: "2026-10-22T05:00:00Z", id: 2, kind: "candidate.merged", subject: "PAY-1", summary: "Recovered earlier merge" },
+    { at: "2026-10-22T07:09:30Z", occurredAt: null, id: 3, kind: "candidate.merged", subject: "PAY-3", summary: "Recovered unknown merge" },
+  ] };
+  const page = pageWithRuns(document, {}, { config: { spec: "delivery-views-config/1", runs: REPLAYED_RUNS } });
+  const [initial, earlier, unknown] = await openPage(page, { now: "2026-10-22T07:10:00Z", steps: [
+    { click: '.stop-btn[data-subject="PAY-1"]' }, { click: '.stop-btn[data-subject="PAY-3"]' }] });
+  expect(initial.app.textContent).toContain("Last landed: Latest merge, 15m ago.");
+  expect(earlier.app.querySelector("#detail .d-meta").textContent).toContain("Landed yesterday at 10:00 pm");
+  expect(unknown.app.querySelector("#detail .d-meta").textContent).toContain("Landed · time unknown");
+  expect(initial.app.querySelector('.feed time[datetime="2026-10-22T07:09:00Z"]') !== null).toEqual(true);
+});

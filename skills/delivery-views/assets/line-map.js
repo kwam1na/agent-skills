@@ -166,6 +166,9 @@
     var delta = Date.now() / 1000 - then;
     return delta < 45 ? "just now" : "for " + duration(delta);
   }
+  function eventTime(entry) {
+    return Object.prototype.hasOwnProperty.call(entry, "occurredAt") ? entry.occurredAt : entry.at;
+  }
   function clock(at) {
     var t = typeof at === "string" ? Date.parse(at) : NaN;
     if (isNaN(t)) { return ""; }
@@ -489,11 +492,14 @@
   function sayLine(doc, all) {
     var status = isObject(doc.status) ? doc.status : {};
     if (status.source === "override" && text(status.text)) { return text(status.text); }
-    var landed = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "candidate.merged"; }).pop();
+    var merges = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "candidate.merged"; });
+    var landed = merges.filter(function (entry) { return seconds(eventTime(entry)) !== null; })
+      .sort(function (a, b) { return seconds(eventTime(a)) - seconds(eventTime(b)) || a.id - b.id; }).pop();
     if (landed) {
       var item = all.filter(function (piece) { return piece.item.subject === landed.subject; })[0];
-      return "Last landed: " + (item ? titleOf(doc, item.item) : text(landed.subject)) + ", " + ago(landed.at) + ".";
+      return "Last landed: " + (item ? titleOf(doc, item.item) : text(landed.subject)) + ", " + ago(eventTime(landed)) + ".";
     }
+    if (merges.length) { return "Work has landed; merge time unknown."; }
     return all.length ? "Nothing has landed yet." : "";
   }
 
@@ -904,7 +910,7 @@
     var stage = el("span", "d-stage");
     var icon = stageIcon(item);
     if (icon) { stage.appendChild(icon); }
-    add(stage, stageWords(item) + (merged && spoken(merged.at) ? " " + spoken(merged.at) : ""));
+    add(stage, stageWords(item) + (merged ? (spoken(eventTime(merged)) ? " " + spoken(eventTime(merged)) : " · time unknown") : ""));
     add(line, " · ", stage);
     var nodes = [owner, el("div", "d1", titleOf(doc, item)), line];
     var batch = item.stage !== "merged" && batchNow(doc, pieces(doc));
@@ -1026,12 +1032,12 @@
     }
     var last = rows[rows.length - 1];
     var summary = el("summary");
-    add(summary, "Merge check", el("span", "mh-sub", " · " + (HISTORY[last.kind] || "") + " " + spoken(last.at) + " · " + rows.length + (rows.length === 1 ? " step" : " steps")));
+    add(summary, "Merge check", el("span", "mh-sub", " · " + (HISTORY[last.kind] || "") + " " + (spoken(eventTime(last)) || "time unknown") + " · " + rows.length + (rows.length === 1 ? " step" : " steps")));
     var ol = el("ol");
     rows.slice(-8).forEach(function (entry) {
       var li = el("li", entry.kind === "candidate.merged" ? "in" : entry.kind === "candidate.stopped" ? "bad" : "");
-      var time = el("time", null, clock(entry.at));
-      time.setAttribute("datetime", text(entry.at));
+      var time = el("time", null, clock(eventTime(entry)) || "Time unknown");
+      time.setAttribute("datetime", text(eventTime(entry)));
       add(li, time, el("span", null, text(entry.summary)));
       ol.appendChild(li);
     });

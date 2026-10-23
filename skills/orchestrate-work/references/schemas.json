@@ -874,6 +874,18 @@
             }
           }
         }
+      },
+      "occurredAt": {
+        "description": "Recovered merges only: source occurrence time, or null when unknown. at remains the append observation time; legacy and normal runner entries omit this field.",
+        "anyOf": [
+          {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     }
   },
@@ -2284,6 +2296,11 @@
               "items": {
                 "$ref": "#/$defs/name"
               }
+            },
+            "mergedAt": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+              "description": "Forge merges only: verified source occurrence time, no later than takenAt. Omit when unknown."
             }
           }
         }

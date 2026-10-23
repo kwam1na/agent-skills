@@ -10,6 +10,13 @@ through `$orchestrate-work`. The repository writes configuration; it writes no
 view or snapshot code of its own. This skill holds everything provider- or
 web-specific, so the core workflow stays neutral.
 
+GitHub snapshots retain `mergedAt` from the source. The line map uses a recovered
+merge's `occurredAt` for landing times and retains journal `at` as observation
+time in the activity feed. A missing source time is shown as unknown. Recovery
+does not extend a single-repository snapshot to other repositories: supply a
+separate verified forge snapshot for work that the configured repository cannot
+list, then reconcile it through the state tool.
+
 ## Dependencies
 
 - `$orchestrate-work` owns the delivery state, its binding, the render wrapper
