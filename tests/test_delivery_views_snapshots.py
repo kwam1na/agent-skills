@@ -499,6 +499,15 @@ class BitbucketTests(SnapshotCase):
         self.assertNotEqual(code, 0)
         self.failed(err, "--since")
         self.assertEqual(transport.requests, [])
+        # A damaged first line is an unreadable record, not an empty one.
+        for line in ("\n", "[]\n", "{}\n", "{\n"):
+            with self.subTest(first_line=line):
+                (self.state / "journal.jsonl").write_text(line, encoding="utf-8")
+                transport = Transport()
+                code, _, err = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
+                self.assertNotEqual(code, 0)
+                self.failed(err, "record")
+                self.assertEqual(transport.requests, [])
         (self.state / "journal.jsonl").unlink()
         transport = Transport((API + "pullrequests?", 200, BITBUCKET["before-since"]),
                               (API + "commit/121212121212", 200, BITBUCKET["commit-1"]))
@@ -670,6 +679,14 @@ class GithubTests(SnapshotCase):
         self.assertTrue(all(headers["Accept"] == "application/vnd.github+json"
                             and headers["X-GitHub-Api-Version"] == "2022-11-28" for _, headers in transport.requests))
         self.assertEqual(transport.methods, ["GET", "GET"])
+
+    def test_a_new_record_needs_since(self) -> None:
+        (self.root / "delivery/journal.jsonl").write_text("", encoding="utf-8")
+        transport = Transport()
+        code, _, err = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "--since")
+        self.assertEqual(transport.requests, [])
 
     def test_since_includes_an_older_pull_request(self) -> None:
         transport = Transport((PULLS, 200, GITHUB["page-1"], {"Link": f'<{PULLS}page=2>; rel="next"'}),

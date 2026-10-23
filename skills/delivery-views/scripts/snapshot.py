@@ -380,7 +380,8 @@ def _record(binding: str, cwd: Path | None, since: str | None) -> tuple[set[str]
         if not since:
             with (directory / "journal.jsonl").open(encoding="utf-8") as journal:
                 line = journal.readline()
-            first = json.loads(line) if line.strip() else None
+            # Only an empty journal has no first entry: a damaged first line is an unreadable record.
+            first = json.loads(line)["at"] if line else None
     except (ConfigError, OSError, UnicodeDecodeError, ValueError, KeyError, TypeError, AttributeError,
             RecursionError) as error:
         raise Failure(f"the record could not be read through --binding {binding}: {type(error).__name__}") from None
@@ -388,10 +389,10 @@ def _record(binding: str, cwd: Path | None, since: str | None) -> tuple[set[str]
         raise Failure("the record holds a subject that is not text")
     if since:
         return subjects, _moment(since, "--since")
-    if not isinstance(first, dict):
+    if first is None:
         # A new record's journal is empty until its first entry.
         raise Failure("the record's journal has no entry to take the since time from: pass --since")
-    return subjects, _moment(first.get("at"), "the journal's first entry")
+    return subjects, _moment(first, "the journal's first entry")
 
 
 def bitbucket_snapshot(args: argparse.Namespace, environ: dict, transport: Transport, deadline: float,
