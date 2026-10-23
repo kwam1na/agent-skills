@@ -133,7 +133,8 @@ else the most recently updated merged one, else the most recently updated.
 request's page, kept only on `--host`; `head` is the source commit resolved
 to its full hash, left out when it cannot be resolved. A pull request created
 before the since time, for a ticket moved into the epic later, needs
-`--since`.
+`--since`. Keep `--subject-pattern` simple: it runs against every pull
+request's title and branch.
 
 ## Round reports: `review-round-report/1`
 

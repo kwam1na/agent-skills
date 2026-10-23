@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime
+import email.utils
 import json
 import os
 import re
@@ -39,14 +40,19 @@ MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_RETRIES = 2
 DEFAULT_TIMEOUT_SECONDS = 25
 SUMMARY_LIMIT = 1000
-RETRYABLE = frozenset({429, 500, 502, 503, 504})
 COMMIT = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 SHORT_HASH = re.compile(r"^[0-9a-f]{4,64}$")
+JIRA_KEY = re.compile(r"^[A-Z][A-Z0-9_]*-[0-9]+$")
 TIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
 
 
 class Failure(Exception):
     """A refusal written never to hold a credential; its text is the stderr line."""
+
+
+def _shown(value: object) -> str:
+    """A provider value as a refusal quotes it: escaped and short, so it stays on one line."""
+    return repr(value)[:80]
 
 
 @dataclass(frozen=True)
@@ -85,7 +91,7 @@ class Client:
         redirects = 0
         while True:
             if _origin(url) != self.origin:
-                raise Failure(f"refused a request to another origin: {_origin(url)[1]}")
+                raise Failure(f"refused a request to another origin: {_shown(_origin(url)[1])}")
             remaining = self.remaining()
             if remaining <= 0:
                 raise Failure("the deadline passed before the snapshot was complete")
@@ -106,7 +112,7 @@ class Client:
                 raise Failure(f"the provider refused the credentials: HTTP {status}")
             if status == 404 and missing_ok:
                 return None
-            if status in RETRYABLE:
+            if status == 429 or 500 <= status <= 599:
                 if retries >= MAX_RETRIES:
                     raise Failure(f"the provider kept failing: HTTP {status} after {MAX_RETRIES} retries")
                 wait = _retry_after(response.headers.get("retry-after"), retries)
@@ -126,11 +132,17 @@ class Client:
 
 
 def _retry_after(value: str | None, retries: int) -> float:
+    if value is None:
+        return float(retries + 1)
     try:
-        seconds = float(value) if value is not None else float(retries + 1)
+        seconds = float(value)
     except ValueError:
-        seconds = float(retries + 1)
-    return max(0.0, seconds)
+        try:
+            moment = email.utils.parsedate_to_datetime(value)
+            seconds = (moment - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            seconds = float(retries + 1)
+    return max(0.0, seconds) if seconds == seconds else 0.0
 
 
 def urllib_transport(method: str, url: str, headers: dict, timeout: float) -> Response:
@@ -149,11 +161,21 @@ def urllib_transport(method: str, url: str, headers: dict, timeout: float) -> Re
     except (urllib.error.URLError, OSError) as error:
         reason = getattr(error, "reason", error)
         raise Failure(f"could not reach {urllib.parse.urlsplit(url).hostname}: {type(reason).__name__}") from None
+    ends = time.monotonic() + timeout
     with response:
-        body = response.read(MAX_RESPONSE_BYTES + 1)
-        if len(body) > MAX_RESPONSE_BYTES:
-            raise Failure("the provider's answer was over 16 MiB")
-        return Response(response.status, {key.lower(): value for key, value in response.headers.items()}, body)
+        # The socket timeout bounds each read; this bounds the whole body.
+        body = bytearray()
+        while True:
+            if time.monotonic() > ends:
+                raise Failure("the deadline passed while the provider was answering")
+            chunk = response.read(65536)
+            if not chunk:
+                break
+            body.extend(chunk)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise Failure("the provider's answer was over 16 MiB")
+        return Response(response.status, {key.lower(): value for key, value in response.headers.items()},
+                        bytes(body))
 
 
 def _credential(environ: dict, name: str | None) -> str:
@@ -239,6 +261,8 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
     site = args.site.rstrip("/")
     if _origin(site)[0] != "https" or not _origin(site)[1] or urllib.parse.urlsplit(site).path:
         raise Failure("--site must be an https origin, such as https://example.atlassian.net")
+    if not JIRA_KEY.match(args.parent):
+        raise Failure("usage: --parent must be an issue key, such as SHFT-10")
     client = Client(site, _authorization(environ, args.token_env, args.user_env), transport, deadline, clock, sleep)
     canceled = {name.strip() for name in (args.canceled_statuses or "").split(",") if name.strip()}
     issues: list[dict] = []
@@ -260,35 +284,38 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
             raise Failure("the search answer's nextPageToken is not text")
     keys = set()
     for issue in issues:
-        keys.add(_text(issue.get("key") if isinstance(issue, dict) else None, "an issue's key"))
+        key = _text(issue.get("key") if isinstance(issue, dict) else None, "an issue's key")
+        if key in keys:
+            raise Failure(f"the search listed {_shown(key)} twice")
+        keys.add(key)
     items = []
     for issue in issues:
         key = issue["key"]
         fields = issue.get("fields")
         if not isinstance(fields, dict):
-            raise Failure(f"{key} has no fields")
+            raise Failure(f"{_shown(key)} has no fields")
         status = fields.get("status")
         category = status.get("statusCategory") if isinstance(status, dict) else None
         category_key = category.get("key") if isinstance(category, dict) else None
         name = status.get("name") if isinstance(status, dict) else None
         if not isinstance(name, str) or not isinstance(category_key, str):
-            raise Failure(f"{key} has no status or status category")
+            raise Failure(f"{_shown(key)} has no status or status category")
         if name in canceled:
             state = "canceled"
         elif category_key in JIRA_STATES:
             state = JIRA_STATES[category_key]
         else:
-            raise Failure(f"{key} has a status category the snapshot does not know: {category_key}")
-        item = {"subject": key, "title": _text(fields.get("summary"), f"{key}'s summary"), "state": state}
+            raise Failure(f"{_shown(key)} has a status category the snapshot does not know: {_shown(category_key)}")
+        item = {"subject": key, "title": _text(fields.get("summary"), f"{_shown(key)}'s summary"), "state": state}
         description = fields.get("description")
         if description is not None:
             summary = _shorten(flatten_adf(description))
             if summary:
                 item["summary"] = summary
         blockers = []
-        links = fields.get("issuelinks") or []
+        links = fields.get("issuelinks")
         if not isinstance(links, list):
-            raise Failure(f"{key}'s issue links are not a list")
+            raise Failure(f"{_shown(key)}'s issue links are missing or not a list")
         for link in links:
             if not isinstance(link, dict):
                 continue
@@ -375,10 +402,10 @@ def bitbucket_snapshot(args: argparse.Namespace, environ: dict, transport: Trans
         if not isinstance(pull, dict):
             raise Failure("a pull request is not an object")
         number = pull.get("id")
-        where = f"pull request {number}"
+        where = f"pull request {_shown(number)}"
         raw_state = pull.get("state")
         if raw_state not in BITBUCKET_STATES:
-            raise Failure(f"{where} is in a state the snapshot does not know: {raw_state}")
+            raise Failure(f"{where} is in a state the snapshot does not know: {_shown(raw_state)}")
         state = BITBUCKET_STATES[raw_state]
         if state == "open" and pull.get("draft") is True:
             state = "draft"
@@ -455,8 +482,16 @@ def run(argv: list[str], *, environ: dict, transport: Transport = urllib_transpo
         clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
         cwd: Path | None = None) -> tuple[int, str, str]:
     """The exit code, stdout and stderr of one snapshot."""
+    secrets: list[str] = []
     try:
         args = _parser().parse_args(argv)
+        # Whatever a provider echoes back, a credential never reaches either stream.
+        named = [environ.get(name) for name in (args.token_env, args.user_env) if name]
+        secrets = [value for value in named if value]
+        if len(secrets) == 2:
+            secrets.append(base64.b64encode(f"{secrets[1]}:{secrets[0]}".encode("utf-8")).decode("ascii"))
+        secrets += [base64.b64encode(value.encode("utf-8")).decode("ascii") for value in named if value]
+        secrets.sort(key=len, reverse=True)
         for name in REQUIRED[args.kind]:
             if not getattr(args, name):
                 raise Failure(f"usage: --{name.replace('_', '-')} is required for --kind {args.kind}")
@@ -469,17 +504,27 @@ def run(argv: list[str], *, environ: dict, transport: Transport = urllib_transpo
         else:
             document = bitbucket_snapshot(args, environ, transport, deadline, clock, sleep, cwd)
         snapshot = {"takenAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"), **document}
-        return 0, json.dumps(snapshot, ensure_ascii=False, sort_keys=True) + "\n", ""
+        try:
+            json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
+        except UnicodeEncodeError:
+            raise Failure("the provider's text holds a character that is not Unicode") from None
+        out = json.dumps(snapshot, ensure_ascii=True, sort_keys=True) + "\n"
+        if any(secret in out for secret in secrets):
+            raise Failure("the provider's answer holds a credential")
+        return 0, out, ""
     except Failure as failure:
-        return 1, "", f"snapshot: {failure}\n"
+        text = " ".join(str(failure).split())
+        for secret in secrets:
+            text = text.replace(secret, "[redacted]")
+        return 1, "", f"snapshot: {text}\n"
     except Exception as error:  # Only the type: an exception's text may hold what it was given.
         return 1, "", f"snapshot: unexpected failure ({type(error).__name__})\n"
 
 
 def main() -> int:
     code, out, err = run(sys.argv[1:], environ=dict(os.environ))
-    sys.stdout.write(out)
-    sys.stderr.write(err)
+    sys.stdout.buffer.write(out.encode("ascii"))
+    sys.stderr.buffer.write(err.encode("utf-8", errors="backslashreplace"))
     return code
 
 

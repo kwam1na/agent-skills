@@ -175,11 +175,63 @@ class JiraTests(SnapshotCase):
         self.assertEqual(items["SHFT-12"]["blockedBy"], ["SHFT-14"])
 
     def test_unknown_or_missing_mapping_fields_fail_closed(self) -> None:
-        for name, needle in (("unknown-category", "undefined"), ("missing-status", "SHFT-16")):
+        no_links = copy.deepcopy(JIRA["page-2"])
+        del no_links["issues"][0]["fields"]["issuelinks"]
+        for name, page, needle in (("unknown-category", JIRA["unknown-category"], "undefined"),
+                                   ("missing-status", JIRA["missing-status"], "SHFT-16"),
+                                   ("missing issue links", no_links, "issue links")):
             with self.subTest(name):
-                code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, JIRA[name])), JIRA_ENV)
+                code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
                 self.assertNotEqual(code, 0)
                 self.failed(err, needle)
+
+    def test_self_and_repeated_blocks_links_are_kept_once(self) -> None:
+        pages = copy.deepcopy(JIRA)
+        links = pages["page-1"]["issues"][1]["fields"]["issuelinks"]
+        blocks = links[0]["type"]
+        links += [{"id": "8", "type": blocks, "inwardIssue": {"key": "SHFT-11"}},
+                  {"id": "9", "type": blocks, "inwardIssue": {"key": "SHFT-12"}}]
+        transport = Transport((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
+        code, out, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
+        self.assertEqual(code, 0)
+        items = {item["subject"]: item for item in json.loads(out)["items"]}
+        self.assertEqual(items["SHFT-12"]["blockedBy"], ["SHFT-11"])
+
+    def test_an_issue_listed_twice_fails(self) -> None:
+        repeated = {**JIRA["page-2"], "issues": [JIRA["page-1"]["issues"][0]]}
+        transport = Transport((SEARCH, 200, JIRA["page-1"]), (SEARCH, 200, repeated))
+        code, _, err = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "twice")
+
+    def test_provider_text_that_is_not_unicode_fails_on_one_line(self) -> None:
+        page = copy.deepcopy(JIRA["page-2"])
+        page["issues"][0]["fields"]["summary"] = "x\ud800"
+        code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "Unicode")
+
+    def test_provider_values_in_a_refusal_stay_on_one_line_and_never_hold_a_credential(self) -> None:
+        for value in ("weird\nline two", f"echo {TOKEN}", f"echo {SECRETS[1]}"):
+            with self.subTest(value=value):
+                page = copy.deepcopy(JIRA["unknown-category"])
+                page["issues"][0]["fields"]["status"]["statusCategory"]["key"] = value
+                code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
+                self.assertNotEqual(code, 0)
+        page = copy.deepcopy(JIRA["page-2"])
+        page["issues"][0]["fields"]["summary"] = f"title {TOKEN}"
+        code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "credential")
+
+    def test_a_parent_that_is_not_an_issue_key_is_refused(self) -> None:
+        argv = [*JIRA_ARGS]
+        argv[argv.index("SHFT-10")] = "SHFT-10 OR project = HR"
+        transport = Transport()
+        code, _, err = self.run_kind(argv, transport, JIRA_ENV)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "--parent")
+        self.assertEqual(transport.requests, [])
 
 
 class FailureTests(SnapshotCase):
@@ -231,6 +283,20 @@ class FailureTests(SnapshotCase):
         self.failed(err, "503")
         self.assertEqual(len(transport.requests), 3)
 
+    def test_every_server_error_is_retried(self) -> None:
+        transport = Transport((SEARCH, 520, b""), (SEARCH, 200, JIRA["page-2"]))
+        code, _, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
+        self.assertEqual(code, 0)
+
+    def test_retry_after_as_a_date(self) -> None:
+        self.assertEqual(snapshot._retry_after("Wed, 21 Oct 2015 07:28:00 GMT", 0), 0.0)
+        later = snapshot.email.utils.format_datetime(
+            snapshot.datetime.datetime.now(snapshot.datetime.timezone.utc) + snapshot.datetime.timedelta(seconds=90),
+            usegmt=True)
+        self.assertGreater(snapshot._retry_after(later, 0), 60)
+        self.assertEqual(snapshot._retry_after("nan", 0), 0.0)
+        self.assertEqual(snapshot._retry_after("-5", 0), 0.0)
+
     def test_a_page_two_failure_leaves_stdout_empty(self) -> None:
         transport = Transport((SEARCH, 200, JIRA["page-1"]), *[(SEARCH, 500, b"oops")] * 3)
         code, out, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
@@ -240,11 +306,13 @@ class FailureTests(SnapshotCase):
     def test_the_item_cap_is_a_failure(self) -> None:
         issue = JIRA["page-1"]["issues"][0]
         page = {"issues": [{**issue, "key": f"SHFT-{index}", "fields": {**issue["fields"], "issuelinks": []}}
-                           for index in range(1000, 1500)], "nextPageToken": "more", "isLast": False}
-        code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page), (SEARCH, 200, JIRA["page-2"])),
-                                     JIRA_ENV)
+                           for index in range(1000, 1500)], "isLast": True}
+        code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.failed(err, "500")
+        page["issues"].pop()
+        code, _, _ = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
+        self.assertEqual(code, 0)
 
     def test_the_deadline_bounds_the_whole_run(self) -> None:
         # The first page takes 30 seconds of a 20-second deadline.
@@ -253,6 +321,11 @@ class FailureTests(SnapshotCase):
         self.assertNotEqual(code, 0)
         self.failed(err, "deadline")
         self.assertEqual(len(transport.requests), 1)
+        # A slow last page still misses the deadline.
+        transport = Transport((SEARCH, 200, JIRA["page-1"]), (SEARCH, 200, JIRA["page-2"], {}, 30))
+        code, _, err = self.run_kind([*JIRA_ARGS, "--timeout-seconds", "20"], transport, JIRA_ENV)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "deadline")
         # A Retry-After past the deadline is not waited for.
         transport = Transport((SEARCH, 429, b"", {"Retry-After": "60"}))
         code, _, err = self.run_kind([*JIRA_ARGS, "--timeout-seconds", "20"], transport, JIRA_ENV)
@@ -265,6 +338,17 @@ class FailureTests(SnapshotCase):
         self.assertNotEqual(code, 0)
         self.failed(err, "redirect")
         self.assertEqual(len(transport.requests), 1)
+        for location in ("http://eshyft.atlassian.net/rest/api/3/search/jql",
+                         "https://eshyft.atlassian.net:8443/rest/api/3/search/jql"):
+            with self.subTest(location=location):
+                transport = Transport((SEARCH, 307, b"", {"Location": location}))
+                code, _, err = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
+                self.assertNotEqual(code, 0)
+                self.assertEqual(len(transport.requests), 1)
+        transport = Transport(*[(SEARCH, 302, b"", {"Location": SEARCH + "jql=again"})] * 7)
+        code, _, err = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "redirects")
         # A redirect on the same origin is followed, with the same authorization.
         transport = Transport((SEARCH, 301, b"", {"Location": SEARCH + "jql=moved"}), (SEARCH, 200, JIRA["page-2"]))
         code, _, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
@@ -386,11 +470,33 @@ class BitbucketTests(SnapshotCase):
                 self.assertEqual(transport.requests, [])
 
     def test_a_next_page_on_another_origin_is_refused(self) -> None:
-        page = {**BITBUCKET["page-1"], "next": "https://evil.example/2.0/repositories/eshyft/eshyftnew/pullrequests"}
-        transport = Transport((API + "pullrequests?", 200, page))
-        code, _, err = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
-        self.assertNotEqual(code, 0)
-        self.assertEqual(len(transport.requests), 1)
+        for next_link in ("https://evil.example/2.0/repositories/eshyft/eshyftnew/pullrequests",
+                          "http://api.bitbucket.org/2.0/repositories/eshyft/eshyftnew/pullrequests?page=2"):
+            with self.subTest(next_link=next_link):
+                page = {**BITBUCKET["page-1"], "next": next_link}
+                transport = Transport((API + "pullrequests?", 200, page))
+                code, _, err = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
+                self.assertNotEqual(code, 0)
+                self.assertEqual(len(transport.requests), 1)
+
+    def test_the_title_match_comes_before_the_branch(self) -> None:
+        pull = copy.deepcopy(BITBUCKET["before-since"]["values"][0])
+        pull.update(title="SHFT-11: from the title", created_on="2026-10-20T12:00:00.000000+00:00")
+        pull["source"]["branch"]["name"] = "SHFT-12-branch"
+        transport = Transport((API + "pullrequests?", 200, {"values": [pull]}),
+                              (API + "commit/121212121212", 200, BITBUCKET["commit-1"]))
+        code, out, _ = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
+        self.assertEqual(code, 0)
+        self.assertEqual([item["subject"] for item in json.loads(out)["items"]], ["SHFT-11"])
+
+    def test_a_resolved_hash_that_is_not_the_short_one_is_left_out(self) -> None:
+        pull = copy.deepcopy(BITBUCKET["before-since"]["values"][0])
+        pull["created_on"] = "2026-10-20T12:00:00.000000+00:00"
+        transport = Transport((API + "pullrequests?", 200, {"values": [pull]}),
+                              (API + "commit/121212121212", 200, BITBUCKET["commit-a"]))
+        code, out, _ = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
+        self.assertEqual(code, 0)
+        self.assertNotIn("head", json.loads(out)["items"][0])
 
 
 if __name__ == "__main__":
