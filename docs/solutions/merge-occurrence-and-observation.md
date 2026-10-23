@@ -11,6 +11,10 @@ semantics. Rewriting append time would hide when recovery actually happened.
 
 An idempotent recovery uses the queue lock and durable recovery intent, preserves
 review events, and checks for a merge after the latest hand-off before appending.
+Retain the recovered head and change-request identity too: hand-off state and
+its journal append can straddle recovery, so journal order alone cannot tell a
+delayed same-attempt hand-off from new work. Reject conflicting retained heads
+and future source occurrences before writing an intent or changing state.
 Display landing times and compute durations from occurrence. If a hand-off was
 recorded after the actual merge, its wait and check duration are unknown, not
 zero or the delay until recovery. Sort the last known landing by occurrence,

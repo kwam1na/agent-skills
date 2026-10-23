@@ -17,6 +17,15 @@ does not extend a single-repository snapshot to other repositories: supply a
 separate verified forge snapshot for work that the configured repository cannot
 list, then reconcile it through the state tool.
 
+Detail times follow the work item's current stage and recorded attempt:
+building shows the recorded assignment as Started, review its round start,
+queued its hand-off, checking its latest check start, checked its matching
+finish, stopped its stop, and landed its merge occurrence. Exact timestamps
+and their source appear in tooltips and accessible labels. Missing times stay
+unknown; planned work has no start label, and a mutable lane focus time never
+supplies a work item's start. The journey's intermediate milestone label uses
+its own row so it cannot collide with the finish label.
+
 ## Dependencies
 
 - `$orchestrate-work` owns the delivery state, its binding, the render wrapper

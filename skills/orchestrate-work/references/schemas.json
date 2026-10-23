@@ -886,6 +886,32 @@
             "type": "null"
           }
         ]
+      },
+      "recovery": {
+        "description": "Recovered source identity, so a late hand-off append cannot duplicate this merge.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "head",
+          "changeRequest"
+        ],
+        "properties": {
+          "head": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+          },
+          "changeRequest": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ]
+          }
+        }
       }
     }
   },

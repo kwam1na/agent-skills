@@ -119,7 +119,9 @@
     link.setAttribute("href", target.href);
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
-    link.setAttribute("aria-label", "Open pull request " + target.label);
+    var identity = (typeof target.repository === "string" && target.repository ? target.repository + " " : "") + target.label;
+    link.title = identity;
+    link.setAttribute("aria-label", "Open pull request " + identity);
     link.addEventListener("click", function (event) { event.stopPropagation(); });
     return link;
   }
@@ -794,11 +796,11 @@
     prev.progress = progress;
     // Without finish lines the pieces landing is the end of the journey, so it takes the end's place.
     var stops = finish.length
-      ? [["Start", 0, "start"], ["Pieces landed", total ? all.length / total : 1, ""], ["Finish line met", 1, "end"]]
+      ? [["Start", 0, "start"], ["Pieces landed", total ? all.length / total : 1, "pieces"], ["Finish line met", 1, "end"]]
       : [["Start", 0, "start"], ["Pieces landed", 1, "end"]];
     stops.forEach(function (stop) {
       var label = el("div", "stop " + stop[2], stop[0]);
-      label.style.left = stop[1] * 100 + "%";
+      label.style.left = stop[2] === "pieces" ? "clamp(55px, " + stop[1] * 100 + "%, calc(100% - 55px))" : stop[1] * 100 + "%";
       var tick = el("div", "tick");
       tick.style.left = stop[1] * 100 + "%";
       add(box, label, tick);
@@ -889,6 +891,43 @@
     if (pick) { showDetail(doc, pick, colours, nowSubject); }
   }
 
+  function stageTime(doc, item) {
+    var stats = isObject(doc.stats) && isObject(doc.stats[item.subject]) ? doc.stats[item.subject] : {};
+    var own = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.subject === item.subject; });
+    var handedIndex = -1;
+    own.forEach(function (entry, index) { if (entry.kind === "candidate.handed") { handedIndex = index; } });
+    var attempt = own.slice(handedIndex + 1);
+    var stoppedIndex = attempt.map(function (entry) { return entry.kind; }).lastIndexOf("candidate.stopped");
+    var checks = attempt.slice(stoppedIndex + 1);
+    function last(kind, rows) { return (rows || attempt).filter(function (entry) { return entry.kind === kind; }).pop(); }
+    var event, label, basis, at = null;
+    if (item.stage === "building") { label = "Started"; basis = "Recorded work assignment"; at = stats.assignedAt; }
+    else if (item.stage === "review") {
+      label = "In review since"; basis = "Recorded review round start";
+      event = last("review.round"); at = event && isObject(event.review) ? event.review.startedAt : null;
+    } else if (item.stage === "queued") {
+      label = "Handed over"; basis = "Recorded hand-off"; event = handedIndex >= 0 ? own[handedIndex] : null;
+    } else if (item.stage === "checking") {
+      label = "Checking since"; basis = "Recorded check start"; event = last("check.started", checks);
+    } else if (item.stage === "checked") {
+      label = "Checked"; basis = "Recorded check finish";
+      var start = checks.map(function (entry) { return entry.kind; }).lastIndexOf("check.started");
+      event = start >= 0 ? last("check.finished", checks.slice(start + 1)) : null;
+    } else if (item.stage === "stopped") {
+      label = "Stopped"; basis = "Recorded stop"; event = last("candidate.stopped");
+    } else if (item.stage === "merged") {
+      label = "Landed"; basis = "Merge occurrence"; event = last("candidate.merged");
+      if (!event) {
+        event = own.filter(function (entry) { return entry.kind === "candidate.merged" && isObject(entry.recovery)
+          && entry.recovery.head === (item.syncedHead || item.head) && entry.recovery.changeRequest === (item.changeRequest || null); }).pop();
+      }
+    } else if (item.stage === "merging" || item.stage === "syncing" || item.stage === "synced") {
+      label = "Time"; basis = "No durable transition time recorded";
+    } else { return null; }
+    if (event && item.stage !== "review") { at = eventTime(event); }
+    return { label: label, basis: basis, at: at };
+  }
+
   function showDetail(doc, piece, colours, nowSubject) {
     var detail = document.getElementById("detail");
     if (!detail) { return; }
@@ -906,11 +945,20 @@
     var line = el("div", "d2 d-meta");
     add(line, issue(subject));
     if (item.changeRequest) { add(line, " · ", changeLink(item.changeRequest)); }
-    var merged = item.stage === "merged" ? journalFor(doc, subject, { "candidate.merged": true }).slice(-1)[0] : null;
+    var timing = stageTime(doc, item);
     var stage = el("span", "d-stage");
     var icon = stageIcon(item);
     if (icon) { stage.appendChild(icon); }
-    add(stage, stageWords(item) + (merged ? (spoken(eventTime(merged)) ? " " + spoken(eventTime(merged)) : " · time unknown") : ""));
+    add(stage, stageWords(item));
+    if (timing) {
+      var relative = spoken(timing.at);
+      var when = el("span", "d-stage-time", (item.stage === "merged" ? (relative ? " " + relative : " · time unknown")
+        : " · " + timing.label + (relative ? " " + relative : (timing.label === "Time" ? " unknown" : " · time unknown"))));
+      var exact = timing.basis + ": " + (relative ? timing.at : "unknown");
+      when.title = exact;
+      when.setAttribute("aria-label", exact);
+      stage.appendChild(when);
+    }
     add(line, " · ", stage);
     var nodes = [owner, el("div", "d1", titleOf(doc, item)), line];
     var batch = item.stage !== "merged" && batchNow(doc, pieces(doc));

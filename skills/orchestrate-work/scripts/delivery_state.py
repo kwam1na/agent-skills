@@ -431,6 +431,8 @@ def journal_errors(entries: list[object]) -> list[str]:
                             errors.append(f"entry {index + 1}: occurrence follows observation")
                     except ValueError:
                         errors.append(f"entry {index + 1}/occurredAt: not a real time")
+            if "recovery" in entry and (entry["kind"] != "candidate.merged" or "occurredAt" not in entry):
+                errors.append(f"entry {index + 1}: only a recovered merge carries source identity")
     return errors
 
 
@@ -922,6 +924,7 @@ def append_journal(
     writer: str | None = None,
     recovered: bool = False,
     occurred_at: str | None = None,
+    recovery: dict | None = None,
 ) -> dict:
     """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset."""
     if writer == "runner" and kind == REVIEW_KIND:
@@ -949,6 +952,8 @@ def append_journal(
             entry["review"] = review
         if recovered:
             entry["occurredAt"] = occurred_at
+        if recovery is not None:
+            entry["recovery"] = recovery
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
@@ -1002,6 +1007,12 @@ def _seconds(start: str | None, end: str | None) -> int | None:
 def event_time(entry: dict) -> str | None:
     """Legacy/runner entries occurred when recorded; recovery explicitly carries a source time or unknown."""
     return entry.get("occurredAt", entry["at"])
+
+
+def _same_recovered_merge(entry: dict, item: dict) -> bool:
+    return (entry["kind"] == "candidate.merged" and entry["subject"] == item["subject"]
+            and entry.get("recovery") == {"head": item.get("syncedHead") or item.get("head"),
+                                           "changeRequest": item.get("changeRequest")})
 
 
 def latest_merge(journal: list[dict]) -> dict | None:
@@ -1069,6 +1080,12 @@ def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> d
             ended, outcome = merged, "merged"
     else:
         merged = None
+
+    if merged is None and item.get("stage") == "merged":
+        # A hand-off's append can arrive after recovery of that same head/PR.
+        merged = next((entry for entry in reversed(own) if _same_recovered_merge(entry, item)), None)
+        if merged is not None:
+            ended, outcome = merged, "merged"
 
     def at(entry: dict | None) -> str | None:
         return event_time(entry) if entry else None
@@ -1432,6 +1449,8 @@ def check_snapshot(snapshot: object, name: str, max_age: float, *, parent: str |
             try:
                 if _parse_time(item["mergedAt"], exact=True) > _parse_time(snapshot["takenAt"], exact=True):
                     errors.append(f"/items/{index}/mergedAt: merge follows snapshot")
+                if _parse_time(item["mergedAt"], exact=True) > _parse_time(now(), exact=True):
+                    errors.append(f"/items/{index}/mergedAt: merge follows observation clock")
             except ValueError:
                 errors.append(f"/items/{index}/mergedAt: not a real time")
     if errors:
@@ -1513,6 +1532,10 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                 if word in ("open", "draft", "merged"):
                     report(subject, f"{'an' if word == 'open' else 'a'} {word} change request for work the record does not hold")
                 continue
+            if (word == "merged" and entry.get("stage") == "merged" and item.get("head")
+                    and item["head"] != (entry.get("syncedHead") or entry.get("head"))):
+                report(subject, "merged forge head differs from the recorded head: settle identity before recovery")
+                continue
             if reference and entry.get("changeRequest") != reference:
                 entry["changeRequest"] = reference
                 change(subject, f"linked change request {reference}")
@@ -1539,9 +1562,13 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                     lead["queue"].append(element)
                     change(subject, "merged on the forge while still planned: added to the queue")
                     entry = element
-                if entry["stage"] != "merged" or not _current_merge(journal, subject):
+                effective_head = entry.get("syncedHead") or entry["head"]
+                if entry["stage"] == "merged" and item.get("head", effective_head) != effective_head:
+                    report(subject, "merged forge head differs from the recorded head: settle identity before recovery")
+                    continue
+                if entry["stage"] != "merged" or not _current_merge(journal, entry):
                     # ...and the merge the runner never saw is recovered as the runner's.
-                    recoveries.append({"subject": subject, "head": item.get("head") or entry["head"],
+                    recoveries.append({"subject": subject, "head": item.get("head") or effective_head,
                                        "changeRequest": entry.get("changeRequest"), "lane": entry.get("lane"),
                                        "occurredAt": item.get("mergedAt")})
                     change(subject, "merged on the forge but not recorded by the runner: recorded as merged", True)
@@ -1648,14 +1675,17 @@ def reconcile(
             "summary": f"{len(changes)} change{'s' if len(changes) != 1 else ''}"}
 
 
-def _current_merge(journal: list[dict], subject: str) -> bool:
-    """A merge after this subject's latest hand-off belongs to its current attempt."""
+def _current_merge(journal: list[dict], item: dict) -> bool:
+    """Respect attempt order, except a recovered identity survives its own delayed hand-off append."""
+    after_handoff = True
     for entry in reversed(journal):
-        if entry["subject"] == subject:
-            if entry["kind"] == "candidate.merged":
+        if entry["subject"] == item["subject"]:
+            if _same_recovered_merge(entry, item):
+                return True
+            if after_handoff and entry["kind"] == "candidate.merged":
                 return True
             if entry["kind"] == "candidate.handed":
-                break
+                after_handoff = False
     return False
 
 
@@ -1699,8 +1729,12 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
             for _ in range(RECONCILE_ATTEMPTS):
                 state = read_state(directory)
                 item = next((item for item in state["queue"] if item["subject"] == recovery["subject"]), None)
-                if item is None or (item["stage"] == "merged" and _current_merge(read_journal(directory), recovery["subject"])):
+                if item is None or (item["stage"] == "merged" and _current_merge(read_journal(directory), item)):
                     withdraw(recovery["subject"])
+                    break
+                if item["stage"] == "merged" and (item.get("syncedHead") or item["head"]) != recovery["head"]:
+                    withdraw(recovery["subject"])
+                    reports.append({"subject": item["subject"], "note": "recorded head changed: settle identity before recovery"})
                     break
                 where = f" as change request {recovery['changeRequest']}" if recovery["changeRequest"] else ""
                 intent = {
@@ -1709,6 +1743,7 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                                "not recorded by the runner",
                     "journalAfter": len(read_journal(directory)),
                     "occurredAt": recovery["occurredAt"],
+                    "changeRequest": recovery["changeRequest"],
                 }
                 # The intent first: a crash after the state write and before
                 # the journal entry is then finished by the next reconcile.
@@ -1732,7 +1767,8 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
 
 def _journal_recovery(directory: Path, intent: dict) -> dict:
     return append_journal(directory, kind="candidate.merged", subject=intent["subject"], lane=intent["lane"],
-                          summary=intent["summary"], recovered=True, occurred_at=intent.get("occurredAt"))
+                          summary=intent["summary"], recovered=True, occurred_at=intent.get("occurredAt"),
+                          recovery={"head": intent["head"], "changeRequest": intent.get("changeRequest")})
 
 
 def _read_recovery(directory: Path) -> dict | None:
@@ -1743,12 +1779,14 @@ def _read_recovery(directory: Path) -> dict | None:
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise StateError("state_invalid", f"{RECOVERY_FILE} is not JSON") from None
     shape = {"subject": str, "head": str, "summary": str, "journalAfter": int}
-    if (not isinstance(intent, dict) or set(intent) not in ({*shape, "lane"}, {*shape, "lane", "occurredAt"})
+    if (not isinstance(intent, dict) or not {*shape, "lane"} <= set(intent)
+            or not set(intent) <= {*shape, "lane", "occurredAt", "changeRequest"}
             or not all(isinstance(intent[key], kind) and not isinstance(intent[key], bool) for key, kind in shape.items())
             or not (intent["lane"] is None or isinstance(intent["lane"], str))):
         raise StateError("state_invalid", f"{RECOVERY_FILE} is malformed")
     probe = {"id": 1, "at": now(), "kind": "candidate.merged", "subject": intent["subject"],
-             "lane": intent["lane"], "summary": intent["summary"], "occurredAt": intent.get("occurredAt")}
+             "lane": intent["lane"], "summary": intent["summary"], "occurredAt": intent.get("occurredAt"),
+             "recovery": {"head": intent["head"], "changeRequest": intent.get("changeRequest")}}
     if journal_errors([probe]):
         raise StateError("state_invalid", f"{RECOVERY_FILE} has an invalid occurrence time")
     return intent

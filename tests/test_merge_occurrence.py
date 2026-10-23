@@ -1,5 +1,7 @@
 """A recovered merge retains source time separately from its later observation."""
 import unittest
+import datetime
+import json
 from pathlib import Path
 from unittest import mock
 
@@ -91,3 +93,68 @@ class MergeOccurrenceTests(unittest.TestCase):
         self.assertEqual(stats["totalSeconds"], 3600)
         self.assertIsNone(stats["waitSeconds"])
         self.assertIsNone(stats["checkToMergeSeconds"])
+
+    def test_future_occurrence_inside_snapshot_skew_refuses_before_any_write(self):
+        self.lead({"queue": [queue_item("work-a")]})
+        before = self.bytes()
+        future = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=20)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        snapshot = {"source": "forge", "takenAt": future, "items": [
+            {"subject": "work-a", "state": "merged", "head": HEAD_A, "mergedAt": future}]}
+        path = self.root / "future.json"
+        path.write_text(json.dumps(snapshot))
+        with self.assertRaises(state_tool.StateError):
+            state_tool.reconcile(self.directory, [path])
+        self.assertEqual(self.bytes(), before)
+        self.assertFalse((self.directory / state_tool.RECOVERY_FILE).exists())
+
+    def test_already_merged_conflicting_head_is_reported_without_writes(self):
+        self.lead({"queue": [queue_item("work-a")]})
+        state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                         selector="queue[subject=work-a]", changes={"stage": "merged"})
+        before = self.bytes()
+        result = state_tool.reconcile(self.directory, [self.forge(head=fixtures.HEAD_B, changeRequest="different-pr")])
+        self.assertFalse(result["drift"])
+        self.assertIn("head", result["reports"][0]["note"])
+        self.assertEqual(self.bytes(), before)
+        self.assertFalse((self.directory / state_tool.RECOVERY_FILE).exists())
+
+    def test_missing_source_head_uses_synced_identity_through_crash(self):
+        self.lead({"queue": [queue_item("work-a")]})
+        state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                         selector="queue[subject=work-a]", changes={"stage": "merged", "syncedHead": fixtures.HEAD_B})
+        forge = Path(self.snapshot("forge", [{"subject": "work-a", "state": "merged", "mergedAt": "2026-10-20T10:00:00Z"}]))
+        with mock.patch.object(state_tool, "_journal_recovery", side_effect=RuntimeError("crash")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [forge])
+        unrelated = Path(self.snapshot("tracker", []))
+        state_tool.reconcile(self.directory, [unrelated])
+        merged = state_tool.read_journal(self.directory)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["occurredAt"], "2026-10-20T10:00:00Z")
+        self.assertFalse(state_tool.reconcile(self.directory, [forge])["drift"])
+
+    def test_late_real_handoff_append_never_duplicates_recovered_merge(self):
+        self.lead({"lanes": [{"id": "lane-1", "title": "Lane", "state": "working", "focus": "work-a",
+                              "since": state_tool.now(), "waitingOn": None}],
+                   "queue": [queue_item("work-a", changeRequest="pr-1")]})
+        forge = self.forge(changeRequest="pr-1")
+        append = state_tool.append_journal
+        def interleave(directory, **kwargs):
+            if kwargs["kind"] == "candidate.handed":
+                state_tool.reconcile(directory, [forge])
+            return append(directory, **kwargs)
+        with mock.patch.object(state_tool, "append_journal", side_effect=interleave):
+            state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_A, change_request="pr-1")
+        before = self.bytes()
+        self.assertFalse(state_tool.reconcile(self.directory, [forge])["drift"])
+        self.assertEqual(self.bytes(), before)
+        shown = state_tool.show(self.directory)
+        self.assertEqual(len([e for e in shown["journal"] if e["kind"] == "candidate.merged"]), 1)
+        self.assertEqual(shown["stats"]["work-a"]["endedAt"], "2026-10-20T10:00:00Z")
+        state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                         selector="queue[subject=work-a]", changes={"stage": "stopped"})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=fixtures.HEAD_B, change_request="pr-2")
+        later = self.forge(head=fixtures.HEAD_B, changeRequest="pr-2", mergedAt="2026-10-20T11:00:00Z")
+        state_tool.reconcile(self.directory, [later])
+        self.assertEqual(len([e for e in state_tool.read_journal(self.directory) if e["kind"] == "candidate.merged"]), 2)
+        self.assertFalse(state_tool.reconcile(self.directory, [later])["drift"])

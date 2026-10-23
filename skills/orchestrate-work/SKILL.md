@@ -416,6 +416,11 @@ run the sync loop in this order:
      Existing entries and review provenance are never rewritten. A normal
      runner entry and an old journal without `occurredAt` retain their `at`
      semantics. Never backdate the clock or edit the journal to recover a merge.
+     Recovery retains the source head and change request as `recovery`, so a
+     delayed hand-off append cannot duplicate that same merge. A conflicting
+     already-merged head is reported for the lead to settle; absent source heads
+     use the recorded synced head, then the candidate head. A future source
+     occurrence is refused before writes, even within snapshot clock skew.
      `show` reports `recoveryPending` while one waits. One that cannot be
      read is set aside as `recovery.json.invalid` (numbered after the first)
      and reported; check the queue item it names against the journal, journal
