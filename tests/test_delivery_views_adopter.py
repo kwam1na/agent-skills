@@ -11,6 +11,7 @@ on PYTHONPATH; no credential is real.
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import os
@@ -37,6 +38,10 @@ INSTALLED = ".agent-skills/current/skills"
 # Stand-in credentials: they only have to be present, and must never be written anywhere.
 CREDENTIALS = {"JIRA_EMAIL": "lead@shift.example", "JIRA_API_TOKEN": "jira-sentinel-4c1d",
                "BITBUCKET_EMAIL": "lead@shift.example", "BITBUCKET_TOKEN": "bitbucket-sentinel-9e2a"}
+# Each token, and the Basic authorization value it is sent in.
+SECRETS = tuple(secret for user, token in (("JIRA_EMAIL", "JIRA_API_TOKEN"), ("BITBUCKET_EMAIL", "BITBUCKET_TOKEN"))
+                for secret in (CREDENTIALS[token],
+                               base64.b64encode(f"{CREDENTIALS[user]}:{CREDENTIALS[token]}".encode()).decode()))
 SEARCH = "https://eshyft.atlassian.net/rest/api/3/search/jql?"
 API = "https://api.bitbucket.org/2.0/repositories/eshyft/eshyftnew/"
 
@@ -127,9 +132,11 @@ class OutsideAdopterTests(unittest.TestCase):
             if path.is_file():
                 self.assertNotRegex(path.read_text(encoding="utf-8").lower(), r"athena|linear|github")
         # Everything the binding runs for the views comes from the installed release.
-        for source in ("trackerSnapshot", "forgeSnapshot"):
-            argv = self.adopter.binding["state"][source]["argv"]
-            self.assertEqual(argv[:3], ["python3", "-B", f"{INSTALLED}/delivery-views/scripts/snapshot.py"])
+        state = self.adopter.binding["state"]
+        for argv, script in ((state["trackerSnapshot"]["argv"], "snapshot.py"),
+                             (state["forgeSnapshot"]["argv"], "snapshot.py"),
+                             *((renderer["argv"], "render.py") for renderer in state["renderers"])):
+            self.assertEqual(argv[:3], ["python3", "-B", f"{INSTALLED}/delivery-views/scripts/{script}"])
             self.assertTrue((self.adopter.repository / argv[2]).is_file())
 
     def test_the_binding_and_configuration_validate_from_the_installed_release(self) -> None:
@@ -190,15 +197,18 @@ class OutsideAdopterTests(unittest.TestCase):
         self.assertEqual(planned["SHFT-12"].get("changeRequest"),
                          "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34")
 
-        # Credentials went only to each provider's own origin, and were written nowhere.
+        # Every recorded answer was asked for, in order, with credentials sent only to each provider's own
+        # origin; and no credential, raw or encoded, was written anywhere.
         requests = adopter.requests()
-        self.assertEqual({(request["url"].split("/")[2], request["authorization"]) for request in requests},
-                         {("eshyft.atlassian.net", "Basic"), ("api.bitbucket.org", "Basic")})
-        for path in [*adopter.state.rglob("*"), *snapshots.rglob("*"), adopter.log]:
-            if path.is_file():
-                contents = path.read_text(encoding="utf-8", errors="replace")
-                for name in ("JIRA_API_TOKEN", "BITBUCKET_TOKEN"):
-                    self.assertNotIn(CREDENTIALS[name], contents, path.name)
+        self.assertEqual([request["authorization"] for request in requests], ["Basic"] * 6)
+        for request, prefix in zip(requests, (SEARCH, SEARCH, API + "pullrequests?", API + "pullrequests?page=2",
+                                              API + "commit/aaaaaaaaaaaa", API + "commit/cccccccccccc")):
+            self.assertTrue(request["url"].startswith(prefix), request["url"])
+        self.assertNotIn("nextPageToken", requests[0]["url"])
+        self.assertIn("nextPageToken=token-page-2", requests[1]["url"])
+        self.assertEqual({item["subject"]: item.get("head") for item in forge["items"]},
+                         {"SHFT-11": "a" * 40, "SHFT-12": "c" * 24 + "0123456789abcdef"})
+        self.assert_no_credential(adopter.state, snapshots, adopter.log)
 
     def test_a_failing_provider_keeps_the_last_snapshot_and_names_no_credential(self) -> None:
         adopter = self.adopter
@@ -211,8 +221,17 @@ class OutsideAdopterTests(unittest.TestCase):
                                     str(output), replay=[_exchange(SEARCH, JIRA["unauthorized"], status=401)])
         self.assertFalse(result["taken"])
         self.assertFalse(output.exists())
-        self.assertNotIn(CREDENTIALS["JIRA_API_TOKEN"], json.dumps(result))
-        self.assertNotIn(CREDENTIALS["JIRA_API_TOKEN"], (adopter.state / "journal.jsonl").read_text(encoding="utf-8"))
+        for secret in SECRETS:
+            self.assertNotIn(secret, json.dumps(result))
+        self.assert_no_credential(adopter.state)
+
+    def assert_no_credential(self, *places: Path) -> None:
+        for place in places:
+            for path in [place, *place.rglob("*")] if place.is_dir() else [place]:
+                if path.is_file():
+                    contents = path.read_text(encoding="utf-8", errors="replace")
+                    for secret in SECRETS:
+                        self.assertNotIn(secret, contents, path.name)
 
     def recorded(self, *, hostile: str | None = None) -> None:
         """The record after both snapshots, taken through the binding, are reconciled into it."""
@@ -280,6 +299,9 @@ class OutsideAdopterTests(unittest.TestCase):
         self.assertIn("https://bitbucket.org/eshyft/eshyftnew/pull-requests/34", outside)
         # The hostile titles and summaries reached the reader as text, and no markup in them became an element.
         self.assertTrue(shown["shownAsText"])
+        self.assertNotIn(hostile, shown["head"])
+        # Rendering ran with the credentials exported: nothing it wrote holds one.
+        self.assert_no_credential(adopter.state)
         self.assertEqual(shown["elements"], 0)
 
     @unittest.skip("the history page lands with the history renderer")
@@ -321,6 +343,20 @@ class AdopterGuideTests(unittest.TestCase):
         kinds = {tuple(block[source]["argv"][block[source]["argv"].index("--kind") + 1] for source in
                        ("trackerSnapshot", "forgeSnapshot")) for block in declared}
         self.assertEqual(kinds, {("jira", "bitbucket"), ("linear", "github")})
+        # Each documented snapshot command is one the shipped script accepts.
+        snapshot = importlib.util.spec_from_file_location("snapshot_for_guide",
+                                                          ROOT / "skills/delivery-views/scripts/snapshot.py")
+        sys.path.insert(0, str(ROOT / "skills/delivery-views/scripts"))
+        try:
+            snapshot_module = importlib.util.module_from_spec(snapshot)
+            sys.modules[snapshot.name] = snapshot_module
+            snapshot.loader.exec_module(snapshot_module)
+            for block in declared:
+                for source in ("trackerSnapshot", "forgeSnapshot"):
+                    with self.subTest(source=source):
+                        snapshot_module._parser().parse_args(block[source]["argv"][3:])
+        finally:
+            sys.path.remove(str(ROOT / "skills/delivery-views/scripts"))
         # Each documented state block is one the render wrapper accepts.
         spec = importlib.util.spec_from_file_location("render_state_for_guide",
                                                       ROOT / "skills/orchestrate-work/scripts/render_state.py")

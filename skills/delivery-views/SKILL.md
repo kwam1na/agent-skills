@@ -30,7 +30,8 @@ and may name one as the live server's front page:
 
 Start `serve`, `live` and renders from the repository's top level: the
 binding names each script by its path in the repository, and the render
-wrapper and the snapshot runner pass no working directory of their own. Each
+wrapper and the state tool's snapshot commands pass no working directory of
+their own. Each
 script here then resolves the top level itself (`git rev-parse
 --show-toplevel`) and resolves `--config`, `--binding`, `--state-dir` and
 `{root}` against it, so run by hand it works from any directory inside the
