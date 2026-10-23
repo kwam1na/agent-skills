@@ -58,7 +58,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
                 self.assertEqual(decision.workflow_skill, expected)
 
     def test_profiles_and_release_payload_include_exact_new_closure(self) -> None:
-        profiles = {name: json.loads((ROOT / f"profiles/{name}.json").read_text()) for name in ("core", "linear")}
+        profiles = {name: json.loads((ROOT / f"profiles/{name}.json").read_text()) for name in ("core", "delivery-views", "linear")}
         core_members = resolve_profile("core", profiles)
         self.assertIn("diagnose-work", core_members)
         self.assertIn("obtain-review", core_members)
@@ -67,6 +67,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             sorted([
                 *core_members,
                 "create-linear-ticket",
+                "delivery-views",
                 "execute-linear-ticket",
                 "linear-tracker-adapter",
             ]),
@@ -75,7 +76,10 @@ class ReleaseIntegrationTests(unittest.TestCase):
         linear = _release_view(ROOT, "linear")
         self.assertLessEqual(NEW_PAYLOAD, core.keys())
         self.assertEqual(set(linear) - set(core), {
+            "profiles/delivery-views.json",
             "profiles/linear.json",
+            "skills/delivery-views/SKILL.md",
+            "skills/delivery-views/scripts/views_common.py",
             "skills/create-linear-ticket/SKILL.md",
             "skills/create-linear-ticket/agents/openai.yaml",
             "skills/create-linear-ticket/references/atomic-plan-template.md",
@@ -94,10 +98,10 @@ class ReleaseIntegrationTests(unittest.TestCase):
         self.assertEqual(inventories[0], inventories[1])
         self.assertEqual(core_scenarios, [row for row in linear_scenarios if row["profile"] == "core"])
         self.assertEqual({row["profile"] for row in core_scenarios}, {"core"})
-        self.assertEqual({row["profile"] for row in linear_scenarios}, {"core", "linear"})
+        self.assertEqual({row["profile"] for row in linear_scenarios}, {"core", "delivery-views", "linear"})
         self.assertEqual(
             {row["skill"] for row in linear_scenarios if row["profile"] == "linear"},
-            set(resolve_profile("linear", profiles)) - set(core_members),
+            set(resolve_profile("linear", profiles)) - set(core_members) - {"delivery-views"},
         )
         for path in NEW_PAYLOAD:
             self.assertEqual(core[path], (ROOT / path).read_bytes(), path)

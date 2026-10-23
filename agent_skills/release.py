@@ -23,7 +23,7 @@ MAX_PATH_DEPTH = 8
 MAX_COMPRESSION_RATIO = 100
 MAX_VERIFY_SECONDS = 5
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
-SUPPORTED_PROFILES = frozenset({"bootstrap", "core", "linear"})
+SUPPORTED_PROFILES = frozenset({"bootstrap", "core", "delivery-views", "linear"})
 
 
 class ReleaseError(ValueError):
@@ -113,19 +113,24 @@ def _release_identity(release_id: object, profile_id: object) -> tuple[str, str]
 def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
     catalog = _packaged_document(root, "catalog.json")
     provenance = _packaged_document(root, "provenance.lock.json")
-    profile_paths = (
-        ["profiles/bootstrap.json"]
-        if profile_id == "bootstrap"
-        else ["profiles/core.json"]
-    )
-    if profile_id == "linear":
-        profile_paths.append("profiles/linear.json")
-    profile_documents = {}
-    for relative in profile_paths:
-        document = _packaged_document(root, relative)
-        profile_documents[document["id"]] = document
-    if profile_id not in profile_documents:
-        raise ReleaseError("release.profile: requested profile is unavailable")
+    # The requested profile and every profile it includes, walked from the
+    # profile documents themselves; an include that cannot be loaded is refused.
+    profile_documents: dict[str, dict] = {}
+    pending = [profile_id]
+    while pending:
+        selected_profile = pending.pop()
+        if selected_profile in profile_documents:
+            continue
+        try:
+            document = _packaged_document(root, f"profiles/{selected_profile}.json")
+        except ReleaseError as error:
+            raise ReleaseError(f"release.profile: profile {selected_profile} is unavailable") from error
+        includes = document.get("includes")
+        if (document.get("id") != selected_profile or not isinstance(includes, list)
+                or not all(isinstance(included, str) for included in includes)):
+            raise ReleaseError(f"release.profile: profile {selected_profile} is malformed")
+        profile_documents[selected_profile] = document
+        pending.extend(document["includes"])
     members = resolve_profile(profile_id, profile_documents)
     skills = {skill["id"]: skill for skill in catalog["skills"]}
     entries = {entry["id"]: entry for entry in provenance["entries"]}

@@ -150,6 +150,35 @@
       }
     },
     {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
+      "id": "delivery-views",
+      "license": "NOASSERTION",
+      "modification": {
+        "reason": "Independently authored configurable delivery views: the line map, history page, snapshot commands and their shared configuration, link, bounded-command and round-report rails, kept out of the core workflow so it stays provider-neutral.",
+        "status": "independently-authored"
+      },
+      "outputs": [
+        {
+          "path": "skills/delivery-views/SKILL.md",
+          "sha256": "2ede5e16f2bcb549ac58545f0ae3bddd9cf6012a26c467461827043c836bc2f4"
+        },
+        {
+          "path": "skills/delivery-views/scripts/views_common.py",
+          "sha256": "039166d7f4904f6b1fb7258ebcd3de93e66ce48760a997003afeaf89cb108b59"
+        }
+      ],
+      "owner": "delivery-agent/user-delegated",
+      "source": {
+        "kind": "independent-origin",
+        "ownerApproval": {
+          "owner": "delivery-agent/user-delegated",
+          "reference": "plan-review:the approved configurable delivery views plan"
+        },
+        "rationale": "Authored from the approved plan that makes the delivery line map a configurable product view, not copied from adopter source."
+      }
+    },
+    {
       "classification": "portable-core",
       "distribution": "releasable",
       "id": "diagnose-work",
@@ -309,7 +338,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "f28dc77298297e98b88e9d78a40db677865739bcd427b619de08ab6de22a6530"
+          "sha256": "8d3ce9fca18cd0f8602242693dac516cf04ced7bb4cc3b34d883800a47113f77"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
