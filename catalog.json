@@ -326,7 +326,7 @@
         "orchestration-workflow",
         "tracker-operations"
       ],
-      "degradedBehavior": "Without session messaging the lead runs lanes as subagents or in sequence, and keeps undelivered messages in its own notes. Optional tracking may be absent; the delivery state and journal remain authoritative for where the epic stands. Recovered merges preserve source occurrence separately from observation; unavailable source times remain unknown. Native review observations retain actual reports without a run; missing or candidate-mismatched artifacts stay unavailable and carry no admission authority.",
+      "degradedBehavior": "Without session messaging the lead runs lanes as subagents or in sequence, and keeps undelivered messages in its own notes. Optional tracking may be absent; the delivery state and journal remain authoritative for where the epic stands. Recovered merges preserve source occurrence separately from observation; unavailable source times remain unknown. Native review observations retain actual reports without a run; missing or candidate-mismatched artifacts stay unavailable and carry no admission authority. Ready and merge hooks receive an exact runner-derived single or batch check mode; it carries no admission authority.",
       "dependencies": [
         {
           "id": "compound-learning",

@@ -518,6 +518,48 @@ class LeadWriteTests(MergeQueueTestCase):
         self.assertEqual(state_tool.read_state(adopter.state)["meta"]["baseHead"], "c" * 40, "the runner's write stands")
 
 
+class CheckModeTests(MergeQueueTestCase):
+    def hooks(self) -> dict:
+        return {
+            "ready": [PY, "tools/forge.py", "ready", "{candidate}", "{checkMode}"],
+            "merge": [PY, "tools/forge.py", "merge", "{branch}", "{expectedHead}", "{checkMode}"],
+        }
+
+    def test_single_merge_hooks_receive_single(self) -> None:
+        adopter = self.adopter(self.hooks())
+        self.candidate(adopter)
+        with mock.patch.dict(os.environ, {"checkMode": "batch", "CHECK_MODE": "batch"}):
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].outcome, "merged")
+        synced = adopter.item("feature")["syncedHead"]
+        self.assertIn("forge ready feature single", adopter.log_lines())
+        self.assertIn(f"forge merge feature {synced} single", adopter.log_lines())
+
+    def test_batch_merge_hooks_receive_batch_for_each_member(self) -> None:
+        adopter = self.adopter(self.hooks())
+        for subject, changes in [("first", {"src/lib.txt": "changed lib\n"}), ("second", {"src/app.txt": "changed app\n"})]:
+            self.candidate(adopter, changes, name=subject)
+        results = adopter.runner().run_command("batch", ["first", "second"])
+        self.assertEqual([result.outcome for result in results], ["merged", "merged"])
+        for subject in ["first", "second"]:
+            synced = adopter.item(subject)["syncedHead"]
+            self.assertIn(f"forge ready {subject} batch", adopter.log_lines())
+            self.assertIn(f"forge merge {subject} {synced} batch", adopter.log_lines())
+
+    def test_check_mode_context_is_an_exact_enum_and_unavailable_before_merge(self) -> None:
+        for mode in ["single", "batch"]:
+            self.assertEqual(queue.Context({"checkMode": mode}).argv(["{checkMode}", "--mode={checkMode}"]), [mode, "--mode={checkMode}"])
+        for values in [{}, *[{"checkMode": invalid} for invalid in ["", "Single", "batch ", "unknown", None, 0, False, [], {}]]]:
+            with self.subTest(values=values), self.assertRaises(queue.Stop) as caught:
+                queue.Context(values).argv(["{checkMode}"])
+            self.assertEqual(caught.exception.reason, "binding_invalid")
+
+    def test_hook_placeholder_preserves_binding_schema_compatibility(self) -> None:
+        adopter = self.adopter(self.hooks())
+        self.assertEqual(queue.binding_errors(adopter.binding), [])
+        self.assertTrue(Draft202012Validator(schema("orchestration-binding")).is_valid(adopter.binding))
+
+
 class CandidatePinningTests(MergeQueueTestCase):
     def test_a_clean_candidate_merges_at_its_synced_head(self) -> None:
         adopter = self.adopter()
