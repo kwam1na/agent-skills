@@ -49,7 +49,7 @@ from delivery_state import load_schema, validate  # noqa: E402
 BINDING_PATH = ".agents/orchestration.json"
 RESULT_VERSION = "merge-queue-result/1"
 PLACEHOLDERS = frozenset({
-    "candidate", "branch", "head", "expectedHead", "base", "baseHead", "treeSha", "ref", "workRoot",
+    "candidate", "branch", "head", "expectedHead", "base", "baseHead", "treeSha", "ref", "workRoot", "checkMode",
 })
 PLACEHOLDER = re.compile(r"^\{([A-Za-z]+)\}$")
 # Reasons that stop the whole queue rather than one candidate.
@@ -498,7 +498,10 @@ class Context:
             return element
         if match[1] not in self.values:
             raise Stop("binding_invalid", f"{element} has no value at this step")
-        return self.values[match[1]]
+        value = self.values[match[1]]
+        if match[1] == "checkMode" and (not isinstance(value, str) or value not in ("single", "batch")):
+            raise Stop("binding_invalid", "{checkMode} must be exactly single or batch")
+        return value
 
     def argv(self, argv: list[str]) -> list[str]:
         return [self.element(element) for element in argv]
@@ -1814,7 +1817,10 @@ class Runner:
             raise Stop("base_moved", f"{self.base} moved to {base_head}, which {subject}'s checked head does not contain")
         self.merging.add(subject)
         self.set_item(subject, stage="merging")
-        context = context.with_values(branch=branch, head=synced, expectedHead=synced, baseHead=base_head, treeSha=self.tree(synced))
+        context = context.with_values(
+            branch=branch, head=synced, expectedHead=synced, baseHead=base_head, treeSha=self.tree(synced),
+            checkMode="single" if batch_synced is None else "batch",
+        )
         timeout = self.binding["checkTimeoutSeconds"]
         if self.run_argv(self.binding["ready"], anchor, context, timeout).returncode != 0:
             raise Stop("ready_refused", f"ready refused {subject}")

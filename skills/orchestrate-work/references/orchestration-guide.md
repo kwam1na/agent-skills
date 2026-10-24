@@ -665,7 +665,14 @@ replaces a whole argv element, or a whole environment value, and never
 substitutes inside a longer string:
 
 `{candidate}`, `{branch}`, `{head}`, `{expectedHead}`, `{base}`,
-`{baseHead}`, `{treeSha}`, `{ref}` and `{workRoot}`.
+`{baseHead}`, `{treeSha}`, `{ref}`, `{workRoot}` and `{checkMode}`.
+
+`{checkMode}` is available only to the `ready` and `merge` hooks invoked by
+`Runner.merge`. Its exact value is `single` when that merge has no batch-synced
+head, or `batch` when it does. The runner derives it from that call, never from
+queue state or an environment flag. Missing or non-enum context values are
+refused with `binding_invalid`. It identifies how the candidate was checked;
+it is not a freshness proof or permission to skip any admission check.
 
 ### Fields
 
