@@ -942,9 +942,12 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
     combined = {**{"run:" + key: value for key, value in runs.items()},
                 **{"native:" + key: value for key, value in reviews.items()}}
     ordered = []
-    state = document.get("state", {})
-    for item in [*state.get("queue", []), *state.get("planned", [])]:
-        key = "run:" + item["runId"] if item.get("runId") else "native:" + item.get("subject", "")
+    # The page draws whatever a malformed record has, so its stop order is read as leniently.
+    state = document.get("state") if isinstance(document.get("state"), dict) else {}
+    stops = [item for name in ("queue", "planned") if isinstance(state.get(name), list)
+             for item in state[name] if isinstance(item, dict)]
+    for item in stops:
+        key = "run:" + item["runId"] if isinstance(item.get("runId"), str) and item["runId"] else "native:" + str(item.get("subject", ""))
         if key in combined and key not in ordered:
             ordered.append(key)
     ordered.extend(key for key in combined if key not in ordered)

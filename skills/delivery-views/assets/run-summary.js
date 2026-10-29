@@ -326,7 +326,7 @@ function runSummaryNode(summary, options) {
     var head = node("p", "run-card-head");
     if (summary.observational && typeof round.candidateRef === "string") {
       var candidate = node("p", "run-quiet", "Reviewed candidate " + short(round.candidateRef));
-      candidate.title = round.candidateRef;
+      candidate.setAttribute("aria-label", "Reviewed candidate " + round.candidateRef);
       box.appendChild(candidate);
     }
     head.appendChild(node("b", null, "Round " + numberOf(round, index)));

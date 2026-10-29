@@ -568,9 +568,9 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind revi
 
 When a lane has no product run, keep its actual native reducer outcomes through
 `capture-review` after hand-off. Supply the complete sequence, one file per
-round in order; each retains its binding and actual `review-lens-result/1`
-reports, including originating `resolvedFindings` (or native `resolutions`),
-with `resolution` or `reason` text. Candidate references are
+round in order; each retains its binding and actual obtain-review lens
+reports (review-lens-result/1), including originating `resolvedFindings`
+(or native `resolutions`), with `resolution` or `reason` text. Candidate references are
 exact opaque strings; the final reference must match the retained queue head (the reviewed
 candidate, not the runner's synced head) before the view can show approval. A
 runner sync onto a moved base keeps the evidence; a new hand-off does not.
