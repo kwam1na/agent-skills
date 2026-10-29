@@ -36,14 +36,14 @@ BITBUCKET = json.loads((SNAPSHOTS / "bitbucket.json").read_text(encoding="utf-8"
 SKILL = ROOT / "skills/delivery-views/SKILL.md"
 INSTALLED = ".agent-skills/current/skills"
 # Stand-in credentials: they only have to be present, and must never be written anywhere.
-CREDENTIALS = {"JIRA_EMAIL": "lead@shift.example", "JIRA_API_TOKEN": "jira-sentinel-4c1d",
-               "BITBUCKET_EMAIL": "lead@shift.example", "BITBUCKET_TOKEN": "bitbucket-sentinel-9e2a"}
+CREDENTIALS = {"JIRA_EMAIL": "lead@app.example", "JIRA_API_TOKEN": "jira-sentinel-4c1d",
+               "BITBUCKET_EMAIL": "lead@app.example", "BITBUCKET_TOKEN": "bitbucket-sentinel-9e2a"}
 # Each token, and the Basic authorization value it is sent in.
 SECRETS = tuple(secret for user, token in (("JIRA_EMAIL", "JIRA_API_TOKEN"), ("BITBUCKET_EMAIL", "BITBUCKET_TOKEN"))
                 for secret in (CREDENTIALS[token],
                                base64.b64encode(f"{CREDENTIALS[user]}:{CREDENTIALS[token]}".encode()).decode()))
-SEARCH = "https://eshyft.atlassian.net/rest/api/3/search/jql?"
-API = "https://api.bitbucket.org/2.0/repositories/eshyft/eshyftnew/"
+SEARCH = "https://example.atlassian.net/rest/api/3/search/jql?"
+API = "https://api.bitbucket.org/2.0/repositories/example/app/"
 
 
 class OutsideAdopter:
@@ -51,11 +51,11 @@ class OutsideAdopter:
 
     def __init__(self, root: Path, archive: Path, metadata: Path) -> None:
         self.root = root
-        self.repository = root / "shift planner"
+        self.repository = root / "example app"
         shutil.copytree(FIXTURE / "repository", self.repository)
         self.git("init", "-q")
         self.git("add", ".")
-        self.git("-c", "user.email=lead@shift.example", "-c", "user.name=Lead", "commit", "-qm", "Initial")
+        self.git("-c", "user.email=lead@app.example", "-c", "user.name=Lead", "commit", "-qm", "Initial")
         with mock.patch.dict(os.environ, {"AGENT_SKILLS_EXECUTION_CONTEXT": "", "GITHUB_EVENT_NAME": ""}):
             Lifecycle(self.repository).install(archive, metadata, maintainer=True)
         # The documented argv starts with python3; this one is the interpreter under test.
@@ -153,10 +153,10 @@ class OutsideAdopterTests(unittest.TestCase):
 
     def test_both_snapshots_run_through_the_binding_and_reconcile_into_the_record(self) -> None:
         adopter = self.adopter
-        adopter.state_tool("init", "--headline", "Shift planner epic")
+        adopter.state_tool("init", "--headline", "Example app epic")
         version = adopter.state_tool("show")["state"]["version"]
         adopter.state_tool("patch", "--writer", "lead", "--version", str(version), "--patch",
-                           json.dumps({"meta": {"trackerParent": "SHFT-10"}}))
+                           json.dumps({"meta": {"trackerParent": "APP-10"}}))
         snapshots = adopter.root / "snapshots"
         snapshots.mkdir()
 
@@ -166,15 +166,15 @@ class OutsideAdopterTests(unittest.TestCase):
         self.assertTrue(taken["taken"], taken)
         tracker = json.loads((snapshots / "tracker.json").read_text(encoding="utf-8"))
         self.assertEqual({item["subject"]: item["state"] for item in tracker["items"]},
-                         {"SHFT-11": "backlog", "SHFT-12": "started", "SHFT-13": "completed", "SHFT-14": "canceled"})
+                         {"APP-11": "backlog", "APP-12": "started", "APP-13": "completed", "APP-14": "canceled"})
         reconciled = adopter.state_tool("reconcile", "--snapshot", str(snapshots / "tracker.json"))
         # The record takes in the tracker by its own rules: an open ticket becomes a follow-up, a started one
         # planned work, a completed one a report, and a canceled one nothing.
-        self.assertEqual([change["subject"] for change in reconciled["changes"]], ["SHFT-11", "SHFT-12"])
-        self.assertEqual([report["subject"] for report in reconciled["reports"]], ["SHFT-13"])
+        self.assertEqual([change["subject"] for change in reconciled["changes"]], ["APP-11", "APP-12"])
+        self.assertEqual([report["subject"] for report in reconciled["reports"]], ["APP-13"])
         record = adopter.state_tool("show")["state"]
-        self.assertEqual([item["subject"] for item in record["planned"]], ["SHFT-12"])
-        self.assertEqual([item["id"] for item in record["followups"]], ["SHFT-11"])
+        self.assertEqual([item["subject"] for item in record["planned"]], ["APP-12"])
+        self.assertEqual([item["id"] for item in record["followups"]], ["APP-11"])
 
         taken = adopter.state_tool("forge-snapshot", "--binding", ".agents/orchestration.json", "--output",
                                    str(snapshots / "forge.json"), replay=[
@@ -186,16 +186,16 @@ class OutsideAdopterTests(unittest.TestCase):
         self.assertTrue(taken["taken"], taken)
         forge = json.loads((snapshots / "forge.json").read_text(encoding="utf-8"))
         self.assertEqual({item["subject"]: (item["state"], item.get("changeRequest")) for item in forge["items"]}, {
-            "SHFT-11": ("merged", "https://bitbucket.org/eshyft/eshyftnew/pull-requests/31"),
-            "SHFT-12": ("open", "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34"),
+            "APP-11": ("merged", "https://bitbucket.org/example/app/pull-requests/31"),
+            "APP-12": ("open", "https://bitbucket.org/example/app/pull-requests/34"),
         })
         reconciled = adopter.state_tool("reconcile", "--snapshot", str(snapshots / "tracker.json"), "--snapshot",
                                         str(snapshots / "forge.json"))
         self.assertTrue(reconciled["ok"], reconciled)
         record = adopter.state_tool("show")["state"]
         planned = {item["subject"]: item for item in record["queue"] + record["planned"]}
-        self.assertEqual(planned["SHFT-12"].get("changeRequest"),
-                         "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34")
+        self.assertEqual(planned["APP-12"].get("changeRequest"),
+                         "https://bitbucket.org/example/app/pull-requests/34")
 
         # Every recorded answer was asked for, in order, with credentials sent only to each provider's own
         # origin; and no credential, raw or encoded, was written anywhere.
@@ -207,15 +207,15 @@ class OutsideAdopterTests(unittest.TestCase):
         self.assertNotIn("nextPageToken", requests[0]["url"])
         self.assertIn("nextPageToken=token-page-2", requests[1]["url"])
         self.assertEqual({item["subject"]: item.get("head") for item in forge["items"]},
-                         {"SHFT-11": "a" * 40, "SHFT-12": "c" * 24 + "0123456789abcdef"})
+                         {"APP-11": "a" * 40, "APP-12": "c" * 24 + "0123456789abcdef"})
         self.assert_no_credential(adopter.state, snapshots, adopter.log)
 
     def test_a_failing_provider_keeps_the_last_snapshot_and_names_no_credential(self) -> None:
         adopter = self.adopter
-        adopter.state_tool("init", "--headline", "Shift planner epic")
+        adopter.state_tool("init", "--headline", "Example app epic")
         version = adopter.state_tool("show")["state"]["version"]
         adopter.state_tool("patch", "--writer", "lead", "--version", str(version), "--patch",
-                           json.dumps({"meta": {"trackerParent": "SHFT-10"}}))
+                           json.dumps({"meta": {"trackerParent": "APP-10"}}))
         output = adopter.root / "tracker.json"
         result = adopter.state_tool("tracker-snapshot", "--binding", ".agents/orchestration.json", "--output",
                                     str(output), replay=[_exchange(SEARCH, JIRA["unauthorized"], status=401)])
@@ -241,11 +241,11 @@ class OutsideAdopterTests(unittest.TestCase):
             jira["page-1"]["issues"][1]["fields"]["summary"] = hostile
             jira["page-1"]["issues"][0]["fields"]["description"] = {
                 "type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": hostile}]}]}
-            bitbucket["page-1"]["values"][2]["title"] = f"SHFT-12 {hostile}"
-        adopter.state_tool("init", "--headline", "Shift planner epic")
+            bitbucket["page-1"]["values"][2]["title"] = f"APP-12 {hostile}"
+        adopter.state_tool("init", "--headline", "Example app epic")
         version = adopter.state_tool("show")["state"]["version"]
         adopter.state_tool("patch", "--writer", "lead", "--version", str(version), "--patch",
-                           json.dumps({"meta": {"trackerParent": "SHFT-10"}}))
+                           json.dumps({"meta": {"trackerParent": "APP-10"}}))
         snapshots = adopter.root / "snapshots"
         snapshots.mkdir(exist_ok=True)
         adopter.state_tool("tracker-snapshot", "--binding", ".agents/orchestration.json", "--output",
@@ -290,22 +290,22 @@ class OutsideAdopterTests(unittest.TestCase):
         page = adopter.state / "line-map.html"
         text = page.read_text(encoding="utf-8")
         self.assertIn('<meta name="delivery-state-live">', text)
-        self.assertIn("<title>Shift planner delivery</title>", text)
+        self.assertIn("<title>Example app delivery</title>", text)
         self.assertNotIn("</script><img", text)
         shown = self.open_page(page, hostile)
         # The planned piece opens a detail; the follow-up is listed with its ticket's link.
-        self.assertEqual(shown["subjects"], ["SHFT-12"])
+        self.assertEqual(shown["subjects"], ["APP-12"])
         # Besides its own chapters, the line map links only the history page beside it and Jira and Bitbucket.
         self.assertIn("delivery-history.html", shown["hrefs"])
         outside = [href for href in shown["hrefs"] if not href.startswith("#") and href != "delivery-history.html"]
         self.assertTrue(outside)
         for href in outside:
             with self.subTest(href=href):
-                self.assertRegex(href, r"^https://(eshyft\.atlassian\.net/browse/(SHFT|EDD)-[0-9]+"
-                                       r"|bitbucket\.org/eshyft/eshyftnew/(pull-requests/[0-9]+|commits/[0-9a-f]{40}))$")
-        for key in ("SHFT-10", "SHFT-11", "SHFT-12"):
-            self.assertIn(f"https://eshyft.atlassian.net/browse/{key}", outside)
-        self.assertIn("https://bitbucket.org/eshyft/eshyftnew/pull-requests/34", outside)
+                self.assertRegex(href, r"^https://(example\.atlassian\.net/browse/(APP|ABC)-[0-9]+"
+                                       r"|bitbucket\.org/example/app/(pull-requests/[0-9]+|commits/[0-9a-f]{40}))$")
+        for key in ("APP-10", "APP-11", "APP-12"):
+            self.assertIn(f"https://example.atlassian.net/browse/{key}", outside)
+        self.assertIn("https://bitbucket.org/example/app/pull-requests/34", outside)
         # The hostile titles and summaries reached the reader as text, and no markup in them became an element.
         self.assertTrue(shown["shownAsText"])
         self.assertNotIn(hostile, shown["head"])
@@ -326,7 +326,7 @@ class OutsideAdopterTests(unittest.TestCase):
         # The record's text never reaches this page, so the checks below guard it rather than prove inertness;
         # the line map's test proves the record's hostile text stays inert.
         self.assertEqual(shown["hrefs"], ["line-map.html"])
-        self.assertNotIn("SHFT-12", text)
+        self.assertNotIn("APP-12", text)
         self.assertNotIn(hostile, shown["head"])
         self.assertEqual(shown["elements"], 0)
         self.assert_no_credential(adopter.state)

@@ -1,15 +1,15 @@
 {
   "spec": "delivery-views-config/1",
-  "title": "Shift planner delivery",
+  "title": "Example app delivery",
   "tracker": {
     "name": "Jira",
-    "issueUrl": "https://eshyft.atlassian.net/browse/{key}",
-    "keyPattern": "^(SHFT|EDD)-[0-9]+$"
+    "issueUrl": "https://example.atlassian.net/browse/{key}",
+    "keyPattern": "^(APP|ABC)-[0-9]+$"
   },
   "forges": [
     {
       "name": "Bitbucket",
-      "repository": "eshyft/eshyftnew",
+      "repository": "example/app",
       "pullUrl": "https://bitbucket.org/{repository}/pull-requests/{number}",
       "commitUrl": "https://bitbucket.org/{repository}/commits/{sha}"
     }

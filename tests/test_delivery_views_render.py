@@ -489,27 +489,27 @@ class CollectRunsTests(unittest.TestCase):
 
 
 class LinkTests(unittest.TestCase):
-    ESHYFT = config(tracker={"name": "Jira", "issueUrl": "https://eshyft.atlassian.net/browse/{key}", "keyPattern": "^(SHFT|EDD)-[0-9]+$"},
-                    forges=[{"name": "Bitbucket", "repository": "eshyft/eshyftnew",
+    EXAMPLE = config(tracker={"name": "Jira", "issueUrl": "https://example.atlassian.net/browse/{key}", "keyPattern": "^(APP|ABC)-[0-9]+$"},
+                    forges=[{"name": "Bitbucket", "repository": "example/app",
                              "pullUrl": "https://bitbucket.org/{repository}/pull-requests/{number}",
                              "commitUrl": "https://bitbucket.org/{repository}/commits/{sha}"}])
 
     def test_jira_and_bitbucket_configuration_produce_their_addresses(self) -> None:
-        document = {"state": {"meta": {"trackerParent": "SHFT-1"}, "queue": [
-            {"subject": "SHFT-12", "changeRequest": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34"},
-            {"subject": "EDD-3", "changeRequest": "#35"},
+        document = {"state": {"meta": {"trackerParent": "APP-1"}, "queue": [
+            {"subject": "APP-12", "changeRequest": "https://bitbucket.org/example/app/pull-requests/34"},
+            {"subject": "ABC-3", "changeRequest": "#35"},
             {"subject": "OTHER-1", "changeRequest": "https://bitbucket.org/someone/else/pull-requests/1"}]}}
         sha = "a" * 40
         runs = {"run-1": {"roundDetail": [{"settled": [{"fixCommit": sha}, {"fixCommit": "javascript:alert(1)"}]}]}}
-        links = render.page_links(document, runs, self.ESHYFT)
-        self.assertEqual(links["issues"], {"SHFT-1": "https://eshyft.atlassian.net/browse/SHFT-1",
-                                           "SHFT-12": "https://eshyft.atlassian.net/browse/SHFT-12",
-                                           "EDD-3": "https://eshyft.atlassian.net/browse/EDD-3"})
+        links = render.page_links(document, runs, self.EXAMPLE)
+        self.assertEqual(links["issues"], {"APP-1": "https://example.atlassian.net/browse/APP-1",
+                                           "APP-12": "https://example.atlassian.net/browse/APP-12",
+                                           "ABC-3": "https://example.atlassian.net/browse/ABC-3"})
         self.assertEqual(links["changes"], {
-            "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34": {"label": "#34", "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34", "repository": "eshyft/eshyftnew"},
-            "#35": {"label": "#35", "href": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/35", "repository": "eshyft/eshyftnew"},
+            "https://bitbucket.org/example/app/pull-requests/34": {"label": "#34", "href": "https://bitbucket.org/example/app/pull-requests/34", "repository": "example/app"},
+            "#35": {"label": "#35", "href": "https://bitbucket.org/example/app/pull-requests/35", "repository": "example/app"},
             "https://bitbucket.org/someone/else/pull-requests/1": {"label": "#1", "href": "https://bitbucket.org/someone/else/pull-requests/1", "repository": "someone/else"}})
-        self.assertEqual(links["commits"], {sha: f"https://bitbucket.org/eshyft/eshyftnew/commits/{sha}"})
+        self.assertEqual(links["commits"], {sha: f"https://bitbucket.org/example/app/commits/{sha}"})
 
     def test_cross_repository_github_links_have_short_labels_and_repository_metadata(self) -> None:
         forge = {"name": "GitHub", "repository": "v26-technologies/athena",
@@ -519,16 +519,16 @@ class LinkTests(unittest.TestCase):
         unknown = "https://unknown.test/a/b/pull/180"
         wrong_path = "https://github.com/a/b/issues/180"
         document = {"state": {"queue": [{"changeRequest": value} for value in [*urls, unknown, wrong_path]]}}
-        links = render.page_links(document, {}, config(forges=[forge, self.ESHYFT["forges"][0]]))["changes"]
+        links = render.page_links(document, {}, config(forges=[forge, self.EXAMPLE["forges"][0]]))["changes"]
         self.assertEqual(links, {url: {"label": f"#{n}", "href": url, "repository": "v26-technologies/agent-delivery-harness"}
                                  for n, url in zip((180, 181), urls)})
         other = "https://bitbucket.org/another/repo/pull-requests/180"
         links = render.page_links({"state": {"planned": [{"changeRequest": other}]}}, {},
-                                  config(forges=[forge, self.ESHYFT["forges"][0]]))["changes"]
+                                  config(forges=[forge, self.EXAMPLE["forges"][0]]))["changes"]
         self.assertEqual(links[other], {"label": "#180", "href": other, "repository": "another/repo"})
 
     def test_with_no_tracker_or_forge_nothing_is_linked(self) -> None:
-        document = {"state": {"queue": [{"subject": "SHFT-12", "changeRequest": "#34"}]}}
+        document = {"state": {"queue": [{"subject": "APP-12", "changeRequest": "#34"}]}}
         self.assertEqual(render.page_links(document, {}, config()), {"issues": {}, "changes": {}, "commits": {}})
 
 

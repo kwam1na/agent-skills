@@ -279,7 +279,7 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
     if _origin(site)[0] != "https" or not _origin(site)[1] or urllib.parse.urlsplit(site).path:
         raise Failure("--site must be an https origin, such as https://example.atlassian.net")
     if not JIRA_KEY.match(args.parent):
-        raise Failure("usage: --parent must be an issue key, such as SHFT-10")
+        raise Failure("usage: --parent must be an issue key, such as APP-10")
     client = Client(site, _authorization(environ, args.token_env, args.user_env), transport, deadline, clock, sleep)
     canceled = {name.strip() for name in (args.canceled_statuses or "").split(",") if name.strip()}
     issues: list[dict] = []

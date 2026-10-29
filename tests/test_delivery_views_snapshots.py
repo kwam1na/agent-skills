@@ -56,10 +56,10 @@ SECRETS = (
     base64.b64encode(TOKEN.encode()).decode(),
 )
 JIRA_ENV = {"JIRA_EMAIL": EMAIL, "JIRA_API_TOKEN": TOKEN}
-JIRA_ARGS = ["--kind", "jira", "--site", "https://eshyft.atlassian.net", "--parent", "SHFT-10",
+JIRA_ARGS = ["--kind", "jira", "--site", "https://example.atlassian.net", "--parent", "APP-10",
              "--user-env", "JIRA_EMAIL", "--token-env", "JIRA_API_TOKEN", "--now", NOW]
-SEARCH = "https://eshyft.atlassian.net/rest/api/3/search/jql?"
-API = "https://api.bitbucket.org/2.0/repositories/eshyft/eshyftnew/"
+SEARCH = "https://example.atlassian.net/rest/api/3/search/jql?"
+API = "https://api.bitbucket.org/2.0/repositories/example/app/"
 
 
 def body(value: object) -> bytes:
@@ -143,34 +143,34 @@ class JiraTests(SnapshotCase):
         code, out, _ = self.run_kind([*JIRA_ARGS, "--canceled-statuses", "Won't Do,Duplicate"], transport, JIRA_ENV)
         self.assertEqual(code, 0)
         first, second = (urllib.parse.parse_qs(urllib.parse.urlsplit(url).query) for url, _ in transport.requests)
-        self.assertEqual(first["jql"], ["parent = SHFT-10"])
+        self.assertEqual(first["jql"], ["parent = APP-10"])
         self.assertNotIn("nextPageToken", first)
         self.assertEqual(second["nextPageToken"], ["token-page-2"])
         self.assertEqual(transport.requests[0][1]["Authorization"],
                          "Basic " + base64.b64encode(f"{EMAIL}:{TOKEN}".encode()).decode())
-        document = self.checked(out, parent="SHFT-10")
+        document = self.checked(out, parent="APP-10")
         self.assertEqual(document["source"], "tracker")
         items = {item["subject"]: item for item in document["items"]}
-        self.assertEqual(list(items), ["SHFT-11", "SHFT-12", "SHFT-13", "SHFT-14"])
-        self.assertEqual(items["SHFT-11"], {
-            "subject": "SHFT-11", "title": "Rails for the views", "state": "backlog",
+        self.assertEqual(list(items), ["APP-11", "APP-12", "APP-13", "APP-14"])
+        self.assertEqual(items["APP-11"], {
+            "subject": "APP-11", "title": "Rails for the views", "state": "backlog",
             "summary": "Shared config and link helpers.\nfirst point\nsecond\nline\n@Ama owns it.",
         })
         # Only the inward Blocks link to another child: not the outward one, the
         # Relates link, or a blocker outside the epic.
-        self.assertEqual(items["SHFT-12"], {"subject": "SHFT-12", "title": "Line map renderer", "state": "started",
-                                            "blockedBy": ["SHFT-11"]})
-        self.assertEqual(items["SHFT-13"]["state"], "completed")
-        summary = items["SHFT-13"]["summary"]
+        self.assertEqual(items["APP-12"], {"subject": "APP-12", "title": "Line map renderer", "state": "started",
+                                            "blockedBy": ["APP-11"]})
+        self.assertEqual(items["APP-13"]["state"], "completed")
+        summary = items["APP-13"]["summary"]
         self.assertLessEqual(len(summary), 1000)
         self.assertTrue(summary.endswith("…"))
-        self.assertEqual(items["SHFT-14"], {"subject": "SHFT-14", "title": "Dropped idea", "state": "canceled"})
+        self.assertEqual(items["APP-14"], {"subject": "APP-14", "title": "Dropped idea", "state": "canceled"})
 
     def test_a_done_status_not_listed_as_canceled_is_completed(self) -> None:
         code, out, _ = self.run_kind(JIRA_ARGS, self.pages(), JIRA_ENV)
         self.assertEqual(code, 0)
         items = {item["subject"]: item for item in json.loads(out)["items"]}
-        self.assertEqual(items["SHFT-14"]["state"], "completed")
+        self.assertEqual(items["APP-14"]["state"], "completed")
 
     def test_a_named_blocks_link_type(self) -> None:
         pages = copy.deepcopy(JIRA)
@@ -181,13 +181,13 @@ class JiraTests(SnapshotCase):
         code, out, _ = self.run_kind([*JIRA_ARGS, "--blocks-link", "Depends"], transport, JIRA_ENV)
         self.assertEqual(code, 0)
         items = {item["subject"]: item for item in json.loads(out)["items"]}
-        self.assertEqual(items["SHFT-12"]["blockedBy"], ["SHFT-14"])
+        self.assertEqual(items["APP-12"]["blockedBy"], ["APP-14"])
 
     def test_unknown_or_missing_mapping_fields_fail_closed(self) -> None:
         no_links = copy.deepcopy(JIRA["page-2"])
         del no_links["issues"][0]["fields"]["issuelinks"]
         for name, page, needle in (("unknown-category", JIRA["unknown-category"], "undefined"),
-                                   ("missing-status", JIRA["missing-status"], "SHFT-16"),
+                                   ("missing-status", JIRA["missing-status"], "APP-16"),
                                    ("missing issue links", no_links, "issue links")):
             with self.subTest(name):
                 code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
@@ -198,13 +198,13 @@ class JiraTests(SnapshotCase):
         pages = copy.deepcopy(JIRA)
         links = pages["page-1"]["issues"][1]["fields"]["issuelinks"]
         blocks = links[0]["type"]
-        links += [{"id": "8", "type": blocks, "inwardIssue": {"key": "SHFT-11"}},
-                  {"id": "9", "type": blocks, "inwardIssue": {"key": "SHFT-12"}}]
+        links += [{"id": "8", "type": blocks, "inwardIssue": {"key": "APP-11"}},
+                  {"id": "9", "type": blocks, "inwardIssue": {"key": "APP-12"}}]
         transport = Transport((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
         code, out, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertEqual(code, 0)
         items = {item["subject"]: item for item in json.loads(out)["items"]}
-        self.assertEqual(items["SHFT-12"]["blockedBy"], ["SHFT-11"])
+        self.assertEqual(items["APP-12"]["blockedBy"], ["APP-11"])
 
     def test_an_issue_listed_twice_fails(self) -> None:
         repeated = {**JIRA["page-2"], "issues": [JIRA["page-1"]["issues"][0]]}
@@ -248,7 +248,7 @@ class JiraTests(SnapshotCase):
 
     def test_a_parent_that_is_not_an_issue_key_is_refused(self) -> None:
         argv = [*JIRA_ARGS]
-        argv[argv.index("SHFT-10")] = "SHFT-10 OR project = HR"
+        argv[argv.index("APP-10")] = "APP-10 OR project = HR"
         transport = Transport()
         code, _, err = self.run_kind(argv, transport, JIRA_ENV)
         self.assertNotEqual(code, 0)
@@ -327,7 +327,7 @@ class FailureTests(SnapshotCase):
 
     def test_the_item_cap_is_a_failure(self) -> None:
         issue = JIRA["page-1"]["issues"][0]
-        page = {"issues": [{**issue, "key": f"SHFT-{index}", "fields": {**issue["fields"], "issuelinks": []}}
+        page = {"issues": [{**issue, "key": f"APP-{index}", "fields": {**issue["fields"], "issuelinks": []}}
                            for index in range(1000, 1500)], "isLast": True}
         code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
         self.assertNotEqual(code, 0)
@@ -360,8 +360,8 @@ class FailureTests(SnapshotCase):
         self.assertNotEqual(code, 0)
         self.failed(err, "redirect")
         self.assertEqual(len(transport.requests), 1)
-        for location in ("http://eshyft.atlassian.net/rest/api/3/search/jql",
-                         "https://eshyft.atlassian.net:8443/rest/api/3/search/jql"):
+        for location in ("http://example.atlassian.net/rest/api/3/search/jql",
+                         "https://example.atlassian.net:8443/rest/api/3/search/jql"):
             with self.subTest(location=location):
                 transport = Transport((SEARCH, 307, b"", {"Location": location}))
                 code, _, err = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
@@ -401,9 +401,9 @@ class BitbucketTests(SnapshotCase):
         self.state = self.root / "delivery"
         self.state.mkdir()
         (self.state / "state.json").write_text(json.dumps({
-            "queue": [{"subject": "SHFT-11"}, {"subject": "SHFT-12"}],
-            "planned": [{"subject": "SHFT-13"}],
-            "tickets": {"EDD-7": {}, "SHFT-14": {}},
+            "queue": [{"subject": "APP-11"}, {"subject": "APP-12"}],
+            "planned": [{"subject": "APP-13"}],
+            "tickets": {"ABC-7": {}, "APP-14": {}},
             "followups": [],
         }), encoding="utf-8")
         (self.state / "journal.jsonl").write_text(
@@ -412,8 +412,8 @@ class BitbucketTests(SnapshotCase):
         self.environ = {"BITBUCKET_TOKEN": TOKEN, "BITBUCKET_EMAIL": EMAIL}
 
     def args(self, *extra: str) -> list[str]:
-        return ["--kind", "bitbucket", "--workspace", "eshyft", "--repo", "eshyftnew", "--binding",
-                ".agents/orchestration.json", "--subject-pattern", "(SHFT|EDD)-[0-9]+", "--token-env",
+        return ["--kind", "bitbucket", "--workspace", "example", "--repo", "app", "--binding",
+                ".agents/orchestration.json", "--subject-pattern", "(APP|ABC)-[0-9]+", "--token-env",
                 "BITBUCKET_TOKEN", "--now", NOW, *extra]
 
     def full(self) -> Transport:
@@ -430,7 +430,7 @@ class BitbucketTests(SnapshotCase):
         self.state.rename(self.root / "served")
         code, out, _ = self.run_kind(self.args("--state-dir", "served"), self.full(), self.environ, cwd=self.root)
         self.assertEqual(code, 0)
-        self.assertEqual([item["subject"] for item in json.loads(out)["items"]], ["EDD-7", "SHFT-11", "SHFT-12", "SHFT-13"])
+        self.assertEqual([item["subject"] for item in json.loads(out)["items"]], ["ABC-7", "APP-11", "APP-12", "APP-13"])
         code, _, err = self.run_kind(self.args("--state-dir", "gone"), self.full(), self.environ, cwd=self.root)
         self.assertNotEqual(code, 0)
         self.failed(err, "the record could not be read through --state-dir gone")
@@ -447,17 +447,17 @@ class BitbucketTests(SnapshotCase):
         self.assertEqual(document["source"], "forge")
         self.assertEqual(document["items"], [
             # A draft whose short hash cannot be resolved keeps no head.
-            {"subject": "EDD-7", "title": "EDD-7: draft work", "state": "draft",
-             "changeRequest": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/36"},
+            {"subject": "ABC-7", "title": "ABC-7: draft work", "state": "draft",
+             "changeRequest": "https://bitbucket.org/example/app/pull-requests/36"},
             # No open request: the most recently updated merged one wins over a later declined one.
-            {"subject": "SHFT-11", "title": "SHFT-11: shared rails", "state": "merged",
-             "changeRequest": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/31", "head": "a" * 40},
+            {"subject": "APP-11", "title": "APP-11: shared rails", "state": "merged",
+             "changeRequest": "https://bitbucket.org/example/app/pull-requests/31", "head": "a" * 40},
             # Matched by its branch; the most recently updated open one wins.
-            {"subject": "SHFT-12", "title": "Line map renderer", "state": "open",
-             "changeRequest": "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34",
+            {"subject": "APP-12", "title": "Line map renderer", "state": "open",
+             "changeRequest": "https://bitbucket.org/example/app/pull-requests/34",
              "head": "c" * 24 + "0123456789abcdef"},
             # Superseded is closed; a link off bitbucket.org is dropped.
-            {"subject": "SHFT-13", "title": "SHFT-13: superseded", "state": "closed", "head": "f" * 40},
+            {"subject": "APP-13", "title": "APP-13: superseded", "state": "closed", "head": "f" * 40},
         ])
 
     def test_basic_authorization_with_a_user(self) -> None:
@@ -479,7 +479,7 @@ class BitbucketTests(SnapshotCase):
         self.assertEqual(code, 0)
         listing = urllib.parse.parse_qs(urllib.parse.urlsplit(transport.requests[0][0]).query)
         self.assertEqual(listing["q"], ['created_on >= 2026-10-19T00:00:00+00:00'])
-        self.assertEqual([item["subject"] for item in json.loads(out)["items"]], ["SHFT-14"])
+        self.assertEqual([item["subject"] for item in json.loads(out)["items"]], ["APP-14"])
 
     def test_an_unknown_state_fails(self) -> None:
         code, _, err = self.run_kind(self.args(), Transport((API + "pullrequests?", 200, BITBUCKET["unknown-state"])),
@@ -523,11 +523,11 @@ class BitbucketTests(SnapshotCase):
         code, out, _ = self.run_kind(self.args("--since", "2026-10-19T00:00:00Z"), transport, self.environ,
                                      cwd=self.root)
         self.assertEqual(code, 0)
-        self.assertEqual([item["subject"] for item in json.loads(out)["items"]], ["SHFT-14"])
+        self.assertEqual([item["subject"] for item in json.loads(out)["items"]], ["APP-14"])
 
     def test_a_next_page_on_another_origin_is_refused(self) -> None:
-        for next_link in ("https://evil.example/2.0/repositories/eshyft/eshyftnew/pullrequests",
-                          "http://api.bitbucket.org/2.0/repositories/eshyft/eshyftnew/pullrequests?page=2"):
+        for next_link in ("https://evil.example/2.0/repositories/example/app/pullrequests",
+                          "http://api.bitbucket.org/2.0/repositories/example/app/pullrequests?page=2"):
             with self.subTest(next_link=next_link):
                 page = {**BITBUCKET["page-1"], "next": next_link}
                 transport = Transport((API + "pullrequests?", 200, page))
@@ -537,13 +537,13 @@ class BitbucketTests(SnapshotCase):
 
     def test_the_title_match_comes_before_the_branch(self) -> None:
         pull = copy.deepcopy(BITBUCKET["before-since"]["values"][0])
-        pull.update(title="SHFT-11: from the title", created_on="2026-10-20T12:00:00.000000+00:00")
-        pull["source"]["branch"]["name"] = "SHFT-12-branch"
+        pull.update(title="APP-11: from the title", created_on="2026-10-20T12:00:00.000000+00:00")
+        pull["source"]["branch"]["name"] = "APP-12-branch"
         transport = Transport((API + "pullrequests?", 200, {"values": [pull]}),
                               (API + "commit/121212121212", 200, BITBUCKET["commit-1"]))
         code, out, _ = self.run_kind(self.args(), transport, self.environ, cwd=self.root)
         self.assertEqual(code, 0)
-        self.assertEqual([item["subject"] for item in json.loads(out)["items"]], ["SHFT-11"])
+        self.assertEqual([item["subject"] for item in json.loads(out)["items"]], ["APP-11"])
 
     def test_a_resolved_hash_that_is_not_the_short_one_is_left_out(self) -> None:
         pull = copy.deepcopy(BITBUCKET["before-since"]["values"][0])
