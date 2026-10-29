@@ -276,16 +276,16 @@ It writes no view or snapshot code of its own.
 ```json
 {
   "spec": "delivery-views-config/1",
-  "title": "Shift planner delivery",
+  "title": "Example app delivery",
   "tracker": {
     "name": "Jira",
-    "issueUrl": "https://eshyft.atlassian.net/browse/{key}",
-    "keyPattern": "^(SHFT|EDD)-[0-9]+$"
+    "issueUrl": "https://example.atlassian.net/browse/{key}",
+    "keyPattern": "^(APP|ABC)-[0-9]+$"
   },
   "forges": [
     {
       "name": "Bitbucket",
-      "repository": "eshyft/eshyftnew",
+      "repository": "example/app",
       "pullUrl": "https://bitbucket.org/{repository}/pull-requests/{number}",
       "commitUrl": "https://bitbucket.org/{repository}/commits/{sha}"
     }
@@ -349,7 +349,7 @@ In the binding's `state`, with `{parent}` the record's `meta.trackerParent`
       "--kind",
       "jira",
       "--site",
-      "https://eshyft.atlassian.net",
+      "https://example.atlassian.net",
       "--parent",
       "{parent}",
       "--user-env",
@@ -371,15 +371,15 @@ In the binding's `state`, with `{parent}` the record's `meta.trackerParent`
       "--kind",
       "bitbucket",
       "--workspace",
-      "eshyft",
+      "example",
       "--repo",
-      "eshyftnew",
+      "app",
       "--binding",
       ".agents/orchestration.json",
       "--state-dir",
       "{stateDirectory}",
       "--subject-pattern",
-      "(SHFT|EDD)-[0-9]+",
+      "(APP|ABC)-[0-9]+",
       "--token-env",
       "BITBUCKET_TOKEN",
       "--user-env",

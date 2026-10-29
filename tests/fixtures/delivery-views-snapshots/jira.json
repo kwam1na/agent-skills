@@ -3,8 +3,8 @@
     "issues": [
       {
         "id": "11",
-        "key": "SHFT-11",
-        "self": "https://eshyft.atlassian.net/rest/api/3/issue/11",
+        "key": "APP-11",
+        "self": "https://example.atlassian.net/rest/api/3/issue/11",
         "fields": {
           "summary": "Rails for the views",
           "description": {
@@ -104,8 +104,8 @@
       },
       {
         "id": "12",
-        "key": "SHFT-12",
-        "self": "https://eshyft.atlassian.net/rest/api/3/issue/12",
+        "key": "APP-12",
+        "self": "https://example.atlassian.net/rest/api/3/issue/12",
         "fields": {
           "summary": "Line map renderer",
           "description": null,
@@ -127,7 +127,7 @@
                 "outward": "blocks"
               },
               "inwardIssue": {
-                "key": "SHFT-11"
+                "key": "APP-11"
               }
             },
             {
@@ -139,7 +139,7 @@
                 "outward": "blocks"
               },
               "outwardIssue": {
-                "key": "SHFT-13"
+                "key": "APP-13"
               }
             },
             {
@@ -151,7 +151,7 @@
                 "outward": "relates to"
               },
               "inwardIssue": {
-                "key": "SHFT-14"
+                "key": "APP-14"
               }
             },
             {
@@ -177,8 +177,8 @@
     "issues": [
       {
         "id": "13",
-        "key": "SHFT-13",
-        "self": "https://eshyft.atlassian.net/rest/api/3/issue/13",
+        "key": "APP-13",
+        "self": "https://example.atlassian.net/rest/api/3/issue/13",
         "fields": {
           "summary": "Snapshot adapters",
           "description": {
@@ -209,8 +209,8 @@
       },
       {
         "id": "14",
-        "key": "SHFT-14",
-        "self": "https://eshyft.atlassian.net/rest/api/3/issue/14",
+        "key": "APP-14",
+        "self": "https://example.atlassian.net/rest/api/3/issue/14",
         "fields": {
           "summary": "Dropped idea",
           "description": {
@@ -236,8 +236,8 @@
     "issues": [
       {
         "id": "15",
-        "key": "SHFT-15",
-        "self": "https://eshyft.atlassian.net/rest/api/3/issue/15",
+        "key": "APP-15",
+        "self": "https://example.atlassian.net/rest/api/3/issue/15",
         "fields": {
           "summary": "Odd",
           "description": null,
@@ -259,7 +259,7 @@
     "issues": [
       {
         "id": "16",
-        "key": "SHFT-16",
+        "key": "APP-16",
         "fields": {
           "summary": "No status",
           "issuelinks": []

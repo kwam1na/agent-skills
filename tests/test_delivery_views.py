@@ -40,13 +40,13 @@ CONFIG = {
     "title": "Delivery",
     "tracker": {
         "name": "Jira",
-        "issueUrl": "https://eshyft.atlassian.net/browse/{key}",
-        "keyPattern": "^(SHFT|EDD)-[0-9]+$",
+        "issueUrl": "https://example.atlassian.net/browse/{key}",
+        "keyPattern": "^(APP|ABC)-[0-9]+$",
     },
     "forges": [
         {
             "name": "Bitbucket",
-            "repository": "eshyft/eshyftnew",
+            "repository": "example/app",
             "pullUrl": "https://bitbucket.org/{repository}/pull-requests/{number}",
             "commitUrl": "https://bitbucket.org/{repository}/commits/{sha}",
         }
@@ -75,7 +75,7 @@ RAISED_REPORT = {
     "roundId": "round-1",
     "runId": "run-37483ff027a5a901",
     "spec": "review-round-report/1",
-    "ticket": "SHFT-2836",
+    "ticket": "APP-2836",
 }
 RESOLVED_REPORT = {
     "candidateTreeSha": "ed011ee841be5d14e5449b3d8017ea7254e95a7d",
@@ -89,7 +89,7 @@ RESOLVED_REPORT = {
     "roundId": "round-2",
     "runId": "run-37483ff027a5a901",
     "spec": "review-round-report/1",
-    "ticket": "SHFT-2836",
+    "ticket": "APP-2836",
 }
 
 
@@ -142,7 +142,7 @@ class ConfigTests(unittest.TestCase):
             ("lenses.lens.security.colour", "unknown lens key",
              self.changed(lambda c: c["lenses"]["lens.security"].update(colour="red"))),
             ("tracker.issueUrl", "http template",
-             self.changed(lambda c: c["tracker"].update(issueUrl="http://eshyft.atlassian.net/browse/{key}"))),
+             self.changed(lambda c: c["tracker"].update(issueUrl="http://example.atlassian.net/browse/{key}"))),
             ("tracker.issueUrl", "javascript template",
              self.changed(lambda c: c["tracker"].update(issueUrl="javascript:alert({key})"))),
             ("forges[0].pullUrl", "empty host",
@@ -150,7 +150,7 @@ class ConfigTests(unittest.TestCase):
             ("forges[0].commitUrl", "unknown placeholder",
              self.changed(lambda c: c["forges"][0].update(commitUrl="https://bitbucket.org/{repository}/commits/{hash}"))),
             ("tracker.issueUrl", "placeholder of another key",
-             self.changed(lambda c: c["tracker"].update(issueUrl="https://eshyft.atlassian.net/{repository}/{key}"))),
+             self.changed(lambda c: c["tracker"].update(issueUrl="https://example.atlassian.net/{repository}/{key}"))),
             ("tracker.issueUrl", "placeholder in the host",
              self.changed(lambda c: c["tracker"].update(issueUrl="https://{key}/browse"))),
             ("runs.argv[3]", "unknown argv placeholder",
@@ -158,7 +158,7 @@ class ConfigTests(unittest.TestCase):
             ("tracker.keyPattern", "long pattern",
              self.changed(lambda c: c["tracker"].update(keyPattern="^" + "A" * 200 + "$"))),
             ("tracker.keyPattern", "pattern that does not compile",
-             self.changed(lambda c: c["tracker"].update(keyPattern="^(SHFT-[0-9]+$"))),
+             self.changed(lambda c: c["tracker"].update(keyPattern="^(APP-[0-9]+$"))),
             ("title", "oversize title", self.changed(lambda c: c.update(title="T" * 81))),
             ("tracker.name", "oversize tracker name", self.changed(lambda c: c["tracker"].update(name="N" * 41))),
             ("lenses.lens.security.name", "oversize lens name",
@@ -187,11 +187,11 @@ class LinkTests(unittest.TestCase):
         self.forge = self.config["forges"][0]
 
     def test_configured_links(self) -> None:
-        self.assertEqual(views.issue_link("SHFT-12", self.tracker), "https://eshyft.atlassian.net/browse/SHFT-12")
+        self.assertEqual(views.issue_link("APP-12", self.tracker), "https://example.atlassian.net/browse/APP-12")
         self.assertIsNone(views.issue_link("OTHER-12", self.tracker))
-        self.assertIsNone(views.issue_link("notes SHFT-12 x", {**self.tracker, "keyPattern": "SHFT-[0-9]+"}))
+        self.assertIsNone(views.issue_link("notes APP-12 x", {**self.tracker, "keyPattern": "APP-[0-9]+"}))
         sha = "0123456789abcdef0123456789abcdef01234567"
-        self.assertEqual(views.commit_link(sha, self.forge), f"https://bitbucket.org/eshyft/eshyftnew/commits/{sha}")
+        self.assertEqual(views.commit_link(sha, self.forge), f"https://bitbucket.org/example/app/commits/{sha}")
         self.assertIsNone(views.commit_link(sha.upper(), self.forge))
         self.assertIsNone(views.commit_link("0123456", self.forge))
 
@@ -223,20 +223,20 @@ class LinkTests(unittest.TestCase):
 
     def test_a_produced_url_off_the_template_origin_renders_as_text(self) -> None:
         template = self.forge["pullUrl"]
-        self.assertTrue(views.same_origin("https://bitbucket.org/eshyft/eshyftnew/pull-requests/3", template))
-        self.assertTrue(views.same_origin("https://bitbucket.org:443/eshyft/eshyftnew/pull-requests/3", template))
+        self.assertTrue(views.same_origin("https://bitbucket.org/example/app/pull-requests/3", template))
+        self.assertTrue(views.same_origin("https://bitbucket.org:443/example/app/pull-requests/3", template))
         self.assertTrue(views.same_origin("https://BitBucket.org/x", template))
         for url in (
-            "https://bitbucket.org.evil.com/eshyft/eshyftnew/pull-requests/3",
-            "https://bitbucket.org:8443/eshyft/eshyftnew/pull-requests/3",
-            "http://bitbucket.org/eshyft/eshyftnew/pull-requests/3",
+            "https://bitbucket.org.evil.com/example/app/pull-requests/3",
+            "https://bitbucket.org:8443/example/app/pull-requests/3",
+            "http://bitbucket.org/example/app/pull-requests/3",
             "https://user@bitbucket.org/x",
         ):
             with self.subTest(url=url):
                 self.assertFalse(views.same_origin(url, template))
         # A placeholder in the host can never produce a link on another host.
         self.assertIsNone(views.link("https://{key}.atlassian.net/browse", {"key": "evil.com"}))
-        self.assertIsNone(views.link("https://{key}.atlassian.net/browse", {"key": "eshyft"}))
+        self.assertIsNone(views.link("https://{key}.atlassian.net/browse", {"key": "example"}))
 
     def test_default_port_templates_equal_portless_ones(self) -> None:
         self.assertTrue(views.same_origin("https://bitbucket.org/x", "https://bitbucket.org:443/{repository}"))
@@ -245,24 +245,24 @@ class LinkTests(unittest.TestCase):
 
     def test_change_requests(self) -> None:
         forges = self.config["forges"]
-        pull = "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34"
+        pull = "https://bitbucket.org/example/app/pull-requests/34"
         self.assertEqual(views.change_request_link("#34", forges), pull)
-        self.assertEqual(views.change_request_link("eshyftnew#34", forges), pull)
+        self.assertEqual(views.change_request_link("app#34", forges), pull)
         self.assertEqual(views.change_request_link(pull, forges), pull)
-        self.assertEqual(views.change_request_link("https://bitbucket.org:443/eshyft/eshyftnew/pull-requests/34", forges),
-                         "https://bitbucket.org:443/eshyft/eshyftnew/pull-requests/34")
+        self.assertEqual(views.change_request_link("https://bitbucket.org:443/example/app/pull-requests/34", forges),
+                         "https://bitbucket.org:443/example/app/pull-requests/34")
         for value in (
             "other#34",
             "#34a",
             "#",
-            "https://bitbucket.org.evil.com/eshyft/eshyftnew/pull-requests/34",
-            "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34/../../x",
-            "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34?x=1",
+            "https://bitbucket.org.evil.com/example/app/pull-requests/34",
+            "https://bitbucket.org/example/app/pull-requests/34/../../x",
+            "https://bitbucket.org/example/app/pull-requests/34?x=1",
             "javascript:alert(1)",
-            "\x00https://bitbucket.org/eshyft/eshyftnew/pull-requests/34",
-            " https://bitbucket.org/eshyft/eshyftnew/pull-requests/34",
-            "https://bitbucket.org/eshyft/eshy\tftnew/pull-requests/34",
-            "https://bitbucket.org/eshyft/eshyftnew/pull-requests/34\n",
+            "\x00https://bitbucket.org/example/app/pull-requests/34",
+            " https://bitbucket.org/example/app/pull-requests/34",
+            "https://bitbucket.org/example/a\tpp/pull-requests/34",
+            "https://bitbucket.org/example/app/pull-requests/34\n",
         ):
             with self.subTest(value=value):
                 self.assertIsNone(views.change_request_link(value, forges))
@@ -553,13 +553,13 @@ class RoundReportTests(unittest.TestCase):
             ("long summary", raised(summary="s" * 281), "raised[0].summary"),
             ("control in summary", raised(summary="a\nb"), "raised[0].summary"),
             ("deferred without issue", raised(state="deferred"), "raised[0].deferredIssue"),
-            ("issue without deferral", raised(deferredIssue="SHFT-1"), "raised[0].deferredIssue"),
+            ("issue without deferral", raised(deferredIssue="APP-1"), "raised[0].deferredIssue"),
             ("fixed without commit", resolved(fixCommit=None), "resolved[0].fixCommit"),
             ("dropped with commit", resolved(state="dropped"), "resolved[0].fixCommit"),
             ("resolution of a later round", resolved(id="r2-f1"), "resolved[0].id"),
             ("resolved twice", resolved(id="r1-f2"), "resolved[1].id"),
             ("resolved deferral without issue", resolved(state="deferred", fixCommit=None), "resolved[0].deferredIssue"),
-            ("issue with a line break", raised(state="deferred", deferredIssue="SHFT-1\n"), "raised[0].deferredIssue"),
+            ("issue with a line break", raised(state="deferred", deferredIssue="APP-1\n"), "raised[0].deferredIssue"),
             ("line separator in summary", raised(summary="a\u2028b"), "raised[0].summary"),
             ("bad briefs lens", {**RAISED_REPORT, "briefs": {"Bad Lens": {"brief": None, "result": None}}},
              "briefs.Bad Lens"),
@@ -575,7 +575,7 @@ class RoundReportTests(unittest.TestCase):
         # A summary of 280 code points, beyond 280 UTF-16 units, is still within the cap.
         self.assertIsNone(views.report_problem(raised(summary="\U0001F600" * 280)))
         self.assertIsNone(views.report_problem({**RAISED_REPORT, "ticket": None}))
-        deferred = raised(state="deferred", deferredIssue="SHFT-99 follow-up")
+        deferred = raised(state="deferred", deferredIssue="APP-99 follow-up")
         self.assertIsNone(views.report_problem(deferred))
 
 
