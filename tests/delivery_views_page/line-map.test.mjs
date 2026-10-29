@@ -126,7 +126,7 @@ test("draws the run as a line map, chapter by chapter", async () => {
   expect(detail).toContain("Retry card payments once on a dropped connection");
   // The building lane labels the panel; under the title, the ticket, the change request and where the piece stands.
   expect(line.querySelector("#detail .d-owner")?.textContent).toBe("Payments lane");
-  expect(line.querySelector("#detail .d-meta")?.textContent).toBe("PAY-2361 · #1106 · Being checked before merge");
+  expect(line.querySelector("#detail .d-meta")?.textContent).toBe("PAY-2361 · #1106 · Being checked before merge · Checking since 6 minutes ago");
   expect(line.querySelector('#detail a.pr-num')?.getAttribute("href")).toBe("https://github.com/acme/shop/pull/1106");
   expect(line.querySelector('.stop-label a[data-ticket="PAY-2361"]')?.getAttribute("href")).toBe("https://tracker.example/issue/PAY-2361");
   expect(detail).toContain("A dropped connection during card payment retries once, without charging twice.");
@@ -422,8 +422,8 @@ test("never lets run text become markup", async () => {
   const page = render(fixtureDocument(), { "run-7": summary, [HOSTILE]: summary });
   expect(page).not.toContain("</script><img");
   expect(page).not.toContain("\u2028");
-  // The record, the runs, the links and the view's configuration, then the program.
-  expect(page.match(/<\/script>/gi)).toHaveLength(5);
+  // The record, the runs, the native reviews, the links and the view's configuration, then the program.
+  expect(page.match(/<\/script>/gi)).toHaveLength(6);
   const [{ app }] = await open(fixtureDocument(), {}, page);
   const run = app.querySelector("#detail .d-run");
   expect(run.querySelector("img")).toBeNull();

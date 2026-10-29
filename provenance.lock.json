@@ -189,7 +189,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "3e3e8ff7571d9e88c79219956a5ccd2e27956f4c24f5103d0aaf6dc79d156414"
+          "sha256": "83a18ceb0a95844f7074fe791dd8ad0d19bec1447eb707cb01d264bd08648c1a"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
@@ -366,11 +366,11 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "af7c2628e79b8b006da044b03a32537a6eb09cfbe391cde5a8cb9302e78a7521"
+          "sha256": "c39c55cd0f50e88c2fd0efd36d41b4c0f7150e7b63fe4d3f456206ea521de32b"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "af6ff2cd94407d8ea2cc9179f15fac1f16db642dd1e535ab3c1494dde709383f"
+          "sha256": "17441d00f18795b5e80af5dc182af49dcc9393fdab8a12e40884fc4b7a68e08b"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",

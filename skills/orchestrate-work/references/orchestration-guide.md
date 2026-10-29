@@ -108,6 +108,7 @@ proceeds and the lead notes the gap in its close-out.
 | --- | --- |
 | `lane.assigned` | On the ticket: it moves to started, naming the lane and what it delivers. |
 | `review.round` | None: the lane posts each round on its own ticket, as its brief says. |
+| `review.evidence` | None: the lane already posted each captured round on its own ticket; the evidence shows in the record and the views. |
 | `candidate.handed` | On the ticket: the hand-off checked as a claim and queued, with its change request, reviewed head and review rounds. |
 | `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. |
 | `check.finished` | None: its outcome posts with `candidate.merged` or `candidate.stopped`. |
