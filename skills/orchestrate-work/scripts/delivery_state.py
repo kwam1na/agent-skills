@@ -1177,7 +1177,8 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
         candidate = reference["candidateRef"]
         try:
             item = items[subject]
-            if (item.get("syncedHead") or item.get("head")) != candidate:
+            # Bound to the reviewed head: a runner sync only merges the base in, under its own checks.
+            if item.get("head") != candidate:
                 raise StateError("review_artifact_invalid", "review candidate is stale or unknown")
             if latest_rounds.get(subject, 0) > event["id"]:
                 raise StateError("review_artifact_invalid", "a later review has not been captured")

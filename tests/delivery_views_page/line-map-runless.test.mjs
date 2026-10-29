@@ -96,3 +96,10 @@ test('malformed journal boundary data yields unavailable evidence without crashi
     expect(shown.app.querySelector('.run-card')).toBeNull();
   }
 });
+test('a runner sync onto a moved base keeps the reviewed head approval and its notes',async()=>{
+  const doc=document();doc.state.queue[0].syncedHead='c'.repeat(40);
+  const [shown]=await openPage(pageWithRuns(doc,{}, {config}));
+  expect(shown.app.querySelector('.d-run-none')).toBeNull();
+  expect(shown.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
+  expect(shown.app.querySelector('.run-closure').textContent).toContain('Original reviewer confirmed');
+});

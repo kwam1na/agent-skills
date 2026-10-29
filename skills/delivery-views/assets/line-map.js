@@ -1007,7 +1007,7 @@
       var evidence = events.filter(function (event) { return event.kind === "review.evidence"; }).slice(-1)[0];
       var observation = isObject(doc.reviewEvidence) ? doc.reviewEvidence[item.subject] : undefined;
       if (!native && !events.length) { return null; }
-      if (!isObject(native) || native.unavailable === true || native.candidateRef !== (item.syncedHead || item.head)
+      if (!isObject(native) || native.unavailable === true || native.candidateRef !== item.head
           || native.journalId !== boundary
           || (evidence && (!isObject(evidence.reviewArtifact) || evidence.reviewArtifact.digest !== native.digest))
           || (isObject(doc.reviewEvidence) && (!isObject(observation) || observation.unavailable === true || observation.digest !== native.digest))) {
