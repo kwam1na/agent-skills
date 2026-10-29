@@ -30,7 +30,7 @@ test('runless actual rounds share cards, escaped findings and originating closur
   const [last,first]=await openPage(page,{steps:[{click:'.run-pick',index:0}]});
   expect(last.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
   expect(last.app.querySelector('.run-closure').textContent).toContain('Original reviewer confirmed <b>the fix</b>.');
-  expect(last.app.querySelector('.run-card .run-quiet').title).toBe(B);
+  expect(last.app.querySelector('.run-card .run-quiet').getAttribute('aria-label')).toBe('Reviewed candidate '+B);
   expect(first.app.querySelector('.run-card-outcome').textContent).toBe('Changes requested');
   expect(first.app.querySelector('.run-finding-text').textContent).toContain('<img');
   expect(first.app.querySelector('.run-settled').textContent).toContain('confirmed round 2');

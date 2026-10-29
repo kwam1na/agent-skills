@@ -53,9 +53,8 @@ test("detail times follow the subject's current stage and attempt", async () => 
     if (label === null) { expect(timing).toBeNull(); continue; }
     expect(meta.textContent).toContain(label);
     if (expectedTime) {
-      expect(timing.title).toContain(expectedTime);
       expect(timing.getAttribute("aria-label")).toContain(expectedTime);
-    } else { expect(timing.title).toContain("unknown"); }
+    } else { expect(timing.getAttribute("aria-label")).toContain("unknown"); }
     if (stage !== "building") { expect(meta.textContent).not.toContain("Started"); }
   }
 });
@@ -110,6 +109,6 @@ test("building uses the current assignment after a rejected handoff, or reports 
       ] };
     const [shown] = await openPage(pageWithRuns(doc, {}, { config: { spec: "delivery-views-config/1" } }), { now: "2026-10-22T07:10:00Z" });
     const timing = shown.app.querySelector("#detail .d-stage-time");
-    expect(timing.title).toBe("Recorded work assignment: " + (assigned ? "2026-10-22T06:00:00Z" : "unknown"));
+    expect(timing.getAttribute("aria-label")).toBe("Recorded work assignment: " + (assigned ? "2026-10-22T06:00:00Z" : "unknown"));
   }
 });

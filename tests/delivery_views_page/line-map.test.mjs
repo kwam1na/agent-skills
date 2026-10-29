@@ -827,7 +827,7 @@ test("labels same-forge pull request URLs by number with repository-aware access
   ]);
   for (const [index, repository] of [[0, "acme/shop"], [1, "acme/tools"], [2, "acme/web"], [4, "acme/elsewhere"]]) {
     const link = number(subjects[index]);
-    expect(link.getAttribute("title")).toBe(`${repository} ${link.textContent}`);
+    expect(link.hasAttribute("title")).toBe(false);
     expect(link.getAttribute("aria-label")).toBe(`Open pull request ${repository} ${link.textContent}`);
   }
 });

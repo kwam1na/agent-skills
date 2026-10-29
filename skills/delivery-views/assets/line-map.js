@@ -122,7 +122,6 @@
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
     var identity = (typeof target.repository === "string" && target.repository ? target.repository + " " : "") + target.label;
-    link.title = identity;
     link.setAttribute("aria-label", "Open pull request " + identity);
     link.addEventListener("click", function (event) { event.stopPropagation(); });
     return link;
@@ -960,7 +959,6 @@
       var when = el("span", "d-stage-time", (item.stage === "merged" ? (relative ? " " + relative : " · time unknown")
         : " · " + timing.label + (relative ? " " + relative : (timing.label === "Time" ? " unknown" : " · time unknown"))));
       var exact = timing.basis + ": " + (relative ? timing.at : "unknown");
-      when.title = exact;
       when.setAttribute("aria-label", exact);
       stage.appendChild(when);
     }
