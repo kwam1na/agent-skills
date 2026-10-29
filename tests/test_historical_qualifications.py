@@ -37,6 +37,12 @@ PR119_QUALIFICATION_SHA256 = {
     "qualifications/provider-workflows-orchestration-v1.json": "0f9ee42039c31867e9c15eabef619974978c981feebfbb2968f55228daff0bca",
 }
 
+PR138_QUALIFICATION_SHA256 = {
+    "qualifications/bootstrap-workflows-delivery-views-v1.json": "bce08c41de84fdc7258e0af884c87a0bd001f3cf6a2848ce74a073a9dfd4f1da",
+    "qualifications/core-workflows-delivery-views-v1.json": "092376a98b10ba227d5cecd20e14c6bf22cb290504dfbcedb54cddf909cdb6d7",
+    "qualifications/provider-workflows-delivery-views-v1.json": "85f15736c72a1cd45387bb04ce97e1432ebf5ef1dabedf4b04cf1641a6832c78",
+}
+
 
 class HistoricalQualificationTests(unittest.TestCase):
     def test_prior_current_records_remain_byte_identical(self) -> None:
@@ -47,6 +53,7 @@ class HistoricalQualificationTests(unittest.TestCase):
             **PR66_QUALIFICATION_SHA256,
             **PR68_QUALIFICATION_SHA256,
             **PR119_QUALIFICATION_SHA256,
+            **PR138_QUALIFICATION_SHA256,
         }.items():
             with self.subTest(relative=relative):
                 self.assertEqual(
