@@ -79,9 +79,21 @@ class RunlessReviewTests(unittest.TestCase):
                     path.write_bytes(data)
                 self.assertTrue(state_tool.show(self.directory)["reviewEvidence"]["work-a"]["unavailable"])
                 path.write_bytes(original)
-        state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
-                         selector="queue[subject=work-a]", changes={"syncedHead": fixtures.HEAD_A})
+        self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_A)]})
         self.assertTrue(state_tool.show(self.directory)["reviewEvidence"]["work-a"]["unavailable"])
+
+    def test_runner_sync_onto_a_moved_base_keeps_evidence_for_the_reviewed_head(self):
+        self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})
+        self.capture()
+        synced = "c" * 40
+        state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                         selector="queue[subject=work-a]", changes={"syncedHead": synced})
+        observation = state_tool.show(self.directory)["reviewEvidence"]["work-a"]
+        self.assertNotIn("unavailable", observation)
+        self.assertEqual(observation["candidateRef"], fixtures.HEAD_B)
+        state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                         selector="queue[subject=work-a]", changes={"stage": "merged"})
+        self.assertNotIn("unavailable", state_tool.show(self.directory)["reviewEvidence"]["work-a"])
 
     def test_invalid_binding_or_foreign_closure_refuses_before_capture(self):
         self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})

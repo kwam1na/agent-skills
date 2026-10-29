@@ -571,8 +571,9 @@ When a lane has no product run, keep its actual native reducer outcomes through
 round in order; each retains its binding and actual obtain-review lens
 reports (review-lens-result/1), including originating `resolvedFindings`
 (or native `resolutions`), with `resolution` or `reason` text. Candidate references are
-exact opaque strings; the final reference must match the retained queue head
-(or synced head) before the view can show approval.
+exact opaque strings; the final reference must match the retained queue head (the reviewed
+candidate, not the runner's synced head) before the view can show approval. A
+runner sync onto a moved base keeps the evidence; a new hand-off does not.
 
 ```sh
 python3 -B scripts/delivery_state.py --dir <state directory> capture-review \
