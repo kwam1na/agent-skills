@@ -1,0 +1,163 @@
+{
+  "attestationSha256": "a8c267616a1e64d43fbbd7a82445d8c1663c5e9801933695a8b546a7ad0bf0a3",
+  "candidate": {
+    "core": {
+      "archiveSha256": "43244e181264f30914221be9b9a711e807a12905aa595ee23c5081727742c795",
+      "metadataSha256": "4b4396387e7f944b9d5e7ecbf2ccba15e544a2d6e8656ec297a9fad15d8765c4",
+      "profile": "core",
+      "releaseId": "core-review-evidence-v1",
+      "sourceTreeSha256": "f496121ea2b09292c6ffd483018a0982581fd83b948937c8713a7c5cc6685116"
+    },
+    "linear": {
+      "archiveSha256": "609250379ec208cac95769ab1f2eee95728bce981bee240881fbf83145bad042",
+      "metadataSha256": "ecd40e33cf29d344ba9e7a409ab62db30236282c02e1b70488bb99ce6d9eddcc",
+      "profile": "linear",
+      "releaseId": "linear-review-evidence-v1",
+      "sourceTreeSha256": "fbbde8db0c8f0299d3b5e8c66e55fc427ae5cb6c41f1a720b8093299f3fedbb0"
+    }
+  },
+  "collectorBinding": {
+    "candidateRef": {
+      "opaque": "a4ed52c8414c3f8a72633d7cace0bcc8",
+      "schemaVersion": "workflow-candidate-ref/1"
+    },
+    "graphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7",
+    "releases": {
+      "core": {
+        "archiveSha256": "43244e181264f30914221be9b9a711e807a12905aa595ee23c5081727742c795",
+        "metadataSha256": "4b4396387e7f944b9d5e7ecbf2ccba15e544a2d6e8656ec297a9fad15d8765c4",
+        "profile": "core",
+        "releaseId": "core-review-evidence-v1"
+      },
+      "linear": {
+        "archiveSha256": "609250379ec208cac95769ab1f2eee95728bce981bee240881fbf83145bad042",
+        "metadataSha256": "ecd40e33cf29d344ba9e7a409ab62db30236282c02e1b70488bb99ce6d9eddcc",
+        "profile": "linear",
+        "releaseId": "linear-review-evidence-v1"
+      }
+    },
+    "schemaVersion": "agent-skills-linear-collector-binding/1",
+    "subjectRef": {
+      "opaque": "2edcc623ddff712124b7f0df32070b93",
+      "schemaVersion": "workflow-subject-ref/1"
+    }
+  },
+  "collectorBindingSha256": "0fb6b334bf6ba875eb156777a1616dba9a97a8a278dff250e6d50f27caff8d38",
+  "coreQualificationSha256": "36bc682fb3e3244b2e75f183c15586d229f0220479300346b07c4ca694565ee2",
+  "proofBoundary": {
+    "live": "external MCP provenance is owned by the protected host-native run",
+    "offline": "binds the retained attestation bytes to the retained receipt reference and independently frozen release, graph, subject, and candidate input; it does not independently prove external calls or collector authorization"
+  },
+  "receiptReference": "linear-receipt:9acf89b60cbfcad24813ba1779bf06fa",
+  "redaction": {
+    "environmentCaptured": false,
+    "hostPayloadsCaptured": false,
+    "localPathsCaptured": false,
+    "retainedEvidence": "canonical redacted host attestation and opaque references"
+  },
+  "scenarios": [
+    {
+      "assertionCount": 4,
+      "evidence": [
+        "exact base profile identity verified",
+        "base qualification names the exact base archive and metadata",
+        "base qualification binds the exact released workflow graph",
+        "base qualification is passing"
+      ],
+      "evidenceSource": "trusted-checked-qualification",
+      "id": "core-qualification-binding",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 4,
+      "evidence": [
+        "frozen collector input names both verified four-field release identities",
+        "both exact archives contain the independently frozen graph bytes",
+        "subject and candidate references match independently frozen versioned opaque input",
+        "Linear's core projection exactly matches the qualified core archive and metadata"
+      ],
+      "evidenceSource": "independently-frozen-collector-input",
+      "id": "collector-candidate-binding",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 6,
+      "evidence": [
+        "exact optional profile installs as the current generation",
+        "installed generation retains the optional profile identity",
+        "both fixed hosts expose the current optional generation",
+        "qualification-owned roots isolate both host projections",
+        ".agents discovers the installed optional adapter",
+        ".claude discovers the installed optional adapter"
+      ],
+      "evidenceSource": "exact-release-runtime",
+      "id": "linear-install-and-host-discovery",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 4,
+      "evidence": [
+        "retained host attestation matches the independently frozen collector binding",
+        "retained host attestation covers all six declared operations",
+        "retained host attestation records canceled cleanup for both entities",
+        "retained attestation names one external Linear receipt reference"
+      ],
+      "evidenceSource": "protected-external-live-mcp-sensor",
+      "id": "live-host-attestation",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 3,
+      "evidence": [
+        "primary create follows an exact-marker miss",
+        "dependency create follows an exact-marker miss",
+        "unique reconciliation suppresses any repeat create"
+      ],
+      "evidenceSource": "protected-external-live-mcp-sensor",
+      "id": "live-reconcile-before-retry",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 16,
+      "evidence": [
+        "controlled boundary matrix covers every declared degraded input",
+        "controlled boundary normalized: auth -> auth-required",
+        "controlled boundary normalized: malformed -> malformed",
+        "controlled boundary normalized: missing -> unavailable",
+        "controlled boundary normalized: mutation-ambiguous -> reconciliation-required",
+        "controlled boundary normalized: mutation-timeout -> reconciliation-required",
+        "controlled boundary normalized: read-ambiguous -> retry",
+        "controlled boundary normalized: read-timeout -> retry",
+        "controlled boundary normalized: reconciliation-ambiguous -> reconciliation-required",
+        "controlled boundary normalized: reconciliation-auth -> reconciliation-required",
+        "controlled boundary normalized: reconciliation-malformed -> reconciliation-required",
+        "controlled boundary normalized: reconciliation-miss -> reconciliation-required",
+        "controlled boundary normalized: reconciliation-timeout -> reconciliation-required",
+        "controlled boundary normalized: reconciliation-unavailable -> reconciliation-required",
+        "controlled boundary normalized: unsupported -> unsupported",
+        "controlled ambiguous mutations never repeat before reconciliation"
+      ],
+      "evidenceSource": "deterministic-controlled-boundary-double",
+      "id": "controlled-degraded-outcomes",
+      "result": "passed"
+    },
+    {
+      "assertionCount": 2,
+      "evidence": [
+        "supplied Linear candidate delta contains no concrete alternate transport action",
+        "host-native MCP capability set remains complete"
+      ],
+      "evidenceSource": "supplied-extracted-candidate-sensor",
+      "id": "forbidden-alternate-transport",
+      "result": "passed"
+    }
+  ],
+  "schemaVersion": "agent-skills-linear-qualification/2",
+  "summary": {
+    "assertionCount": 39,
+    "failedScenarioCount": 0,
+    "passedScenarioCount": 7,
+    "requiredScenarioCount": 7,
+    "result": "passed"
+  }
+}
