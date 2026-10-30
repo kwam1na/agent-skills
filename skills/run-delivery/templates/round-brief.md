@@ -63,10 +63,7 @@ Return `review-lens-result/1` as one JSON object, and nothing else, as your fina
 - `outcome`: `aligned` or `changes-requested`. Only `changes-requested` carries open P0 or P1 findings; both carry
   evidence.
 - `findings`: every finding, with a unique id starting `{{short}}-r{{round}}-` and one severity, P0 to P3.
-  - P0 and P1 are actionable and never deferred. In a verification round, a new finding outside the delta is filed
-    only at P0; a P1 outside the delta is recorded in `evidence` as dissent instead.
-  - P2 and P3 are deferrable: file each with `"state": "deferred"` and `"deferredIssue": "<what its follow-up item
-    must say>"`. A deferred finding doesn't block `aligned`.
+{{severities}}
 - `evidence` (strings, required): the reviewed tree SHA `{{tree}}` and the successful start and end identity checks;
   the re-check of every carried finding; the model class you ran under; the realization basis `host-convention`.
   End `evidence` with the approval conditions: for each finding you raise, whether its proposed change, adopted as

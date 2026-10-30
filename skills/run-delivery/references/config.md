@@ -135,6 +135,11 @@ checks may need no file at all.
     }
   },
   "finish": [ { "id": "acs", "text": "Every acceptance criterion met on the delivery base" } ],
+  "planReview": { "lenses": ["lens.outcome-correctness", "lens.adversarial-testing"] }, // the plan's own review
+  "approvals": [                              // drafted by lead-setup --approvals-section; optional
+    { "id": "approval-1", "text": "The Product Owner signs off the copy", "state": "waiting", "blocking": true }
+  ],
+  "outOfScope": ["A per-delivery base branch"], // drafted by lead-setup --out-of-scope-section; optional
   "authority": {                              // the operator's grant to lanes; absent: lanes don't push
     "push": true,                             // each lane's own story branch, never forced (run_delivery.py push)
     "draftPullRequests": true,                // its draft PR into the delivery base (run_delivery.py open-pr)
@@ -159,6 +164,22 @@ are removed after the run, and the run is logged as `<delivery>.ship-gates.jsonl
 
 A story's plan context is the plan section whose heading names its key, plus table rows naming its key or label,
 plus the `context.sections`. The plan has no required format beyond that.
+
+`planReview.lenses` names the lenses that review the plan itself, through `run_delivery.py plan-review
+prepare|reduce|end`: 1 to 12 of the repository's declared lenses, each with its charter. They are fixed at round 1; a
+different set later is refused, so an amendment after `lead-init` is judged by the lenses that reviewed the plan, and
+continues the round numbering. The review has no round bound. Its store, `<workDirectory>/review/<delivery>/plan/`
+without `checkouts/`, keeps every round in full, and `lead-close` archives it with the delivery. `lead-init` refuses to
+freeze the plan while the review is open; with no recorded round it freezes as before.
+
+`approvals` and `outOfScope` reach the plan chapter as they are. `lead-setup --approvals-section NAME` drafts one
+approval per top-level list item of that plan section, ids `approval-1`, `approval-2` and so on, each `waiting`;
+`--out-of-scope-section NAME` drafts one text per item. A named section that is missing, or holds no list, drafts
+nothing and says so. `lead-setup --force` keeps `planReview`, `approvals` and `outOfScope` from the existing file. Set
+`"blocking": true` on an approval that blocks work while completing the file: the plan chapter then says "Approvals
+are blocking work" until `run_delivery.py lead-plan approval <id> --state done` marks it done. An approval that isn't
+blocking stays in the chapter's "Approvals ahead" fold. `lead-plan approval` commits the delivery file in the lead's
+clean checkout, as `lead-plan change` does, and never pushes; an approval without an `id` is changed by hand.
 
 ## The forge contract
 

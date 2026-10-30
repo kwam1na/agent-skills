@@ -594,6 +594,7 @@ FLAGS = [
     ("The plan couldn't be read", ()),
     ("The base is broken", ("the last base event in the record is `base.broken`",
                             "While it holds, the title can't read \"Every criterion is proven\"")),
+    ("Approvals are blocking work", ("an `approvals` entry is `blocking` and `waiting`", "The flag names each")),
     ("Work in the record isn't in the plan", ("a queue or planned subject has no unit", "The flag names the subjects")),
     ("The plan and the record disagree on finish lines", ("a finish line in the plan that the record lacks, or the reverse",)),
     ("A finish line no longer covers the plan", ("its `covers.criteria` is an explicit, non-empty list that omits a criterion"

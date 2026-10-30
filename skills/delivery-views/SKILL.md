@@ -156,8 +156,9 @@ any value.
 | `approved` | `{at, review?, snapshot: {units, finish}}`, frozen once at the start of the delivery. |
 | `changes` | Ordered `{id, at, kind, subjects, criteria?, by, why?, title?, source?, ref?, before?, after?}`, `kind` one of `added`, `removed`, `relaxed`, `changed` or `finish`; `by` may be `unrecorded`. |
 | `evidence` | `{<subject>: {<producer kind>: {state, head?, at?, reason?, items?}}}`, `state` one of `done`, `todo` or `waived`. `done` and `waived` need `head`; `waived` also needs `reason`. |
-| `approvals` | Optional, ordered `{text, state: done \| waiting, who?}`. |
+| `approvals` | Optional, ordered `{id?, text, state: done \| waiting, who?, blocking?}`. `id` is unique; `blocking` is false when absent. |
 | `outOfScope` | Optional list of texts. |
+| `planReview` | Optional: how the plan came to be approved. `{lenses, state, endedReason?, rounds}`, below. |
 
 Texts are capped at 600 characters, `outcome.text` at 2,000 and labels at 200;
 lists at 200 units, 1,000 criteria, 500 changes and 30 finish lines. Ids match
@@ -167,21 +168,51 @@ are data only: the page finds units through its own map, never through a
 selector built from one, and sets every text as text. A `ref` becomes a link
 only when the renderer already links that change request.
 
+`planReview` holds what the plan file keeps of an unbounded review. `lenses` is
+the review's ordered lens ids, 1 to 12, fixed for the review. `state` is
+`aligned`, `open` or `ended`, checked against the last entry: `aligned` needs
+every lens's verdict `approve` there, `open` at least one that isn't, and
+`ended` needs `endedReason`, at most 600 characters. `rounds` holds at most 32
+entries, each `{round, fromRound?, candidateRef, at, outcome, verdicts,
+findings, raised, settled, clipped?}`: the run summary's round shape. `verdicts`
+maps each lens to `approve`, `changes` or `unavailable`; `findings` counts
+`P0` to `P3`; `raised` lists at most 30 `{id, lens, severity, summary, state:
+unresolved | resolved}`, summaries at most 280 characters; `settled` lists at
+most 30 `{id, lens, state: fixed | dropped | open, fixCommit, resolution}`,
+with `fixCommit` a full commit id exactly when the state is `fixed`. A plan has
+no deferral path. Entries cover rounds 1 to the last entry's `round` in order,
+with no gap or overlap; an entry with `fromRound` is a fold of rounds
+`fromRound` to `round`, lists nothing, carries its last round's verdicts and
+candidate and its rounds' summed counts, and is never the last entry.
+`clipped` is `{findings, closures, texts}`: what the entry doesn't list, and
+whether its texts were shortened. Serialized, `planReview` is at most 256 KiB.
+run-delivery's producer fits every review to these caps; any producer that
+writes the same keys gets the same fold.
+
 With no `plan.json`, the page is exactly as it was: no chapter, no rail entry,
 no line in Now, and What's left keeps its finish-line list. An invalid file
 renders as if absent, plus the chapter holding one flag, "The plan couldn't be
 read", with the key path. A valid plan gets a fixed 512 KiB share of the page,
-taken from the runs' budget. Over its share, the oldest changes' text is
-clipped first, then other text outside the approved snapshot; the snapshot and
-every count are kept, and the changes fold says what was clipped.
+taken from the runs' budget. Over its share, the plan review's texts are
+clipped first, the oldest rounds' resolutions then their summaries, then the
+oldest changes' text, then other text outside the approved snapshot. The
+snapshot, every count, and each review entry's coverage, verdicts and listed
+fix commits are kept, and the changes fold says what was clipped.
 
 ### The chapter
 
 It sits between What's left and What happened. Open by default: the title
 ("N of M criteria proven", adding ", W by waiver" when a proof was waived), the
 outcome's summary, what needs the engineer, the units not yet proven with each
-one's next missing proof, and one meter per finish line. Folded, each with a
-count: all units (with an "as approved / as amended" switch), changes since
+one's next missing proof, and one meter per finish line. With a `planReview`,
+one line beside the approval reads "Approved <date> after N review rounds",
+then "· every lens aligned", "· ended without alignment" or "· still open"; N
+is the last entry's `round`. Without one, the approval keeps its own `review`
+text, in the units fold. Folded, each with a count: all units (with an "as
+approved / as amended" switch), with a review "Plan review (N rounds)", drawn
+by the run summary's track and cards (a fold reads "Rounds a–b" with its
+counts, an entry says what it doesn't list, the summary says the review is
+unbounded, and an ended review shows its reason), changes since
 approval (a scope-over-time chart and word redlines from `before` and
 `after`), waived proofs with their reasons, approvals ahead, out of scope, and
 the full outcome. Open folds are remembered per viewer under the page's theme
@@ -239,18 +270,21 @@ reads "Nothing in the plan needs you right now."
 1. **The plan couldn't be read.**
 2. **The base is broken**: the last base event in the record is `base.broken`.
    While it holds, the title can't read "Every criterion is proven".
-3. **Work in the record isn't in the plan**: a queue or planned subject has no
+3. **Approvals are blocking work**: an `approvals` entry is `blocking` and
+   `waiting`. The flag names each. A waiting approval that isn't blocking
+   raises nothing and stays in "Approvals ahead".
+4. **Work in the record isn't in the plan**: a queue or planned subject has no
    unit. The flag names the subjects.
-4. **The plan and the record disagree on finish lines**: a finish line in the
+5. **The plan and the record disagree on finish lines**: a finish line in the
    plan that the record lacks, or the reverse.
-5. **A finish line no longer covers the plan**: its `covers.criteria` is an
+6. **A finish line no longer covers the plan**: its `covers.criteria` is an
    explicit, non-empty list that omits a criterion added or changed after its
    `at`. Lines covering `"all"` or `[]` never raise it.
-6. **A change touches open work**: a `relaxed`, `changed` or `removed` change
+7. **A change touches open work**: a `relaxed`, `changed` or `removed` change
    names a unit that is neither proven nor removed. It clears once that unit's
    review approves at a time after the change.
-7. **A change has no reason**: its `why` is absent.
-8. **A waived proof on a unit not yet proven.**
+8. **A change has no reason**: its `why` is absent.
+9. **A waived proof on a unit not yet proven.**
 
 ### Live
 

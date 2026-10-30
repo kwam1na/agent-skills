@@ -1,5 +1,5 @@
 {
-  "description": "The commands that carry out an orchestrated delivery, layered on the delivery views: lens round briefs and round files, gate runs, in-app checks under a lease, draft change requests, lane hand-offs, and the lead's setup, assignment, acceptance, evidence, ship and close-out. A delivery whose stories declare criteria also gets the plan chapter's input, written by lead-side commands alone, with every change to the approved plan recorded.",
+  "description": "The commands that carry out an orchestrated delivery, layered on the delivery views: lens round briefs and round files, gate runs, in-app checks under a lease, draft change requests, lane hand-offs, and the lead's setup, assignment, acceptance, evidence, ship and close-out. A delivery whose stories declare criteria also gets the plan chapter's input, written by lead-side commands alone, with every change to the approved plan recorded. The plan's own review runs through plan-review commands with no round bound, kept in a durable store every plan write reads and fitted to the plan's caps; lead-setup drafts approvals and out of scope from the plan, and lead-plan approval marks one done.",
   "expectedFiles": [
     "skills/compound-delivery-kernel/SKILL.md",
     "skills/compound-learning/SKILL.md",
@@ -15,6 +15,7 @@
     "skills/delivery-views/assets/run-summary.js",
     "skills/delivery-views/references/delivery-plan.schema.json",
     "skills/delivery-views/scripts/render.py",
+    "skills/delivery-views/scripts/review_projection.py",
     "skills/delivery-views/scripts/snapshot.py",
     "skills/delivery-views/scripts/views_common.py",
     "skills/diagnose-work/SKILL.md",
