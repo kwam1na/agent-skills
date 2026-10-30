@@ -75,8 +75,11 @@ This plan keeps that boundary.
 
 ## Plan Review Status
 
-Round 1 (outcome-correctness, adversarial) asked for changes: eight P1 findings over five issues. This revision
-answers them. Plan review carries no round bound.
+- Round 1 (outcome-correctness, adversarial) asked for changes: eight P1 findings over five issues.
+- Round 2 closed all eight and raised one shared issue: a review past the caps would block every plan write. C4a
+  answers it.
+
+Plan review carries no round bound.
 
 ## Scope
 
@@ -114,7 +117,7 @@ schema changes. A plan write that changes `planReview` moves the record through 
 | `lenses` | Ordered lens ids, fixed for the review; 1 to 12. |
 | `state` | `aligned`, `open`, or `ended`. The validator checks it against the last round: `aligned` needs every lens's verdict `approve` there; `open` needs at least one not `approve`; `ended` needs `endedReason`. |
 | `endedReason` | Exactly when `state` is `ended`; at most 600 characters. |
-| `rounds` | Ordered rounds, numbered from 1 with no gaps; at most 32. Each is `{round, candidateRef, at, outcome, verdicts, raised, settled}`, the native `roundDetail` shape `native_review_summaries` produces today. |
+| `rounds` | Ordered rounds, numbered from 1 with no gaps; at most 32 entries (C4 says how a longer review fits). Each is `{round, candidateRef, at, outcome, verdicts, findings, raised, settled, clipped?}`: the native `roundDetail` shape `native_review_summaries` produces today, without `detailsUnavailable` and without `deferredIssue` on its entries. `at` and `outcome` may be null, as there; `findings` holds the severity counts the track and card read. `clipped` is set when C4 clipped this round's lists or texts, and holds how many findings and closures were dropped. |
 
 - `candidateRef` is opaque text of at most 2,048 characters, as the review outcome contract allows; the page shows
   it and never parses it.
@@ -134,6 +137,18 @@ when absent). Existing entries stay valid and unflagged.
 `native_review_summaries` into a module both `render.py` and `run-delivery` import. For a plan review it takes, per
 round, the candidate commit, and sets each `fixed` closure's `fixCommit` to the commit of the round that reports it
 closed: the revision that carried the fix.
+
+**C4a. The producer always fits the caps.** The review is unbounded; what the plan file holds of it is bounded. When
+the store exceeds C2's caps, the projection fits it rather than refusing:
+1. a round's `raised` and `settled` lists keep their first 30 entries by severity, then order, and record the rest in
+   `clipped`;
+2. then the oldest rounds' `resolution` texts, then `summary` texts, are clipped until `planReview` is within 256 KiB;
+3. past 32 rounds, the oldest rounds beyond the first are folded into one entry that keeps their verdicts' last state,
+   counts and fix commits, marked `clipped`.
+
+Rounds' verdicts, `findings` counts, fix commits and the review's `state` are always kept. The round store itself is
+never clipped. Every plan the producer writes therefore passes `validate_plan` and the 1 MiB check, whatever the
+review's length, and the card says when a round was clipped.
 
 **C5. The page.**
 - **Open by default:** one line beside the approval. With `planReview`: "Approved <date> after N review rounds",
@@ -155,7 +170,8 @@ closed: the revision that carried the fix.
 - **Candidate:** `clean_head` of the lead's checkout, with the plan file committed; a round whose candidate equals
   the previous round's is refused, as for stories. The tool composes `candidateRef`, the binding tuple and each
   lens's resolution pairs.
-- **Checkouts:** each lens gets a clean checkout of the candidate under `.orchestration/review/<delivery>/plan/<lens>`,
+- **Checkouts:** each lens gets a clean checkout of the candidate under
+  `.orchestration/review/<delivery>/plan/checkouts/<lens>`, apart from the store's files,
   start identity checks before its brief is printed, end checks in `reduce`. `reduce` removes a round's checkouts
   after its end checks; a failed check keeps them and fails the round.
 - **Briefs:** `templates/round-brief.md`'s `unbounded` form, with each lens's carried entries. In it, and in `reduce`'s
@@ -163,8 +179,9 @@ closed: the revision that carried the fix.
 - **Convergence:** when a round after the first raises a new finding and leaves no fewer open findings than the round
   before, `reduce` says the review isn't converging and that the operator may end it. It never ends it.
 - **End:** `plan-review end --reason TEXT` records `ended`; the reason is capped by C2. No round count ends a review.
-- **Store:** each round's outcome, and the end record, are written under `.orchestration/review/<delivery>/plan/`.
-  That folder is the durable store; `lead-close` archives it with the delivery.
+- **Store:** each round's outcome (`round-<n>.json`) and the end record (`ended.json`) are written under
+  `.orchestration/review/<delivery>/plan/`. That folder, without `checkouts/`, is the durable store; `lead-close`
+  archives it with the delivery. The store keeps every round in full; C4a bounds only what the plan file holds.
 
 **C7. The plan write.**
 - `build_plan` reads the plan-review store on every build, and the store joins its list of pure-function sources. A
@@ -173,15 +190,20 @@ closed: the revision that carried the fix.
   aligned", always under 600 characters; the existing "Approved <time> · " prefix completes it.
 - `lead-init` refuses to freeze while the review is `open`. With no recorded rounds it freezes as today, without
   `planReview`.
-- A plan review after `lead-init` (an amendment) continues the round numbering in the same store; the line reads
-  "still open" until it aligns or is ended.
+- A plan review after `lead-init` (an amendment) continues the round numbering in the same store, with the same
+  lenses, on purpose: an amendment is judged by the lenses that approved the plan. The line reads "still open" until
+  it aligns or is ended.
+- A late snapshot keeps its existing text and, with `planReview`, the line's words follow it: "taken after the delivery
+  started · after 3 review rounds · every lens aligned".
 - The producer checks the serialized `plan.json` against the 1 MiB limit as well as `validate_plan` before writing,
   and refuses a plan over it.
 
 **C8. Approvals and out of scope from the plan.**
 - `lead-setup` drafts `approvals` and `outOfScope` from the plan's sections named by `--approvals-section` and
-  `--out-of-scope-section`, one entry per top-level list item, each approval `{id, text, state: "waiting"}`. The lead
-  sets `blocking` while completing the delivery file, as it assigns lanes. `lead-setup --force` keeps `planReview`,
+  `--out-of-scope-section`, one entry per top-level list item, each approval `{id, text, state: "waiting"}`. Ids are
+  `approval-1`, `approval-2` and so on, in order. A named section that is missing, or holds no list, drafts nothing for
+  that key and says so; an unnamed section drafts nothing silently. The lead sets `blocking` while completing the
+  delivery file, as it assigns lanes. `lead-setup --force` keeps `planReview`,
   `approvals` and `outOfScope` from the existing file.
 - `lead-plan approval <id> --state done|waiting [--who NAME]` changes one approval with `lead-plan change`'s
   discipline: a clean checkout not behind the base, one commit, never a push. Approvals without `id` are changed by
@@ -199,7 +221,9 @@ the 256 KiB aggregate at and over its limit; `approvals` with `id` and `blocking
 ### P2. The shared projection
 
 A new module in `delivery-views/scripts`, used by `render.py`. Characterization-first: the existing native-review
-goldens and page tests are unchanged. Test-first for the plan-review case: closures get the closing round's commit.
+goldens and page tests are unchanged. Test-first for the plan-review case: closures get the closing round's commit,
+and C4a's fitting (more than 30 findings in a round, text past 256 KiB, more than 32 rounds) always yields a valid
+`planReview` with verdicts, counts and fix commits intact.
 
 ### P3. The page and its share
 
@@ -221,7 +245,9 @@ unchanged candidate; a lens checkout that moved; the non-converging message; an 
 `references/config.md`. Test-first: a frozen plan with `planReview` passes `check-plan`; a sweep and `lead-plan
 approval` after `lead-init` keep `planReview` and `approved.review`; freezing refuses an open review; an oversized
 plan is refused; `lead-setup` drafts approvals and out-of-scope from a plan shaped like the pilot's, and `--force`
-keeps them; `lead-plan approval` commits and refuses a dirty checkout.
+keeps them; a missing named section drafts nothing and says so; `lead-plan approval` commits and refuses a dirty
+checkout; after a review past its caps (scenario 6), `lead-init`, a sweep and `lead-plan approval` all write a valid
+plan.
 
 ### P6. Text and registry
 
@@ -247,8 +273,10 @@ blocking approvals), catalog and profile descriptions, and output digests throug
 4. **A review that isn't converging:** round 3 raises a new finding with open findings not lower; `reduce` says so;
    `end` records the reason; the line reads "ended without alignment", and the fold shows the reason.
 5. **A refused freeze:** `lead-init` refuses while the last round has a lens asking for changes.
-6. **A review at its caps:** 32 rounds with full text stays readable; the page clips the oldest texts and keeps every
-   verdict.
+6. **A review past its caps:** a store with 40 rounds, one of them raising 35 findings, and full-length texts. The
+   producer's plan passes `check-plan`; the over-long round is marked clipped with its counts intact; the oldest
+   rounds are folded and the oldest texts clipped; every verdict and fix commit is kept. `lead-plan approval` and a
+   sweep still write the plan.
 
 ## Repository Sensors
 
@@ -265,7 +293,8 @@ The page goldens compare whole pages, so a base that moves under P3 is re-checke
 - **Clutter:** C5 keeps one line open and everything else folded; a page test enforces it. Only blocking approvals
   flag.
 - **The view and the producer drift:** C4's one projection; C7's size and validator checks on every write.
-- **A plan that the page can't read:** C2's aggregate cap and C7's size check; C5's clipping.
+- **A plan that the page can't read, or a producer that can't write one:** C4a fits every review to C2's caps before
+  C7's checks run; C5 clips again into the page share.
 - **A dropped review on rebuild:** C7 makes the store a `build_plan` source, and P5 tests every rebuild path.
 - **Hostile text in findings:** text-only rendering, as for story rounds.
 - **Lens checkouts left behind:** C6's removal after the end checks.
