@@ -280,7 +280,8 @@ def load_harness(root: Path, release: Path) -> tuple[dict | None, str]:
               "additionalReviewLenses: c.additionalReviewLenses || []})) })")
     register = ('data:text/javascript,import {register} from "node:module"; import {pathToFileURL} from "node:url"; '
                 f'register(pathToFileURL({json.dumps(str(hook))}));')
-    done = subprocess.run([node, "--no-warnings", "--import", register, "-e", script, str(path)],
+    # Node before 22.18 and 23.6 strips types only behind this flag; later ones accept it unchanged.
+    done = subprocess.run([node, "--no-warnings", "--experimental-strip-types", "--import", register, "-e", script, str(path)],
                           text=True, capture_output=True, cwd=root)
     if done.returncode != 0:
         return None, f"harness.config.ts not read: {done.stderr.strip()[-200:]}"

@@ -1,10 +1,5 @@
 # run-delivery-v1
 
-**This release is held.** Core, provider and bootstrap are re-earned, and every product archive is built and
-verified, but the Linear set waits for its live host attestation. Until that is collected and the Linear set is
-re-earned, `qualification-pending.json` names `linear`, the release command refuses to build, and the release is not
-cut. "Collecting the Linear attestation" below says exactly what remains.
-
 ## Version and set names
 
 A release is identified by its release ids and qualification set names, so this release is a new themed set for every
@@ -115,91 +110,16 @@ head after a runner sync, so a synced or merged unit keeps its review proof.
 - **Offline records.** The core, provider and bootstrap records were re-earned offline against this set's archives.
   Every scenario passed: 13 of 13 for core, 11 of 11 for provider and 3 of 3 for bootstrap. Each replays byte for byte.
 - **Linear.**
-  - The collector input, `qualifications/product/linear-run-delivery-v1.collector-binding.json`, was frozen from the
-    verified core and linear archives before any live operation.
-  - The attestation is collected in an owner-approved live host session on disposable issues. `qualify-linear.py` then
-    runs against the frozen input and the exact core and linear product archives.
-  - The record and the attestation join the set when that run is done. Until then `qualification-pending.json` names
-    the linear set, and the release is held: the release command refuses to build, and nothing is cut. "Collecting the
-    Linear attestation" below has the steps.
+  - The collector input, `qualifications/product/linear-run-delivery-v1.collector-binding.json` (sha256
+    `9284c709d14c287be7cecf74a4592a8ae06c5e2ca7602ffd96f092e348010e08`), was frozen before any live operation from the
+    verified `core-run-delivery-v1` archive (`08610e46436ad0239f1171dd489bc1cbeb342fc01a9ce64d7e50920e95f5b0cb`) and
+    `linear-run-delivery-v1` archive (`9d75dd6f007fdaa2c830c4e2f14176c0844e30df5f5e3a91451da605b44bc949`).
+  - The attestation comes from the owner-approved live host run on two disposable issues, both canceled at the end. Its
+    receipt is on the canceled primary issue.
+  - `qualify-linear.py` passes all seven scenarios against the frozen input and the exact core and linear product
+    archives.
 - **The run-delivery and delivery-views profiles** ship unqualified, as the delivery-views profile did before:
   - The core qualifier is bound to the core profile and refuses a superset.
   - The core skills these profiles include are byte-identical to those in the qualified `core-run-delivery-v1`.
   - What they add is covered by the corpus's own tests: the run-delivery characterization, behaviour, setup-check and
     guide-driven fixture adopter suites, and the delivery-views golden, page-lane, renderer, plan and snapshot suites.
-
-## Collecting the Linear attestation
-
-Everything around the live run is prepared; only the run itself and what follows it remain.
-
-**Frozen before any live operation** (never change these):
-- The collector input is `qualifications/product/linear-run-delivery-v1.collector-binding.json`, sha256
-  `9284c709d14c287be7cecf74a4592a8ae06c5e2ca7602ffd96f092e348010e08`. It binds `core-run-delivery-v1` (archive `08610e46436ad0239f1171dd489bc1cbeb342fc01a9ce64d7e50920e95f5b0cb`) and
-  `linear-run-delivery-v1` (archive `9d75dd6f007fdaa2c830c4e2f14176c0844e30df5f5e3a91451da605b44bc949`). It was frozen from
-  `verify_release` of the core and linear products, with fresh random opaque `subjectRef` and `candidateRef`. It binds
-  `core-run-delivery-v1` and `linear-run-delivery-v1` by archive and metadata digest, and the graph digest of
-  `workflows/delivery-v1.json`, identical in both extracted archives.
-- The archives the run installs are `qualifications/product/linear-run-delivery-v1.zip` and its release file. Verify
-  them with `scripts/build-release.py verify` first.
-- The core record it qualifies against, `qualifications/product/core-run-delivery-v1.json`, is already earned.
-
-**The live run.** An authorized maintainer's configured host, with the host-native Linear MCP and the verified Linear
-profile installed:
-1. **Two disposable issues.** Search for each of two clearly disposable issues, primary and dependency, by an exact
-   random operation marker, and find each absent first.
-2. **The event sequence.** Retain the redacted live event sequence, in this order:
-
-   | # | Operation | Outcome | Entities |
-   | --- | --- | --- | --- |
-   | 1–2 | search | miss | primary, then dependency |
-   | 3–4 | create | success | primary, then dependency |
-   | 5–6 | read | success | primary, then dependency |
-   | 7–8 | update | success | primary, then dependency |
-   | 9 | relations | success | both |
-   | 10 | read | relation-observed | both |
-   | 11 | reconciliation | unique-match | primary |
-   | 12–13 | update | canceled | primary, then dependency |
-   | 14–15 | read | cleanup-confirmed | primary, then dependency |
-
-3. **The attestation.** Write `agent-skills-linear-host-attestation/2`:
-   - `collector` is `{"kind": "trusted-host-side", "transport": "host-native-linear-mcp"}`;
-   - `collectorBinding` is exactly the frozen input;
-   - it carries `entities` (primary first, both `finalStatus: canceled`), `auditReferences` in the same order,
-     `events`, `sessionReference`, and `receipt: {"externalSystem": "linear", "reference": "<random receipt reference>"}`.
-
-   Serialize it with sorted keys, two-space indentation and a final newline.
-4. **The receipt.** Post the attestation's digest and the receipt reference through the same host-native boundary: on
-   the canceled primary issue, and on the release's tracking issue.
-
-**After the run**, from a checkout of this release's branch:
-
-```bash
-cp <collected attestation> qualifications/product/linear-run-delivery-v1.attestation.json
-python3 scripts/qualify-linear.py \
-  --core-archive qualifications/product/core-run-delivery-v1.zip \
-  --core-metadata qualifications/product/core-run-delivery-v1.release.json \
-  --core-record qualifications/product/core-run-delivery-v1.json \
-  --linear-archive qualifications/product/linear-run-delivery-v1.zip \
-  --linear-metadata qualifications/product/linear-run-delivery-v1.release.json \
-  --collector-binding qualifications/product/linear-run-delivery-v1.collector-binding.json \
-  --attestation qualifications/product/linear-run-delivery-v1.attestation.json \
-  --record qualifications/product/linear-run-delivery-v1.json
-git rm qualification-pending.json
-```
-
-Then:
-- **README.** The `qualify-linear` example takes its attestation from `/tmp/…` and names the record without its folder,
-  because the README test requires every `qualifications/…` path it names to exist. Change both back to the checked-in
-  paths.
-- **Notes.** Replace this section and the held notice with the run's facts, and update `qualifications/product/README.md`
-  to match.
-- **Gates.** Run the gates. With the marker gone, the Linear replay and projection tests run instead of skipping. Once
-  they pass, the release can be cut from the merged base.
-
-If anything under `skills/`, `agent_skills/` or `scripts/` changes first, the archives change with it:
-- rebuild every product, with runtime 0.7.4's bytes and `workflowContentSha256` re-derived per profile;
-- re-earn core, provider and bootstrap;
-- freeze a new binding with fresh opaque references before any live run.
-
-Never reuse this binding for different archives.
-

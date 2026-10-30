@@ -943,7 +943,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "c3ceb64f454c72c758e2e72a8d2d23ce6d49c2ec6a92449c4fabcb9b3471298f"
+          "sha256": "9f071df3a78abbb3138f6dd38e929955a24ee523daac5751df1011fccdffde90"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",

@@ -226,11 +226,11 @@ python3 scripts/qualify-linear.py \
   --linear-archive qualifications/product/linear-run-delivery-v1.zip \
   --linear-metadata qualifications/product/linear-run-delivery-v1.release.json \
   --collector-binding qualifications/product/linear-run-delivery-v1.collector-binding.json \
-  --attestation /tmp/linear-run-delivery-v1.attestation.json \
+  --attestation qualifications/product/linear-run-delivery-v1.attestation.json \
   --record /tmp/linear.qualification.json
 ```
 
-The version-2 checked record, `linear-run-delivery-v1.json` beside the archives once the set's attestation is collected, binds the passing core
+The version-2 checked record at `qualifications/product/linear-run-delivery-v1.json` binds the passing core
 qualification, both exact archive and metadata identities, canonical extracted
 source-tree digests, the frozen collector input and its digest, the exact retained
 attestation bytes, and its external receipt reference. Old unbound attestations,

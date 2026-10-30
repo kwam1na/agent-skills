@@ -1038,7 +1038,7 @@ class LinearQualificationTests(unittest.TestCase):
             "core": ("core-run-delivery-v1", "08610e46436ad0239f1171dd489bc1cbeb342fc01a9ce64d7e50920e95f5b0cb"),
             "linear": ("linear-run-delivery-v1", "9d75dd6f007fdaa2c830c4e2f14176c0844e30df5f5e3a91451da605b44bc949"),
             # The product an adopter installs: no qualification set gates it, so its projection always holds.
-            "run-delivery": ("run-delivery-run-delivery-v1", "63bf93293975ef520a0a5b000908e6b91e75c8660e9acb78e72062707e0e6f83"),
+            "run-delivery": ("run-delivery-run-delivery-v1", "8261eb3143d8e81e74711e9fa524b2f4c3298ed4f1c237210ccc2b9f9ca611df"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
