@@ -80,7 +80,11 @@ This plan keeps that boundary.
   answered it.
 - Round 3 raised one shared issue in C4a: its fold had no valid shape and its guarantees conflicted. C2's numbering
   rule, C4a's four steps and the "always kept" list answer it. Round 3 also met plan-work's non-convergence signal (a
-  new finding, open findings not lower); it was put to the operator.
+  new finding, open findings not lower); the operator chose to continue.
+- Round 4: adversarial approved, every carried finding closed. outcome-correctness closed its carried finding and
+  raised one: scenario 6's fold read rounds 2 to 9 where C4a gives 2 to 10. That is corrected, with three wording
+  clarifications from both lenses' notes. Round 5 asks only outcome-correctness, the lens that filed the open finding:
+  the delta is text-only and adversarial had already approved everything around it.
 
 Plan review carries no round bound.
 
@@ -131,8 +135,9 @@ schema changes. A plan write that changes `planReview` moves the record through 
   `open`, `resolution` at most 600 characters. `fixCommit` is 40 lowercase hex exactly when `state` is `fixed`, else
   null.
 - Finding ids and lens ids match `[A-Za-z0-9._-]{1,64}`.
-- A fold's `raised` and `settled` are empty; its `verdicts` and `candidateRef` are its last round's, and its
-  `findings` sum its rounds' counts.
+- A fold covers at least two rounds (`fromRound` < `round`). Its `raised` and `settled` are empty; its `verdicts`,
+  `candidateRef`, `at` and `outcome` are its last round's, and its `findings` sum its rounds' counts. The last entry
+  is never a fold.
 - **Aggregate:** the serialized `planReview` is at most 256 KiB, so a plan within every other cap stays under 1 MiB.
 - Unknown keys are refused.
 
@@ -177,7 +182,8 @@ which is never clipped; the card says how many an entry doesn't list. Every plan
   `approvals` entry that is `blocking` and `waiting`. Waiting entries that aren't blocking raise nothing and stay in
   "Approvals ahead".
 - **Share:** `plan_block` gives `planReview` its place in the plan's 512 KiB share. Over it, the oldest rounds'
-  `resolution` and then `summary` texts are clipped first; rounds, verdicts, counts and fix commits are always kept.
+  `resolution` and then `summary` texts are clipped first; every entry's coverage, verdicts and counts, and the fix
+  commits of listed closures, are always kept.
 - No new chapter, rail entry or line in Now. Every existing golden and page test is unchanged.
 
 **C6. Plan review commands.** `run_delivery.py plan-review prepare|reduce|end`, top-level, so they work before
@@ -241,8 +247,8 @@ A new module in `delivery-views/scripts`, used by `render.py`. Characterization-
 goldens and page tests are unchanged. Test-first for the plan-review case: closures get the closing round's commit,
 and C4a's fitting always yields a `planReview` that passes P1's validator within 256 KiB: more than 30 findings in a
 round; a fold over rounds holding more than 30 closures in all; and the worst case, 40 rounds each at 30+ findings and
-closures, with ids at 64 characters, `candidateRef`s at 2,048 and full-length texts. Listed closures keep their fix
-commits; `fixed` closures are listed first.
+closures, with ids at 64 characters, `candidateRef`s at 2,048 and full-length texts, which yields exactly 32 entries
+with one fold over rounds 2 to 10. Listed closures keep their fix commits; `fixed` closures are listed first.
 
 ### P3. The page and its share
 
@@ -293,9 +299,10 @@ blocking approvals), catalog and profile descriptions, and output digests throug
    `end` records the reason; the line reads "ended without alignment", and the fold shows the reason.
 5. **A refused freeze:** `lead-init` refuses while the last round has a lens asking for changes.
 6. **A review past its caps:** a store with 40 rounds, one of them raising 35 findings, and full-length texts. The
-   producer's plan passes `check-plan`: rounds 2 to 9 form one fold, the over-long round lists 30 and counts 5 in
-   `clipped`, the oldest texts are shortened, and every entry's verdicts, counts and listed fix commits are kept. The
-   page reads "after 40 review rounds". `lead-plan approval` and a sweep still write the plan.
+   producer's plan passes `check-plan` with exactly 32 entries: round 1, one fold over rounds 2 to 10, and rounds 11
+   to 40. The over-long round lists 30 and counts 5 in `clipped`, the oldest texts are shortened, and every entry's
+   verdicts, counts and listed fix commits are kept. The page reads "after 40 review rounds". `lead-plan approval` and
+   a sweep still write the plan.
 
 ## Repository Sensors
 
