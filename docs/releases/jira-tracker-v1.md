@@ -97,13 +97,14 @@ in the release and receipt code, the two schemas, and its manifest and runtime d
   Every scenario passed: 13 of 13 for core, 11 of 11 for provider and 3 of 3 for bootstrap. Each replays byte for byte,
   as do their workflow-only records.
 - **Linear.**
-  - The collector input, `qualifications/product/linear-jira-tracker-v1.collector-binding.json`, was frozen from the
-    verified core and linear archives before any live operation.
-  - The attestation is collected in an owner-approved live host session on disposable issues. `qualify-linear.py` then
-    runs against the frozen input and the exact core and linear product archives.
-  - The record and the attestation join the set when that run is done. Until then `qualification-pending.json` names
-    the linear set, and the release is held: the release command refuses to build, and nothing is cut. "Collecting the
-    Linear attestation" below has the steps.
+  - The collector input, `qualifications/product/linear-jira-tracker-v1.collector-binding.json` (sha256
+    `3fc06a47bd4f8313d678e698f88518e64ff7615eb14ac47ecfb0ca1fe66c0e35`), was frozen before any live operation from the
+    verified `core-jira-tracker-v1` archive (`b0e62ce335ee77187b843b6e58f71540b1b7bffe364ea6d80695a57dc47e12d1`) and
+    `linear-jira-tracker-v1` archive (`5a178fddb311c766902d0fef1602acb97d00a881ba929db6cc1e78d891308feb`).
+  - The attestation comes from the owner-approved live host run on two disposable issues, both canceled at the end. Its
+    receipt is on the canceled primary issue and on the release's tracking issue.
+  - `qualify-linear.py` passes all seven scenarios against the frozen input and the exact core and linear product
+    archives.
 - **The jira, run-delivery and delivery-views profiles** ship unqualified, as run-delivery and delivery-views did
   before:
   - The core qualifier is bound to the core profile and refuses a superset.
@@ -112,79 +113,3 @@ in the release and receipt code, the two schemas, and its manifest and runtime d
     fail-closed, transport-boundary, tracking-workflow and archive suites; for the others, the suites
     `run-delivery-v1` names.
   - No live Jira host run qualifies the Jira adapter in this set.
-
-## Collecting the Linear attestation
-
-Everything around the live run is prepared; only the run itself and what follows it remain.
-
-**Frozen before any live operation** (never change these):
-- The collector input is `qualifications/product/linear-jira-tracker-v1.collector-binding.json`, sha256
-  `3fc06a47bd4f8313d678e698f88518e64ff7615eb14ac47ecfb0ca1fe66c0e35`. It binds `core-jira-tracker-v1` (archive
-  `b0e62ce335ee77187b843b6e58f71540b1b7bffe364ea6d80695a57dc47e12d1`) and `linear-jira-tracker-v1` (archive
-  `5a178fddb311c766902d0fef1602acb97d00a881ba929db6cc1e78d891308feb`). It was frozen from `verify_release` of the core
-  and linear products, with fresh random opaque `subjectRef` and `candidateRef` that no earlier input used. It binds
-  both releases by archive and metadata digest, and the graph digest of `workflows/delivery-v1.json`, identical in both
-  extracted archives.
-- The archives the run installs are `qualifications/product/linear-jira-tracker-v1.zip` and its release file. Verify
-  them with `scripts/build-release.py verify` first.
-- The core record it qualifies against, `qualifications/product/core-jira-tracker-v1.json`, is already earned.
-
-**The live run.** An authorized maintainer's configured host, with the host-native Linear MCP and the verified Linear
-profile installed:
-1. **Two disposable issues.** Search for each of two clearly disposable issues, primary and dependency, by an exact
-   random operation marker, and find each absent first.
-2. **The event sequence.** Retain the redacted live event sequence, in this order:
-
-   | # | Operation | Outcome | Entities |
-   | --- | --- | --- | --- |
-   | 1–2 | search | miss | primary, then dependency |
-   | 3–4 | create | success | primary, then dependency |
-   | 5–6 | read | success | primary, then dependency |
-   | 7–8 | update | success | primary, then dependency |
-   | 9 | relations | success | both |
-   | 10 | read | relation-observed | both |
-   | 11 | reconciliation | unique-match | primary |
-   | 12–13 | update | canceled | primary, then dependency |
-   | 14–15 | read | cleanup-confirmed | primary, then dependency |
-
-3. **The attestation.** Write `agent-skills-linear-host-attestation/2`:
-   - `collector` is `{"kind": "trusted-host-side", "transport": "host-native-linear-mcp"}`;
-   - `collectorBinding` is exactly the frozen input;
-   - it carries `entities` (primary first, both `finalStatus: canceled`), `auditReferences` in the same order,
-     `events`, `sessionReference`, and `receipt: {"externalSystem": "linear", "reference": "<random receipt reference>"}`.
-
-   Serialize it with sorted keys, two-space indentation and a final newline.
-4. **The receipt.** Post the attestation's digest and the receipt reference through the same host-native boundary: on
-   the canceled primary issue, and on the release's tracking issue.
-
-**After the run**, from a checkout of this release's branch:
-
-```bash
-cp <collected attestation> qualifications/product/linear-jira-tracker-v1.attestation.json
-python3 scripts/qualify-linear.py \
-  --core-archive qualifications/product/core-jira-tracker-v1.zip \
-  --core-metadata qualifications/product/core-jira-tracker-v1.release.json \
-  --core-record qualifications/product/core-jira-tracker-v1.json \
-  --linear-archive qualifications/product/linear-jira-tracker-v1.zip \
-  --linear-metadata qualifications/product/linear-jira-tracker-v1.release.json \
-  --collector-binding qualifications/product/linear-jira-tracker-v1.collector-binding.json \
-  --attestation qualifications/product/linear-jira-tracker-v1.attestation.json \
-  --record qualifications/product/linear-jira-tracker-v1.json
-git rm qualification-pending.json
-```
-
-Then:
-- **README.** The `qualify-linear` example takes its attestation from `/tmp/…` and names the record without its folder,
-  because the README test requires every `qualifications/…` path it names to exist. Change both back to the checked-in
-  paths.
-- **Notes.** Replace this section and the held notice with the run's facts, and update `qualifications/product/README.md`
-  to match.
-- **Gates.** Run the gates. With the marker gone, the Linear replay and projection tests run instead of skipping. Once
-  they pass, the release can be cut from the merged base.
-
-If anything under `skills/`, `agent_skills/` or `scripts/` changes first, the archives change with it:
-- rebuild every product, with runtime 0.7.4's bytes and `workflowContentSha256` re-derived per profile;
-- re-earn core, provider and bootstrap;
-- freeze a new binding with fresh opaque references before any live run.
-
-Never reuse this binding for different archives.

@@ -41,10 +41,8 @@ Their bytes and identities remain immutable.
 The `*-jira-tracker-v1` files are the current product set. The bootstrap archive
 qualifies the minimal first-install profile and full product lifecycle. The core
 archive carries its exact current core and provider qualification records. The
-Linear pair is bound to a new independently frozen collector input,
-`linear-jira-tracker-v1.collector-binding.json`, frozen before any live
-operation; its protected host-native attestation and qualification record join
-the set once the attestation is collected. The `run-delivery` archive is the
+Linear qualification binds that exact core and Linear pair to a new
+independently frozen collector input and protected host-native attestation. The `run-delivery` archive is the
 product an adopter installs to run deliveries, and the `jira` archive is the
 product a Jira adopter installs; like the delivery-views profile before them,
 neither carries a qualification record of its own. Every earlier product
