@@ -86,7 +86,7 @@ class EntryBudgetTests(unittest.TestCase):
         # A checked product archive shows the shape the budget models: its
         # runtime files are exactly the runtime set, and everything else is
         # the workflow release.
-        product = ROOT / "qualifications/product/linear-plan-review-v1.zip"
+        product = ROOT / "qualifications/product/linear-capture-observations-v1.zip"
         with zipfile.ZipFile(product) as opened:
             names = [info.filename for info in opened.infolist()]
         runtime = [name for name in names if name.startswith("runtime/")]
