@@ -48,6 +48,7 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " carries them",
         "Tag each release with an annotated tag named exactly its set name",
         "Never move or reuse a release tag",
+        "that release is the channel adopters download from",
         "by mutating a file `provenance.lock.json` covers takes the digests"
         " with it",
         "mutating the pinned text alone raises"
