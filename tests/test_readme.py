@@ -25,7 +25,7 @@ class ReadmeLifecycleTests(unittest.TestCase):
         if pending("linear") is not None:
             self.skipTest(pending("linear"))
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        for name in ("linear-plan-review-v1.attestation.json", "linear-plan-review-v1.json"):
+        for name in ("linear-capture-observations-v1.attestation.json", "linear-capture-observations-v1.json"):
             with self.subTest(name=name):
                 self.assertIn(f"qualifications/product/{name}", readme)
 

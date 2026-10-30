@@ -48,8 +48,8 @@ SKILL = ROOT / "skills/run-delivery"
 PROFILE = "run-delivery"
 TOOL_RELATIVE = "skills/run-delivery/scripts/run_delivery.py"
 # The current qualification set's core product carries the runtime this profile's product is rebound from.
-RUNTIME_SOURCE = ROOT / "qualifications/product/core-plan-review-v1.zip"
-RUNTIME_VERSION = "0.7.4"
+RUNTIME_SOURCE = ROOT / "qualifications/product/core-capture-observations-v1.zip"
+RUNTIME_VERSION = "0.7.7"
 # The fixture page adapter-test serves, byte for byte as the tool's own fixture page was before it moved in.
 ADAPTER_FIXTURE_SHA256 = "31257fd55d83ebc6aa602b7a508248d6f44776991f54e1127ce1629b0bf59a81"
 POSIX_ONLY = "the run-delivery tool is POSIX-only: it uses fcntl, process groups and sh"
