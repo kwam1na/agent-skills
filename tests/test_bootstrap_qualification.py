@@ -27,7 +27,7 @@ class BootstrapQualificationTests(unittest.TestCase):
         # The retained record's driver digest covers the corpus validator, whose
         # provider rule changed; it is re-earned with the pending bootstrap set.
         skip_if_pending(self, "bootstrap")
-        product = ROOT / "qualifications/product/bootstrap-jira-tracker-v1"
+        product = ROOT / "qualifications/product/bootstrap-plan-review-v1"
         archive = product.with_suffix(".zip")
         metadata = product.with_suffix(".release.json")
         with tempfile.TemporaryDirectory() as temporary:
@@ -36,7 +36,7 @@ class BootstrapQualificationTests(unittest.TestCase):
             release = verify_release(archive, metadata, extract_to=extracted)
             self.assertEqual(
                 release.archive_sha256,
-                "30adda28336e1bc179800fc73531e85b168613d1afcc5af170346baddad09f92",
+                "6b93152f010e9accbd188ea544cea4584073e257b0e1d16ab3f3c0da86032ab6",
             )
             self.assertEqual(canonical_json(load_runner().qualify(archive, metadata)).encode(),
                              product.with_suffix(".json").read_bytes(), "the record replays byte for byte")
@@ -62,11 +62,11 @@ class BootstrapQualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="bootstrap-workflows-jira-tracker-v1",
+                release_id="bootstrap-workflows-plan-review-v1",
                 profile_id="bootstrap",
             )
             replay = runner.qualify(archive, metadata)
-        checked = (ROOT / "qualifications/bootstrap-workflows-jira-tracker-v1.json").read_bytes()
+        checked = (ROOT / "qualifications/bootstrap-workflows-plan-review-v1.json").read_bytes()
         skip_if_pending(self, "bootstrap")
         self.assertEqual(canonical_json(replay).encode(), checked, "the record replays byte for byte")
 
@@ -80,7 +80,7 @@ class BootstrapQualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="bootstrap-workflows-jira-tracker-v1",
+                release_id="bootstrap-workflows-plan-review-v1",
                 profile_id="bootstrap",
             )
             record = runner.qualify(archive, metadata)

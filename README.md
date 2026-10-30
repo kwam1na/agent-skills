@@ -48,7 +48,7 @@ On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
 Build and verify the core profile:
 
 ```bash
-python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-jira-tracker-v1
+python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-plan-review-v1
 python3 scripts/build-release.py verify \
   --archive /tmp/core.zip \
   --metadata /tmp/core.release.json \
@@ -84,7 +84,7 @@ source artifacts, and rolls back through installed bytes:
 python3 scripts/build-release.py build \
   --archive /tmp/bootstrap.zip \
   --metadata /tmp/bootstrap.release.json \
-  --release-id bootstrap-workflows-jira-tracker-v1 \
+  --release-id bootstrap-workflows-plan-review-v1 \
   --profile bootstrap
 python3 scripts/qualify-bootstrap.py \
   --archive /tmp/bootstrap.zip \
@@ -93,7 +93,7 @@ python3 scripts/qualify-bootstrap.py \
 ```
 
 The current checked qualification record is
-`qualifications/bootstrap-workflows-jira-tracker-v1.json`.
+`qualifications/bootstrap-workflows-plan-review-v1.json`.
 
 The detached release metadata authenticates the ZIP before it is parsed. The
 manifest then authenticates the complete payload and its single profile group.
@@ -141,8 +141,8 @@ python3 scripts/build-release.py build \
   --profile run-delivery
 ```
 
-The current product set is `jira-tracker-v1` under `qualifications/product/`;
-its release notes are `docs/releases/jira-tracker-v1.md`.
+The current product set is `plan-review-v1` under `qualifications/product/`;
+its release notes are `docs/releases/plan-review-v1.md`.
 
 The [portable workflow graph](docs/workflow-graph-v1.md) declares ten canonical
 stages and closed, exactly bound stage results. `diagnose-work` returns causal
@@ -182,7 +182,7 @@ named in the record remains the single release under qualification. That prior
 fixture is built only from the verified candidate extraction, never from the
 runner checkout corpus.
 The current workflow-only record is checked in at
-`qualifications/core-workflows-jira-tracker-v1.json`.
+`qualifications/core-workflows-plan-review-v1.json`.
 Historical records retain their original bytes under `qualifications/history/`.
 Historical product records such as `linear-product-v1` also remain immutable
 under `qualifications/product/`.
@@ -209,7 +209,7 @@ Each reference is an object with `schemaVersion` and `opaque`. Use fresh redacte
 opaque identities, not ticket identifiers, paths, or host payloads. Serialize the
 collector input and attestation with sorted keys, two-space indentation, and a
 final newline. The current checked input is
-`qualifications/product/linear-jira-tracker-v1.collector-binding.json`; it is not
+`qualifications/product/linear-plan-review-v1.collector-binding.json`; it is not
 part of either archive.
 Qualification also rebuilds the supplied Linear archive's core projection and
 requires its archive and metadata bytes to match the separately qualified core.
@@ -228,12 +228,12 @@ the independently frozen input to the offline driver:
 
 ```bash
 python3 scripts/qualify-linear.py \
-  --core-archive qualifications/product/core-jira-tracker-v1.zip \
-  --core-metadata qualifications/product/core-jira-tracker-v1.release.json \
-  --core-record qualifications/product/core-jira-tracker-v1.json \
-  --linear-archive qualifications/product/linear-jira-tracker-v1.zip \
-  --linear-metadata qualifications/product/linear-jira-tracker-v1.release.json \
-  --collector-binding qualifications/product/linear-jira-tracker-v1.collector-binding.json \
+  --core-archive qualifications/product/core-plan-review-v1.zip \
+  --core-metadata qualifications/product/core-plan-review-v1.release.json \
+  --core-record qualifications/product/core-plan-review-v1.json \
+  --linear-archive qualifications/product/linear-plan-review-v1.zip \
+  --linear-metadata qualifications/product/linear-plan-review-v1.release.json \
+  --collector-binding qualifications/product/linear-plan-review-v1.collector-binding.json \
   --attestation qualifications/product/linear-jira-tracker-v1.attestation.json \
   --record /tmp/linear.qualification.json
 ```
@@ -280,7 +280,7 @@ written manifest and reviewer artifacts. Its deterministic record covers
 success, blocked, failed, cancelled, interrupted, duplicate, unsupported
 version, reconciliation, anti-vacuity, completeness, and redaction behavior
 while retaining no local paths or opaque host references. The checked record is
-`qualifications/provider-workflows-jira-tracker-v1.json`.
+`qualifications/provider-workflows-plan-review-v1.json`.
 Its `workflowGraphSha256` names the actual installed graph, and the installation
 scenario compares that graph and both new skill bodies with the verified
 candidate. A failed qualifier cannot leave an earlier success record at the
@@ -295,19 +295,19 @@ calls.
 ## Getting a release
 
 Each release set is published as a GitHub release named by its tag, such as
-`jira-tracker-v1`. It carries every product archive of the set with its
+`plan-review-v1`. It carries every product archive of the set with its
 `.release.json`, and its notes list each archive's sha256. Download one profile's
 pair, check the zip against the digest its `.release.json` records, and install
 it with `apply` below; `apply` verifies the archive against that file again
 before it writes anything:
 
 ```bash
-gh release download jira-tracker-v1 --repo kwam1na/agent-skills \
-  --pattern 'run-delivery-jira-tracker-v1.*'
-shasum -a 256 run-delivery-jira-tracker-v1.zip
+gh release download plan-review-v1 --repo kwam1na/agent-skills \
+  --pattern 'run-delivery-plan-review-v1.*'
+shasum -a 256 run-delivery-plan-review-v1.zip
 ```
 
-A Jira adopter downloads the `jira-jira-tracker-v1.*` pair the same way.
+A Jira adopter downloads the `jira-plan-review-v1.*` pair the same way.
 
 The release workflow publishes a set when its tag is pushed. It refuses a tag
 that is not annotated or not merged to `main`, verifies every archive first, and

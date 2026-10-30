@@ -56,6 +56,13 @@ PR149_QUALIFICATION_SHA256 = {
 }
 
 
+PR152_QUALIFICATION_SHA256 = {
+    "qualifications/bootstrap-workflows-jira-tracker-v1.json": "86117db89f8b720a17bcb80062eb81010216b4db39ca9a7bfec5a5876654b4de",
+    "qualifications/core-workflows-jira-tracker-v1.json": "41793bd5569bf36aeff577fd1a9c4fa966990fff2089fe9d5d8a7a89f21f9341",
+    "qualifications/provider-workflows-jira-tracker-v1.json": "0c9e774401530fad70228bbbdf5b17cb91a74d7700cdb05855916ae095166be0",
+}
+
+
 class HistoricalQualificationTests(unittest.TestCase):
     def test_prior_current_records_remain_byte_identical(self) -> None:
         for relative, digest in {
@@ -68,6 +75,7 @@ class HistoricalQualificationTests(unittest.TestCase):
             **PR138_QUALIFICATION_SHA256,
             **PR148_QUALIFICATION_SHA256,
             **PR149_QUALIFICATION_SHA256,
+            **PR152_QUALIFICATION_SHA256,
         }.items():
             with self.subTest(relative=relative):
                 self.assertEqual(

@@ -22,9 +22,9 @@ from tests.qualification_pending_support import pending, skip_if_pending
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
 PRODUCT = ROOT / "qualifications" / "product"
-ATTESTATION = PRODUCT / "linear-jira-tracker-v1.attestation.json"
-RECORD = PRODUCT / "linear-jira-tracker-v1.json"
-BINDING = PRODUCT / "linear-jira-tracker-v1.collector-binding.json"
+ATTESTATION = PRODUCT / "linear-plan-review-v1.attestation.json"
+RECORD = PRODUCT / "linear-plan-review-v1.json"
+BINDING = PRODUCT / "linear-plan-review-v1.collector-binding.json"
 HISTORICAL_ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
 HISTORICAL_RECORD = PRODUCT / "linear-product-v1.json"
 HISTORICAL_BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
@@ -145,6 +145,22 @@ HISTORICAL_PRODUCT_SHA256 = {
     "provider-run-delivery-v1.json": "d4a00f7f274c5dfbde010d2d67dd1ef84651e5d21796e72c8a2388bfc14a49d4",
     "run-delivery-run-delivery-v1.release.json": "beb033932b4c00ec14ded64646ed69432a1a7b9d58b822b708e8f80fd758ebcd",
     "run-delivery-run-delivery-v1.zip": "8261eb3143d8e81e74711e9fa524b2f4c3298ed4f1c237210ccc2b9f9ca611df",
+    "bootstrap-jira-tracker-v1.json": "e3d7f1e100083edb1305eb1a6d6c0d265026c0f826e2d03aeec4da7f78d5ee46",
+    "bootstrap-jira-tracker-v1.release.json": "d79b7f0afedd4b22e460905d6beff5c20abe00ea1f23362040a062c8affbfd22",
+    "bootstrap-jira-tracker-v1.zip": "30adda28336e1bc179800fc73531e85b168613d1afcc5af170346baddad09f92",
+    "core-jira-tracker-v1.json": "f7baa75e7a345abdde0b5e2ba523af1c83965072579fd7f44d17c1c2c9ba5740",
+    "core-jira-tracker-v1.release.json": "92dc69575cddad398bb60459725865e17799248de1610890ce23dfa171817d19",
+    "core-jira-tracker-v1.zip": "b0e62ce335ee77187b843b6e58f71540b1b7bffe364ea6d80695a57dc47e12d1",
+    "jira-jira-tracker-v1.release.json": "32eca1cbb4816491faa44bec42a202e6025d48468976d244d0ded0e416e889df",
+    "jira-jira-tracker-v1.zip": "b28cea94f8de60e058a24633339d6b4ccc4cca1a415c326f87e8a259606f1cf8",
+    "linear-jira-tracker-v1.attestation.json": "565bb96ea1bfc5b6d4d84a03c4f4c73876db854e05eeaed9ad3fd9784b0a0082",
+    "linear-jira-tracker-v1.collector-binding.json": "3fc06a47bd4f8313d678e698f88518e64ff7615eb14ac47ecfb0ca1fe66c0e35",
+    "linear-jira-tracker-v1.json": "7743505ab234c4bacb9ee6438baed4bfd8424cfeb96abc1e84e0465eab33afc2",
+    "linear-jira-tracker-v1.release.json": "d775c8979d423458fcc45dd7aea5d8456a29a16135e94832c53d4082d502e311",
+    "linear-jira-tracker-v1.zip": "5a178fddb311c766902d0fef1602acb97d00a881ba929db6cc1e78d891308feb",
+    "provider-jira-tracker-v1.json": "bebb8b5a7a33ec9bb1c812e7983bc07c6596ce05ba6cc248ead9122477eb49f0",
+    "run-delivery-jira-tracker-v1.release.json": "5cfe28f71abffb75566c151d071cd7affec80b7b9a63cb68300b86600a1d4b61",
+    "run-delivery-jira-tracker-v1.zip": "acb653684144e9ca4ce85431aec14b2876eab6c82d6edd89a8ce1e57536562b8",
 }
 
 
@@ -1008,11 +1024,11 @@ class LinearQualificationTests(unittest.TestCase):
         # it is re-earned with the pending linear set.
         skip_if_pending(self, "core", "linear")
         replay = _load_runner().qualify(
-            PRODUCT / "core-jira-tracker-v1.zip",
-            PRODUCT / "core-jira-tracker-v1.release.json",
-            PRODUCT / "core-jira-tracker-v1.json",
-            PRODUCT / "linear-jira-tracker-v1.zip",
-            PRODUCT / "linear-jira-tracker-v1.release.json",
+            PRODUCT / "core-plan-review-v1.zip",
+            PRODUCT / "core-plan-review-v1.release.json",
+            PRODUCT / "core-plan-review-v1.json",
+            PRODUCT / "linear-plan-review-v1.zip",
+            PRODUCT / "linear-plan-review-v1.release.json",
             ATTESTATION,
             BINDING,
         )
@@ -1026,7 +1042,7 @@ class LinearQualificationTests(unittest.TestCase):
         sha256 = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         graphs = set()
         for profile in ("core", "linear"):
-            product = PRODUCT / f"{profile}-jira-tracker-v1"
+            product = PRODUCT / f"{profile}-plan-review-v1"
             release = binding["releases"][profile]
             self.assertEqual(release["archiveSha256"], sha256(product.with_suffix(".zip")), profile)
             self.assertEqual(release["metadataSha256"], sha256(product.with_suffix(".release.json")), profile)
@@ -1043,18 +1059,18 @@ class LinearQualificationTests(unittest.TestCase):
         for ref in ("subjectRef", "candidateRef"):
             self.assertNotIn(binding[ref]["opaque"], used, ref)
         # The collection steps name exactly this input.
-        notes = (ROOT / "docs/releases/jira-tracker-v1.md").read_text(encoding="utf-8")
+        notes = (ROOT / "docs/releases/plan-review-v1.md").read_text(encoding="utf-8")
         for digest in (sha256(BINDING), binding["releases"]["core"]["archiveSha256"], binding["releases"]["linear"]["archiveSha256"]):
             self.assertIn(digest, notes)
 
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
         current_products = {
-            "core": ("core-jira-tracker-v1", "b0e62ce335ee77187b843b6e58f71540b1b7bffe364ea6d80695a57dc47e12d1"),
-            "linear": ("linear-jira-tracker-v1", "5a178fddb311c766902d0fef1602acb97d00a881ba929db6cc1e78d891308feb"),
+            "core": ("core-plan-review-v1", "35bc4b90e2fc395ecff063a51c331e12f966494f522e87eb38d11c6108e5f8f5"),
+            "linear": ("linear-plan-review-v1", "fbf16c2a81de7155f6b939ea9da7043a87a14bd6f86de030828a2cd8b490488d"),
             # The product an adopter installs: no qualification set gates it, so its projection always holds.
-            "run-delivery": ("run-delivery-jira-tracker-v1", "acb653684144e9ca4ce85431aec14b2876eab6c82d6edd89a8ce1e57536562b8"),
+            "run-delivery": ("run-delivery-plan-review-v1", "77b4a2c01c85a7a1f346e0f22776791754a1d0d28ec63cb6ba9324bbfd4aed12"),
             # The product a Jira adopter installs, likewise ungated.
-            "jira": ("jira-jira-tracker-v1", "b28cea94f8de60e058a24633339d6b4ccc4cca1a415c326f87e8a259606f1cf8"),
+            "jira": ("jira-plan-review-v1", "0dde68753debecd0b1f46503ccac4bef9fad7e4912a79945495428d3427d83e0"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -1073,7 +1089,7 @@ class LinearQualificationTests(unittest.TestCase):
                                         release_id=release.release_id, profile_id=profile)
                 if profile in ("run-delivery", "jira") or pending(profile) is None:
                     self.assertEqual(projected, current, "checked product workflows differ from current source")
-        self.assertIn("linear-jira-tracker-v1", (ROOT / "README.md").read_text())
+        self.assertIn("linear-plan-review-v1", (ROOT / "README.md").read_text())
         skip_if_pending(self, "core", "linear")
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
