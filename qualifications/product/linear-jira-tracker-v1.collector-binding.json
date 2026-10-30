@@ -1,0 +1,26 @@
+{
+  "candidateRef": {
+    "opaque": "90fc7ddd9423fd654815d4df348a4c98",
+    "schemaVersion": "workflow-candidate-ref/1"
+  },
+  "graphSha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7",
+  "releases": {
+    "core": {
+      "archiveSha256": "b0e62ce335ee77187b843b6e58f71540b1b7bffe364ea6d80695a57dc47e12d1",
+      "metadataSha256": "92dc69575cddad398bb60459725865e17799248de1610890ce23dfa171817d19",
+      "profile": "core",
+      "releaseId": "core-jira-tracker-v1"
+    },
+    "linear": {
+      "archiveSha256": "5a178fddb311c766902d0fef1602acb97d00a881ba929db6cc1e78d891308feb",
+      "metadataSha256": "d775c8979d423458fcc45dd7aea5d8456a29a16135e94832c53d4082d502e311",
+      "profile": "linear",
+      "releaseId": "linear-jira-tracker-v1"
+    }
+  },
+  "schemaVersion": "agent-skills-linear-collector-binding/1",
+  "subjectRef": {
+    "opaque": "8de7ba3795891484b6d6c17371c24d1c",
+    "schemaVersion": "workflow-subject-ref/1"
+  }
+}

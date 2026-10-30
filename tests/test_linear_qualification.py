@@ -22,9 +22,9 @@ from tests.qualification_pending_support import pending, skip_if_pending
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
 PRODUCT = ROOT / "qualifications" / "product"
-ATTESTATION = PRODUCT / "linear-run-delivery-v1.attestation.json"
-RECORD = PRODUCT / "linear-run-delivery-v1.json"
-BINDING = PRODUCT / "linear-run-delivery-v1.collector-binding.json"
+ATTESTATION = PRODUCT / "linear-jira-tracker-v1.attestation.json"
+RECORD = PRODUCT / "linear-jira-tracker-v1.json"
+BINDING = PRODUCT / "linear-jira-tracker-v1.collector-binding.json"
 HISTORICAL_ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
 HISTORICAL_RECORD = PRODUCT / "linear-product-v1.json"
 HISTORICAL_BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
@@ -131,6 +131,20 @@ HISTORICAL_PRODUCT_SHA256 = {
     "linear-review-evidence-v1.release.json": "ecd40e33cf29d344ba9e7a409ab62db30236282c02e1b70488bb99ce6d9eddcc",
     "linear-review-evidence-v1.zip": "609250379ec208cac95769ab1f2eee95728bce981bee240881fbf83145bad042",
     "provider-review-evidence-v1.json": "e34d6dbe73f937344eb2ae7d9ad5daa1e87b19020f5a43b95b36a9b513695281",
+    "bootstrap-run-delivery-v1.json": "66da21f0e51f4e45a878825a194d1d2e6b9de1a7366bc0a1ef3f0928b3c430f5",
+    "bootstrap-run-delivery-v1.release.json": "d505dda9b6d23be8c7eaac61754bf81d304bb1c9a8c9c55ad7499b7de4b98a4c",
+    "bootstrap-run-delivery-v1.zip": "9ed1d1803d65e2839fac60768e362ec7f220b26dddc64cc249fe38404bd1f05e",
+    "core-run-delivery-v1.json": "44a1708d2ca62ef720aef4f74d181e256cedd4fee66251acd7a10148764bc971",
+    "core-run-delivery-v1.release.json": "06248e3916d568495191db6ff020eee265ea242ee6e9f3a6aa027ad56eb14b0f",
+    "core-run-delivery-v1.zip": "08610e46436ad0239f1171dd489bc1cbeb342fc01a9ce64d7e50920e95f5b0cb",
+    "linear-run-delivery-v1.attestation.json": "bc6e682fe888d4aba628f06d825ddf19696e7cf0794ad9533e1d08fca0a93ed2",
+    "linear-run-delivery-v1.collector-binding.json": "9284c709d14c287be7cecf74a4592a8ae06c5e2ca7602ffd96f092e348010e08",
+    "linear-run-delivery-v1.json": "7986e7159f606dd6dacb9fe350ee848e6d76b11e411f81e33d8dcd7fdf4b56ce",
+    "linear-run-delivery-v1.release.json": "488df87926f9a8058534ef6ad36e05b9155e6f4cf65039264c1019c1d60bbffa",
+    "linear-run-delivery-v1.zip": "9d75dd6f007fdaa2c830c4e2f14176c0844e30df5f5e3a91451da605b44bc949",
+    "provider-run-delivery-v1.json": "d4a00f7f274c5dfbde010d2d67dd1ef84651e5d21796e72c8a2388bfc14a49d4",
+    "run-delivery-run-delivery-v1.release.json": "beb033932b4c00ec14ded64646ed69432a1a7b9d58b822b708e8f80fd758ebcd",
+    "run-delivery-run-delivery-v1.zip": "8261eb3143d8e81e74711e9fa524b2f4c3298ed4f1c237210ccc2b9f9ca611df",
 }
 
 
@@ -994,11 +1008,11 @@ class LinearQualificationTests(unittest.TestCase):
         # it is re-earned with the pending linear set.
         skip_if_pending(self, "core", "linear")
         replay = _load_runner().qualify(
-            PRODUCT / "core-run-delivery-v1.zip",
-            PRODUCT / "core-run-delivery-v1.release.json",
-            PRODUCT / "core-run-delivery-v1.json",
-            PRODUCT / "linear-run-delivery-v1.zip",
-            PRODUCT / "linear-run-delivery-v1.release.json",
+            PRODUCT / "core-jira-tracker-v1.zip",
+            PRODUCT / "core-jira-tracker-v1.release.json",
+            PRODUCT / "core-jira-tracker-v1.json",
+            PRODUCT / "linear-jira-tracker-v1.zip",
+            PRODUCT / "linear-jira-tracker-v1.release.json",
             ATTESTATION,
             BINDING,
         )
@@ -1012,7 +1026,7 @@ class LinearQualificationTests(unittest.TestCase):
         sha256 = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         graphs = set()
         for profile in ("core", "linear"):
-            product = PRODUCT / f"{profile}-run-delivery-v1"
+            product = PRODUCT / f"{profile}-jira-tracker-v1"
             release = binding["releases"][profile]
             self.assertEqual(release["archiveSha256"], sha256(product.with_suffix(".zip")), profile)
             self.assertEqual(release["metadataSha256"], sha256(product.with_suffix(".release.json")), profile)
@@ -1029,20 +1043,22 @@ class LinearQualificationTests(unittest.TestCase):
         for ref in ("subjectRef", "candidateRef"):
             self.assertNotIn(binding[ref]["opaque"], used, ref)
         # The collection steps name exactly this input.
-        notes = (ROOT / "docs/releases/run-delivery-v1.md").read_text(encoding="utf-8")
+        notes = (ROOT / "docs/releases/jira-tracker-v1.md").read_text(encoding="utf-8")
         for digest in (sha256(BINDING), binding["releases"]["core"]["archiveSha256"], binding["releases"]["linear"]["archiveSha256"]):
             self.assertIn(digest, notes)
 
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
         current_products = {
-            "core": ("core-run-delivery-v1", "08610e46436ad0239f1171dd489bc1cbeb342fc01a9ce64d7e50920e95f5b0cb"),
-            "linear": ("linear-run-delivery-v1", "9d75dd6f007fdaa2c830c4e2f14176c0844e30df5f5e3a91451da605b44bc949"),
+            "core": ("core-jira-tracker-v1", "b0e62ce335ee77187b843b6e58f71540b1b7bffe364ea6d80695a57dc47e12d1"),
+            "linear": ("linear-jira-tracker-v1", "5a178fddb311c766902d0fef1602acb97d00a881ba929db6cc1e78d891308feb"),
             # The product an adopter installs: no qualification set gates it, so its projection always holds.
-            "run-delivery": ("run-delivery-run-delivery-v1", "8261eb3143d8e81e74711e9fa524b2f4c3298ed4f1c237210ccc2b9f9ca611df"),
+            "run-delivery": ("run-delivery-jira-tracker-v1", "acb653684144e9ca4ce85431aec14b2876eab6c82d6edd89a8ce1e57536562b8"),
+            # The product a Jira adopter installs, likewise ungated.
+            "jira": ("jira-jira-tracker-v1", "b28cea94f8de60e058a24633339d6b4ccc4cca1a415c326f87e8a259606f1cf8"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            for profile in ("core", "linear", "run-delivery"):
+            for profile in ("core", "linear", "run-delivery", "jira"):
                 product, expected_archive_sha256 = current_products[profile]
                 archive = PRODUCT / f"{product}.zip"
                 metadata = PRODUCT / f"{product}.release.json"
@@ -1055,9 +1071,9 @@ class LinearQualificationTests(unittest.TestCase):
                 current = build_release(ROOT, directory / f"{profile}-current.zip",
                                         directory / f"{profile}-current.json",
                                         release_id=release.release_id, profile_id=profile)
-                if profile == "run-delivery" or pending(profile) is None:
+                if profile in ("run-delivery", "jira") or pending(profile) is None:
                     self.assertEqual(projected, current, "checked product workflows differ from current source")
-        self.assertIn("linear-run-delivery-v1", (ROOT / "README.md").read_text())
+        self.assertIn("linear-jira-tracker-v1", (ROOT / "README.md").read_text())
         skip_if_pending(self, "core", "linear")
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
