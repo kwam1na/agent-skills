@@ -1,7 +1,7 @@
 ---
 title: "feat: Show a delivery's plan review in the live view, produced by run-delivery"
 type: feat
-status: draft
+status: approved
 date: 2026-10-30
 execution_posture: test-first
 context: A second adopter's pilot ran a plan through plan-work's unbounded review by hand. The rounds converged, but the live view showed none of it, and said nothing needed the engineer while three approvals blocked the lane.
@@ -90,7 +90,7 @@ This plan keeps that boundary.
 
 Both lenses aligned on 2026-10-30, after 5 rounds: adversarial in round 4, outcome-correctness in round 5. Blocking
 findings ran 8, 2, 2, 1, 0. The evidence is in `2026-10-30-plan-review-in-live-view.review.json`. There is no round
-bound. It awaits the operator's approval and the C7 choice.
+bound. The operator approved it on 2026-10-30, with C7 as written: freezing refuses an open plan review.
 
 ## Scope
 
@@ -332,7 +332,7 @@ The page goldens compare whole pages, so a base that moves under P3 is re-checke
 ## Approval Handoffs
 
 1. This plan's approval by the operator after its lenses align.
-2. C7's strictness: freezing refuses an open plan review. The operator may prefer a warning.
+2. C7's strictness: decided on 2026-10-30. Freezing refuses an open plan review.
 3. Which release batch carries it, per AGENTS.md.
 
 ## Observable Finish Line
