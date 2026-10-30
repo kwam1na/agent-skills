@@ -85,8 +85,12 @@ This plan keeps that boundary.
   raised one: scenario 6's fold read rounds 2 to 9 where C4a gives 2 to 10. That is corrected, with three wording
   clarifications from both lenses' notes. Round 5 asks only outcome-correctness, the lens that filed the open finding:
   the delta is text-only and adversarial had already approved everything around it.
+- Round 5: outcome-correctness approved, every carried finding closed. Its two non-blocking notes (name the over-long
+  round in scenario 6; add the one-round fold and last-entry fold to P1's refused cases) are adopted as written.
 
-Plan review carries no round bound.
+Both lenses aligned on 2026-10-30, after 5 rounds: adversarial in round 4, outcome-correctness in round 5. Blocking
+findings ran 8, 2, 2, 1, 0. The evidence is in `2026-10-30-plan-review-in-live-view.review.json`. There is no round
+bound. It awaits the operator's approval and the C7 choice.
 
 ## Scope
 
@@ -238,8 +242,8 @@ which is never clipped; the card says how many an entry doesn't list. Every plan
 
 `references/delivery-plan.schema.json` and `views_common.py` (validator, `check-plan`) in `delivery-views`. Test-first:
 valid and invalid `planReview` cases, including each `state` cross-check, `fixCommit` only on `fixed`, every cap and
-the 256 KiB aggregate at and over its limit, and the numbering rule (a valid fold; a gap, an overlap, a fold with
-listed entries); `approvals` with `id` and `blocking`; today's fixtures still valid.
+the 256 KiB aggregate at and over its limit, and the numbering rule (a valid fold; refused: a gap, an overlap, a fold
+with listed entries, a fold over one round, a fold as the last entry); `approvals` with `id` and `blocking`; today's fixtures still valid.
 
 ### P2. The shared projection
 
@@ -298,7 +302,7 @@ blocking approvals), catalog and profile descriptions, and output digests throug
 4. **A review that isn't converging:** round 3 raises a new finding with open findings not lower; `reduce` says so;
    `end` records the reason; the line reads "ended without alignment", and the fold shows the reason.
 5. **A refused freeze:** `lead-init` refuses while the last round has a lens asking for changes.
-6. **A review past its caps:** a store with 40 rounds, one of them raising 35 findings, and full-length texts. The
+6. **A review past its caps:** a store with 40 rounds, round 20 raising 35 findings, and full-length texts. The
    producer's plan passes `check-plan` with exactly 32 entries: round 1, one fold over rounds 2 to 10, and rounds 11
    to 40. The over-long round lists 30 and counts 5 in `clipped`, the oldest texts are shortened, and every entry's
    verdicts, counts and listed fix commits are kept. The page reads "after 40 review rounds". `lead-plan approval` and
