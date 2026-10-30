@@ -46,6 +46,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Cut releases at batch boundaries, not per ruling. Operator rulings"
         " accumulate as merged text on the default branch, and one release"
         " carries them",
+        "Tag each release with an annotated tag named exactly its set name",
+        "Never move or reuse a release tag",
         "by mutating a file `provenance.lock.json` covers takes the digests"
         " with it",
         "mutating the pinned text alone raises"

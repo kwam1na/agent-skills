@@ -16,7 +16,9 @@ matches the pair by exact text rather than by parsing the reference.
 
 Cut releases at batch boundaries, not per ruling. Operator rulings
 accumulate as merged text on the default branch, and one release carries
-them.
+them. Tag each release with an annotated tag named exactly its set name, such
+as `run-delivery-v1`, on the merge commit that carries its archives and
+records. Never move or reuse a release tag.
 
 When a releasable skill changes, update its catalog entry, every selected
 profile, and the corresponding provenance output digest in the same change,
