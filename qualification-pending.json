@@ -1,7 +1,0 @@
-{
-  "reason": "The plan-review-v1 Linear set waits for its owner-approved live host attestation; the collector input is frozen.",
-  "schemaVersion": "qualification-pending/1",
-  "sets": [
-    "linear"
-  ]
-}

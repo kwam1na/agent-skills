@@ -75,8 +75,10 @@ runtime descriptor; every core skill is byte-identical.
     `8bc16b67e46eb1d2ef99de529962bfb73f13d8fa4c46ab889b2342ce749bcd49`), was frozen before any live operation from the
     verified `core-plan-review-v1` archive (`35bc4b90e2fc395ecff063a51c331e12f966494f522e87eb38d11c6108e5f8f5`) and
     `linear-plan-review-v1` archive (`fbf16c2a81de7155f6b939ea9da7043a87a14bd6f86de030828a2cd8b490488d`).
-  - The owner-approved live host run, its attestation and `qualify-linear.py`'s record are pending. Until they land,
-    `qualification-pending.json` names the `linear` set, and the set can't merge or be released.
+  - The attestation comes from the owner-approved live host run on two disposable issues, both canceled at the end. Its
+    receipt is on the canceled primary issue.
+  - `qualify-linear.py` passes all seven scenarios against the frozen input and the exact core and linear product
+    archives.
 - **The jira, run-delivery and delivery-views profiles** ship unqualified, as before:
   - The core qualifier is bound to the core profile and refuses a superset.
   - The core skills these profiles include are byte-identical to those in the qualified `core-plan-review-v1`.
