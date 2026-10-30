@@ -13,7 +13,7 @@ const CONFIG = readJson(path.join(CORPUS, "linked-config.json"));
 
 test("the corpus holds every captured case", () => {
   assert.deepEqual(CASES, ["delivery-records-epic", "parked-no-runs", "parked-round-report-unreadable", "parked-round-reports",
-    "parked-run-view", "plan-in-app", "plan-record-only", "round-card-record"]);
+    "parked-run-view", "plan-in-app", "plan-record-only", "plan-review", "round-card-record"]);
 });
 
 for (const name of CASES) {

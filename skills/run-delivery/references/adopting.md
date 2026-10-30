@@ -263,6 +263,21 @@ delivery's purpose in one sentence and in full. `lead-init` freezes all of it as
 }
 ```
 
+If the plan names approvals someone must give, or what is out of scope, have `lead-setup` draft them from those
+sections: `--approvals-section "Approval Handoffs"` drafts one `approvals` entry per list item, each `waiting` with an id
+`approval-1`, `approval-2` and so on, and `--out-of-scope-section "Out of scope"` drafts `outOfScope`. While completing
+the file, mark each approval that blocks work `"blocking": true`; the plan chapter then says "Approvals are blocking
+work", naming it, until `lead-plan approval <id> --state done` records it done and commits the delivery file. One that
+is merely ahead stays in the chapter's "Approvals ahead" fold.
+
+To review the plan itself before work starts, name its lenses in the delivery file, such as `"planReview": {"lenses":
+["lens.outcome-correctness", "lens.adversarial-testing"]}`, commit the plan, and run `plan-review prepare`. It gives
+each lens a clean checkout of the commit and a filled brief, and prints the reviewer prompts; save each reviewer's
+result where it says, then run `plan-review reduce`. Revise the plan for the open findings, commit, and repeat. The
+review has no round bound: `reduce` says when it stops converging, and only the operator ends it, with `plan-review end
+--reason TEXT`. Every round, and the commit that closed each finding, is kept and shown in the plan chapter's "Plan
+review" fold; `lead-init` refuses to freeze the plan while the review is open.
+
 Commit it, check the delivery, create the record, write the lane brief and assign the story:
 
 ```sh example repo

@@ -49,6 +49,7 @@ from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import review_projection  # noqa: E402
 import views_common  # noqa: E402
 from views_common import ConfigError, RunUnavailable  # noqa: E402
 
@@ -113,8 +114,7 @@ def _clip(value: str) -> str:
     return value[:VALUE_LENGTH - 1] + "\u2026" if len(value) > VALUE_LENGTH else value
 
 
-def _plain(value: str) -> str:
-    return CONTROL_RUN.sub(" ", value)
+_plain = review_projection.plain
 
 
 def _milliseconds(value: object) -> float | None:
@@ -148,16 +148,7 @@ def findings_of(value: object) -> dict | None:
             for severity in SEVERITIES}
 
 
-def outcome_word(value: object) -> str | None:
-    """A review outcome in the state journal's words; anything unknown is kept."""
-    outcome = _text(value)
-    if outcome is None:
-        return None
-    if re.fullmatch(r"approve|approved|aligned", outcome, re.IGNORECASE):
-        return "approve"
-    if re.fullmatch(r"changes|changes[ _-]requested|request[ _-]changes", outcome, re.IGNORECASE):
-        return "changes"
-    return outcome
+outcome_word = review_projection.outcome_word
 
 
 def _view_items(view: dict, section_id: str) -> list[tuple[str, dict]]:
@@ -333,9 +324,7 @@ def _report_from(reading: object, run_id: str | None, number: int, specs: list[s
     return report
 
 
-def _issue(value: object) -> str | None:
-    issue = _text(value)
-    return issue if issue is not None and len(issue) <= ISSUE_LENGTH and not CONTROL_RUN.search(issue) else None
+_issue = review_projection.issue
 
 
 def _raised(report: dict, states: dict[str, str]) -> list[dict]:
@@ -527,40 +516,7 @@ def native_review_summaries(document: dict) -> dict:
         except (review_state.StateError, ValueError, TypeError, UnicodeError, RecursionError):
             summaries[subject] = {"unavailable": True}
             continue
-        rounds, states = [], {}
-        for outcome in observation.get("outcomes", []):
-            raised, settled, verdicts = [], [], {}
-            candidate, complete = None, True
-            for entry in outcome["entries"]:
-                lens, binding = entry["lens"], entry["binding"]
-                candidate = binding["candidateRef"]
-                if entry["state"] != "obtained":
-                    verdicts[lens], complete = "unavailable", False
-                    continue
-                result = entry["result"]
-                verdicts[lens] = outcome_word(result["outcome"])
-                for finding in result["findings"]:
-                    state = "deferred" if finding.get("state") == "deferred" else "unresolved"
-                    states[finding["id"]] = state
-                    raised.append({"id": finding["id"], "lens": lens, "severity": finding["severity"],
-                                   "summary": _plain(finding["summary"])[:SUMMARY_LENGTH], "state": state,
-                                   "deferredIssue": _issue(finding.get("deferredIssue"))})
-                for closure in result.get("resolvedFindings", result.get("resolutions", [])):
-                    state = {"closed": "fixed", "fixed": "fixed", "withdrawn": "dropped", "dropped": "dropped",
-                             "deferred": "deferred", "open": "open"}[closure["state"]]
-                    states[closure["id"]] = "resolved" if state in ("fixed", "dropped") else "deferred" if state == "deferred" else "unresolved"
-                    settled.append({"id": closure["id"], "lens": lens, "state": state,
-                                    "fixCommit": closure.get("fixCommit"), "deferredIssue": _issue(closure.get("deferredIssue")),
-                                    "resolution": _plain(closure.get("resolution", closure.get("reason", "")))[:2048]})
-            counts = {severity: sum(note["severity"] == severity for note in raised) for severity in SEVERITIES}
-            approved = complete and outcome.get("outcome") == "aligned" and all(word == "approve" for word in verdicts.values())
-            rounds.append({"round": outcome["round"], "candidateRef": candidate, "at": None,
-                           "outcome": "approve" if approved else "changes" if "changes" in verdicts.values() else None,
-                           "findings": counts, "verdicts": verdicts, "raised": raised, "settled": settled,
-                           "detailsUnavailable": not complete})
-        for row in rounds:
-            for raised in row["raised"]:
-                raised["state"] = states[raised["id"]]
+        rounds = review_projection.round_detail(observation.get("outcomes", []))
         summaries[subject] = {"observationKey": subject + ":" + observation["digest"],
                               "digest": observation["digest"],
                               "journalId": boundary,
@@ -939,8 +895,10 @@ def render_history(history: dict, config: dict, *, line_map: str | None) -> str:
 
 
 def plan_block(plan: dict, share: int = PLAN_SHARE_BYTES) -> dict:
-    """A valid plan as the page embeds it, within its share: the oldest changes' text is clipped first, then other
-    text outside the approved snapshot. The snapshot and every count are kept, and the block says what was clipped."""
+    """A valid plan as the page embeds it, within its share: the plan review's texts are clipped first, the oldest
+    rounds' resolutions then their summaries, then the oldest changes' text, then other text outside the approved
+    snapshot. The snapshot, every count, and each review entry's coverage, verdicts and listed fix commits are kept, and
+    the block says what was clipped."""
     plan = json.loads(json.dumps(plan))  # independent parts: clipping current text never touches the snapshot
     # Measured against the largest clipped note the block can carry, so the note never pushes it over.
     size = len(embed({"plan": plan, "clipped": {"changes": len(plan["changes"]), "texts": 99999,
@@ -957,6 +915,15 @@ def plan_block(plan: dict, share: int = PLAN_SHARE_BYTES) -> dict:
         seconds, _, fraction = at.rstrip("Z").partition(".")
         return f"{seconds}.{fraction.ljust(9, '0')}"
 
+    review = plan.get("planReview")
+    for key, notes in (("resolution", "settled"), ("summary", "raised")):
+        for entry in review["rounds"] if review else ():
+            for note in entry[notes]:
+                if size <= share:
+                    break
+                if note[key]:
+                    size -= clip(note, key)
+                    clipped["texts"] += 1
     order = sorted(range(len(plan["changes"])), key=lambda index: (when(plan["changes"][index]["at"]), index))
     for index in order:
         if size <= share:

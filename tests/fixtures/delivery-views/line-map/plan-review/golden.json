@@ -1,0 +1,310 @@
+{
+  "now": "2026-10-30T12:00:00Z",
+  "blocks": {
+    "delivery-state": {
+      "state": {
+        "version": 3,
+        "meta": {
+          "headline": "Fixture delivery",
+          "updatedAt": "2026-10-30T11:59:00Z"
+        },
+        "lanes": [
+          {
+            "id": "lane-1",
+            "title": "Lane one",
+            "focus": "",
+            "state": "working",
+            "waitingOn": null,
+            "since": "2026-10-30T06:00:00Z"
+          }
+        ],
+        "queue": [
+          {
+            "order": 1,
+            "subject": "SHOP-1",
+            "title": "Work SHOP-1",
+            "lane": "lane-1",
+            "stage": "queued",
+            "head": "0c1cb5a310264b55142fe107183976b91c430c6b",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          }
+        ],
+        "planned": [],
+        "finish": [],
+        "followups": [],
+        "leases": []
+      },
+      "journal": [],
+      "stats": {},
+      "estimates": {},
+      "status": {
+        "source": "derived",
+        "text": ""
+      },
+      "focus": {}
+    },
+    "delivery-runs": {},
+    "delivery-plan": {
+      "plan": {
+        "schemaVersion": "delivery-plan/1",
+        "updated": "2026-10-30T09:00:00Z",
+        "outcome": {
+          "summary": "Shoppers can pay again after a dropped connection.",
+          "text": "Shoppers can pay again after a dropped connection, and no payment is ever taken twice."
+        },
+        "requiredLenses": [
+          "lens.outcome-correctness",
+          "lens.adversarial-testing"
+        ],
+        "proofKinds": [
+          {
+            "id": "review",
+            "label": "Review",
+            "source": "record"
+          },
+          {
+            "id": "handed",
+            "label": "Handed off",
+            "source": "record"
+          },
+          {
+            "id": "merged",
+            "label": "Merged",
+            "source": "record"
+          }
+        ],
+        "units": [
+          {
+            "subject": "SHOP-1",
+            "title": "Saved addresses",
+            "criteria": [
+              {
+                "id": "SHOP-1.1",
+                "text": "Criterion 1 of SHOP-1"
+              },
+              {
+                "id": "SHOP-1.2",
+                "text": "Criterion 2 of SHOP-1"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged"
+            ]
+          }
+        ],
+        "finish": [],
+        "approved": {
+          "at": "2026-10-30T06:00:00Z",
+          "review": "after 3 review rounds · every lens aligned",
+          "snapshot": {
+            "units": [
+              {
+                "subject": "SHOP-1",
+                "title": "Saved addresses",
+                "criteria": [
+                  {
+                    "id": "SHOP-1.1",
+                    "text": "Criterion 1 of SHOP-1"
+                  },
+                  {
+                    "id": "SHOP-1.2",
+                    "text": "Criterion 2 of SHOP-1"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged"
+                ]
+              }
+            ],
+            "finish": []
+          }
+        },
+        "changes": [],
+        "evidence": {},
+        "approvals": [
+          {
+            "id": "approval-1",
+            "text": "Product Owner signs off the copy",
+            "state": "waiting",
+            "blocking": true
+          },
+          {
+            "id": "approval-2",
+            "text": "Security reviews the token scope",
+            "state": "waiting",
+            "blocking": true
+          },
+          {
+            "id": "approval-3",
+            "text": "Release notes are reviewed",
+            "state": "waiting"
+          }
+        ],
+        "outOfScope": [
+          "A per-delivery base branch",
+          "Importing addresses"
+        ],
+        "planReview": {
+          "lenses": [
+            "lens.outcome-correctness",
+            "lens.adversarial-testing"
+          ],
+          "state": "aligned",
+          "rounds": [
+            {
+              "round": 1,
+              "candidateRef": "1111111111111111111111111111111111111111",
+              "at": "2026-10-30T01:00:00Z",
+              "outcome": "changes",
+              "verdicts": {
+                "lens.outcome-correctness": "changes",
+                "lens.adversarial-testing": "changes"
+              },
+              "findings": {
+                "P0": 0,
+                "P1": 4,
+                "P2": 0,
+                "P3": 0
+              },
+              "raised": [
+                {
+                  "id": "c1-1",
+                  "lens": "lens.outcome-correctness",
+                  "severity": "P1",
+                  "summary": "The fold has no valid shape.",
+                  "state": "resolved"
+                },
+                {
+                  "id": "c1-2",
+                  "lens": "lens.outcome-correctness",
+                  "severity": "P1",
+                  "summary": "The guarantees conflict.",
+                  "state": "resolved"
+                },
+                {
+                  "id": "c1-3",
+                  "lens": "lens.outcome-correctness",
+                  "severity": "P1",
+                  "summary": "The caps block every plan write.",
+                  "state": "resolved"
+                },
+                {
+                  "id": "a1-1",
+                  "lens": "lens.adversarial-testing",
+                  "severity": "P1",
+                  "summary": "A review past the caps blocks the plan write.",
+                  "state": "resolved"
+                }
+              ],
+              "settled": []
+            },
+            {
+              "round": 2,
+              "candidateRef": "2222222222222222222222222222222222222222",
+              "at": "2026-10-30T02:40:00Z",
+              "outcome": "changes",
+              "verdicts": {
+                "lens.outcome-correctness": "changes",
+                "lens.adversarial-testing": "approve"
+              },
+              "findings": {
+                "P0": 0,
+                "P1": 1,
+                "P2": 0,
+                "P3": 0
+              },
+              "raised": [
+                {
+                  "id": "c2-1",
+                  "lens": "lens.outcome-correctness",
+                  "severity": "P1",
+                  "summary": "Scenario 6 reads the wrong rounds.",
+                  "state": "resolved"
+                }
+              ],
+              "settled": [
+                {
+                  "id": "c1-1",
+                  "lens": "lens.outcome-correctness",
+                  "state": "fixed",
+                  "fixCommit": "2222222222222222222222222222222222222222",
+                  "resolution": "C2's numbering rule gives the fold its shape."
+                },
+                {
+                  "id": "c1-2",
+                  "lens": "lens.outcome-correctness",
+                  "state": "fixed",
+                  "fixCommit": "2222222222222222222222222222222222222222",
+                  "resolution": "The always-kept list settles it."
+                },
+                {
+                  "id": "c1-3",
+                  "lens": "lens.outcome-correctness",
+                  "state": "fixed",
+                  "fixCommit": "2222222222222222222222222222222222222222",
+                  "resolution": "C4a's four steps always fit the caps."
+                },
+                {
+                  "id": "a1-1",
+                  "lens": "lens.adversarial-testing",
+                  "state": "fixed",
+                  "fixCommit": "2222222222222222222222222222222222222222",
+                  "resolution": "The producer fits the review before it writes."
+                }
+              ]
+            },
+            {
+              "round": 3,
+              "candidateRef": "3333333333333333333333333333333333333333",
+              "at": "2026-10-30T04:20:00Z",
+              "outcome": "approve",
+              "verdicts": {
+                "lens.outcome-correctness": "approve",
+                "lens.adversarial-testing": "approve"
+              },
+              "findings": {
+                "P0": 0,
+                "P1": 0,
+                "P2": 0,
+                "P3": 0
+              },
+              "raised": [],
+              "settled": [
+                {
+                  "id": "c2-1",
+                  "lens": "lens.outcome-correctness",
+                  "state": "fixed",
+                  "fixCommit": "3333333333333333333333333333333333333333",
+                  "resolution": "The off-by-one is corrected: scenario 6 reads rounds 2 to 10."
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "initialText": "NowThe lineWhoWhat's leftThe planWhat happenedParkedFixture delivery0 of 1 pieces have landed.Nothing has landed yet.Shoppers can pay again after a dropped connection. 0 of 2 criteria proven · plan changed 0 timesReady to be checkedWork SHOP-1Handed over; each is checked and merged in turn, in this order.StartPieces landedSaved view · updated 1m agoThe lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Lane one0 of 1 landedSHOP-11 laneWork SHOP-1SHOP-1 · Ready, waiting to be checked · Handed over · time unknownIn the plan: next: Review, not recordedLandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedBoth landedWho's doing what1 lane is working on this.Each lane is a separate session working in parallel on its own part of the work.Lane oneBuildingfor 6hWhat's left1piece to go0 of 1 pieces have landed.1with Lane oneThe plan0 of 2 criteria proven.Shoppers can pay again after a dropped connection.Approved Oct 30 after 3 review rounds · every lens alignedNeeds you▲Approvals are blocking workProduct Owner signs off the copy; Security reviews the token scopeSHOP-1Saved addressesNext: Review: not recordedAll units1As amendedAs approvedApproved 6 hours ago · after 3 review rounds · every lens alignedUnitCriteriaReviewHanded offMergedSHOP-1Saved addressesSHOP-1.1 Criterion 1 of SHOP-1SHOP-1.2 Criterion 2 of SHOP-1Reviewnot recordedHanded offdoneMergednot merged yetPlan review (3 rounds)The plan's review has no round bound: it runs until every lens approves or the operator ends it.Approved on round 3 · 5 serious notes raised141:00 am211 h 40 min later31 h 40 min laterReviewed candidate 3333333Round 3ApprovedTestingCorrectnessNothing new raisedConfirmed 1 earlier note fixed in 3333333CorrectnessThe off-by-one is corrected: scenario 6 reads rounds 2 to 10.fixedc2-1 · The off-by-one is corrected: scenario 6 reads rounds 2 to 10.Changes since approval0Nothing has changed since approval.Waived proofs0No proof was waived.Approvals ahead3Waiting Product Owner signs off the copyWaiting Security reviews the token scopeWaiting Release notes are reviewedOut of scope2A per-delivery base branchImporting addressesThe full outcomeShoppers can pay again after a dropped connection, and no payment is ever taken twice.What happenedThe story so far, newest first.●Landed◐Ready to check◆Decision▲Problem·Other updateEverythingDecisionsLandedProblemsNothing here yet.Parked for laterNothing parked.Past deliveries and runs",
+  "folds": {
+    "units": "All units1As amendedAs approvedApproved 6 hours ago · after 3 review rounds · every lens alignedUnitCriteriaReviewHanded offMergedSHOP-1Saved addressesSHOP-1.1 Criterion 1 of SHOP-1SHOP-1.2 Criterion 2 of SHOP-1Reviewnot recordedHanded offdoneMergednot merged yet",
+    "review": "Plan review (3 rounds)The plan's review has no round bound: it runs until every lens approves or the operator ends it.Approved on round 3 · 5 serious notes raised141:00 am211 h 40 min later31 h 40 min laterReviewed candidate 3333333Round 3ApprovedTestingCorrectnessNothing new raisedConfirmed 1 earlier note fixed in 3333333CorrectnessThe off-by-one is corrected: scenario 6 reads rounds 2 to 10.fixedc2-1 · The off-by-one is corrected: scenario 6 reads rounds 2 to 10.",
+    "changes": "Changes since approval0Nothing has changed since approval.",
+    "waived": "Waived proofs0No proof was waived.",
+    "approvals": "Approvals ahead3Waiting Product Owner signs off the copyWaiting Security reviews the token scopeWaiting Release notes are reviewed",
+    "out": "Out of scope2A per-delivery base branchImporting addresses",
+    "outcome": "The full outcomeShoppers can pay again after a dropped connection, and no payment is ever taken twice."
+  },
+  "details": {
+    "SHOP-1": {
+      "detail": "1 laneWork SHOP-1SHOP-1 · Ready, waiting to be checked · Handed over · time unknownIn the plan: next: Review, not recorded"
+    }
+  }
+}

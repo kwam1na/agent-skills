@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "4cb12b68838bc14949d8b0642f56bbe742fc951a966ac8da2399e42ef739e04f"
+          "sha256": "fdc92f53c920d5227a85a51e1769e8ce9396b3d42d3f960d974acb8a711875a4"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -210,27 +210,31 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
-          "sha256": "5a78fb2045f98d4d8b9bfb5621a0ec49b3bc8b223e36c75248b67131a1f00581"
+          "sha256": "65f655cadbdcd3a4dcd954a50e07295cca31628eada2fa630cffb9cfd9dde836"
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "9890c9173279cf985b380beebfb5f57e517f905079b9dcb6f49723b7f7face6a"
+          "sha256": "405836afe7f90bf851eec87b61b3e7faa4111acbb2fd74c79c1e1364d31573f7"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
-          "sha256": "6f42f19be6c4f11aebcda331ae9e97c346e1ca9aa318475f7d441932cbdc4981"
+          "sha256": "9fcee247dba92f5020a372b102b425c85b0c89a4d01480ff74b5501481a9e54a"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.js",
-          "sha256": "4479bffc9c76862fa2ba36ca0ebf1edab6b7b3699a1a4338e6c903a369a82bc2"
+          "sha256": "bc8d75e147b54c9e6a34594d97e3bafbb322f2c5c1ba80ed8613f1237720556f"
         },
         {
           "path": "skills/delivery-views/references/delivery-plan.schema.json",
-          "sha256": "08b287710d309d5b08f994b13c11dff650b34ec3ea4d1c59b01aaa45483089ab"
+          "sha256": "5e05872cef679fde648678c3cdfaa8c70c7b40f712433ff9a26f4647b385f832"
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "aa35aeb59f828d91e5504e7f3bad0f6c22786ae3d49eda57bf6f5d2da4252d41"
+          "sha256": "b28bfc5d56604d3cb041416523ebab644d978e8103e26f737dbcd229fbf5f013"
+        },
+        {
+          "path": "skills/delivery-views/scripts/review_projection.py",
+          "sha256": "1cf0c5552260bdb6f96c7477e259898a476f8fb2785f990a15d3e5a146a4a914"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
@@ -238,7 +242,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
-          "sha256": "110b02fa77cf598917d853b20d21928854bbda11044f29e30458f4ed4358d701"
+          "sha256": "6babd507a762128174e1903c92e94a70e3b93b43d0a351c02aabf9b4ecd8cb63"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -1014,7 +1018,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "1dc328433a6dd4a2ac2435d0a86a12bc7166663903785c8db890f2c36accc03a"
+          "sha256": "bf3eb95c4aae1c67f73bfbfd4f0fe42f94b8e8ef37afd148645fd72eedd13c87"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1030,15 +1034,15 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "d18be3b20b89188e123f8cf36d5429ac19b3988395d8301ee1e8bdd9797ea408"
+          "sha256": "fe88abaf70784c7c8be1610b4a01264114474421e16815deb8cd4152e069a9a0"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "b4245831f92025804f21721d2c2ec0ed47dde3e69ed5598de0d687c98f292d26"
+          "sha256": "a1191cfbbe0affeb5e424812927effe858b9b518e27f64f9e24bdd74ef5dea27"
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "9f071df3a78abbb3138f6dd38e929955a24ee523daac5751df1011fccdffde90"
+          "sha256": "7f9e0a2c2c48a27a486751435a8a3ddd65bf27f9a7488ac8e622d4ce3fc46412"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",
@@ -1054,7 +1058,7 @@
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",
-          "sha256": "3bf9c6aa148c5046c516e72c7af1d4414e37d58e58697e0ff83d42501d7dfffb"
+          "sha256": "d70ba0e50a781e2ee92c42e7a1a6a9d553960413e9dd83d0f8669b41261372ac"
         }
       ],
       "owner": "delivery-agent/user-delegated",

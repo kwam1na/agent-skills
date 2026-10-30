@@ -77,6 +77,17 @@ SECRET_ARGUMENT = re.compile(r"password|passwd|token|secret|api[-_]?key|credenti
 SEVERITIES = ("P0", "P1", "P2", "P3")
 CLOSED = ("closed", "fixed", "withdrawn", "dropped", "deferred")
 CONTEXT_TODO = "TODO: replace this line with your evidence so far"
+# The round brief's severity rules: a story's review defers P2 and P3; a plan review has no deferral path.
+STORY_SEVERITIES = (
+    "  - P0 and P1 are actionable and never deferred. In a verification round, a new finding outside the delta is filed\n"
+    "    only at P0; a P1 outside the delta is recorded in `evidence` as dissent instead.\n"
+    "  - P2 and P3 are deferrable: file each with `\"state\": \"deferred\"` and `\"deferredIssue\": \"<what its follow-up item\n"
+    "    must say>\"`. A deferred finding doesn't block `aligned`.")
+PLAN_SEVERITIES = (
+    "  - P0 and P1 are actionable, and a plan review never defers them. In a verification round, a new finding outside\n"
+    "    the delta is filed only at P0; a P1 outside the delta is recorded in `evidence` as dissent instead.\n"
+    "  - P2 and P3 notes belong in `evidence`, never in `findings`: a plan review has no deferral path, so a result\n"
+    "    carries no `state` or `deferredIssue` on any finding.")
 STAMP = ".flow-build.json"
 EVIDENCE_FINISH = {"id": "evidence-page", "text": "The delivery's evidence page is published and current: every merged "
                    "story marked for video has its before/after clip on it, and the epic and stories link to it"}
@@ -804,7 +815,7 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
         "releaseId": rel["releaseId"], "profile": str(rel["profile"]), "archiveSha256": rel["archiveSha256"],
         "metadataSha256": rel["metadataSha256"], "graph": graph_digest(), "bound_text": bound_text, "kind": kind,
         "carry": carry, "resolutions": resolutions, "charter": charter, "later": later, "checkout": str(checkout),
-        "context": context, "in_app": in_app_summary(key),
+        "context": context, "in_app": in_app_summary(key), "severities": STORY_SEVERITIES,
     }
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
 
@@ -1134,6 +1145,373 @@ def review_reduce(args) -> None:
         remove_checkout(lens_checkout(key, n, short))
     ensure_journaled(key, outcome, lane)
     summarize(key, outcome)
+
+
+# -- the plan's review -------------------------------------------------------------------------
+# A plan review runs like a story's review, with no bound: one clean checkout and one brief per lens, carried findings,
+# and a reduction per round. Its store, .orchestration/review/<delivery>/plan/ without checkouts/, keeps every round in
+# full; build_plan reads it, and fits what the plan file holds of it to the plan contract's caps.
+
+PLAN_REVIEW_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+PLAN_REVIEW_REASON = 600
+PLAN_REVIEW_CLOSED = ("closed", "fixed", "withdrawn", "dropped")
+
+
+def plan_review_dir(c) -> Path:
+    return c.main / c.work / "review" / c.delivery / "plan"
+
+
+def plan_review_subject(c) -> str:
+    return f"{c.delivery}.plan"
+
+
+def plan_review_lenses(c) -> list[str]:
+    """The lenses the delivery file names for its plan review: declared lenses, each with a charter."""
+    lenses = (c.raw.get("planReview") or {}).get("lenses")
+    if not isinstance(lenses, list) or not lenses:
+        raise Stop(f"{c.delivery_where} names no plan review lenses: set planReview.lenses, such as {list(c.lenses)}")
+    if len(lenses) > 12 or len(set(lenses)) != len(lenses):
+        raise Stop(f"{c.delivery_where}: planReview.lenses must be 1 to 12 different lenses")
+    unknown = [lens for lens in lenses if lens not in c.lenses or not PLAN_REVIEW_ID.fullmatch(lens)]
+    if unknown:
+        raise Stop(f"{c.delivery_where}: planReview.lenses names {', '.join(map(str, unknown))}, which this repository "
+                   f"doesn't declare; its lenses are {', '.join(c.lenses)}")
+    return lenses
+
+
+def plan_review_rounds(c) -> list[dict]:
+    """Every reduced round, in order."""
+    return [json.loads(p.read_text()) for p in round_files(plan_review_dir(c))] if plan_review_dir(c).exists() else []
+
+
+def plan_review_ended(c) -> dict | None:
+    return load_json(plan_review_dir(c) / "ended.json")
+
+
+def plan_review_open(rounds: list[dict]) -> dict[str, dict]:
+    """The findings still open after the given rounds, by id."""
+    found: dict[str, dict] = {}
+    for outcome in rounds:
+        for entry in outcome["entries"]:
+            result = entry["result"]
+            for f in result.get("findings", []):
+                found[f["id"]] = {"id": f["id"], "lens": entry["lens"], "severity": f["severity"], "summary": f["summary"]}
+            for x in result.get("resolvedFindings", []):
+                if x.get("state") in PLAN_REVIEW_CLOSED:
+                    found.pop(x["id"], None)
+    return found
+
+
+def plan_review_state(c, rounds: list[dict]) -> str:
+    if plan_review_ended(c):
+        return "ended"
+    return "aligned" if rounds and rounds[-1]["outcome"] == "aligned" else "open"
+
+
+def plan_review_of(c=None) -> dict | None:
+    """The plan file's `planReview`: the store's rounds through the shared projection, fitted to the plan's caps; None
+    with no reduced round."""
+    c = c or cfg()
+    rounds = plan_review_rounds(c)
+    if not rounds:
+        return None
+    plan_validator(c)  # puts the release's delivery-views scripts first on the path
+    import review_projection  # noqa: E402  (the installed release's own projection)
+    detail = review_projection.round_detail(rounds, {r["round"]: r["candidate"] for r in rounds})
+    ended = plan_review_ended(c)
+    return review_projection.fit_plan_review(detail, rounds[0]["lenses"], plan_review_state(c, rounds),
+                                             ended["reason"] if ended else None)
+
+
+def plan_review_words(review: dict | None) -> str | None:
+    """The approval line's fixed words, without its date or reason: "after 3 review rounds · every lens aligned"."""
+    if not review:
+        return None
+    count = review["rounds"][-1]["round"]
+    ending = {"aligned": "every lens aligned", "ended": "ended without alignment", "open": "still open"}[review["state"]]
+    return f"after {count} review round{'' if count == 1 else 's'} · {ending}"
+
+
+def plan_checkout_problem(path: Path, candidate: str, tree: str) -> str | None:
+    """Why a lens's checkout fails its identity check, or None: at the candidate, with its tree, and clean."""
+    if not path.exists():
+        return "is missing"
+    head = git("rev-parse", "HEAD", cwd=path, check=False)
+    if head != candidate:
+        return f"is at {head[:10] or 'no commit'}, not the candidate {candidate[:10]}"
+    if git("rev-parse", "HEAD^{tree}", cwd=path, check=False) != tree:
+        return "holds another tree"
+    if git("status", "--porcelain", "--untracked-files=all", cwd=path, check=False):
+        return "has changes"
+    return None
+
+
+def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, prior: list[dict],
+               prior_candidate: str | None) -> str:
+    short, charter_file = c.lenses[lens]
+    rel = release_tuple()
+    subject = plan_review_subject(c)
+    if n == 1:
+        kind = (f"`assessment round`: this lens's first result-carrying round; review the whole plan, `{c.plan}` in your "
+                "checkout, and carry no prior entries or candidate resolution pairs.")
+        carry = "None: this is an assessment round, which carries no prior entries."
+        resolutions = "None: an assessment round spans no delta and needs no resolution pair."
+        later = "- `lateFindings`: none on an assessment round; omit it."
+    else:
+        kind = ("`verification round`: re-check every carried finding and its approval condition against the plan's "
+                f"revision, the delta you derive yourself (`git diff {prior_candidate}..{candidate}`), then review that "
+                "delta. A change adopted differently from its approval condition, or declined, is re-checked like any "
+                "carried finding.")
+        carry = "\n".join(
+            f"- round {e['binding']['round']}: `{json.dumps({'binding': e['binding'], 'state': e['state'], 'result': e.get('result')}, separators=(',', ':'))}`"
+            for e in prior) or "None: this lens has carried nothing."
+        resolutions = (f"- `{prior_candidate}` resolves to git commit `{prior_candidate}`\n"
+                       f"- `{candidate}` resolves to git commit `{candidate}`")
+        later = ("- `lateFindings`: ids of this result's own findings you raised late (against lines unchanged since "
+                 "your previous round); omit when none.\n"
+                 "- `resolvedFindings`: required. One entry for every finding this lens raised in an earlier round and "
+                 'has not closed, `{"id", "state": "closed|fixed|withdrawn|open", "resolution": "..."}`. Every carried '
+                 "finding must appear; a plan review defers none.")
+    context = (f"The plan under review is `{c.plan}` in your checkout, the plan of delivery {c.delivery}. Judge whether it "
+               "is ready to approve: its outcome, scope, contract decisions, units, sensors and finish line. The plan "
+               "is the whole subject; there is no ticket or code diff to review beyond it.")
+    values = {
+        "lens": lens, "short": short, "key": subject, "round": str(n), "candidate": candidate, "tree": tree,
+        "releaseId": rel["releaseId"], "profile": str(rel["profile"]), "archiveSha256": rel["archiveSha256"],
+        "metadataSha256": rel["metadataSha256"], "graph": graph_digest(),
+        "bound_text": f"`unbounded`: unbounded round {n}, with no bound supplied or invented.", "kind": kind,
+        "carry": carry, "resolutions": resolutions, "charter": Path(charter_file).read_text().strip(), "later": later,
+        "checkout": str(checkout), "context": context, "in_app": "None: a plan review has no in-app evidence.",
+        "severities": PLAN_SEVERITIES,
+    }
+    template = (TOOL / "templates/round-brief.md").read_text()
+    return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
+
+
+def plan_review_prepare(args) -> None:
+    c = cfg()
+    release_tuple()  # refuse an unidentified generation before anything is checked out or written
+    folder = plan_review_dir(c)
+    lenses = plan_review_lenses(c)
+    if plan_review_ended(c):
+        raise Stop(f"the plan review was ended ({folder / 'ended.json'}); a new review needs a new store")
+    rounds = plan_review_rounds(c)
+    if rounds and rounds[0]["lenses"] != lenses:
+        raise Stop(f"the plan review's lenses were fixed at round 1 as {rounds[0]['lenses']}; {c.delivery_where} now "
+                   f"names {lenses}. An amendment is judged by the lenses that reviewed the plan")
+    n = len(rounds) + 1
+    meta_path = folder / f"round-{n}.meta.json"
+    previous = load_json(meta_path)
+    if previous and not args.restart:
+        raise Stop(f"plan review round {n} is already prepared (at {previous['candidate'][:10]}). Reduce it, or pass "
+                   "--restart to discard it")
+    root = repo()
+    candidate = clean_head(root)
+    if run(["git", "cat-file", "-e", f"{candidate}:{c.plan.as_posix()}"], cwd=root, check=False).returncode != 0:
+        raise Stop(f"the plan {c.plan} isn't committed at {candidate[:10]}; commit it first")
+    tree = git("rev-parse", "HEAD^{tree}", cwd=root)
+    prior_candidate = rounds[-1]["candidate"] if rounds else None
+    if prior_candidate == candidate:
+        raise Stop(f"HEAD {candidate[:10]} is the candidate of round {n - 1}; commit the plan's revision first")
+    folder.mkdir(parents=True, exist_ok=True)
+    if previous:
+        for lens in lenses:
+            path = result_path(folder, n, c.lenses[lens][0])
+            if path.exists():
+                path.rename(path.with_suffix(f".discarded-{now().replace(':', '')}.json"))
+    briefs, checks = [], {}
+    for lens in lenses:
+        short = c.lenses[lens][0]
+        checkout = folder / "checkouts" / lens
+        remove_checkout(checkout)
+        checkout.parent.mkdir(parents=True, exist_ok=True)
+        git("worktree", "add", "--detach", "-q", str(checkout), candidate, cwd=root)
+        for argv in prepare_commands():
+            run(argv, cwd=checkout)
+        problem = plan_checkout_problem(checkout, candidate, tree)
+        if problem:
+            raise Stop(f"{lens}: its checkout {checkout} {problem} before its brief was written")
+        checks[lens] = "passed"
+        prior = [e for r in rounds for e in r["entries"] if e["lens"] == lens]
+        path = folder / f"brief-r{n}-{short}.md"
+        path.write_text(plan_brief(c, n, lens, candidate, tree, checkout, prior, prior_candidate))
+        briefs.append((lens, path, result_path(folder, n, short)))
+    meta_path.write_text(json.dumps({"round": n, "candidate": candidate, "tree": tree, "startedAt": now(),
+                                     "lenses": lenses, "startChecks": checks}, indent=2) + "\n")
+    print(f"{c.delivery} plan review round {n}: candidate {candidate[:10]}, tree {tree[:10]}; no round bound")
+    print()
+    print("Start one reviewer per lens, in parallel, each with exactly this prompt" if n == 1 and not previous else
+          "Resume the same reviewer for each lens, in parallel, with exactly this message; only if one can't be resumed, "
+          "start a fresh one with the same prompt")
+    print("Save each final JSON message, exactly as returned, to its result path. Never write or edit a result.\n")
+    for lens, path, result in briefs:
+        print(f"- {lens}\n  prompt: Read {path} and follow it exactly. Your final message is only the JSON it asks for.\n"
+              f"  save to: {result}")
+    print(f"\nThen: {flow_command()} plan-review reduce")
+
+
+def plan_check_result(result: object, *, subject: str, lens: str, short: str, n: int, meta: dict, carried: set[str],
+                      known: dict[str, str]) -> list[str]:
+    """What's wrong with one plan-review lens result, as messages; empty when it matches its brief."""
+    if not isinstance(result, dict):
+        return ["is not a JSON object"]
+    problems = []
+    expect = {"schemaVersion": "review-lens-result/1", "lensId": lens, "subjectRef": subject,
+              "candidateRef": meta["candidate"], "round": n}
+    for field, value in expect.items():
+        if result.get(field) != value:
+            problems.append(f"{field} is {result.get(field)!r}, expected {value!r}")
+    if result.get("outcome") not in ("aligned", "changes-requested"):
+        problems.append(f"outcome is {result.get('outcome')!r}")
+    evidence = result.get("evidence")
+    if not isinstance(evidence, list) or not evidence or not all(isinstance(e, str) for e in evidence):
+        problems.append("evidence must be a non-empty list of strings")
+    elif not any(meta["tree"] in e for e in evidence):
+        problems.append(f"evidence doesn't name the reviewed tree {meta['tree']}")
+    findings = result.get("findings")
+    if not isinstance(findings, list):
+        return problems + ["findings must be a list"]
+    open_blocking = False
+    for f in findings:
+        if not isinstance(f, dict) or not isinstance(f.get("id"), str) or not isinstance(f.get("summary"), str) or not f["summary"].strip():
+            problems.append(f"finding {f!r} lacks id or summary")
+            continue
+        if not PLAN_REVIEW_ID.fullmatch(f["id"]) or not f["id"].startswith(f"{short}-r{n}-"):
+            problems.append(f"finding id {f['id']} must start with {short}-r{n}- and hold only letters, digits, dots, "
+                            "dashes or underscores, at most 64")
+        elif f["id"] in known:
+            problems.append(f"finding id {f['id']} was already raised")
+        if f.get("severity") not in SEVERITIES:
+            problems.append(f"finding {f['id']} has severity {f.get('severity')!r}")
+        elif f["severity"] in ("P2", "P3"):
+            problems.append(f"finding {f['id']} is {f['severity']}: a plan review files P2 and P3 notes in evidence")
+        else:
+            open_blocking = True
+        if "state" in f or "deferredIssue" in f:
+            problems.append(f"finding {f['id']} carries a state or deferredIssue: a plan review defers nothing")
+    closures = result.get("resolvedFindings", [])
+    if not isinstance(closures, list) or not all(isinstance(x, dict) for x in closures):
+        problems.append("resolvedFindings must be a list of objects")
+        closures = []
+    for x in closures:
+        if x.get("state") not in (*PLAN_REVIEW_CLOSED, "open"):
+            problems.append(f"resolvedFindings entry {x.get('id')!r} has state {x.get('state')!r}: closed, fixed, "
+                            "withdrawn or open")
+        if x.get("id") not in carried:
+            problems.append(f"resolvedFindings entry {x.get('id')!r} isn't an open finding this lens raised earlier")
+        if not isinstance(x.get("resolution"), str) or not x["resolution"].strip():
+            problems.append(f"resolvedFindings entry {x.get('id')!r} needs a resolution")
+        if x.get("state") == "open":
+            open_blocking = True
+    missing = carried - {x.get("id") for x in closures}
+    if missing:
+        problems.append(f"resolvedFindings leaves out carried finding(s) {sorted(missing)}")
+    if result.get("outcome") == "aligned" and open_blocking:
+        problems.append("outcome is aligned but it raises an open P0/P1 finding")
+    return problems
+
+
+def plan_review_reduce(args) -> None:
+    c = cfg()
+    folder = plan_review_dir(c)
+    rounds = plan_review_rounds(c)
+    n = len(rounds) + 1
+    meta = load_json(folder / f"round-{n}.meta.json")
+    if meta is None:
+        if rounds:
+            plan_review_summary(c, rounds)
+            return
+        raise Stop(f"no plan review round is prepared: run {flow_command()} plan-review prepare first")
+    subject = plan_review_subject(c)
+    opened = plan_review_open(rounds)
+    known = {f["id"]: e["lens"] for r in rounds for e in r["entries"] for f in e["result"].get("findings", [])}
+    rel, graph = release_tuple(), graph_digest()
+    entries, digests, problems = [], {}, []
+    for lens in meta["lenses"]:
+        short = c.lenses[lens][0]
+        path = result_path(folder, n, short)
+        if not path.exists():
+            problems.append(f"{lens}: missing {path}; save its reviewer's final JSON there")
+            continue
+        raw = path.read_bytes()
+        digests[lens] = hashlib.sha256(raw).hexdigest()
+        try:
+            result = json.loads(re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw.decode()))
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            problems.append(f"{lens}: {path.name} is not JSON ({error})")
+            continue
+        carried = {f["id"] for f in opened.values() if f["lens"] == lens}
+        problems += [f"{lens}: {p}" for p in plan_check_result(result, subject=subject, lens=lens, short=short, n=n,
+                                                                meta=meta, carried=carried, known=known)]
+        entries.append({"lens": lens, "binding": {"subjectRef": subject, "candidateRef": meta["candidate"], "round": n,
+                                                  "release": rel, "graphSha256": graph, "candidateTree": meta["tree"]},
+                        "state": "obtained", "independence": {"status": "unverified"}, "result": result})
+    if problems:
+        raise Stop("results that don't match their briefs:\n  " + "\n  ".join(problems)
+                   + "\n(re-run only those lenses with the same brief, saving over their results)")
+    failed = []
+    for lens in meta["lenses"]:
+        checkout = folder / "checkouts" / lens
+        problem = plan_checkout_problem(checkout, meta["candidate"], meta["tree"])
+        if problem:
+            failed.append(f"{lens}: its checkout {checkout} failed the end identity check: it {problem}")
+    if failed:
+        raise Stop("the round fails; its checkouts are kept for inspection:\n  " + "\n  ".join(failed)
+                   + f"\nPrepare it again with {flow_command()} plan-review prepare --restart")
+    after = plan_review_open([*rounds, {"entries": entries}])
+    aligned = all(e["result"]["outcome"] == "aligned" for e in entries) and not after
+    outcome = {"round": n, "outcome": "aligned" if aligned else "unresolved", "candidate": meta["candidate"],
+               "tree": meta["tree"], "lenses": meta["lenses"], "startedAt": meta["startedAt"], "finishedAt": now(),
+               "startChecks": meta.get("startChecks", {}), "resultDigests": digests,
+               "open": list(after.values()), "entries": entries}
+    (folder / f"round-{n}.json").write_text(json.dumps(outcome, indent=1) + "\n")
+    for lens in meta["lenses"]:
+        remove_checkout(folder / "checkouts" / lens)
+    plan_review_summary(c, [*rounds, outcome])
+    if (c.state / "state.json").exists():
+        print(f"  {rebuild_plan_quietly(c)}")
+
+
+def plan_review_summary(c, rounds: list[dict]) -> None:
+    outcome = rounds[-1]
+    n = outcome["round"]
+    if outcome["outcome"] == "aligned":
+        print(f"{c.delivery} plan review round {n}: every lens aligned; the plan is ready for the operator's approval")
+        return
+    count = len(outcome["open"])
+    print(f"{c.delivery} plan review round {n}: changes requested; {count} open finding{'' if count == 1 else 's'}")
+    for f in outcome["open"]:
+        print(f"  open {f['severity']} {f['id']} ({f['lens']}): {f['summary']}")
+    if n > 1:
+        before = len(rounds[-2]["open"])
+        raised = any(e["result"].get("findings") for e in outcome["entries"])
+        if raised and count >= before:
+            print(f"The plan review isn't converging: round {n} raised a new finding and leaves {count} open, no fewer "
+                  f"than round {n - 1}'s {before}. The operator may end it: {flow_command()} plan-review end --reason "
+                  "TEXT. Nothing ends it on its own.")
+    print(f"  Revise the plan for the open findings, commit, then: {flow_command()} plan-review prepare")
+
+
+def plan_review_end(args) -> None:
+    c = cfg()
+    reason = args.reason.strip()
+    if not reason or len(reason) > PLAN_REVIEW_REASON or re.search(r"[\x00-\x1f\x7f-\x9f  ]", reason):
+        raise Stop(f"--reason must be one line of 1 to {PLAN_REVIEW_REASON} characters")
+    folder = plan_review_dir(c)
+    rounds = plan_review_rounds(c)
+    if not rounds:
+        raise Stop("the plan review has no reduced round to end")
+    if plan_review_ended(c):
+        raise Stop(f"the plan review was already ended ({folder / 'ended.json'})")
+    if rounds[-1]["outcome"] == "aligned":
+        raise Stop(f"round {rounds[-1]['round']} ended with every lens aligned; there is no open review to end")
+    if (folder / f"round-{len(rounds) + 1}.meta.json").exists():
+        raise Stop(f"round {len(rounds) + 1} is prepared; reduce it first, then end the review")
+    (folder / "ended.json").write_text(json.dumps({"at": now(), "round": rounds[-1]["round"], "reason": reason},
+                                                  indent=2) + "\n")
+    print(f"{c.delivery} plan review ended after round {rounds[-1]['round']}: {reason}")
+    if (c.state / "state.json").exists():
+        print(f"  {rebuild_plan_quietly(c)}")
 
 
 # -- lane: gates, build and in-app checks -------------------------------------------------
@@ -2347,11 +2725,14 @@ def build_plan(c, log: list[dict]) -> dict:
             change["why"] = whys[entry["id"]]
         changes.append(change)
     outcome = c.raw.get("outcome") or {"summary": c.raw.get("headline", c.delivery), "text": c.raw.get("headline", c.delivery)}
+    review = plan_review_of(c)
+    said = " · ".join(words for words in (LATE_SNAPSHOT if snapshot.get("late") else None, plan_review_words(review))
+                      if words)
     plan = {
         "schemaVersion": "delivery-plan/1", "updated": now(), "outcome": outcome,
         "requiredLenses": c.raw.get("requiredLenses", list(c.lenses)), "proofKinds": kinds, "units": units,
         "finish": plan_finish(c, snapshot["at"]),
-        "approved": {"at": snapshot["at"], **({"review": LATE_SNAPSHOT} if snapshot.get("late") else {}),
+        "approved": {"at": snapshot["at"], **({"review": said} if said else {}),
                      "snapshot": {"units": snapshot["units"], "finish": snapshot["finish"]}},
         "changes": changes,
         "evidence": {key: found for key in c.stories if (found := plan_evidence(c, key))},
@@ -2359,6 +2740,8 @@ def build_plan(c, log: list[dict]) -> dict:
     for key in ("approvals", "outOfScope"):
         if key in c.raw:
             plan[key] = c.raw[key]
+    if review:
+        plan["planReview"] = review
     return plan
 
 
@@ -2378,6 +2761,10 @@ def check_plan(plan: dict, c) -> None:
         views.validate_plan(json.loads(json.dumps(plan)))
     except views.ConfigError as error:
         raise Stop(f"the plan this delivery file makes isn't a valid delivery-plan/1: {error}")
+    # Measured as rebuild_plan writes it, so the view never meets a file it refuses unread.
+    size = len((json.dumps(plan, indent=2) + "\n").encode("utf-8"))
+    if size > views.PLAN_LIMIT_BYTES:
+        raise Stop(f"the plan this delivery file makes holds {size} bytes, over the 1 MiB a plan may hold")
 
 
 def rebuild_plan(c) -> str | None:
@@ -2447,6 +2834,9 @@ def lead_plan(args) -> None:
     if not is_ancestor(c.base_ref, "HEAD"):
         raise Stop(f"{root} has diverged from {c.base_ref}; bring it up to date first")
     raw = json.loads(c.delivery_path.read_text())
+    if args.action == "approval":
+        plan_approval(c, raw, args)
+        return
     stories = raw["stories"]
     change: dict = {"kind": args.kind, "subjects": args.subjects or [], "by": args.by, "why": args.why, "source": "lead-plan"}
     for key in ("title", "ref"):
@@ -2532,6 +2922,42 @@ def lead_plan(args) -> None:
     print(f"committed the delivery file; push it so lanes see it: git push {c.remote} HEAD:{c.base_branch}")
 
 
+def plan_approval(c, raw: dict, args) -> None:
+    """Mark one approval done or waiting, with lead-plan change's discipline: one commit, never a push."""
+    entry = next((item for item in raw.get("approvals") or [] if item.get("id") == args.id), None)
+    if entry is None:
+        raise Stop(f"no approval {args.id} in {c.delivery_where}; an approval without an id is changed by hand")
+    entry["state"] = args.state
+    if args.who:
+        entry["who"] = args.who
+    with plan_lock(c):
+        original = c.delivery_path.read_text()
+        c.delivery_path.write_text(json.dumps(raw, indent=2) + "\n")
+        try:
+            c.load_delivery(c.delivery)
+            check_plan(build_plan(c, read_plan_log(c) or [snapshot_entry(c, late=True)]), c)
+        except Stop:
+            c.delivery_path.write_text(original)
+            c.load_delivery(c.delivery)
+            raise
+        git("add", str(c.delivery_path), cwd=c.root)
+        git("commit", "-q", "-m", f"{c.delivery}: approval {args.id} {args.state}", cwd=c.root)
+        rebuild_plan(c)
+    print(f"approval {args.id}: {args.state}")
+    print(f"committed the delivery file; push it so lanes see it: git push {c.remote} HEAD:{c.base_branch}")
+
+
+def archive_plan_review(archive: Path) -> Path | None:
+    """The plan review's store, without its checkouts, copied into a delivery's archive."""
+    c = cfg()
+    source = plan_review_dir(c)
+    if not source.exists():
+        return None
+    target = archive / "plan-review"
+    shutil.copytree(source, target, ignore=lambda folder, names: ["checkouts"] if Path(folder) == source else [])
+    return target
+
+
 # -- lead ----------------------------------------------------------------------------------
 
 def patch(body: dict, version: int) -> None:
@@ -2574,6 +3000,25 @@ def lead_setup(args) -> None:
         for subject in stories:
             if subject not in tracked:
                 notes.append(f"plan story {subject} has no tracker item")
+    drafted = {}
+    sections = plan_sections(plan.read_text())
+    for field, name, noun in (("approvals", args.approvals_section, "approvals"),
+                            ("outOfScope", args.out_of_scope_section, "out-of-scope items")):
+        if not name:
+            continue
+        body = next((b for _, title, b in sections if title == name), None)
+        items = plan_list_items(body) if body is not None else []
+        if body is None:
+            notes.append(f"the plan has no '{name}' section: drafted no {noun}")
+        elif not items:
+            notes.append(f"the plan's '{name}' section holds no list: drafted no {noun}")
+        else:
+            drafted[field] = ([{"id": f"approval-{i + 1}", "text": text, "state": "waiting"} for i, text in enumerate(items)]
+                            if field == "approvals" else items)
+            print(f"drafted {len(items)} {noun} from '{name}'")
+    if args.force and path.exists():
+        existing = json.loads(path.read_text())
+        drafted.update({name: existing[name] for name in ("approvals", "outOfScope", "planReview") if name in existing})
     git("fetch", "-q", c.remote)
     base = args.base or c.binding_base
     if not base:
@@ -2597,6 +3042,7 @@ def lead_setup(args) -> None:
         "lanes": {},
         "stories": stories,
         "finish": [EVIDENCE_FINISH] if any(st.get("evidence") == "video" for st in stories.values()) else [],
+        **drafted,
     }
     if args.ship_from:
         delivery["ship"] = {"from": args.ship_from, "toolingCommit": tooling, "paths": args.ship_path or ["src/"],
@@ -2610,12 +3056,34 @@ def lead_setup(args) -> None:
         print(f"  note: {n}")
 
 
+def plan_list_items(body: str) -> list[str]:
+    """Each top-level list item of a plan section, before its first subheading, as one line of at most 600
+    characters; an item's indented continuation lines join it."""
+    items: list[str] = []
+    for line in body.splitlines()[1:]:
+        if line.startswith("#"):
+            break
+        item = re.match(r"^(?:[-*+]|\d+[.)])\s+(.*)$", line)
+        if item:
+            items.append(item.group(1).strip())
+        elif items and line[:1] in (" ", "\t") and line.strip():
+            items[-1] += " " + line.strip()
+    items = [re.sub(r"\s+", " ", text) for text in items if text][:100]
+    return [text if len(text) <= 600 else text[:599] + "\u2026" for text in items]
+
+
 def lead_init(args) -> None:
     c = cfg()
     c.check_lanes()
     if c.ship and not c.ship.get("toolingCommit"):
         raise Stop(f"{c.delivery_where}: ship.toolingCommit isn't set")
     if plan_declared(c):
+        rounds = plan_review_rounds(c)
+        if rounds and plan_review_state(c, rounds) == "open" and not any(
+                entry["type"] == "snapshot" for entry in read_plan_log(c)):
+            raise Stop(f"the plan review is still open after round {rounds[-1]['round']}: align it with another round, "
+                       f"or have the operator end it ({flow_command()} plan-review end --reason TEXT), before freezing "
+                       "the plan")
         # Refused before the record starts, so a criterion the view can't read is corrected before anything is kept.
         check_plan(build_plan(c, [snapshot_entry(c, late=False)]), c)
     if not (c.state / "state.json").exists():
@@ -3066,7 +3534,9 @@ def lead_close(args) -> None:
     for source in (c.state, c.flow_log, c.flow_log.parent / "evidence"):
         if source.exists():
             shutil.copytree(source, archive / source.name)
-    done.append(f"archived the record, the lead-side logs and the lanes' evidence in {archive}")
+    reviewed = archive_plan_review(archive)
+    done.append(f"archived the record, the lead-side logs{', the plan review' if reviewed else ''} and the lanes' "
+                f"evidence in {archive}")
     for pid, command in delivery_processes(lead, c.state, c.delivery, c.main):
         try:
             os.kill(pid, signal.SIGTERM)
@@ -3790,6 +4260,15 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=review_prepare)
     p = sub.add_parser("review-reduce"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.set_defaults(fn=review_reduce)
+    p = sub.add_parser("plan-review", help="review the plan before it is approved: prepare, reduce or end a round")
+    review_commands = p.add_subparsers(dest="action", required=True)
+    q = review_commands.add_parser("prepare", help="the next round's checkouts and briefs, one per lens")
+    q.add_argument("--restart", action="store_true", help="discard the prepared round's results and prepare it again")
+    q.set_defaults(fn=plan_review_prepare)
+    q = review_commands.add_parser("reduce", help="check the lenses' results and record the round")
+    q.set_defaults(fn=plan_review_reduce)
+    q = review_commands.add_parser("end", help="end a review that isn't converging, with the operator's reason")
+    q.add_argument("--reason", required=True); q.set_defaults(fn=plan_review_end)
     p = sub.add_parser("gate"); p.add_argument("key"); p.set_defaults(fn=gate)
     p = sub.add_parser("build"); p.add_argument("key"); p.set_defaults(fn=build)
     p = sub.add_parser("app-check"); p.add_argument("key"); p.add_argument("name")
@@ -3824,6 +4303,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--base", help="default: the binding's base.ref"); p.add_argument("--pattern", required=True); p.add_argument("--headline")
     p.add_argument("--tracker-snapshot"); p.add_argument("--ship-from"); p.add_argument("--ship-path", action="append")
     p.add_argument("--context-section", action="append"); p.add_argument("--force", action="store_true")
+    p.add_argument("--approvals-section", help="draft approvals from this plan section's list")
+    p.add_argument("--out-of-scope-section", help="draft outOfScope from this plan section's list")
     p.set_defaults(fn=lead_setup)
     p = sub.add_parser("lead-init"); p.set_defaults(fn=lead_init)
     p = sub.add_parser("lead-brief"); p.set_defaults(fn=lead_brief)
@@ -3849,6 +4330,9 @@ def main(argv: list[str] | None = None) -> None:
     q.add_argument("--finish", help="finish: the line's id"); q.add_argument("--covers", help="finish: its covers, as JSON")
     q.add_argument("--label", help="finish: a new line's label"); q.add_argument("--why", required=True)
     q.add_argument("--by", default="lead"); q.add_argument("--ref"); q.add_argument("--title")
+    q.set_defaults(fn=lead_plan)
+    q = plan_commands.add_parser("approval", help="mark one approval done or waiting, and commit the delivery file")
+    q.add_argument("id"); q.add_argument("--state", required=True, choices=["done", "waiting"]); q.add_argument("--who")
     q.set_defaults(fn=lead_plan)
     q = plan_commands.add_parser("why", help="give a recorded change its reason")
     q.add_argument("change"); q.add_argument("--why", required=True); q.set_defaults(fn=lead_plan)

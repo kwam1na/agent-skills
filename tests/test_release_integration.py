@@ -88,6 +88,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             "skills/delivery-views/assets/run-summary.css",
             "skills/delivery-views/assets/run-summary.js",
             "skills/delivery-views/scripts/render.py",
+            "skills/delivery-views/scripts/review_projection.py",
             "skills/delivery-views/scripts/views_common.py",
             "skills/delivery-views/references/delivery-plan.schema.json",
             "skills/create-linear-ticket/SKILL.md",
