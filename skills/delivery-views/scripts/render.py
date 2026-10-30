@@ -64,6 +64,8 @@ ASSETS = Path(__file__).resolve().parent.parent / "assets"
 DEFAULT_DEADLINE_SECONDS = 20
 PAGE_BUDGET_BYTES = 4 * 1024 * 1024
 TEXT_LIMIT_BYTES = 64 * 1024
+# A plan's fixed share of the page, taken from the runs' budget only when a plan is present.
+PLAN_SHARE_BYTES = 512 * 1024
 SEVERITIES = ("P0", "P1", "P2", "P3")
 ROUNDS_KEPT = 12
 # How many runs are read at once; every read still shares the render's one deadline.
@@ -933,10 +935,88 @@ def render_history(history: dict, config: dict, *, line_map: str | None) -> str:
     ])
 
 
+# The plan
+
+
+def plan_block(plan: dict, share: int = PLAN_SHARE_BYTES) -> dict:
+    """A valid plan as the page embeds it, within its share: the oldest changes' text is clipped first, then other
+    text outside the approved snapshot. The snapshot and every count are kept, and the block says what was clipped."""
+    plan = json.loads(json.dumps(plan))  # independent parts: clipping current text never touches the snapshot
+    # Measured against the largest clipped note the block can carry, so the note never pushes it over.
+    size = len(embed({"plan": plan, "clipped": {"changes": len(plan["changes"]), "texts": 99999,
+                                                "overShare": True}}).encode("utf-8"))
+    clipped = {"changes": 0, "texts": 0}
+
+    def clip(holder: dict, key: str) -> int:
+        before = len(embed(holder[key]).encode("utf-8"))
+        holder[key] = ""
+        return before - len(embed("").encode("utf-8"))
+
+    # Oldest first, by time: every time gets a fraction of nine digits, so "…:00Z" sorts before "…:00.5Z".
+    def when(at: str) -> str:
+        seconds, _, fraction = at.rstrip("Z").partition(".")
+        return f"{seconds}.{fraction.ljust(9, '0')}"
+
+    order = sorted(range(len(plan["changes"])), key=lambda index: (when(plan["changes"][index]["at"]), index))
+    for index in order:
+        if size <= share:
+            break
+        change = plan["changes"][index]
+        for key in ("why", "title", "source", "ref", "before", "after"):
+            if isinstance(change.get(key), str) and change[key]:
+                size -= clip(change, key)
+        size += len(embed({"clipped": True}).encode("utf-8")) - 1  # ',"clipped":true'
+
+        change["clipped"] = True
+        clipped["changes"] += 1
+    # Then text outside the snapshot, the least needed first.
+    holders = [*((entry, "reason") for kinds in plan["evidence"].values() for entry in kinds.values()),
+               *((approval, "text") for approval in plan.get("approvals", [])),
+               *((line, "text") for line in plan["finish"]),
+               *((criterion, "text") for unit in plan["units"] for criterion in unit["criteria"]),
+               *((unit, "title") for unit in plan["units"]),
+               (plan["outcome"], "text")]
+    for holder, key in holders:
+        if size <= share:
+            break
+        if isinstance(holder.get(key), str) and holder[key]:
+            size -= clip(holder, key)
+            clipped["texts"] += 1
+    if size > share and plan.get("outOfScope"):
+        for index, text in enumerate(plan["outOfScope"]):
+            if size <= share:
+                break
+            if text:
+                size -= clip(plan["outOfScope"], index)
+                clipped["texts"] += 1
+    block = {"plan": plan, "clipped": clipped}
+    # The running count is an upper bound; the block itself decides. Only the approved snapshot and the counts are
+    # left past this point, and those are never dropped.
+    if len(embed(block).encode("utf-8")) > share:
+        clipped["overShare"] = True
+    if not (clipped["changes"] or clipped["texts"] or clipped.get("overShare")):
+        del block["clipped"]
+    return block
+
+
+def read_plan_block(state_directory: Path) -> dict | None:
+    """The page's plan block: None with no plan.json, one line naming the key path for a file that can't be trusted,
+    or the valid plan within its share."""
+    path = state_directory / "plan.json"
+    if not path.exists() and not path.is_symlink():
+        return None
+    try:
+        plan = views_common.read_plan(path)
+    except views_common.ConfigError as error:
+        return {"unreadable": str(error).replace(str(path), "plan.json")}
+    return plan_block(plan)
+
+
 # The page
 
 
-def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None) -> str:
+def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
+                    plan: dict | None = None) -> str:
     reviews = native_review_summaries(document)
     # One review payload budget, in stop order, regardless of its backing store.
     combined = {**{"run:" + key: value for key, value in runs.items()},
@@ -951,7 +1031,11 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         if key in combined and key not in ordered:
             ordered.append(key)
     ordered.extend(key for key in combined if key not in ordered)
-    bounded = within_budget(combined, ordered, PAGE_BUDGET_BYTES - 2)
+    # A readable plan takes its share from the runs; one that can't be read leaves the page as if it were absent.
+    share = 0
+    if plan is not None and "plan" in plan:
+        share = max(PLAN_SHARE_BYTES, len(embed(plan).encode("utf-8")))
+    bounded = within_budget(combined, ordered, PAGE_BUDGET_BYTES - 2 - share)
     runs = {key: bounded["run:" + key] for key in runs}
     reviews = {key: bounded["native:" + key] for key in reviews}
     document = {key: value for key, value in document.items() if key != "reviewEvidence"}
@@ -982,6 +1066,7 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         f'<script type="application/json" id="delivery-reviews">{embed(reviews)}</script>',
         f'<script type="application/json" id="delivery-links">{embed(page_links(document, runs, config))}</script>',
         f'<script type="application/json" id="delivery-view">{embed(view)}</script>',
+        *([f'<script type="application/json" id="delivery-plan">{embed(plan)}</script>'] if plan is not None else []),
         f"<script>\n{_asset('run-summary.js')}{_asset('line-map.js')}</script>",
         "</body>",
         "</html>",
@@ -1025,7 +1110,8 @@ def line_map(arguments: argparse.Namespace) -> int:
                         time.monotonic() + seconds)
     page = render_line_map(document, runs, inputs.config,
                            theme_key=views_common.theme_key(inputs.state_directory),
-                           history=_renderer_output(inputs.binding, "history"))
+                           history=_renderer_output(inputs.binding, "history"),
+                           plan=read_plan_block(inputs.state_directory))
     sys.stdout.write(page)
     return 0
 

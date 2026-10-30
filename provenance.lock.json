@@ -161,7 +161,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "a749014cb83844dbcc82aa8e90fc461f1c75d1d0c9617a144c493f9595f64484"
+          "sha256": "4cb12b68838bc14949d8b0642f56bbe742fc951a966ac8da2399e42ef739e04f"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -173,11 +173,11 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
-          "sha256": "f31a1fa1970c6bc6d23d934cb9fdf3732d10c3417eb7ebce986e6de7a4d1e177"
+          "sha256": "5a78fb2045f98d4d8b9bfb5621a0ec49b3bc8b223e36c75248b67131a1f00581"
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "c30b775c26a9dce9601759fbb1acd6c8ed6a21523ad60bf25551bdcb94928956"
+          "sha256": "9890c9173279cf985b380beebfb5f57e517f905079b9dcb6f49723b7f7face6a"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -188,8 +188,12 @@
           "sha256": "4479bffc9c76862fa2ba36ca0ebf1edab6b7b3699a1a4338e6c903a369a82bc2"
         },
         {
+          "path": "skills/delivery-views/references/delivery-plan.schema.json",
+          "sha256": "08b287710d309d5b08f994b13c11dff650b34ec3ea4d1c59b01aaa45483089ab"
+        },
+        {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "83a18ceb0a95844f7074fe791dd8ad0d19bec1447eb707cb01d264bd08648c1a"
+          "sha256": "aa35aeb59f828d91e5504e7f3bad0f6c22786ae3d49eda57bf6f5d2da4252d41"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
@@ -197,7 +201,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
-          "sha256": "fd01714b8b67c68c6a0e278477bfd5f15a55d6b8ff082aa9eb5814861cfc6c8d"
+          "sha256": "110b02fa77cf598917d853b20d21928854bbda11044f29e30458f4ed4358d701"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -901,6 +905,71 @@
         "repository": "kwamina/athena",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "54ee28663a49d11d0e8afa5c213b9c9819feef3b93f7ccd8afd02bc60446032e"
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
+      "id": "run-delivery",
+      "license": "FSL-1.1-ALv2",
+      "modification": {
+        "reason": "Independently authored delivery commands: the owner's own command-line tool for the mechanical steps of an orchestrated delivery, with its reference forge adapters, templates, adapter fixture page and configuration reference, contributed by its owner and kept out of the core workflow.",
+        "status": "independently-authored"
+      },
+      "outputs": [
+        {
+          "path": "skills/run-delivery/SKILL.md",
+          "sha256": "1dc328433a6dd4a2ac2435d0a86a12bc7166663903785c8db890f2c36accc03a"
+        },
+        {
+          "path": "skills/run-delivery/adapters/forge_bitbucket.py",
+          "sha256": "30c571321dac8051db21dce46dd9fc1696774e6e9d32a40b3a6c65e9bc46f89d"
+        },
+        {
+          "path": "skills/run-delivery/adapters/forge_github.py",
+          "sha256": "fbd63b2d4814d8626e53f92728d6e0084f797e7caea5dde1d46ea4490605c4da"
+        },
+        {
+          "path": "skills/run-delivery/assets/adapter-fixture/index.html",
+          "sha256": "31257fd55d83ebc6aa602b7a508248d6f44776991f54e1127ce1629b0bf59a81"
+        },
+        {
+          "path": "skills/run-delivery/references/adopting.md",
+          "sha256": "d18be3b20b89188e123f8cf36d5429ac19b3988395d8301ee1e8bdd9797ea408"
+        },
+        {
+          "path": "skills/run-delivery/references/config.md",
+          "sha256": "b4245831f92025804f21721d2c2ec0ed47dde3e69ed5598de0d687c98f292d26"
+        },
+        {
+          "path": "skills/run-delivery/scripts/run_delivery.py",
+          "sha256": "9f071df3a78abbb3138f6dd38e929955a24ee523daac5751df1011fccdffde90"
+        },
+        {
+          "path": "skills/run-delivery/templates/evidence.html",
+          "sha256": "e9b9f603c2c325e156f6162dedc0670374b911b4c79226743a82ad99c57f3228"
+        },
+        {
+          "path": "skills/run-delivery/templates/lane-brief.in-app.md",
+          "sha256": "682fee2df7892a26eabce9511e1653ac9a93d7b865d49d6fe844537d3195cd1f"
+        },
+        {
+          "path": "skills/run-delivery/templates/lane-brief.md",
+          "sha256": "4067852659da8ec87a74a42747414fdb9253ec87da95568a7cd7193e8e0e5221"
+        },
+        {
+          "path": "skills/run-delivery/templates/round-brief.md",
+          "sha256": "3bf9c6aa148c5046c516e72c7af1d4414e37d58e58697e0ff83d42501d7dfffb"
+        }
+      ],
+      "owner": "delivery-agent/user-delegated",
+      "source": {
+        "kind": "independent-origin",
+        "ownerApproval": {
+          "owner": "delivery-agent/user-delegated",
+          "reference": "plan-review:the approved run-delivery plan, with the owner's approval to contribute the tool's code given on 2026-10-29"
+        },
+        "rationale": "Moved in from the owner's own uncommitted delivery tool under the approved run-delivery plan; it wraps the release's state tool, round validator, round-brief template and lens charters, and copies no adopter source."
       }
     }
   ],

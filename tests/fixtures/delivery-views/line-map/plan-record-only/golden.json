@@ -1,0 +1,500 @@
+{
+  "now": "2026-10-30T12:00:00Z",
+  "blocks": {
+    "delivery-state": {
+      "state": {
+        "version": 3,
+        "meta": {
+          "headline": "Fixture delivery",
+          "updatedAt": "2026-10-30T11:59:00Z"
+        },
+        "lanes": [
+          {
+            "id": "lane-1",
+            "title": "Lane one",
+            "focus": "",
+            "state": "working",
+            "waitingOn": null,
+            "since": "2026-10-30T06:00:00Z"
+          }
+        ],
+        "queue": [
+          {
+            "order": 1,
+            "subject": "PAY-1",
+            "title": "Work PAY-1",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "31686d8f41e095e55258be3b62d0e69173490ee7",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 2,
+            "subject": "PAY-2",
+            "title": "Work PAY-2",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "31686d9241e095e95258be4062d0e69773490eee",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 3,
+            "subject": "PAY-3",
+            "title": "Work PAY-3",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "31686d9541e095ed5258be4562d0e69d73490ef5",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 4,
+            "subject": "PAY-4",
+            "title": "Work PAY-4",
+            "lane": "lane-1",
+            "stage": "queued",
+            "head": "31686d9841e095f15258be4a62d0e6a373490efc",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          }
+        ],
+        "planned": [],
+        "finish": [
+          {
+            "id": "landed",
+            "text": "Every piece lands",
+            "met": false
+          },
+          {
+            "id": "proven",
+            "text": "Every criterion is proven",
+            "met": false
+          }
+        ],
+        "followups": [],
+        "leases": []
+      },
+      "journal": [
+        {
+          "id": 1,
+          "at": "2026-10-30T06:10:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "PAY-1",
+          "summary": "PAY-1: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:10:00Z",
+            "finishedAt": "2026-10-30T06:10:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 2,
+          "at": "2026-10-30T06:11:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "PAY-1",
+          "summary": "candidate.handed PAY-1"
+        },
+        {
+          "id": 3,
+          "at": "2026-10-30T06:12:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "PAY-1",
+          "summary": "candidate.merged PAY-1"
+        },
+        {
+          "id": 4,
+          "at": "2026-10-30T06:13:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "PAY-2",
+          "summary": "PAY-2: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:13:00Z",
+            "finishedAt": "2026-10-30T06:13:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 5,
+          "at": "2026-10-30T06:14:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "PAY-2",
+          "summary": "candidate.handed PAY-2"
+        },
+        {
+          "id": 6,
+          "at": "2026-10-30T06:15:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "PAY-2",
+          "summary": "candidate.merged PAY-2"
+        },
+        {
+          "id": 7,
+          "at": "2026-10-30T06:16:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "PAY-3",
+          "summary": "PAY-3: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:16:00Z",
+            "finishedAt": "2026-10-30T06:16:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 8,
+          "at": "2026-10-30T06:17:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "PAY-3",
+          "summary": "candidate.handed PAY-3"
+        },
+        {
+          "id": 9,
+          "at": "2026-10-30T06:18:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "PAY-3",
+          "summary": "candidate.merged PAY-3"
+        },
+        {
+          "id": 10,
+          "at": "2026-10-30T06:19:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "PAY-4",
+          "summary": "PAY-4: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:19:00Z",
+            "finishedAt": "2026-10-30T06:19:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "changes",
+              "lens.adversarial-testing": "changes"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 11,
+          "at": "2026-10-30T06:20:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "PAY-4",
+          "summary": "candidate.handed PAY-4"
+        }
+      ],
+      "stats": {},
+      "estimates": {},
+      "status": {
+        "source": "derived",
+        "text": ""
+      },
+      "focus": {}
+    },
+    "delivery-runs": {},
+    "delivery-plan": {
+      "plan": {
+        "schemaVersion": "delivery-plan/1",
+        "updated": "2026-10-30T09:00:00Z",
+        "outcome": {
+          "summary": "Shoppers can pay again after a dropped connection.",
+          "text": "Shoppers can pay again after a dropped connection, and no payment is ever taken twice."
+        },
+        "requiredLenses": [
+          "lens.outcome-correctness",
+          "lens.adversarial-testing"
+        ],
+        "proofKinds": [
+          {
+            "id": "review",
+            "label": "Review",
+            "source": "record"
+          },
+          {
+            "id": "handed",
+            "label": "Handed off",
+            "source": "record"
+          },
+          {
+            "id": "merged",
+            "label": "Merged",
+            "source": "record"
+          }
+        ],
+        "units": [
+          {
+            "subject": "PAY-1",
+            "title": "Card retry",
+            "criteria": [
+              {
+                "id": "PAY-1.1",
+                "text": "Criterion 1 of PAY-1"
+              },
+              {
+                "id": "PAY-1.2",
+                "text": "Criterion 2 of PAY-1"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged"
+            ]
+          },
+          {
+            "subject": "PAY-2",
+            "title": "Receipt email",
+            "criteria": [
+              {
+                "id": "PAY-2.1",
+                "text": "Criterion 1 of PAY-2"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged"
+            ]
+          },
+          {
+            "subject": "PAY-3",
+            "title": "Refund screen",
+            "criteria": [
+              {
+                "id": "PAY-3.1",
+                "text": "Criterion 1 of PAY-3"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged"
+            ]
+          },
+          {
+            "subject": "PAY-4",
+            "title": "Payment audit",
+            "criteria": [
+              {
+                "id": "PAY-4.1",
+                "text": "Criterion 1 of PAY-4"
+              },
+              {
+                "id": "PAY-4.2",
+                "text": "Criterion 2 of PAY-4"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged"
+            ]
+          }
+        ],
+        "finish": [
+          {
+            "id": "landed",
+            "label": "Every piece lands",
+            "text": "The landed line is met",
+            "at": "2026-10-30T06:00:00Z",
+            "covers": {
+              "criteria": [],
+              "proofs": [
+                "merged"
+              ]
+            }
+          },
+          {
+            "id": "proven",
+            "label": "Every criterion proven",
+            "text": "The proven line is met",
+            "at": "2026-10-30T06:00:00Z",
+            "covers": {
+              "criteria": "all",
+              "proofs": [
+                "review",
+                "handed",
+                "merged"
+              ]
+            }
+          }
+        ],
+        "approved": {
+          "at": "2026-10-30T06:00:00Z",
+          "snapshot": {
+            "units": [
+              {
+                "subject": "PAY-1",
+                "title": "Card retry",
+                "criteria": [
+                  {
+                    "id": "PAY-1.1",
+                    "text": "Criterion 1 of PAY-1"
+                  },
+                  {
+                    "id": "PAY-1.2",
+                    "text": "Criterion 2 of PAY-1"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged"
+                ]
+              },
+              {
+                "subject": "PAY-2",
+                "title": "Receipt email",
+                "criteria": [
+                  {
+                    "id": "PAY-2.1",
+                    "text": "Criterion 1 of PAY-2"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged"
+                ]
+              },
+              {
+                "subject": "PAY-3",
+                "title": "Refund screen",
+                "criteria": [
+                  {
+                    "id": "PAY-3.1",
+                    "text": "Criterion 1 of PAY-3"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged"
+                ]
+              },
+              {
+                "subject": "PAY-4",
+                "title": "Payment audit",
+                "criteria": [
+                  {
+                    "id": "PAY-4.1",
+                    "text": "Criterion 1 of PAY-4"
+                  },
+                  {
+                    "id": "PAY-4.2",
+                    "text": "Criterion 2 of PAY-4"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged"
+                ]
+              }
+            ],
+            "finish": [
+              {
+                "id": "landed",
+                "label": "Every piece lands",
+                "text": "The landed line is met",
+                "at": "2026-10-30T06:00:00Z",
+                "covers": {
+                  "criteria": [],
+                  "proofs": [
+                    "merged"
+                  ]
+                }
+              },
+              {
+                "id": "proven",
+                "label": "Every criterion proven",
+                "text": "The proven line is met",
+                "at": "2026-10-30T06:00:00Z",
+                "covers": {
+                  "criteria": "all",
+                  "proofs": [
+                    "review",
+                    "handed",
+                    "merged"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "changes": [],
+        "evidence": {}
+      }
+    }
+  },
+  "initialText": "NowThe lineWhoWhat's leftThe planWhat happenedParkedFixture delivery3 of 4 pieces have landed.Last landed: Work PAY-3, 5h 42m ago.Shoppers can pay again after a dropped connection. 4 of 6 criteria proven · plan changed 0 timesReady to be checkedWork PAY-4Handed over; each is checked and merged in turn, in this order.StartPieces landedFinish line metSaved view · updated 1m agoThe lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Lane one3 of 4 landedPAY-1PAY-2PAY-3PAY-41 laneWork PAY-4PAY-4 · Ready, waiting to be checked · Handed over 5 hours agoReview evidence unavailable or stale for this candidate.Merge check · Handed over 5 hours ago · 1 step6:20 amcandidate.handed PAY-4In the plan: next: Review, not approved yetLandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedBoth landedWho's doing what1 lane is working on this.Each lane is a separate session working in parallel on its own part of the work.Lane oneBuildingfor 6hWhat's left1piece to go3 of 4 pieces have landed.1with Lane oneThe finish lineEvery piece landsNot met3 of 4 unitsEvery criterion provenNot met4 of 6 criteriaThe plan4 of 6 criteria proven.Shoppers can pay again after a dropped connection.Nothing in the plan needs you right now.PAY-4Payment auditNext: Review: not approved yetEvery piece landsNot met3 of 4 unitsEvery criterion provenNot met4 of 6 criteriaAll units4As amendedAs approvedApproved 6 hours agoUnitCriteriaReviewHanded offMergedPAY-1Card retryPAY-1.1 Criterion 1 of PAY-1PAY-1.2 Criterion 2 of PAY-1ReviewapprovedHanded offdoneMergeddonePAY-2Receipt emailPAY-2.1 Criterion 1 of PAY-2ReviewapprovedHanded offdoneMergeddonePAY-3Refund screenPAY-3.1 Criterion 1 of PAY-3ReviewapprovedHanded offdoneMergeddonePAY-4Payment auditPAY-4.1 Criterion 1 of PAY-4PAY-4.2 Criterion 2 of PAY-4Reviewnot approved yetHanded offdoneMergednot merged yetChanges since approval0Nothing has changed since approval.Waived proofs0No proof was waived.The full outcomeShoppers can pay again after a dropped connection, and no payment is ever taken twice.What happenedThe story so far, newest first.●Landed◐Ready to check◆Decision▲Problem·Other updateEverythingDecisionsLandedProblems6:20 am◐candidate.handed PAY-4Handed over · Lane one · PAY-46:19 am·PAY-4: review round 1Review round · Lane one · PAY-46:18 am●candidate.merged PAY-3Landed · Lane one · PAY-36:17 am◐candidate.handed PAY-3Handed over · Lane one · PAY-36:16 am·PAY-3: review round 1Review round · Lane one · PAY-36:15 am●candidate.merged PAY-2Landed · Lane one · PAY-26:14 am◐candidate.handed PAY-2Handed over · Lane one · PAY-26:13 am·PAY-2: review round 1Review round · Lane one · PAY-2Show all 11Parked for laterNothing parked.Past deliveries and runs",
+  "folds": {
+    "units": "All units4As amendedAs approvedApproved 6 hours agoUnitCriteriaReviewHanded offMergedPAY-1Card retryPAY-1.1 Criterion 1 of PAY-1PAY-1.2 Criterion 2 of PAY-1ReviewapprovedHanded offdoneMergeddonePAY-2Receipt emailPAY-2.1 Criterion 1 of PAY-2ReviewapprovedHanded offdoneMergeddonePAY-3Refund screenPAY-3.1 Criterion 1 of PAY-3ReviewapprovedHanded offdoneMergeddonePAY-4Payment auditPAY-4.1 Criterion 1 of PAY-4PAY-4.2 Criterion 2 of PAY-4Reviewnot approved yetHanded offdoneMergednot merged yet",
+    "changes": "Changes since approval0Nothing has changed since approval.",
+    "waived": "Waived proofs0No proof was waived.",
+    "outcome": "The full outcomeShoppers can pay again after a dropped connection, and no payment is ever taken twice."
+  },
+  "details": {
+    "PAY-1": {
+      "detail": "1 laneWork PAY-1PAY-1 · Landed 5 hours agoReview evidence unavailable or stale for this candidate.Merge check · Landed 5 hours ago · 2 steps6:11 amcandidate.handed PAY-16:12 amcandidate.merged PAY-1In the plan: proven"
+    },
+    "PAY-4": {
+      "detail": "1 laneWork PAY-4PAY-4 · Ready, waiting to be checked · Handed over 5 hours agoReview evidence unavailable or stale for this candidate.Merge check · Handed over 5 hours ago · 1 step6:20 amcandidate.handed PAY-4In the plan: next: Review, not approved yet"
+    }
+  }
+}

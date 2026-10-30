@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "plan": "docs/plans/2026-10-30-plan-chapter.md",
+  "planSha256": "2b84f503065e60f4ae9e83c91dd8d84ae051c4d7d4d5283f3250d6e3e8af6072",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "outcome-correctness",
+    "adversarial"
+  ],
+  "reviews": [
+    {
+      "lens": "outcome-correctness",
+      "agent": "plan-review-outcome-correctness-r4",
+      "findings": []
+    },
+    {
+      "lens": "adversarial",
+      "agent": "plan-review-adversarial-r4",
+      "findings": []
+    }
+  ],
+  "residualRisks": [
+    "Under C12-A the run-delivery delivery's approved plan must be amended and reviewed, and its release waits for these units.",
+    "lead-plan change commits but never pushes; lanes see a change only after the lead pushes it.",
+    "Journal-only review rounds carry no head, so the view relies on the hand-off window to judge staleness.",
+    "The chapter is only as accurate as the producer's evidence; producers other than run-delivery must pass check-plan."
+  ]
+}

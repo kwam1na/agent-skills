@@ -31,7 +31,8 @@
       "profiles": [
         "core",
         "delivery-views",
-        "linear"
+        "linear",
+        "run-delivery"
       ],
       "provenanceId": "compound-delivery-kernel"
     },
@@ -55,7 +56,8 @@
       "profiles": [
         "core",
         "delivery-views",
-        "linear"
+        "linear",
+        "run-delivery"
       ],
       "provenanceId": "compound-learning"
     },
@@ -133,7 +135,8 @@
       "profiles": [
         "core",
         "delivery-views",
-        "linear"
+        "linear",
+        "run-delivery"
       ],
       "provenanceId": "deliver-work"
     },
@@ -141,7 +144,7 @@
       "capabilities": [
         "delivery-views"
       ],
-      "degradedBehavior": "Without a configuration the views are not declared and the core workflow's built-in pages remain; a view that cannot read a run, a report or a snapshot shows it as unavailable rather than failing the render. Recovered landing times use source occurrence, while the activity feed retains observation time. Unknown phase times remain unavailable; configured forge templates recognize validated cross-repository pull requests with compact labels and retained repository identity. Native review observations retain actual reports without a run; missing or candidate-mismatched artifacts stay unavailable and carry no admission authority. Originating closure explanations remain available through a collapsed keyboard-accessible disclosure, with settlement summaries visible.",
+      "degradedBehavior": "Without a configuration the views are not declared and the core workflow's built-in pages remain; a view that cannot read a run, a report or a snapshot shows it as unavailable rather than failing the render. Recovered landing times use source occurrence, while the activity feed retains observation time. Unknown phase times remain unavailable; configured forge templates recognize validated cross-repository pull requests with compact labels and retained repository identity. Native review observations retain actual reports without a run; missing or candidate-mismatched artifacts stay unavailable and carry no admission authority. Originating closure explanations remain available through a collapsed keyboard-accessible disclosure, with settlement summaries visible. Without a plan.json the line map is unchanged; one that can't be read adds only the plan chapter with a flag naming its key path.",
       "dependencies": [
         {
           "id": "orchestrate-work",
@@ -157,7 +160,8 @@
       "path": "skills/delivery-views/SKILL.md",
       "profiles": [
         "delivery-views",
-        "linear"
+        "linear",
+        "run-delivery"
       ],
       "provenanceId": "delivery-views"
     },
@@ -181,7 +185,8 @@
       "profiles": [
         "core",
         "delivery-views",
-        "linear"
+        "linear",
+        "run-delivery"
       ],
       "provenanceId": "diagnose-work"
     },
@@ -256,7 +261,8 @@
       "profiles": [
         "core",
         "delivery-views",
-        "linear"
+        "linear",
+        "run-delivery"
       ],
       "provenanceId": "execute-work"
     },
@@ -317,7 +323,8 @@
       "profiles": [
         "core",
         "delivery-views",
-        "linear"
+        "linear",
+        "run-delivery"
       ],
       "provenanceId": "obtain-review"
     },
@@ -355,7 +362,8 @@
       "profiles": [
         "core",
         "delivery-views",
-        "linear"
+        "linear",
+        "run-delivery"
       ],
       "provenanceId": "orchestrate-work"
     },
@@ -381,7 +389,8 @@
       "profiles": [
         "core",
         "delivery-views",
-        "linear"
+        "linear",
+        "run-delivery"
       ],
       "provenanceId": "plan-work"
     },
@@ -408,9 +417,50 @@
       "profiles": [
         "core",
         "delivery-views",
-        "linear"
+        "linear",
+        "run-delivery"
       ],
       "provenanceId": "review-work"
+    },
+    {
+      "capabilities": [
+        "delivery-commands"
+      ],
+      "degradedBehavior": "POSIX hosts only: on Windows the tool exits with a message saying so. Without a forge adapter the lead pushes and opens change requests; without ffmpeg and ffprobe video evidence is unavailable; without Node 22.6 or newer a harness configuration is not read; without in-app adapters no in-app checks are declared. A delivery file without criteria writes no plan, and the plan chapter stays off.",
+      "dependencies": [
+        {
+          "id": "delivery-views",
+          "requirement": "required"
+        },
+        {
+          "id": "obtain-review",
+          "requirement": "required"
+        },
+        {
+          "id": "orchestrate-work",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [
+        "git",
+        "python3",
+        "ps",
+        "lsof",
+        "ffmpeg",
+        "ffprobe",
+        "node",
+        "gh"
+      ],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "run-delivery",
+      "path": "skills/run-delivery/SKILL.md",
+      "profiles": [
+        "run-delivery"
+      ],
+      "provenanceId": "run-delivery"
     }
   ]
 }

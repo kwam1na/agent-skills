@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "plan": "docs/plans/2026-10-29-run-delivery-skill.md",
+  "planSha256": "8b3b3e3e3010a45b95a6618d2c0811688d7f816622cccec09ba648d8334b7da3",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "outcome-correctness",
+    "adversarial"
+  ],
+  "reviews": [
+    {
+      "lens": "outcome-correctness",
+      "agent": "plan-review-outcome-correctness-r5",
+      "findings": []
+    },
+    {
+      "lens": "adversarial",
+      "agent": "plan-review-adversarial-r5",
+      "findings": []
+    }
+  ],
+  "residualRisks": [
+    "The linear qualification needs a live host attestation collected by the lead; without it the release cannot be cut, and that stays a visible blocker.",
+    "The forge adapters are the corpus's first writing provider clients: draft open only, behind the delivery's authority grant, with no token in output.",
+    "Forge write access is never verified by the setup check; it reports it as not verified, so a read-only token surfaces only at open-pr.",
+    "The tool is POSIX-only; Windows adopters get a clear refusal, not support.",
+    "In-app checks depend on adopter-supplied build, serve and check adapters; the corpus proves only their contract with its fixture page."
+  ]
+}

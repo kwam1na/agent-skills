@@ -1,0 +1,1077 @@
+{
+  "state": {
+    "version": 3,
+    "meta": {
+      "headline": "Fixture delivery",
+      "updatedAt": "2026-10-30T11:59:00Z"
+    },
+    "lanes": [
+      {
+        "id": "lane-1",
+        "title": "Lane one",
+        "focus": "",
+        "state": "working",
+        "waitingOn": null,
+        "since": "2026-10-30T06:00:00Z"
+      }
+    ],
+    "queue": [
+      {
+        "order": 1,
+        "subject": "CART-101",
+        "title": "Work CART-101",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5c64f3947f013079a19e6d5ec43baa43e6d8",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 2,
+        "subject": "CART-102",
+        "title": "Work CART-102",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5c67f3947f053079a1a36d5ec441aa43e6df",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 3,
+        "subject": "CART-103",
+        "title": "Work CART-103",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5c6af3947f093079a1a86d5ec447aa43e6e6",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 4,
+        "subject": "CART-104",
+        "title": "Work CART-104",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5c6df3947f0d3079a1ad6d5ec44daa43e6ed",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 5,
+        "subject": "CART-105",
+        "title": "Work CART-105",
+        "lane": "lane-1",
+        "stage": "queued",
+        "head": "b6af5c70f3947f113079a1b26d5ec453aa43e6f4",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 6,
+        "subject": "CART-106",
+        "title": "Work CART-106",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5c73f3947f153079a1b76d5ec459aa43e6fb",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 7,
+        "subject": "CART-107",
+        "title": "Work CART-107",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5c76f3947f193079a1bc6d5ec45faa43e702",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 8,
+        "subject": "CART-108",
+        "title": "Work CART-108",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5c79f3947f1d3079a1c16d5ec465aa43e709",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 9,
+        "subject": "CART-109",
+        "title": "Work CART-109",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5c7cf3947f213079a1c66d5ec46baa43e710",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 10,
+        "subject": "CART-110",
+        "title": "Work CART-110",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5cbef3947f793079a2346d5ec4efaa43e7aa",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 11,
+        "subject": "CART-111",
+        "title": "Work CART-111",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5cc1f3947f7d3079a2396d5ec4f5aa43e7b1",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 12,
+        "subject": "CART-112",
+        "title": "Work CART-112",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5cc4f3947f813079a23e6d5ec4fbaa43e7b8",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 13,
+        "subject": "CART-113",
+        "title": "Work CART-113",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5cc7f3947f853079a2436d5ec501aa43e7bf",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 14,
+        "subject": "CART-114",
+        "title": "Work CART-114",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5ccaf3947f893079a2486d5ec507aa43e7c6",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 15,
+        "subject": "CART-115",
+        "title": "Work CART-115",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5ccdf3947f8d3079a24d6d5ec50daa43e7cd",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 16,
+        "subject": "CART-116",
+        "title": "Work CART-116",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5cd0f3947f913079a2526d5ec513aa43e7d4",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 17,
+        "subject": "CART-117",
+        "title": "Work CART-117",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5cd3f3947f953079a2576d5ec519aa43e7db",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 18,
+        "subject": "CART-118",
+        "title": "Work CART-118",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5cd6f3947f993079a25c6d5ec51faa43e7e2",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 19,
+        "subject": "CART-119",
+        "title": "Work CART-119",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5cd9f3947f9d3079a2616d5ec525aa43e7e9",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 20,
+        "subject": "CART-120",
+        "title": "Work CART-120",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "b6af5d1bf3947ff53079a2cf6d5ec5a9aa43e883",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      }
+    ],
+    "planned": [],
+    "finish": [
+      {
+        "id": "cart-flow",
+        "text": "Every cart criterion is merged",
+        "met": false
+      },
+      {
+        "id": "verified",
+        "text": "Every criterion is checked in the app",
+        "met": false
+      }
+    ],
+    "followups": [],
+    "leases": []
+  },
+  "journal": [
+    {
+      "id": 1,
+      "at": "2026-10-30T06:10:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-101",
+      "summary": "CART-101: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:10:00Z",
+        "finishedAt": "2026-10-30T06:10:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 2,
+      "at": "2026-10-30T06:11:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-101",
+      "summary": "candidate.handed CART-101"
+    },
+    {
+      "id": 3,
+      "at": "2026-10-30T06:12:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-101",
+      "summary": "candidate.merged CART-101"
+    },
+    {
+      "id": 4,
+      "at": "2026-10-30T06:13:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-102",
+      "summary": "CART-102: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:13:00Z",
+        "finishedAt": "2026-10-30T06:13:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 5,
+      "at": "2026-10-30T06:14:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-102",
+      "summary": "candidate.handed CART-102"
+    },
+    {
+      "id": 6,
+      "at": "2026-10-30T06:15:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-102",
+      "summary": "candidate.merged CART-102"
+    },
+    {
+      "id": 7,
+      "at": "2026-10-30T06:16:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-103",
+      "summary": "CART-103: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:16:00Z",
+        "finishedAt": "2026-10-30T06:16:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 8,
+      "at": "2026-10-30T06:17:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-103",
+      "summary": "candidate.handed CART-103"
+    },
+    {
+      "id": 9,
+      "at": "2026-10-30T06:18:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-103",
+      "summary": "candidate.merged CART-103"
+    },
+    {
+      "id": 10,
+      "at": "2026-10-30T06:19:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-104",
+      "summary": "CART-104: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:19:00Z",
+        "finishedAt": "2026-10-30T06:19:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 11,
+      "at": "2026-10-30T06:20:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-104",
+      "summary": "candidate.handed CART-104"
+    },
+    {
+      "id": 12,
+      "at": "2026-10-30T06:21:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-104",
+      "summary": "candidate.merged CART-104"
+    },
+    {
+      "id": 13,
+      "at": "2026-10-30T06:22:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-105",
+      "summary": "CART-105: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:22:00Z",
+        "finishedAt": "2026-10-30T06:22:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 14,
+      "at": "2026-10-30T06:23:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-105",
+      "summary": "candidate.handed CART-105"
+    },
+    {
+      "id": 15,
+      "at": "2026-10-30T06:25:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-106",
+      "summary": "CART-106: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:25:00Z",
+        "finishedAt": "2026-10-30T06:25:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 16,
+      "at": "2026-10-30T06:26:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-106",
+      "summary": "candidate.handed CART-106"
+    },
+    {
+      "id": 17,
+      "at": "2026-10-30T06:27:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-106",
+      "summary": "candidate.merged CART-106"
+    },
+    {
+      "id": 18,
+      "at": "2026-10-30T06:28:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-107",
+      "summary": "CART-107: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:28:00Z",
+        "finishedAt": "2026-10-30T06:28:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 19,
+      "at": "2026-10-30T06:29:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-107",
+      "summary": "candidate.handed CART-107"
+    },
+    {
+      "id": 20,
+      "at": "2026-10-30T06:30:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-107",
+      "summary": "candidate.merged CART-107"
+    },
+    {
+      "id": 21,
+      "at": "2026-10-30T06:31:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-108",
+      "summary": "CART-108: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:31:00Z",
+        "finishedAt": "2026-10-30T06:31:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 22,
+      "at": "2026-10-30T06:32:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-108",
+      "summary": "candidate.handed CART-108"
+    },
+    {
+      "id": 23,
+      "at": "2026-10-30T06:33:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-108",
+      "summary": "candidate.merged CART-108"
+    },
+    {
+      "id": 24,
+      "at": "2026-10-30T06:34:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-109",
+      "summary": "CART-109: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:34:00Z",
+        "finishedAt": "2026-10-30T06:34:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 25,
+      "at": "2026-10-30T06:35:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-109",
+      "summary": "candidate.handed CART-109"
+    },
+    {
+      "id": 26,
+      "at": "2026-10-30T06:36:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-109",
+      "summary": "candidate.merged CART-109"
+    },
+    {
+      "id": 27,
+      "at": "2026-10-30T06:37:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-110",
+      "summary": "CART-110: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:37:00Z",
+        "finishedAt": "2026-10-30T06:37:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 28,
+      "at": "2026-10-30T06:38:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-110",
+      "summary": "candidate.handed CART-110"
+    },
+    {
+      "id": 29,
+      "at": "2026-10-30T06:39:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-110",
+      "summary": "candidate.merged CART-110"
+    },
+    {
+      "id": 30,
+      "at": "2026-10-30T06:40:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-111",
+      "summary": "CART-111: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:40:00Z",
+        "finishedAt": "2026-10-30T06:40:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 31,
+      "at": "2026-10-30T06:41:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-111",
+      "summary": "candidate.handed CART-111"
+    },
+    {
+      "id": 32,
+      "at": "2026-10-30T06:42:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-111",
+      "summary": "candidate.merged CART-111"
+    },
+    {
+      "id": 33,
+      "at": "2026-10-30T06:43:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-112",
+      "summary": "CART-112: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:43:00Z",
+        "finishedAt": "2026-10-30T06:43:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 34,
+      "at": "2026-10-30T06:44:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-112",
+      "summary": "candidate.handed CART-112"
+    },
+    {
+      "id": 35,
+      "at": "2026-10-30T06:45:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-112",
+      "summary": "candidate.merged CART-112"
+    },
+    {
+      "id": 36,
+      "at": "2026-10-30T06:46:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-113",
+      "summary": "CART-113: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:46:00Z",
+        "finishedAt": "2026-10-30T06:46:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 37,
+      "at": "2026-10-30T06:47:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-113",
+      "summary": "candidate.handed CART-113"
+    },
+    {
+      "id": 38,
+      "at": "2026-10-30T06:48:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-113",
+      "summary": "candidate.merged CART-113"
+    },
+    {
+      "id": 39,
+      "at": "2026-10-30T06:49:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-114",
+      "summary": "CART-114: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:49:00Z",
+        "finishedAt": "2026-10-30T06:49:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 40,
+      "at": "2026-10-30T06:50:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-114",
+      "summary": "candidate.handed CART-114"
+    },
+    {
+      "id": 41,
+      "at": "2026-10-30T06:51:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-114",
+      "summary": "candidate.merged CART-114"
+    },
+    {
+      "id": 42,
+      "at": "2026-10-30T06:52:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-115",
+      "summary": "CART-115: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:52:00Z",
+        "finishedAt": "2026-10-30T06:52:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 43,
+      "at": "2026-10-30T06:53:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-115",
+      "summary": "candidate.handed CART-115"
+    },
+    {
+      "id": 44,
+      "at": "2026-10-30T06:54:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-115",
+      "summary": "candidate.merged CART-115"
+    },
+    {
+      "id": 45,
+      "at": "2026-10-30T06:55:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-116",
+      "summary": "CART-116: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:55:00Z",
+        "finishedAt": "2026-10-30T06:55:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 46,
+      "at": "2026-10-30T06:56:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-116",
+      "summary": "candidate.handed CART-116"
+    },
+    {
+      "id": 47,
+      "at": "2026-10-30T06:57:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-116",
+      "summary": "candidate.merged CART-116"
+    },
+    {
+      "id": 48,
+      "at": "2026-10-30T06:58:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-117",
+      "summary": "CART-117: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:58:00Z",
+        "finishedAt": "2026-10-30T06:58:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 49,
+      "at": "2026-10-30T06:59:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-117",
+      "summary": "candidate.handed CART-117"
+    },
+    {
+      "id": 50,
+      "at": "2026-10-30T07:00:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-117",
+      "summary": "candidate.merged CART-117"
+    },
+    {
+      "id": 51,
+      "at": "2026-10-30T07:01:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-118",
+      "summary": "CART-118: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T07:01:00Z",
+        "finishedAt": "2026-10-30T07:01:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 52,
+      "at": "2026-10-30T07:02:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-118",
+      "summary": "candidate.handed CART-118"
+    },
+    {
+      "id": 53,
+      "at": "2026-10-30T07:03:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-118",
+      "summary": "candidate.merged CART-118"
+    },
+    {
+      "id": 54,
+      "at": "2026-10-30T07:04:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-119",
+      "summary": "CART-119: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T07:04:00Z",
+        "finishedAt": "2026-10-30T07:04:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 55,
+      "at": "2026-10-30T07:05:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-119",
+      "summary": "candidate.handed CART-119"
+    },
+    {
+      "id": 56,
+      "at": "2026-10-30T07:06:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-119",
+      "summary": "candidate.merged CART-119"
+    },
+    {
+      "id": 57,
+      "at": "2026-10-30T07:07:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "CART-120",
+      "summary": "CART-120: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T07:07:00Z",
+        "finishedAt": "2026-10-30T07:07:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 58,
+      "at": "2026-10-30T07:08:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "CART-120",
+      "summary": "candidate.handed CART-120"
+    },
+    {
+      "id": 59,
+      "at": "2026-10-30T07:09:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "CART-120",
+      "summary": "candidate.merged CART-120"
+    }
+  ],
+  "stats": {},
+  "estimates": {},
+  "status": {
+    "source": "derived",
+    "text": ""
+  },
+  "focus": {}
+}

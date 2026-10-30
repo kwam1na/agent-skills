@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>delivery-flow adapter fixture</title></head>
+  <body>
+    <main aria-busy="true">
+      <h1>delivery-flow adapter fixture</h1>
+      <p>This page loads one record from /api/one, marks itself busy until the request settles, then shows its state.</p>
+      <p id="state">loading</p>
+      <p id="note"></p>
+      <p id="live" role="alert"></p>
+    </main>
+    <script>
+      // ?refetch: fetch the record a second time after it loads (a check must not hold that one).
+      // ?flash: show an alert for a moment after loading (a check must still notice it).
+      const params = new URLSearchParams(location.search);
+      fetch('/api/one')
+        .then(r => {
+          if (!r.ok) throw new Error('status ' + r.status);
+          document.querySelector('#state').textContent = 'loaded';
+          if (params.has('refetch')) return fetch('/api/one');
+        })
+        .then(() => {
+          // ?flash-attr: an existing element becomes an alert for a moment. ?flash-text: text appears for a moment in
+          // an always-present, empty alert.
+          if (params.has('flash-attr')) {
+            const note = document.querySelector('#note');
+            note.textContent = 'became an alert';
+            note.setAttribute('role', 'alert');
+            setTimeout(() => note.removeAttribute('role'), 300);
+          }
+          if (params.has('flash-text')) {
+            const live = document.querySelector('#live');
+            live.textContent = 'live text';
+            setTimeout(() => (live.textContent = ''), 300);
+          }
+          if (!params.has('flash')) return;
+          const flash = document.createElement('p');
+          flash.setAttribute('role', 'alert');
+          flash.textContent = 'transient';
+          document.body.appendChild(flash);
+          setTimeout(() => flash.remove(), 300);
+        })
+        .catch(() => {
+          const alert = document.createElement('p');
+          alert.setAttribute('role', 'alert');
+          alert.textContent = 'failed';
+          document.querySelector('main').appendChild(alert);
+          document.querySelector('#state').textContent = 'failed';
+        })
+        .finally(() => document.querySelector('main').removeAttribute('aria-busy'));
+    </script>
+  </body>
+</html>

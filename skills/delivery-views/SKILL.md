@@ -67,7 +67,8 @@ python3 -B .agent-skills/current/skills/delivery-views/scripts/views_common.py c
 
 `scripts/render.py line-map` reads the delivery record on stdin and prints one
 page: the delivery told in six chapters (now, the line, who, what's left, what
-happened, parked), with a detail panel for each piece of work. Its style and
+happened, parked), and a seventh, the plan, when the delivery has one (see
+"The plan chapter" below), with a detail panel for each piece of work. Its style and
 program are the skill's `assets/line-map.css`, `assets/line-map.js`,
 `assets/run-summary.css` and `assets/run-summary.js`, inlined into the page, and
 it loads only its two typefaces from Google Fonts. It
@@ -119,6 +120,149 @@ that cannot be read is listed with a note. The record on stdin only names the
 delivery each run belongs to. Its run commands share the render's deadline, and
 past the 4 MiB page budget the oldest rows give up their summaries first.
 `--now` fixes the history's as-of time, for tests.
+
+## The plan chapter
+
+A delivery may also say what it committed to. The line map then gains a
+chapter, **The plan**, that answers one question for the engineer working with
+the agents: is the work still what was agreed, and what proves it? The chapter
+reads one input, `delivery-plan/1`, beside the record the page already reads.
+It knows nothing about any repository, tracker, plan format or kind of evidence
+beyond what that input declares. `$run-delivery` produces the input; a
+repository that writes it any other way gets the same chapter.
+
+### The input: `delivery-plan/1`
+
+The renderer reads `<state directory>/plan.json`: one JSON object, at most
+1 MiB, refused unread if larger. Its schema is
+`references/delivery-plan.schema.json`. Check a file before relying on it:
+
+```bash
+python3 -B .agent-skills/current/skills/delivery-views/scripts/views_common.py check-plan <state directory>/plan.json
+```
+
+It exits 0 with a summary, or 2 naming the failing key path without echoing
+any value.
+
+| Field | Contents |
+| --- | --- |
+| `schemaVersion` | `delivery-plan/1`. |
+| `updated` | When the producer last wrote it. |
+| `outcome` | `{summary, text}`: one sentence, and the full text. |
+| `requiredLenses` | Lens ids every approving review round must include. |
+| `proofKinds` | Ordered `{id, label, source}`, with `source` either `record` or `producer`. Columns follow this order. |
+| `units` | Ordered `{subject, label?, title, removed?, criteria: [{id, text}], proofs: [kind ids owed]}`. |
+| `finish` | Ordered `{id, label, text, at, covers: {criteria: [ids] \| "all" \| [], proofs: [kind ids]}}`. `id` is the record's finish line id; `[]` covers no criteria by design. |
+| `approved` | `{at, review?, snapshot: {units, finish}}`, frozen once at the start of the delivery. |
+| `changes` | Ordered `{id, at, kind, subjects, criteria?, by, why?, title?, source?, ref?, before?, after?}`, `kind` one of `added`, `removed`, `relaxed`, `changed` or `finish`; `by` may be `unrecorded`. |
+| `evidence` | `{<subject>: {<producer kind>: {state, head?, at?, reason?, items?}}}`, `state` one of `done`, `todo` or `waived`. `done` and `waived` need `head`; `waived` also needs `reason`. |
+| `approvals` | Optional, ordered `{text, state: done \| waiting, who?}`. |
+| `outOfScope` | Optional list of texts. |
+
+Texts are capped at 600 characters, `outcome.text` at 2,000 and labels at 200;
+lists at 200 units, 1,000 criteria, 500 changes and 30 finish lines. Ids match
+`[A-Za-z0-9._-]{1,64}` and criterion ids are unique. Unknown keys are refused,
+and so is a record kind other than `handed`, `merged` and `review`. Subjects
+are data only: the page finds units through its own map, never through a
+selector built from one, and sets every text as text. A `ref` becomes a link
+only when the renderer already links that change request.
+
+With no `plan.json`, the page is exactly as it was: no chapter, no rail entry,
+no line in Now, and What's left keeps its finish-line list. An invalid file
+renders as if absent, plus the chapter holding one flag, "The plan couldn't be
+read", with the key path. A valid plan gets a fixed 512 KiB share of the page,
+taken from the runs' budget. Over its share, the oldest changes' text is
+clipped first, then other text outside the approved snapshot; the snapshot and
+every count are kept, and the changes fold says what was clipped.
+
+### The chapter
+
+It sits between What's left and What happened. Open by default: the title
+("N of M criteria proven", adding ", W by waiver" when a proof was waived), the
+outcome's summary, what needs the engineer, the units not yet proven with each
+one's next missing proof, and one meter per finish line. Folded, each with a
+count: all units (with an "as approved / as amended" switch), changes since
+approval (a scope-over-time chart and word redlines from `before` and
+`after`), waived proofs with their reasons, approvals ahead, out of scope, and
+the full outcome. Open folds are remembered per viewer under the page's theme
+key, and the page works without storage. Now gains the outcome's summary and
+"N of M criteria proven · plan changed K times"; each stop on The line opens its
+unit; and What's left shows the meters instead of its finish-line list. At
+phone width each unit becomes a card, with its proofs as labelled pills.
+
+A criterion is **proven**; a finish line is **met**, as the record says.
+
+### Proofs from the record
+
+Record proofs are derived in the page from every record it draws, embedded or
+pushed, by the same lookups The line uses:
+
+- **`handed`** is done when a queue item exists for the subject, its stage is
+  not `stopped`, and it is not pending acceptance.
+- **`merged`** is done when the queue item's stage is `merged`. A hand-off after
+  a merge supersedes it, and a `merged_unverified` stop leaves it open.
+- **`review`** approves from every `requiredLenses` lens, at the queue item's
+  `head`: the reviewed and handed head, never `syncedHead`, so a synced or
+  merged unit keeps its proofs. Its source is the first that applies: the
+  run's latest round, with the journal's verdicts laid over it; an available
+  review observation of the queue item's `head`; then the journal's
+  `review.round` entries. Rounds the lane only reported carry no verdicts. A
+  round that names no candidate counts only when it was recorded after the
+  `candidate.handed` before the current one; a unit handed off once counts
+  every round. The review reads **stale** only when a source positively shows
+  approval for another head, **open** for a round that hasn't approved, and
+  **not recorded** for nothing.
+
+Producer proofs come from `evidence`. A missing entry is `todo`. Once the
+subject has a queue item, a `done` or `waived` entry whose `head` differs from
+that item's `head` is stale and counts as not done; before hand-off an entry
+counts at face value, and the unit's open row says "before hand-off".
+
+### Definitions
+
+- A **unit is proven** when every proof it owes is done or waived and none is
+  stale; a **criterion is proven** when its unit is. Removed units count in
+  neither N nor M.
+- A **finish line's meter** fills by the share of covered criteria whose units
+  have every `covers.proofs` kind done, and a second segment adds those with
+  the kinds done or waived, so the meter and the title agree. A kind a unit
+  doesn't owe is settled for it. `"all"` covers every criterion; `[]` covers
+  proofs only, over every unit. Whether the line is met comes only from the
+  record's finish line with the same id; a record finish line with no plan
+  entry still shows, with no fill.
+
+### What needs the engineer
+
+The chapter's attention area shows these flags, in this order, and with none it
+reads "Nothing in the plan needs you right now."
+
+1. **The plan couldn't be read.**
+2. **The base is broken**: the last base event in the record is `base.broken`.
+   While it holds, the title can't read "Every criterion is proven".
+3. **Work in the record isn't in the plan**: a queue or planned subject has no
+   unit. The flag names the subjects.
+4. **The plan and the record disagree on finish lines**: a finish line in the
+   plan that the record lacks, or the reverse.
+5. **A finish line no longer covers the plan**: its `covers.criteria` is an
+   explicit, non-empty list that omits a criterion added or changed after its
+   `at`. Lines covering `"all"` or `[]` never raise it.
+6. **A change touches open work**: a `relaxed`, `changed` or `removed` change
+   names a unit that is neither proven nor removed. It clears once that unit's
+   review approves at a time after the change.
+7. **A change has no reason**: its `why` is absent.
+8. **A waived proof on a unit not yet proven.**
+
+### Live
+
+The page embeds the validated plan once and derives record proofs from each
+pushed record, so the chapter redraws as The line does. A producer writes
+`plan.json` only when its content, apart from `updated`, changed: atomically
+first, then a decision entry in the delivery journal whose summary starts "Plan updated:",
+names the new `updated` value and says what changed. That moves the record, so
+the live server renders the page again from the new file. An open page shows
+"The plan changed. Reload to see it." beside the title when the latest "Plan
+updated:" entry in a pushed record names an `updated` value other than its
+embedded plan's; a page rendered or reloaded after the change shows none.
 
 ## Configuration: `delivery-views-config/1`
 

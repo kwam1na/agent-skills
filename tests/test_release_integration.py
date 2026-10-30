@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from agent_skills import receipt, release
 from agent_skills.catalog import resolve_profile
 from agent_skills.release import _release_view, build_release, verify_release
 from agent_skills.router import WorkflowRequest, route_workflow
@@ -88,6 +89,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             "skills/delivery-views/assets/run-summary.js",
             "skills/delivery-views/scripts/render.py",
             "skills/delivery-views/scripts/views_common.py",
+            "skills/delivery-views/references/delivery-plan.schema.json",
             "skills/create-linear-ticket/SKILL.md",
             "skills/create-linear-ticket/agents/openai.yaml",
             "skills/create-linear-ticket/references/atomic-plan-template.md",
@@ -114,6 +116,60 @@ class ReleaseIntegrationTests(unittest.TestCase):
         for path in NEW_PAYLOAD:
             self.assertEqual(core[path], (ROOT / path).read_bytes(), path)
         self.assertFalse(any(path.startswith(("qualifications/", "docs/delivery/")) for path in linear))
+
+    def test_run_delivery_profile_adds_only_its_own_skill_to_delivery_views(self) -> None:
+        profiles = {
+            name: json.loads((ROOT / f"profiles/{name}.json").read_text())
+            for name in ("core", "delivery-views", "linear", "run-delivery")
+        }
+        self.assertEqual(
+            resolve_profile("run-delivery", profiles),
+            sorted([*resolve_profile("delivery-views", profiles), "run-delivery"]),
+        )
+        self.assertNotIn("run-delivery", resolve_profile("linear", profiles))
+        views = _release_view(ROOT, "delivery-views")
+        run_delivery = _release_view(ROOT, "run-delivery")
+        own = {path for path in run_delivery if path.startswith("skills/run-delivery/")}
+        self.assertIn("skills/run-delivery/SKILL.md", own)
+        self.assertEqual(set(run_delivery) - set(views), {"profiles/run-delivery.json", *own})
+        for path in set(views) - {"catalog.json", "provenance.lock.json", "validation-inventory.json"}:
+            self.assertEqual(views[path], run_delivery[path], path)
+        catalog = {skill["id"]: skill for skill in json.loads((ROOT / "catalog.json").read_text())["skills"]}
+        entry = catalog["run-delivery"]
+        self.assertEqual(entry["dependencies"], [
+            {"id": "delivery-views", "requirement": "required"},
+            {"id": "obtain-review", "requirement": "required"},
+            {"id": "orchestrate-work", "requirement": "required"},
+        ])
+        self.assertEqual(entry["externalTools"], ["git", "python3", "ps", "lsof", "ffmpeg", "ffprobe", "node", "gh"])
+        self.assertEqual(entry["profiles"], ["run-delivery"])
+        scenarios = json.loads((ROOT / "validation-inventory.json").read_text())["scenarios"]
+        self.assertIn(
+            {"hosts": ["claude-code", "codex"], "id": "run-delivery-profile-selects-run-delivery",
+             "profile": "run-delivery", "skill": "run-delivery"},
+            scenarios,
+        )
+
+    def test_schema_profile_enums_name_every_supported_release_profile(self) -> None:
+        # Bootstrap releases are named in neither schema's profile enum, as before.
+        expected = sorted(release.SUPPORTED_PROFILES - {"bootstrap"})
+        self.assertEqual(expected, sorted(receipt.SUPPORTED_PROFILES - {"bootstrap"}))
+        self.assertIn("run-delivery", expected)
+
+        def profile_enums(node):
+            if isinstance(node, dict):
+                if isinstance(node.get("profile"), dict) and "enum" in node["profile"]:
+                    yield node["profile"]["enum"]
+                for value in node.values():
+                    yield from profile_enums(value)
+            elif isinstance(node, list):
+                for value in node:
+                    yield from profile_enums(value)
+
+        for name in ("receipt", "release-manifest"):
+            with self.subTest(schema=name):
+                enums = list(profile_enums(json.loads((ROOT / f"schemas/{name}.schema.json").read_text())))
+                self.assertEqual(enums, [expected])
 
     def test_new_runtime_is_scanned_for_provider_and_repository_leakage(self) -> None:
         for relative in sorted(path for path in NEW_PAYLOAD if path.startswith("agent_skills/")):

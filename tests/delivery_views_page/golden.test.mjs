@@ -1,4 +1,5 @@
-// The line map equals the golden outputs captured from its source design, case by case.
+// The line map equals the golden outputs captured from its source design, case by case. A case with a plan.json renders
+// with it in the state directory and also pins the plan chapter's folds; a case without one embeds no plan at all.
 import assert from "node:assert/strict";
 import { readdirSync, existsSync } from "node:fs";
 import path from "node:path";
@@ -12,7 +13,7 @@ const CONFIG = readJson(path.join(CORPUS, "linked-config.json"));
 
 test("the corpus holds every captured case", () => {
   assert.deepEqual(CASES, ["delivery-records-epic", "parked-no-runs", "parked-round-report-unreadable", "parked-round-reports",
-    "parked-run-view", "round-card-record"]);
+    "parked-run-view", "plan-in-app", "plan-record-only", "round-card-record"]);
 });
 
 for (const name of CASES) {
@@ -20,11 +21,19 @@ for (const name of CASES) {
     const folder = path.join(CORPUS, name);
     const golden = readJson(path.join(folder, "golden.json"));
     const document = readJson(path.join(folder, "document.json"));
-    const page = renderPage(document, { config: CONFIG, runsCommands: readJson(path.join(folder, "runs-commands.json")) });
+    const planFile = path.join(folder, "plan.json");
+    const plan = existsSync(planFile) ? readJson(planFile) : null;
+    const page = renderPage(document, { config: CONFIG, runsCommands: readJson(path.join(folder, "runs-commands.json")), plan });
     assert.deepEqual(block(page, "delivery-state"), golden.blocks["delivery-state"]);
     assert.deepEqual(block(page, "delivery-runs"), golden.blocks["delivery-runs"]);
+    assert.deepEqual(block(page, "delivery-plan"), golden.blocks["delivery-plan"] ?? null);
     const [first] = await openPage(page, { now: golden.now });
     assert.equal(first.text, golden.initialText);
+    for (const [name, expected] of Object.entries(golden.folds ?? {})) {
+      const fold = `.plan-fold[data-fold="${name}"]`;
+      const [, opened] = await openPage(page, { now: golden.now, steps: [{ toggle: fold }] });
+      assert.equal(opened.app.querySelector(fold).textContent, expected, name);
+    }
     for (const [subject, expected] of Object.entries(golden.details)) {
       const stop = `.stop-btn[data-subject="${subject}"]`;
       const [, shown] = await openPage(page, { now: golden.now, steps: [{ click: stop }] });

@@ -1,0 +1,232 @@
+{
+  "schemaVersion": "delivery-plan/1",
+  "updated": "2026-10-30T09:00:00Z",
+  "outcome": {
+    "summary": "Shoppers can pay again after a dropped connection.",
+    "text": "Shoppers can pay again after a dropped connection, and no payment is ever taken twice."
+  },
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "proofKinds": [
+    {
+      "id": "review",
+      "label": "Review",
+      "source": "record"
+    },
+    {
+      "id": "handed",
+      "label": "Handed off",
+      "source": "record"
+    },
+    {
+      "id": "merged",
+      "label": "Merged",
+      "source": "record"
+    }
+  ],
+  "units": [
+    {
+      "subject": "PAY-1",
+      "title": "Card retry",
+      "criteria": [
+        {
+          "id": "PAY-1.1",
+          "text": "Criterion 1 of PAY-1"
+        },
+        {
+          "id": "PAY-1.2",
+          "text": "Criterion 2 of PAY-1"
+        }
+      ],
+      "proofs": [
+        "review",
+        "handed",
+        "merged"
+      ]
+    },
+    {
+      "subject": "PAY-2",
+      "title": "Receipt email",
+      "criteria": [
+        {
+          "id": "PAY-2.1",
+          "text": "Criterion 1 of PAY-2"
+        }
+      ],
+      "proofs": [
+        "review",
+        "handed",
+        "merged"
+      ]
+    },
+    {
+      "subject": "PAY-3",
+      "title": "Refund screen",
+      "criteria": [
+        {
+          "id": "PAY-3.1",
+          "text": "Criterion 1 of PAY-3"
+        }
+      ],
+      "proofs": [
+        "review",
+        "handed",
+        "merged"
+      ]
+    },
+    {
+      "subject": "PAY-4",
+      "title": "Payment audit",
+      "criteria": [
+        {
+          "id": "PAY-4.1",
+          "text": "Criterion 1 of PAY-4"
+        },
+        {
+          "id": "PAY-4.2",
+          "text": "Criterion 2 of PAY-4"
+        }
+      ],
+      "proofs": [
+        "review",
+        "handed",
+        "merged"
+      ]
+    }
+  ],
+  "finish": [
+    {
+      "id": "landed",
+      "label": "Every piece lands",
+      "text": "The landed line is met",
+      "at": "2026-10-30T06:00:00Z",
+      "covers": {
+        "criteria": [],
+        "proofs": [
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "proven",
+      "label": "Every criterion proven",
+      "text": "The proven line is met",
+      "at": "2026-10-30T06:00:00Z",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "handed",
+          "merged"
+        ]
+      }
+    }
+  ],
+  "approved": {
+    "at": "2026-10-30T06:00:00Z",
+    "snapshot": {
+      "units": [
+        {
+          "subject": "PAY-1",
+          "title": "Card retry",
+          "criteria": [
+            {
+              "id": "PAY-1.1",
+              "text": "Criterion 1 of PAY-1"
+            },
+            {
+              "id": "PAY-1.2",
+              "text": "Criterion 2 of PAY-1"
+            }
+          ],
+          "proofs": [
+            "review",
+            "handed",
+            "merged"
+          ]
+        },
+        {
+          "subject": "PAY-2",
+          "title": "Receipt email",
+          "criteria": [
+            {
+              "id": "PAY-2.1",
+              "text": "Criterion 1 of PAY-2"
+            }
+          ],
+          "proofs": [
+            "review",
+            "handed",
+            "merged"
+          ]
+        },
+        {
+          "subject": "PAY-3",
+          "title": "Refund screen",
+          "criteria": [
+            {
+              "id": "PAY-3.1",
+              "text": "Criterion 1 of PAY-3"
+            }
+          ],
+          "proofs": [
+            "review",
+            "handed",
+            "merged"
+          ]
+        },
+        {
+          "subject": "PAY-4",
+          "title": "Payment audit",
+          "criteria": [
+            {
+              "id": "PAY-4.1",
+              "text": "Criterion 1 of PAY-4"
+            },
+            {
+              "id": "PAY-4.2",
+              "text": "Criterion 2 of PAY-4"
+            }
+          ],
+          "proofs": [
+            "review",
+            "handed",
+            "merged"
+          ]
+        }
+      ],
+      "finish": [
+        {
+          "id": "landed",
+          "label": "Every piece lands",
+          "text": "The landed line is met",
+          "at": "2026-10-30T06:00:00Z",
+          "covers": {
+            "criteria": [],
+            "proofs": [
+              "merged"
+            ]
+          }
+        },
+        {
+          "id": "proven",
+          "label": "Every criterion proven",
+          "text": "The proven line is met",
+          "at": "2026-10-30T06:00:00Z",
+          "covers": {
+            "criteria": "all",
+            "proofs": [
+              "review",
+              "handed",
+              "merged"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "changes": [],
+  "evidence": {}
+}

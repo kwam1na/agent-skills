@@ -1,0 +1,452 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-skills.dev/schemas/delivery-plan/1",
+  "title": "delivery-plan/1",
+  "description": "The plan chapter's one input: a delivery's outcome, units and criteria, the proofs each unit owes, finish lines, the approved snapshot, changes since, and producer evidence. At most 1 MiB. The validator in views_common.py also checks what a schema can't: unique criterion ids, covers and proofs that name declared criteria and kinds, record kinds limited to handed, merged and review, evidence only for kinds a unit owes, head on done and waived entries, a reason on waived ones, and the 1,000-criterion total.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "updated",
+    "outcome",
+    "requiredLenses",
+    "proofKinds",
+    "units",
+    "finish",
+    "approved",
+    "changes",
+    "evidence"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "delivery-plan/1"
+    },
+    "updated": {
+      "$ref": "#/$defs/time"
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary",
+        "text"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "requiredLenses": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/id"
+      }
+    },
+    "proofKinds": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/proofKind"
+      }
+    },
+    "units": {
+      "$ref": "#/$defs/units"
+    },
+    "finish": {
+      "$ref": "#/$defs/finish"
+    },
+    "approved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "at",
+        "snapshot"
+      ],
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/time"
+        },
+        "review": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "units",
+            "finish"
+          ],
+          "properties": {
+            "units": {
+              "$ref": "#/$defs/units"
+            },
+            "finish": {
+              "$ref": "#/$defs/finish"
+            }
+          }
+        }
+      }
+    },
+    "changes": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "$ref": "#/$defs/change"
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/evidenceEntry"
+        }
+      }
+    },
+    "approvals": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text",
+          "state"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "state": {
+            "enum": [
+              "done",
+              "waiting"
+            ]
+          },
+          "who": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      }
+    },
+    "outOfScope": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 600
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,64}$"
+    },
+    "time": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+    },
+    "covers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criteria",
+        "proofs"
+      ],
+      "properties": {
+        "criteria": {
+          "oneOf": [
+            {
+              "const": "all"
+            },
+            {
+              "type": "array",
+              "maxItems": 1000,
+              "items": {
+                "$ref": "#/$defs/id"
+              }
+            }
+          ]
+        },
+        "proofs": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      }
+    },
+    "proofKind": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "source": {
+          "enum": [
+            "record",
+            "producer"
+          ]
+        }
+      }
+    },
+    "units": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "subject",
+          "title",
+          "criteria",
+          "proofs"
+        ],
+        "properties": {
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "removed": {
+            "type": "boolean"
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "text"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/id"
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                }
+              }
+            }
+          },
+          "proofs": {
+            "type": "array",
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        }
+      }
+    },
+    "finish": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "text",
+          "at",
+          "covers"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "at": {
+            "$ref": "#/$defs/time"
+          },
+          "covers": {
+            "$ref": "#/$defs/covers"
+          }
+        }
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "at",
+        "kind",
+        "subjects",
+        "by"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "at": {
+          "$ref": "#/$defs/time"
+        },
+        "kind": {
+          "enum": [
+            "added",
+            "removed",
+            "relaxed",
+            "changed",
+            "finish"
+          ]
+        },
+        "subjects": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "criteria": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "by": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "why": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "before": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 600
+            },
+            {
+              "$ref": "#/$defs/covers"
+            }
+          ]
+        },
+        "after": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 600
+            },
+            {
+              "$ref": "#/$defs/covers"
+            }
+          ]
+        }
+      }
+    },
+    "evidenceEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "done",
+            "todo",
+            "waived"
+          ]
+        },
+        "head": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "at": {
+          "$ref": "#/$defs/time"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      }
+    }
+  }
+}
