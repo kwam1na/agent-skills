@@ -18,7 +18,10 @@ Cut releases at batch boundaries, not per ruling. Operator rulings
 accumulate as merged text on the default branch, and one release carries
 them. Tag each release with an annotated tag named exactly its set name, such
 as `run-delivery-v1`, on the merge commit that carries its archives and
-records. Never move or reuse a release tag.
+records. Never move or reuse a release tag. Pushing the tag publishes the
+set as a GitHub release of the same name, carrying its verified product
+archives and release files; that release is the channel adopters download
+from.
 
 When a releasable skill changes, update its catalog entry, every selected
 profile, and the corresponding provenance output digest in the same change,

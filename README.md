@@ -284,6 +284,26 @@ responsibility of the protected external run that supplies host events; the
 controlled host-event inputs used here do not independently prove external
 calls.
 
+## Getting a release
+
+Each release set is published as a GitHub release named by its tag, such as
+`run-delivery-v1`. It carries every product archive of the set with its
+`.release.json`, and its notes list each archive's sha256. Download one profile's
+pair, check the zip against the digest its `.release.json` records, and install
+it with `apply` below; `apply` verifies the archive against that file again
+before it writes anything:
+
+```bash
+gh release download run-delivery-v1 --repo kwam1na/agent-skills \
+  --pattern 'run-delivery-run-delivery-v1.*'
+shasum -a 256 run-delivery-run-delivery-v1.zip
+```
+
+The release workflow publishes a set when its tag is pushed. It refuses a tag
+that is not annotated or not merged to `main`, verifies every archive first, and
+never replaces a release that already exists. The same bytes stay checked in
+under `qualifications/product/` at the tag.
+
 ## Repository lifecycle
 
 Run the lifecycle from an extracted release archive. Read-only commands emit
