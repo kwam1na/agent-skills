@@ -22,9 +22,9 @@ from tests.qualification_pending_support import pending, skip_if_pending
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
 PRODUCT = ROOT / "qualifications" / "product"
-ATTESTATION = PRODUCT / "linear-review-evidence-v1.attestation.json"
-RECORD = PRODUCT / "linear-review-evidence-v1.json"
-BINDING = PRODUCT / "linear-review-evidence-v1.collector-binding.json"
+ATTESTATION = PRODUCT / "linear-run-delivery-v1.attestation.json"
+RECORD = PRODUCT / "linear-run-delivery-v1.json"
+BINDING = PRODUCT / "linear-run-delivery-v1.collector-binding.json"
 HISTORICAL_ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
 HISTORICAL_RECORD = PRODUCT / "linear-product-v1.json"
 HISTORICAL_BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
@@ -119,6 +119,18 @@ HISTORICAL_PRODUCT_SHA256 = {
     "linear-delivery-views-v1.release.json": "daad256ce872027823de290051d104cc29c8ddbebe3c50645a66d4855bbb8a08",
     "linear-delivery-views-v1.zip": "47407f1e51e461d27bc1ed1130aad2455c2a36f56ef7072c54fe6add7c6a5d9f",
     "provider-delivery-views-v1.json": "85573e84c765451d1048870541fe8d3bb6d6abd7af8a991321f26363aa623905",
+    "bootstrap-review-evidence-v1.json": "1d5bf220dbdef5038da4c7b4ad02cb9ad8c5ae47d59bf71ee489d2f61d65c99c",
+    "bootstrap-review-evidence-v1.release.json": "9652ac74bcbdd51a1aeb4e6e807226890f4443f4e4634ca660114e7d2ffa2707",
+    "bootstrap-review-evidence-v1.zip": "531ad32c33a30a6c85aa6a1d04ae43b0eb676a8153d67e2db2bc9d5b5c17ecf2",
+    "core-review-evidence-v1.json": "36bc682fb3e3244b2e75f183c15586d229f0220479300346b07c4ca694565ee2",
+    "core-review-evidence-v1.release.json": "4b4396387e7f944b9d5e7ecbf2ccba15e544a2d6e8656ec297a9fad15d8765c4",
+    "core-review-evidence-v1.zip": "43244e181264f30914221be9b9a711e807a12905aa595ee23c5081727742c795",
+    "linear-review-evidence-v1.attestation.json": "a8c267616a1e64d43fbbd7a82445d8c1663c5e9801933695a8b546a7ad0bf0a3",
+    "linear-review-evidence-v1.collector-binding.json": "0fb6b334bf6ba875eb156777a1616dba9a97a8a278dff250e6d50f27caff8d38",
+    "linear-review-evidence-v1.json": "9e6f195d1397b36540839b04ecef82e745fbc1530ec21b8dfecfd3dc812b9b8e",
+    "linear-review-evidence-v1.release.json": "ecd40e33cf29d344ba9e7a409ab62db30236282c02e1b70488bb99ce6d9eddcc",
+    "linear-review-evidence-v1.zip": "609250379ec208cac95769ab1f2eee95728bce981bee240881fbf83145bad042",
+    "provider-review-evidence-v1.json": "e34d6dbe73f937344eb2ae7d9ad5daa1e87b19020f5a43b95b36a9b513695281",
 }
 
 
@@ -982,25 +994,55 @@ class LinearQualificationTests(unittest.TestCase):
         # it is re-earned with the pending linear set.
         skip_if_pending(self, "core", "linear")
         replay = _load_runner().qualify(
-            PRODUCT / "core-review-evidence-v1.zip",
-            PRODUCT / "core-review-evidence-v1.release.json",
-            PRODUCT / "core-review-evidence-v1.json",
-            PRODUCT / "linear-review-evidence-v1.zip",
-            PRODUCT / "linear-review-evidence-v1.release.json",
+            PRODUCT / "core-run-delivery-v1.zip",
+            PRODUCT / "core-run-delivery-v1.release.json",
+            PRODUCT / "core-run-delivery-v1.json",
+            PRODUCT / "linear-run-delivery-v1.zip",
+            PRODUCT / "linear-run-delivery-v1.release.json",
             ATTESTATION,
             BINDING,
         )
         self.assertEqual(_load_runner().canonical_json(replay).encode(), RECORD.read_bytes(),
                          "the record replays byte for byte")
 
+    def test_the_frozen_collector_input_names_the_checked_archives_with_fresh_references(self) -> None:
+        # Ungated by the pending marker: the input is frozen before the live run, so it must already be right while
+        # the linear set waits for its attestation.
+        binding = _load_runner().load_collector_binding(BINDING)
+        sha256 = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        graphs = set()
+        for profile in ("core", "linear"):
+            product = PRODUCT / f"{profile}-run-delivery-v1"
+            release = binding["releases"][profile]
+            self.assertEqual(release["archiveSha256"], sha256(product.with_suffix(".zip")), profile)
+            self.assertEqual(release["metadataSha256"], sha256(product.with_suffix(".release.json")), profile)
+            self.assertEqual(release["releaseId"], json.loads(product.with_suffix(".release.json").read_text())["releaseId"])
+            self.assertEqual(release["profile"], profile)
+            with zipfile.ZipFile(product.with_suffix(".zip")) as archive:
+                graphs.add(hashlib.sha256(archive.read("workflows/delivery-v1.json")).hexdigest())
+        self.assertEqual(graphs, {binding["graphSha256"]})
+        # Fresh references: no earlier collector input, current or retained, ever used them.
+        earlier = [path for path in [*PRODUCT.glob("*.collector-binding.json"), *(ROOT / "qualifications/history").glob("*collector-binding.json")]
+                   if path != BINDING]
+        self.assertTrue(earlier)
+        used = {json.loads(path.read_text())[ref]["opaque"] for path in earlier for ref in ("subjectRef", "candidateRef")}
+        for ref in ("subjectRef", "candidateRef"):
+            self.assertNotIn(binding[ref]["opaque"], used, ref)
+        # The collection steps name exactly this input.
+        notes = (ROOT / "docs/releases/run-delivery-v1.md").read_text(encoding="utf-8")
+        for digest in (sha256(BINDING), binding["releases"]["core"]["archiveSha256"], binding["releases"]["linear"]["archiveSha256"]):
+            self.assertIn(digest, notes)
+
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
         current_products = {
-            "core": ("core-review-evidence-v1", "43244e181264f30914221be9b9a711e807a12905aa595ee23c5081727742c795"),
-            "linear": ("linear-review-evidence-v1", "609250379ec208cac95769ab1f2eee95728bce981bee240881fbf83145bad042"),
+            "core": ("core-run-delivery-v1", "08610e46436ad0239f1171dd489bc1cbeb342fc01a9ce64d7e50920e95f5b0cb"),
+            "linear": ("linear-run-delivery-v1", "9d75dd6f007fdaa2c830c4e2f14176c0844e30df5f5e3a91451da605b44bc949"),
+            # The product an adopter installs: no qualification set gates it, so its projection always holds.
+            "run-delivery": ("run-delivery-run-delivery-v1", "63bf93293975ef520a0a5b000908e6b91e75c8660e9acb78e72062707e0e6f83"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            for profile in ("core", "linear"):
+            for profile in ("core", "linear", "run-delivery"):
                 product, expected_archive_sha256 = current_products[profile]
                 archive = PRODUCT / f"{product}.zip"
                 metadata = PRODUCT / f"{product}.release.json"
@@ -1013,9 +1055,9 @@ class LinearQualificationTests(unittest.TestCase):
                 current = build_release(ROOT, directory / f"{profile}-current.zip",
                                         directory / f"{profile}-current.json",
                                         release_id=release.release_id, profile_id=profile)
-                if pending(profile) is None:
+                if profile == "run-delivery" or pending(profile) is None:
                     self.assertEqual(projected, current, "checked product workflows differ from current source")
-        self.assertIn("linear-review-evidence-v1", (ROOT / "README.md").read_text())
+        self.assertIn("linear-run-delivery-v1", (ROOT / "README.md").read_text())
         skip_if_pending(self, "core", "linear")
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:

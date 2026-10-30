@@ -27,13 +27,21 @@ concurrent-delivery and orchestration release sets, each with its independently 
 attestation. Their bytes and identities remain immutable.
 
 The `*-delivery-views-v1` files retain the previously qualified delivery-views
-release set, with its independently bound protected Linear attestation. Their
-bytes and identities remain immutable.
+release set, including its independently bound protected Linear attestation.
+Their bytes and identities remain immutable.
 
-The `*-review-evidence-v1` files are the current qualified product set. The
-bootstrap archive qualifies the minimal first-install profile and full product lifecycle.
-The core archive carries its exact current core and provider qualification
-records. The Linear qualification binds that exact core and Linear pair to a
-new independently frozen collector input and protected host-native attestation.
-Every earlier product artifact above remains unchanged and its attestation is
-never rebound or relabeled.
+The `*-review-evidence-v1` files retain the previously qualified review-evidence
+release set, including its independently bound protected Linear attestation.
+Their bytes and identities remain immutable.
+
+The `*-run-delivery-v1` files are the current product set. The bootstrap archive
+qualifies the minimal first-install profile and full product lifecycle. The core
+archive carries its exact current core and provider qualification records. The
+Linear pair is bound to a new independently frozen collector input,
+`linear-run-delivery-v1.collector-binding.json`, frozen before any live
+operation; its protected host-native attestation and qualification record join
+the set once the attestation is collected. The `run-delivery` archive is the
+product an adopter installs to run deliveries; like the delivery-views profile
+before it, it carries no qualification record of its own. Every earlier product
+artifact above remains unchanged and its attestation is never rebound or
+relabeled.

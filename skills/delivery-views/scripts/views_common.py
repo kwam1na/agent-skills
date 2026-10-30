@@ -4,7 +4,8 @@ commands, paths, the run cache and the round report format.
 
 Standard library only. ``python3 -B views_common.py check --config <path>
 --binding <path>`` validates a repository's configuration and prints where the
-views will read and write.
+views will read and write. ``python3 -B views_common.py check-plan <path>``
+validates a ``delivery-plan/1`` file, the plan chapter's one input.
 """
 
 from __future__ import annotations
@@ -670,6 +671,249 @@ def report_problem(value: object, spec: str = REPORT_SPEC) -> str | None:
     return None
 
 
+# The plan chapter's input
+
+
+PLAN_SPEC = "delivery-plan/1"
+PLAN_LIMIT_BYTES = 1024 * 1024
+PLAN_OUTCOME_TEXT, PLAN_TEXT, PLAN_LABEL = 2000, 600, 200
+PLAN_UNITS, PLAN_CRITERIA, PLAN_CHANGES, PLAN_FINISH = 200, 1000, 500, 30
+# Bounds the contract leaves to the validator: kinds, lenses, approvals, out-of-scope texts, items per proof.
+PLAN_LIST = 100
+PLAN_RECORD_KINDS = ("handed", "merged", "review")
+PLAN_CHANGE_KINDS = ("added", "removed", "relaxed", "changed", "finish")
+PLAN_KEYS = ("schemaVersion", "updated", "outcome", "requiredLenses", "proofKinds", "units", "finish", "approved",
+             "changes", "evidence", "approvals", "outOfScope")
+PLAN_REQUIRED = ("schemaVersion", "updated", "outcome", "requiredLenses", "proofKinds", "units", "finish", "approved",
+                 "changes", "evidence")
+PLAN_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _plan_object(value: object, where: str, allowed: set[str], required: set[str] = frozenset()) -> dict:
+    """Like _object, but an unknown key is not named: it is the file's text, and the message reaches the page."""
+    if not isinstance(value, dict):
+        raise ConfigError(f"{where or '(top level)'}: must be an object")
+    if any(key not in allowed for key in value):
+        raise ConfigError(f"{where or '(top level)'}: holds an unknown key")
+    for key in sorted(required):
+        if key not in value:
+            raise ConfigError(f"{_join(where, key)}: is required")
+    return value
+
+
+def _bounded(value: object, where: str, cap: int) -> list:
+    items = _list(value, where)
+    if len(items) > cap:
+        raise ConfigError(f"{where}: holds {len(items)} entries, over the cap of {cap}")
+    return items
+
+
+def _plan_id(value: object, where: str) -> str:
+    if not isinstance(value, str) or not PLAN_ID.fullmatch(value):
+        raise ConfigError(f"{where}: must be an id of 1 to 64 letters, digits, dots, dashes or underscores")
+    return value
+
+
+def _plan_time(value: object, where: str) -> str:
+    if not isinstance(value, str) or not TIMESTAMP.fullmatch(value):
+        raise ConfigError(f"{where}: must be a UTC time such as 2026-01-01T00:00:00Z")
+    return value
+
+
+def _plan_units(value: object, where: str, kinds: dict[str, str]) -> set[str]:
+    """Validate a unit list; return its criterion ids, each unique across the list."""
+    criteria: set[str] = set()
+    subjects: set[str] = set()
+    count = 0
+    for i, unit in enumerate(_bounded(value, where, PLAN_UNITS)):
+        at = f"{where}[{i}]"
+        _plan_object(unit, at, {"subject", "label", "title", "removed", "criteria", "proofs"},
+                {"subject", "title", "criteria", "proofs"})
+        subject = _text(unit["subject"], f"{at}.subject", PLAN_LABEL)
+        if subject in subjects:
+            raise ConfigError(f"{at}.subject: repeats another unit's subject")
+        subjects.add(subject)
+        if "label" in unit:
+            _text(unit["label"], f"{at}.label", PLAN_LABEL)
+        _text(unit["title"], f"{at}.title", PLAN_TEXT)
+        if "removed" in unit and not isinstance(unit["removed"], bool):
+            raise ConfigError(f"{at}.removed: must be true or false")
+        for j, criterion in enumerate(_list(unit["criteria"], f"{at}.criteria")):
+            spot = f"{at}.criteria[{j}]"
+            _plan_object(criterion, spot, {"id", "text"}, {"id", "text"})
+            ident = _plan_id(criterion["id"], f"{spot}.id")
+            if ident in criteria:
+                raise ConfigError(f"{spot}.id: repeats a criterion id")
+            criteria.add(ident)
+            _text(criterion["text"], f"{spot}.text", PLAN_TEXT)
+        count += len(unit["criteria"])
+        if count > PLAN_CRITERIA:
+            raise ConfigError(f"{where}: holds over the cap of {PLAN_CRITERIA} criteria")
+        owed = _bounded(unit["proofs"], f"{at}.proofs", PLAN_LIST)
+        for j, kind in enumerate(owed):
+            if not isinstance(kind, str) or kind not in kinds:
+                raise ConfigError(f"{at}.proofs[{j}]: names no declared proof kind")
+        if len(set(owed)) != len(owed):
+            raise ConfigError(f"{at}.proofs: repeats a proof kind")
+    return criteria
+
+
+def _plan_covers(value: object, where: str, criteria: set[str], kinds: dict[str, str]) -> None:
+    _plan_object(value, where, {"criteria", "proofs"}, {"criteria", "proofs"})
+    covered = value["criteria"]
+    if covered != "all":
+        for i, ident in enumerate(_bounded(covered, f"{where}.criteria", PLAN_CRITERIA)):
+            if not isinstance(ident, str) or ident not in criteria:
+                raise ConfigError(f"{where}.criteria[{i}]: names no criterion of the plan's units")
+    for i, kind in enumerate(_bounded(value["proofs"], f"{where}.proofs", PLAN_LIST)):
+        if not isinstance(kind, str) or kind not in kinds:
+            raise ConfigError(f"{where}.proofs[{i}]: names no declared proof kind")
+
+
+def _plan_finish(value: object, where: str, criteria: set[str], kinds: dict[str, str]) -> None:
+    seen: set[str] = set()
+    for i, line in enumerate(_bounded(value, where, PLAN_FINISH)):
+        at = f"{where}[{i}]"
+        _plan_object(line, at, {"id", "label", "text", "at", "covers"}, {"id", "label", "text", "at", "covers"})
+        ident = _plan_id(line["id"], f"{at}.id")
+        if ident in seen:
+            raise ConfigError(f"{at}.id: repeats a finish line id")
+        seen.add(ident)
+        _text(line["label"], f"{at}.label", PLAN_LABEL)
+        _text(line["text"], f"{at}.text", PLAN_TEXT)
+        _plan_time(line["at"], f"{at}.at")
+        _plan_covers(line["covers"], f"{at}.covers", criteria, kinds)
+
+
+def validate_plan(value: object) -> dict:
+    """A `delivery-plan/1` document, unchanged, or a ConfigError naming the key path and echoing no value."""
+    plan = _plan_object(value, "", set(PLAN_KEYS), set(PLAN_REQUIRED))
+    if plan["schemaVersion"] != PLAN_SPEC:
+        raise ConfigError(f"schemaVersion: must be {PLAN_SPEC}")
+    _plan_time(plan["updated"], "updated")
+    outcome = _plan_object(plan["outcome"], "outcome", {"summary", "text"}, {"summary", "text"})
+    _text(outcome["summary"], "outcome.summary", PLAN_TEXT)
+    _text(outcome["text"], "outcome.text", PLAN_OUTCOME_TEXT)
+    lenses = _bounded(plan["requiredLenses"], "requiredLenses", PLAN_LIST)
+    for i, lens in enumerate(lenses):
+        _plan_id(lens, f"requiredLenses[{i}]")
+    kinds: dict[str, str] = {}
+    for i, kind in enumerate(_bounded(plan["proofKinds"], "proofKinds", PLAN_LIST)):
+        at = f"proofKinds[{i}]"
+        _plan_object(kind, at, {"id", "label", "source"}, {"id", "label", "source"})
+        ident = _plan_id(kind["id"], f"{at}.id")
+        if kind["source"] not in ("record", "producer"):
+            raise ConfigError(f"{at}.source: must be record or producer")
+        if kind["source"] == "record" and ident not in PLAN_RECORD_KINDS:
+            raise ConfigError(f"{at}.id: a record kind must be one of {', '.join(PLAN_RECORD_KINDS)}")
+        if ident in kinds:
+            raise ConfigError(f"{at}.id: repeats a proof kind")
+        _text(kind["label"], f"{at}.label", PLAN_LABEL)
+        kinds[ident] = kind["source"]
+    criteria = _plan_units(plan["units"], "units", kinds)
+    _plan_finish(plan["finish"], "finish", criteria, kinds)
+    approved = _plan_object(plan["approved"], "approved", {"at", "review", "snapshot"}, {"at", "snapshot"})
+    _plan_time(approved["at"], "approved.at")
+    if "review" in approved:
+        _text(approved["review"], "approved.review", PLAN_TEXT)
+    snapshot = _plan_object(approved["snapshot"], "approved.snapshot", {"units", "finish"}, {"units", "finish"})
+    frozen = _plan_units(snapshot["units"], "approved.snapshot.units", kinds)
+    _plan_finish(snapshot["finish"], "approved.snapshot.finish", frozen, kinds)
+    seen: set[str] = set()
+    for i, change in enumerate(_bounded(plan["changes"], "changes", PLAN_CHANGES)):
+        at = f"changes[{i}]"
+        _plan_object(change, at, {"id", "at", "kind", "subjects", "criteria", "by", "why", "title", "source", "ref",
+                             "before", "after"}, {"id", "at", "kind", "subjects", "by"})
+        ident = _plan_id(change["id"], f"{at}.id")
+        if ident in seen:
+            raise ConfigError(f"{at}.id: repeats a change id")
+        seen.add(ident)
+        _plan_time(change["at"], f"{at}.at")
+        if change["kind"] not in PLAN_CHANGE_KINDS:
+            raise ConfigError(f"{at}.kind: must be one of {', '.join(PLAN_CHANGE_KINDS)}")
+        for j, subject in enumerate(_bounded(change["subjects"], f"{at}.subjects", PLAN_UNITS)):
+            _text(subject, f"{at}.subjects[{j}]", PLAN_LABEL)
+        for j, ident in enumerate(_bounded(change.get("criteria", []), f"{at}.criteria", PLAN_CRITERIA)):
+            _plan_id(ident, f"{at}.criteria[{j}]")
+        _text(change["by"], f"{at}.by", PLAN_LABEL)
+        for key, cap in (("why", PLAN_TEXT), ("title", PLAN_TEXT), ("source", PLAN_LABEL), ("ref", PLAN_TEXT)):
+            if key in change:
+                _text(change[key], f"{at}.{key}", cap)
+        for key in ("before", "after"):
+            if key in change:
+                if isinstance(change[key], dict):
+                    _plan_object(change[key], f"{at}.{key}", {"criteria", "proofs"}, {"criteria", "proofs"})
+                    covered = change[key]["criteria"]
+                    if covered != "all":
+                        for j, ident in enumerate(_bounded(covered, f"{at}.{key}.criteria", PLAN_CRITERIA)):
+                            _plan_id(ident, f"{at}.{key}.criteria[{j}]")
+                    for j, kind in enumerate(_bounded(change[key]["proofs"], f"{at}.{key}.proofs", PLAN_LIST)):
+                        _plan_id(kind, f"{at}.{key}.proofs[{j}]")
+                else:
+                    _text(change[key], f"{at}.{key}", PLAN_TEXT)
+    owed = {unit["subject"]: set(unit["proofs"]) for unit in plan["units"]}
+    evidence = plan["evidence"]
+    if not isinstance(evidence, dict) or not all(isinstance(entry, dict) for entry in evidence.values()):
+        raise ConfigError("evidence: must map subjects to objects")
+    for subject in sorted(evidence):
+        at = _join("evidence", subject)
+        if subject not in owed:
+            raise ConfigError("evidence: names a subject that is no unit of the plan")
+        for kind in sorted(evidence[subject]):
+            if kinds.get(kind) != "producer" or kind not in owed[subject]:
+                raise ConfigError(f"{at}: names a kind that is no producer kind the unit owes")
+            spot = _join(at, kind)
+            entry = _plan_object(evidence[subject][kind], spot, {"state", "head", "at", "reason", "items"}, {"state"})
+            if entry["state"] not in ("done", "todo", "waived"):
+                raise ConfigError(f"{spot}.state: must be done, todo or waived")
+            if entry["state"] in ("done", "waived") and "head" not in entry:
+                raise ConfigError(f"{spot}.head: is required when the state is {entry['state']}")
+            if "head" in entry and (not isinstance(entry["head"], str) or not TREE.fullmatch(entry["head"])):
+                raise ConfigError(f"{spot}.head: must be a full commit id")
+            if entry["state"] == "waived" and "reason" not in entry:
+                raise ConfigError(f"{spot}.reason: is required when the state is waived")
+            if "reason" in entry:
+                _text(entry["reason"], f"{spot}.reason", PLAN_TEXT)
+            if "at" in entry:
+                _plan_time(entry["at"], f"{spot}.at")
+            for j, item in enumerate(_bounded(entry.get("items", []), f"{spot}.items", PLAN_LIST)):
+                _text(item, f"{spot}.items[{j}]", PLAN_LABEL)
+    for i, approval in enumerate(_bounded(plan.get("approvals", []), "approvals", PLAN_LIST)):
+        at = f"approvals[{i}]"
+        _plan_object(approval, at, {"text", "state", "who"}, {"text", "state"})
+        _text(approval["text"], f"{at}.text", PLAN_TEXT)
+        if approval["state"] not in ("done", "waiting"):
+            raise ConfigError(f"{at}.state: must be done or waiting")
+        if "who" in approval:
+            _text(approval["who"], f"{at}.who", PLAN_LABEL)
+    for i, text in enumerate(_bounded(plan.get("outOfScope", []), "outOfScope", PLAN_LIST)):
+        _text(text, f"outOfScope[{i}]", PLAN_TEXT)
+    return plan
+
+
+def read_plan(path: Path) -> dict:
+    """The validated plan at `path`. A file over 1 MiB is refused unread; nothing from the file is echoed."""
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        raise ConfigError(f"{path}: doesn't exist") from None
+    except OSError:
+        raise ConfigError(f"{path}: couldn't be read") from None
+    if size > PLAN_LIMIT_BYTES:
+        raise ConfigError(f"{path}: holds {size} bytes, over the 1 MiB a plan may hold")
+    try:
+        data = path.read_bytes()
+    except OSError:
+        raise ConfigError(f"{path}: couldn't be read") from None
+    try:
+        value = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ConfigError(f"{path}: isn't JSON (at line {getattr(error, 'lineno', '?')})") from None
+    except RecursionError:
+        raise ConfigError(f"{path}: nests too deeply to read") from None
+    return validate_plan(value)
+
+
 # Command line
 
 
@@ -677,7 +921,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     add_input_arguments(commands.add_parser("check", help="validate the configuration and binding"))
+    checking = commands.add_parser("check-plan", help=f"validate a {PLAN_SPEC} file, as the line map reads it")
+    checking.add_argument("plan", help="the plan file, usually <state directory>/plan.json")
     args = parser.parse_args(argv)
+    if args.command == "check-plan":
+        try:
+            plan = read_plan(Path(args.plan))
+        except ConfigError as error:
+            print(f"delivery-views: {error}", file=sys.stderr)
+            return 2
+        print(json.dumps({"ok": True, "plan": args.plan, "units": len(plan["units"]),
+                          "criteria": sum(len(unit["criteria"]) for unit in plan["units"])}, indent=2))
+        return 0
     try:
         inputs = load_inputs(args.config, args.binding, state_dir=args.state_dir)
     except ConfigError as error:

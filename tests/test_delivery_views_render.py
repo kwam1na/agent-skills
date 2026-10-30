@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import threading
 import time
@@ -634,6 +635,243 @@ class RendererTests(unittest.TestCase):
         self.assertNotIn(" ", page)
         self.assertEqual(block(page, "delivery-state")["state"]["meta"]["headline"], hostile)
         self.assertIn("<title>&lt;/script&gt;&lt;img", page)
+
+
+
+def plan_document(changes: int = 2, text: str = "Because the operator asked.") -> dict:
+    """A valid delivery-plan/1 document with `changes` changes, oldest first."""
+    unit = {"subject": "PAY-1", "title": "Pay", "criteria": [{"id": "AC1", "text": "It pays."}],
+            "proofs": ["review", "merged"]}
+    finish = [{"id": "acs", "label": "Criteria", "text": "Every criterion is proven", "at": "2026-10-30T10:00:00Z",
+               "covers": {"criteria": "all", "proofs": ["review"]}}]
+    return {
+        "schemaVersion": "delivery-plan/1", "updated": "2026-10-30T12:00:00Z",
+        "outcome": {"summary": "Payments work.", "text": "Every payment goes through."},
+        "requiredLenses": ["lens.outcome-correctness"],
+        "proofKinds": [{"id": "review", "label": "Review", "source": "record"},
+                       {"id": "merged", "label": "Merged", "source": "record"}],
+        "units": [unit], "finish": finish,
+        "approved": {"at": "2026-10-30T09:00:00Z", "snapshot": {"units": [unit], "finish": finish}},
+        "changes": [{"id": f"c{index}", "at": f"2026-10-30T11:{index // 60:02d}:{index % 60:02d}Z", "kind": "changed",
+                     "subjects": ["PAY-1"], "by": "the operator", "why": text, "title": text, "source": "log",
+                     "ref": "https://tracker.test/PAY-1", "before": text, "after": text} for index in range(changes)],
+        "evidence": {},
+    }
+
+
+class PlanRenderTests(unittest.TestCase):
+    """The line map embeds the plan chapter's input as C3 and C10 say: nothing without it, one line for a file it
+    can't trust, and a valid plan within its share."""
+
+    def setUp(self) -> None:
+        self.folder = tempfile.TemporaryDirectory()
+        self.root = Path(self.folder.name)
+        self.runs = Runs(self.root)
+        self.repository = Repository(self.root, {"spec": views_common.CONFIG_SPEC,
+                                                 "runs": {"argv": self.runs.argv, "timeoutSeconds": 5}})
+        self.runs.answer(table([LISTED], {"run-7": VIEW}))
+        (self.root / "state").mkdir()
+        self.plan_path = self.root / "state" / "plan.json"
+
+    def tearDown(self) -> None:
+        self.folder.cleanup()
+
+    def page(self) -> str:
+        result = self.repository.render(document_naming(["run-7"]))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.decode("utf-8")
+
+    def test_without_a_plan_the_page_has_no_plan_block(self) -> None:
+        page = self.page()
+        # The page script looks the block up by its id; the page itself carries no block, and no plan.
+        self.assertNotIn('id="delivery-plan"', page)
+        self.assertIsNone(block(page, "delivery-plan"))
+        self.assertEqual(render.render_line_map({"state": {}}, {}, config(), theme_key="k", history=None),
+                         render.render_line_map({"state": {}}, {}, config(), theme_key="k", history=None, plan=None))
+
+    def test_an_unreadable_plan_renders_as_if_absent_plus_one_line_naming_the_key_path(self) -> None:
+        self.page()  # the first render fills the runs cache; compare cached pages with cached pages
+        absent = self.page()
+        secret = "SENTINEL-not-to-be-echoed"
+        broken = plan_document()
+        broken["units"][0][secret] = secret
+        cases = {
+            "an unknown key": (json.dumps(broken), "units[0]: holds an unknown key"),
+            "not JSON": ("{" + secret, "plan.json: isn't JSON"),
+            "over 1 MiB": (" " * (views_common.PLAN_LIMIT_BYTES + 1), "plan.json: holds"),
+            "a dangling link": (None, "plan.json: doesn't exist"),
+        }
+        for name, (content, opening) in cases.items():
+            with self.subTest(case=name):
+                self.plan_path.unlink(missing_ok=True)
+                if content is None:
+                    self.plan_path.symlink_to(self.root / "nowhere.json")
+                else:
+                    self.plan_path.write_text(content, encoding="utf-8")
+                page = self.page()
+                self.assertEqual(block(page, "delivery-plan"), {"unreadable": block(page, "delivery-plan")["unreadable"]})
+                message = block(page, "delivery-plan")["unreadable"]
+                self.assertTrue(message.startswith(opening), message)
+                self.assertNotIn(secret, page)
+                self.assertNotIn(str(self.root), message)
+                # Everything else is as if there were no plan.
+                self.assertEqual(re.sub(r'<script type="application/json" id="delivery-plan">[^<]*</script>\n', "", page),
+                                 absent)
+
+    def test_a_valid_plan_is_embedded_whole_and_takes_its_share_from_the_runs(self) -> None:
+        plan = plan_document()
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        page = self.page()
+        self.assertEqual(block(page, "delivery-plan"), {"plan": plan})
+        self.assertEqual(render.PLAN_SHARE_BYTES, 512 * 1024)
+        # Runs that fit the page alone, but not beside the plan's share: the oldest stop's run gives way.
+        big = "x" * (1200 * 1024)
+        runs = {f"run-{index}": {"runId": f"run-{index}", "note": big} for index in range(3)}
+        document = {"state": {"queue": [{"subject": f"PAY-{index}", "runId": f"run-{index}"} for index in range(3)]}}
+        without = block(render.render_line_map(document, runs, config(), theme_key="k", history=None), "delivery-runs")
+        self.assertFalse(any(run.get("unavailable") for run in without.values()))
+        within = block(render.render_line_map(document, runs, config(), theme_key="k", history=None,
+                                              plan=render.plan_block(plan)), "delivery-runs")
+        # A plan that can't be read leaves the runs as if there were none.
+        unreadable = block(render.render_line_map(document, runs, config(), theme_key="k", history=None,
+                                                  plan={"unreadable": "plan.json: isn't JSON (at line 1)"}),
+                           "delivery-runs")
+        self.assertEqual(unreadable, without)
+        self.assertTrue(within["run-0"].get("unavailable"))
+        self.assertFalse(within["run-2"].get("unavailable"))
+
+    def test_an_oversized_plan_is_clipped_oldest_changes_first_within_its_share_and_says_so(self) -> None:
+        plan = plan_document(changes=500, text="t" * 400)
+        self.assertGreater(len(render.embed(plan).encode("utf-8")), render.PLAN_SHARE_BYTES)
+        self.assertLessEqual(len(json.dumps(plan).encode("utf-8")), views_common.PLAN_LIMIT_BYTES)
+        embedded = render.plan_block(plan)
+        self.assertLessEqual(len(render.embed(embedded).encode("utf-8")), render.PLAN_SHARE_BYTES)
+        kept = embedded["plan"]
+        # The snapshot and every count are kept.
+        self.assertEqual(kept["approved"], plan["approved"])
+        self.assertEqual([c["id"] for c in kept["changes"]], [c["id"] for c in plan["changes"]])
+        self.assertEqual(kept["units"], plan["units"])
+        self.assertEqual(kept["finish"], plan["finish"])
+        # The oldest changes lost their text first; the newest kept theirs.
+        clipped = [c["id"] for c in kept["changes"] if c.get("clipped")]
+        self.assertEqual(clipped, [c["id"] for c in plan["changes"][:len(clipped)]])
+        self.assertTrue(clipped)
+        self.assertEqual(kept["changes"][-1], plan["changes"][-1])
+        for change in kept["changes"][:len(clipped)]:
+            self.assertEqual({k: change[k] for k in ("why", "title", "source", "ref", "before", "after")},
+                             {"why": "", "title": "", "source": "", "ref": "", "before": "", "after": ""})
+        self.assertEqual(embedded["clipped"], {"changes": len(clipped), "texts": 0})
+        # Whatever the text length, the block fits its share or says it doesn't.
+        for length in (373, 401, 450, 520, 600):
+            for changes in (300, 420, 500):
+                with self.subTest(length=length, changes=changes):
+                    plan = plan_document(changes=changes, text="t" * length)
+                    if len(json.dumps(plan).encode("utf-8")) > views_common.PLAN_LIMIT_BYTES:
+                        continue
+                    embedded = render.plan_block(plan)
+                    # Only change text is over, and clipping it is enough: the block fits, and says nothing else.
+                    self.assertLessEqual(len(render.embed(embedded).encode("utf-8")), render.PLAN_SHARE_BYTES)
+                    self.assertEqual(set(embedded.get("clipped", {"changes": 0, "texts": 0})), {"changes", "texts"})
+        # Oldest first by time, a fractional second included.
+        plan = plan_document(changes=2, text="t" * 400)
+        plan["changes"][0]["at"], plan["changes"][1]["at"] = "2026-10-30T11:00:00.5Z", "2026-10-30T11:00:00Z"
+        embedded = render.plan_block(plan, share=len(render.embed({"plan": plan}).encode("utf-8")) - 100)
+        self.assertEqual([c.get("clipped", False) for c in embedded["plan"]["changes"]], [False, True])
+        # Oldest by time, not by position: the last change in the list is the earliest.
+        plan = plan_document(changes=500, text="t" * 400)
+        plan["changes"][-1]["at"] = "2026-10-29T00:00:00Z"
+        clipped_ids = {c["id"] for c in render.plan_block(plan)["plan"]["changes"] if c.get("clipped")}
+        self.assertIn(plan["changes"][-1]["id"], clipped_ids)
+        self.assertNotIn(plan["changes"][-2]["id"], clipped_ids)
+        plan = plan_document(changes=500, text="t" * 400)
+        embedded = render.plan_block(plan)
+        # On the page, too.
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        self.assertEqual(block(self.page(), "delivery-plan"), embedded)
+
+    def test_past_the_changes_other_text_outside_the_snapshot_is_clipped_and_the_snapshot_never(self) -> None:
+        plan = plan_document(changes=0)
+        plan["units"] = [{"subject": f"PAY-{index}", "title": "t" * 300,
+                          "criteria": [{"id": f"AC{index}-{n}", "text": "c" * 500} for n in range(5)],
+                          "proofs": ["review"]} for index in range(200)]
+        embedded = render.plan_block(plan)
+        self.assertLessEqual(len(render.embed(embedded).encode("utf-8")), render.PLAN_SHARE_BYTES)
+        self.assertGreater(embedded["clipped"]["texts"], 0)
+        self.assertNotIn("overShare", embedded["clipped"])
+        kept = embedded["plan"]
+        self.assertEqual([[c["id"] for c in u["criteria"]] for u in kept["units"]],
+                         [[c["id"] for c in u["criteria"]] for u in plan["units"]])
+        self.assertEqual(kept["approved"], plan["approved"])
+        self.assertEqual(kept["outcome"]["summary"], plan["outcome"]["summary"])
+        # A snapshot over the share on its own is kept whole; the block says it is over, and the page gives it room.
+        plan = plan_document(changes=0)
+        plan["approved"]["snapshot"]["units"] = [{"subject": f"PAY-{index}", "title": "t",
+                                                  "criteria": [{"id": f"AC{index}-{n}", "text": "c" * 560}
+                                                               for n in range(5)], "proofs": ["review"]}
+                                                 for index in range(200)]
+        embedded = render.plan_block(plan)
+        self.assertEqual(embedded["plan"]["approved"], plan["approved"])
+        self.assertTrue(embedded["clipped"]["overShare"])
+        size = len(render.embed(embedded).encode("utf-8"))
+        self.assertGreater(size, render.PLAN_SHARE_BYTES)
+        page = render.render_line_map({"state": {}}, {}, config(), theme_key="k", history=None, plan=embedded)
+        self.assertEqual(block(page, "delivery-plan"), embedded)
+        # Runs that fit beside a 512 KiB share, but not beside this block: the page still keeps its budget.
+        each = (render.PAGE_BUDGET_BYTES - 2 - render.PLAN_SHARE_BYTES - 4096) // 3 - 64
+        runs = {f"run-{index}": {"runId": f"run-{index}", "note": "x" * each} for index in range(3)}
+        document = {"state": {"queue": [{"subject": f"PAY-{index}", "runId": f"run-{index}"} for index in range(3)]}}
+        page = render.render_line_map(document, runs, config(), theme_key="k", history=None, plan=embedded)
+        kept = block(page, "delivery-runs")
+        self.assertTrue(kept["run-0"].get("unavailable"))
+        self.assertLessEqual(len(render.embed(kept).encode("utf-8")) + size, render.PAGE_BUDGET_BYTES)
+
+    def test_every_share_across_the_clipping_boundaries_is_met_exactly(self) -> None:
+        # Shares a few bytes apart, between all-clipped and nothing-clipped: the running count and the note's cost
+        # must be exact enough that the block always fits, and never claims it doesn't.
+        plan = plan_document(changes=40, text="t" * 400)
+        floor = len(render.embed(render.plan_block(plan, share=0)).encode("utf-8"))
+        whole = len(render.embed({"plan": plan}).encode("utf-8"))
+        for share in range(floor, whole, 7):
+            embedded = render.plan_block(plan, share=share)
+            self.assertLessEqual(len(render.embed(embedded).encode("utf-8")), share, share)
+            self.assertNotIn("overShare", embedded.get("clipped", {}), share)
+
+    def test_the_second_pass_clips_the_least_needed_text_first_and_never_the_summary(self) -> None:
+        plan = plan_document(changes=0)
+        plan["proofKinds"].append({"id": "in-app", "label": "In-app", "source": "producer"})
+        plan["units"] = [{"subject": f"PAY-{index}", "title": "T" * 500,
+                          "criteria": [{"id": f"AC{index}-{n}", "text": "c" * 500} for n in range(2)],
+                          "proofs": ["review", "in-app"]} for index in range(40)]
+        plan["evidence"] = {f"PAY-{index}": {"in-app": {"state": "waived", "head": "a" * 40, "reason": "r" * 500}}
+                            for index in range(40)}
+        plan["approvals"] = [{"text": "a" * 500, "state": "waiting"} for _ in range(40)]
+        plan["finish"] = [{**plan["finish"][0], "id": f"f{index}", "text": "f" * 500} for index in range(30)]
+        plan["finish"][0]["covers"] = {"criteria": "all", "proofs": ["review"]}
+        plan["outcome"]["text"] = "o" * 2000
+        plan["outOfScope"] = ["s" * 500 for _ in range(40)]
+        whole = len(render.embed({"plan": plan}).encode("utf-8"))
+        texts = lambda kept: {
+            "reasons": [e["in-app"]["reason"] for e in kept["evidence"].values()],
+            "approvals": [a["text"] for a in kept["approvals"]], "finish": [f["text"] for f in kept["finish"]],
+            "criteria": [c["text"] for u in kept["units"] for c in u["criteria"]],
+            "titles": [u["title"] for u in kept["units"]], "outcome": [kept["outcome"]["text"]],
+            "outOfScope": kept["outOfScope"]}
+        # Partway: reasons, approvals and finish texts go, then some criteria; titles, outcome and outOfScope stay.
+        kept = texts(render.plan_block(plan, share=whole - 120 * 520)["plan"])
+        for name in ("reasons", "approvals", "finish"):
+            self.assertEqual(set(kept[name]), {""}, name)
+        self.assertIn("", kept["criteria"])
+        self.assertIn("c" * 500, kept["criteria"])
+        for name in ("titles", "outcome", "outOfScope"):
+            self.assertNotIn("", kept[name], name)
+        # All the way: everything but the summary, the ids and the snapshot.
+        embedded = render.plan_block(plan, share=1024)
+        kept = texts(embedded["plan"])
+        for name, values in kept.items():
+            self.assertEqual(set(values), {""}, name)
+        self.assertEqual(embedded["plan"]["outcome"]["summary"], plan["outcome"]["summary"])
+        self.assertEqual(embedded["plan"]["approved"], plan["approved"])
+        self.assertTrue(embedded["clipped"]["overShare"])
 
 
 if __name__ == "__main__":

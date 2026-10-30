@@ -1,6 +1,6 @@
 {
   "expectedLifecycleScenarioCount": 30,
-  "expectedScenarioCount": 15,
+  "expectedScenarioCount": 16,
   "lifecycleScenarios": [
     {
       "id": "activation-boundary-fault-recovery",
@@ -548,6 +548,15 @@
       "id": "delivery-views-profile-selects-delivery-views",
       "profile": "delivery-views",
       "skill": "delivery-views"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "run-delivery-profile-selects-run-delivery",
+      "profile": "run-delivery",
+      "skill": "run-delivery"
     }
   ],
   "schemaVersion": "agent-skills-validation-inventory/1"

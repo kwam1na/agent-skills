@@ -114,6 +114,15 @@
     return isObject(target) && typeof target.label === "string" && typeof target.href === "string" ? target : null;
   }
   function pageTitle() { return typeof VIEW.title === "string" && VIEW.title ? VIEW.title : "Delivery"; }
+  // The delivery's plan, as the renderer validated and embedded it: { plan, clipped? }, or { unreadable } naming the key
+  // path that failed. With no block the page has no plan chapter at all.
+  var PLAN = null;
+  var planBlock = document.getElementById("delivery-plan");
+  if (planBlock) {
+    try { PLAN = JSON.parse(planBlock.textContent); } catch (error) { PLAN = null; }
+    if (!isObject(PLAN) || (!isObject(PLAN.plan) && typeof PLAN.unreadable !== "string")) { PLAN = { unreadable: "" }; }
+  }
+  var plan = PLAN && isObject(PLAN.plan) ? PLAN.plan : null;
   function changeLink(changeRequest) {
     var target = changeTarget(changeRequest);
     if (!target) { return el("span", "pr-num", text(changeRequest)); }
@@ -214,6 +223,8 @@
 
   // The chapters are built once; each draw fills them.
   var CHAPTERS = [["now", "Now"], ["line", "The line"], ["who", "Who"], ["left", "What's left"], ["happened", "What happened"], ["parked", "Parked"]];
+  // The plan sits after the work ahead and before the history, and only when the renderer embedded one.
+  if (PLAN) { CHAPTERS.splice(4, 0, ["plan", "The plan"]); }
   var parts = Object.create(null);
   var rail = el("nav", "rail");
   rail.setAttribute("aria-label", "Chapters");
@@ -479,6 +490,8 @@
     var nodes = [kicker, title];
     var status = sayLine(doc, all);
     if (status) { nodes.push(el("p", "say", status)); }
+    var planLine = planNow(doc);
+    if (planLine) { nodes.push(planLine); }
     var panel = checkingPanel(doc, all);
     if (panel) { nodes.push(panel); }
     var needs = attention(doc);
@@ -987,6 +1000,8 @@
     if (timeline) { nodes.push(timeline); }
     var history = historyFor(doc, item);
     if (history) { nodes.push(history); }
+    var inPlan = planStop(doc, subject);
+    if (inPlan) { nodes.push(inPlan); }
     detail.replaceChildren.apply(detail, nodes);
     // A new piece's panel grows or shrinks to its height smoothly; a live redraw of the same piece does not move.
     if (switched && from) { runEaseHeight(detail, from); }
@@ -1199,7 +1214,11 @@
       nodes.push(groups);
     }
     var finish = list(doc.state.finish).filter(isObject);
-    if (finish.length) {
+    // With a plan, its meters take the list's place and show every line the record has.
+    var meters = plan ? planMeters(doc) : null;
+    if (meters) {
+      nodes.push(el("div", "kicker", "The finish line"), meters);
+    } else if (finish.length) {
       var after = el("div", "after");
       var first = true;
       finish.forEach(function (line) {
@@ -1213,6 +1232,542 @@
     inner.replaceChildren.apply(inner, nodes);
     prev.open = open.length;
     prev.dots = nowOpen;
+  }
+
+  /* The plan: is the work still what was agreed, and what proves it? */
+  // Proofs are derived from each record the page draws, by the same lookups The line uses; the plan itself is fixed at
+  // render. Every unit, row and fold is found through these maps, never through a selector built from plan text.
+  var planFolds = Object.create(null);
+  var planAsApproved = false;
+  var planRows = Object.create(null);
+  var FOLD_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":plan-folds";
+  try {
+    list(JSON.parse(localStorage.getItem(FOLD_KEY) || "[]")).forEach(function (name) { if (typeof name === "string") { planFolds[name] = true; } });
+  } catch (error) { /* folds start closed and are remembered until the page reloads */ }
+  function rememberFolds() {
+    try { localStorage.setItem(FOLD_KEY, JSON.stringify(Object.keys(planFolds).filter(function (name) { return planFolds[name]; }))); }
+    catch (error) { /* remembered until the page reloads */ }
+  }
+  function own(holder, key) { return isObject(holder) && Object.prototype.hasOwnProperty.call(holder, key) ? holder[key] : undefined; }
+  function planUnits(units) { return list(units).filter(isObject); }
+  function liveUnits() { return planUnits(plan.units).filter(function (unit) { return unit.removed !== true; }); }
+  function kindsOf() { return list(plan.proofKinds).filter(isObject); }
+  function kindLabel(id) { var kind = kindsOf().filter(function (entry) { return entry.id === id; })[0]; return kind ? text(kind.label) || text(id) : text(id); }
+  function kindSource(id) { var kind = kindsOf().filter(function (entry) { return entry.id === id; })[0]; return kind ? kind.source : null; }
+  function unitName(unit) { return text(unit.label) || text(unit.subject); }
+  function queueItem(doc, subject) {
+    return list(doc.state.queue).filter(function (item) { return isObject(item) && subjectOf(item) === subject; })[0] || null;
+  }
+  // A lens verdict keyed by the lens's id, or by the name the configuration gives it.
+  function verdictOf(verdicts, lens) {
+    if (!isObject(verdicts)) { return undefined; }
+    var named = isObject(VIEW.lenses) && isObject(own(VIEW.lenses, lens)) ? text(own(VIEW.lenses, lens).name) : "";
+    var found = own(verdicts, lens);
+    return found !== undefined ? found : named ? own(verdicts, named) : undefined;
+  }
+  function approves(verdicts) {
+    var required = list(plan.requiredLenses).map(text);
+    if (!required.length) {
+      var words = isObject(verdicts) ? Object.keys(verdicts).map(function (key) { return verdicts[key]; }) : [];
+      return words.length > 0 && words.every(function (word) { return word === "approve"; });
+    }
+    return required.every(function (lens) { return verdictOf(verdicts, lens) === "approve"; });
+  }
+  function laterThan(at, than) { var a = seconds(at), b = seconds(than); return a !== null && (b === null || a > b); }
+
+  /**
+   * The unit's review, from the first source that applies: its run's latest round, an available review observation
+   * of the queue head, then the journal's rounds. A round that names no candidate counts only after the hand-off
+   * before the current one. { state: done | stale | open | none, at } with `at` the approving round's time.
+   */
+  function reviewProof(doc, subject, item) {
+    var handed = journalFor(doc, subject, { "candidate.handed": true });
+    var boundary = handed.length > 1 ? handed[handed.length - 2] : null;
+    var journaled = journalFor(doc, subject, { "review.round": true }).filter(function (entry) { return isObject(entry.review); });
+    var overlay = Object.create(null);
+    journaled.forEach(function (entry) { if (isObject(entry.review.verdicts)) { overlay[entry.review.round] = entry.review.verdicts; } });
+    function judged(approved, current, at) {
+      if (current) { return approved ? { state: "done", at: at } : { state: "open", at: null }; }
+      return approved ? { state: "stale", at: null } : { state: "open", at: null };
+    }
+    if (item && typeof item.runId === "string" && item.runId) {
+      var summary = own(runs, item.runId);
+      var rounds = isObject(summary) && summary.unavailable !== true ? list(summary.roundDetail).filter(isObject) : [];
+      if (rounds.length) {
+        var last = rounds[rounds.length - 1];
+        var verdicts = isObject(last.verdicts) && Object.keys(last.verdicts).length ? last.verdicts : overlay[last.round];
+        var approved = verdicts ? approves(verdicts) : last.outcome === "approve" && !list(plan.requiredLenses).length;
+        if (typeof last.candidateRef === "string" && last.candidateRef) { return judged(approved, last.candidateRef === item.head, last.at); }
+        return judged(approved, !boundary || laterThan(last.at, boundary.at), last.at);
+      }
+    }
+    var native = own(nativeReviews, subject);
+    var observed = isObject(doc.reviewEvidence) ? own(doc.reviewEvidence, subject) : undefined;
+    if (item && isObject(native) && native.unavailable !== true && native.candidateRef === item.head
+        && (!isObject(doc.reviewEvidence) || (isObject(observed) && observed.unavailable !== true && observed.digest === native.digest))) {
+      var detail = list(native.roundDetail).filter(isObject);
+      var final = detail[detail.length - 1];
+      var captured = journalFor(doc, subject, { "review.evidence": true }).pop();
+      if (final) { return judged(final.outcome === "approve" && approves(final.verdicts), true, captured ? captured.at : null); }
+    }
+    if (journaled.length) {
+      var latest = journaled[journaled.length - 1];
+      return judged(approves(latest.review.verdicts), !boundary || (latest.id || 0) > (boundary.id || 0), text(latest.review.finishedAt) || latest.at);
+    }
+    return { state: "none", at: null };
+  }
+
+  /** One owed proof of a unit: { state: done | waived | stale | open | todo | none, words, reason? }. */
+  function proofOf(doc, unit, kind) {
+    var subject = text(unit.subject);
+    var item = queueItem(doc, subject);
+    if (kindSource(kind) === "producer") {
+      var entry = own(own(plan.evidence, subject), kind);
+      if (!isObject(entry) || entry.state === "todo") { return { state: "todo", words: "to do" }; }
+      if (item && entry.head !== item.head) { return { state: "stale", words: "for another head" }; }
+      return entry.state === "waived" ? { state: "waived", words: "waived", reason: text(entry.reason) } : { state: "done", words: "done" };
+    }
+    if (kind === "handed") {
+      if (!item) { return { state: "open", words: "not handed off yet" }; }
+      if (item.stage === "stopped") { return { state: "open", words: "stopped" }; }
+      if (item.pending === true) { return { state: "open", words: "waiting for the lead to accept" }; }
+      return { state: "done", words: "done" };
+    }
+    if (kind === "merged") {
+      return item && item.stage === "merged" ? { state: "done", words: "done" } : { state: "open", words: "not merged yet" };
+    }
+    var review = reviewProof(doc, subject, item);
+    var words = { done: "approved", stale: "approved for another head", open: "not approved yet", none: "not recorded" };
+    return { state: review.state, words: words[review.state], at: review.at };
+  }
+
+  /** Every unit's proofs, and whether it is proven: every owed proof done or waived, none stale. */
+  function planProofs(doc, units) {
+    var proofs = Object.create(null);
+    units.forEach(function (unit) {
+      var subject = text(unit.subject);
+      var owed = list(unit.proofs).map(text);
+      var states = Object.create(null);
+      kindsOf().forEach(function (kind) { states[kind.id] = proofOf(doc, unit, kind.id); });
+      var proven = owed.every(function (kind) { return states[kind].state === "done" || states[kind].state === "waived"; });
+      var waived = owed.some(function (kind) { return states[kind].state === "waived"; });
+      var next = owed.filter(function (kind) { return states[kind].state !== "done" && states[kind].state !== "waived"; })[0] || null;
+      proofs[subject] = { unit: unit, owed: owed, states: states, proven: proven, waived: waived, next: next,
+        handed: Boolean(queueItem(doc, subject)), review: states.review || proofOf(doc, unit, "review") };
+    });
+    return proofs;
+  }
+
+  /** N of M criteria proven, W of them by waiver, over the units not removed. */
+  function planCounts(doc) {
+    var units = liveUnits();
+    var proofs = planProofs(doc, units);
+    var counts = { proven: 0, total: 0, waived: 0, proofs: proofs, units: units };
+    units.forEach(function (unit) {
+      var size = list(unit.criteria).length;
+      var proof = proofs[text(unit.subject)];
+      counts.total += size;
+      if (proof.proven) { counts.proven += size; if (proof.waived) { counts.waived += size; } }
+    });
+    return counts;
+  }
+  function baseBroken(doc) {
+    var events = list(doc.journal).filter(function (entry) { return isObject(entry) && (entry.kind === "base.broken" || entry.kind === "base.repaired"); });
+    return events.length > 0 && events[events.length - 1].kind === "base.broken";
+  }
+  function planTitle(doc, counts) {
+    var waiver = counts.waived ? ", " + counts.waived + " by waiver" : "";
+    if (counts.total && counts.proven === counts.total && !baseBroken(doc)) { return "Every criterion is proven" + waiver + "."; }
+    return counts.proven + " of " + counts.total + " criteria proven" + waiver + ".";
+  }
+  function timesChanged(count) { return "plan changed " + count + (count === 1 ? " time" : " times"); }
+
+  /** The line under Now's headline: the outcome, and how much of the plan is proven. */
+  function planNow(doc) {
+    if (!plan) { return null; }
+    var counts = planCounts(doc);
+    var link = el("a", "plan-now-link", counts.proven + " of " + counts.total + " criteria proven · " + timesChanged(list(plan.changes).length));
+    link.setAttribute("href", "#plan");
+    return add(el("p", "plan-now"), el("span", "plan-now-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")), " ", link);
+  }
+
+  /** The criteria a finish line covers, or null when it covers proofs only, over every unit. */
+  function coveredCriteria(units, covers) {
+    var criteria = [];
+    units.forEach(function (unit) { list(unit.criteria).filter(isObject).forEach(function (criterion) { criteria.push({ id: criterion.id, unit: unit }); }); });
+    if (!isObject(covers) || covers.criteria === "all") { return criteria; }
+    var named = list(covers.criteria);
+    if (!named.length) { return null; }
+    return criteria.filter(function (criterion) { return named.indexOf(criterion.id) >= 0; });
+  }
+  /** A finish line's meter: the share whose covered proofs are done, then the share done or waived. */
+  function meter(counts, line, recordLine) {
+    var box = el("div", "plan-meter" + (recordLine && recordLine.met === true ? " met" : ""));
+    var label = line ? text(line.label) || text(line.id) : text(recordLine.text) || text(recordLine.id);
+    var head = add(el("div", "pm-head"), el("span", "pm-label", label), el("span", "pm-state", recordLine && recordLine.met === true ? "Met" : "Not met"));
+    var done = 0, either = 0, total = 0, noun = "criteria";
+    if (line) {
+      var kinds = list(isObject(line.covers) ? line.covers.proofs : []).map(text);
+      var settled = function (unit, waivedToo) {
+        var proof = counts.proofs[text(unit.subject)];
+        if (!kinds.length) { return proof.proven && (waivedToo || !proof.waived); }
+        // A kind the unit does not owe is settled for it, so the meter and the title agree.
+        return kinds.every(function (kind) {
+          if (proof.owed.indexOf(kind) < 0) { return true; }
+          var state = proof.states[kind].state;
+          return state === "done" || (waivedToo && state === "waived");
+        });
+      };
+      var covered = coveredCriteria(counts.units, line.covers);
+      var rows = covered === null ? counts.units : covered.map(function (criterion) { return criterion.unit; });
+      if (covered === null) { noun = "units"; }
+      total = rows.length;
+      done = rows.filter(function (unit) { return settled(unit, false); }).length;
+      either = rows.filter(function (unit) { return settled(unit, true); }).length;
+    }
+    var bar = el("div", "pm-bar");
+    var full = el("i", "pm-done");
+    var waived = el("i", "pm-waived");
+    full.style.width = (total ? done / total * 100 : 0) + "%";
+    waived.style.width = (total ? (either - done) / total * 100 : 0) + "%";
+    add(bar, full, waived);
+    var words = line ? done + " of " + total + " " + noun + (either > done ? ", " + (either - done) + " more by waiver" : "") : "Not in the plan";
+    return add(box, head, bar, el("div", "pm-count", words));
+  }
+  /** One meter per finish line: the plan's, in order, then any the record has that the plan does not. */
+  function planMeters(doc) {
+    if (!plan) { return null; }
+    var counts = planCounts(doc);
+    var record = list(doc.state.finish).filter(isObject);
+    var lines = list(plan.finish).filter(isObject);
+    var row = el("div", "plan-meters");
+    lines.forEach(function (line) { row.appendChild(meter(counts, line, record.filter(function (entry) { return entry.id === line.id; })[0] || null)); });
+    record.filter(function (entry) { return !lines.some(function (line) { return line.id === entry.id; }); })
+      .forEach(function (entry) { row.appendChild(meter(counts, null, entry)); });
+    return row.children.length ? row : null;
+  }
+
+  /** The criteria a change touched: the ones it names, or every criterion of the units it added. */
+  function touchedCriteria(change) {
+    var named = list(change.criteria).map(text);
+    if (named.length || change.kind !== "added") { return named; }
+    var ids = [];
+    planUnits(plan.units).filter(function (unit) { return list(change.subjects).indexOf(unit.subject) >= 0; })
+      .forEach(function (unit) { list(unit.criteria).filter(isObject).forEach(function (criterion) { ids.push(criterion.id); }); });
+    return ids;
+  }
+  /** C7's flags, in order: each { title, why }. */
+  function planFlags(doc, counts) {
+    var flags = [];
+    var changes = list(plan.changes).filter(isObject);
+    var events = list(doc.journal).filter(function (entry) { return isObject(entry) && (entry.kind === "base.broken" || entry.kind === "base.repaired"); });
+    if (baseBroken(doc)) { flags.push({ title: "The base is broken", why: text(events[events.length - 1].summary) || "No reason recorded." }); }
+    var known = Object.create(null);
+    planUnits(plan.units).forEach(function (unit) { known[text(unit.subject)] = true; });
+    var stray = [];
+    list(doc.state.queue).concat(list(doc.state.planned)).filter(isObject).forEach(function (item) {
+      var subject = subjectOf(item);
+      if (subject && !known[subject] && stray.indexOf(subject) < 0) { stray.push(subject); }
+    });
+    if (stray.length) { flags.push({ title: "Work in the record isn't in the plan", why: stray.join(", ") }); }
+    var planIds = list(plan.finish).filter(isObject).map(function (line) { return text(line.id); });
+    var recordIds = list(doc.state.finish).filter(isObject).map(function (line) { return text(line.id); });
+    var onlyPlan = planIds.filter(function (id) { return recordIds.indexOf(id) < 0; });
+    var onlyRecord = recordIds.filter(function (id) { return planIds.indexOf(id) < 0; });
+    if (onlyPlan.length || onlyRecord.length) {
+      flags.push({ title: "The plan and the record disagree on finish lines", why: [onlyPlan.length ? "Only in the plan: " + onlyPlan.join(", ") : "",
+        onlyRecord.length ? "Only in the record: " + onlyRecord.join(", ") : ""].filter(Boolean).join(". ") });
+    }
+    var live = Object.create(null);
+    counts.units.forEach(function (unit) { list(unit.criteria).filter(isObject).forEach(function (criterion) { live[criterion.id] = true; }); });
+    list(plan.finish).filter(isObject).forEach(function (line) {
+      var named = isObject(line.covers) && Array.isArray(line.covers.criteria) ? line.covers.criteria : null;
+      if (!named || !named.length) { return; }
+      var missed = [];
+      changes.filter(function (change) { return (change.kind === "added" || change.kind === "changed" || change.kind === "relaxed") && laterThan(change.at, line.at); })
+        .forEach(function (change) {
+          touchedCriteria(change).forEach(function (id) { if (live[id] && named.indexOf(id) < 0 && missed.indexOf(id) < 0) { missed.push(id); } });
+        });
+      if (missed.length) { flags.push({ title: "A finish line no longer covers the plan", why: (text(line.label) || text(line.id)) + " omits " + missed.join(", ") }); }
+    });
+    var touched = [];
+    changes.filter(function (change) { return change.kind === "relaxed" || change.kind === "changed" || change.kind === "removed"; }).forEach(function (change) {
+      list(change.subjects).map(text).forEach(function (subject) {
+        var proof = counts.proofs[subject];
+        if (!proof || proof.proven || touched.indexOf(subject) >= 0) { return; }
+        if (proof.review.state === "done" && laterThan(proof.review.at, change.at)) { return; }
+        touched.push(subject);
+      });
+    });
+    if (touched.length) { flags.push({ title: "A change touches open work", why: touched.join(", ") }); }
+    // Clipping empties a reason that was there; a change that never had one still has none.
+    var unexplained = changes.filter(function (change) { return own(change, "why") === undefined || (change.clipped !== true && !text(change.why)); });
+    if (unexplained.length) {
+      flags.push({ title: unexplained.length === 1 ? "A change has no reason" : unexplained.length + " changes have no reason",
+        why: unexplained.map(function (change) { return text(change.title) || text(change.id); }).join(", ") });
+    }
+    var waivedOpen = counts.units.filter(function (unit) { var proof = counts.proofs[text(unit.subject)]; return !proof.proven && list(unit.proofs).some(function (kind) { return proof.states[kind].state === "waived"; }); });
+    if (waivedOpen.length) { flags.push({ title: "A waived proof on a unit not yet proven", why: waivedOpen.map(unitName).join(", ") }); }
+    return flags;
+  }
+  function flagList(flags) {
+    var box = el("div", "plan-needs");
+    if (!flags.length) { return add(box, el("p", "plan-calm", "Nothing in the plan needs you right now.")); }
+    var ul = el("ul");
+    flags.forEach(function (flag) {
+      ul.appendChild(add(el("li"), el("span", "g", "▲"), add(el("div"), el("div", "a1", flag.title), flag.why ? el("div", "a2", flag.why) : null)));
+    });
+    return add(box, el("div", "ah", "Needs you"), ul);
+  }
+
+  /** A proof as a labelled pill: the label shows on a phone, where the grid's column heads do not. */
+  function pill(proof, kind) {
+    var node = el("span", "plan-pill " + proof.state);
+    add(node, el("span", "pp-kind", kindLabel(kind)), el("span", "pp-state", proof.words));
+    return node;
+  }
+  function unitRow(proof, kinds, asApproved) {
+    var unit = proof.unit;
+    var row = el("div", "plan-unit" + (unit.removed === true ? " removed" : proof && proof.proven ? " proven" : ""));
+    var name = add(el("div", "pu-name"), issue(text(unit.subject), unitName(unit)), el("span", "pu-title", text(unit.title)));
+    if (unit.removed === true) { name.appendChild(el("span", "pu-removed", "Removed")); }
+    var criteria = el("ul", "pu-criteria");
+    list(unit.criteria).filter(isObject).forEach(function (criterion) { criteria.appendChild(add(el("li"), el("b", null, text(criterion.id)), " ", text(criterion.text))); });
+    var cells = el("div", "pu-proofs");
+    kinds.forEach(function (kind) {
+      if (list(unit.proofs).indexOf(kind.id) < 0) { cells.appendChild(el("span", "plan-pill none-owed")); return; }
+      cells.appendChild(asApproved && unit.removed === true ? el("span", "plan-pill none-owed") : pill(proof.states[kind.id], kind.id));
+    });
+    return add(row, name, criteria, cells);
+  }
+  /** A fold the reader opens; open folds are remembered for this page. */
+  function fold(name, label, count, body) {
+    var box = el("details", "plan-fold");
+    box.setAttribute("data-fold", name);
+    if (planFolds[name]) { box.open = true; }
+    var summary = el("summary", null, label);
+    if (count !== null) { summary.appendChild(el("span", "pf-count", String(count))); }
+    add(box, summary, body);
+    box.addEventListener("toggle", function () { planFolds[name] = box.open; rememberFolds(); });
+    return box;
+  }
+  /** Before and after as one text, with what was dropped struck and what was added marked, word by word. */
+  function redline(before, after) {
+    var a = text(before).split(/(\s+)/), b = text(after).split(/(\s+)/);
+    var table2 = [];
+    for (var i = a.length; i >= 0; i -= 1) {
+      table2[i] = [];
+      for (var j = b.length; j >= 0; j -= 1) {
+        table2[i][j] = i === a.length || j === b.length ? 0 : a[i] === b[j] ? table2[i + 1][j + 1] + 1 : Math.max(table2[i + 1][j], table2[i][j + 1]);
+      }
+    }
+    var box = el("div", "redline");
+    var x = 0, y = 0;
+    while (x < a.length || y < b.length) {
+      if (x < a.length && y < b.length && a[x] === b[y]) { box.appendChild(document.createTextNode(a[x])); x += 1; y += 1; }
+      else if (x < a.length && (y === b.length || table2[x + 1][y] >= table2[x][y + 1])) { box.appendChild(el("del", null, a[x])); x += 1; }
+      else { box.appendChild(el("ins", null, b[y])); y += 1; }
+    }
+    return box;
+  }
+  function coversText(covers) {
+    if (!isObject(covers)) { return text(covers); }
+    var criteria = covers.criteria === "all" ? "every criterion" : list(covers.criteria).length ? list(covers.criteria).join(", ") : "no criteria";
+    return criteria + "; proofs: " + (list(covers.proofs).length ? list(covers.proofs).map(kindLabel).join(", ") : "none");
+  }
+  var CHANGE_WORDS = table({ added: "Added", removed: "Removed", relaxed: "Relaxed", changed: "Changed", finish: "Finish line" });
+  /** The scope over time: units in the plan from approval through each change. */
+  function scopeChart(changes) {
+    var svgNs = "http://www.w3.org/2000/svg";
+    var start = seconds(isObject(plan.approved) ? plan.approved.at : null);
+    var times = changes.map(function (change) { return seconds(change.at); }).filter(function (t) { return t !== null; });
+    var end = Math.max.apply(null, times.concat([start || 0, Date.now() / 1000]));
+    var begin = start === null ? Math.min.apply(null, times.concat([end])) : start;
+    var size = planUnits(isObject(plan.approved) && isObject(plan.approved.snapshot) ? plan.approved.snapshot.units : []).length;
+    var points = [[begin, size]];
+    changes.slice().sort(function (p, q) { return (seconds(p.at) || 0) - (seconds(q.at) || 0); }).forEach(function (change) {
+      if (change.kind === "added") { size += list(change.subjects).length; }
+      if (change.kind === "removed") { size -= list(change.subjects).length; }
+      points.push([seconds(change.at) || begin, size, change.kind]);
+    });
+    points.push([end, size]);
+    var top = Math.max.apply(null, points.map(function (point) { return point[1]; }).concat([1]));
+    var x = function (t) { return 8 + (end > begin ? (t - begin) / (end - begin) : 0) * 584; };
+    var y = function (n) { return 72 - n / top * 60; };
+    var svg = document.createElementNS(svgNs, "svg");
+    svg.setAttribute("class", "plan-scope");
+    svg.setAttribute("viewBox", "0 0 600 80");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "Units in scope: " + points[0][1] + " at approval, " + size + " now, over " + changes.length + " changes");
+    var path = "";
+    points.forEach(function (point, index) { path += (index ? " H" + x(point[0]).toFixed(1) + " V" : "M" + x(point[0]).toFixed(1) + " ") + y(point[1]).toFixed(1); });
+    shape(svg, "path", { class: "ps-line", d: path });
+    points.slice(1, -1).forEach(function (point) { shape(svg, "circle", { class: "ps-dot " + point[2], cx: x(point[0]).toFixed(1), cy: y(point[1]).toFixed(1), r: 3.5 }); });
+    return svg;
+  }
+  function changeRef(ref) {
+    var target = changeTarget(ref);
+    if (target) { return changeLink(ref); }
+    return issueHref(text(ref)) ? issue(text(ref)) : el("span", "pc-ref", text(ref));
+  }
+  function changeRow(change) {
+    var row = el("li", "plan-change " + text(change.kind));
+    var head = add(el("div", "pc-head"), el("span", "pc-kind", CHANGE_WORDS[change.kind] || text(change.kind)),
+      el("span", "pc-subjects", list(change.subjects).map(text).join(", ")), el("time", null, clock(change.at)));
+    head.lastChild.setAttribute("datetime", text(change.at));
+    add(row, head);
+    if (text(change.title)) { row.appendChild(el("div", "pc-title", text(change.title))); }
+    var before = own(change, "before"), after = own(change, "after");
+    if (isObject(before) || isObject(after)) { row.appendChild(redline(coversText(before), coversText(after))); }
+    else if (before !== undefined || after !== undefined) { row.appendChild(redline(before, after)); }
+    var meta = [change.by === "unrecorded" ? "Not recorded by a command" : "By " + text(change.by)];
+    if (text(change.why)) { meta.push(text(change.why)); } else if (own(change, "why") === undefined || change.clipped !== true) { meta.push("No reason given"); }
+    var foot = add(el("div", "pc-why"), meta.join(" · "));
+    if (text(change.source)) { add(foot, " · ", text(change.source)); }
+    if (text(change.ref)) { add(foot, " · ", changeRef(change.ref)); }
+    if (change.clipped === true) { add(foot, el("span", "pc-clipped", " · text clipped")); }
+    return add(row, foot);
+  }
+
+  function drawPlan(doc) {
+    var inner = parts.plan;
+    planRows = Object.create(null);
+    var nodes = [el("div", "kicker", "The plan")];
+    if (!plan) {
+      var reason = PLAN && text(PLAN.unreadable) ? PLAN.unreadable : "";
+      nodes.push(flagList([{ title: "The plan couldn't be read", why: reason }]));
+      inner.replaceChildren.apply(inner, nodes);
+      return;
+    }
+    var counts = planCounts(doc);
+    var title = add(el("h2", "title plan-title"), planTitle(doc, counts));
+    // A pushed record says when the producer rewrote the plan; this page holds the plan it was rendered with.
+    var updates = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "decision.recorded" && /^Plan updated:/.test(text(entry.summary)); });
+    var latest = updates.length ? /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/.exec(text(updates[updates.length - 1].summary)) : null;
+    if (latest && latest[0] !== plan.updated) { title.appendChild(el("span", "plan-reload", "The plan changed. Reload to see it.")); }
+    nodes.push(title, el("p", "say plan-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")), flagList(planFlags(doc, counts)));
+    var open = counts.units.filter(function (unit) { return !counts.proofs[text(unit.subject)].proven; });
+    if (open.length) {
+      var ul = el("ul", "plan-open");
+      open.forEach(function (unit) {
+        var proof = counts.proofs[text(unit.subject)];
+        var next = proof.next ? kindLabel(proof.next) + ": " + proof.states[proof.next].words : "";
+        var li = add(el("li"), issue(text(unit.subject), unitName(unit)), el("span", "po-title", text(unit.title)),
+          el("span", "po-next", "Next: " + next + (proof.handed ? "" : " · before hand-off")));
+        li.setAttribute("tabindex", "-1");
+        planRows[text(unit.subject)] = li;
+        ul.appendChild(li);
+      });
+      nodes.push(ul);
+    }
+    var meters = planMeters(doc);
+    if (meters) { nodes.push(meters); }
+    var kinds = kindsOf();
+    var amended = planUnits(plan.units);
+    var approved = isObject(plan.approved) ? plan.approved : {};
+    var frozen = planUnits(isObject(approved.snapshot) ? approved.snapshot.units : []);
+    var shownUnits = planAsApproved ? frozen.map(function (unit) {
+      var now = amended.filter(function (entry) { return entry.subject === unit.subject; })[0];
+      return Object.assign({}, unit, { removed: !now || now.removed === true });
+    }) : amended;
+    var all = el("div", "plan-all");
+    var switcher = el("div", "plan-switch");
+    switcher.setAttribute("role", "group");
+    switcher.setAttribute("aria-label", "Show the plan");
+    [[false, "As amended"], [true, "As approved"]].forEach(function (choice) {
+      var button = el("button", null, choice[1]);
+      button.type = "button";
+      button.setAttribute("aria-pressed", String(planAsApproved === choice[0]));
+      button.addEventListener("click", function () { planAsApproved = choice[0]; drawPlan(shown); });
+      switcher.appendChild(button);
+    });
+    switcher.appendChild(el("span", "ps-when", "Approved " + (spoken(approved.at) || "at an unknown time") + (text(approved.review) ? " · " + text(approved.review) : "")));
+    var heads = add(el("div", "plan-grid-head"), el("div", "pu-name", "Unit"), el("div", "pu-criteria", "Criteria"));
+    var headCells = el("div", "pu-proofs");
+    kinds.forEach(function (kind) { headCells.appendChild(el("span", "plan-pill head", text(kind.label) || text(kind.id))); });
+    heads.appendChild(headCells);
+    heads.style.setProperty("--cols", String(Math.max(1, kinds.length)));
+    add(all, switcher, heads);
+    var allProofs = planProofs(doc, shownUnits);
+    shownUnits.forEach(function (unit) {
+      var row = unitRow(allProofs[text(unit.subject)], kinds, planAsApproved);
+      row.style.setProperty("--cols", String(Math.max(1, kinds.length)));
+      row.setAttribute("tabindex", "-1");
+      planRows["all:" + text(unit.subject)] = row;
+      all.appendChild(row);
+    });
+    var folds = el("div", "plan-folds");
+    folds.appendChild(fold("units", "All units", shownUnits.length, all));
+    var changes = list(plan.changes).filter(isObject);
+    var changeBox = el("div", "plan-changes");
+    if (changes.length) { changeBox.appendChild(scopeChart(changes)); }
+    var changeList = el("ul");
+    changes.slice().reverse().forEach(function (change) { changeList.appendChild(changeRow(change)); });
+    changeBox.appendChild(changes.length ? changeList : el("p", "waiting", "Nothing has changed since approval."));
+    if (isObject(PLAN.clipped)) {
+      var clip = PLAN.clipped;
+      changeBox.appendChild(el("p", "plan-clipped", "The plan was too large to show whole: " +
+        [clip.changes ? "the text of the " + clip.changes + " oldest " + (clip.changes === 1 ? "change" : "changes") : "",
+          clip.texts ? clip.texts + " other " + (clip.texts === 1 ? "text" : "texts") : ""].filter(Boolean).join(" and ") + " left out." +
+        (clip.overShare ? " The approved plan alone is over the page's share for it." : "")));
+    }
+    folds.appendChild(fold("changes", "Changes since approval", changes.length, changeBox));
+    var waivers = el("ul", "plan-waivers");
+    var waivedCount = 0;
+    counts.units.forEach(function (unit) {
+      var proof = counts.proofs[text(unit.subject)];
+      list(unit.proofs).forEach(function (kind) {
+        if (proof.states[kind].state !== "waived") { return; }
+        waivedCount += 1;
+        waivers.appendChild(add(el("li"), el("b", null, unitName(unit) + " · " + kindLabel(kind)), " ", proof.states[kind].reason));
+      });
+    });
+    folds.appendChild(fold("waived", "Waived proofs", waivedCount, waivedCount ? waivers : el("p", "waiting", "No proof was waived.")));
+    if (Array.isArray(plan.approvals)) {
+      var approvals = el("ul", "plan-approvals");
+      var ahead = plan.approvals.filter(function (entry) { return isObject(entry) && entry.state === "waiting"; });
+      plan.approvals.filter(isObject).forEach(function (entry) {
+        approvals.appendChild(add(el("li", entry.state === "done" ? "done" : "waiting"), el("span", null, entry.state === "done" ? "Done" : "Waiting"),
+          " ", text(entry.text), text(entry.who) ? " · " + text(entry.who) : ""));
+      });
+      folds.appendChild(fold("approvals", "Approvals ahead", ahead.length, approvals));
+    }
+    if (Array.isArray(plan.outOfScope)) {
+      var scope = el("ul", "plan-scope-out");
+      plan.outOfScope.forEach(function (entry) { scope.appendChild(el("li", null, text(entry))); });
+      folds.appendChild(fold("out", "Out of scope", plan.outOfScope.length, scope));
+    }
+    folds.appendChild(fold("outcome", "The full outcome", null, el("p", "plan-full", text(isObject(plan.outcome) ? plan.outcome.text : ""))));
+    nodes.push(folds);
+    inner.replaceChildren.apply(inner, nodes);
+  }
+
+  /** In a stop's panel: where its unit stands in the plan, and a way to it. */
+  function planStop(doc, subject) {
+    if (!plan) { return null; }
+    var unit = planUnits(plan.units).filter(function (entry) { return entry.subject === subject; })[0];
+    if (!unit) { return null; }
+    var proof = planProofs(doc, [unit])[subject];
+    var words = unit.removed === true ? "removed from the plan" : proof.proven ? "proven" : "next: " + kindLabel(proof.next) + ", " + proof.states[proof.next].words;
+    var go = el("button", "d-plan", "In the plan: " + words);
+    go.type = "button";
+    go.setAttribute("data-plan-unit", subject);
+    go.addEventListener("click", function (event) {
+      event.stopPropagation();
+      var row = !proof.proven && unit.removed !== true ? planRows[subject] : null;
+      if (!row) {
+        planFolds.units = true;
+        rememberFolds();
+        planAsApproved = false;
+        drawPlan(shown);
+        row = planRows["all:" + subject];
+      }
+      if (row) {
+        if (typeof row.scrollIntoView === "function") { row.scrollIntoView({ block: "center" }); }
+        row.focus({ preventScroll: true });
+      }
+    });
+    return go;
   }
 
   /* 5. What happened */
@@ -1297,7 +1852,7 @@
   function draw(doc) {
     if (!usable(doc)) {
       parts.now.replaceChildren(el("div", "kicker", pageTitle()), el("h1", "title", "The delivery record could not be read."));
-      ["line", "who", "left", "happened", "parked"].forEach(function (name) { parts[name].replaceChildren(); });
+      Object.keys(parts).filter(function (name) { return name !== "now"; }).forEach(function (name) { parts[name].replaceChildren(); });
       return;
     }
     var focus = focusMark();
@@ -1309,6 +1864,7 @@
     drawLine(doc, all);
     drawWho(doc, all);
     drawLeft(doc, all);
+    if (parts.plan) { drawPlan(doc); }
     drawHappened(doc);
     drawParked(doc);
     refocus(focus);

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Test helper: the renderer's functions on a JSON request from stdin.
 
-    {"page": {"document": ..., "runs": {...}, "config": {...}, "themeKey": "...", "history": null}}
-        prints the line map for those run summaries, as the renderer embeds them
+    {"page": {"document": ..., "runs": {...}, "config": {...}, "themeKey": "...", "history": null, "plan": ...}}
+        prints the line map for those run summaries, as the renderer embeds them; a `plan` is validated and embedded
+        as the renderer embeds a valid plan.json, and a `planBlock` is embedded as it is given
     {"summarize": {"view": ..., "listed": {...}, "readings": {...} | null, "reportSpecs": [...]}}
         prints the run view's summary, with its round reports when readings are given
     {"embed": <value>}
@@ -23,9 +24,10 @@ if "page" in request:
     asked = request["page"]
     config = views_common.validate_config(asked.get("config", {"spec": views_common.CONFIG_SPEC}))
     runs = asked.get("runs", {})
+    plan = render.plan_block(views_common.validate_plan(asked["plan"])) if "plan" in asked else asked.get("planBlock")
     sys.stdout.write(render.render_line_map(asked["document"], render.within_budget(runs, list(runs)), config,
                                             theme_key=asked.get("themeKey", "delivery-views:test:theme"),
-                                            history=asked.get("history")))
+                                            history=asked.get("history"), plan=plan))
 elif "summarize" in request:
     asked = request["summarize"]
     summary = render.summarize_run_view(asked["view"], asked["listed"])

@@ -1,0 +1,245 @@
+{
+  "state": {
+    "version": 3,
+    "meta": {
+      "headline": "Fixture delivery",
+      "updatedAt": "2026-10-30T11:59:00Z"
+    },
+    "lanes": [
+      {
+        "id": "lane-1",
+        "title": "Lane one",
+        "focus": "",
+        "state": "working",
+        "waitingOn": null,
+        "since": "2026-10-30T06:00:00Z"
+      }
+    ],
+    "queue": [
+      {
+        "order": 1,
+        "subject": "PAY-1",
+        "title": "Work PAY-1",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "31686d8f41e095e55258be3b62d0e69173490ee7",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 2,
+        "subject": "PAY-2",
+        "title": "Work PAY-2",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "31686d9241e095e95258be4062d0e69773490eee",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 3,
+        "subject": "PAY-3",
+        "title": "Work PAY-3",
+        "lane": "lane-1",
+        "stage": "merged",
+        "head": "31686d9541e095ed5258be4562d0e69d73490ef5",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      },
+      {
+        "order": 4,
+        "subject": "PAY-4",
+        "title": "Work PAY-4",
+        "lane": "lane-1",
+        "stage": "queued",
+        "head": "31686d9841e095f15258be4a62d0e6a373490efc",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      }
+    ],
+    "planned": [],
+    "finish": [
+      {
+        "id": "landed",
+        "text": "Every piece lands",
+        "met": false
+      },
+      {
+        "id": "proven",
+        "text": "Every criterion is proven",
+        "met": false
+      }
+    ],
+    "followups": [],
+    "leases": []
+  },
+  "journal": [
+    {
+      "id": 1,
+      "at": "2026-10-30T06:10:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "PAY-1",
+      "summary": "PAY-1: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:10:00Z",
+        "finishedAt": "2026-10-30T06:10:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 2,
+      "at": "2026-10-30T06:11:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "PAY-1",
+      "summary": "candidate.handed PAY-1"
+    },
+    {
+      "id": 3,
+      "at": "2026-10-30T06:12:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "PAY-1",
+      "summary": "candidate.merged PAY-1"
+    },
+    {
+      "id": 4,
+      "at": "2026-10-30T06:13:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "PAY-2",
+      "summary": "PAY-2: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:13:00Z",
+        "finishedAt": "2026-10-30T06:13:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 5,
+      "at": "2026-10-30T06:14:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "PAY-2",
+      "summary": "candidate.handed PAY-2"
+    },
+    {
+      "id": 6,
+      "at": "2026-10-30T06:15:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "PAY-2",
+      "summary": "candidate.merged PAY-2"
+    },
+    {
+      "id": 7,
+      "at": "2026-10-30T06:16:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "PAY-3",
+      "summary": "PAY-3: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:16:00Z",
+        "finishedAt": "2026-10-30T06:16:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 8,
+      "at": "2026-10-30T06:17:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "PAY-3",
+      "summary": "candidate.handed PAY-3"
+    },
+    {
+      "id": 9,
+      "at": "2026-10-30T06:18:00Z",
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "PAY-3",
+      "summary": "candidate.merged PAY-3"
+    },
+    {
+      "id": 10,
+      "at": "2026-10-30T06:19:00Z",
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "PAY-4",
+      "summary": "PAY-4: review round 1",
+      "review": {
+        "round": 1,
+        "startedAt": "2026-10-30T06:19:00Z",
+        "finishedAt": "2026-10-30T06:19:00Z",
+        "verdicts": {
+          "lens.outcome-correctness": "changes",
+          "lens.adversarial-testing": "changes"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        }
+      }
+    },
+    {
+      "id": 11,
+      "at": "2026-10-30T06:20:00Z",
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "PAY-4",
+      "summary": "candidate.handed PAY-4"
+    }
+  ],
+  "stats": {},
+  "estimates": {},
+  "status": {
+    "source": "derived",
+    "text": ""
+  },
+  "focus": {}
+}

@@ -129,7 +129,8 @@
           "enum": [
             "core",
             "delivery-views",
-            "linear"
+            "linear",
+            "run-delivery"
           ]
         },
         "releaseId": {

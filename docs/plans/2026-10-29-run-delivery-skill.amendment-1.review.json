@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "plan": "docs/plans/2026-10-29-run-delivery-skill.md",
+  "planSha256": "61946446ce828857ea970dd0005774e58ba165dd4e577f457a9a4526aaefcff3",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "outcome-correctness",
+    "adversarial"
+  ],
+  "reviews": [
+    {
+      "lens": "outcome-correctness",
+      "agent": "amendment-1-review-outcome-correctness-r3",
+      "findings": []
+    },
+    {
+      "lens": "adversarial",
+      "agent": "amendment-1-review-adversarial-r3",
+      "findings": []
+    }
+  ],
+  "residualRisks": [
+    "The release waits for P1-P5 before U5.",
+    "P1 rebases onto U4's merge before its final provenance run, because both edit provenance.lock.json."
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "description": "Optional host-native Linear tracker adapter layered on the complete core profile. Review acquisition supports native subagents without Python helpers and exact content-based base-move reopening. Declared delivery-product gates, recovery and honest cost coverage remain host-native. Terminal handoffs retain the bound review release identity and any mid-review install. Shared v2 run observations retain selected structured output through compatible runtime capture. Coherent round briefs separate bounded delivery from unbounded planning; candidate checkouts and shared resources are isolated explicitly. Merge recovery preserves source occurrence time separately from observation, with unknown timing left unknown. Views show stage-specific recorded times and compact cross-repository pull request identities. Native runless review reports use bounded observational capture and candidate-bound shared cards. Originating closure details are collapsed by default in shared review cards. Ready and merge hooks receive an exact runner-derived single or batch check mode without changing admission.",
+  "description": "Optional host-native Linear tracker adapter layered on the complete core profile. Review acquisition supports native subagents without Python helpers and exact content-based base-move reopening. Declared delivery-product gates, recovery and honest cost coverage remain host-native. Terminal handoffs retain the bound review release identity and any mid-review install. Shared v2 run observations retain selected structured output through compatible runtime capture. Coherent round briefs separate bounded delivery from unbounded planning; candidate checkouts and shared resources are isolated explicitly. Merge recovery preserves source occurrence time separately from observation, with unknown timing left unknown. Views show stage-specific recorded times and compact cross-repository pull request identities. Native runless review reports use bounded observational capture and candidate-bound shared cards. Originating closure details are collapsed by default in shared review cards. Ready and merge hooks receive an exact runner-derived single or batch check mode without changing admission. The line map gains a plan chapter from an optional delivery-plan/1 input: which criteria are proven, from the record and producer evidence, what changed since approval, and what needs the engineer.",
   "expectedFiles": [
     "skills/compound-delivery-kernel/SKILL.md",
     "skills/compound-learning/SKILL.md",
@@ -17,6 +17,7 @@
     "skills/delivery-views/assets/line-map.js",
     "skills/delivery-views/assets/run-summary.css",
     "skills/delivery-views/assets/run-summary.js",
+    "skills/delivery-views/references/delivery-plan.schema.json",
     "skills/delivery-views/scripts/render.py",
     "skills/delivery-views/scripts/snapshot.py",
     "skills/delivery-views/scripts/views_common.py",

@@ -51,10 +51,17 @@ export function renderIn(root, document, extra = []) {
   return { page: result.stdout, status: result.status, stderr: result.stderr };
 }
 
-/** Renders a page in a throwaway repository and returns it, failing on a non-zero exit. */
-export function renderPage(document, { config, runsCommands = null } = {}) {
+/**
+ * Renders a page in a throwaway repository and returns it, failing on a non-zero exit. A `plan` is placed as the
+ * state directory's plan.json: an object as its JSON, a string as its exact text.
+ */
+export function renderPage(document, { config, runsCommands = null, plan = null } = {}) {
   const root = repository({ config, runsCommands });
   try {
+    if (plan !== null) {
+      mkdirSync(path.join(root, "state"), { recursive: true });
+      writeFileSync(path.join(root, "state", "plan.json"), typeof plan === "string" ? plan : JSON.stringify(plan));
+    }
     const { page, status, stderr } = renderIn(root, document);
     if (status !== 0) throw new Error(`render.py exited ${status}: ${stderr}`);
     return page;
@@ -104,6 +111,9 @@ const VIEW_ADDRESS = "http://localhost/view/line-map.html";
  * { click, index? } (focus, then click), { toggle } or { wait }. Each snapshot is { app, text, focused, source,
  * titled }, titled counting the elements anywhere in the document that carry a title attribute.
  *
+ * `stored: { key: value }` puts values in the page's storage before it loads; storage needs an address, so it goes with
+ * `rendered`.
+ *
  * `motion: { reduced? }` stands in for what jsdom lacks to move things: elements get a height that grows with what
  * they hold, `matchMedia` answers the reduced-motion query as `reduced` says, and each `animate` call is recorded, as
  * { target, keyframes, options }, in the result's `animations`.
@@ -139,6 +149,7 @@ export async function openPage(page, scenario = {}) {
             set onfinish(done) { if (typeof done === "function") queueMicrotask(done); } };
         };
       }
+      for (const [key, value] of Object.entries(scenario.stored ?? {})) window.localStorage.setItem(key, value);
       if (scenario.storage === false) {
         Object.defineProperty(window, "localStorage", { get() { throw new Error("storage blocked"); } });
       }
@@ -208,9 +219,14 @@ function tool(request) {
   if (result.status !== 0) throw new Error(`page_tools.py exited ${result.status}: ${result.stderr}`);
   return result.stdout;
 }
-/** The line map for a document and run summaries given as they are, without a runs command. */
-export function pageWithRuns(document, runs = {}, { config = { spec: "delivery-views-config/1", runs: REPLAYED_RUNS }, themeKey, history = null } = {}) {
-  return tool({ page: { document, runs, config, ...(themeKey ? { themeKey } : {}), history } });
+/**
+ * The line map for a document and run summaries given as they are, without a runs command. A `plan` is validated and
+ * embedded as the renderer embeds plan.json; a `planBlock` is embedded as it is given.
+ */
+export function pageWithRuns(document, runs = {}, { config = { spec: "delivery-views-config/1", runs: REPLAYED_RUNS }, themeKey, history = null,
+  plan, planBlock } = {}) {
+  return tool({ page: { document, runs, config, ...(themeKey ? { themeKey } : {}), history, ...(plan !== undefined ? { plan } : {}),
+    ...(planBlock !== undefined ? { planBlock } : {}) } });
 }
 /** The renderer's summary of a run view and its inventory row, with round reports when readings are given. */
 export function summarize(view, listed, readings = null, reportSpecs = undefined) {

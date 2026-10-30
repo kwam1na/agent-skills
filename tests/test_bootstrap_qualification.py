@@ -27,7 +27,7 @@ class BootstrapQualificationTests(unittest.TestCase):
         # The retained record's driver digest covers the corpus validator, whose
         # provider rule changed; it is re-earned with the pending bootstrap set.
         skip_if_pending(self, "bootstrap")
-        product = ROOT / "qualifications/product/bootstrap-review-evidence-v1"
+        product = ROOT / "qualifications/product/bootstrap-run-delivery-v1"
         archive = product.with_suffix(".zip")
         metadata = product.with_suffix(".release.json")
         with tempfile.TemporaryDirectory() as temporary:
@@ -36,7 +36,7 @@ class BootstrapQualificationTests(unittest.TestCase):
             release = verify_release(archive, metadata, extract_to=extracted)
             self.assertEqual(
                 release.archive_sha256,
-                "531ad32c33a30a6c85aa6a1d04ae43b0eb676a8153d67e2db2bc9d5b5c17ecf2",
+                "9ed1d1803d65e2839fac60768e362ec7f220b26dddc64cc249fe38404bd1f05e",
             )
             self.assertEqual(canonical_json(load_runner().qualify(archive, metadata)).encode(),
                              product.with_suffix(".json").read_bytes(), "the record replays byte for byte")
@@ -62,11 +62,11 @@ class BootstrapQualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="bootstrap-workflows-review-evidence-v1",
+                release_id="bootstrap-workflows-run-delivery-v1",
                 profile_id="bootstrap",
             )
             replay = runner.qualify(archive, metadata)
-        checked = (ROOT / "qualifications/bootstrap-workflows-review-evidence-v1.json").read_bytes()
+        checked = (ROOT / "qualifications/bootstrap-workflows-run-delivery-v1.json").read_bytes()
         skip_if_pending(self, "bootstrap")
         self.assertEqual(canonical_json(replay).encode(), checked, "the record replays byte for byte")
 
@@ -80,7 +80,7 @@ class BootstrapQualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="bootstrap-workflows-review-evidence-v1",
+                release_id="bootstrap-workflows-run-delivery-v1",
                 profile_id="bootstrap",
             )
             record = runner.qualify(archive, metadata)

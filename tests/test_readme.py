@@ -17,6 +17,18 @@ class ReadmeLifecycleTests(unittest.TestCase):
             with self.subTest(path=relative):
                 self.assertTrue((ROOT / relative).exists(), relative)
 
+    def test_the_current_linear_evidence_is_named_once_it_is_earned(self) -> None:
+        # While the linear set is pending, its attestation and record don't exist yet, so the README can't name their
+        # checked paths; once the set is earned it must, so the existence check above covers them again.
+        from tests.qualification_pending_support import pending
+
+        if pending("linear") is not None:
+            self.skipTest(pending("linear"))
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        for name in ("linear-run-delivery-v1.attestation.json", "linear-run-delivery-v1.json"):
+            with self.subTest(name=name):
+                self.assertIn(f"qualifications/product/{name}", readme)
+
     def test_public_lifecycle_guidance_covers_session_refresh_and_first_removal(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 

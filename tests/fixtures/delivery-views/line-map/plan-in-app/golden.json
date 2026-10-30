@@ -1,0 +1,2084 @@
+{
+  "now": "2026-10-30T12:00:00Z",
+  "blocks": {
+    "delivery-state": {
+      "state": {
+        "version": 3,
+        "meta": {
+          "headline": "Fixture delivery",
+          "updatedAt": "2026-10-30T11:59:00Z"
+        },
+        "lanes": [
+          {
+            "id": "lane-1",
+            "title": "Lane one",
+            "focus": "",
+            "state": "working",
+            "waitingOn": null,
+            "since": "2026-10-30T06:00:00Z"
+          }
+        ],
+        "queue": [
+          {
+            "order": 1,
+            "subject": "CART-101",
+            "title": "Work CART-101",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5c64f3947f013079a19e6d5ec43baa43e6d8",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 2,
+            "subject": "CART-102",
+            "title": "Work CART-102",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5c67f3947f053079a1a36d5ec441aa43e6df",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 3,
+            "subject": "CART-103",
+            "title": "Work CART-103",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5c6af3947f093079a1a86d5ec447aa43e6e6",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 4,
+            "subject": "CART-104",
+            "title": "Work CART-104",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5c6df3947f0d3079a1ad6d5ec44daa43e6ed",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 5,
+            "subject": "CART-105",
+            "title": "Work CART-105",
+            "lane": "lane-1",
+            "stage": "queued",
+            "head": "b6af5c70f3947f113079a1b26d5ec453aa43e6f4",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 6,
+            "subject": "CART-106",
+            "title": "Work CART-106",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5c73f3947f153079a1b76d5ec459aa43e6fb",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 7,
+            "subject": "CART-107",
+            "title": "Work CART-107",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5c76f3947f193079a1bc6d5ec45faa43e702",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 8,
+            "subject": "CART-108",
+            "title": "Work CART-108",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5c79f3947f1d3079a1c16d5ec465aa43e709",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 9,
+            "subject": "CART-109",
+            "title": "Work CART-109",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5c7cf3947f213079a1c66d5ec46baa43e710",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 10,
+            "subject": "CART-110",
+            "title": "Work CART-110",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5cbef3947f793079a2346d5ec4efaa43e7aa",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 11,
+            "subject": "CART-111",
+            "title": "Work CART-111",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5cc1f3947f7d3079a2396d5ec4f5aa43e7b1",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 12,
+            "subject": "CART-112",
+            "title": "Work CART-112",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5cc4f3947f813079a23e6d5ec4fbaa43e7b8",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 13,
+            "subject": "CART-113",
+            "title": "Work CART-113",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5cc7f3947f853079a2436d5ec501aa43e7bf",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 14,
+            "subject": "CART-114",
+            "title": "Work CART-114",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5ccaf3947f893079a2486d5ec507aa43e7c6",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 15,
+            "subject": "CART-115",
+            "title": "Work CART-115",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5ccdf3947f8d3079a24d6d5ec50daa43e7cd",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 16,
+            "subject": "CART-116",
+            "title": "Work CART-116",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5cd0f3947f913079a2526d5ec513aa43e7d4",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 17,
+            "subject": "CART-117",
+            "title": "Work CART-117",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5cd3f3947f953079a2576d5ec519aa43e7db",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 18,
+            "subject": "CART-118",
+            "title": "Work CART-118",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5cd6f3947f993079a25c6d5ec51faa43e7e2",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 19,
+            "subject": "CART-119",
+            "title": "Work CART-119",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5cd9f3947f9d3079a2616d5ec525aa43e7e9",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          },
+          {
+            "order": 20,
+            "subject": "CART-120",
+            "title": "Work CART-120",
+            "lane": "lane-1",
+            "stage": "merged",
+            "head": "b6af5d1bf3947ff53079a2cf6d5ec5a9aa43e883",
+            "syncedHead": null,
+            "leadInputs": [],
+            "reportedRounds": null,
+            "runId": null,
+            "checks": []
+          }
+        ],
+        "planned": [],
+        "finish": [
+          {
+            "id": "cart-flow",
+            "text": "Every cart criterion is merged",
+            "met": false
+          },
+          {
+            "id": "verified",
+            "text": "Every criterion is checked in the app",
+            "met": false
+          }
+        ],
+        "followups": [],
+        "leases": []
+      },
+      "journal": [
+        {
+          "id": 1,
+          "at": "2026-10-30T06:10:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-101",
+          "summary": "CART-101: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:10:00Z",
+            "finishedAt": "2026-10-30T06:10:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 2,
+          "at": "2026-10-30T06:11:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-101",
+          "summary": "candidate.handed CART-101"
+        },
+        {
+          "id": 3,
+          "at": "2026-10-30T06:12:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-101",
+          "summary": "candidate.merged CART-101"
+        },
+        {
+          "id": 4,
+          "at": "2026-10-30T06:13:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-102",
+          "summary": "CART-102: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:13:00Z",
+            "finishedAt": "2026-10-30T06:13:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 5,
+          "at": "2026-10-30T06:14:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-102",
+          "summary": "candidate.handed CART-102"
+        },
+        {
+          "id": 6,
+          "at": "2026-10-30T06:15:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-102",
+          "summary": "candidate.merged CART-102"
+        },
+        {
+          "id": 7,
+          "at": "2026-10-30T06:16:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-103",
+          "summary": "CART-103: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:16:00Z",
+            "finishedAt": "2026-10-30T06:16:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 8,
+          "at": "2026-10-30T06:17:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-103",
+          "summary": "candidate.handed CART-103"
+        },
+        {
+          "id": 9,
+          "at": "2026-10-30T06:18:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-103",
+          "summary": "candidate.merged CART-103"
+        },
+        {
+          "id": 10,
+          "at": "2026-10-30T06:19:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-104",
+          "summary": "CART-104: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:19:00Z",
+            "finishedAt": "2026-10-30T06:19:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 11,
+          "at": "2026-10-30T06:20:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-104",
+          "summary": "candidate.handed CART-104"
+        },
+        {
+          "id": 12,
+          "at": "2026-10-30T06:21:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-104",
+          "summary": "candidate.merged CART-104"
+        },
+        {
+          "id": 13,
+          "at": "2026-10-30T06:22:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-105",
+          "summary": "CART-105: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:22:00Z",
+            "finishedAt": "2026-10-30T06:22:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 14,
+          "at": "2026-10-30T06:23:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-105",
+          "summary": "candidate.handed CART-105"
+        },
+        {
+          "id": 15,
+          "at": "2026-10-30T06:25:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-106",
+          "summary": "CART-106: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:25:00Z",
+            "finishedAt": "2026-10-30T06:25:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 16,
+          "at": "2026-10-30T06:26:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-106",
+          "summary": "candidate.handed CART-106"
+        },
+        {
+          "id": 17,
+          "at": "2026-10-30T06:27:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-106",
+          "summary": "candidate.merged CART-106"
+        },
+        {
+          "id": 18,
+          "at": "2026-10-30T06:28:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-107",
+          "summary": "CART-107: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:28:00Z",
+            "finishedAt": "2026-10-30T06:28:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 19,
+          "at": "2026-10-30T06:29:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-107",
+          "summary": "candidate.handed CART-107"
+        },
+        {
+          "id": 20,
+          "at": "2026-10-30T06:30:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-107",
+          "summary": "candidate.merged CART-107"
+        },
+        {
+          "id": 21,
+          "at": "2026-10-30T06:31:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-108",
+          "summary": "CART-108: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:31:00Z",
+            "finishedAt": "2026-10-30T06:31:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 22,
+          "at": "2026-10-30T06:32:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-108",
+          "summary": "candidate.handed CART-108"
+        },
+        {
+          "id": 23,
+          "at": "2026-10-30T06:33:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-108",
+          "summary": "candidate.merged CART-108"
+        },
+        {
+          "id": 24,
+          "at": "2026-10-30T06:34:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-109",
+          "summary": "CART-109: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:34:00Z",
+            "finishedAt": "2026-10-30T06:34:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 25,
+          "at": "2026-10-30T06:35:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-109",
+          "summary": "candidate.handed CART-109"
+        },
+        {
+          "id": 26,
+          "at": "2026-10-30T06:36:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-109",
+          "summary": "candidate.merged CART-109"
+        },
+        {
+          "id": 27,
+          "at": "2026-10-30T06:37:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-110",
+          "summary": "CART-110: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:37:00Z",
+            "finishedAt": "2026-10-30T06:37:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 28,
+          "at": "2026-10-30T06:38:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-110",
+          "summary": "candidate.handed CART-110"
+        },
+        {
+          "id": 29,
+          "at": "2026-10-30T06:39:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-110",
+          "summary": "candidate.merged CART-110"
+        },
+        {
+          "id": 30,
+          "at": "2026-10-30T06:40:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-111",
+          "summary": "CART-111: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:40:00Z",
+            "finishedAt": "2026-10-30T06:40:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 31,
+          "at": "2026-10-30T06:41:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-111",
+          "summary": "candidate.handed CART-111"
+        },
+        {
+          "id": 32,
+          "at": "2026-10-30T06:42:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-111",
+          "summary": "candidate.merged CART-111"
+        },
+        {
+          "id": 33,
+          "at": "2026-10-30T06:43:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-112",
+          "summary": "CART-112: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:43:00Z",
+            "finishedAt": "2026-10-30T06:43:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 34,
+          "at": "2026-10-30T06:44:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-112",
+          "summary": "candidate.handed CART-112"
+        },
+        {
+          "id": 35,
+          "at": "2026-10-30T06:45:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-112",
+          "summary": "candidate.merged CART-112"
+        },
+        {
+          "id": 36,
+          "at": "2026-10-30T06:46:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-113",
+          "summary": "CART-113: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:46:00Z",
+            "finishedAt": "2026-10-30T06:46:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 37,
+          "at": "2026-10-30T06:47:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-113",
+          "summary": "candidate.handed CART-113"
+        },
+        {
+          "id": 38,
+          "at": "2026-10-30T06:48:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-113",
+          "summary": "candidate.merged CART-113"
+        },
+        {
+          "id": 39,
+          "at": "2026-10-30T06:49:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-114",
+          "summary": "CART-114: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:49:00Z",
+            "finishedAt": "2026-10-30T06:49:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 40,
+          "at": "2026-10-30T06:50:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-114",
+          "summary": "candidate.handed CART-114"
+        },
+        {
+          "id": 41,
+          "at": "2026-10-30T06:51:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-114",
+          "summary": "candidate.merged CART-114"
+        },
+        {
+          "id": 42,
+          "at": "2026-10-30T06:52:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-115",
+          "summary": "CART-115: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:52:00Z",
+            "finishedAt": "2026-10-30T06:52:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 43,
+          "at": "2026-10-30T06:53:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-115",
+          "summary": "candidate.handed CART-115"
+        },
+        {
+          "id": 44,
+          "at": "2026-10-30T06:54:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-115",
+          "summary": "candidate.merged CART-115"
+        },
+        {
+          "id": 45,
+          "at": "2026-10-30T06:55:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-116",
+          "summary": "CART-116: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:55:00Z",
+            "finishedAt": "2026-10-30T06:55:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 46,
+          "at": "2026-10-30T06:56:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-116",
+          "summary": "candidate.handed CART-116"
+        },
+        {
+          "id": 47,
+          "at": "2026-10-30T06:57:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-116",
+          "summary": "candidate.merged CART-116"
+        },
+        {
+          "id": 48,
+          "at": "2026-10-30T06:58:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-117",
+          "summary": "CART-117: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T06:58:00Z",
+            "finishedAt": "2026-10-30T06:58:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 49,
+          "at": "2026-10-30T06:59:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-117",
+          "summary": "candidate.handed CART-117"
+        },
+        {
+          "id": 50,
+          "at": "2026-10-30T07:00:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-117",
+          "summary": "candidate.merged CART-117"
+        },
+        {
+          "id": 51,
+          "at": "2026-10-30T07:01:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-118",
+          "summary": "CART-118: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T07:01:00Z",
+            "finishedAt": "2026-10-30T07:01:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 52,
+          "at": "2026-10-30T07:02:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-118",
+          "summary": "candidate.handed CART-118"
+        },
+        {
+          "id": 53,
+          "at": "2026-10-30T07:03:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-118",
+          "summary": "candidate.merged CART-118"
+        },
+        {
+          "id": 54,
+          "at": "2026-10-30T07:04:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-119",
+          "summary": "CART-119: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T07:04:00Z",
+            "finishedAt": "2026-10-30T07:04:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 55,
+          "at": "2026-10-30T07:05:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-119",
+          "summary": "candidate.handed CART-119"
+        },
+        {
+          "id": 56,
+          "at": "2026-10-30T07:06:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-119",
+          "summary": "candidate.merged CART-119"
+        },
+        {
+          "id": 57,
+          "at": "2026-10-30T07:07:00Z",
+          "kind": "review.round",
+          "lane": "lane-1",
+          "subject": "CART-120",
+          "summary": "CART-120: review round 1",
+          "review": {
+            "round": 1,
+            "startedAt": "2026-10-30T07:07:00Z",
+            "finishedAt": "2026-10-30T07:07:00Z",
+            "verdicts": {
+              "lens.outcome-correctness": "approve",
+              "lens.adversarial-testing": "approve"
+            },
+            "findings": {
+              "P0": 0,
+              "P1": 0,
+              "P2": 0,
+              "P3": 0
+            }
+          }
+        },
+        {
+          "id": 58,
+          "at": "2026-10-30T07:08:00Z",
+          "kind": "candidate.handed",
+          "lane": "lane-1",
+          "subject": "CART-120",
+          "summary": "candidate.handed CART-120"
+        },
+        {
+          "id": 59,
+          "at": "2026-10-30T07:09:00Z",
+          "kind": "candidate.merged",
+          "lane": "lane-1",
+          "subject": "CART-120",
+          "summary": "candidate.merged CART-120"
+        }
+      ],
+      "stats": {},
+      "estimates": {},
+      "status": {
+        "source": "derived",
+        "text": ""
+      },
+      "focus": {}
+    },
+    "delivery-runs": {},
+    "delivery-plan": {
+      "plan": {
+        "schemaVersion": "delivery-plan/1",
+        "updated": "2026-10-30T09:00:00Z",
+        "outcome": {
+          "summary": "Shoppers can pay again after a dropped connection.",
+          "text": "Shoppers can pay again after a dropped connection, and no payment is ever taken twice."
+        },
+        "requiredLenses": [
+          "lens.outcome-correctness",
+          "lens.adversarial-testing"
+        ],
+        "proofKinds": [
+          {
+            "id": "review",
+            "label": "Review",
+            "source": "record"
+          },
+          {
+            "id": "handed",
+            "label": "Handed off",
+            "source": "record"
+          },
+          {
+            "id": "merged",
+            "label": "Merged",
+            "source": "record"
+          },
+          {
+            "id": "app",
+            "label": "In-app check",
+            "source": "producer"
+          }
+        ],
+        "units": [
+          {
+            "subject": "CART-101",
+            "title": "Cart step 1",
+            "criteria": [
+              {
+                "id": "CART-101.1",
+                "text": "Criterion 1 of CART-101"
+              },
+              {
+                "id": "CART-101.2",
+                "text": "Criterion 2 of CART-101"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-102",
+            "title": "Cart step 2",
+            "criteria": [
+              {
+                "id": "CART-102.1",
+                "text": "Criterion 1 of CART-102"
+              },
+              {
+                "id": "CART-102.2",
+                "text": "Criterion 2 of CART-102"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-103",
+            "title": "Cart step 3",
+            "criteria": [
+              {
+                "id": "CART-103.1",
+                "text": "Criterion 1 of CART-103"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-104",
+            "title": "Cart step 4",
+            "criteria": [
+              {
+                "id": "CART-104.1",
+                "text": "Criterion 1 of CART-104"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-105",
+            "title": "Cart step 5",
+            "criteria": [
+              {
+                "id": "CART-105.1",
+                "text": "Criterion 1 of CART-105"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-106",
+            "title": "Cart step 6",
+            "criteria": [
+              {
+                "id": "CART-106.1",
+                "text": "Criterion 1 of CART-106"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-107",
+            "title": "Cart step 7",
+            "criteria": [
+              {
+                "id": "CART-107.1",
+                "text": "Criterion 1 of CART-107"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-108",
+            "title": "Cart step 8",
+            "criteria": [
+              {
+                "id": "CART-108.1",
+                "text": "Criterion 1 of CART-108"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-109",
+            "title": "Cart step 9",
+            "criteria": [
+              {
+                "id": "CART-109.1",
+                "text": "Criterion 1 of CART-109"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-110",
+            "title": "Cart step 10",
+            "criteria": [
+              {
+                "id": "CART-110.1",
+                "text": "Criterion 1 of CART-110"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-111",
+            "title": "Cart step 11",
+            "criteria": [
+              {
+                "id": "CART-111.1",
+                "text": "Criterion 1 of CART-111"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-112",
+            "title": "Cart step 12",
+            "criteria": [
+              {
+                "id": "CART-112.1",
+                "text": "Criterion 1 of CART-112"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-113",
+            "title": "Added step 13",
+            "criteria": [
+              {
+                "id": "CART-113.1",
+                "text": "Criterion 1 of CART-113"
+              },
+              {
+                "id": "CART-113.2",
+                "text": "Criterion 2 of CART-113"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-114",
+            "title": "Added step 14",
+            "criteria": [
+              {
+                "id": "CART-114.1",
+                "text": "Criterion 1 of CART-114"
+              },
+              {
+                "id": "CART-114.2",
+                "text": "Criterion 2 of CART-114"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-115",
+            "title": "Added step 15",
+            "criteria": [
+              {
+                "id": "CART-115.1",
+                "text": "Criterion 1 of CART-115"
+              },
+              {
+                "id": "CART-115.2",
+                "text": "Criterion 2 of CART-115"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-116",
+            "title": "Added step 16",
+            "criteria": [
+              {
+                "id": "CART-116.1",
+                "text": "Criterion 1 of CART-116"
+              },
+              {
+                "id": "CART-116.2",
+                "text": "Criterion 2 of CART-116"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-117",
+            "title": "Added step 17",
+            "criteria": [
+              {
+                "id": "CART-117.1",
+                "text": "Criterion 1 of CART-117"
+              },
+              {
+                "id": "CART-117.2",
+                "text": "Criterion 2 of CART-117"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-118",
+            "title": "Added step 18",
+            "criteria": [
+              {
+                "id": "CART-118.1",
+                "text": "Criterion 1 of CART-118"
+              },
+              {
+                "id": "CART-118.2",
+                "text": "Criterion 2 of CART-118"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-119",
+            "title": "Added step 19",
+            "criteria": [
+              {
+                "id": "CART-119.1",
+                "text": "Criterion 1 of CART-119"
+              },
+              {
+                "id": "CART-119.2",
+                "text": "Criterion 2 of CART-119"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          },
+          {
+            "subject": "CART-120",
+            "title": "Added step 20",
+            "criteria": [
+              {
+                "id": "CART-120.1",
+                "text": "Criterion 1 of CART-120"
+              }
+            ],
+            "proofs": [
+              "review",
+              "handed",
+              "merged",
+              "app"
+            ]
+          }
+        ],
+        "finish": [
+          {
+            "id": "cart-flow",
+            "label": "Every cart criterion merged",
+            "text": "Every cart criterion is merged",
+            "at": "2026-10-30T06:00:00Z",
+            "covers": {
+              "criteria": [
+                "CART-101.1",
+                "CART-101.2",
+                "CART-102.1",
+                "CART-102.2",
+                "CART-103.1",
+                "CART-104.1",
+                "CART-105.1",
+                "CART-106.1",
+                "CART-107.1",
+                "CART-108.1",
+                "CART-109.1",
+                "CART-110.1",
+                "CART-111.1",
+                "CART-112.1"
+              ],
+              "proofs": [
+                "merged"
+              ]
+            }
+          },
+          {
+            "id": "verified",
+            "label": "Checked in the app",
+            "text": "Every criterion is checked in the app",
+            "at": "2026-10-30T11:00:00Z",
+            "covers": {
+              "criteria": "all",
+              "proofs": [
+                "app"
+              ]
+            }
+          }
+        ],
+        "approved": {
+          "at": "2026-10-30T06:00:00Z",
+          "review": "Both lenses aligned",
+          "snapshot": {
+            "units": [
+              {
+                "subject": "CART-101",
+                "title": "Cart step 1",
+                "criteria": [
+                  {
+                    "id": "CART-101.1",
+                    "text": "Criterion 1 of CART-101"
+                  },
+                  {
+                    "id": "CART-101.2",
+                    "text": "Criterion 2 of CART-101"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged",
+                  "app"
+                ]
+              },
+              {
+                "subject": "CART-102",
+                "title": "Cart step 2",
+                "criteria": [
+                  {
+                    "id": "CART-102.1",
+                    "text": "Criterion 1 of CART-102"
+                  },
+                  {
+                    "id": "CART-102.2",
+                    "text": "Criterion 2 of CART-102"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged",
+                  "app"
+                ]
+              },
+              {
+                "subject": "CART-103",
+                "title": "Cart step 3",
+                "criteria": [
+                  {
+                    "id": "CART-103.1",
+                    "text": "Criterion 1 of CART-103"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged",
+                  "app"
+                ]
+              },
+              {
+                "subject": "CART-104",
+                "title": "Cart step 4",
+                "criteria": [
+                  {
+                    "id": "CART-104.1",
+                    "text": "Criterion 1 of CART-104"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged",
+                  "app"
+                ]
+              },
+              {
+                "subject": "CART-105",
+                "title": "Cart step 5",
+                "criteria": [
+                  {
+                    "id": "CART-105.1",
+                    "text": "Criterion 1 of CART-105"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged",
+                  "app"
+                ]
+              },
+              {
+                "subject": "CART-106",
+                "title": "Cart step 6",
+                "criteria": [
+                  {
+                    "id": "CART-106.1",
+                    "text": "Criterion 1 of CART-106"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged",
+                  "app"
+                ]
+              },
+              {
+                "subject": "CART-107",
+                "title": "Cart step 7",
+                "criteria": [
+                  {
+                    "id": "CART-107.1",
+                    "text": "Criterion 1 of CART-107"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged",
+                  "app"
+                ]
+              },
+              {
+                "subject": "CART-108",
+                "title": "Cart step 8",
+                "criteria": [
+                  {
+                    "id": "CART-108.1",
+                    "text": "Criterion 1 of CART-108"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged",
+                  "app"
+                ]
+              },
+              {
+                "subject": "CART-109",
+                "title": "Cart step 9",
+                "criteria": [
+                  {
+                    "id": "CART-109.1",
+                    "text": "Criterion 1 of CART-109"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged",
+                  "app"
+                ]
+              },
+              {
+                "subject": "CART-110",
+                "title": "Cart step 10",
+                "criteria": [
+                  {
+                    "id": "CART-110.1",
+                    "text": "Criterion 1 of CART-110"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged",
+                  "app"
+                ]
+              },
+              {
+                "subject": "CART-111",
+                "title": "Cart step 11",
+                "criteria": [
+                  {
+                    "id": "CART-111.1",
+                    "text": "Criterion 1 of CART-111"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged",
+                  "app"
+                ]
+              },
+              {
+                "subject": "CART-112",
+                "title": "Cart step 12",
+                "criteria": [
+                  {
+                    "id": "CART-112.1",
+                    "text": "Criterion 1 of CART-112"
+                  }
+                ],
+                "proofs": [
+                  "review",
+                  "handed",
+                  "merged",
+                  "app"
+                ]
+              }
+            ],
+            "finish": [
+              {
+                "id": "cart-flow",
+                "label": "Every cart criterion merged",
+                "text": "Every cart criterion is merged",
+                "at": "2026-10-30T06:00:00Z",
+                "covers": {
+                  "criteria": [
+                    "CART-101.1",
+                    "CART-101.2",
+                    "CART-102.1",
+                    "CART-102.2",
+                    "CART-103.1",
+                    "CART-104.1",
+                    "CART-105.1",
+                    "CART-106.1",
+                    "CART-107.1",
+                    "CART-108.1",
+                    "CART-109.1",
+                    "CART-110.1",
+                    "CART-111.1",
+                    "CART-112.1"
+                  ],
+                  "proofs": [
+                    "merged"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "changes": [
+          {
+            "id": "c1",
+            "at": "2026-10-30T07:00:00Z",
+            "kind": "added",
+            "subjects": [
+              "CART-113",
+              "CART-114"
+            ],
+            "by": "lead",
+            "why": "The review asked for the retry paths.",
+            "title": "Retry paths"
+          },
+          {
+            "id": "c2",
+            "at": "2026-10-30T07:30:00Z",
+            "kind": "added",
+            "subjects": [
+              "CART-115",
+              "CART-116"
+            ],
+            "by": "operator",
+            "why": "The operator asked for receipts.",
+            "title": "Receipts"
+          },
+          {
+            "id": "c3",
+            "at": "2026-10-30T08:00:00Z",
+            "kind": "added",
+            "subjects": [
+              "CART-117",
+              "CART-118"
+            ],
+            "by": "lane-1",
+            "why": "A lane found the refund gap.",
+            "title": "Refunds",
+            "ref": "#41"
+          },
+          {
+            "id": "c4",
+            "at": "2026-10-30T08:30:00Z",
+            "kind": "added",
+            "subjects": [
+              "CART-119",
+              "CART-120"
+            ],
+            "by": "operator",
+            "why": "The operator asked for the audit trail.",
+            "title": "Audit trail"
+          },
+          {
+            "id": "c5",
+            "at": "2026-10-30T09:00:00Z",
+            "kind": "relaxed",
+            "subjects": [
+              "CART-101"
+            ],
+            "criteria": [
+              "CART-101.2"
+            ],
+            "by": "operator",
+            "why": "One retry is enough.",
+            "before": "Criterion 2 of CART-101 retries three times",
+            "after": "Criterion 2 of CART-101 retries once"
+          },
+          {
+            "id": "c6",
+            "at": "2026-10-30T09:30:00Z",
+            "kind": "changed",
+            "subjects": [
+              "CART-105"
+            ],
+            "criteria": [
+              "CART-105.1"
+            ],
+            "by": "lead",
+            "why": "The check proved nothing at the old step.",
+            "before": "Checked after the cart loads",
+            "after": "Checked after the payment returns"
+          },
+          {
+            "id": "c7",
+            "at": "2026-10-30T11:00:00Z",
+            "kind": "finish",
+            "subjects": [],
+            "by": "lead",
+            "why": "Every criterion is checked in the app before the release.",
+            "after": {
+              "criteria": "all",
+              "proofs": [
+                "app"
+              ]
+            }
+          }
+        ],
+        "evidence": {
+          "CART-101": {
+            "app": {
+              "state": "done",
+              "head": "b6af5c64f3947f013079a19e6d5ec43baa43e6d8",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-102": {
+            "app": {
+              "state": "done",
+              "head": "b6af5c67f3947f053079a1a36d5ec441aa43e6df",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-103": {
+            "app": {
+              "state": "waived",
+              "head": "b6af5c6af3947f093079a1a86d5ec447aa43e6e6",
+              "reason": "The device lab was down; the flow is covered by the contract test.",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-104": {
+            "app": {
+              "state": "done",
+              "head": "b6af5c6df3947f0d3079a1ad6d5ec44daa43e6ed",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-105": {
+            "app": {
+              "state": "todo",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-106": {
+            "app": {
+              "state": "done",
+              "head": "b6af5c73f3947f153079a1b76d5ec459aa43e6fb",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-107": {
+            "app": {
+              "state": "done",
+              "head": "b6af5c76f3947f193079a1bc6d5ec45faa43e702",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-108": {
+            "app": {
+              "state": "done",
+              "head": "b6af5c79f3947f1d3079a1c16d5ec465aa43e709",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-109": {
+            "app": {
+              "state": "done",
+              "head": "b6af5c7cf3947f213079a1c66d5ec46baa43e710",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-110": {
+            "app": {
+              "state": "done",
+              "head": "b6af5cbef3947f793079a2346d5ec4efaa43e7aa",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-111": {
+            "app": {
+              "state": "done",
+              "head": "b6af5cc1f3947f7d3079a2396d5ec4f5aa43e7b1",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-112": {
+            "app": {
+              "state": "done",
+              "head": "b6af5cc4f3947f813079a23e6d5ec4fbaa43e7b8",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-113": {
+            "app": {
+              "state": "done",
+              "head": "b6af5cc7f3947f853079a2436d5ec501aa43e7bf",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-114": {
+            "app": {
+              "state": "done",
+              "head": "b6af5ccaf3947f893079a2486d5ec507aa43e7c6",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-115": {
+            "app": {
+              "state": "done",
+              "head": "b6af5ccdf3947f8d3079a24d6d5ec50daa43e7cd",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-116": {
+            "app": {
+              "state": "done",
+              "head": "b6af5cd0f3947f913079a2526d5ec513aa43e7d4",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-117": {
+            "app": {
+              "state": "done",
+              "head": "b6af5cd3f3947f953079a2576d5ec519aa43e7db",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-118": {
+            "app": {
+              "state": "done",
+              "head": "b6af5cd6f3947f993079a25c6d5ec51faa43e7e2",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-119": {
+            "app": {
+              "state": "done",
+              "head": "b6af5cd9f3947f9d3079a2616d5ec525aa43e7e9",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          },
+          "CART-120": {
+            "app": {
+              "state": "done",
+              "head": "b6af5d1bf3947ff53079a2cf6d5ec5a9aa43e883",
+              "at": "2026-10-30T09:20:00Z",
+              "items": [
+                "checkout-flow"
+              ]
+            }
+          }
+        },
+        "approvals": [
+          {
+            "text": "Plan approved",
+            "state": "done",
+            "who": "operator"
+          },
+          {
+            "text": "Release sign-off",
+            "state": "waiting",
+            "who": "operator"
+          }
+        ],
+        "outOfScope": [
+          "Saved cards",
+          "Gift cards",
+          "Currency conversion"
+        ]
+      }
+    }
+  },
+  "initialText": "NowThe lineWhoWhat's leftThe planWhat happenedParkedFixture delivery19 of 20 pieces have landed.Last landed: Work CART-120, 4h 51m ago.Shoppers can pay again after a dropped connection. 28 of 29 criteria proven · plan changed 7 timesReady to be checkedWork CART-105Handed over; each is checked and merged in turn, in this order.StartPieces landedFinish line metSaved view · updated 1m agoThe lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Lane one19 of 20 landedCART-101CART-102CART-103CART-104CART-105CART-106CART-107CART-108CART-109CART-110CART-111CART-112CART-113CART-114CART-115CART-116CART-117CART-118CART-119CART-1201 laneWork CART-105CART-105 · Ready, waiting to be checked · Handed over 5 hours agoReview evidence unavailable or stale for this candidate.Merge check · Handed over 5 hours ago · 1 step6:23 amcandidate.handed CART-105In the plan: next: Merged, not merged yetLandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedBoth landedWho's doing what1 lane is working on this.Each lane is a separate session working in parallel on its own part of the work.Lane oneBuildingfor 6hWhat's left1piece to go19 of 20 pieces have landed.1with Lane oneThe finish lineEvery cart criterion mergedNot met13 of 14 criteriaChecked in the appNot met27 of 29 criteria, 1 more by waiverThe plan28 of 29 criteria proven, 1 by waiver.Shoppers can pay again after a dropped connection.Needs you▲A finish line no longer covers the planEvery cart criterion merged omits CART-113.1, CART-113.2, CART-114.1, CART-114.2, CART-115.1, CART-115.2, CART-116.1, CART-116.2, CART-117.1, CART-117.2, CART-118.1, CART-118.2, CART-119.1, CART-119.2, CART-120.1▲A change touches open workCART-105CART-105Cart step 5Next: Merged: not merged yetEvery cart criterion mergedNot met13 of 14 criteriaChecked in the appNot met27 of 29 criteria, 1 more by waiverAll units20As amendedAs approvedApproved 6 hours ago · Both lenses alignedUnitCriteriaReviewHanded offMergedIn-app checkCART-101Cart step 1CART-101.1 Criterion 1 of CART-101CART-101.2 Criterion 2 of CART-101ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-102Cart step 2CART-102.1 Criterion 1 of CART-102CART-102.2 Criterion 2 of CART-102ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-103Cart step 3CART-103.1 Criterion 1 of CART-103ReviewapprovedHanded offdoneMergeddoneIn-app checkwaivedCART-104Cart step 4CART-104.1 Criterion 1 of CART-104ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-105Cart step 5CART-105.1 Criterion 1 of CART-105ReviewapprovedHanded offdoneMergednot merged yetIn-app checkto doCART-106Cart step 6CART-106.1 Criterion 1 of CART-106ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-107Cart step 7CART-107.1 Criterion 1 of CART-107ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-108Cart step 8CART-108.1 Criterion 1 of CART-108ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-109Cart step 9CART-109.1 Criterion 1 of CART-109ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-110Cart step 10CART-110.1 Criterion 1 of CART-110ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-111Cart step 11CART-111.1 Criterion 1 of CART-111ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-112Cart step 12CART-112.1 Criterion 1 of CART-112ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-113Added step 13CART-113.1 Criterion 1 of CART-113CART-113.2 Criterion 2 of CART-113ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-114Added step 14CART-114.1 Criterion 1 of CART-114CART-114.2 Criterion 2 of CART-114ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-115Added step 15CART-115.1 Criterion 1 of CART-115CART-115.2 Criterion 2 of CART-115ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-116Added step 16CART-116.1 Criterion 1 of CART-116CART-116.2 Criterion 2 of CART-116ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-117Added step 17CART-117.1 Criterion 1 of CART-117CART-117.2 Criterion 2 of CART-117ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-118Added step 18CART-118.1 Criterion 1 of CART-118CART-118.2 Criterion 2 of CART-118ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-119Added step 19CART-119.1 Criterion 1 of CART-119CART-119.2 Criterion 2 of CART-119ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-120Added step 20CART-120.1 Criterion 1 of CART-120ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneChanges since approval7Finish line11:00 amevery criterion; proofs: In-app checkBy lead · Every criterion is checked in the app before the release.ChangedCART-1059:30 amChecked after the cartpayment loadsreturnsBy lead · The check proved nothing at the old step.RelaxedCART-1019:00 amCriterion 2 of CART-101 retries three timesonceBy operator · One retry is enough.AddedCART-119, CART-1208:30 amAudit trailBy operator · The operator asked for the audit trail.AddedCART-117, CART-1188:00 amRefundsBy lane-1 · A lane found the refund gap. · #41AddedCART-115, CART-1167:30 amReceiptsBy operator · The operator asked for receipts.AddedCART-113, CART-1147:00 amRetry pathsBy lead · The review asked for the retry paths.Waived proofs1CART-103 · In-app check The device lab was down; the flow is covered by the contract test.Approvals ahead1Done Plan approved · operatorWaiting Release sign-off · operatorOut of scope3Saved cardsGift cardsCurrency conversionThe full outcomeShoppers can pay again after a dropped connection, and no payment is ever taken twice.What happenedThe story so far, newest first.●Landed◐Ready to check◆Decision▲Problem·Other updateEverythingDecisionsLandedProblems7:09 am●candidate.merged CART-120Landed · Lane one · CART-1207:08 am◐candidate.handed CART-120Handed over · Lane one · CART-1207:07 am·CART-120: review round 1Review round · Lane one · CART-1207:06 am●candidate.merged CART-119Landed · Lane one · CART-1197:05 am◐candidate.handed CART-119Handed over · Lane one · CART-1197:04 am·CART-119: review round 1Review round · Lane one · CART-1197:03 am●candidate.merged CART-118Landed · Lane one · CART-1187:02 am◐candidate.handed CART-118Handed over · Lane one · CART-118Show all 59Parked for laterNothing parked.Past deliveries and runs",
+  "folds": {
+    "units": "All units20As amendedAs approvedApproved 6 hours ago · Both lenses alignedUnitCriteriaReviewHanded offMergedIn-app checkCART-101Cart step 1CART-101.1 Criterion 1 of CART-101CART-101.2 Criterion 2 of CART-101ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-102Cart step 2CART-102.1 Criterion 1 of CART-102CART-102.2 Criterion 2 of CART-102ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-103Cart step 3CART-103.1 Criterion 1 of CART-103ReviewapprovedHanded offdoneMergeddoneIn-app checkwaivedCART-104Cart step 4CART-104.1 Criterion 1 of CART-104ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-105Cart step 5CART-105.1 Criterion 1 of CART-105ReviewapprovedHanded offdoneMergednot merged yetIn-app checkto doCART-106Cart step 6CART-106.1 Criterion 1 of CART-106ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-107Cart step 7CART-107.1 Criterion 1 of CART-107ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-108Cart step 8CART-108.1 Criterion 1 of CART-108ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-109Cart step 9CART-109.1 Criterion 1 of CART-109ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-110Cart step 10CART-110.1 Criterion 1 of CART-110ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-111Cart step 11CART-111.1 Criterion 1 of CART-111ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-112Cart step 12CART-112.1 Criterion 1 of CART-112ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-113Added step 13CART-113.1 Criterion 1 of CART-113CART-113.2 Criterion 2 of CART-113ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-114Added step 14CART-114.1 Criterion 1 of CART-114CART-114.2 Criterion 2 of CART-114ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-115Added step 15CART-115.1 Criterion 1 of CART-115CART-115.2 Criterion 2 of CART-115ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-116Added step 16CART-116.1 Criterion 1 of CART-116CART-116.2 Criterion 2 of CART-116ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-117Added step 17CART-117.1 Criterion 1 of CART-117CART-117.2 Criterion 2 of CART-117ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-118Added step 18CART-118.1 Criterion 1 of CART-118CART-118.2 Criterion 2 of CART-118ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-119Added step 19CART-119.1 Criterion 1 of CART-119CART-119.2 Criterion 2 of CART-119ReviewapprovedHanded offdoneMergeddoneIn-app checkdoneCART-120Added step 20CART-120.1 Criterion 1 of CART-120ReviewapprovedHanded offdoneMergeddoneIn-app checkdone",
+    "changes": "Changes since approval7Finish line11:00 amevery criterion; proofs: In-app checkBy lead · Every criterion is checked in the app before the release.ChangedCART-1059:30 amChecked after the cartpayment loadsreturnsBy lead · The check proved nothing at the old step.RelaxedCART-1019:00 amCriterion 2 of CART-101 retries three timesonceBy operator · One retry is enough.AddedCART-119, CART-1208:30 amAudit trailBy operator · The operator asked for the audit trail.AddedCART-117, CART-1188:00 amRefundsBy lane-1 · A lane found the refund gap. · #41AddedCART-115, CART-1167:30 amReceiptsBy operator · The operator asked for receipts.AddedCART-113, CART-1147:00 amRetry pathsBy lead · The review asked for the retry paths.",
+    "waived": "Waived proofs1CART-103 · In-app check The device lab was down; the flow is covered by the contract test.",
+    "approvals": "Approvals ahead1Done Plan approved · operatorWaiting Release sign-off · operator",
+    "out": "Out of scope3Saved cardsGift cardsCurrency conversion",
+    "outcome": "The full outcomeShoppers can pay again after a dropped connection, and no payment is ever taken twice."
+  },
+  "details": {
+    "CART-101": {
+      "detail": "1 laneWork CART-101CART-101 · Landed 5 hours agoReview evidence unavailable or stale for this candidate.Merge check · Landed 5 hours ago · 2 steps6:11 amcandidate.handed CART-1016:12 amcandidate.merged CART-101In the plan: proven"
+    },
+    "CART-105": {
+      "detail": "1 laneWork CART-105CART-105 · Ready, waiting to be checked · Handed over 5 hours agoReview evidence unavailable or stale for this candidate.Merge check · Handed over 5 hours ago · 1 step6:23 amcandidate.handed CART-105In the plan: next: Merged, not merged yet"
+    }
+  }
+}

@@ -48,7 +48,7 @@ On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
 Build and verify the core profile:
 
 ```bash
-python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-review-evidence-v1
+python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-run-delivery-v1
 python3 scripts/build-release.py verify \
   --archive /tmp/core.zip \
   --metadata /tmp/core.release.json \
@@ -78,7 +78,7 @@ source artifacts, and rolls back through installed bytes:
 python3 scripts/build-release.py build \
   --archive /tmp/bootstrap.zip \
   --metadata /tmp/bootstrap.release.json \
-  --release-id bootstrap-workflows-review-evidence-v1 \
+  --release-id bootstrap-workflows-run-delivery-v1 \
   --profile bootstrap
 python3 scripts/qualify-bootstrap.py \
   --archive /tmp/bootstrap.zip \
@@ -87,7 +87,7 @@ python3 scripts/qualify-bootstrap.py \
 ```
 
 The current checked qualification record is
-`qualifications/bootstrap-workflows-review-evidence-v1.json`.
+`qualifications/bootstrap-workflows-run-delivery-v1.json`.
 
 The detached release metadata authenticates the ZIP before it is parsed. The
 manifest then authenticates the complete payload and its single profile group.
@@ -112,6 +112,29 @@ that reach the tracker only through it, without changing core behavior when
 tracking is unavailable. A cataloged source-only entry is never selectable, and
 Athena overlays remain classification inputs: what ships is a narrowed
 derivative, never copied repository policy.
+
+Two further optional profiles layer on core. `delivery-views` adds ready-made
+views of an orchestrated delivery, configured rather than coded: a live line map
+(with a plan chapter when the delivery supplies a `delivery-plan/1` input), a
+history page, and tracker and forge snapshots. `run-delivery` adds
+`delivery-views` and the commands that carry out an orchestrated delivery: lens
+round briefs, gate runs, in-app checks under a lease, draft change requests,
+lane hand-offs, and the lead's setup, acceptance, evidence, ship and close-out.
+Its product archive is the one an adopter installs to run deliveries; its
+adoption guide is `skills/run-delivery/references/adopting.md`, and
+`run_delivery.py doctor` checks a repository's setup. Build either profile like
+the others:
+
+```bash
+python3 scripts/build-release.py build \
+  --archive /tmp/run-delivery.zip \
+  --metadata /tmp/run-delivery.release.json \
+  --release-id run-delivery-workflows-v1 \
+  --profile run-delivery
+```
+
+The current product set is `run-delivery-v1` under `qualifications/product/`;
+its release notes are `docs/releases/run-delivery-v1.md`.
 
 The [portable workflow graph](docs/workflow-graph-v1.md) declares ten canonical
 stages and closed, exactly bound stage results. `diagnose-work` returns causal
@@ -151,7 +174,7 @@ named in the record remains the single release under qualification. That prior
 fixture is built only from the verified candidate extraction, never from the
 runner checkout corpus.
 The current workflow-only record is checked in at
-`qualifications/core-workflows-review-evidence-v1.json`.
+`qualifications/core-workflows-run-delivery-v1.json`.
 Historical records retain their original bytes under `qualifications/history/`.
 Historical product records such as `linear-product-v1` also remain immutable
 under `qualifications/product/`.
@@ -178,7 +201,7 @@ Each reference is an object with `schemaVersion` and `opaque`. Use fresh redacte
 opaque identities, not ticket identifiers, paths, or host payloads. Serialize the
 collector input and attestation with sorted keys, two-space indentation, and a
 final newline. The current checked input is
-`qualifications/product/linear-review-evidence-v1.collector-binding.json`; it is not
+`qualifications/product/linear-run-delivery-v1.collector-binding.json`; it is not
 part of either archive.
 Qualification also rebuilds the supplied Linear archive's core projection and
 requires its archive and metadata bytes to match the separately qualified core.
@@ -197,17 +220,17 @@ the independently frozen input to the offline driver:
 
 ```bash
 python3 scripts/qualify-linear.py \
-  --core-archive qualifications/product/core-review-evidence-v1.zip \
-  --core-metadata qualifications/product/core-review-evidence-v1.release.json \
-  --core-record qualifications/product/core-review-evidence-v1.json \
-  --linear-archive qualifications/product/linear-review-evidence-v1.zip \
-  --linear-metadata qualifications/product/linear-review-evidence-v1.release.json \
-  --collector-binding qualifications/product/linear-review-evidence-v1.collector-binding.json \
-  --attestation qualifications/product/linear-review-evidence-v1.attestation.json \
+  --core-archive qualifications/product/core-run-delivery-v1.zip \
+  --core-metadata qualifications/product/core-run-delivery-v1.release.json \
+  --core-record qualifications/product/core-run-delivery-v1.json \
+  --linear-archive qualifications/product/linear-run-delivery-v1.zip \
+  --linear-metadata qualifications/product/linear-run-delivery-v1.release.json \
+  --collector-binding qualifications/product/linear-run-delivery-v1.collector-binding.json \
+  --attestation /tmp/linear-run-delivery-v1.attestation.json \
   --record /tmp/linear.qualification.json
 ```
 
-The version-2 checked record at `qualifications/product/linear-review-evidence-v1.json` binds the passing core
+The version-2 checked record, `linear-run-delivery-v1.json` beside the archives once the set's attestation is collected, binds the passing core
 qualification, both exact archive and metadata identities, canonical extracted
 source-tree digests, the frozen collector input and its digest, the exact retained
 attestation bytes, and its external receipt reference. Old unbound attestations,
@@ -249,7 +272,7 @@ written manifest and reviewer artifacts. Its deterministic record covers
 success, blocked, failed, cancelled, interrupted, duplicate, unsupported
 version, reconciliation, anti-vacuity, completeness, and redaction behavior
 while retaining no local paths or opaque host references. The checked record is
-`qualifications/provider-workflows-review-evidence-v1.json`.
+`qualifications/provider-workflows-run-delivery-v1.json`.
 Its `workflowGraphSha256` names the actual installed graph, and the installation
 scenario compares that graph and both new skill bodies with the verified
 candidate. A failed qualifier cannot leave an earlier success record at the

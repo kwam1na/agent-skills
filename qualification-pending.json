@@ -1,0 +1,7 @@
+{
+  "reason": "The run-delivery-v1 set is assembled and core, provider and bootstrap are re-earned; the linear set waits for its live host attestation, which the operator collects in a real host session against the frozen collector input in qualifications/product/linear-run-delivery-v1.collector-binding.json.",
+  "schemaVersion": "qualification-pending/1",
+  "sets": [
+    "linear"
+  ]
+}

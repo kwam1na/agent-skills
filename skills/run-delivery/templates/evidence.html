@@ -1,0 +1,53 @@
+<title>{{title}}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a single reading column of story sections; each clip is a before|after pair at full column width */
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --fg: #17202b; --muted: #5b6676; --line: #dde2e9;
+  --before: #8a5a14; --after: #1d6b4f; --chip: #eef1f5;
+  --sans: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11161d; --surface: #18202a; --fg: #e6ebf1; --muted: #9aa6b5; --line: #2a3542;
+  --before: #e0a64e; --after: #5fcf9f; --chip: #222c38; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11161d; --surface: #18202a; --fg: #e6ebf1; --muted: #9aa6b5; --line: #2a3542;
+  --before: #e0a64e; --after: #5fcf9f; --chip: #222c38; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 16px/1.55 var(--sans);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main { max-width: 1040px; margin: 0 auto; padding-block: 40px 64px; display: grid; gap: 40px; }
+header { display: grid; gap: 10px; max-width: 70ch; }
+.eyebrow { font: 600 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-size: 2rem; line-height: 1.2; margin: 0; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font: 13px/1.4 var(--mono); color: var(--muted); }
+.legend b { font-weight: 600; }
+.legend .b { color: var(--before); } .legend .a { color: var(--after); }
+section.story { display: grid; gap: 16px; padding-top: 24px; border-top: 1px solid var(--line); }
+.story-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.story-head h2 { margin: 0; font-size: 1.25rem; text-wrap: balance; }
+.key { font: 600 13px/1 var(--mono); color: var(--muted); }
+.links { display: flex; gap: 14px; font-size: 14px; margin-left: auto; }
+a { color: inherit; text-underline-offset: 3px; }
+a:focus-visible, video:focus-visible { outline: 2px solid var(--after); outline-offset: 2px; }
+figure { margin: 0; display: grid; gap: 8px; min-width: 0; }
+.sides { display: grid; grid-template-columns: 1fr 1fr; font: 600 12px/1 var(--mono); letter-spacing: .04em; }
+.sides span:first-child { color: var(--before); } .sides span:last-child { color: var(--after); padding-left: 6px; }
+video { width: 100%; max-width: 100%; display: block; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+figcaption { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 14px; }
+.chip { font: 600 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .06em; padding: 5px 7px; border-radius: 4px; background: var(--chip); color: var(--fg); }
+.none { color: var(--muted); font-size: 14px; margin: 0; }
+footer { color: var(--muted); font-size: 13px; }
+@media (max-width: 640px) { h1 { font-size: 1.6rem; } .links { margin-left: 0; } }
+</style>
+<main>
+  <header>
+    <div class="eyebrow">{{eyebrow}}</div>
+    <h1>{{heading}}</h1>
+    <p>{{intro}}</p>
+    <div class="legend"><span class="b"><b>Left</b> before · {{before}}</span><span class="a"><b>Right</b> after · {{after}}</span></div>
+  </header>
+{{stories}}
+  <footer>{{footer}}</footer>
+</main>
