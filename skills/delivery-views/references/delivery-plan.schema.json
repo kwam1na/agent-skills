@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-skills.dev/schemas/delivery-plan/1",
   "title": "delivery-plan/1",
-  "description": "The plan chapter's one input: a delivery's outcome, units and criteria, the proofs each unit owes, finish lines, the approved snapshot, changes since, and producer evidence. At most 1 MiB. The validator in views_common.py also checks what a schema can't: unique criterion ids, covers and proofs that name declared criteria and kinds, record kinds limited to handed, merged and review, evidence only for kinds a unit owes, head on done and waived entries, a reason on waived ones, and the 1,000-criterion total.",
+  "description": "The plan chapter's one input: a delivery's outcome, units and criteria, the proofs each unit owes, finish lines, the approved snapshot, changes since, and producer evidence. At most 1 MiB. The validator in views_common.py also checks what a schema can't: unique criterion ids, covers and proofs that name declared criteria and kinds, record kinds limited to handed, merged and review, evidence only for kinds a unit owes, head on done and waived entries, a reason on waived ones, and the 1,000-criterion total, and in `planReview`: a verdict for exactly the review's lenses, a state the last round bears out, entries covering rounds 1 to N with no gap or overlap, folds that list nothing and never come last, a fix commit exactly on fixed closures, and at most 256 KiB serialized.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -125,6 +125,9 @@
           "state"
         ],
         "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
           "text": {
             "type": "string",
             "minLength": 1,
@@ -140,6 +143,9 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 200
+          },
+          "blocking": {
+            "type": "boolean"
           }
         }
       }
@@ -151,6 +157,46 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 600
+      }
+    },
+    "planReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lenses",
+        "state",
+        "rounds"
+      ],
+      "properties": {
+        "lenses": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "state": {
+          "enum": [
+            "aligned",
+            "open",
+            "ended"
+          ]
+        },
+        "endedReason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "rounds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/reviewRound"
+          }
+        }
       }
     }
   },
@@ -444,6 +490,203 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 200
+          }
+        }
+      }
+    },
+    "reviewRound": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "round",
+        "candidateRef",
+        "at",
+        "outcome",
+        "verdicts",
+        "findings",
+        "raised",
+        "settled"
+      ],
+      "properties": {
+        "round": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fromRound": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "candidateRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "at": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "approve",
+            "changes",
+            null
+          ]
+        },
+        "verdicts": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/id"
+          },
+          "additionalProperties": {
+            "enum": [
+              "approve",
+              "changes",
+              "unavailable"
+            ]
+          }
+        },
+        "findings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "properties": {
+            "P0": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "P1": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "P2": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "P3": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "raised": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "lens",
+              "severity",
+              "summary",
+              "state"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "lens": {
+                "$ref": "#/$defs/id"
+              },
+              "severity": {
+                "enum": [
+                  "P0",
+                  "P1",
+                  "P2",
+                  "P3"
+                ]
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 280
+              },
+              "state": {
+                "enum": [
+                  "unresolved",
+                  "resolved"
+                ]
+              }
+            }
+          }
+        },
+        "settled": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "lens",
+              "state",
+              "fixCommit",
+              "resolution"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "lens": {
+                "$ref": "#/$defs/id"
+              },
+              "state": {
+                "enum": [
+                  "fixed",
+                  "dropped",
+                  "open"
+                ]
+              },
+              "fixCommit": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "resolution": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 600
+              }
+            }
+          }
+        },
+        "clipped": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "findings",
+            "closures",
+            "texts"
+          ],
+          "properties": {
+            "findings": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "closures": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "texts": {
+              "type": "boolean"
+            }
           }
         }
       }

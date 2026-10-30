@@ -27,6 +27,8 @@
 .run-reviewer { display: grid; gap: 8px; }
 .run-reviewer-head { font-size: 13px; color: var(--soft, #5f676d); }
 .run-quiet { margin: 0; font-size: 13px; color: var(--faint, #8f979c); }
+.run-clipped { margin: 0; font-size: 13px; color: var(--faint, #8f979c); font-style: italic; }
+.run-ended { margin: 0; font-size: 13px; color: var(--wait, #b07a1f); }
 .run-findings { list-style: none; margin: 0; padding: 0 0 0 24px; display: grid; gap: 6px; }
 .run-band { margin-top: 10px; margin-bottom: -2px; font-size: 11px; font-weight: 500; letter-spacing: 0.02em; color: var(--faint, #8f979c); }
 .run-band:first-child { margin-top: 0; }

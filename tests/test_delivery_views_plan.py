@@ -302,6 +302,291 @@ class PlanContractTests(unittest.TestCase):
                 self.assertNotIn("Traceback", done.stderr)
 
 
+LENSES = ["lens.outcome-correctness", "lens.adversarial-testing"]
+FIX = "b" * 40
+
+
+def review_entry(number: int, verdicts: dict, *, raised: list | None = None, settled: list | None = None,
+                 findings: dict | None = None, **extra) -> dict:
+    """One `planReview.rounds` entry, as the projection writes it."""
+    return {"round": number, "candidateRef": f"{number:040x}", "at": "2026-10-30T10:00:00Z",
+            "outcome": "approve" if all(v == "approve" for v in verdicts.values()) else "changes",
+            "verdicts": verdicts, "findings": findings or {"P0": 0, "P1": 0, "P2": 0, "P3": 0},
+            "raised": raised or [], "settled": settled or [], **extra}
+
+
+def plan_review() -> dict:
+    """Three rounds to alignment: round 1 raises two findings, round 2 fixes one and raises one, round 3 closes both."""
+    changes = {"lens.outcome-correctness": "changes", "lens.adversarial-testing": "approve"}
+    approve = {lens: "approve" for lens in LENSES}
+    return {
+        "lenses": list(LENSES),
+        "state": "aligned",
+        "rounds": [
+            review_entry(1, changes, findings={"P0": 0, "P1": 2, "P2": 0, "P3": 0}, raised=[
+                {"id": "oc-r1-1", "lens": "lens.outcome-correctness", "severity": "P1",
+                 "summary": "The fold has no shape.", "state": "resolved"},
+                {"id": "oc-r1-2", "lens": "lens.outcome-correctness", "severity": "P1",
+                 "summary": "The cap conflicts.", "state": "resolved"}]),
+            review_entry(2, changes, findings={"P0": 0, "P1": 1, "P2": 0, "P3": 0}, raised=[
+                {"id": "oc-r2-1", "lens": "lens.outcome-correctness", "severity": "P1",
+                 "summary": "A round is off by one.", "state": "resolved"}], settled=[
+                {"id": "oc-r1-1", "lens": "lens.outcome-correctness", "state": "fixed", "fixCommit": FIX,
+                 "resolution": "C2 gives the fold its shape."},
+                {"id": "oc-r1-2", "lens": "lens.outcome-correctness", "state": "dropped", "fixCommit": None,
+                 "resolution": "Not a conflict after all."}]),
+            review_entry(3, approve, settled=[
+                {"id": "oc-r2-1", "lens": "lens.outcome-correctness", "state": "fixed", "fixCommit": "c" * 40,
+                 "resolution": "Scenario 6 reads rounds 2 to 10."}],
+                clipped={"findings": 0, "closures": 0, "texts": False}),
+        ],
+    }
+
+
+def folded_review() -> dict:
+    """Round 1, one fold over rounds 2 to 4, then round 5: the shape C4a's first step writes."""
+    changes = {"lens.outcome-correctness": "changes", "lens.adversarial-testing": "approve"}
+    review = plan_review()
+    review["state"] = "open"
+    review["rounds"] = [
+        review_entry(1, changes, findings={"P0": 0, "P1": 1, "P2": 0, "P3": 0}),
+        review_entry(4, changes, fromRound=2, findings={"P0": 0, "P1": 3, "P2": 1, "P3": 0},
+                     clipped={"findings": 4, "closures": 3, "texts": False}),
+        review_entry(5, changes, findings={"P0": 0, "P1": 1, "P2": 0, "P3": 0}),
+    ]
+    return review
+
+
+def with_review(review: dict) -> dict:
+    document = plan()
+    document["planReview"] = review
+    return document
+
+
+class PlanReviewContractTests(unittest.TestCase):
+    """C2 and C3: the optional `planReview`, and `id` and `blocking` on approvals."""
+
+    def test_a_plan_review_and_marked_approvals_are_accepted_whole(self) -> None:
+        for review in (plan_review(), folded_review()):
+            document = with_review(review)
+            document["approvals"] = [{"id": "approval-1", "text": "The release", "state": "waiting", "blocking": True},
+                                     {"id": "approval-2", "text": "The plan", "state": "done", "blocking": False},
+                                     {"text": "By hand", "state": "waiting"}]
+            self.assertEqual(views.validate_plan(copy.deepcopy(document)), document)
+        ended = plan_review()
+        ended["state"], ended["endedReason"] = "ended", "The operator stopped it: the findings stopped converging."
+        views.validate_plan(with_review(ended))
+        # A review still open after an amendment: the last round has a lens asking for changes.
+        reopened = plan_review()
+        reopened["state"] = "open"
+        reopened["rounds"].pop()
+        views.validate_plan(with_review(reopened))
+        # An unavailable verdict keeps a review open; `at` and `outcome` may be null.
+        unavailable = plan_review()
+        unavailable["state"] = "open"
+        unavailable["rounds"][-1].update(at=None, outcome=None)
+        unavailable["rounds"][-1]["verdicts"]["lens.adversarial-testing"] = "unavailable"
+        views.validate_plan(with_review(unavailable))
+
+    def test_each_refusal_names_its_key_path_and_echoes_no_value(self) -> None:
+        def change(edit):
+            review = plan_review()
+            edit(review)
+            return with_review(review)
+
+        def gap(review):
+            review["rounds"][2]["round"] = 4
+
+        def overlap(review):
+            review["rounds"][1].update(round=3, fromRound=1)
+
+        def fold_with_entries(review):
+            review["rounds"][1]["fromRound"] = 2
+            review["rounds"][1]["round"] = 3
+            review["rounds"][2]["round"] = 4
+
+        def fold_last(review):
+            review["rounds"][2]["fromRound"] = 3
+            review["rounds"][2]["round"] = 4
+
+        def only_fold(review):
+            review["rounds"] = [review_entry(3, {lens: "approve" for lens in LENSES}, fromRound=1)]
+
+        cases = {
+            "an unknown key": (lambda r: r.update({SECRET: 1}), "planReview: holds an unknown key"),
+            "an unknown entry key": (lambda r: r["rounds"][0].update({SECRET: 1}), "planReview.rounds[0]: holds an unknown"),
+            "an unknown state": (lambda r: r.update(state=SECRET), "planReview.state"),
+            "aligned with a lens asking for changes": (lambda r: r["rounds"][2]["verdicts"].update(
+                {"lens.adversarial-testing": "changes"}), "planReview.state"),
+            "open with every lens approving": (lambda r: r.update(state="open"), "planReview.state"),
+            "ended without a reason": (lambda r: r.update(state="ended"), "planReview.endedReason"),
+            "a reason on an aligned review": (lambda r: r.update(endedReason="Stopped."), "planReview.endedReason"),
+            "an overlong reason": (lambda r: r.update(state="ended", endedReason=SECRET + "x" * 600),
+                                   "planReview.endedReason"),
+            "no lens": (lambda r: r.update(lenses=[]), "planReview.lenses"),
+            "thirteen lenses": (lambda r: r.update(lenses=[f"lens.{i}" for i in range(13)]), "planReview.lenses"),
+            "a repeated lens": (lambda r: r.update(lenses=LENSES + LENSES[:1]), "planReview.lenses[2]"),
+            "a malformed lens id": (lambda r: r["lenses"].append(SECRET + " x"), "planReview.lenses[2]"),
+            "no round": (lambda r: r.update(rounds=[]), "planReview.rounds"),
+            "a verdict for no lens": (lambda r: r["rounds"][0]["verdicts"].update({SECRET: "approve"}),
+                                      "planReview.rounds[0].verdicts"),
+            "a missing verdict": (lambda r: r["rounds"][0]["verdicts"].pop("lens.adversarial-testing"),
+                                  "planReview.rounds[0].verdicts"),
+            "an unknown verdict": (lambda r: r["rounds"][0]["verdicts"].update({"lens.adversarial-testing": SECRET}),
+                                   "planReview.rounds[0].verdicts.lens.adversarial-testing"),
+            "an unknown outcome": (lambda r: r["rounds"][0].update(outcome=SECRET), "planReview.rounds[0].outcome"),
+            "a malformed time": (lambda r: r["rounds"][0].update(at=SECRET), "planReview.rounds[0].at"),
+            "an overlong candidate": (lambda r: r["rounds"][0].update(candidateRef="x" * 2049),
+                                      "planReview.rounds[0].candidateRef"),
+            "a negative count": (lambda r: r["rounds"][0]["findings"].update(P1=-1), "planReview.rounds[0].findings"),
+            "a count that isn't whole": (lambda r: r["rounds"][0]["findings"].update(P1=True),
+                                         "planReview.rounds[0].findings"),
+            "a missing severity": (lambda r: r["rounds"][0]["findings"].pop("P3"), "planReview.rounds[0].findings"),
+            "a deferred finding": (lambda r: r["rounds"][0]["raised"][0].update(state="deferred"),
+                                   "planReview.rounds[0].raised[0].state"),
+            "a deferred issue": (lambda r: r["rounds"][0]["raised"][0].update(deferredIssue=SECRET),
+                                 "planReview.rounds[0].raised[0]: holds an unknown"),
+            "an unknown severity": (lambda r: r["rounds"][0]["raised"][0].update(severity=SECRET),
+                                    "planReview.rounds[0].raised[0].severity"),
+            "an overlong summary": (lambda r: r["rounds"][0]["raised"][0].update(summary=SECRET + "x" * 280),
+                                    "planReview.rounds[0].raised[0].summary"),
+            "a finding of no lens": (lambda r: r["rounds"][0]["raised"][0].update(lens="lens.other"),
+                                     "planReview.rounds[0].raised[0].lens"),
+            "a malformed finding id": (lambda r: r["rounds"][0]["raised"][0].update(id=SECRET + "/1"),
+                                       "planReview.rounds[0].raised[0].id"),
+            "a fixed closure without its commit": (lambda r: r["rounds"][1]["settled"][0].update(fixCommit=None),
+                                                   "planReview.rounds[1].settled[0].fixCommit"),
+            "a short fix commit": (lambda r: r["rounds"][1]["settled"][0].update(fixCommit=SECRET),
+                                   "planReview.rounds[1].settled[0].fixCommit"),
+            "a fix commit on a dropped closure": (lambda r: r["rounds"][1]["settled"][1].update(fixCommit=FIX),
+                                                  "planReview.rounds[1].settled[1].fixCommit"),
+            "a deferred closure": (lambda r: r["rounds"][1]["settled"][1].update(state="deferred"),
+                                   "planReview.rounds[1].settled[1].state"),
+            "an overlong resolution": (lambda r: r["rounds"][1]["settled"][1].update(resolution=SECRET + "x" * 600),
+                                       "planReview.rounds[1].settled[1].resolution"),
+            "a malformed clipped note": (lambda r: r["rounds"][2]["clipped"].update(findings=-1),
+                                         "planReview.rounds[2].clipped"),
+            "a gap": (gap, "planReview.rounds[2].round"),
+            "an overlap": (overlap, "planReview.rounds[1]"),
+            "a fold with listed entries": (fold_with_entries, "planReview.rounds[1]"),
+            "a fold over one round": (lambda r: r["rounds"][1].update(fromRound=2), "planReview.rounds[1].fromRound"),
+            "a fold as the last entry": (fold_last, "planReview.rounds[2]"),
+            "a review that is one fold": (only_fold, "planReview.rounds[0]"),
+            "a first entry past round 1": (lambda r: [e.update(round=e["round"] + 1) for e in r["rounds"]],
+                                           "planReview.rounds[0].round"),
+        }
+        for name, (edit, path) in cases.items():
+            with self.subTest(case=name):
+                message = refusal(change(edit))
+                self.assertTrue(message.startswith(path), message)
+                self.assertNotIn(SECRET, message)
+
+    def test_approval_ids_are_ids_and_unique_and_blocking_is_a_boolean(self) -> None:
+        for edit, path in (
+                (lambda a: a[0].update(id=SECRET + " x"), "approvals[0].id"),
+                (lambda a: (a[0].update(id="approval-1"), a[1].update(id="approval-1")), "approvals[1].id"),
+                (lambda a: a[0].update(blocking=SECRET), "approvals[0].blocking"),
+                (lambda a: a[0].update({SECRET: True}), "approvals[0]: holds an unknown key")):
+            document = plan()
+            edit(document["approvals"])
+            message = refusal(document)
+            self.assertTrue(message.startswith(path), message)
+            self.assertNotIn(SECRET, message)
+
+    def test_each_cap_holds_at_its_limit_and_refuses_one_past_it(self) -> None:
+        self.assertEqual((views.PLAN_REVIEW_LENSES, views.PLAN_REVIEW_ROUNDS, views.PLAN_REVIEW_NOTES,
+                          views.PLAN_REVIEW_SUMMARY, views.PLAN_REVIEW_CANDIDATE, views.PLAN_REVIEW_BYTES),
+                         (12, 32, 30, 280, 2048, 256 * 1024))
+        lens = "lens.outcome-correctness"
+        changes = {lens: "changes", "lens.adversarial-testing": "approve"}
+
+        def full(count: int) -> dict:
+            review = plan_review()
+            review["state"] = "open"
+            review["rounds"] = [review_entry(n, changes) for n in range(1, count + 1)]
+            return review
+
+        views.validate_plan(with_review(full(32)))
+        self.assertTrue(refusal(with_review(full(33))).startswith("planReview.rounds:"))
+        twelve = plan_review()
+        twelve["lenses"] = [f"lens.{i}" for i in range(12)]
+        for entry in twelve["rounds"]:
+            entry["verdicts"] = {name: "approve" for name in twelve["lenses"]}
+            entry["raised"], entry["settled"] = [], []
+        views.validate_plan(with_review(twelve))
+        for key, make in (("raised", lambda i: {"id": f"f{i}", "lens": lens, "severity": "P1", "summary": "s",
+                                                "state": "unresolved"}),
+                          ("settled", lambda i: {"id": f"f{i}", "lens": lens, "state": "open", "fixCommit": None,
+                                                 "resolution": "r"})):
+            review = full(2)
+            review["rounds"][0][key] = [make(i) for i in range(30)]
+            views.validate_plan(with_review(review))
+            review["rounds"][0][key].append(make(30))
+            self.assertTrue(refusal(with_review(review)).startswith(f"planReview.rounds[0].{key}:"))
+        texts = plan_review()
+        texts["rounds"][0]["raised"][0]["summary"] = "x" * 280
+        texts["rounds"][1]["settled"][0]["resolution"] = "x" * 600
+        texts["rounds"][0]["candidateRef"] = "x" * 2048
+        views.validate_plan(with_review(texts))
+
+    def test_the_serialized_review_is_held_to_256_kib(self) -> None:
+        lens = "lens.outcome-correctness"
+        review = plan_review()
+        review["state"] = "open"
+        changes = {lens: "changes", "lens.adversarial-testing": "approve"}
+        review["rounds"] = [review_entry(n, changes, settled=[
+            {"id": f"f{n}-{i}", "lens": lens, "state": "open", "fixCommit": None, "resolution": "x" * 600}
+            for i in range(30)]) for n in range(1, 14)]
+        size = views.plan_review_size(review)
+        self.assertGreater(size, views.PLAN_REVIEW_BYTES)
+        # Trim the last resolution until the review sits exactly at the cap, then one byte over it.
+        last = review["rounds"][-1]["settled"]
+        while views.plan_review_size(review) > views.PLAN_REVIEW_BYTES:
+            excess = views.plan_review_size(review) - views.PLAN_REVIEW_BYTES
+            entry = next(e for e in reversed(last) if len(e["resolution"]) > 1)
+            entry["resolution"] = entry["resolution"][:max(1, len(entry["resolution"]) - excess)]
+        self.assertEqual(views.plan_review_size(review), views.PLAN_REVIEW_BYTES)
+        views.validate_plan(with_review(review))
+        entry = next(e for e in last if len(e["resolution"]) < 600)
+        entry["resolution"] += "x"
+        self.assertEqual(views.plan_review_size(review), views.PLAN_REVIEW_BYTES + 1)
+        self.assertTrue(refusal(with_review(review)).startswith("planReview: holds"))
+
+    def test_todays_fixtures_and_a_plan_without_a_review_stay_valid(self) -> None:
+        views.validate_plan(plan())
+        for case in ("plan-in-app", "plan-record-only"):
+            path = PRODUCT_ROOT / "tests/fixtures/delivery-views/line-map" / case / "plan.json"
+            views.validate_plan(json.loads(path.read_text(encoding="utf-8")))
+
+    def test_the_schema_holds_the_review_and_refuses_what_it_can_express(self) -> None:
+        import jsonschema
+
+        validator = jsonschema.Draft202012Validator(json.loads(SCHEMA.read_text(encoding="utf-8")))
+        for review in (plan_review(), folded_review()):
+            document = with_review(review)
+            document["approvals"][0].update(id="approval-1", blocking=True)
+            self.assertEqual(list(validator.iter_errors(document)), [])
+        refused = {
+            "an unknown review key": lambda r: r.update(extra=1),
+            "an unknown state": lambda r: r.update(state="paused"),
+            "thirteen lenses": lambda r: r.update(lenses=[f"lens.{i}" for i in range(13)]),
+            "33 rounds": lambda r: r.update(rounds=r["rounds"] * 11),
+            "a deferred finding": lambda r: r["rounds"][0]["raised"][0].update(state="deferred"),
+            "a short fix commit": lambda r: r["rounds"][1]["settled"][0].update(fixCommit="abc"),
+            "an overlong summary": lambda r: r["rounds"][0]["raised"][0].update(summary="x" * 281),
+            "an unknown verdict": lambda r: r["rounds"][0]["verdicts"].update({LENSES[0]: "maybe"}),
+        }
+        for name, edit in refused.items():
+            with self.subTest(case=name):
+                review = plan_review()
+                edit(review)
+                self.assertTrue(list(validator.iter_errors(with_review(review))), name)
+                self.assertRaises(views.ConfigError, views.validate_plan, with_review(review))
+        document = plan()
+        document["approvals"][0]["blocking"] = "yes"
+        self.assertTrue(list(validator.iter_errors(document)))
+
+
 SKILL = PRODUCT_ROOT / "skills/delivery-views/SKILL.md"
 LINE_MAP = PRODUCT_ROOT / "skills/delivery-views/assets/line-map.js"
 # C7: what needs the engineer, in the order the chapter shows it, each with the words that make it the rule it is.

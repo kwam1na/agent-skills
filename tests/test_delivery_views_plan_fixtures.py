@@ -17,7 +17,7 @@ from tests.test_run_delivery import FIRST_ADOPTER_TERM_DIGESTS
 
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT / "tests" / "fixtures" / "delivery-views" / "line-map"
-PLAN_CASES = ("plan-in-app", "plan-record-only")
+PLAN_CASES = ("plan-in-app", "plan-record-only", "plan-review")
 RECORDS = CORPUS / "plan-records"
 HEX = re.compile(r"\b[0-9a-f]{40}\b|\b[0-9a-f]{64}\b")
 TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z")

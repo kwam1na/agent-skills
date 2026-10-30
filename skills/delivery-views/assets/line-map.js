@@ -1462,6 +1462,9 @@
     var changes = list(plan.changes).filter(isObject);
     var events = list(doc.journal).filter(function (entry) { return isObject(entry) && (entry.kind === "base.broken" || entry.kind === "base.repaired"); });
     if (baseBroken(doc)) { flags.push({ title: "The base is broken", why: text(events[events.length - 1].summary) || "No reason recorded." }); }
+    // Only an approval the lead marked blocking needs the engineer; one that is merely ahead stays in its fold.
+    var blocking = list(plan.approvals).filter(function (entry) { return isObject(entry) && entry.blocking === true && entry.state === "waiting"; });
+    if (blocking.length) { flags.push({ title: "Approvals are blocking work", why: blocking.map(function (entry) { return text(entry.text); }).join("; ") }); }
     var known = Object.create(null);
     planUnits(plan.units).forEach(function (unit) { known[text(unit.subject)] = true; });
     var stray = [];
@@ -1629,6 +1632,32 @@
     return add(row, foot);
   }
 
+  /** The plan's review as the run summary draws a review: its entries, how it ended, and that it has no bound. */
+  function planReview() { return isObject(plan.planReview) && list(plan.planReview.rounds).filter(isObject).length ? plan.planReview : null; }
+  function reviewRounds(review) {
+    var rounds = list(review.rounds).filter(isObject);
+    var last = rounds[rounds.length - 1].round;
+    return typeof last === "number" ? last : rounds.length;
+  }
+  var REVIEW_ENDINGS = table({ aligned: "every lens aligned", ended: "ended without alignment", open: "still open" });
+  /** "Approved Oct 30 after 3 review rounds · every lens aligned": open by default, beside the approval. */
+  function approvalLine(review) {
+    var at = seconds(isObject(plan.approved) ? plan.approved.at : null);
+    var date = at === null ? null : new Date(at * 1000);
+    var day = date ? MONTHS[date.getMonth()] + " " + date.getDate() + (date.getFullYear() === new Date(Date.now()).getFullYear() ? "" : ", " + date.getFullYear()) : "at an unknown time";
+    var count = reviewRounds(review);
+    return el("p", "plan-approval", "Approved " + day + " after " + count + (count === 1 ? " review round" : " review rounds") +
+      (REVIEW_ENDINGS[review.state] ? " · " + REVIEW_ENDINGS[review.state] : ""));
+  }
+  function reviewFold(review) {
+    var count = reviewRounds(review);
+    var summary = { observational: true, observationKey: "plan-review", open: false, roundDetail: list(review.rounds).filter(isObject),
+      planReview: { state: text(review.state), endedReason: text(review.endedReason) } };
+    var box = el("div", "plan-review");
+    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, lenses: VIEW.lenses }));
+    return fold("review", "Plan review (" + count + (count === 1 ? " round)" : " rounds)"), null, box);
+  }
+
   function drawPlan(doc) {
     var inner = parts.plan;
     planRows = Object.create(null);
@@ -1645,7 +1674,10 @@
     var updates = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "decision.recorded" && /^Plan updated:/.test(text(entry.summary)); });
     var latest = updates.length ? /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/.exec(text(updates[updates.length - 1].summary)) : null;
     if (latest && latest[0] !== plan.updated) { title.appendChild(el("span", "plan-reload", "The plan changed. Reload to see it.")); }
-    nodes.push(title, el("p", "say plan-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")), flagList(planFlags(doc, counts)));
+    var review = planReview();
+    nodes.push(title, el("p", "say plan-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")));
+    if (review) { nodes.push(approvalLine(review)); }
+    nodes.push(flagList(planFlags(doc, counts)));
     var open = counts.units.filter(function (unit) { return !counts.proofs[text(unit.subject)].proven; });
     if (open.length) {
       var ul = el("ul", "plan-open");
@@ -1698,6 +1730,7 @@
     });
     var folds = el("div", "plan-folds");
     folds.appendChild(fold("units", "All units", shownUnits.length, all));
+    if (review) { folds.appendChild(reviewFold(review)); }
     var changes = list(plan.changes).filter(isObject);
     var changeBox = el("div", "plan-changes");
     if (changes.length) { changeBox.appendChild(scopeChart(changes)); }

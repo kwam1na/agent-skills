@@ -1,0 +1,46 @@
+{
+  "state": {
+    "version": 3,
+    "meta": {
+      "headline": "Fixture delivery",
+      "updatedAt": "2026-10-30T11:59:00Z"
+    },
+    "lanes": [
+      {
+        "id": "lane-1",
+        "title": "Lane one",
+        "focus": "",
+        "state": "working",
+        "waitingOn": null,
+        "since": "2026-10-30T06:00:00Z"
+      }
+    ],
+    "queue": [
+      {
+        "order": 1,
+        "subject": "SHOP-1",
+        "title": "Work SHOP-1",
+        "lane": "lane-1",
+        "stage": "queued",
+        "head": "0c1cb5a310264b55142fe107183976b91c430c6b",
+        "syncedHead": null,
+        "leadInputs": [],
+        "reportedRounds": null,
+        "runId": null,
+        "checks": []
+      }
+    ],
+    "planned": [],
+    "finish": [],
+    "followups": [],
+    "leases": []
+  },
+  "journal": [],
+  "stats": {},
+  "estimates": {},
+  "status": {
+    "source": "derived",
+    "text": ""
+  },
+  "focus": {}
+}

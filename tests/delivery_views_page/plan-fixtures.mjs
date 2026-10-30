@@ -1,5 +1,5 @@
 // Synthetic deliveries for the plan chapter: a record the page draws and the delivery-plan/1 document beside it.
-// Run with `node tests/delivery_views_page/plan-fixtures.mjs` to rewrite the two golden fixture deliveries, inputs and
+// Run with `node tests/delivery_views_page/plan-fixtures.mjs` to rewrite the golden fixture deliveries, inputs and
 // goldens: read every golden it writes before committing it, since a golden pins what the page shows today.
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -160,8 +160,56 @@ export function recordOnlyDelivery() {
   return { document, plan: planFor(units, { finish }) };
 }
 
+/**
+ * A plan review as run-delivery writes it: three rounds to alignment, each fixed finding carrying the commit of the round
+ * that reports it closed. `folded` gives twelve rounds instead, rounds 2 to 10 folded into one entry, and round 11
+ * listing less than it raised.
+ */
+export function threeRoundReview({ folded = false } = {}) {
+  const [oc, at] = LENSES;
+  const counts = (P1 = 0, P2 = 0) => ({ P0: 0, P1, P2, P3: 0 });
+  const raised = (id, lens, summary, severity = "P1") => ({ id, lens, severity, summary, state: "resolved" });
+  const fixed = (id, lens, commit, resolution) => ({ id, lens, state: "fixed", fixCommit: commit, resolution });
+  const first = { round: 1, candidateRef: "1".repeat(40), at: minute(-300), outcome: "changes", verdicts: { [oc]: "changes", [at]: "changes" },
+    findings: counts(4), raised: [raised("c1-1", oc, "The fold has no valid shape."), raised("c1-2", oc, "The guarantees conflict."),
+      raised("c1-3", oc, "The caps block every plan write."), raised("a1-1", at, "A review past the caps blocks the plan write.")], settled: [] };
+  if (!folded) {
+    const two = "2".repeat(40);
+    return { lenses: [...LENSES], state: "aligned", rounds: [first,
+      { round: 2, candidateRef: two, at: minute(-200), outcome: "changes", verdicts: { [oc]: "changes", [at]: "approve" }, findings: counts(1),
+        raised: [raised("c2-1", oc, "Scenario 6 reads the wrong rounds.")],
+        settled: [fixed("c1-1", oc, two, "C2's numbering rule gives the fold its shape."), fixed("c1-2", oc, two, "The always-kept list settles it."),
+          fixed("c1-3", oc, two, "C4a's four steps always fit the caps."), fixed("a1-1", at, two, "The producer fits the review before it writes.")] },
+      { round: 3, candidateRef: "3".repeat(40), at: minute(-100), outcome: "approve", verdicts: { [oc]: "approve", [at]: "approve" }, findings: counts(),
+        raised: [], settled: [fixed("c2-1", oc, "3".repeat(40), "The off-by-one is corrected: scenario 6 reads rounds 2 to 10.")] }] };
+  }
+  return { lenses: [...LENSES], state: "aligned", rounds: [first,
+    { round: 10, fromRound: 2, candidateRef: "a".repeat(40), at: minute(-150), outcome: "changes", verdicts: { [oc]: "changes", [at]: "approve" },
+      findings: counts(9, 2), raised: [], settled: [], clipped: { findings: 11, closures: 7, texts: false } },
+    { round: 11, candidateRef: "b".repeat(40), at: minute(-120), outcome: "changes", verdicts: { [oc]: "changes", [at]: "approve" },
+      findings: counts(6), raised: [{ ...raised("c11-1", oc, "One finding of six is listed."), state: "resolved" }],
+      settled: [], clipped: { findings: 5, closures: 0, texts: true } },
+    { round: 12, candidateRef: "c".repeat(40), at: minute(-100), outcome: "approve", verdicts: { [oc]: "approve", [at]: "approve" },
+      findings: counts(), raised: [], settled: [fixed("c11-1", oc, "c".repeat(40), "Fixed.")] }] };
+}
+
+/**
+ * A one-unit delivery whose plan went through three review rounds, with three approvals drafted from the plan, two of
+ * them marked blocking, and an out-of-scope list.
+ */
+export function planReviewDelivery() {
+  const document = record({ queue: [item("SHOP-1", "queued")], journal: journal([]) });
+  const plan = planFor([unit("SHOP-1", { criteria: 2, title: "Saved addresses" })], { review: "after 3 review rounds · every lens aligned",
+    approvals: [{ id: "approval-1", text: "Product Owner signs off the copy", state: "waiting", blocking: true },
+      { id: "approval-2", text: "Security reviews the token scope", state: "waiting", blocking: true },
+      { id: "approval-3", text: "Release notes are reviewed", state: "waiting" }],
+    outOfScope: ["A per-delivery base branch", "Importing addresses"] });
+  plan.planReview = threeRoundReview();
+  return { document, plan };
+}
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-export const PLAN_CASES = { "plan-in-app": inAppDelivery, "plan-record-only": recordOnlyDelivery };
+export const PLAN_CASES = { "plan-in-app": inAppDelivery, "plan-record-only": recordOnlyDelivery, "plan-review": planReviewDelivery };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const corpus = path.join(HERE, "..", "fixtures", "delivery-views", "line-map");

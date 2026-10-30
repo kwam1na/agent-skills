@@ -159,6 +159,22 @@ function runSummaryNode(summary, options) {
     return typeof round.outcome === "string" && round.outcome !== "" ? "reported as " + round.outcome : "outcome not reported";
   }
   function numberOf(round, index) { return round.round === null || round.round === undefined ? index + 1 : round.round; }
+  // A plan review's fold covers several rounds as one entry: "2–10", and "Rounds 2–10".
+  function isFold(round) { return typeof round.fromRound === "number" && typeof round.round === "number" && round.fromRound < round.round; }
+  function dotOf(round, index) { return isFold(round) ? round.fromRound + "\u2013" + round.round : numberOf(round, index); }
+  function nameOf(round, index) { return (isFold(round) ? "Rounds " : "Round ") + dotOf(round, index); }
+  function plural(count, noun) { return count + " " + noun + (count === 1 ? "" : "s"); }
+  // What an entry of a bounded plan file doesn't list: "This round doesn't list 5 findings, and some of its texts
+  // were shortened."; a fold says how many rounds it holds.
+  function clippedNode(round) {
+    var clipped = round.clipped && typeof round.clipped === "object" ? round.clipped : {};
+    var findings = Math.max(0, Number(clipped.findings) || 0), closures = Math.max(0, Number(clipped.closures) || 0);
+    var unlisted = [findings ? plural(findings, "finding") : "", closures ? plural(closures, "closure") : ""].filter(Boolean).join(" or ");
+    var words = isFold(round) ? "This entry folds " + (round.round - round.fromRound + 1) + " rounds" + (unlisted ? " and doesn't list " + unlisted : "")
+      : unlisted ? "This round doesn't list " + unlisted : "";
+    if (clipped.texts === true) { words = words ? words + ", and some of its texts were shortened" : "Some of this round's texts were shortened"; }
+    return words ? node("p", "run-clipped", words + ".") : null;
+  }
   function worst(counts) { return SEVERITIES.filter(function (severity) { return counts[severity] > 0; })[0] || null; }
   function bead(round, index, previous, picked, choose) {
     var outcome = outcomeOf(round);
@@ -169,9 +185,9 @@ function runSummaryNode(summary, options) {
     var button = node("button", "run-pick");
     button.type = "button";
     button.setAttribute("aria-pressed", String(picked));
-    button.setAttribute("aria-label", "Round " + number + ", " + outcomeWords(round) +
+    button.setAttribute("aria-label", nameOf(round, index) + ", " + outcomeWords(round) +
       (round.findings && typeof round.findings === "object" ? ", " + (noteWords(counts) || "nothing raised") : ""));
-    button.appendChild(node("span", "run-dot", number));
+    button.appendChild(node("span", "run-dot", dotOf(round, index)));
     if (total) { button.appendChild(node("span", "run-badge is-" + worst(counts).toLowerCase(), total)); }
     button.addEventListener("click", function (event) { event.stopPropagation(); choose(index); });
     item.appendChild(button);
@@ -329,12 +345,12 @@ function runSummaryNode(summary, options) {
       candidate.setAttribute("aria-label", "Reviewed candidate " + round.candidateRef);
       box.appendChild(candidate);
     }
-    head.appendChild(node("b", null, "Round " + numberOf(round, index)));
+    head.appendChild(node("b", null, nameOf(round, index)));
     var pill = outcome === "approve" ? "Approved" : outcome === "changes" ? "Changes requested" : outcomeWords(round);
     head.appendChild(node("span", "run-card-outcome", pill.charAt(0).toUpperCase() + pill.slice(1)));
     box.appendChild(head);
     var verdicts = round.verdicts && typeof round.verdicts === "object" ? round.verdicts : {};
-    if (Array.isArray(round.raised)) {
+    if (Array.isArray(round.raised) && !isFold(round)) {
       var raised = round.raised.filter(isNote);
       var lenses = Object.keys(verdicts);
       raised.forEach(function (entry) { if (lenses.indexOf(entry.lens) < 0) { lenses.push(entry.lens); } });
@@ -411,6 +427,8 @@ function runSummaryNode(summary, options) {
         group.appendChild(list);
         box.appendChild(group);
       });
+      var listed = clippedNode(round);
+      if (listed) { box.appendChild(listed); }
       return box;
     }
     var names = Object.keys(verdicts).sort();
@@ -433,6 +451,8 @@ function runSummaryNode(summary, options) {
     }
     if (round.detailsUnavailable === true) { notes.appendChild(node("span", "run-clean", "details unavailable")); }
     box.appendChild(notes);
+    var unlisted = clippedNode(round);
+    if (unlisted) { box.appendChild(unlisted); }
     return box;
   }
   function firstOf(entries) {
@@ -442,7 +462,13 @@ function runSummaryNode(summary, options) {
   }
 
   var box = node("div", "run-summary");
-  if (summary.observational) { box.appendChild(node("p", "run-quiet", "Recorded reviewer reports · display only")); }
+  var planReview = summary.planReview && typeof summary.planReview === "object" ? summary.planReview : null;
+  if (planReview) {
+    // A plan's review is unbounded: it ends when every lens approves, or when the operator ends it, with a reason.
+    box.appendChild(node("p", "run-quiet", "The plan's review has no round bound: it runs until every lens approves or the operator ends it."));
+    if (planReview.state === "ended") { box.appendChild(node("p", "run-ended", "Ended without alignment: " + (planReview.endedReason || "no reason recorded."))); }
+  }
+  else if (summary.observational) { box.appendChild(node("p", "run-quiet", "Recorded reviewer reports · display only")); }
   var rounds = Array.isArray(summary.roundDetail) ? summary.roundDetail.filter(function (round) { return round && typeof round === "object"; }) : [];
   box.appendChild(node("p", "run-story", rounds.length ? story(rounds) : "No review rounds yet"));
   if (rounds.length) {

@@ -836,6 +836,42 @@ class PlanRenderTests(unittest.TestCase):
             self.assertLessEqual(len(render.embed(embedded).encode("utf-8")), share, share)
             self.assertNotIn("overShare", embedded.get("clipped", {}), share)
 
+    def test_a_plan_review_gives_up_its_oldest_texts_first_and_keeps_every_verdict_count_and_commit(self) -> None:
+        lens = "lens.outcome-correctness"
+        plan = plan_document(changes=2)
+
+        def entry(number: int) -> dict:
+            return {"round": number, "candidateRef": f"{number:040x}", "at": "2026-10-30T10:00:00Z",
+                    "outcome": "changes", "verdicts": {lens: "changes"}, "findings": {"P0": 0, "P1": 10, "P2": 0, "P3": 0},
+                    "raised": [{"id": f"f{number}-{i}", "lens": lens, "severity": "P1", "summary": "s" * 280,
+                                "state": "unresolved"} for i in range(10)],
+                    "settled": [{"id": f"f{number - 1}-{i}", "lens": lens, "state": "fixed", "fixCommit": f"{number:040x}",
+                                 "resolution": "r" * 600} for i in range(10)] if number > 1 else []}
+
+        plan["planReview"] = {"lenses": [lens], "state": "open", "rounds": [entry(n) for n in range(1, 4)]}
+        views_common.validate_plan(plan)
+        whole = len(render.embed({"plan": plan}).encode("utf-8"))
+        self.assertEqual(render.plan_block(plan, share=whole + 100), {"plan": plan})
+        # A little over: the oldest round's resolutions go first, one by one; summaries and changes stay.
+        embedded = render.plan_block(plan, share=whole - 3000)
+        rounds = embedded["plan"]["planReview"]["rounds"]
+        self.assertEqual([note["resolution"] for note in rounds[1]["settled"]][:5], [""] * 5)
+        self.assertIn("r" * 600, [note["resolution"] for note in rounds[1]["settled"]])
+        self.assertEqual({note["resolution"] for note in rounds[2]["settled"]}, {"r" * 600})
+        self.assertEqual({note["summary"] for entry in rounds for note in entry["raised"]}, {"s" * 280})
+        self.assertEqual([change["why"] for change in embedded["plan"]["changes"]], [plan["changes"][0]["why"]] * 2)
+        self.assertEqual(embedded["clipped"], {"changes": 0, "texts": 6})
+        # All the way: every review text goes, and every entry's coverage, verdicts, counts and fix commits stay.
+        embedded = render.plan_block(plan, share=1024)
+        kept = embedded["plan"]["planReview"]
+        self.assertEqual({note["resolution"] for entry in kept["rounds"] for note in entry["settled"]}, {""})
+        self.assertEqual({note["summary"] for entry in kept["rounds"] for note in entry["raised"]}, {""})
+        for before, after in zip(plan["planReview"]["rounds"], kept["rounds"]):
+            for key in ("round", "candidateRef", "verdicts", "findings", "outcome"):
+                self.assertEqual(after[key], before[key], key)
+            self.assertEqual([note["fixCommit"] for note in after["settled"]], [note["fixCommit"] for note in before["settled"]])
+            self.assertEqual([note["id"] for note in after["raised"]], [note["id"] for note in before["raised"]])
+
     def test_the_second_pass_clips_the_least_needed_text_first_and_never_the_summary(self) -> None:
         plan = plan_document(changes=0)
         plan["proofKinds"].append({"id": "in-app", "label": "In-app", "source": "producer"})

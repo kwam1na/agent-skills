@@ -1,0 +1,241 @@
+{
+  "schemaVersion": "delivery-plan/1",
+  "updated": "2026-10-30T09:00:00Z",
+  "outcome": {
+    "summary": "Shoppers can pay again after a dropped connection.",
+    "text": "Shoppers can pay again after a dropped connection, and no payment is ever taken twice."
+  },
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "proofKinds": [
+    {
+      "id": "review",
+      "label": "Review",
+      "source": "record"
+    },
+    {
+      "id": "handed",
+      "label": "Handed off",
+      "source": "record"
+    },
+    {
+      "id": "merged",
+      "label": "Merged",
+      "source": "record"
+    }
+  ],
+  "units": [
+    {
+      "subject": "SHOP-1",
+      "title": "Saved addresses",
+      "criteria": [
+        {
+          "id": "SHOP-1.1",
+          "text": "Criterion 1 of SHOP-1"
+        },
+        {
+          "id": "SHOP-1.2",
+          "text": "Criterion 2 of SHOP-1"
+        }
+      ],
+      "proofs": [
+        "review",
+        "handed",
+        "merged"
+      ]
+    }
+  ],
+  "finish": [],
+  "approved": {
+    "at": "2026-10-30T06:00:00Z",
+    "review": "after 3 review rounds · every lens aligned",
+    "snapshot": {
+      "units": [
+        {
+          "subject": "SHOP-1",
+          "title": "Saved addresses",
+          "criteria": [
+            {
+              "id": "SHOP-1.1",
+              "text": "Criterion 1 of SHOP-1"
+            },
+            {
+              "id": "SHOP-1.2",
+              "text": "Criterion 2 of SHOP-1"
+            }
+          ],
+          "proofs": [
+            "review",
+            "handed",
+            "merged"
+          ]
+        }
+      ],
+      "finish": []
+    }
+  },
+  "changes": [],
+  "evidence": {},
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "Product Owner signs off the copy",
+      "state": "waiting",
+      "blocking": true
+    },
+    {
+      "id": "approval-2",
+      "text": "Security reviews the token scope",
+      "state": "waiting",
+      "blocking": true
+    },
+    {
+      "id": "approval-3",
+      "text": "Release notes are reviewed",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "A per-delivery base branch",
+    "Importing addresses"
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ],
+    "state": "aligned",
+    "rounds": [
+      {
+        "round": 1,
+        "candidateRef": "1111111111111111111111111111111111111111",
+        "at": "2026-10-30T01:00:00Z",
+        "outcome": "changes",
+        "verdicts": {
+          "lens.outcome-correctness": "changes",
+          "lens.adversarial-testing": "changes"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 4,
+          "P2": 0,
+          "P3": 0
+        },
+        "raised": [
+          {
+            "id": "c1-1",
+            "lens": "lens.outcome-correctness",
+            "severity": "P1",
+            "summary": "The fold has no valid shape.",
+            "state": "resolved"
+          },
+          {
+            "id": "c1-2",
+            "lens": "lens.outcome-correctness",
+            "severity": "P1",
+            "summary": "The guarantees conflict.",
+            "state": "resolved"
+          },
+          {
+            "id": "c1-3",
+            "lens": "lens.outcome-correctness",
+            "severity": "P1",
+            "summary": "The caps block every plan write.",
+            "state": "resolved"
+          },
+          {
+            "id": "a1-1",
+            "lens": "lens.adversarial-testing",
+            "severity": "P1",
+            "summary": "A review past the caps blocks the plan write.",
+            "state": "resolved"
+          }
+        ],
+        "settled": []
+      },
+      {
+        "round": 2,
+        "candidateRef": "2222222222222222222222222222222222222222",
+        "at": "2026-10-30T02:40:00Z",
+        "outcome": "changes",
+        "verdicts": {
+          "lens.outcome-correctness": "changes",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 1,
+          "P2": 0,
+          "P3": 0
+        },
+        "raised": [
+          {
+            "id": "c2-1",
+            "lens": "lens.outcome-correctness",
+            "severity": "P1",
+            "summary": "Scenario 6 reads the wrong rounds.",
+            "state": "resolved"
+          }
+        ],
+        "settled": [
+          {
+            "id": "c1-1",
+            "lens": "lens.outcome-correctness",
+            "state": "fixed",
+            "fixCommit": "2222222222222222222222222222222222222222",
+            "resolution": "C2's numbering rule gives the fold its shape."
+          },
+          {
+            "id": "c1-2",
+            "lens": "lens.outcome-correctness",
+            "state": "fixed",
+            "fixCommit": "2222222222222222222222222222222222222222",
+            "resolution": "The always-kept list settles it."
+          },
+          {
+            "id": "c1-3",
+            "lens": "lens.outcome-correctness",
+            "state": "fixed",
+            "fixCommit": "2222222222222222222222222222222222222222",
+            "resolution": "C4a's four steps always fit the caps."
+          },
+          {
+            "id": "a1-1",
+            "lens": "lens.adversarial-testing",
+            "state": "fixed",
+            "fixCommit": "2222222222222222222222222222222222222222",
+            "resolution": "The producer fits the review before it writes."
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "candidateRef": "3333333333333333333333333333333333333333",
+        "at": "2026-10-30T04:20:00Z",
+        "outcome": "approve",
+        "verdicts": {
+          "lens.outcome-correctness": "approve",
+          "lens.adversarial-testing": "approve"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 0,
+          "P3": 0
+        },
+        "raised": [],
+        "settled": [
+          {
+            "id": "c2-1",
+            "lens": "lens.outcome-correctness",
+            "state": "fixed",
+            "fixCommit": "3333333333333333333333333333333333333333",
+            "resolution": "The off-by-one is corrected: scenario 6 reads rounds 2 to 10."
+          }
+        ]
+      }
+    ]
+  }
+}

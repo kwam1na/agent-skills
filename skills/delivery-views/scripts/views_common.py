@@ -683,10 +683,18 @@ PLAN_LIST = 100
 PLAN_RECORD_KINDS = ("handed", "merged", "review")
 PLAN_CHANGE_KINDS = ("added", "removed", "relaxed", "changed", "finish")
 PLAN_KEYS = ("schemaVersion", "updated", "outcome", "requiredLenses", "proofKinds", "units", "finish", "approved",
-             "changes", "evidence", "approvals", "outOfScope")
+             "changes", "evidence", "approvals", "outOfScope", "planReview")
 PLAN_REQUIRED = ("schemaVersion", "updated", "outcome", "requiredLenses", "proofKinds", "units", "finish", "approved",
                  "changes", "evidence")
 PLAN_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+# The plan's review: what the plan file holds of it is bounded, though the review itself is not.
+PLAN_REVIEW_LENSES, PLAN_REVIEW_ROUNDS, PLAN_REVIEW_NOTES = 12, 32, 30
+PLAN_REVIEW_SUMMARY, PLAN_REVIEW_CANDIDATE, PLAN_REVIEW_BYTES = 280, 2048, 256 * 1024
+PLAN_REVIEW_STATES = ("aligned", "open", "ended")
+PLAN_REVIEW_VERDICTS = ("approve", "changes", "unavailable")
+PLAN_REVIEW_ENTRY = ("round", "fromRound", "candidateRef", "at", "outcome", "verdicts", "findings", "raised", "settled",
+                     "clipped")
+SEVERITY_NAMES = ("P0", "P1", "P2", "P3")
 
 
 def _plan_object(value: object, where: str, allowed: set[str], required: set[str] = frozenset()) -> dict:
@@ -785,6 +793,115 @@ def _plan_finish(value: object, where: str, criteria: set[str], kinds: dict[str,
         _plan_covers(line["covers"], f"{at}.covers", criteria, kinds)
 
 
+def plan_review_size(review: object) -> int:
+    """The bytes `planReview` takes, serialized compactly as UTF-8: the measure its 256 KiB cap is held to."""
+    return len(json.dumps(review, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _whole(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _plan_review_entry(entry: object, at: str, lenses: list[str]) -> dict:
+    _plan_object(entry, at, set(PLAN_REVIEW_ENTRY), set(PLAN_REVIEW_ENTRY) - {"fromRound", "clipped"})
+    for key in ("round", "fromRound"):
+        if key in entry and (not _whole(entry[key]) or entry[key] < 1):
+            raise ConfigError(f"{at}.{key}: must be a whole number from 1")
+    _text(entry["candidateRef"], f"{at}.candidateRef", PLAN_REVIEW_CANDIDATE)
+    if entry["at"] is not None:
+        _plan_time(entry["at"], f"{at}.at")
+    if entry["outcome"] not in (None, "approve", "changes"):
+        raise ConfigError(f"{at}.outcome: must be approve, changes or null")
+    verdicts = entry["verdicts"]
+    if not isinstance(verdicts, dict) or sorted(verdicts) != sorted(lenses):
+        raise ConfigError(f"{at}.verdicts: must give exactly the review's lenses a verdict")
+    for lens in lenses:
+        if verdicts[lens] not in PLAN_REVIEW_VERDICTS:
+            raise ConfigError(f"{at}.verdicts.{lens}: must be approve, changes or unavailable")
+    findings = entry["findings"]
+    if not isinstance(findings, dict) or sorted(findings) != list(SEVERITY_NAMES) or not all(
+            _whole(findings[severity]) for severity in SEVERITY_NAMES):
+        raise ConfigError(f"{at}.findings: must count P0, P1, P2 and P3 as whole numbers")
+    for i, note in enumerate(_bounded(entry["raised"], f"{at}.raised", PLAN_REVIEW_NOTES)):
+        spot = f"{at}.raised[{i}]"
+        _plan_object(note, spot, {"id", "lens", "severity", "summary", "state"},
+                     {"id", "lens", "severity", "summary", "state"})
+        _plan_id(note["id"], f"{spot}.id")
+        if note["lens"] not in lenses:
+            raise ConfigError(f"{spot}.lens: names no lens of the review")
+        if note["severity"] not in SEVERITY_NAMES:
+            raise ConfigError(f"{spot}.severity: must be P0, P1, P2 or P3")
+        _text(note["summary"], f"{spot}.summary", PLAN_REVIEW_SUMMARY)
+        if note["state"] not in ("unresolved", "resolved"):
+            raise ConfigError(f"{spot}.state: must be unresolved or resolved")
+    for i, note in enumerate(_bounded(entry["settled"], f"{at}.settled", PLAN_REVIEW_NOTES)):
+        spot = f"{at}.settled[{i}]"
+        _plan_object(note, spot, {"id", "lens", "state", "fixCommit", "resolution"},
+                     {"id", "lens", "state", "fixCommit", "resolution"})
+        _plan_id(note["id"], f"{spot}.id")
+        if note["lens"] not in lenses:
+            raise ConfigError(f"{spot}.lens: names no lens of the review")
+        if note["state"] not in ("fixed", "dropped", "open"):
+            raise ConfigError(f"{spot}.state: must be fixed, dropped or open")
+        commit = note["fixCommit"]
+        if (note["state"] == "fixed") != (isinstance(commit, str) and bool(COMMIT.fullmatch(commit))) or (
+                note["state"] != "fixed" and commit is not None):
+            raise ConfigError(f"{spot}.fixCommit: is a full commit id exactly when the state is fixed, else null")
+        _text(note["resolution"], f"{spot}.resolution", PLAN_TEXT)
+    if "clipped" in entry:
+        clipped = entry["clipped"]
+        if not isinstance(clipped, dict) or sorted(clipped) != ["closures", "findings", "texts"] or not (
+                _whole(clipped["findings"]) and _whole(clipped["closures"]) and isinstance(clipped["texts"], bool)):
+            raise ConfigError(f"{at}.clipped: must hold findings and closures as whole numbers and texts as true or false")
+    return entry
+
+
+def _plan_review(value: object) -> None:
+    """C2: lenses, a state checked against the last round, and entries covering rounds 1 to N with no gap or overlap."""
+    review = _plan_object(value, "planReview", {"lenses", "state", "endedReason", "rounds"}, {"lenses", "state", "rounds"})
+    size = plan_review_size(review)
+    if size > PLAN_REVIEW_BYTES:
+        raise ConfigError(f"planReview: holds {size} bytes, over the {PLAN_REVIEW_BYTES} it may take")
+    lenses = _list(review["lenses"], "planReview.lenses", non_empty=True)
+    if len(lenses) > PLAN_REVIEW_LENSES:
+        raise ConfigError(f"planReview.lenses: holds {len(lenses)} entries, over the cap of {PLAN_REVIEW_LENSES}")
+    for i, lens in enumerate(lenses):
+        _plan_id(lens, f"planReview.lenses[{i}]")
+        if lens in lenses[:i]:
+            raise ConfigError(f"planReview.lenses[{i}]: repeats a lens")
+    rounds = _list(review["rounds"], "planReview.rounds", non_empty=True)
+    if len(rounds) > PLAN_REVIEW_ROUNDS:
+        raise ConfigError(f"planReview.rounds: holds {len(rounds)} entries, over the cap of {PLAN_REVIEW_ROUNDS}")
+    covered = 0
+    for i, entry in enumerate(rounds):
+        at = f"planReview.rounds[{i}]"
+        _plan_review_entry(entry, at, lenses)
+        first = entry.get("fromRound", entry["round"])
+        if first != covered + 1:
+            raise ConfigError(f"{at}.{'fromRound' if 'fromRound' in entry else 'round'}: must start at round "
+                              f"{covered + 1}, the round after the entry before it")
+        if "fromRound" in entry:
+            if entry["fromRound"] >= entry["round"]:
+                raise ConfigError(f"{at}.fromRound: a fold covers at least two rounds")
+            if entry["raised"] or entry["settled"]:
+                raise ConfigError(f"{at}: a fold lists no findings or closures")
+            if i == len(rounds) - 1:
+                raise ConfigError(f"{at}: the last entry is never a fold")
+        covered = entry["round"]
+    state = review["state"]
+    if state not in PLAN_REVIEW_STATES:
+        raise ConfigError("planReview.state: must be aligned, open or ended")
+    last = rounds[-1]["verdicts"]
+    if state == "aligned" and any(last[lens] != "approve" for lens in lenses):
+        raise ConfigError("planReview.state: aligned needs every lens's verdict approve in the last round")
+    if state == "open" and all(last[lens] == "approve" for lens in lenses):
+        raise ConfigError("planReview.state: open needs a lens in the last round that doesn't approve")
+    if (state == "ended") != ("endedReason" in review):
+        raise ConfigError("planReview.endedReason: is required exactly when the state is ended")
+    if "endedReason" in review:
+        _text(review["endedReason"], "planReview.endedReason", PLAN_TEXT)
+
+
 def validate_plan(value: object) -> dict:
     """A `delivery-plan/1` document, unchanged, or a ConfigError naming the key path and echoing no value."""
     plan = _plan_object(value, "", set(PLAN_KEYS), set(PLAN_REQUIRED))
@@ -878,16 +995,25 @@ def validate_plan(value: object) -> dict:
                 _plan_time(entry["at"], f"{spot}.at")
             for j, item in enumerate(_bounded(entry.get("items", []), f"{spot}.items", PLAN_LIST)):
                 _text(item, f"{spot}.items[{j}]", PLAN_LABEL)
+    approval_ids: set[str] = set()
     for i, approval in enumerate(_bounded(plan.get("approvals", []), "approvals", PLAN_LIST)):
         at = f"approvals[{i}]"
-        _plan_object(approval, at, {"text", "state", "who"}, {"text", "state"})
+        _plan_object(approval, at, {"id", "text", "state", "who", "blocking"}, {"text", "state"})
+        if "id" in approval:
+            if _plan_id(approval["id"], f"{at}.id") in approval_ids:
+                raise ConfigError(f"{at}.id: repeats an approval id")
+            approval_ids.add(approval["id"])
         _text(approval["text"], f"{at}.text", PLAN_TEXT)
         if approval["state"] not in ("done", "waiting"):
             raise ConfigError(f"{at}.state: must be done or waiting")
         if "who" in approval:
             _text(approval["who"], f"{at}.who", PLAN_LABEL)
+        if "blocking" in approval and not isinstance(approval["blocking"], bool):
+            raise ConfigError(f"{at}.blocking: must be true or false")
     for i, text in enumerate(_bounded(plan.get("outOfScope", []), "outOfScope", PLAN_LIST)):
         _text(text, f"outOfScope[{i}]", PLAN_TEXT)
+    if "planReview" in plan:
+        _plan_review(plan["planReview"])
     return plan
 
 
