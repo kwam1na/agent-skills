@@ -23,7 +23,7 @@ MAX_PATH_DEPTH = 8
 MAX_COMPRESSION_RATIO = 100
 MAX_VERIFY_SECONDS = 5
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
-SUPPORTED_PROFILES = frozenset({"bootstrap", "core", "delivery-views", "linear", "run-delivery"})
+SUPPORTED_PROFILES = frozenset({"bootstrap", "core", "delivery-views", "jira", "linear", "run-delivery"})
 
 
 class ReleaseError(ValueError):

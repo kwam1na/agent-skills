@@ -34,12 +34,17 @@ The `*-review-evidence-v1` files retain the previously qualified review-evidence
 release set, including its independently bound protected Linear attestation.
 Their bytes and identities remain immutable.
 
-The `*-run-delivery-v1` files are the current product set. The bootstrap archive
+The `*-run-delivery-v1` files retain the previously qualified run-delivery
+release set, including its independently bound protected Linear attestation.
+Their bytes and identities remain immutable.
+
+The `*-jira-tracker-v1` files are the current product set. The bootstrap archive
 qualifies the minimal first-install profile and full product lifecycle. The core
 archive carries its exact current core and provider qualification records. The
 Linear qualification binds that exact core and Linear pair to a new
 independently frozen collector input and protected host-native attestation. The `run-delivery` archive is the
-product an adopter installs to run deliveries; like the delivery-views profile
-before it, it carries no qualification record of its own. Every earlier product
+product an adopter installs to run deliveries, and the `jira` archive is the
+product a Jira adopter installs; like the delivery-views profile before them,
+neither carries a qualification record of its own. Every earlier product
 artifact above remains unchanged and its attestation is never rebound or
 relabeled.
