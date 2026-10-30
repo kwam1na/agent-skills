@@ -69,6 +69,12 @@ python3 scripts/build-release.py verify \
   --extract-to /tmp/linear-standalone
 ```
 
+The optional Jira profile builds the same way with `--profile jira`. It reaches
+Jira only through the host's Atlassian MCP connector, configured by the adopting
+repository's `.agents/tracker-properties.json`, whose `jira` block names the
+site, issue types, dependency link type, and any summary prefix, components,
+labels and canceled resolutions.
+
 Build and qualify the bootstrap profile independently. Its qualifier installs
 the exact archive in a fresh Git repository, verifies both host exposures and
 standalone corpus validation, updates through the same command, removes its
@@ -94,8 +100,9 @@ manifest then authenticates the complete payload and its single profile group.
 Verification is bounded by fixed entry, file-size, expanded-size, path-depth,
 compression-ratio, and elapsed-time limits. The archive contains the validator,
 catalog, selected profile closure, provenance, schemas, inventory, and selected
-skills. Core excludes optional profile bodies; Linear adds its adapter and the two
-tracking workflows that call the adapter to the complete core closure.
+skills. Core excludes optional profile bodies; Linear and Jira each add their
+adapter and the two tracking workflows that call the adapter to the complete
+core closure.
 
 An installed product verifies an incoming release against its own limits, so
 raising a limit takes a stepping-stone release. The release that raises a limit
@@ -109,7 +116,8 @@ bounded multi-lens review convergence, and a caller-owned compounding decision.
 Bootstrap guidance is opt-in. The optional Linear profile adds a
 host-native MCP adapter plus the decomposition and tracked-execution workflows
 that reach the tracker only through it, without changing core behavior when
-tracking is unavailable. A cataloged source-only entry is never selectable, and
+tracking is unavailable. The optional Jira profile does the same through the
+host's Atlassian MCP connector. A cataloged source-only entry is never selectable, and
 Athena overlays remain classification inputs: what ships is a narrowed
 derivative, never copied repository policy.
 

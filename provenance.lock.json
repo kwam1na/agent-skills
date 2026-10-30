@@ -82,6 +82,43 @@
     {
       "classification": "optional-adapter",
       "distribution": "releasable",
+      "id": "create-jira-ticket",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The retained tracker source is narrowed to a decomposition workflow that reaches the tracker only through the optional adapter.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/create-jira-ticket/SKILL.md",
+          "sha256": "8532c41a95f7af2451bb69d5d7c25b2f25ca07ad427a642f50fff8ecfa08f247"
+        },
+        {
+          "path": "skills/create-jira-ticket/agents/openai.yaml",
+          "sha256": "fee0080125ffc66a394e2c7ca4336f1e34cba709fc54532da5aff2c8a09373ac"
+        },
+        {
+          "path": "skills/create-jira-ticket/references/atomic-plan-template.md",
+          "sha256": "f2f8dbc01c4cb7790a460e220249ea44e25a3d0959b4185e9af0448f0175f950"
+        },
+        {
+          "path": "skills/create-jira-ticket/references/atomic-ticket-template.md",
+          "sha256": "ba18fac7ca2ada7b2ba3e20b62a328f89b0f57a4cdfb8a5cc901ed536f5a311b"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "track-skill",
+        "kind": "repository-source",
+        "path": ".agents/skills/track",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "d0b51b5efd0ed6a0518b24a201de7b042c04673e965d9e06bf10d03d0687518b"
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
       "id": "create-linear-ticket",
       "license": "LicenseRef-Athena-internal",
       "modification": {
@@ -241,6 +278,35 @@
     {
       "classification": "optional-adapter",
       "distribution": "releasable",
+      "id": "execute-jira-ticket",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The retained execution source is narrowed to an execution workflow that reaches the tracker only through the optional adapter.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/execute-jira-ticket/SKILL.md",
+          "sha256": "64076dab5d6045fbbefc82b1f2d68d02916c98596320edd85258174633ee86bc"
+        },
+        {
+          "path": "skills/execute-jira-ticket/agents/openai.yaml",
+          "sha256": "b3b8e60330fcfcae23b99856718db835bc7ac97b59c1c576c50781ce5f7f0fb6"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "execute-skill",
+        "kind": "repository-source",
+        "path": ".agents/skills/execute",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "f8a66cf662013f931eabb7f149c8ade7a253d0b06ac534facb347aabeadb1d27"
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
       "id": "execute-linear-ticket",
       "license": "LicenseRef-Athena-internal",
       "modification": {
@@ -298,6 +364,35 @@
         "repository": "kwamina/athena",
         "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
         "sha256": "43f883389cbfbf5bbf556fdd9fd7acfecd577bf3a6879263e11ea12a7c00c222"
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
+      "id": "jira-tracker-adapter",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The provider-specific planning and execution source is narrowed to a host-native adapter for the neutral tracker contract, mapped onto Jira through the host's Atlassian MCP connector.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/jira-tracker-adapter/SKILL.md",
+          "sha256": "425d5f26c83fcc4a252e50879eaff20724c235d38f8990bf98526592d7bfd64a"
+        },
+        {
+          "path": "skills/jira-tracker-adapter/references/adapter-contract.json",
+          "sha256": "862e7a1431f8020ba0a9d9a563756a357489e7bec703a0af396cb1b513598149"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "track-skill",
+        "kind": "repository-source",
+        "path": ".agents/skills/track",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "d0b51b5efd0ed6a0518b24a201de7b042c04673e965d9e06bf10d03d0687518b"
       }
     },
     {

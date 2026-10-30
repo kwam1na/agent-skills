@@ -1,6 +1,6 @@
 {
   "expectedLifecycleScenarioCount": 30,
-  "expectedScenarioCount": 16,
+  "expectedScenarioCount": 19,
   "lifecycleScenarios": [
     {
       "id": "activation-boundary-fault-recovery",
@@ -557,6 +557,33 @@
       "id": "run-delivery-profile-selects-run-delivery",
       "profile": "run-delivery",
       "skill": "run-delivery"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "jira-profile-selects-create-jira-ticket",
+      "profile": "jira",
+      "skill": "create-jira-ticket"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "jira-profile-selects-execute-jira-ticket",
+      "profile": "jira",
+      "skill": "execute-jira-ticket"
+    },
+    {
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "jira-profile-selects-jira-tracker-adapter",
+      "profile": "jira",
+      "skill": "jira-tracker-adapter"
     }
   ],
   "schemaVersion": "agent-skills-validation-inventory/1"

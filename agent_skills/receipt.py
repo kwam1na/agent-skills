@@ -12,7 +12,7 @@ from .validate import canonical_json, safe_relative_path
 RECEIPT_SCHEMA = "agent-skills-receipt/1"
 OWNERSHIP = "agent-skills-managed"
 DIGEST = re.compile(r"^[a-f0-9]{64}$")
-SUPPORTED_PROFILES = frozenset({"bootstrap", "core", "delivery-views", "linear", "run-delivery"})
+SUPPORTED_PROFILES = frozenset({"bootstrap", "core", "delivery-views", "jira", "linear", "run-delivery"})
 MANAGED_REPOSITORY_DIRECTORIES = frozenset(
     {
         ".agent-skills",

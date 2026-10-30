@@ -20,6 +20,7 @@
       "enum": [
         "core",
         "delivery-views",
+        "jira",
         "linear",
         "run-delivery"
       ]

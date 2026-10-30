@@ -31,6 +31,7 @@
       "profiles": [
         "core",
         "delivery-views",
+        "jira",
         "linear",
         "run-delivery"
       ],
@@ -56,10 +57,39 @@
       "profiles": [
         "core",
         "delivery-views",
+        "jira",
         "linear",
         "run-delivery"
       ],
       "provenanceId": "compound-learning"
+    },
+    {
+      "degradedBehavior": "Decomposition remains complete and reports the undecomposed candidates plus every omitted mutation when the host-native tracker capability is unavailable.",
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        },
+        {
+          "id": "jira-tracker-adapter",
+          "requirement": "required"
+        },
+        {
+          "id": "plan-work",
+          "requirement": "routing"
+        }
+      ],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "create-jira-ticket",
+      "path": "skills/create-jira-ticket/SKILL.md",
+      "profiles": [
+        "jira"
+      ],
+      "provenanceId": "create-jira-ticket"
     },
     {
       "degradedBehavior": "Decomposition remains complete and reports the undecomposed candidates plus every omitted mutation when the host-native tracker capability is unavailable.",
@@ -135,6 +165,7 @@
       "profiles": [
         "core",
         "delivery-views",
+        "jira",
         "linear",
         "run-delivery"
       ],
@@ -160,6 +191,7 @@
       "path": "skills/delivery-views/SKILL.md",
       "profiles": [
         "delivery-views",
+        "jira",
         "linear",
         "run-delivery"
       ],
@@ -185,10 +217,55 @@
       "profiles": [
         "core",
         "delivery-views",
+        "jira",
         "linear",
         "run-delivery"
       ],
       "provenanceId": "diagnose-work"
+    },
+    {
+      "degradedBehavior": "Execution remains complete and reports every omitted tracking mutation when the host-native tracker capability is unavailable.",
+      "dependencies": [
+        {
+          "id": "compound-delivery-kernel",
+          "requirement": "required"
+        },
+        {
+          "id": "compound-learning",
+          "requirement": "required"
+        },
+        {
+          "id": "create-jira-ticket",
+          "requirement": "routing"
+        },
+        {
+          "id": "execute-work",
+          "requirement": "required"
+        },
+        {
+          "id": "jira-tracker-adapter",
+          "requirement": "required"
+        },
+        {
+          "id": "obtain-review",
+          "requirement": "required"
+        },
+        {
+          "id": "review-work",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "execute-jira-ticket",
+      "path": "skills/execute-jira-ticket/SKILL.md",
+      "profiles": [
+        "jira"
+      ],
+      "provenanceId": "execute-jira-ticket"
     },
     {
       "degradedBehavior": "Execution remains complete and reports every omitted tracking mutation when the host-native tracker capability is unavailable.",
@@ -261,10 +338,37 @@
       "profiles": [
         "core",
         "delivery-views",
+        "jira",
         "linear",
         "run-delivery"
       ],
       "provenanceId": "execute-work"
+    },
+    {
+      "capabilities": [
+        "tracker-adapter",
+        "tracker-operations"
+      ],
+      "degradedBehavior": "Core delivery remains complete and reports omitted optional tracking when the host-native Jira capability is unavailable. schemaVersion identifies the properties document; operational properties remain read-only inputs.",
+      "dependencies": [
+        {
+          "id": "deliver-work",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [
+        "atlassian-mcp"
+      ],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "jira-tracker-adapter",
+      "path": "skills/jira-tracker-adapter/SKILL.md",
+      "profiles": [
+        "jira"
+      ],
+      "provenanceId": "jira-tracker-adapter"
     },
     {
       "capabilities": [
@@ -323,6 +427,7 @@
       "profiles": [
         "core",
         "delivery-views",
+        "jira",
         "linear",
         "run-delivery"
       ],
@@ -362,6 +467,7 @@
       "profiles": [
         "core",
         "delivery-views",
+        "jira",
         "linear",
         "run-delivery"
       ],
@@ -389,6 +495,7 @@
       "profiles": [
         "core",
         "delivery-views",
+        "jira",
         "linear",
         "run-delivery"
       ],
@@ -417,6 +524,7 @@
       "profiles": [
         "core",
         "delivery-views",
+        "jira",
         "linear",
         "run-delivery"
       ],
