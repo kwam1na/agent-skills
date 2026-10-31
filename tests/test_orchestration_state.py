@@ -4151,7 +4151,7 @@ JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
     "check.retried", "check.reused", "candidate.merged", "candidate.stopped", "base.broken", "base.repaired",
     "lease.granted", "lease.released", "release.started", "release.finished",
-    "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence",
+    "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
 ]
 
 
@@ -4451,3 +4451,147 @@ class SkillTextTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def selected_check(check_id: str, **fields: object) -> dict:
+    check = {"id": check_id, "argv": ["python3", "-m", "pytest", f"tests/{check_id}"], "cwd": ".",
+             "reasons": ["the parser changed"], "prerequisites": []}
+    check.update(fields)
+    return check
+
+
+class LeadSelectionTests(unittest.TestCase):
+    """The lead records a candidate's checks through the tool; only the tool writes them, and a new head voids them."""
+
+    BINDING = {
+        "selection": {"lead": True},
+        "alwaysRun": [selected_check("always")],
+        "fallback": [selected_check("fallback")],
+        "profiles": {"default": {"environment": {}}},
+        "checkTimeoutCeiling": 600,
+    }
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name) / "state"
+        state_tool.init(self.directory, "Epic underway")
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="lead", version=state["version"],
+                         changes={"lanes": [lane("lane-1")], "queue": [queue_item("work-q", changeRequest="cr-1")]})
+
+    def item(self) -> dict:
+        return state_tool.read_state(self.directory)["queue"][0]
+
+    def select(self, checks: object = None, *, head: str = HEAD_A, reason: str = "only the parser changed",
+               binding: dict | None = None) -> dict:
+        return state_tool.select_checks(self.directory, "work-q", binding=binding or self.BINDING, head=head,
+                                        checks=[selected_check("parser")] if checks is None else checks, reason=reason)
+
+    def refused(self, call) -> str:
+        before = (self.directory / state_tool.STATE_FILE).read_bytes()
+        with self.assertRaises(state_tool.StateError) as caught:
+            call()
+        self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
+        return caught.exception.code
+
+    def test_a_selection_is_recorded_for_the_reviewed_head_and_journaled(self) -> None:
+        item = self.select()
+        self.assertEqual(item["leadSelection"]["head"], HEAD_A)
+        self.assertEqual(item["leadSelection"]["checks"], [selected_check("parser")])
+        self.assertEqual(item["leadSelection"]["reason"], "only the parser changed")
+        self.assertEqual(self.item(), item)
+        entry = state_tool.read_journal(self.directory)[-1]
+        self.assertEqual((entry["kind"], entry["subject"], entry["lane"]), ("check.selected", "work-q", "lane-1"))
+        self.assertIn("parser", entry["summary"])
+        self.assertIn("only the parser changed", entry["summary"])
+
+    def test_the_command_line_records_and_clears_a_selection(self) -> None:
+        binding = Path(self.directory.parent) / "orchestration.json"
+        binding.write_text(json.dumps(self.BINDING), encoding="utf-8")
+        code, result = run_tool(self.directory, "select", "--subject", "work-q", "--binding", str(binding),
+                                "--head", HEAD_A, "--checks", "-", "--reason", "parser only",
+                                stdin=json.dumps([selected_check("parser")]))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["item"]["leadSelection"]["reason"], "parser only")
+        code, result = run_tool(self.directory, "select", "--subject", "work-q", "--clear")
+        self.assertEqual(code, 0, result)
+        self.assertNotIn("leadSelection", result["item"])
+        self.assertEqual(state_tool.read_journal(self.directory)[-1]["kind"], "check.selected")
+        code, result = run_tool(self.directory, "select", "--subject", "work-q", "--head", HEAD_A)
+        self.assertEqual((code, result["code"]), (1, "select_invalid"))
+
+    def test_a_binding_that_does_not_enable_it_is_refused(self) -> None:
+        for binding in ({**self.BINDING, "selection": {"lead": False}},
+                        {key: value for key, value in self.BINDING.items() if key != "selection"}):
+            with self.subTest(binding=binding.get("selection")):
+                self.assertEqual(self.refused(lambda: self.select(binding=binding)), "select_invalid")
+
+    def test_a_selection_for_another_head_or_without_a_reason_is_refused(self) -> None:
+        self.assertEqual(self.refused(lambda: self.select(head=HEAD_B)), "select_invalid")
+        self.assertEqual(self.refused(lambda: self.select(reason=" ")), "select_invalid")
+        self.assertEqual(self.refused(lambda: state_tool.select_checks(
+            self.directory, "missing", binding=self.BINDING, head=HEAD_A, checks=[selected_check("x")], reason="r")),
+            "subject_unknown")
+
+    def test_checks_the_runner_would_refuse_are_refused_when_recorded(self) -> None:
+        cases = {
+            "empty": [],
+            "shape": [{"id": "parser"}],
+            "repeated": [selected_check("parser"), selected_check("parser")],
+            "binding id": [selected_check("always")],
+            "unselected prerequisite": [selected_check("parser", prerequisites=["build"])],
+            "cycle": [selected_check("a", prerequisites=["b"]), selected_check("b", prerequisites=["a"])],
+            "unknown profile": [selected_check("parser", environmentProfile="missing")],
+            "over the ceiling": [selected_check("parser", timeoutSeconds=601)],
+            "escaping cwd": [selected_check("parser", cwd="../elsewhere")],
+            "absolute cwd": [selected_check("parser", cwd="/tmp")],
+            "empty argv": [selected_check("parser", argv=[])],
+        }
+        for name, checks in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.refused(lambda: self.select(checks)), "select_invalid")
+
+    def test_only_the_select_command_writes_a_selection(self) -> None:
+        self.select()
+        state = state_tool.read_state(self.directory)
+        for writer in ("lead", "runner"):
+            with self.subTest(writer=writer):
+                self.assertEqual(self.refused(lambda: state_tool.patch(
+                    self.directory, writer=writer, version=state["version"], selector="queue[subject=work-q]",
+                    changes={"leadSelection": {"head": HEAD_A, "checks": [], "reason": "r",
+                                               "recordedAt": "2026-10-30T00:00:00Z"}})), "field_not_owned")
+        self.assertEqual(self.refused(lambda: state_tool.patch(
+            self.directory, writer="lead", version=state["version"], selector="queue[subject=work-q]",
+            changes={"checkSelection": {"by": "lead"}})), "field_not_owned")
+        written = state_tool.patch(self.directory, writer="runner", version=state["version"],
+                                   selector="queue[subject=work-q]", changes={"checkSelection": {"by": "provider"}})
+        self.assertEqual(written["queue"][0]["checkSelection"], {"by": "provider"})
+
+    def test_a_hand_off_at_a_new_head_drops_the_selection_and_one_at_the_same_head_keeps_it(self) -> None:
+        self.select()
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="runner", version=state["version"], selector="queue[subject=work-q]",
+                         changes={"stage": "stopped", "checkSelection": {"by": "lead", "head": HEAD_A, "reason": "r"}})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-q", head=HEAD_A, change_request="cr-1")
+        self.assertIn("leadSelection", self.item())
+        self.assertNotIn("checkSelection", self.item())
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="runner", version=state["version"], selector="queue[subject=work-q]",
+                         changes={"stage": "stopped"})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-q", head=HEAD_B, change_request="cr-1")
+        self.assertNotIn("leadSelection", self.item())
+
+    def test_a_merged_candidate_takes_no_selection(self) -> None:
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="runner", version=state["version"], selector="queue[subject=work-q]",
+                         changes={"stage": "merged"})
+        self.assertEqual(self.refused(self.select), "select_invalid")
+
+    def test_the_stats_say_whose_checks_ran(self) -> None:
+        state = state_tool.read_state(self.directory)
+        self.assertNotIn("checksSelectedBy", state_tool.delivery_stats(state, [])["work-q"])
+        state = state_tool.patch(self.directory, writer="runner", version=state["version"],
+                                 selector="queue[subject=work-q]",
+                                 changes={"checkSelection": {"by": "lead", "head": HEAD_A, "reason": "parser only"}})
+        self.assertEqual(state_tool.delivery_stats(state, [])["work-q"]["checksSelectedBy"], "lead")

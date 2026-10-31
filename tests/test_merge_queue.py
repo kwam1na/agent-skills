@@ -4296,3 +4296,140 @@ class ReusedCheckTests(MergeQueueTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LeadSelectionTests(MergeQueueTestCase):
+    """Under a binding that enables it, the lead's checks for a candidate's reviewed head replace the provider's answer."""
+
+    LEAD = {"selection": {"lead": True}}
+
+    def select(self, adopter: Adopter, subject: str, checks: list[dict], reason: str = "only the parser changed",
+               *, head: str | None = None, binding: dict | None = None) -> dict:
+        return state_tool.select_checks(adopter.state, subject, binding=binding or adopter.binding,
+                                        head=head or adopter.item(subject)["head"], checks=checks, reason=reason)
+
+    def checked(self, results: list) -> dict:
+        return next(result.document() for result in results if result.document()["subcommand"] in ("check", "batch")
+                    and result.document()["selection"] is not None)
+
+    def ran(self, adopter: Adopter) -> list[str]:
+        return [line.split()[1] for line in adopter.log_lines() if line.startswith("check ")]
+
+    def test_the_lead_selection_and_always_run_are_the_checks_and_no_provider_runs(self) -> None:
+        adopter = self.adopter(self.LEAD)
+        head = self.candidate(adopter)
+        self.select(adopter, "feature", [check_entry("focused")])
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        selection = self.checked(results)["selection"]
+        self.assertEqual(selection["checks"], ["focused", "always"])
+        self.assertEqual((selection["providers"], selection["fallbackReasons"], selection["widened"]), ([], [], False))
+        self.assertEqual(selection["lead"]["members"][0]["subject"], "feature")
+        self.assertEqual(selection["lead"]["members"][0]["head"], head)
+        self.assertEqual(selection["lead"]["members"][0]["reason"], "only the parser changed")
+        self.assertEqual(selection["lead"]["members"][0]["checks"], ["focused"])
+        self.assertTrue(any("selected by the lead" in note for note in self.checked(results)["notes"]))
+        self.assertEqual(sorted(self.ran(adopter)), ["always", "focused"])
+        self.assertEqual(adopter.item("feature")["checkSelection"],
+                         {"by": "lead", "head": head, "reason": "only the parser changed"})
+        stats = state_tool.delivery_stats(state_tool.read_state(adopter.state), state_tool.read_journal(adopter.state))
+        self.assertEqual(stats["feature"]["checksSelectedBy"], "lead")
+        kinds = [entry["kind"] for entry in state_tool.read_journal(adopter.state)]
+        self.assertIn("check.selected", kinds)
+
+    def test_without_a_selection_the_provider_selects_and_the_row_says_so(self) -> None:
+        adopter = self.adopter(self.LEAD)
+        self.candidate(adopter)
+        results = self.run_queue(adopter, "feature")
+        selection = self.checked(results)["selection"]
+        self.assertNotIn("lead", selection)
+        self.assertIn("unit", selection["checks"])
+        self.assertEqual(selection["providers"][0]["outcome"], "selected")
+        self.assertEqual(adopter.item("feature")["checkSelection"], {"by": "provider"})
+
+    def test_a_selection_made_at_another_head_is_void(self) -> None:
+        adopter = self.adopter(self.LEAD)
+        self.candidate(adopter)
+        self.select(adopter, "feature", [check_entry("focused")])
+        newer = adopter.lane_commit("feature", {"src/app.txt": "app three\n"})
+        adopter.lead_set("feature", head=newer)
+        results = self.run_queue(adopter, "feature")
+        document = self.checked(results)
+        self.assertNotIn("lead", document["selection"])
+        self.assertIn("unit", document["selection"]["checks"])
+        self.assertNotIn("focused", self.ran(adopter))
+        self.assertTrue(any("is void" in note for note in document["notes"]), document["notes"])
+        self.assertEqual(adopter.item("feature")["checkSelection"], {"by": "provider"})
+
+    def test_a_binding_that_does_not_enable_it_ignores_the_selection(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        self.select(adopter, "feature", [check_entry("focused")], binding={**adopter.binding, **self.LEAD})
+        results = self.run_queue(adopter, "feature")
+        document = self.checked(results)
+        self.assertNotIn("lead", document["selection"])
+        self.assertNotIn("focused", self.ran(adopter))
+        self.assertTrue(any("does not set selection.lead" in note for note in document["notes"]), document["notes"])
+        # An adopter without the option gains nothing new on its rows.
+        self.assertNotIn("checkSelection", adopter.item("feature"))
+
+    def test_a_lead_selected_check_failing_on_the_base_too_stops_the_queue_as_base_broken(self) -> None:
+        adopter = self.adopter(self.LEAD)
+        adopter.advance_base({"src/app.txt": "FAIL on base\n", "gen/generated.txt": "FAIL on base\nlib one\n"})
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"})
+        self.select(adopter, "feature", [check_entry("focused", "src/app.txt")])
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "base_broken")
+        self.assertTrue(document["stop"]["queueStopped"])
+        self.assertIn("focused", document["stop"]["detail"])
+
+    def test_a_selection_the_binding_no_longer_admits_stops_the_candidate(self) -> None:
+        adopter = self.adopter(self.LEAD)
+        self.candidate(adopter)
+        # Recorded under a binding without that alwaysRun check; the repository's binding has one of that id.
+        self.select(adopter, "feature", [check_entry("always")], binding={**adopter.binding, "alwaysRun": []})
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "selection_invalid")
+        self.assertIn("always", document["stop"]["detail"])
+        self.assertFalse(document["stop"]["queueStopped"])
+
+    def batch(self, adopter: Adopter, *subjects: str) -> list:
+        return adopter.runner().run_command("batch", list(subjects))
+
+    def test_a_batch_runs_the_union_of_its_members_selections(self) -> None:
+        adopter = self.adopter(self.LEAD)
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        self.select(adopter, "first", [check_entry("shared"), check_entry("lib")], "lib only")
+        self.select(adopter, "second", [check_entry("shared"), check_entry("extra")], "extra only")
+        results = self.batch(adopter, "first", "second")
+        self.assertEqual({result.document()["outcome"] for result in results}, {"merged"})
+        selection = self.checked(results)["selection"]
+        self.assertEqual(selection["checks"], ["shared", "lib", "extra", "always"])
+        self.assertEqual([member["subject"] for member in selection["lead"]["members"]], ["first", "second"])
+        self.assertEqual(self.ran(adopter).count("shared"), 1)
+        self.assertNotIn("unit", self.ran(adopter))
+        self.assertEqual(adopter.item("second")["checkSelection"]["reason"], "extra only")
+
+    def test_a_batch_member_without_a_selection_sends_the_whole_batch_to_the_provider(self) -> None:
+        adopter = self.adopter(self.LEAD)
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        self.candidate(adopter, {"src/app.txt": "app two\n"}, name="second")
+        self.select(adopter, "first", [check_entry("lib")], "lib only")
+        results = self.batch(adopter, "first", "second")
+        self.assertEqual({result.document()["outcome"] for result in results}, {"merged"})
+        document = self.checked(results)
+        self.assertNotIn("lead", document["selection"])
+        self.assertIn("unit", document["selection"]["checks"])
+        self.assertNotIn("lib", self.ran(adopter))
+        self.assertTrue(any("second has no lead selection" in note for note in document["notes"]), document["notes"])
+        self.assertEqual(adopter.item("first")["checkSelection"], {"by": "provider"})
+
+    def test_batch_members_that_define_one_check_differently_are_refused(self) -> None:
+        adopter = self.adopter(self.LEAD)
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        self.select(adopter, "first", [check_entry("shared")])
+        self.select(adopter, "second", [check_entry("shared", "src/extra.txt")])
+        results = self.batch(adopter, "first", "second")
+        reasons = {result.document()["stop"]["reason"] for result in results if result.document()["stop"]}
+        self.assertIn("selection_invalid", reasons)
+        self.assertNotEqual(adopter.item("first")["stage"], "merged")

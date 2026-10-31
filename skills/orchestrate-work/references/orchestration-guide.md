@@ -26,9 +26,10 @@ it through the state tool, then render the views.
 
 - **Ownership is enforced.** The lead adds each handed candidate to `queue[]`
   as `queued`, with `syncedHead` null and `checks` empty. Only the runner
-  writes `stage`, `syncedHead`, `checks`, `meta.baseHead`,
+  writes `stage`, `syncedHead`, `checks`, `checkSelection`, `meta.baseHead`,
   `meta.releasedHead` and `meta.checking`; a lead attempt is refused with
-  `field_not_owned`.
+  `field_not_owned`. Only the `select` command writes a queue element's
+  `leadSelection`.
 - **Planned work and change requests are the lead's.** The optional
   `planned[]` list holds work under way but not yet handed to the queue,
   `{subject, title, lane, stage: planned|building|review, changeRequest?, runId?}`, selected
@@ -114,6 +115,7 @@ proceeds and the lead notes the gap in its close-out.
 | `check.finished` | None: its outcome posts with `candidate.merged` or `candidate.stopped`. |
 | `check.retried` | On the flake's tracking reference: one more retry, naming the candidate and the failing tests, as evidence for fixing the flake. |
 | `check.reused` | None: the candidate's work item already says it was handed off and is being checked; the reused check shows in the record and the views. |
+| `check.selected` | None: the lead's selection and its reason show in the record and the views, and the checks it ran post with `candidate.merged` or `candidate.stopped`. |
 | `candidate.merged` | On the ticket: the merge commit, the checks run, and any check reported but not awaited; the ticket moves to its review or completed state. |
 | `candidate.stopped` | On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or pending a decision. |
 | `base.broken` | On the epic: the stop code and its detail (the failing check, an unverified merge, a base that moved under a batch, or a batch that landed in part), and that the queue is stopped; `base.repaired` reopens it. |
@@ -184,6 +186,12 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   `handoff --reject <subject> --reason <why>` to send it back to the lane's
   plan. Never hold approved work: an approved candidate enters the queue at
   once, not batched behind unrelated work or held for a convenient moment.
+- When the binding sets `selection.lead`, you may choose a candidate's checks
+  from its diff instead of the provider: run `select --subject <s> --binding
+  <binding> --head <reviewed head> --checks <json> --reason "<why>"`, after
+  the hand-off and before the runner takes it. See "Lead-selected checks"
+  for when to, and what it costs. `select --subject <s> --clear` gives the
+  choice back to the provider.
 - Reassign the lane (step 3) once it has handed off: its `lanes[]` element
   moves to `assigned` with its next ticket. Leave it `handed` only when no
   unblocked work exists for it, and record that.
@@ -252,6 +260,7 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   | `undeclared_change`, `unreviewed_change` | The sync produced changes the binding does not declare, or code the lenses did not review. Return it to the lane, or declare the path in the binding. |
   | `prepare_failed`, `dirty_checkout` | A checkout could not be prepared, or was not clean after preparing or checking. Fix `prepare` or the check that writes files. |
   | `no_checks`, `profile_unknown` | The selection was empty while files changed, or a check named an unknown profile. Fix the provider, `alwaysRun`, `fallback` or `profiles`. |
+  | `selection_invalid` | Your check selection no longer fits the binding, or two batch members' selections define one check differently. Select again, or clear it, and re-queue. |
   | `check_failed` | Return the failing check's output to the lane. |
   | `base_broken` | Stop and follow the base-broken rules. |
   | `base_moved` | The base moved after the candidate was synced. `run` re-syncs and re-checks once and stops on a second move; a standalone `check` or `merge` stops at once. Re-queue. |
@@ -314,7 +323,8 @@ decision. Lanes post on their own tickets at the points the lane brief names.
 - Run the binding's `fullHealth` once, on the final base: in a fresh detached
   checkout of the final base tip, after the binding's `prepare` steps, with
   the binding's `environment` set and its placeholders filled in. Never run
-  it in the operator's own checkout.
+  it in the operator's own checkout. It is the backstop for every
+  lead-selected check set: anything a selection left out runs here.
 - Confirm every line in `finish[]` is met, or record why it is not.
 - Move every ticket, and the epic, to its final state through the tracker
   capability.
@@ -697,6 +707,7 @@ it is not a freshness proof or permission to skip any admission check.
 | `checkOutput` | Optional. `{failurePattern}`: a regular expression with a named group `id` and an optional named group `message`, matched line by line against a failed check's output. Each match is a failing test or step, shown in the record, the journal and the views. |
 | `flakes` | Optional. Known flakes, each `{check, tests?, ref}`: the check's id, the regular expressions its flaky failure ids match in full (leave `tests` out when the whole check is flaky), and the reference that tracks the flake. See "Flakes and retries". |
 | `parallelChecks` | Optional. How many checks marked `parallelSafe` may run at once; 1 when absent. A check without `parallelSafe` always runs alone. |
+| `selection` | Optional. `{lead}`: `true` lets the lead choose a candidate's checks with the state tool's `select` command, in place of the provider's answer and `fallback`. Off when absent, so every candidate is checked as before. See "Lead-selected checks". |
 | `reusableChecks` | Optional. Ids of the binding's own checks (`alwaysRun` or `fallback`) the runner may reuse from a lane's hand-off evidence instead of running them again. Each may use no placeholder but `{treeSha}`, and no binding check may name it as a prerequisite. None when absent, so nothing is reused until you opt in. See "Reused checks". |
 | `batch` | Optional. `{culpritSearch}`: how `batch` finds the member that failed a batch's checks, `bisect` (the default, fewest check runs) or `serial` (each prefix in order). |
 | `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match; these names are matched without case. The runner drops an inherited setting of them before running git or any declared argv; a profile's environment may still set them for its checks. |
@@ -790,6 +801,51 @@ need?", in format `affected-checks/1`.
   selection.
 - When a candidate changes any `providerInputs`, the candidate's own provider
   runs too, and the selection is the union.
+
+### Lead-selected checks
+
+When the provider over-selects, so that a change to a few files runs most of
+the repository's checks and pulls unrelated failures into the queue, the
+binding can let the lead choose a candidate's checks from its diff instead.
+It is off unless the binding sets `selection: {"lead": true}`.
+
+- **Recording.** `select --subject <s> --binding <binding> --head <reviewed
+  head> --checks <json> --reason "<why>"` records the checks on the queue
+  row's `leadSelection`, with the reason and the time, and journals
+  `check.selected`. Each check has the shape of an `alwaysRun` entry: `{id,
+  argv, cwd, reasons, prerequisites, environmentProfile?, timeoutSeconds?,
+  parallelSafe?}`; `--checks -` reads them from stdin. The tool refuses a
+  binding without `selection.lead`, a head that is not the row's reviewed
+  `head`, an empty list, an id the binding's own checks use, an unknown
+  profile, a timeout above the ceiling, a `cwd` outside the checkout, and
+  prerequisites outside the list or in a cycle. Only `select` writes
+  `leadSelection`: a patch that changes it, yours or the runner's, is
+  refused. `select --subject <s> --clear` drops it.
+- **Use.** While the binding allows it and the selection names the
+  candidate's reviewed head, the runner checks the candidate with the lead's
+  checks plus `alwaysRun`; no provider runs and `fallback` is not added. A
+  candidate without a selection is checked by the provider as before.
+- **A new head voids it.** A hand-off at a new head drops the selection, and
+  a selection whose head is no longer the row's reviewed head is ignored with
+  a note, so new code is never checked with checks chosen for old code.
+- **Batches.** A batch uses the lead's checks only when every member has a
+  selection for its reviewed head: the union of them, in member order, each
+  check once. When any member has none, the provider selects for the whole
+  batch, and a note names the members without one. Two members that define
+  one check id differently stop the batch with `selection_invalid`.
+- **Shown as the lead's.** The result's `selection.lead` lists each member's
+  selection, head and reason, and its `providers` is empty. Under a binding
+  that enables the option, the runner writes each row's `checkSelection`,
+  `{by: "lead", head, reason}` or `{by: "provider"}`; the views say the checks
+  were selected by the lead, with the reason, and the stats carry
+  `checksSelectedBy`. So a lead's choice never passes for the provider's.
+- **Failures.** A lead-selected check that fails is classified as any other:
+  `base_broken` when the base fails it unchanged, `check_failed` otherwise.
+- **The trade-off.** A selection is the lead's judgment, not the repository's
+  impact analysis: a check the lead leaves out does not run before the merge.
+  Select only when you can name, from the diff, what the change can affect, and
+  say why in the reason. The close-out `fullHealth` run on the final base
+  remains the backstop for anything a selection missed.
 
 ### Lead inputs and leases
 

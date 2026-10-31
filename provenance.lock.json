@@ -214,7 +214,7 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "405836afe7f90bf851eec87b61b3e7faa4111acbb2fd74c79c1e1364d31573f7"
+          "sha256": "b4f0898382d9665feeba9532ebeeac20056ef1df89264df2c1d322d5663f02fc"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -469,27 +469,27 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "d3682b7bd66594a30e1a0ae859c026606fa19ecd656ed54bb4da44670b0c466e"
+          "sha256": "a391e3ff78c9d612380af8f59406ca16cf6f1cd80270b4df1f5f1c817443895a"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "17441d00f18795b5e80af5dc182af49dcc9393fdab8a12e40884fc4b7a68e08b"
+          "sha256": "9afeedcd81ea8cb2f1466f74dee2f4e478a89eb49084eebe28fdbc612e3c9357"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "fa8b451727040597602307760900b461fcacecac6b451525e83c06b768cafe70"
+          "sha256": "230d9c779915b17eb85ccb07f289a3d08d92551131fae8953c95681926058c08"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "007491f42558eb2875bd5765d490b6ad69755c3b28e2afa245d2d0b22461e7aa"
+          "sha256": "59e6b9936863196ba6ec4d2892b439303f1f03dc79c928b41fb34b219116f6a8"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "25440b7bdb6621c284b150dc444d948f3294a8de48f43a571cc20adb0d7b9518"
+          "sha256": "3f1bc9e1da68ae6b13d89051723c945cdb4bfefc0118a992164c0e952cb08927"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "e367567d14e8b23ecb49f92457f2af9236b72e7b4f8c51c90fa3e8af0175ee41"
+          "sha256": "a5d3021cfc6e9ca6e847cd447978a38346ab123d1808e1276852793344b88abd"
         }
       ],
       "owner": "delivery-agent/user-delegated",

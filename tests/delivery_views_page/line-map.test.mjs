@@ -164,6 +164,21 @@ test("draws the run as a line map, chapter by chapter", async () => {
   expect(chapter("parked").textContent).toContain("Measure checkout drop-off by payment state");
 });
 
+test("says when the checks being run were chosen by the lead, with the lead's reason", async () => {
+  const plain = (await open(fixtureDocument()))[0].app.querySelector(".checking").textContent;
+  expect(plain).not.toContain("chosen by the lead");
+  const document = fixtureDocument();
+  const subject = document.state.meta.checking.now.subject;
+  const item = document.state.queue.find((entry) => entry.subject === subject);
+  item.checkSelection = { by: "lead", head: item.head, reason: "only the retry path changed" };
+  const [{ app }] = await open(document);
+  expect(app.querySelector(".checking").textContent).toContain(
+    "Checks chosen by the lead, not the usual selection: only the retry path changed");
+  item.checkSelection = { by: "provider" };
+  const [{ app: provider }] = await open(document);
+  expect(provider.querySelector(".checking").textContent).not.toContain("chosen by the lead");
+});
+
 test("shows a ticket's own title and summary when its id is hovered, wherever the id appears", async () => {
   const document = fixtureDocument();
   document.state.tickets["PAY-2360"] = { title: "Calm decline message", summary: HOSTILE };

@@ -96,9 +96,11 @@ SELECTOR = re.compile(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)
 # Fields only the runner writes. Everything else, apart from the fields the
 # tool itself maintains, belongs to the lead.
 RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory", "sources", "sourceReports")
-RUNNER_QUEUE = ("stage", "checks", "syncedHead")
+RUNNER_QUEUE = ("stage", "checks", "syncedHead", "checkSelection")
 # Written only by a lane's hand-off, through the tool: no patch, the lead's or the runner's, changes it.
 HANDOFF_QUEUE = ("evidence",)
+# Written only by the lead's select command, through the tool, so every selection is validated and journaled.
+SELECT_QUEUE = ("leadSelection",)
 EVIDENCE_FIELDS = ("check", "definition", "head", "tree", "result")
 EVIDENCE_COMMIT = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 EVIDENCE_DEFINITION = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -626,6 +628,9 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
         for field in HANDOFF_QUEUE:
             if item.get(field) != previous.get(field):
                 violations.append(f"/queue[subject={item.get('subject')}]/{field} is written only by a lane's hand-off")
+        for field in SELECT_QUEUE:
+            if item.get(field) != previous.get(field):
+                violations.append(f"/queue[subject={item.get('subject')}]/{field} is written only by the select command")
     meta_before, meta_after = before.get("meta", {}), after.get("meta", {})
     if meta_before.get("updatedAt") != meta_after.get("updatedAt"):
         violations.append("/meta/updatedAt is maintained by the tool")
@@ -657,7 +662,7 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
     for item in after.get("queue", []):
         previous = old.get(item.get("subject"))
         for field in RUNNER_QUEUE:
-            expected = previous.get(field) if previous is not None else QUEUE_START[field]
+            expected = previous.get(field) if previous is not None else QUEUE_START.get(field)
             if item.get(field) != expected:
                 violations.append(f"/queue[subject={item.get('subject')}]/{field} belongs to the runner")
     return violations
@@ -772,6 +777,10 @@ def handoff(
             if queued["stage"] not in ("queued", "stopped"):
                 raise StateError("handoff_invalid", f"{subject} is {queued['stage']}; hand it off once it stops")
             queued.update(stage="queued", head=head, syncedHead=None, checks=[], changeRequest=change_request)
+            queued.pop("checkSelection", None)
+            # A lead selection is for the head it was made at; new code is never checked with it.
+            if queued.get("leadSelection", {}).get("head") != head:
+                queued.pop("leadSelection", None)
             item = queued
         else:
             planned = next((entry for entry in state.get("planned", []) if entry["subject"] == subject), None)
@@ -850,6 +859,94 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
     append_journal(directory, kind="decision.recorded", subject=subject, lane=back["lane"],  # type: ignore[index]
                    summary=f"Rejected the hand-off of {subject}: {reason}")
     return back  # type: ignore[return-value]
+
+
+def lead_selection_errors(checks: object, binding: dict) -> list[str]:
+    """Problems with the lead's checks for a candidate, beyond their shape, as the runner would find them."""
+    if not isinstance(checks, list) or not checks:
+        return ["--checks is a non-empty JSON list of checks"]
+    schema = load_schema("delivery-state/1")
+    problems = []
+    for index, check in enumerate(checks):
+        problems += [f"check {index + 1}{error}" for error in _errors(check, schema["$defs"]["check"], schema, ())]
+    if problems:
+        return problems
+    ids = [check["id"] for check in checks]
+    if len(ids) != len(set(ids)):
+        problems.append("check ids must be unique")
+    own = {check.get("id") for name in ("alwaysRun", "fallback") for check in binding.get(name) or []
+           if isinstance(check, dict)}
+    profiles = binding.get("profiles") if isinstance(binding.get("profiles"), dict) else {}
+    ceiling = binding.get("checkTimeoutCeiling")
+    for check in checks:
+        if not check["argv"]:
+            problems.append(f"{check['id']}: argv must not be empty")
+        if check["id"] in own:
+            problems.append(f"{check['id']}: reuses the id of a binding check; alwaysRun runs anyway")
+        missing = [name for name in check["prerequisites"] if name not in ids]
+        if missing:
+            problems.append(f"{check['id']}: prerequisites name unselected checks {missing}")
+        if "environmentProfile" in check and check["environmentProfile"] not in profiles:
+            problems.append(f"{check['id']}: unknown environment profile {check['environmentProfile']}")
+        if isinstance(ceiling, int) and check.get("timeoutSeconds", 0) > ceiling:
+            problems.append(f"{check['id']}: timeoutSeconds above the ceiling")
+        if posixpath.isabs(check["cwd"]) or Path(check["cwd"]).is_absolute() or ".." in re.split(r"[\\/]", check["cwd"]):
+            problems.append(f"{check['id']}: cwd leaves the checkout")
+    if not problems:
+        done: set[str] = set()
+        remaining = list(checks)
+        while remaining:
+            ready = [check for check in remaining if all(name in done for name in check["prerequisites"])]
+            if not ready:
+                problems.append("prerequisites form a cycle")
+                break
+            done.add(ready[0]["id"])
+            remaining.remove(ready[0])
+    return problems
+
+
+def select_checks(directory: Path, subject: str, *, binding: dict, head: str | None = None,
+                  checks: object = None, reason: str | None = None) -> dict:
+    """The lead records the checks a candidate runs at its reviewed head, or clears them with no head.
+
+    The runner uses a selection only while the binding's ``selection.lead`` is
+    true and the candidate is still at the head the selection names; a
+    hand-off at a new head drops it. alwaysRun runs beside it.
+    """
+    clearing = head is None
+    if not clearing:
+        if not (isinstance(binding.get("selection"), dict) and binding["selection"].get("lead") is True):
+            raise StateError("select_invalid", "the binding does not enable lead selection: set selection.lead to true")
+        if not reason or not reason.strip():
+            raise StateError("select_invalid", "say why these checks with --reason")
+        problems = lead_selection_errors(checks, binding)
+        if problems:
+            raise StateError("select_invalid", "; ".join(problems))
+
+    def change(state: dict) -> dict:
+        item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
+        if item is None:
+            raise StateError("subject_unknown", f"{subject} is not queued")
+        if clearing:
+            if "leadSelection" not in item:
+                raise StateError("select_invalid", f"{subject} has no lead selection to clear")
+            item.pop("leadSelection")
+            return copy.deepcopy(item)
+        if item["stage"] in ("merging", "merged"):
+            raise StateError("select_invalid", f"{subject} is {item['stage']}")
+        if head != item["head"]:
+            raise StateError("select_invalid", f"{subject}'s reviewed head is {item['head']}, not {head}")
+        item["leadSelection"] = {"head": head, "checks": copy.deepcopy(checks), "reason": reason, "recordedAt": now()}
+        return copy.deepcopy(item)
+
+    _, item = _tool_write(directory, change)
+    if clearing:
+        summary = f"Cleared the lead's check selection for {subject}; the provider selects its checks"
+    else:
+        names = ", ".join(check["id"] for check in checks)  # type: ignore[union-attr]
+        summary = f"The lead selected checks for {subject} at {head}: {names}. Why: {reason}"
+    append_journal(directory, kind="check.selected", subject=subject, lane=item.get("lane"), summary=summary)  # type: ignore[union-attr]
+    return item  # type: ignore[return-value]
 
 
 def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None,
@@ -1324,6 +1421,7 @@ def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> d
     findings = None
     if rounds:
         findings = {severity: sum(review["findings"][severity] for review in rounds) for severity in SEVERITIES}
+    chosen = item.get("checkSelection")
     return {
         "assignedAt": at(assigned),
         "handedAt": at(handed),
@@ -1339,6 +1437,8 @@ def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> d
         "roundsSource": "journal" if rounds else ("reported" if reported is not None else None),
         "findings": findings,
         "lastVerdicts": dict(rounds[-1]["verdicts"]) if rounds else None,
+        # Only once a binding that enables lead selection has checked it, so other records read as before.
+        **({"checksSelectedBy": chosen["by"]} if isinstance(chosen, dict) else {}),
     }
 
 
@@ -3254,6 +3354,27 @@ def _handoff_command(args: argparse.Namespace) -> dict:
                    change_request=args.change_request, rounds=args.rounds, evidence=evidence, run=args.run)
 
 
+def _select_command(args: argparse.Namespace) -> dict:
+    if args.clear:
+        if args.head or args.checks or args.reason:
+            raise StateError("select_invalid", "--clear takes only --subject")
+        return select_checks(args.dir, args.subject, binding={})
+    missing = [name for name in ("binding", "head", "checks", "reason") if not getattr(args, name)]
+    if missing:
+        raise StateError("select_invalid", "a selection needs " + ", ".join("--" + name for name in missing))
+    try:
+        binding = json.loads(Path(args.binding).read_bytes().decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise StateError("binding_invalid", f"cannot read the binding {Path(args.binding).name}: {error}") from None
+    if not isinstance(binding, dict):
+        raise StateError("binding_invalid", f"{Path(args.binding).name} is not a JSON object")
+    try:
+        checks = _json_argument(args.checks, "checks")
+    except StateError as error:
+        raise StateError("select_invalid", str(error)) from None
+    return select_checks(args.dir, args.subject, binding=binding, head=args.head, checks=checks, reason=args.reason)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", type=Path, required=True, help="the state directory")
@@ -3296,6 +3417,13 @@ def main(argv: list[str] | None = None) -> int:
     hand.add_argument("--run", help="the id of the run that built the work; kept from before when left out")
     hand.add_argument("--evidence", action="append",
                       help="the lane's evidence of a reusable check's run, as merge_queue.py evidence prints it; once a check")
+    chosen = commands.add_parser("select", help="the lead records the checks a candidate runs at its reviewed head")
+    chosen.add_argument("--subject", required=True)
+    chosen.add_argument("--binding", type=Path, help="the repository binding, with selection.lead true")
+    chosen.add_argument("--head", help="the candidate's reviewed head the selection is for")
+    chosen.add_argument("--checks", help="a JSON list of checks shaped like the binding's alwaysRun entries, or - for stdin")
+    chosen.add_argument("--reason", help="why these checks cover the candidate's diff")
+    chosen.add_argument("--clear", action="store_true", help="drop the selection, so the provider selects again")
     headline = commands.add_parser("headline", help="the lead's status line, shown until it expires")
     told = headline.add_mutually_exclusive_group(required=True)
     told.add_argument("--text", help="the status line")
@@ -3377,6 +3505,8 @@ def main(argv: list[str] | None = None) -> int:
             if age < 1:
                 raise StateError("patch_invalid", "--max-age is at least 1 second")
             result = {"ok": True, "state": set_status_override(args.dir, None if args.clear else args.text, age)}
+        elif args.command == "select":
+            result = {"ok": True, "item": _select_command(args)}
         elif args.command == "capture-review":
             result = {"ok": True, "entry": capture_review(args.dir, subject=args.subject, candidate=args.candidate, outcomes=args.outcome)}
         elif args.command == "handoff":
