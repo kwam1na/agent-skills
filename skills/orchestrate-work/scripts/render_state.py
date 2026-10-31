@@ -292,9 +292,30 @@ def _stats_text(stats: dict) -> str:
         findings = stats.get("findings") or {}
         counts = "/".join(str(findings.get(severity, "?")) for severity in ("P0", "P1", "P2", "P3"))
         review = f"{rounds} {'round' if rounds == 1 else 'rounds'}, findings P0/P1/P2/P3 {counts}"
+    chosen = " · checks selected by the lead" if stats.get("checksSelectedBy") == "lead" else ""
     return (f"build {_duration(stats.get('buildSeconds'))} · review {_duration(stats.get('reviewSeconds'))}"
             f" · {review} · wait {_duration(stats.get('waitSeconds'))}"
-            f" · check to merge {_duration(stats.get('checkToMergeSeconds'))} · total {_duration(stats.get('totalSeconds'))}")
+            f" · check to merge {_duration(stats.get('checkToMergeSeconds'))} · total {_duration(stats.get('totalSeconds'))}"
+            f"{chosen}")
+
+
+def _selection_texts(item: dict) -> list[str]:
+    """Whose choice a queue row's checks are, and the lead's selection waiting for the runner; the page's program writes the same lines."""
+    texts = []
+    used = item.get("checkSelection")
+    chosen = item.get("leadSelection")
+    if isinstance(used, dict) and used.get("by") == "lead":
+        texts.append(f"checks selected by the lead at {used.get('head')}, not the provider · why: {used.get('reason')}")
+    elif isinstance(used, dict) and used.get("by") == "provider":
+        texts.append("checks selected by the provider")
+    if isinstance(chosen, dict) and not (isinstance(used, dict) and used.get("by") == "lead"
+                                         and used.get("head") == chosen.get("head")):
+        names = ", ".join(str(check.get("id")) for check in chosen.get("checks", []) if isinstance(check, dict))
+        text = f"lead selection for {chosen.get('head')}: {names} · why: {chosen.get('reason')}"
+        if chosen.get("head") != item.get("head"):
+            text += f" · void: the reviewed head is now {item.get('head')}"
+        texts.append(text)
+    return texts
 
 
 def _status_text(status: object) -> str | None:
@@ -369,6 +390,7 @@ def render_markdown(document: dict) -> str:
         rows.extend(stats_row(item, "  "))
         if isinstance(estimates.get(item["subject"]), dict):
             rows.append(f"  - {_markdown_text(_estimate_text(estimates[item['subject']]))}")
+        rows.extend(f"  - {_markdown_text(text)}" for text in _selection_texts(item))
         rows.extend(f"  - {_markdown_text(_check_text(check))}" for check in item["checks"])
     lines += _markdown_section("Queue", rows, "The queue is empty.")
 
@@ -594,7 +616,26 @@ _PAGE_PROGRAM = """
     }
     return "build " + duration(stats.buildSeconds) + " \\u00b7 review " + duration(stats.reviewSeconds) +
       " \\u00b7 " + review + " \\u00b7 wait " + duration(stats.waitSeconds) +
-      " \\u00b7 check to merge " + duration(stats.checkToMergeSeconds) + " \\u00b7 total " + duration(stats.totalSeconds);
+      " \\u00b7 check to merge " + duration(stats.checkToMergeSeconds) + " \\u00b7 total " + duration(stats.totalSeconds) +
+      (stats.checksSelectedBy === "lead" ? " \\u00b7 checks selected by the lead" : "");
+  }
+  function selectionTexts(item) {
+    var texts = [];
+    var used = isObject(item.checkSelection) ? item.checkSelection : null;
+    var chosen = isObject(item.leadSelection) ? item.leadSelection : null;
+    var byLead = used !== null && used.by === "lead";
+    if (byLead) {
+      texts.push("checks selected by the lead at " + show(used.head) + ", not the provider \\u00b7 why: " + show(used.reason));
+    } else if (used !== null && used.by === "provider") {
+      texts.push("checks selected by the provider");
+    }
+    if (chosen !== null && !(byLead && used.head === chosen.head)) {
+      var names = (isArray(chosen.checks) ? chosen.checks : []).filter(isObject).map(function (check) { return show(check.id); }).join(", ");
+      var text = "lead selection for " + show(chosen.head) + ": " + names + " \\u00b7 why: " + show(chosen.reason);
+      if (chosen.head !== item.head) { text += " \\u00b7 void: the reviewed head is now " + show(item.head); }
+      texts.push(text);
+    }
+    return texts;
   }
   function isArray(value) { return Array.isArray(value); }
   function isObject(value) { return value !== null && typeof value === "object" && !isArray(value); }
@@ -673,6 +714,7 @@ _PAGE_PROGRAM = """
         item.stage, known.summary), item);
       var estimate = Object.prototype.hasOwnProperty.call(estimates, item.subject) ? estimates[item.subject] : null;
       if (isObject(estimate)) { entry.appendChild(el("div", estimateText(estimate), "detail")); }
+      selectionTexts(item).forEach(function (text) { entry.appendChild(el("div", text, "detail")); });
       item.checks.forEach(function (check) {
         if ((isArray(check.failures) && check.failures.length) || typeof check.log === "string" ||
             typeof check.reusedFrom === "string") {

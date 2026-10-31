@@ -199,6 +199,15 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   evidence shows it passing, under the same definition: it is recorded as
   reused, with the head of the lane's run, and journaled as `check.reused`.
   Every other check still runs, and the merge stays pinned to the synced head.
+  When the binding sets `selection.lead` and the lead recorded a selection for
+  the candidate's reviewed head with the state tool's `select` command, the
+  runner checks it with the lead's checks plus `alwaysRun` instead of the
+  provider's answer and `fallback`. The result, the record, the views and the
+  stats say the checks were selected by the lead, with the lead's reason. A
+  hand-off at a new head voids the selection. A batch uses the union of its
+  members' selections only when every member has one, and the provider
+  otherwise. A selection is the lead's judgment; the close-out `fullHealth` run
+  is its backstop.
 - `merge <candidate>` merges the checked head through the binding's `ready`
   and `merge` commands and confirms the new base.
 - `run <candidate>...` does sync, check and merge in order for each candidate,
@@ -546,7 +555,8 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind revi
   renderers read, with a `publication` block saying whether what was
   published lags it. `stats` is derived, never stored: per queued or planned
   candidate, the build, review, wait, check-to-merge and total seconds, the
-  rounds and their findings. A stat whose events are missing is null, never
+  rounds and their findings, and `checksSelectedBy`: `lead` or `provider` once
+  a binding that enables lead selection has checked it, absent otherwise. A stat whose events are missing is null, never
   zero; with no recorded rounds, the count is the lane's `reportedRounds`. A
   candidate handed again follows its latest attempt: its total runs to that
   attempt's merge and is null unless it merged. Times keep six fractional

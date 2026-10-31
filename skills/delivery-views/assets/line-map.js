@@ -552,6 +552,14 @@
       add(box, add(el("div", "ck-h"), el("span", "ck-dot"), "Being checked now"));
       add(box, el("div", "ck-t", byId[current.subject] ? titleOf(doc, byId[current.subject]) : text(current.title) || text(current.subject)));
     }
+    // Checks the lead chose never pass for the provider's answer: each member's reason is said beside the run.
+    (batch || (byId[current.subject] ? [byId[current.subject]] : [])).forEach(function (item) {
+      var chosen = isObject(item.checkSelection) && item.checkSelection.by === "lead" ? item.checkSelection : null;
+      if (chosen) {
+        add(box, el("div", "ck-s", "Checks chosen by the lead, not the usual selection" + (batch ? " · " + titleOf(doc, item) : "") +
+          (text(chosen.reason) ? ": " + text(chosen.reason) : "")));
+      }
+    });
     var steps = list(current.steps).filter(function (step) { return isObject(step) && step.label !== "selecting checks"; });
     if (steps.length) {
       var done = steps.filter(function (step) { return DONE[step.state]; }).length;

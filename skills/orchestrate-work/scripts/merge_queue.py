@@ -1542,8 +1542,113 @@ class Runner:
             if "environmentProfile" in check and check["environmentProfile"] not in known
         ]
 
+    def note(self, text: str) -> None:
+        if text not in self.notes:
+            self.notes.append(text)
+
+    def lead_selection(self, subjects: list[str]) -> list[dict] | None:
+        """Each member's own lead selection, when the binding allows them and every member has one for its reviewed head.
+
+        None means the provider selects, as it does for a candidate without
+        one. A selection made at another head is void: new code is never
+        checked with checks chosen for the old.
+        """
+        items = [self.item(subject) for subject in subjects]
+        recorded = [item for item in items if "leadSelection" in item]
+        if not recorded:
+            return None
+        if not self.binding.get("selection", {}).get("lead"):
+            self.note("the lead's check selection is ignored: the binding does not set selection.lead")
+            return None
+        current = [item for item in recorded if item["leadSelection"]["head"] == item["head"]]
+        for item in recorded:
+            if item not in current:
+                self.note(f"the lead's check selection for {item['subject']} is void: it was made at "
+                          f"{item['leadSelection']['head']}, and the reviewed head is {item['head']}")
+        missing = [item["subject"] for item in items if item not in current]
+        if missing:
+            if current:
+                self.note(f"the provider selects the batch's checks: {', '.join(missing)} has no lead selection "
+                          "for its reviewed head")
+            return None
+        return [{"subject": item["subject"], **copy.deepcopy(item["leadSelection"])} for item in current]
+
+    def lead_checks(self, members: list[dict], checkout: Path) -> list[dict]:
+        """The union of the members' selections, in member order, refused when two disagree on a check."""
+        chosen: dict[str, dict] = {}
+        for member in members:
+            for check in member["checks"]:
+                if check["id"] in chosen and chosen[check["id"]] != check:
+                    raise Stop("selection_invalid", f"the lead's selections for the batch define {check['id']} differently")
+                chosen.setdefault(check["id"], check)
+        checks = list(chosen.values())
+        reserved = {check["id"] for check in [*self.binding["alwaysRun"], *self.binding["fallback"]]}
+        problems = selection_errors(checks, self.binding, check_cwd=checkout)
+        problems += self.profile_errors(checks)
+        problems += [f"{check['id']}: reuses the id of a binding check" for check in checks if check["id"] in reserved]
+        if problems:
+            raise Stop("selection_invalid", "the lead's check selection: " + "; ".join(problems)[:800])
+        return checks
+
+    def record_selection(self, subjects: list[str], members: list[dict] | None) -> None:
+        """Say on each queue row whose choice its checks are, so the lead's never passes for the provider's.
+
+        Written only under a binding that enables lead selection; elsewhere every check is the provider's.
+        """
+        by_subject = {member["subject"]: member for member in members or []}
+
+        def build(current: dict) -> tuple[dict, dict]:
+            queue = [dict(item) for item in current["queue"]]
+            for item in queue:
+                if item["subject"] in subjects:
+                    member = by_subject.get(item["subject"])
+                    item["checkSelection"] = ({"by": "lead", "head": member["head"], "reason": member["reason"]}
+                                              if member else {"by": "provider"})
+            return {"queue": queue}, {}
+
+        self.write(build=build)
+
     def select(
         self, subject: str, base_head: str, synced: str, changes: list[dict], checkout: Path, context: Context,
+        subjects: list[str] | None = None,
+    ) -> tuple[dict, list[dict]]:
+        subjects = subjects or [subject]
+        members = self.lead_selection(subjects)
+        if members is not None:
+            selection, ordered = self.select_by_lead(members, checkout)
+        else:
+            selection, ordered = self.select_by_provider(base_head, synced, changes, checkout, context)
+        if self.binding.get("selection", {}).get("lead"):
+            self.record_selection(subjects, members)
+        return selection, ordered
+
+    def select_by_lead(self, members: list[dict], checkout: Path) -> tuple[dict, list[dict]]:
+        """The lead's checks and alwaysRun; no provider runs and fallback does not apply."""
+        final = self.lead_checks(members, checkout)
+        for check in self.binding["alwaysRun"]:
+            final.append(check)
+        problems = selection_errors(final, self.binding, check_cwd=checkout)
+        if problems:
+            raise Stop("selection_invalid", "the lead's check selection with alwaysRun: " + "; ".join(problems)[:800])
+        ordered = order_checks(final) or final
+        reasons = "; ".join(f"{member['subject']}: {member['reason']}" for member in members)
+        self.note(f"checks selected by the lead, not the provider ({reasons})")
+        selection = {
+            "providers": [],
+            "fallbackReasons": [],
+            "widened": False,
+            "uncovered": [],
+            "checks": [check["id"] for check in ordered],
+            "lead": {"members": [
+                {"subject": member["subject"], "head": member["head"], "reason": member["reason"],
+                 "recordedAt": member["recordedAt"], "checks": [check["id"] for check in member["checks"]]}
+                for member in members
+            ]},
+        }
+        return selection, ordered
+
+    def select_by_provider(
+        self, base_head: str, synced: str, changes: list[dict], checkout: Path, context: Context,
     ) -> tuple[dict, list[dict]]:
         request = {"base": self.base, "baseHead": base_head, "head": synced, "changes": changes}
         providers = []
@@ -1905,7 +2010,7 @@ class Runner:
         checkout = self.checkout(commit, "batch-check", context=context)
         self.assert_clean(checkout, "a fresh checkout of the batch")
         changes = self.changes(base_head, commit)
-        selection, checks = self.select(subjects[0], base_head, commit, changes, checkout, context)
+        selection, checks = self.select(subjects[0], base_head, commit, changes, checkout, context, subjects=subjects)
         result.selection = selection
         if not checks and changes:
             raise Stop("no_checks", "nothing would check this batch's changes")

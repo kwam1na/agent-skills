@@ -554,6 +554,58 @@
                   }
                 }
               }
+            },
+            "leadSelection": {
+              "description": "Written only by the state tool's select command: the checks the lead chose for this candidate at its reviewed head, and why. The runner uses them instead of the provider's answer when the binding's selection.lead is true and head is still the candidate's reviewed head. A hand-off at a new head drops it. Absent otherwise.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "head",
+                "checks",
+                "reason",
+                "recordedAt"
+              ],
+              "properties": {
+                "head": {
+                  "$ref": "#/$defs/commit"
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/check"
+                  }
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "recordedAt": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            },
+            "checkSelection": {
+              "description": "Written by the runner when it selects checks: whether its latest checks came from the lead's selection or the provider's answer. For the lead's, the reviewed head it was recorded at and the lead's reason. A hand-off at a new head drops it. Absent until the runner first selects.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "by"
+              ],
+              "properties": {
+                "by": {
+                  "enum": [
+                    "lead",
+                    "provider"
+                  ]
+                },
+                "head": {
+                  "$ref": "#/$defs/commit"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
             }
           }
         }
@@ -737,6 +789,58 @@
           "timed_out",
           "reused"
         ]
+      },
+      "argv": {
+        "description": "A non-empty list of strings, run without a shell.",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "check": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "argv",
+          "cwd",
+          "reasons",
+          "prerequisites"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/name"
+          },
+          "argv": {
+            "$ref": "#/$defs/argv"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prerequisites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            }
+          },
+          "environmentProfile": {
+            "$ref": "#/$defs/name"
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "parallelSafe": {
+            "description": "true lets the runner run this check at the same time as other parallelSafe checks, up to the binding's parallelChecks. A check without it runs alone.",
+            "type": "boolean"
+          }
+        }
       }
     }
   },
@@ -784,7 +888,8 @@
           "decision.recorded",
           "blocker.recorded",
           "delivery.closed",
-          "review.evidence"
+          "review.evidence",
+          "check.selected"
         ]
       },
       "lane": {
@@ -1290,6 +1395,52 @@
                 "items": {
                   "$ref": "#/$defs/name"
                 }
+              },
+              "lead": {
+                "description": "Present only when the checks are the lead's selection rather than the provider's answer: each candidate's selection, at the reviewed head it was recorded for, with the lead's reason. No provider ran, so providers is empty.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "members"
+                ],
+                "properties": {
+                  "members": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "subject",
+                        "head",
+                        "reason",
+                        "recordedAt",
+                        "checks"
+                      ],
+                      "properties": {
+                        "subject": {
+                          "$ref": "#/$defs/name"
+                        },
+                        "head": {
+                          "$ref": "#/$defs/commit"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "recordedAt": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "checks": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/name"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -1549,6 +1700,7 @@
           "dirty_checkout",
           "no_checks",
           "profile_unknown",
+          "selection_invalid",
           "check_failed",
           "base_broken",
           "base_moved",
@@ -1766,6 +1918,19 @@
         "type": "array",
         "items": {
           "$ref": "#/$defs/check"
+        }
+      },
+      "selection": {
+        "description": "Optional. lead: true lets the lead choose a candidate's checks from its diff with the state tool's select command; the runner then runs the lead's selection and alwaysRun instead of the provider's answer and fallback, while the selection is for the candidate's reviewed head. A candidate without one is checked as before. Off when absent.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "lead"
+        ],
+        "properties": {
+          "lead": {
+            "type": "boolean"
+          }
         }
       },
       "checkTimeoutSeconds": {

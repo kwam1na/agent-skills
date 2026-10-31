@@ -609,11 +609,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
-    "delivery.html": "3eb180eb4a654be51b61e0a8fcf716ac923aaba4da714bcf292cd0137c1177c6",
+    "delivery.html": "6ce6f338d48ebbb25f66193ec52f4657422cf2eaf286ae9b1de38eb023b26b4a",
 }
 PINNED_VIEWS = {
     "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
-    "delivery.html": "a3c6d61688e4063d98e6c5c51231e154931560d19db40369f8e2b1e1341ca80a",
+    "delivery.html": "71a42852ef31312b1a20b1b448ed717c4184df84b3ec6b67920579486ea84241",
 }
 
 
@@ -919,6 +919,32 @@ TICKET_LINES = (
 )
 
 
+def selection_document() -> dict:
+    """The fixed state with one row checked by the lead's selection and one whose selection a new head voided."""
+    state = copy.deepcopy(FIXED_STATE)
+    first, second = state["queue"][0], state["queue"][1]
+    check = {"id": "parser", "argv": ["python3", "-m", "pytest", "tests/parser"], "cwd": ".", "reasons": ["parser"],
+             "prerequisites": []}
+    first["leadSelection"] = {"head": first["head"], "checks": [check], "reason": "only the parser changed",
+                              "recordedAt": "2026-10-20T11:00:00Z"}
+    first["checkSelection"] = {"by": "lead", "head": first["head"], "reason": "only the parser changed"}
+    second["leadSelection"] = {"head": "d" * 40, "checks": [check, {**check, "id": "lexer"}], "reason": "lexer too",
+                               "recordedAt": "2026-10-20T11:00:00Z"}
+    second["checkSelection"] = {"by": "provider"}
+    stats = sys.modules[render_state.show.__module__].delivery_stats(state, FIXED_JOURNAL)
+    return {"state": state, "journal": FIXED_JOURNAL, "stats": stats}
+
+
+def selection_lines(document: dict) -> tuple[str, ...]:
+    first, second = document["state"]["queue"][0], document["state"]["queue"][1]
+    return (
+        f"checks selected by the lead at {first['head']}, not the provider · why: only the parser changed",
+        "checks selected by the provider",
+        f"lead selection for {'d' * 40}: parser, lexer · why: lexer too · void: the reviewed head is now {second['head']}",
+        "· checks selected by the lead",
+    )
+
+
 VISIBILITY_LINES = (
     "fmt: passed · took 30s",
     "unit: running · 1m 40s of an expected 10m 00s",
@@ -981,6 +1007,15 @@ class CheckVisibilityViewTests(unittest.TestCase):
         document["estimates"] = {"change-2": {"position": 1, "expectedStart": None}}
         self.assertIn(render_state._markdown_text("position 1 · start time unknown (an estimate)"),
                       render_state.render_markdown(document))
+
+    def test_the_markdown_view_says_whose_checks_ran_and_why(self) -> None:
+        document = selection_document()
+        view = render_state.render_markdown(document)
+        for line in selection_lines(document):
+            with self.subTest(line=line):
+                self.assertIn(render_state._markdown_text(line), view)
+        # The selection the lead's checks came from is said once, not again as waiting.
+        self.assertNotIn(render_state._markdown_text(f"lead selection for {document['state']['queue'][0]['head']}"), view)
 
     def test_a_document_without_estimates_or_timing_renders_as_before(self) -> None:
         document = {"state": FIXED_STATE, "journal": FIXED_JOURNAL}
@@ -2140,6 +2175,14 @@ setTimeout(async () => {
         for line in VISIBILITY_LINES:
             with self.subTest(line=line):
                 self.assertIn(line, shown["text"])
+
+    def test_the_page_says_whose_checks_ran_as_the_markdown_does(self) -> None:
+        document = selection_document()
+        shown = self.run_page({}, document)
+        for line in selection_lines(document):
+            with self.subTest(line=line):
+                self.assertIn(line, shown["text"])
+        self.assertNotIn(f"lead selection for {document['state']['queue'][0]['head']}", shown["text"])
 
     def test_a_page_whose_clock_is_behind_the_record_counts_from_the_records_last_write(self) -> None:
         shown = self.run_page({"now": "2026-10-20T11:59:00Z"}, visibility_document())
