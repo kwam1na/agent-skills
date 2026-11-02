@@ -13,12 +13,11 @@ from pathlib import Path
 from unittest import mock
 
 from agent_skills.release import VerifiedRelease, build_release
-from tests.qualification_pending_support import pending, skip_if_pending
+from tests.built_product import build_product
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-provider.py"
-RECORD = ROOT / "qualifications" / "provider-workflows-draft-building-v1.json"
 
 
 def _load_runner():
@@ -30,17 +29,27 @@ def _load_runner():
 
 
 class ProviderQualificationTests(unittest.TestCase):
-    def test_checked_product_provider_replays_exactly(self) -> None:
-        product = ROOT / "qualifications/product"
-        current = "core-draft-building-v1"
+    def test_provider_product_built_from_the_tree_qualifies(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "provider.json"
+            directory = Path(temporary)
+            archive, metadata = build_product(directory, "core", "core-qualification-fixture")
+            output = directory / "provider.json"
             result = subprocess.run([sys.executable, "-B", str(SCRIPT),
-                                     "--archive", str(product / f"{current}.zip"),
-                                     "--metadata", str(product / f"{current}.release.json"),
+                                     "--archive", str(archive),
+                                     "--metadata", str(metadata),
                                      "--record", str(output)], cwd=temporary, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(output.read_bytes(), (product / "provider-draft-building-v1.json").read_bytes())
+            record = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(set(record), {
+            "installedProviderSha256", "proofBoundary", "protocolVersion", "redaction", "release", "replay",
+            "scenarios", "schemaVersion", "summary", "workflowGraphSha256",
+        })
+        self.assertEqual(record["schemaVersion"], "agent-skills-provider-qualification/1")
+        self.assertEqual(record["release"]["profile"], "core")
+        self.assertEqual(record["release"]["releaseId"], "core-qualification-fixture")
+        self.assertEqual(record["summary"]["result"], "passed")
+        self.assertEqual(record["summary"]["passedScenarioCount"], len(record["scenarios"]))
+        self.assertTrue(all(scenario["result"] == "passed" for scenario in record["scenarios"]))
 
     def test_record_cannot_overwrite_a_qualification_input(self) -> None:
         runner = _load_runner()
@@ -106,7 +115,7 @@ class ProviderQualificationTests(unittest.TestCase):
             ROOT,
             archive,
             metadata,
-            release_id="core-workflows-draft-building-v1",
+            release_id="core-qualification-fixture",
             profile_id="core",
         )
         output = record or directory / "provider.qualification.json"
@@ -149,7 +158,7 @@ class ProviderQualificationTests(unittest.TestCase):
             self.assertEqual(record["schemaVersion"], "agent-skills-provider-qualification/1")
             self.assertEqual(record["protocolVersion"], "delivery-provider-rails/1")
             self.assertEqual(record["release"]["profile"], "core")
-            self.assertEqual(record["release"]["releaseId"], "core-workflows-draft-building-v1")
+            self.assertEqual(record["release"]["releaseId"], "core-qualification-fixture")
             self.assertRegex(record["release"]["archiveSha256"], r"^[a-f0-9]{64}$")
             self.assertRegex(record["release"]["metadataSha256"], r"^[a-f0-9]{64}$")
             self.assertRegex(record["installedProviderSha256"], r"^[a-f0-9]{64}$")
@@ -272,14 +281,18 @@ class ProviderQualificationTests(unittest.TestCase):
                 )
             )
 
-    def test_checked_record_replays_exactly(self) -> None:
+    def test_record_from_a_tree_built_archive_replays_exactly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            result, replay = self._run(directory)
-
+            first_directory, second_directory = directory / "first", directory / "second"
+            first_directory.mkdir()
+            second_directory.mkdir()
+            result, first = self._run(first_directory)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            skip_if_pending(self, "provider")
-            self.assertEqual(replay.read_bytes(), RECORD.read_bytes())
+            replay_result, second = self._run(second_directory)
+            self.assertEqual(replay_result.returncode, 0, replay_result.stdout + replay_result.stderr)
+            self.assertEqual(json.loads(first.read_text(encoding="utf-8"))["summary"]["result"], "passed")
+            self.assertEqual(first.read_bytes(), second.read_bytes())
 
     def test_hostile_installed_provider_mutations_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
