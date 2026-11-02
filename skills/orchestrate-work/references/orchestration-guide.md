@@ -426,6 +426,8 @@ Post on your own ticket, with your host's tracker tools:
 
 When you begin, also move your ticket to started with the same tools: the
 next reconcile takes that alone to move its stop from planned to building.
+Your draft change request does the same from the forge, for a delivery that
+reads no tracker snapshot.
 
 One attempt each, never a gate. With no tracker tools, carry on and say so
 in your hand-off.

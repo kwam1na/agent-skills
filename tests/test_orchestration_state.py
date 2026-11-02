@@ -1037,7 +1037,9 @@ class ReconcileTests(unittest.TestCase):
         forge = self.snapshot("forge", [{"subject": "work-now", "title": "A change request title", "state": "draft",
                                          "summary": "The change request's own text."}])
         code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
-        self.assertEqual((code, result["drift"]), (0, False), result)
+        self.assertEqual(code, 0, result)
+        self.assertEqual([change["change"] for change in result["changes"]],
+                         ["its change request is a draft: now building"])
         self.assertNotIn("tickets", state_tool.show(self.directory)["state"])
 
     def test_an_over_long_summary_is_refused_and_nothing_is_written(self) -> None:
@@ -1145,7 +1147,7 @@ class ReconcileTests(unittest.TestCase):
         state = state_tool.show(self.directory)["state"]
         self.assertEqual(state["planned"], [
             {"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "review", "changeRequest": "change 11"},
-            {"subject": "work-b", "title": "B", "lane": None, "stage": "planned", "changeRequest": "change 12"},
+            {"subject": "work-b", "title": "B", "lane": None, "stage": "building", "changeRequest": "change 12"},
         ])
         self.assertEqual(state["queue"][0]["changeRequest"], "change 13")
         self.assertEqual(state["queue"][0]["stage"], "queued", "the lead's reconcile never writes runner fields")
@@ -1153,6 +1155,47 @@ class ReconcileTests(unittest.TestCase):
         again = self.snapshot("forge", json.loads(Path(forge).read_text())["items"])
         code, result = run_tool(self.directory, "reconcile", "--snapshot", again)
         self.assertEqual((code, result["drift"]), (0, False))
+
+    def test_a_draft_change_request_moves_planned_work_to_building_and_nothing_further(self) -> None:
+        self.lead({"planned": [
+            {"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "planned"},
+            {"subject": "work-b", "title": "B", "lane": "lane-2", "stage": "building"},
+            {"subject": "work-c", "title": "C", "lane": "lane-3", "stage": "review", "changeRequest": "change 23"},
+        ], "queue": [queue_item("work-d")]})
+        forge = self.snapshot("forge", [
+            {"subject": "work-a", "state": "draft", "changeRequest": "change 21"},
+            {"subject": "work-b", "state": "draft", "changeRequest": "change 22"},
+            {"subject": "work-c", "state": "draft", "changeRequest": "change 23"},
+            {"subject": "work-d", "state": "draft", "changeRequest": "change 24"},
+        ])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["reports"]), (0, []), result)
+        self.assertEqual([(change["subject"], change["change"]) for change in result["changes"]], [
+            ("work-a", "linked change request change 21"),
+            ("work-a", "its change request is a draft: now building"),
+            ("work-b", "linked change request change 22"),
+            ("work-d", "linked change request change 24"),
+        ])
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state["planned"], [
+            {"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "building", "changeRequest": "change 21"},
+            {"subject": "work-b", "title": "B", "lane": "lane-2", "stage": "building", "changeRequest": "change 22"},
+            {"subject": "work-c", "title": "C", "lane": "lane-3", "stage": "review", "changeRequest": "change 23"},
+        ])
+        self.assertEqual(state["queue"][0]["stage"], "queued", "queued work stays queued")
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["drift"], result["changes"]), (0, False, []))
+
+    def test_a_draft_then_open_change_request_moves_planned_work_through_building_to_review(self) -> None:
+        self.lead({"planned": [{"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "planned"}]})
+        for word, stage in (("draft", "building"), ("open", "review")):
+            with self.subTest(word=word):
+                forge = self.snapshot("forge", [{"subject": "work-a", "state": word, "changeRequest": "change 21"}])
+                code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+                self.assertEqual((code, result["drift"]), (0, True), result)
+                self.assertEqual(state_tool.show(self.directory)["state"]["planned"][0]["stage"], stage)
+                code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+                self.assertEqual((code, result["drift"]), (0, False))
 
     def test_a_snapshot_exactly_the_maximum_age_old_is_fresh_and_one_second_more_is_stale(self) -> None:
         moment = datetime.datetime(2026, 10, 20, 12, 0, 0, tzinfo=datetime.timezone.utc)

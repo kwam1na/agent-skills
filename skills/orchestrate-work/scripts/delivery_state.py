@@ -1869,6 +1869,10 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
             if word == "open" and entry is planned(subject) and entry["stage"] in ("planned", "building"):
                 entry["stage"] = "review"
                 change(subject, "its change request is open: now in review")
+            elif word == "draft" and entry is planned(subject) and entry["stage"] == "planned":
+                # A lane's change request opens as a draft; with no tracker snapshot, that alone moves the stop.
+                entry["stage"] = "building"
+                change(subject, "its change request is a draft: now building")
             elif word == "closed" and entry.get("stage") != "merged":
                 report(subject, "its change request closed without merging")
             elif word == "merged":

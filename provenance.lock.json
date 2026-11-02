@@ -469,11 +469,11 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "a391e3ff78c9d612380af8f59406ca16cf6f1cd80270b4df1f5f1c817443895a"
+          "sha256": "0e4840547b562783fec6a5d74420993dc2e664e832d0d284ae58971c9e5e763a"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "9afeedcd81ea8cb2f1466f74dee2f4e478a89eb49084eebe28fdbc612e3c9357"
+          "sha256": "27b1fe169a4306217e778a66f049c631e0c44fad0fafa490ff9f6e906858b9e4"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -481,7 +481,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "59e6b9936863196ba6ec4d2892b439303f1f03dc79c928b41fb34b219116f6a8"
+          "sha256": "40b4e5e06d377e79a1fd1381e3e94b44f9613af62c496fbe782893f1259e9499"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
@@ -1018,7 +1018,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "bf3eb95c4aae1c67f73bfbfd4f0fe42f94b8e8ef37afd148645fd72eedd13c87"
+          "sha256": "de230bf095c5898f8e793d80357bc33a51b23c316c589ebc8788d14944ffa413"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
