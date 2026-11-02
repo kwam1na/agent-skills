@@ -20,8 +20,16 @@
   ],
   "hooks": "bypass",
   "regenerable": {
-    "paths": [],
-    "regenerators": []
+    "paths": [
+      "provenance.lock.json"
+    ],
+    "regenerators": [
+      [
+        ".venv/bin/python",
+        "-B",
+        "scripts/update-provenance.py"
+      ]
+    ]
   },
   "postSync": [],
   "leadInputs": [],
@@ -179,7 +187,7 @@
         "--state-dir",
         "{stateDirectory}",
         "--subject-pattern",
-        "V26-304[2-8]",
+        "V26-30(4[2-8]|52)",
         "--token-env",
         "GITHUB_TOKEN",
         "--timeout-seconds",
