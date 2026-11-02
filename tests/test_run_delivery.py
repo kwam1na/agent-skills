@@ -47,8 +47,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills/run-delivery"
 PROFILE = "run-delivery"
 TOOL_RELATIVE = "skills/run-delivery/scripts/run_delivery.py"
-# The current qualification set's core product carries the runtime this profile's product is rebound from.
-RUNTIME_SOURCE = ROOT / "qualifications/product/core-draft-building-v1.zip"
+# The stored runtime this profile's product is rebound from.
+RUNTIME_SOURCE = ROOT / "product-runtime"
 RUNTIME_VERSION = "0.7.7"
 # The fixture page adapter-test serves, byte for byte as the tool's own fixture page was before it moved in.
 ADAPTER_FIXTURE_SHA256 = "31257fd55d83ebc6aa602b7a508248d6f44776991f54e1127ce1629b0bf59a81"
@@ -449,13 +449,11 @@ def installed_release() -> types.SimpleNamespace:
     built = types.SimpleNamespace()
     built.build = Path(tempfile.mkdtemp(prefix="run-delivery-release-"))
     unittest.addModuleCleanup(shutil.rmtree, built.build, True)
-    # The runtime the current core product carries, with only its descriptor's workflow digest rebound to this
-    # profile's workflow projection.
+    # The stored runtime, with only its descriptor's workflow digest rebound to this profile's workflow projection.
     runtime = built.build / "runtime"
     runtime.mkdir()
-    with zipfile.ZipFile(RUNTIME_SOURCE) as source:
-        for name in release.RUNTIME_FILES:
-            (runtime / name).write_bytes(source.read(f"runtime/{name}"))
+    for name in release.RUNTIME_FILES:
+        (runtime / name).write_bytes((RUNTIME_SOURCE / name).read_bytes())
     descriptor_text = (runtime / "runtime.json").read_text(encoding="utf-8")
     built.descriptor = json.loads(descriptor_text)
     view = release._release_view(ROOT, PROFILE)
