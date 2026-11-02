@@ -144,8 +144,14 @@ In-flight items that already own an entry:
   - **"Needs you" is derived, never stored.** Each pass computes it from live conditions:
     - the publisher's ledger lagging the journal, and its last error;
     - an undrained host outbox;
-    - a failed `fullHealth` for the current base head;
-    - a `blocker.recorded` or lane question with no later resolving entry for the same subject;
+    - a failed `fullHealth` for the current base head, from its result kept in `flow-log/full-health.json` by base
+      head. It clears when `fullHealth` passes at a later head;
+    - `base.broken` with no later `base.repaired`;
+    - a lane whose state is `blocked`, or that is waiting on the lead. It clears when the lane's state changes;
+    - a `blocker.recorded` the lead hasn't resolved. `lead-resolve <journal id> --why TEXT`, a new command, resolves
+      it: it records the resolution in `flow-log/resolutions.jsonl` and journals a `decision.recorded` naming it;
+    - ledger `failed` and `handled` lines: tracker updates that couldn't be posted, and moves that weren't offered.
+      These are shown, but don't hold the close, and the friction note lists them;
     - a supervisor child that won't stay up.
 
     The line map shows the same list, and the close condition reads the same function, so an item clears when its
@@ -177,16 +183,19 @@ In-flight items that already own an entry:
     publisher exits 0 and leaves the entries to that run or the next pass, so a runner write never waits on a
     backlog. Lane commands take the same lock for the actions they make (C5).
   - **Ordering.** It processes journal entries in id order and adds the ledger line after each one. A transient
-    failure stops the run, and the next run retries from there. Transient means a network error, a timeout, a 5xx,
-    a 429, or a 401 or site-wide 403.
+    failure stops the run, and the next run retries from there. Transient means a network error, a timeout, a 5xx, a
+    409, 423 or 429, a 401, or a 403 that the adapter's status read of the epic also returns, meaning the whole site
+    refuses the credentials.
   - **Permanent failures.** Any other 4xx is permanent, such as a deleted ticket or a body the tracker refuses. The
-    publisher writes a `failed` line, journals one `blocker.recorded` naming the entry and the error, and goes on to
-    later entries. So one rejected entry never holds every later update or the close.
+    publisher writes a `failed` line and goes on to later entries. It journals nothing, so a failure can't produce an
+    entry that fails again. The failure shows in "Needs you" from the ledger (C1). So one rejected entry never holds
+    every later update or the close.
   - **Bodies.** Every comment is truncated to the adapter's declared limit (32,767 characters for Jira), with a
     pointer to the record for the rest.
   - **Idempotency.** Each comment and move carries its journal id as a marker the adapter stores on the known ticket
     (the Jira adapter uses an entity property). A created item carries a marker the tracker can search for without an
-    installed app (the Jira adapter uses the label `agent-followup-<finding id>`, searched under the epic). Before
+    installed app. The Jira adapter uses the label `agent-followup-<story>-<finding id>`, lowercased to Jira's label
+    rules, and searches for it within the configured project. Before
     writing, the publisher asks the adapter for the marker. A crash between the write and the ledger line therefore
     doesn't produce a second post or a second item.
   - **What it posts.** It handles every journal kind, using the orchestration guide's table. Two rules decide what it
@@ -202,15 +211,16 @@ In-flight items that already own an entry:
     publisher, and the supervisor raises an undrained outbox as "Needs you", naming the updates waiting.
   - **Where the ledger is.** The publisher finds the state directory through a `{stateDirectory}` substitution in
     publisher argv, which `render_state.py` gains. Today it substitutes only in renderer argv.
-  - **Refusals.** A binding with a tracker but no tracker publisher fails `doctor`. `lead-init` refuses it unless
+  - **Refusals.** Either of these fails `doctor`: a tracker with an adapter but no tracker publisher, or a tracker
+    reachable only through the host but with no host publisher. `lead-init` refuses either unless
     `run-delivery.json` sets `tracker.updates: "manual"`.
 - **C3. Every tracker move is configuration.** `run-delivery.json` `tracker.transitions` keeps `start` and `review`
   for lanes. It gains `lead`, an object from journal kind to the transitions the publisher makes. If `lead` is absent,
   or a kind maps to an empty list, no move is made and the update says the move belongs to people. That is the default, because
   some teams reserve every move after review for people. Each move reads the ticket's status first:
   - one already made by a person or an integration is skipped, and reported as made by someone else;
-  - one not offered from the current status raises one blocker in the record, and is recorded in the ledger as
-    handled, so it isn't retried or raised again.
+  - one not offered from the current status is recorded in the ledger as `handled`, shown in "Needs you" (C1), and
+    neither retried nor journalled.
 - **C4. Marking ready happens at acceptance, under a grant.** The delivery file's `authority` gains
   `readyPullRequests`, and forge adapters gain `ready --url`. `run-delivery.json` gains `forge.mergeNeedsReady`, which
   says the repository's merge step refuses a draft.
@@ -223,17 +233,24 @@ In-flight items that already own an entry:
   - **`lane-start <key> --base <base>`,** a new command:
     1. checks `--base` against the binding's bases;
     2. creates `.orchestration/lanes/<key>` from that base and runs the prepare step;
-    3. applies the start transition, posts the start update, and sets the lane's focus.
+    3. sets the lane's focus.
 
-    It replaces four steps the brief lists today. `lead-assign` prints it with the base filled in.
-  - **The review transition's timing is a setting.** `tracker.transitions.reviewWhen` is one of:
-    - `gates-passed`, the default and today's brief wording: `open-pr` applies it once the PR is open and the gates
-      pass at its head;
+    The start transition and start update belong to `lane.assigned`, which the publisher handles under the guide's
+    table ("it moves to started") as soon as `lead-assign` journals it. Neither the lead nor the lane makes the move.
+    For a tracker reachable only through the host, `lane-start` prints the move and post for the lane to make and
+    records them. `lane-start` replaces four steps the brief lists today. `lead-assign` prints it with the base filled
+    in.
+  - **The review transition's timing is a setting, and the automatic move is opt-in.**
+    `tracker.transitions.reviewWhen` is one of:
+    - `gates-passed`: `open-pr` applies it once the PR is open and the gates pass at its head;
     - `pr-open`: `open-pr` applies it as soon as the PR opens;
     - `pipeline-green`: `pr-review` applies it once the pipeline's review is current at the PR's head and its checks
       are green. It needs `review.pr`, and `doctor` fails it without one.
 
-    It is never inferred from `review.pr`.
+    With `reviewWhen` absent, nothing moves automatically. The lane commands print the move for the lane, as the brief
+    does today. `doctor` names the setting. `lead-setup` asks for it when drafting the delivery's settings and records
+    the answer. It's never inferred from `review.pr`, so an adopter whose existing configuration has `review.pr` and
+    no `reviewWhen` sees no change in when its tickets move.
   - **`handoff`** posts the hand-off update.
   - **Lane posts go through the ledger.** Every post and move a lane command makes takes the publisher's lock and
     writes its ledger line under the journal id of the entry it journals. When the tracker call fails, the command
@@ -246,10 +263,10 @@ In-flight items that already own an entry:
 - **C6. Close-out runs itself, step by step.** When the close condition holds, the supervisor runs these steps. Each
   must succeed before the next.
   1. **Health check.** Run the binding's `fullHealth` in a fresh detached checkout of the final base, at most once per
-     base head. If it fails, journal `blocker.recorded` with its output, raise "Needs you", and hold the close until
-     the base head changes.
-  2. **Follow-ups.** File one follow-up item for each deferred finding that has none, keyed by finding id against
-     `followups[]`, through the tracker publisher. A failed filing holds the close and is retried on the next pass. A
+     base head. Its result and output are kept in `flow-log/full-health.json`. A failure shows in "Needs you" (C1)
+     and holds the close until `fullHealth` passes at a later head.
+  2. **Follow-ups.** File one follow-up item for each deferred finding that has none, keyed by story and finding id
+     (`<story>-<finding id>`, since finding ids repeat across stories) against `followups[]`, through the tracker publisher. A failed filing holds the close and is retried on the next pass. A
      tracker reachable only through the host raises the filings as "Needs you" instead.
   3. **Close.** Journal `delivery.closed` and render, then wait until the tracker has every entry through
      `delivery.closed`. What that means depends on the tracker:
@@ -285,9 +302,10 @@ In-flight items that already own an entry:
   `lead-plan change` entries and `plan.lock` don't count. `lead-init --replace` stops any supervisor, confirms its pid is gone, archives both,
   and starts fresh. The plan's approval snapshot is taken from the delivery file at that `lead-init`.
 - **C9. Plan review for any plan.** `plan-review prepare|reduce|end --plan <path> --lenses <ids>` works without a
-  delivery file, binding or record. It keeps its rounds in a store keyed by a `reviewSlug` the
-  first `prepare` writes into the plan's front matter, under `.orchestration/plan-review/<slug>/`, so renaming the plan
-  file doesn't orphan its review. When the plan later becomes a delivery, `lead-setup` and `lead-init` adopt that
+  delivery file, binding or record. It keeps its rounds in a store under
+  `.orchestration/plan-review/<slug>/`, keyed by a `reviewSlug` in the plan's front matter, so renaming the plan file
+  doesn't orphan its review. `prepare` refuses a plan without one and prints the line to add, so the author commits it
+  before round 1's candidate. When the plan later becomes a delivery, `lead-setup` and `lead-init` adopt that
   store, so the review shows in the plan chapter. `plan-work`'s review section names the command.
 
 ## In scope, by unit
@@ -301,6 +319,7 @@ In-flight items that already own an entry:
   - **Forge adapters.** Both gain `ready` and `merge --strategy merge|squash`, which merges a pull request through the
     forge's API. The GitHub adapter gains `reviews`. The guide shows a binding whose `merge` argv calls the adapter, so
     an adopter no longer writes its own `merge.py`.
+  - `lead-resolve <journal id> --why TEXT` resolves a blocker (C1).
   - `lead-accept --requeue <key>` re-queues a stopped candidate the lead has resolved, without a new hand-off from the
     lane.
   - `doctor --delivery` reports:
@@ -555,6 +574,9 @@ In-flight items that already own an entry:
   - With a host publisher, the close waits until the outbox is acked through `delivery.closed`. Under
     `tracker.updates: "manual"`, it doesn't wait.
   - A story removed through `lead-plan change --kind removed` doesn't hold the close.
+  - After a red `fullHealth` and a green one at a later base head, the delivery closes.
+  - A lane's `blocker.recorded` holds the close until `lead-resolve` resolves it, and then the delivery closes.
+  - A host-only tracker with a host publisher passes `doctor` and `lead-init`.
   - Cleanup of a merged story waits until its lane has moved off it.
   - On success, the fake Jira holds the `delivery.closed` update. Then the record is archived, the friction stub is
     written, and the supervisor stops.
@@ -563,34 +585,40 @@ In-flight items that already own an entry:
   - `lead-run --resume` adopts or stops the orphaned children, and posts nothing twice;
   - a `lead-cleanup` run by hand meanwhile isn't repeated.
 - **Publisher.** Against a fake Jira that, like real Jira without an app, refuses JQL on issue properties:
-  - each journal kind posts the guide's update once, except kinds a lane command posted, and unmarked
-    `decision.recorded` entries;
+  - each journal kind gets the guide's update once, except an entry whose ledger already holds an action line, and
+    `decision.recorded` entries outside the subjects and writers C2 names, which get `skip` lines;
   - when entry 11 fails and entry 12 succeeds, the next run posts only 11;
   - two renders running at once post each entry once;
   - a process killed after the POST and before the ledger line posts nothing again;
   - a 401 raises "Needs you", and once the token is fixed the lag clears, "Needs you" empties, and the close isn't
     held;
   - a `blocker.recorded` entry with 40,000 characters of output posts one comment truncated to the limit;
-  - an entry rejected with 400 gets one `failed` line and one blocker, and later entries are still posted;
+  - an entry rejected with 400 gets one `failed` line over three runs, later entries are still posted, the journal
+    doesn't grow, and the close isn't held by it;
   - a follow-up created before a crash is found by its label and not filed again;
+  - two stories deferring the same finding id each get their own follow-up, once;
+  - a 409 is retried, and a 403 that the epic read also returns is retried; a 403 on one ticket alone is permanent;
   - a `handoff` whose own post got a 401 still hands off, and the next publisher run posts its update once;
   - a runner write during a publisher backlog doesn't wait: the second run exits at once.
 - **Moves.** With `tracker.transitions.lead` configured:
   - a move whose status was already reached is skipped, and reported as made by someone else;
-  - a move not offered raises one blocker, once;
+  - a move not offered gets one `handled` line, is shown in "Needs you", and journals nothing;
   - with `lead` absent, no move is made and the update says so.
 - **Adapter contract.** The publisher, run against a second fake adapter that implements only `tracker-adapter/1`
   (no Jira code), posts, moves and files exactly as it does against the Jira adapter.
 - **Host outbox.** With a tracker reachable only through the host, an undrained host outbox raises "Needs you", naming
   the waiting updates.
 - **Lane start.**
-  - `lane-start` creates the worktree from `--base`, applies the start transition, posts the start update and sets
-    focus.
+  - `lead-assign` journals `lane.assigned`, and the publisher applies the start transition and posts the start update
+    once.
+  - `lane-start` creates the worktree from `--base` and sets focus, and makes no tracker call of its own.
   - Run twice, it changes nothing the second time.
   - A base outside `bases` is refused.
   - With a tracker reachable only through the host, it prints the move and the post and records them.
 - **Review move.**
-  - With no `reviewWhen`, `open-pr` makes the move once the gates pass, as today, whether or not `review.pr` is set.
+  - With no `reviewWhen`, nothing moves and `open-pr` prints the move, whether or not `review.pr` is set, and `doctor`
+    names the setting.
+  - With `gates-passed`, `open-pr` makes the move once the gates pass.
   - With `pr-open`, `open-pr` makes it as the PR opens.
   - With `pipeline-green`, `open-pr` makes no move and `pr-review` makes it once the fake pipeline is green.
   - `pipeline-green` without `review.pr` fails `doctor`.
@@ -636,7 +664,7 @@ In-flight items that already own an entry:
 ## Test dispositions
 
 - `tests/test_run_delivery.py`:
-  - the subcommand inventory gains `lead-run`, `lane-start` and `view`, plus the `--requeue`, `--plan` and `--base`
+  - the subcommand inventory gains `lead-run`, `lead-resolve`, `lane-start` and `view`, plus the `--requeue`, `--plan` and `--base`
     options;
   - the brief text and round-brief pins change;
   - the guide pins change;
