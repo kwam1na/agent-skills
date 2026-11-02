@@ -124,7 +124,7 @@ In-flight items that already own an entry:
   - **Lifetime.** `lead-init` starts `run-delivery lead-run`, one process per record. It detaches by starting a new
     session (`start_new_session`), never by ignoring signals. Before starting any child it resets SIGINT, SIGHUP and
     SIGQUIT to their defaults.
-  - **Liveness.** Liveness is the lock `lead-run` holds on `flow-log/supervisor.lock`, which also records its pid,
+  - **Liveness.** Liveness is the lock `lead-run` holds on the flow log's `supervisor` lock, which also records its pid,
     start time and children. Nothing about the supervisor goes in the state's `meta`.
   - **Children.** It runs and keeps alive the merge queue's `serve`, the reconcile sweep and the live view. Its first
     line of output is the live view's address, and every lead command repeats it.
@@ -144,12 +144,12 @@ In-flight items that already own an entry:
   - **"Needs you" is derived, never stored.** Each pass computes it from live conditions:
     - the publisher's ledger lagging the journal, and its last error;
     - an undrained host outbox;
-    - a failed `fullHealth` for the current base head, from its result kept in `flow-log/full-health.json` by base
+    - a failed `fullHealth` for the current base head, from its result kept in the flow log's `full-health` file by base
       head. It clears when `fullHealth` passes at a later head;
     - `base.broken` with no later `base.repaired`;
     - a lane whose state is `blocked`, or that is waiting on the lead. It clears when the lane's state changes;
     - a `blocker.recorded` the lead hasn't resolved. `lead-resolve <journal id> --why TEXT`, a new command, resolves
-      it: it records the resolution in `flow-log/resolutions.jsonl` and journals a `decision.recorded` naming it;
+      it: it records the resolution in the flow log's `resolutions` file and journals a `decision.recorded` naming it;
     - ledger `failed` and `handled` lines: tracker updates that couldn't be posted, and moves that weren't offered;
     - a supervisor child that won't stay up.
 
@@ -158,10 +158,11 @@ In-flight items that already own an entry:
 
     Some resolutions are automatic:
     - the runner's own blocker is resolved by the hold clearing, or by `base.repaired`. It is recognised as a
-      `blocker.recorded` with no lane and no subject, whose summary starts with the runner's own text ("Serving is
-      held:"), journalled right after `meta.hold` is set. The journal records no writer;
-    - `lead-resolve full-health --why TEXT` reruns `fullHealth` at the current head, for a failure the lead judges
-      flaky.
+      `blocker.recorded` with no lane and no subject whose summary starts with the runner's own text ("Serving is
+      held:"). The journal records no writer;
+    - `lead-resolve full-health --why TEXT` asks the supervisor's next pass to rerun `fullHealth` at the current
+      head, for a failure the lead judges flaky. It doesn't run the check itself, so only the supervisor writes the
+      `full-health` file.
 
     The line map shows the same list, and the close condition reads the same function, so an item clears when its
     condition clears. Nothing is added to the record's schema for it.
@@ -217,9 +218,9 @@ In-flight items that already own an entry:
       `lead-plan change`, a deferral, a `lead-resolve` and a blocker. The mark is the entry's journal id in
       the flow log's `tracker-marks` file, because the journal records no writer. The marking command holds the
       publisher's ledger lock, waiting for it, across the journal write and the mark, so no publisher run sees the
-      entry unmarked. A command that dies between the two leaves the entry unmarked, and the publisher posts an
-      unmarked `decision.recorded` only on a pass after the one that first saw it, by which time a live command has
-      marked it. Every other entry gets a `skip` line.
+      entry unmarked. The publisher decides on a `decision.recorded` (post if marked, else `skip`) only on a pass
+      after the one that first saw it. A command that dies between the journal write and the mark therefore leaves
+      the entry skipped. The friction note lists it as an unposted decision. Every other entry gets a `skip` line.
       Nothing is added to the journal schema for this.
   - **Failure.** The supervisor's "Needs you" (C1) includes a publisher whose ledger lags the journal for more than one
     pass, naming its last error and the waiting entries. It clears when the lag does.
@@ -248,8 +249,10 @@ In-flight items that already own an entry:
 
   `lead-assign` journals one `lane.assigned` per story key it assigns, so each ticket has an entry for its own start,
   made when its lane begins it. The wait ends at the story's first `lane-start` record. If the journal reaches the
-  story's `candidate.handed`, its `candidate.merged` or its removal first, the wait ends there instead: the publisher
-  applies `start` then, and the status-first read skips a move already passed. Either way the entry gets a line.
+  story's `candidate.handed`, its `candidate.merged` or its removal first, the wait ends there instead. The publisher
+  writes a `skip` line and makes no move, because a late start could move a ticket that is already in review back to
+  started, and the adapter contract carries no status order. The friction note lists such a story as "start never
+  recorded". `start` is applied only on a `lane-start` record. Either way the entry gets a line.
   While an entry waits, it isn't ledger lag in "Needs you". But during C6 step 3 it counts as uncovered and is shown,
   naming the story. Each move reads the ticket's status first:
   - one already made by a person or an integration is skipped, and reported as made by someone else;
@@ -299,7 +302,7 @@ In-flight items that already own an entry:
 - **C6. Close-out runs itself, step by step.** When the close condition holds, the supervisor runs these steps. Each
   must succeed before the next.
   1. **Health check.** Run the binding's `fullHealth` in a fresh detached checkout of the final base, at most once per
-     base head. Its result and output are kept in `flow-log/full-health.json`. A failure shows in "Needs you" (C1)
+     base head. Its result and output are kept in the flow log's `full-health` file. A failure shows in "Needs you" (C1)
      and holds the close until `fullHealth` passes, at a later head or on a `lead-resolve full-health` rerun.
   2. **Follow-ups.** File one follow-up item for each deferred finding that has none, keyed by story and finding id
      (`<story>-<finding id>`, since finding ids repeat across stories), which is also the `followups[]` item's `id`.
@@ -338,7 +341,8 @@ In-flight items that already own an entry:
     still needs that setting on it, and `doctor` says so.
 - **C8. A fresh record starts a fresh plan log.** `lead-init` refuses when the state directory holds a record, or the
   flow log holds a snapshot or a supervisor lock, and names the delivery, its base and when it started. Pre-init
-  `lead-plan change` entries and `plan.lock` don't count. `lead-init --replace` stops any supervisor, confirms its pid is gone, archives both,
+  `lead-plan change` entries and `plan.lock` don't count. `lead-init --replace` stops any supervisor, confirms its pid is gone, archives both (carrying the `lane-starts` and
+  `tracker-marks` files over, so started stories and marked decisions survive),
   and starts fresh. The plan's approval snapshot is taken from the delivery file at that `lead-init`.
 - **C9. Plan review for any plan.** `plan-review prepare|reduce|end --plan <path> --lenses <ids>` works without a
   delivery file, binding or record. It keeps its rounds in a store under
@@ -653,7 +657,8 @@ In-flight items that already own an entry:
   - a two-story `lead-assign` moves neither ticket until each one's `lane-start`, then moves each once;
   - a story removed before its `lane-start` never moves, and its entry gets a `skip` line;
   - a story reassigned after it reached review gets no second start move;
-  - a story handed off and merged with no `lane-start` gets one line for its `lane.assigned`, and the delivery closes;
+  - a story moved to review by hand, then handed off and merged with no `lane-start`, keeps its review status, gets
+    one `skip` line for its `lane.assigned`, and the delivery closes;
   - a publisher run started between a `lead-plan change`'s journal write and its mark still posts the update once;
   - an unmarked `decision.recorded`, such as an acceptance, gets a `skip` line, while a `lead-plan change`'s is
     posted.
@@ -742,6 +747,8 @@ In-flight items that already own an entry:
   requires.
 - **Background processes.** Supervisor tests start real background processes. Their classes are marked
   `run_serially = True`, and they stop every process they start, so they don't add to V26-2951's leaks.
+- **Flow-log files.** Every new lead-side file is named with the delivery key, as `flow_log()` names every lead-side
+  log today.
 - **Shared files.**
   - `run_delivery.py` is edited by several units. Setup lands before Lead supervisor and Plan review. Lane commands
     and Rounds touch only their own commands.
