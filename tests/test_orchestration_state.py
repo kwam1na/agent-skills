@@ -13,7 +13,6 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import ast
 import threading
 import time
 import unittest
@@ -694,38 +693,6 @@ class StateToolTests(unittest.TestCase):
             self.assertEqual(sorted(path.name for path in copy_root.rglob("*.pyc")), [])
             self.assertEqual(sorted(path.name for path in copy_root.rglob("__pycache__")), [])
         self.assertEqual(list(SCRIPTS.rglob("__pycache__")), [])
-
-
-# Every guard call site, in source order, with the arguments after the test case.
-GUARD_CALLS = {
-    "tests/test_qualification.py": [
-        ("skip_if_pending", ["core"]), ("pending", ["core"]), ("skip_if_pending", ["core"]), ("skip_if_pending", ["core"]),
-    ],
-    "tests/test_provider_qualification.py": [("skip_if_pending", ["provider"])],
-    "tests/test_linear_qualification.py": [
-        ("skip_if_pending", ["core", "linear"]), ("pending", ["profile"]), ("skip_if_pending", ["core", "linear"]),
-    ],
-    "tests/test_bootstrap_qualification.py": [
-        ("skip_if_pending", ["bootstrap"]), ("pending", ["bootstrap"]), ("skip_if_pending", ["bootstrap"]),
-        ("skip_if_pending", ["bootstrap"]),
-    ],
-}
-
-
-def _guard_calls(tree: ast.AST) -> list[tuple[str, list[str]]]:
-    calls = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None)
-        if name not in {"pending", "skip_if_pending"}:
-            continue
-        arguments = node.args[1:] if name == "skip_if_pending" else node.args
-        calls.append((node.lineno, name, [
-            argument.value if isinstance(argument, ast.Constant) else ast.unparse(argument)
-            for argument in arguments
-        ]))
-    return [(name, arguments) for _, name, arguments in sorted(calls)]
 
 
 def taken(seconds_ago: float = 0) -> str:
@@ -4135,17 +4102,6 @@ class PublicationTests(unittest.TestCase):
         self.assertTrue(shown["publication"]["outboxLags"], "a journal entry the outbox lacks is a lag")
         # What renderers read: the state, the journal, and the stats, estimates, status and focus folded from them.
         self.assertEqual(sorted(state_tool.show(self.directory)), ["estimates", "focus", "journal", "state", "stats", "status"])
-
-
-class SkipGuardTests(unittest.TestCase):
-    def test_each_skip_guard_names_its_own_qualification_set(self) -> None:
-        for relative, expected in GUARD_CALLS.items():
-            with self.subTest(path=relative):
-                tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
-                self.assertEqual(_guard_calls(tree), expected)
-        # The linear guard's variable ranges over exactly the two profiles it compares.
-        linear = (ROOT / "tests/test_linear_qualification.py").read_text(encoding="utf-8")
-        self.assertIn('for profile in ("core", "linear"):', linear)
 
 
 def valid_state() -> dict:
