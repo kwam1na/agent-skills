@@ -99,12 +99,13 @@ Each unit is one tracked item. Owned files are exclusive: a lane needing another
 
 - **Outcome.** Every operating system's failure is known and has an owner, and Ubuntu is green. All three systems passing
   is proven at the integration change request, not here.
-- **Owns.** `.github/workflows/ci.yml`; a test or workflow fix a failure needs, with the lead handing over any file
-  another lane owns.
+- **Owns.** `.github/workflows/ci.yml`; `tests/test_qualification_pending.py` for one method only; a test or workflow fix
+  a failure needs, with the lead handing over any file another lane owns.
 - **Scope.** No bytecode is written during CI runs, the page lane's packages are installed, and `fail-fast` is off so every
   operating system reports. The `edited` trigger, which existed for the marker, goes. The validate step stops passing
   `--target-base` and its `TARGET_BASE` environment block goes, which is safe while `validate-registry.py` still accepts
-  the argument.
+  the argument. This unit also deletes `test_ci_passes_the_target_base_for_default_branch_events` from
+  `tests/test_qualification_pending.py`, handed over by the lead; the current-set unit removes the rest of that file later.
 - **Scout first.** The lane opens a draft change request with `fail-fast` off, and the lead journals every failing test per
   operating system. Each failure is then classified: a test another unit removes is left for that unit and named against
   it; a test or workflow fix is made by this unit; shipped code or a skill file is a lead decision recorded as an addition
@@ -192,8 +193,10 @@ Each unit is one tracked item. Owned files are exclusive: a lane needing another
   on-demand Linear connector check document exists, for when the connector or Linear-facing skill text changes; it gates
   nothing and retains no attestation. A candidate's promotion is described, including that the final's digests differ
   from the candidate's because its release id does. The docs say a local suite run can leave bytecode that makes a local
-  `cut-release` refuse, and how to clear it. They warn that `draft-building-v1` and earlier sets carry a 0.7.7 runtime
-  without the installed-data protocol, so an adopter on Athena's generation must not apply them.
+  `cut-release` refuse, and how to clear it. The README's install section warns, without naming a set, that
+  releases before the first version tag, which is what latest resolves to until then, carry a 0.7.7 runtime without the
+  installed-data protocol, so an adopter whose installed runtime has `installed-data-proof/1` must not apply them.
+  `docs/product-generation.md` names `draft-building-v1` and earlier sets as those releases.
 - **Owns.** Those documents, `docs/linear-connector-check.md`, `tests/test_readme.py`,
   `tests/test_declared_mechanics_corpus.py`, and `tests/test_no_current_set_names.py`, the set-name scan.
 - **Depends on.** Every other unit.
@@ -244,7 +247,8 @@ Each unit is one tracked item. Owned files are exclusive: a lane needing another
 ## Test scenarios
 
 - **CI.** From a fresh clone and CI's own commands, the validate job's steps pass with no `__pycache__` under `skills/`.
-  The matrix's `fail-fast` is off. `ci.yml` names neither `--target-base` nor `TARGET_BASE`.
+  The matrix's `fail-fast` is off. `ci.yml` names neither `--target-base` nor `TARGET_BASE`, and no test pins the removed trigger or arguments. This holds on
+  Ubuntu at this unit and on all three systems at integration, apart from failures named to another unit.
 - **Build.** Building twice from one tree gives identical archive digests. Each product verifies, carries every runtime
   file byte for byte, and binds `workflowContentSha256` to its own profile. `product-runtime/` is unchanged after a run,
   and each profile's descriptor differs from the stored one only in that field.
@@ -267,8 +271,8 @@ Each unit is one tracked item. Owned files are exclusive: a lane needing another
   tree on every matrix operating system, without comparing against a checked-in record.
 - **Channel.** Only version tags trigger publish, and old-style set tags do not. The annotated and merged guards, the
   ordering guard and the no-replace check precede publishing, and a release that already exists stops later jobs. `tests/test_release_channel.py` runs the ordering guard against a temporary repository with real tags, including a first
-  version with no earlier version tag and old-style set tags: a lower or equal version, or a commit behind the highest
-  version tag, is refused, and promoting a candidate on its own commit is accepted. Text pins cover only the workflow's
+  version with no earlier version tag and old-style set tags: a lower or equal version, compared with every version tag except the one being evaluated, or a commit behind
+  the highest version tag, is refused, a re-run of a failed run for the same tag is not refused by the guard itself, and promoting a candidate on its own commit is accepted. Text pins cover only the workflow's
   wiring. The matrix job is a dependency of the publish job. Provenance precedes publishing, and its subject and the
   upload both cover every output file. A final is explicitly latest; a candidate is a prerelease and explicitly not.
   `--clobber`, `gh release upload` and `gh release delete` stay absent. `release.yml` holds no workflow-level write
@@ -279,7 +283,8 @@ Each unit is one tracked item. Owned files are exclusive: a lane needing another
   list.
 - **History.** Every pinned historical digest still matches, including all of `lead-selected-checks-v1` and
   `draft-building-v1`.
-- **README.** Every `qualifications/` path it names exists, it still points at history, and it names no current set.
+- **README.** Every `qualifications/` path it names exists, it still points at history, and it names no current set. It does not
+  contain `draft-building-v1`, and its install section holds the warning about releases before the first version tag.
 - **Set names.** Outside `tests/test_historical_qualifications.py`, and the historical digest table and pins in
   `tests/test_linear_qualification.py`, no test names a release set, and `tests/test_no_current_set_names.py`, which excludes
   itself, proves it by scanning `tests/` for `draft-building-v1`. A test still reading a historical archive, such as `linear-adoption-v1` in
@@ -358,7 +363,7 @@ declares no run-event command, so nothing is emitted.
   annotation says so for adopters.
 - A scheduled connector check, proposed in discussion, is on demand for now, as recorded under Out of scope.
 - `product-runtime/` is preferred to fetching a prior release's asset, so builds and tests need no network.
-- The runtime is seeded from Athena's active generation rather than `draft-building-v1`, to avoid rolling back a protocol
+- The runtime is seeded from the named Athena generation rather than `draft-building-v1`, to avoid rolling back a protocol
   an adopter uses under an unchanged version label.
 - The change is decomposed into lanes on a delivery base at the operator's direction, instead of one change set.
 - The accepted risk: a connector break can ship and surface only at an on-demand check or in an adopter's run.
