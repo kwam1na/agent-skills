@@ -29,8 +29,11 @@ a delivery's.
 A duty the workflow can't do in a given repository, because a grant, credential, adapter or setting is missing, is
 reported by `doctor` and refused at `lead-init`. It never surfaces mid-delivery as something forgotten. A failure of
 one of the workflow's own duties, such as a tracker post rejected by its credentials, is raised in the record as
-"Needs you" and holds the close. The workflow also adopts from the guide alone into a repository like eshyft's,
-delivers to any long-lived base without editing shared settings, and every refusal says how to recover.
+"Needs you" and holds the close. The workflow also adopts from the guide alone into a repository with a protected default branch, several long-lived
+bases, a tracker whose workflow reserves some moves for people, and a pipeline that reviews pull requests. It delivers
+to any of those bases without editing shared settings, and every refusal says how to recover. None of this is specific
+to the adopters the evidence comes from: every behaviour that differs between adopters is a setting, with a default
+that matches today's behaviour.
 
 ## Evidence behind this plan
 
@@ -71,8 +74,9 @@ Causes confirmed in this repository at `main` ebb3aec, and by plan review round 
   the lead runs `render_state.py`. The state tool and every run-delivery command render nothing, and `live` strips
   publishers. Publication is acknowledged by `ack`: one watermark in `published.json`, shared by every publisher and
   capped by any host outbox.
-- **`serve` takes a candidate as soon as it is accepted.** It runs any queued item that isn't pending. eshyft's
-  `merge.py` refuses a draft, and a stopped candidate waits for its lane to hand it off again.
+- **`serve` takes a candidate as soon as it is accepted.** It runs any queued item that isn't pending. An adopter's
+  merge step that refuses a draft (one adopter's `merge.py` does) stops the candidate, and a stopped candidate waits
+  for its lane to hand it off again.
 - **Forge adapters can't mark ready.** The Bitbucket adapter answers `find`, `open`, `get` and `reviews`. The GitHub
   adapter has no `reviews`. Nothing can mark a pull request ready.
 - **Two places build lens briefs.** run-delivery builds every lens brief from `skills/run-delivery/templates/round-brief.md`,
@@ -95,6 +99,9 @@ status line names a residual ("still open: …") is placed for that residual too
 aren't repeated. The fixes they name are run-delivery-v1, review-evidence-v1, jira-tracker-v1, plan-review-v1 and
 draft-building-v1. That includes "lens ids don't map to charters", which run-delivery's brief resolves by naming each
 lens's persona.
+
+"The release vehicle was discovered after the delivery finished" is placed in C7. Once a binding names its `bases`,
+`lead-setup` requires `--base`, so where the work lands is decided at setup, before any lane starts.
 
 In-flight items that already own an entry:
 
@@ -134,38 +141,73 @@ In-flight items that already own an entry:
     5. copy the record and the flow log, under the state lock, into one fixed `latest` directory at the archive
        location `lead-close` uses;
     6. when the close condition holds, run the close-out (C6).
-  - **Close condition.** Every planned and queued story is merged, or recorded as dropped by a lead decision. Every
-    finish line is met. The queue is empty. Every lane is idle or done. No escalation or "Needs you" item is open.
+  - **"Needs you" is derived, never stored.** Each pass computes it from live conditions:
+    - the publisher's ledger lagging the journal, and its last error;
+    - an undrained host outbox;
+    - a failed `fullHealth` for the current base head;
+    - a `blocker.recorded` or lane question with no later resolving entry for the same subject;
+    - a supervisor child that won't stay up.
+
+    The line map shows the same list, and the close condition reads the same function, so an item clears when its
+    condition clears. Nothing is added to the record's schema for it.
+  - **Close condition.** Every planned and queued story is merged, or removed through `lead-plan change --kind
+    removed`. Every finish line is met. The queue is empty. Every lane is idle or done. "Needs you" is empty.
   - **Lead commands** keep working when the supervisor is down, so a lead can always act by hand. The supervisor
     skips anything already done when it resumes.
+  - **Cleanup waits for the lane.** It cleans up a merged story only once its lane has moved off it, idle or on its
+    next story, so it never removes a worktree a lane session still stands in.
   - **Ready marks.** The supervisor never marks a pull request ready (C4). It reports a candidate that was accepted as
     a draft while `forge.mergeNeedsReady` was set.
-- **C2. Tracker updates are a publisher with its own ledger.** run-delivery ships a Jira tracker publisher that the
-  binding names in `state.publishers`, so it runs whenever the render wrapper runs (C1 step 4, and the runner's
-  writes).
-  - **Ledger and lock.** It doesn't use `ack`. It keeps its own ledger, `tracker-published.jsonl` in the state
-    directory, with one line per journal id and action: comment, transition or create. It holds its own file lock for
-    the whole run.
-  - **Ordering.** It processes journal entries in id order and stops at the first failure. It adds the ledger line
-    after each successful action, and the next run retries from there.
-  - **Idempotency.** Each comment, move and created follow-up carries its journal id as a Jira entity property. Before
-    writing, the publisher looks for that marker on the ticket, so a crash between the write and the ledger line
-    doesn't produce a second post or a second issue.
-  - **What it posts.** It posts one update per journal kind, using the orchestration guide's table, except:
-    - kinds a lane command already posted (C5);
-    - `decision.recorded` entries the writing command didn't mark for the tracker. Acceptances, cleanups and
-      registrations aren't marked; plan changes, deferrals and blockers are.
-  - **Failure.** A failure lasting more than one pass raises "Needs you" in the record, naming the publisher, its last
-    error and the waiting entries. It holds the close.
-  - **Linear.** The host's connector is the only way to reach Linear, and a process can't call it. A Linear repository
-    uses the existing host publisher, and the supervisor raises an undrained outbox as "Needs you", naming the updates
-    waiting.
-  - **Refusals.** A binding with a Jira tracker but no tracker publisher fails `doctor`. `lead-init` refuses it unless
+- **C2. Tracker updates are a publisher with its own ledger.** run-delivery defines a tracker adapter contract and
+  ships a publisher that the binding names in `state.publishers`, so it runs whenever the render wrapper runs (C1 step
+  4, and the runner's writes). The publisher holds everything below: the ledger, the ordering, the mapping from journal
+  kinds to updates and moves, and the failure handling. It calls a tracker adapter for only five operations: read a
+  ticket's status and markers, comment, transition, and create an item, each carrying a marker. run-delivery ships a
+  Jira adapter; an adopter on another tracker with an API supplies its own adapter under the same contract, the way
+  forge adapters work today.
+  - **The ledger is the one record of tracker actions.** The publisher doesn't use `ack`. It keeps
+    `tracker-published.jsonl` in the state directory, with one line per journal id and outcome. The outcomes are:
+    - `comment`, `transition` or `create`, for an action taken;
+    - `skip`, for an entry with nothing to post;
+    - `handled`, for a move not offered (C3);
+    - `failed`, for a permanent rejection.
+
+    Every journal entry gets at least one line, so "the ledger covers entry N" is well defined.
+  - **Locking.** The publisher takes the ledger's lock with a non-blocking try. When another run holds it, the
+    publisher exits 0 and leaves the entries to that run or the next pass, so a runner write never waits on a
+    backlog. Lane commands take the same lock for the actions they make (C5).
+  - **Ordering.** It processes journal entries in id order and adds the ledger line after each one. A transient
+    failure stops the run, and the next run retries from there. Transient means a network error, a timeout, a 5xx,
+    a 429, or a 401 or site-wide 403.
+  - **Permanent failures.** Any other 4xx is permanent, such as a deleted ticket or a body the tracker refuses. The
+    publisher writes a `failed` line, journals one `blocker.recorded` naming the entry and the error, and goes on to
+    later entries. So one rejected entry never holds every later update or the close.
+  - **Bodies.** Every comment is truncated to the adapter's declared limit (32,767 characters for Jira), with a
+    pointer to the record for the rest.
+  - **Idempotency.** Each comment and move carries its journal id as a marker the adapter stores on the known ticket
+    (the Jira adapter uses an entity property). A created item carries a marker the tracker can search for without an
+    installed app (the Jira adapter uses the label `agent-followup-<finding id>`, searched under the epic). Before
+    writing, the publisher asks the adapter for the marker. A crash between the write and the ledger line therefore
+    doesn't produce a second post or a second item.
+  - **What it posts.** It handles every journal kind, using the orchestration guide's table. Two rules decide what it
+    posts:
+    - an entry whose ledger already holds an action line is skipped, whoever wrote that line, the publisher or a lane
+      command;
+    - `decision.recorded` is posted only for the subjects and writers the table names: a `lead-plan change`,
+      a deferral or a blocker. Every other entry gets a `skip` line. Nothing is added to the journal schema for this.
+  - **Failure.** The supervisor's "Needs you" (C1) includes a publisher whose ledger lags the journal for more than one
+    pass, naming its last error and the waiting entries. It clears when the lag does.
+  - **Trackers reachable only through the host.** Some trackers are reachable only through the host's connector,
+    which a process can't call. Linear is one, by this corpus's own rule. Such a repository uses the existing host
+    publisher, and the supervisor raises an undrained outbox as "Needs you", naming the updates waiting.
+  - **Where the ledger is.** The publisher finds the state directory through a `{stateDirectory}` substitution in
+    publisher argv, which `render_state.py` gains. Today it substitutes only in renderer argv.
+  - **Refusals.** A binding with a tracker but no tracker publisher fails `doctor`. `lead-init` refuses it unless
     `run-delivery.json` sets `tracker.updates: "manual"`.
 - **C3. Every tracker move is configuration.** `run-delivery.json` `tracker.transitions` keeps `start` and `review`
   for lanes. It gains `lead`, an object from journal kind to the transitions the publisher makes. If `lead` is absent,
-  or a kind maps to an empty list, no move is made and the update says the move belongs to people, which matches
-  eshyft's workflow. Each move reads the ticket's status first:
+  or a kind maps to an empty list, no move is made and the update says the move belongs to people. That is the default, because
+  some teams reserve every move after review for people. Each move reads the ticket's status first:
   - one already made by a person or an integration is skipped, and reported as made by someone else;
   - one not offered from the current status raises one blocker in the record, and is recorded in the ledger as
     handled, so it isn't retried or raised again.
@@ -184,12 +226,21 @@ In-flight items that already own an entry:
     3. applies the start transition, posts the start update, and sets the lane's focus.
 
     It replaces four steps the brief lists today. `lead-assign` prints it with the base filled in.
-  - **The review transition** is applied by `pr-review` once the pipeline's review is current at the PR's head and its
-    checks are green, when `review.pr` is configured. Without `review.pr`, `open-pr` applies it once the gates pass at
-    the PR's head.
+  - **The review transition's timing is a setting.** `tracker.transitions.reviewWhen` is one of:
+    - `gates-passed`, the default and today's brief wording: `open-pr` applies it once the PR is open and the gates
+      pass at its head;
+    - `pr-open`: `open-pr` applies it as soon as the PR opens;
+    - `pipeline-green`: `pr-review` applies it once the pipeline's review is current at the PR's head and its checks
+      are green. It needs `review.pr`, and `doctor` fails it without one.
+
+    It is never inferred from `review.pr`.
   - **`handoff`** posts the hand-off update.
-  - **Linear.** The commands print the exact move and post for the lane to make with its own connector, and record
-    that they printed them.
+  - **Lane posts go through the ledger.** Every post and move a lane command makes takes the publisher's lock and
+    writes its ledger line under the journal id of the entry it journals. When the tracker call fails, the command
+    writes no line, says the publisher will retry, and doesn't fail. A Jira outage never blocks a hand-off or a lane
+    start.
+  - **Trackers reachable only through the host.** The commands print the exact move and post for the lane to make
+    with its own connector, and record that they printed them.
   - **The turn rule.** The brief tells lanes to wait inside their turn: a lane ends a turn only to hand off, to report
     itself blocked, or to ask the lead, never just to wait for a reviewer or the pipeline.
 - **C6. Close-out runs itself, step by step.** When the close condition holds, the supervisor runs these steps. Each
@@ -199,21 +250,25 @@ In-flight items that already own an entry:
      the base head changes.
   2. **Follow-ups.** File one follow-up item for each deferred finding that has none, keyed by finding id against
      `followups[]`, through the tracker publisher. A failed filing holds the close and is retried on the next pass. A
-     Linear tracker raises the filings as "Needs you" instead.
-  3. **Close.** Journal `delivery.closed` and render, then wait for the publisher's ledger to cover every entry through
-     `delivery.closed`.
-  4. **Archive.** Archive the record. If the operator's checkout is clean and on the final base, fast-forward it.
-     Otherwise name it in step 5.
+     tracker reachable only through the host raises the filings as "Needs you" instead.
+  3. **Close.** Journal `delivery.closed` and render, then wait until the tracker has every entry through
+     `delivery.closed`. What that means depends on the tracker:
+     - with a tracker publisher, its ledger covers that entry, skip lines included;
+     - with a host publisher, `ack`'s `journalThrough` reaches it, and "Needs you" says so until then;
+     - under `tracker.updates: "manual"`, no wait.
+  4. **Archive.** Release every lease the lead holds, and archive the record. If the operator's checkout is clean and
+     on the final base, fast-forward it. Otherwise name it in step 5, along with removing the lead's checkout once
+     the operator no longer needs it.
   5. **Friction note.** Write a friction note stub beside the archive for the lead's `compound-learning` pass, and
      raise it as the one remaining "Needs you" item, together with the host steps the workflow can't do, such as
      archiving lane sessions.
   6. **Stop.**
 
-  `lead-close` stays as the explicit command for closing early or when the supervisor is down. It takes the
-  supervisor's lock, waiting for any pass in progress, and refuses while the lead's checkout has uncommitted changes to
-  `.agents/` or the binding.
+  `lead-close` stays as the explicit command for closing early or when the supervisor is down. It asks a running
+  supervisor to stop after its current pass, waits for it to release its lock, and then closes. It refuses while the
+  lead's checkout has uncommitted changes to `.agents/` or the binding.
 - **C7. A binding names the bases it serves.** The binding gains an optional `bases`, a list of exact names or `*`
-  patterns, such as `["main", "dev-alt-*"]`. `base.ref` stays the default.
+  patterns, such as `["main", "integration-*"]`. `base.ref` stays the default.
   - **Matching.** A delivery file's `baseBranch` must match `base.ref` or one of `bases`. So must the merge queue's
     `--base`, `lane-start`'s `--base`, and `lead-setup`'s `--base`, which `lead-setup` requires when the binding
     declares `bases`.
@@ -227,11 +282,12 @@ In-flight items that already own an entry:
     still needs that setting on it, and `doctor` says so.
 - **C8. A fresh record starts a fresh plan log.** `lead-init` refuses when the state directory holds a record, or the
   flow log holds a snapshot or a supervisor lock, and names the delivery, its base and when it started. Pre-init
-  `lead-plan change` entries and `plan.lock` don't count. `lead-init --replace` stops any supervisor, archives both,
+  `lead-plan change` entries and `plan.lock` don't count. `lead-init --replace` stops any supervisor, confirms its pid is gone, archives both,
   and starts fresh. The plan's approval snapshot is taken from the delivery file at that `lead-init`.
 - **C9. Plan review for any plan.** `plan-review prepare|reduce|end --plan <path> --lenses <ids>` works without a
-  delivery file, binding or record. It keeps its rounds in a store keyed by the plan's path, under
-  `.orchestration/plan-review/<slug>/`. When the plan later becomes a delivery, `lead-setup` and `lead-init` adopt that
+  delivery file, binding or record. It keeps its rounds in a store keyed by a `reviewSlug` the
+  first `prepare` writes into the plan's front matter, under `.orchestration/plan-review/<slug>/`, so renaming the plan
+  file doesn't orphan its review. When the plan later becomes a delivery, `lead-setup` and `lead-init` adopt that
   store, so the review shows in the plan chapter. `plan-work`'s review section names the command.
 
 ## In scope, by unit
@@ -264,14 +320,18 @@ In-flight items that already own an entry:
 ### Unit: Tracker publisher
 
 - **Outcome.** C2 and C3.
-  - A Jira tracker publisher ships with run-delivery, under the same command-line shape and credential variables as
-    the delivery-views Jira snapshot.
-  - `lead-setup` adds it to the binding when the configuration names Jira.
-  - The supervisor's "Needs you" checks for a failing publisher and an undrained Linear outbox.
-- **Owns.** A new `skills/run-delivery/adapters/tracker_jira.py`, the publisher and `tracker.transitions` entries in
+  - The tracker adapter contract (`tracker-adapter/1`: status, markers, comment, transition, create), the
+    tracker-neutral publisher, and a Jira adapter under the same command-line shape and credential variables as the
+    delivery-views Jira snapshot.
+  - `lead-setup` adds the publisher to the binding when the configuration names a tracker with an adapter.
+  - The supervisor's "Needs you" checks for a failing publisher and an undrained host outbox.
+- **Owns.** The `{stateDirectory}` substitution in publisher argv in `skills/orchestrate-work/scripts/render_state.py`,
+  with its case in `tests/test_orchestration_render.py`. Also a new `skills/run-delivery/scripts/tracker_publisher.py`
+  and `skills/run-delivery/adapters/tracker_jira.py`,
+  the contract in `config.md` beside the forge adapter contract, the publisher and `tracker.transitions` entries in
   `config.md`, `lead-setup`'s binding draft, the publisher checks in `run_delivery.py`, and a new
   `tests/test_run_delivery_tracker.py`.
-- **Required scenarios.** Publisher, Moves, Linear outbox.
+- **Required scenarios.** Publisher, Adapter contract, Moves, Host outbox.
 - **Sensors.** `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery.py`.
 
 ### Unit: Lane commands
@@ -279,7 +339,7 @@ In-flight items that already own an entry:
 - **Outcome.** C5.
   - `lane-start` is added.
   - `open-pr`, `pr-review` and `handoff` make the lane's moves and posts through the tracker adapter, or print them
-    for Linear.
+    for a tracker reachable only through the host.
   - The generated brief shrinks to match, and carries the turn rule.
 - **Owns.** `lane-start`, `open-pr`, `pr-review` and `handoff` in `run_delivery.py`, the brief templates in
   `skills/run-delivery/templates/` other than `round-brief.md`, and the brief and command pins in
@@ -383,8 +443,10 @@ In-flight items that already own an entry:
 - **Outcome.**
   - **`adopting.md`.** Its walk-through becomes the short one C1, C5, C6 and C9 allow: plan and review, set up,
     assign, accept, answer.
-    - **A worked adopter:** Bitbucket, Jira, an AI PR reviewer, and long-lived dev-alt bases under C7, with the
-      binding's `merge` argv calling the forge adapter.
+    - **A worked adopter**, naming no real organization: Bitbucket, Jira, a pipeline that reviews pull requests, a
+      protected default branch, and long-lived bases under C7, with the binding's `merge` argv calling the forge
+      adapter and `reviewWhen: pipeline-green`. The existing GitHub walk-through stays beside it, and every setting the
+      worked adopter changes is shown against its default.
     - **Repository setup:**
       - ignore entries for hooks and formatters, including the generated lane brief;
       - the gitignored `.claude/`;
@@ -397,7 +459,8 @@ In-flight items that already own an entry:
       - `lead-run --resume` after an install update or a token change;
       - merge strategy;
       - single-session test accounts;
-      - why lanes create their own worktrees.
+      - why lanes create their own worktrees;
+      - the lead working from a checkout of the delivery's base, which C7 reads.
     - **Host notes:** they name what the workflow can't do. That covers starting lane sessions, archiving them,
       queued lead messages, Bitbucket PRs the host can't watch, and session limits.
     - Every example that pushes to `main` either opens a PR instead or is labelled for an unprotected base.
@@ -421,9 +484,10 @@ In-flight items that already own an entry:
 | The lead's app server holding the in-app port | In-app checks. Follow-up. |
 | Lead-only evidence notes lost at compaction | In-app evidence. Follow-up. |
 | `ship`'s path-based stripping | Follow-up. |
+| Adopters writing their own `candidate.py` | It resolves a story's candidate from repository conventions that differ by adopter. The guide's worked adopter shows one. Follow-up for a ready-made one. |
 | No early check of lane ownership against the plan's file lists | By design, ownership is the plan's. Follow-up for a `doctor` hint. |
 | Sharing the live view outside the machine | Needs a publisher design. Follow-up. |
-| A record that continues past merge (deploy, QA) | Deploying belongs to people at eshyft. Follow-up. |
+| A record that continues past merge (deploy, QA) | Deploying is outside the delivery at the adopters in evidence, and differs by adopter. Follow-up. |
 | One record for an epic that spans repositories | Follow-up. |
 | Installed product size, and a user-level `delivery-flow` skill duplicating run-delivery | The first is lifecycle, which V26-3041 leaves untouched. The second is on the operator's machine, not in this corpus. |
 | `__pycache__` blocking the install, and `status` not checking Node | Lifecycle. The Node check is added to run-delivery's `doctor` instead. |
@@ -488,33 +552,48 @@ In-flight items that already own an entry:
     - a failing publisher.
   - A failing `fullHealth` holds the close and isn't rerun until the base head changes.
   - A failed follow-up filing holds the close, and is retried and filed once.
+  - With a host publisher, the close waits until the outbox is acked through `delivery.closed`. Under
+    `tracker.updates: "manual"`, it doesn't wait.
+  - A story removed through `lead-plan change --kind removed` doesn't hold the close.
+  - Cleanup of a merged story waits until its lane has moved off it.
   - On success, the fake Jira holds the `delivery.closed` update. Then the record is archived, the friction stub is
     written, and the supervisor stops.
 - **Supervisor down.** With `lead-run` killed:
   - `doctor --delivery` and each lead command report it;
   - `lead-run --resume` adopts or stops the orphaned children, and posts nothing twice;
   - a `lead-cleanup` run by hand meanwhile isn't repeated.
-- **Publisher.** Against a fake Jira:
+- **Publisher.** Against a fake Jira that, like real Jira without an app, refuses JQL on issue properties:
   - each journal kind posts the guide's update once, except kinds a lane command posted, and unmarked
     `decision.recorded` entries;
   - when entry 11 fails and entry 12 succeeds, the next run posts only 11;
   - two renders running at once post each entry once;
   - a process killed after the POST and before the ledger line posts nothing again;
-  - a 401 raises "Needs you".
+  - a 401 raises "Needs you", and once the token is fixed the lag clears, "Needs you" empties, and the close isn't
+    held;
+  - a `blocker.recorded` entry with 40,000 characters of output posts one comment truncated to the limit;
+  - an entry rejected with 400 gets one `failed` line and one blocker, and later entries are still posted;
+  - a follow-up created before a crash is found by its label and not filed again;
+  - a `handoff` whose own post got a 401 still hands off, and the next publisher run posts its update once;
+  - a runner write during a publisher backlog doesn't wait: the second run exits at once.
 - **Moves.** With `tracker.transitions.lead` configured:
   - a move whose status was already reached is skipped, and reported as made by someone else;
   - a move not offered raises one blocker, once;
   - with `lead` absent, no move is made and the update says so.
-- **Linear outbox.** An undrained host outbox raises "Needs you", naming the waiting updates.
+- **Adapter contract.** The publisher, run against a second fake adapter that implements only `tracker-adapter/1`
+  (no Jira code), posts, moves and files exactly as it does against the Jira adapter.
+- **Host outbox.** With a tracker reachable only through the host, an undrained host outbox raises "Needs you", naming
+  the waiting updates.
 - **Lane start.**
   - `lane-start` creates the worktree from `--base`, applies the start transition, posts the start update and sets
     focus.
   - Run twice, it changes nothing the second time.
   - A base outside `bases` is refused.
-  - With Linear, it prints the move and the post and records them.
+  - With a tracker reachable only through the host, it prints the move and the post and records them.
 - **Review move.**
-  - With `review.pr` configured, `open-pr` makes no move, and `pr-review` makes it once the fake pipeline is green.
-  - Without `review.pr`, `open-pr` makes it.
+  - With no `reviewWhen`, `open-pr` makes the move once the gates pass, as today, whether or not `review.pr` is set.
+  - With `pr-open`, `open-pr` makes it as the PR opens.
+  - With `pipeline-green`, `open-pr` makes no move and `pr-review` makes it once the fake pipeline is green.
+  - `pipeline-green` without `review.pr` fails `doctor`.
 - **Brief.** The brief lists the lane commands in place of the manual tracker steps, and carries the turn rule.
 - **Stale record.**
   - `lead-init` over an existing record or supervisor lock refuses and names it.
@@ -528,12 +607,12 @@ In-flight items that already own an entry:
   - a forge with no snapshot;
   - Node below the minimum;
   - a remote base without the configuration.
-- **Bases.** With a binding that has `bases: ["main", "dev-alt-*"]`, and a delivery file committed only on
-  `dev-alt-10`:
+- **Bases.** With a binding that has `bases: ["main", "integration-*"]`, and a delivery file committed only on
+  `integration-2`:
   - the lead's `doctor`, `lead-init` and `lead-brief` pass, as do a lane's `lane-start`, `gate` and `open-pr`, and a
     queue merge;
   - `release/1` is refused, with the guide anchor;
-  - a binding without `bases` refuses `dev-alt-10` exactly as today.
+  - a binding without `bases` refuses `integration-2` exactly as today.
 - **Rounds before hand-off.** After `review-reduce` round 1, before hand-off, the line map shows the round card and
   its notes for the planned story.
 - **Lost checkout.** After the lead's checkout is deleted, `run-delivery view --archive` serves `latest`, which holds
@@ -577,8 +656,9 @@ In-flight items that already own an entry:
 
 ## Shared resources
 
-- **Repositories and servers.** Tests use temporary repositories, remotes, and fake forge and Jira servers created
-  inside each test, bound to port 0.
+- **Repositories and servers.** Tests use temporary repositories, remotes, and fake forge and tracker servers created
+  inside each test, bound to port 0. Fixtures name no real organization, repository or ticket, as `AGENTS.md`
+  requires.
 - **Background processes.** Supervisor tests start real background processes. Their classes are marked
   `run_serially = True`, and they stop every process they start, so they don't add to V26-2951's leaks.
 - **Shared files.**
@@ -605,7 +685,8 @@ The owner approved A1 to A5 as written on 2026-11-02, and decided A6: the fricti
   including merging accepted work and closing the delivery. The alternative was commands that do their own duties and
   print the rest. That is less machinery, but it leaves the sweep, merges and close-out to memory, which the logs show
   fails.
-- **A2. Automatic tracker writes.** C2 and C3 have the workflow post to and move tickets in Jira through its API,
+- **A2. Automatic tracker writes.** C2 and C3 have the workflow post to and move tickets through a tracker adapter
+  (Jira's API for the shipped one),
   without the lead acting on each one, and file follow-up items at close.
 - **A3. Turn rule.** C5 makes lanes wait inside their turn.
 - **A4. Bases.** C7 lets one binding serve several bases.
@@ -613,7 +694,9 @@ The owner approved A1 to A5 as written on 2026-11-02, and decided A6: the fricti
 - **A6. Friction logs.** They stay uncommitted, in the owner's checkout at `docs/delivery/`. This plan cites them by
   path as evidence outside the tree.
 
-C9 was added after the owner noted that this plan's own review had to be composed by hand.
+C9 was added after the owner noted that this plan's own review had to be composed by hand. After round 1, the owner
+had the plan made adopter-neutral: every behaviour that differs between adopters is a setting, and the review
+transition's timing became `reviewWhen` rather than being inferred from `review.pr`.
 
 ## Approval handoffs
 
