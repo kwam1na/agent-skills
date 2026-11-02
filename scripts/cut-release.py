@@ -9,7 +9,8 @@ removes every release file there, of any version, and refuses a directory that
 holds anything else.
 
 Exit codes: 0 when the set is published; 1 when a build, verification or
-qualifier fails; 2 for a refused version or output directory.
+qualifier fails; 2 for a refused version or output directory. Success prints
+nothing, so a closed stdout cannot turn a published set into a failure.
 """
 
 from __future__ import annotations
@@ -232,7 +233,6 @@ def main(arguments: list[str] | None = None) -> int:
     except Exception as error:
         print(f"cut-release failed: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
-    print(f"cut-release: {args.version} published to {out}")
     return 0
 
 

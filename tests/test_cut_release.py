@@ -376,6 +376,7 @@ class RealRunTests(unittest.TestCase):
     def test_the_run_succeeds_with_exactly_the_named_outputs(self) -> None:
         self.assertEqual(self.result.returncode, 0, self.result.stdout + self.result.stderr)
         self.assertEqual({path.name for path in self.out.iterdir()}, _named_outputs(VERSION))
+        self.assertEqual(self.result.stdout, "")
 
     def test_every_product_verifies_and_every_record_passes(self) -> None:
         self.assertEqual(self.result.returncode, 0, self.result.stdout + self.result.stderr)
