@@ -126,7 +126,7 @@ proceeds and the lead notes the gap in its close-out.
 | `release.finished` | On the epic: the release shipped, its commit and targets, and who approved it. |
 | `finish.met` | On the epic: the finish line and the evidence that met it. |
 | `decision.recorded` | On the ticket the decision concerns, or the epic: what, why, and who decided, the operator or the lead. A deferred finding links its follow-up item. |
-| `blocker.recorded` | On the blocked ticket: the blocker, and whose answer or work unblocks it. |
+| `blocker.recorded` | On the blocked ticket, or the epic when the blocker holds every ticket: the blocker, and whose answer or work unblocks it. |
 | `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. |
 
 The lead posts the updates in this table, including every cross-lane
@@ -558,8 +558,9 @@ operator.
 
 ## Coordination protocol
 
-These rules hold on any host that can start and message sessions. A host that
-cannot stops the delivery, under [Without a session capability](#without-a-session-capability).
+These rules hold on any host that can start and message sessions. On a host
+that cannot, no lane starts, under
+[Without a session capability](#without-a-session-capability).
 
 ### Messages
 
@@ -573,7 +574,9 @@ cannot stops the delivery, under [Without a session capability](#without-a-sessi
 - When the host holds or refuses a message, keep the undelivered text in the
   lead's notes, inform the operator once (a notice, not a question), and send
   it when delivery resumes.
-  Never repeat a message to force it through.
+  Never repeat a message to force it through. A refusal that persists means the
+  host cannot message sessions: follow
+  [Without a session capability](#without-a-session-capability).
 - A lane that is blocked on a decision it cannot make sends the lead one
   short question and stops. Lanes never go to the operator directly; the lead
   answers, or escalates under the lead authority rules. Progress and results
@@ -598,6 +601,11 @@ is always a session of its own: never a subagent, and never the lead working in
 its own session. The lead journals `blocker.recorded` and brings it to the
 operator, who may choose to deliver the tickets one at a time through
 `$execute-work`. Subagents remain how a lane realizes its review lenses.
+
+A host that loses the ability during a delivery, or that still refuses a message
+one retry later at the next milestone, is this blocker and not a held message.
+No further lane starts, each running lane finishes its current step and stops
+there, and the queue keeps landing the candidates already handed off.
 
 ### Leases
 
