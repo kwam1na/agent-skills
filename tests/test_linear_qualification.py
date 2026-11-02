@@ -22,9 +22,9 @@ from tests.qualification_pending_support import pending, skip_if_pending
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
 PRODUCT = ROOT / "qualifications" / "product"
-ATTESTATION = PRODUCT / "linear-lead-selected-checks-v1.attestation.json"
-RECORD = PRODUCT / "linear-lead-selected-checks-v1.json"
-BINDING = PRODUCT / "linear-lead-selected-checks-v1.collector-binding.json"
+ATTESTATION = PRODUCT / "linear-draft-building-v1.attestation.json"
+RECORD = PRODUCT / "linear-draft-building-v1.json"
+BINDING = PRODUCT / "linear-draft-building-v1.collector-binding.json"
 HISTORICAL_ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
 HISTORICAL_RECORD = PRODUCT / "linear-product-v1.json"
 HISTORICAL_BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
@@ -193,6 +193,22 @@ HISTORICAL_PRODUCT_SHA256 = {
     "provider-capture-observations-v1.json": "c9b628a799f5823912b84008c051757a8fce56e44765fb990bc2e067b5adb3f9",
     "run-delivery-capture-observations-v1.release.json": "0ec1382829d1aab49643135e5f7ba238a3f4278283e2f84b58aefaf5c4c91230",
     "run-delivery-capture-observations-v1.zip": "88e387fa9c59a61c92526684032991595d9954674902be0c2a415a7290b989e8",
+    "bootstrap-lead-selected-checks-v1.json": "36f74d0c85718f3110b9b0296b7858feac9d7991b5c07941f59708468c431993",
+    "bootstrap-lead-selected-checks-v1.release.json": "be47e5fa88fcc9c785d290659e711b2e69c371aa2719bc564388f9a0eee286aa",
+    "bootstrap-lead-selected-checks-v1.zip": "90e47c7a85a125a5af2f628863c680f76952a5a940d68ade23530e5963141f65",
+    "core-lead-selected-checks-v1.json": "1576937164553b90709406e8864a8d3e24c500e9863c5e798b25c7f2e348fa45",
+    "core-lead-selected-checks-v1.release.json": "279239109a99fd6ddb228c7779aaf07e52a33187fa795105fb7a8be170f39ab7",
+    "core-lead-selected-checks-v1.zip": "56f662554d5c095544e1d299c4b0f48ad7588eebbc16bc45a1d7b2f04d726f14",
+    "jira-lead-selected-checks-v1.release.json": "2a1c92f2aefcb238fcf06bfc35c4f45f6f31e7254f29b9efc3f6665b07c9d5a1",
+    "jira-lead-selected-checks-v1.zip": "97bb4916fb081c4284d337e6cf6651725822d01dd8d1ea1dd4eb9a806b69ae60",
+    "linear-lead-selected-checks-v1.attestation.json": "96c067c97e64bf80a3ae767fc2fe47b0ca9a804c2b7a061b5eb4e710d415285f",
+    "linear-lead-selected-checks-v1.collector-binding.json": "613a5473ead5da2f716cfa9881f6d233b10ce68fd241f00c950af9043f00b0d5",
+    "linear-lead-selected-checks-v1.json": "7c3cb834cb7f1b70393043ce11847b62cad4f9400853e1365d8790866adc3016",
+    "linear-lead-selected-checks-v1.release.json": "11356b8e54c7fd875502c0a85b6214c47a29d718013f4850bf990e92622e81d4",
+    "linear-lead-selected-checks-v1.zip": "9fa00be4da28a5773767f7d5e5babf55c263f29cb6e4a653a020cea286847f97",
+    "provider-lead-selected-checks-v1.json": "be7efa377a3524666cbea5c9ff9742b2d666d5e50143e3a2c776968bd14970f3",
+    "run-delivery-lead-selected-checks-v1.release.json": "7669ac80f32983da12c86c67db62205f41bd1cc4bce481cda8543dc4cad707a4",
+    "run-delivery-lead-selected-checks-v1.zip": "1aa52eaa0c86afd4dd77a05d7de0afaa5bff8d823642301c2be36c45d299fa0d",
 }
 
 
@@ -1056,11 +1072,11 @@ class LinearQualificationTests(unittest.TestCase):
         # it is re-earned with the pending linear set.
         skip_if_pending(self, "core", "linear")
         replay = _load_runner().qualify(
-            PRODUCT / "core-lead-selected-checks-v1.zip",
-            PRODUCT / "core-lead-selected-checks-v1.release.json",
-            PRODUCT / "core-lead-selected-checks-v1.json",
-            PRODUCT / "linear-lead-selected-checks-v1.zip",
-            PRODUCT / "linear-lead-selected-checks-v1.release.json",
+            PRODUCT / "core-draft-building-v1.zip",
+            PRODUCT / "core-draft-building-v1.release.json",
+            PRODUCT / "core-draft-building-v1.json",
+            PRODUCT / "linear-draft-building-v1.zip",
+            PRODUCT / "linear-draft-building-v1.release.json",
             ATTESTATION,
             BINDING,
         )
@@ -1074,7 +1090,7 @@ class LinearQualificationTests(unittest.TestCase):
         sha256 = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         graphs = set()
         for profile in ("core", "linear"):
-            product = PRODUCT / f"{profile}-lead-selected-checks-v1"
+            product = PRODUCT / f"{profile}-draft-building-v1"
             release = binding["releases"][profile]
             self.assertEqual(release["archiveSha256"], sha256(product.with_suffix(".zip")), profile)
             self.assertEqual(release["metadataSha256"], sha256(product.with_suffix(".release.json")), profile)
@@ -1091,18 +1107,18 @@ class LinearQualificationTests(unittest.TestCase):
         for ref in ("subjectRef", "candidateRef"):
             self.assertNotIn(binding[ref]["opaque"], used, ref)
         # The collection steps name exactly this input.
-        notes = (ROOT / "docs/releases/lead-selected-checks-v1.md").read_text(encoding="utf-8")
+        notes = (ROOT / "docs/releases/draft-building-v1.md").read_text(encoding="utf-8")
         for digest in (sha256(BINDING), binding["releases"]["core"]["archiveSha256"], binding["releases"]["linear"]["archiveSha256"]):
             self.assertIn(digest, notes)
 
     def test_checked_product_workflow_projection_matches_current_source(self) -> None:
         current_products = {
-            "core": ("core-lead-selected-checks-v1", "56f662554d5c095544e1d299c4b0f48ad7588eebbc16bc45a1d7b2f04d726f14"),
-            "linear": ("linear-lead-selected-checks-v1", "9fa00be4da28a5773767f7d5e5babf55c263f29cb6e4a653a020cea286847f97"),
+            "core": ("core-draft-building-v1", "51cd9926d94ab1ef6623c74fd7cb5d2324c9868029ca2e4001d8cd389fb43df0"),
+            "linear": ("linear-draft-building-v1", "b11c63362206988e81ce3ce355ccc74082ed0b23b9208c7334ee0c9e0587aca1"),
             # The product an adopter installs: no qualification set gates it, so its projection always holds.
-            "run-delivery": ("run-delivery-lead-selected-checks-v1", "1aa52eaa0c86afd4dd77a05d7de0afaa5bff8d823642301c2be36c45d299fa0d"),
+            "run-delivery": ("run-delivery-draft-building-v1", "13c27a97ede0ddef6f730ec7590a0dd3e0c8f291229e88f26a3a04f3e61e7f10"),
             # The product a Jira adopter installs, likewise ungated.
-            "jira": ("jira-lead-selected-checks-v1", "97bb4916fb081c4284d337e6cf6651725822d01dd8d1ea1dd4eb9a806b69ae60"),
+            "jira": ("jira-draft-building-v1", "0bf4485626a0140a59cf3eaebc253807ef3837665172272f0fb95c2c87382a5c"),
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -1121,7 +1137,7 @@ class LinearQualificationTests(unittest.TestCase):
                                         release_id=release.release_id, profile_id=profile)
                 if profile in ("run-delivery", "jira") or pending(profile) is None:
                     self.assertEqual(projected, current, "checked product workflows differ from current source")
-        self.assertIn("linear-lead-selected-checks-v1", (ROOT / "README.md").read_text())
+        self.assertIn("linear-draft-building-v1", (ROOT / "README.md").read_text())
         skip_if_pending(self, "core", "linear")
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
