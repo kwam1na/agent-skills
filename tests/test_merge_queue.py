@@ -8,6 +8,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -460,6 +461,15 @@ class Adopter:
         return run("show", f"{revision}:{path}", cwd=self.lane)
 
 
+def remove_tree(path: Path) -> None:
+    # Git writes its objects read-only, and Windows refuses to delete a read-only file.
+    if os.name == "nt":
+        for folder, _, files in os.walk(path):
+            for name in files:
+                os.chmod(os.path.join(folder, name), stat.S_IWRITE)
+    shutil.rmtree(path)
+
+
 class MergeQueueTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = Path(tempfile.mkdtemp(prefix="merge-queue-test-")).resolve()
@@ -469,7 +479,7 @@ class MergeQueueTestCase(unittest.TestCase):
         return Adopter(self.directory, binding_changes, mode)
 
     def fresh(self) -> None:
-        shutil.rmtree(self.directory)
+        remove_tree(self.directory)
         self.directory.mkdir()
 
     def environment_adopter(self, extra: dict[str, str], binding_changes: dict | None = None) -> Adopter:
@@ -805,7 +815,7 @@ class SelectionTests(MergeQueueTestCase):
     def test_a_missing_failing_malformed_or_timed_out_provider_falls_back(self) -> None:
         for mode, reason in (("fail", "provider_failed"), ("malformed", "provider_malformed"), ("timeout", "provider_timed_out")):
             with self.subTest(mode=mode):
-                shutil.rmtree(self.directory)
+                remove_tree(self.directory)
                 self.directory.mkdir()
                 # The timeout case waits out the provider's whole timeout: keep it short.
                 provider = {"argv": [PY, "tools/provider.py"], "cwd": ".", "timeoutSeconds": 1,
@@ -818,7 +828,7 @@ class SelectionTests(MergeQueueTestCase):
                 self.assertIn("fallback", check["selection"]["checks"])
                 self.assertTrue(check["selection"]["widened"])
                 self.assertEqual(results[-1].document()["outcome"], "merged")
-        shutil.rmtree(self.directory)
+        remove_tree(self.directory)
         self.directory.mkdir()
         adopter = self.adopter({"provider": None})
         self.candidate(adopter)
@@ -831,7 +841,7 @@ class SelectionTests(MergeQueueTestCase):
         check = self.run_queue(adopter, "feature")[1].document()
         self.assertEqual(check["selection"]["fallbackReasons"], ["empty_selection"])
         self.assertIn("fallback", check["selection"]["checks"])
-        shutil.rmtree(self.directory)
+        remove_tree(self.directory)
         self.directory.mkdir()
         adopter = self.adopter({"alwaysRun": [], "fallback": []}, mode="empty")
         self.candidate(adopter)
@@ -855,7 +865,7 @@ class SelectionTests(MergeQueueTestCase):
     def test_a_cycle_or_an_escaping_cwd_is_refused(self) -> None:
         for mode in ("cycle", "outside"):
             with self.subTest(mode=mode):
-                shutil.rmtree(self.directory)
+                remove_tree(self.directory)
                 self.directory.mkdir()
                 adopter = self.adopter(mode=mode)
                 self.candidate(adopter)
@@ -893,7 +903,7 @@ class SelectionTests(MergeQueueTestCase):
         adopter = self.adopter({"alwaysRun": [check_entry("always", environmentProfile="missing")]})
         self.candidate(adopter)
         self.assertStopped(self.run_queue(adopter, "feature"), "binding_invalid")
-        shutil.rmtree(self.directory)
+        remove_tree(self.directory)
         self.directory.mkdir()
         adopter = self.adopter(mode="profile")
         self.candidate(adopter)

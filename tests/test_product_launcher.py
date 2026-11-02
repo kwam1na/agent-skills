@@ -288,6 +288,7 @@ class ProductLauncherTests(unittest.TestCase):
             "liveness=confirmed;survivingPids=12345",
         )
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_signal_during_spawn_is_forwarded_after_child_assignment(self) -> None:
         for signum in POSIX_SIGNALS:
             with self.subTest(signum=signum):
@@ -834,6 +835,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
                         except ProcessLookupError:
                             pass
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_an_escaped_descendant_that_cannot_be_stopped_is_reported_by_pid(self) -> None:
         child = Mock(pid=12345)
         child.poll.return_value = 0
@@ -1029,6 +1031,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             _stop_posix_group(child, signal.SIGTERM, tracker)
         self.assertEqual(events, ["drain?", ("kill", 777, signal.SIGKILL), ("killpg", signal.SIGKILL), "drain?"])
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_known_escapees_behind_an_unreadable_table_are_never_reported_stopped(self) -> None:
         me = os.getpid()
         child = Mock(pid=100)
@@ -1073,6 +1076,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         # Stamps that do not order are never before.
         self.assertFalse(_started_before("Wed Oct 21 01:20:50 2026", "Wed Oct 21 01:20:51 2026"))
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_a_table_unreadable_for_a_moment_is_read_again_before_anything_is_reported(self) -> None:
         child = Mock(pid=12345)
         child.poll.return_value = 0
@@ -1152,6 +1156,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         self.assertEqual(_DescendantTracker(child, table=lambda: table, environment=environment).escaped(), ())
         self.assertEqual(read, [])
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_cleanup_never_selects_the_caller_chain_init_or_another_users_process(self) -> None:
         # An environment reader that says every process carries the marker
         # stands in for any matching rule gone wrong.
@@ -1280,6 +1285,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         finally:
             os.close(write)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_the_fork_watcher_adopts_only_children_of_known_processes(self) -> None:
         me = os.getpid()
         child = Mock(pid=100)
@@ -1310,6 +1316,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         self.assertEqual(tracker.escaped(), (300,))
         self.assertEqual(tracker.preview()["escaped"], [[300, "forked"]])
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_a_refused_candidate_fails_cancellation_closed_and_is_never_signalled(self) -> None:
         child = Mock(pid=12345)
         child.poll.return_value = 0
@@ -1353,6 +1360,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             self.assertEqual(_run_command(["worker"], ROOT, preview=seen.append), 128 + signal.SIGTERM)
         self.assertEqual(seen, [tracker.preview.return_value])
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_another_users_group_member_that_leaves_the_group_is_refused_not_signalled(self) -> None:
         me = os.getpid()
         child = Mock(pid=100)
@@ -1698,6 +1706,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
         self.assertFalse(_same_process((11, 1), _Stamp(11, 0, 50)))
         self.assertFalse(_same_process(_Stamp(11, 0, 50), None))
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_a_pid_reused_by_a_process_with_a_new_unique_id_is_never_selected(self) -> None:
         me = os.getpid()
         child = Mock(pid=100)
@@ -1764,6 +1773,7 @@ raise SystemExit(_run_command([sys.executable, '-B', 'parent.py'], root))
             processes[320] = _Process(300, 320, UID, _Stamp(13, 0, 70), False, 50)
             self.assertTrue(tracker.adopt(320, 300))
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup model")
     def test_a_marker_match_forked_before_the_child_is_refused_by_unique_id_whatever_the_clock(self) -> None:
         me = os.getpid()
         child = Mock(pid=100)

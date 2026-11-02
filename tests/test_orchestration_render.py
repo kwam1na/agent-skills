@@ -355,7 +355,7 @@ class BoundedCommandTests(DeliveryStateFixture):
     # One signal, then two in quick succession: a repeated interrupt, or a
     # supervisor that terminates after interrupting.
     SIGNALS = (
-        (signal.SIGINT,), (signal.SIGTERM,), (signal.SIGHUP,),
+        (signal.SIGINT,), (signal.SIGTERM,), *(() if os.name == "nt" else ((signal.SIGHUP,),)),
         (signal.SIGINT, signal.SIGTERM), (signal.SIGTERM, signal.SIGINT),
     )
 
