@@ -16,18 +16,11 @@ from pathlib import Path
 from unittest import mock
 
 from agent_skills.release import RUNTIME_FILES, _path_digest, _release_view, build_release, verify_release
-from tests.qualification_pending_support import pending, skip_if_pending
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-linear.py"
 PRODUCT = ROOT / "qualifications" / "product"
-ATTESTATION = PRODUCT / "linear-draft-building-v1.attestation.json"
-RECORD = PRODUCT / "linear-draft-building-v1.json"
-BINDING = PRODUCT / "linear-draft-building-v1.collector-binding.json"
-HISTORICAL_ATTESTATION = PRODUCT / "linear-product-v1.attestation.json"
-HISTORICAL_RECORD = PRODUCT / "linear-product-v1.json"
-HISTORICAL_BINDING = PRODUCT / "linear-product-v1.collector-binding.json"
 HISTORICAL_PRODUCT_SHA256 = {
     "bootstrap-product-v1.json": "5a5129d50ea22b205a31c80fff640c5c3887f7055235ac959fb3cc8afa8b07f2",
     "bootstrap-product-v1.release.json": "bca83f3140382b0bfc2084fcc949b88c61a6b59bd39a7269c6f1511527867143",
@@ -209,6 +202,22 @@ HISTORICAL_PRODUCT_SHA256 = {
     "provider-lead-selected-checks-v1.json": "be7efa377a3524666cbea5c9ff9742b2d666d5e50143e3a2c776968bd14970f3",
     "run-delivery-lead-selected-checks-v1.release.json": "7669ac80f32983da12c86c67db62205f41bd1cc4bce481cda8543dc4cad707a4",
     "run-delivery-lead-selected-checks-v1.zip": "1aa52eaa0c86afd4dd77a05d7de0afaa5bff8d823642301c2be36c45d299fa0d",
+    "bootstrap-draft-building-v1.json": "14abe99d94457af1fd9f651d83443e4fdd25960f5c0ef54de7541d42f499de88",
+    "bootstrap-draft-building-v1.release.json": "d80c8aa6684ca4c31a5e82badb0daa1c50c982a2523987c4ab0471f6d40326d3",
+    "bootstrap-draft-building-v1.zip": "98969d62a61390e665326eb13c8bd69459ea9c67b941184e6f2bf1ef55bb3379",
+    "core-draft-building-v1.json": "619a0929a68ec9ca9e053ba431cf0923f840a33fd71653e8988e63a99f91da49",
+    "core-draft-building-v1.release.json": "ed67418d61af4e9787b83f46cf8b73562fde84e7dd6cd1a7b073c373591c705f",
+    "core-draft-building-v1.zip": "51cd9926d94ab1ef6623c74fd7cb5d2324c9868029ca2e4001d8cd389fb43df0",
+    "jira-draft-building-v1.release.json": "dd4509062b419569234da484973bb6cd512b74e5882a1b3464fa907dc2804638",
+    "jira-draft-building-v1.zip": "0bf4485626a0140a59cf3eaebc253807ef3837665172272f0fb95c2c87382a5c",
+    "linear-draft-building-v1.attestation.json": "ee8602b2298a7bdf87b01433e5230f1eef95390ced0ae72b98154da7d9bfa425",
+    "linear-draft-building-v1.collector-binding.json": "6b022864a2cca740ecc84be2493c00d89a362c46f797a348cd5e062a80a69ac5",
+    "linear-draft-building-v1.json": "a6c43045d892d87e5a0d26de3874b7734f6cc73dede6323bae28f617d24dfc4a",
+    "linear-draft-building-v1.release.json": "d2867ffed62678ae34fc37afec1245dcff62fab72135a5ac744a6b27f310f2cb",
+    "linear-draft-building-v1.zip": "b11c63362206988e81ce3ce355ccc74082ed0b23b9208c7334ee0c9e0587aca1",
+    "provider-draft-building-v1.json": "81d2931749751a50b2c2a915134bcc464eaa87fca63a2d80aebcecb4c0692713",
+    "run-delivery-draft-building-v1.release.json": "d226522d2ae1a6ab1591a438b424ae5b0e954d38f48f39ae6d6f9fd3488fdb74",
+    "run-delivery-draft-building-v1.zip": "13c27a97ede0ddef6f730ec7590a0dd3e0c8f291229e88f26a3a04f3e61e7f10",
 }
 
 
@@ -224,199 +233,26 @@ def _canonical_json(value: object) -> str:
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
 
 
-def _collector_binding() -> dict:
-    """Synthetic test-only input; never qualification evidence for a release."""
-    return {
-        "schemaVersion": "agent-skills-linear-collector-binding/1",
-        "releases": {
-            profile: {
-                "archiveSha256": "a" * 64,
-                "metadataSha256": "b" * 64,
-                "profile": profile,
-                "releaseId": f"{profile}-v1",
-            }
-            for profile in ("core", "linear")
-        },
-        "graphSha256": "c" * 64,
-        "subjectRef": {"schemaVersion": "workflow-subject-ref/1", "opaque": "test subject"},
-        "candidateRef": {"schemaVersion": "workflow-candidate-ref/1", "opaque": "test candidate"},
-    }
-
-
-def _host_attestation(binding: dict | None = None) -> dict:
-    """Synthetic test-only attestation, not a retained host collection."""
-    event_specs = (
-        ("search", "miss", ["primary"]),
-        ("search", "miss", ["dependency"]),
-        ("create", "success", ["primary"]),
-        ("create", "success", ["dependency"]),
-        ("read", "success", ["primary"]),
-        ("read", "success", ["dependency"]),
-        ("update", "success", ["primary"]),
-        ("update", "success", ["dependency"]),
-        ("relations", "success", ["primary", "dependency"]),
-        ("read", "relation-observed", ["primary", "dependency"]),
-        ("reconciliation", "unique-match", ["primary"]),
-        ("update", "canceled", ["primary"]),
-        ("update", "canceled", ["dependency"]),
-        ("read", "cleanup-confirmed", ["primary"]),
-        ("read", "cleanup-confirmed", ["dependency"]),
-    )
-    return {
-        "auditReferences": [
-            "linear-audit:11111111111111111111111111111111",
-            "linear-audit:22222222222222222222222222222222",
-        ],
-        "collector": {
-            "kind": "trusted-host-side",
-            "transport": "host-native-linear-mcp",
-        },
-        "collectorBinding": copy.deepcopy(binding if binding is not None else _collector_binding()),
-        "entities": [
-            {
-                "auditReference": "linear-audit:11111111111111111111111111111111",
-                "finalStatus": "canceled",
-                "operationMarker": "linear-operation:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "role": "primary",
-            },
-            {
-                "auditReference": "linear-audit:22222222222222222222222222222222",
-                "finalStatus": "canceled",
-                "operationMarker": "linear-operation:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                "role": "dependency",
-            },
-        ],
-        "events": [
-            {
-                "eventReference": f"linear-event:{index:032x}",
-                "operation": operation,
-                "outcome": outcome,
-                "roles": roles,
-                "sequence": index,
-            }
-            for index, (operation, outcome, roles) in enumerate(event_specs, start=1)
-        ],
-        "receipt": {
-            "externalSystem": "linear",
-            "reference": "linear-receipt:cccccccccccccccccccccccccccccccc",
-        },
-        "schemaVersion": "agent-skills-linear-host-attestation/2",
-        "sessionReference": "linear-session:dddddddddddddddddddddddddddddddd",
-    }
-
-
 class LinearQualificationTests(unittest.TestCase):
-    def test_bound_attestation_compares_every_field_with_independent_input(self) -> None:
-        runner = _load_runner()
-        binding = _collector_binding()
-        self.assertIn("liveEvidence", runner.validate_attestation(_host_attestation(), binding))
-        paths = [
-            ("releases", profile, field)
-            for profile in ("core", "linear")
-            for field in ("archiveSha256", "metadataSha256", "profile", "releaseId")
-        ] + [("graphSha256",), ("subjectRef", "opaque"), ("candidateRef", "opaque")]
-        for path in paths:
-            attestation = _host_attestation()
-            target = attestation["collectorBinding"]
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = "d" * 64 if path[-1].endswith("Sha256") else "different"
-            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "binding"):
-                runner.validate_attestation(attestation, binding)
-
-    def test_old_unbound_attestation_is_rejected(self) -> None:
-        legacy = _host_attestation()
-        legacy.pop("collectorBinding")
-        legacy["schemaVersion"] = "agent-skills-linear-host-attestation/1"
-        with self.assertRaisesRegex(ValueError, "attestation"):
-            _load_runner().validate_attestation(legacy, _collector_binding())
-
-    def test_binding_and_attestation_hostile_shapes_fail_closed(self) -> None:
-        runner = _load_runner()
-        malformed = [None, [], "", {}, {**_collector_binding(), "extra": "forbidden"}]
-        for path, replacement in (
-            (("schemaVersion",), "agent-skills-linear-collector-binding/0"),
-            (("releases",), []),
-            (("releases", "core"), []),
-            (("releases", "core", "archiveSha256"), "A" * 64),
-            (("releases", "linear", "releaseId"), " "),
-            (("graphSha256",), True),
-            (("subjectRef",), {"schemaVersion": "workflow-subject-ref/1", "opaque": "", "extra": "x"}),
-            (("subjectRef", "schemaVersion"), "workflow-subject-ref/2"),
-            (("candidateRef", "schemaVersion"), "workflow-candidate-ref/2"),
-            (("subjectRef", "opaque"), []),
-            (("candidateRef", "opaque"), " \n"),
-        ):
-            binding = _collector_binding()
-            target = binding
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = replacement
-            malformed.append(binding)
-        for binding in malformed:
-            with self.subTest(binding=binding), self.assertRaisesRegex(ValueError, "collector_binding"):
-                runner.validate_collector_binding(binding)
-        for change in ("audit", "sequence", "collector", "receipt", "redaction"):
-            attestation = _host_attestation()
-            if change == "audit":
-                attestation["auditReferences"][0] = []
-            elif change == "sequence":
-                attestation["events"][0]["sequence"] = True
-            elif change == "collector":
-                attestation["collector"] = {"kind": "unavailable", "transport": "host-native-linear-mcp"}
-            elif change == "receipt":
-                attestation["receipt"] = None
-            else:
-                attestation["collectorBinding"]["subjectRef"]["opaque"] = "/Users/private/subject"
-            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "attestation"):
-                runner.validate_attestation(attestation, attestation["collectorBinding"])
-
-    def test_collector_input_must_exist_be_canonical_and_independently_supplied(self) -> None:
-        runner = _load_runner()
-        with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "binding.json"
-            with self.assertRaisesRegex(ValueError, "unavailable input"):
-                runner.load_collector_binding(path)
-            binding = _collector_binding()
-            for contents in (
-                json.dumps(binding),
-                _canonical_json(binding).replace('"graphSha256":', '"graphSha256":"' + "d" * 64 + '","graphSha256":'),
-            ):
-                path.write_text(contents, encoding="utf-8")
-                with self.assertRaisesRegex(ValueError, "canonical"):
-                    runner.load_collector_binding(path)
-            path.write_text(_canonical_json(binding), encoding="utf-8")
-            self.assertEqual(runner.load_collector_binding(path), binding)
-            with self.assertRaisesRegex(ValueError, "collector_binding"):
-                runner.validate_attestation(_host_attestation(), None)
-            with self.assertRaisesRegex(ValueError, "unavailable input"):
-                runner.load_attestation(Path(temporary) / "unavailable.json", binding)
-
-    def test_candidate_binding_checks_actual_release_fields_and_both_graphs(self) -> None:
+    def test_graph_digest_comes_from_both_candidates(self) -> None:
         runner = _load_runner()
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             paths = self._build_candidates(directory)
             core_root, linear_root = directory / "core", directory / "linear"
-            core = verify_release(paths[0], paths[1], extract_to=core_root)
-            linear = verify_release(paths[2], paths[3], extract_to=linear_root)
-            binding = self._binding_for_candidates(*paths)
-            runner.validate_candidate_binding(binding, core, linear, core_root, linear_root)
-            for profile in ("core", "linear"):
-                for field in ("archiveSha256", "metadataSha256", "profile", "releaseId"):
-                    wrong = copy.deepcopy(binding)
-                    wrong["releases"][profile][field] = "d" * 64 if field.endswith("Sha256") else "wrong"
-                    with self.subTest(profile=profile, field=field), self.assertRaisesRegex(ValueError, "collector_binding"):
-                        runner.validate_candidate_binding(wrong, core, linear, core_root, linear_root)
+            verify_release(paths[0], paths[1], extract_to=core_root)
+            verify_release(paths[2], paths[3], extract_to=linear_root)
+            expected = runner.digest_bytes((core_root / runner.GRAPH_PATH).read_bytes())
+            self.assertEqual(runner._candidate_graph_sha256(core_root, linear_root), expected)
             for root in (core_root, linear_root):
                 graph = root / runner.GRAPH_PATH
                 original = graph.read_bytes()
                 graph.write_bytes(original + b"\n")
                 with self.subTest(root=root.name), self.assertRaisesRegex(ValueError, "graph mismatch"):
-                    runner.validate_candidate_binding(binding, core, linear, core_root, linear_root)
+                    runner._candidate_graph_sha256(core_root, linear_root)
                 graph.unlink()
-                with self.assertRaisesRegex(ValueError, "graph unavailable"):
-                    runner.validate_candidate_binding(binding, core, linear, core_root, linear_root)
+                with self.subTest(root=root.name), self.assertRaisesRegex(ValueError, "graph unavailable"):
+                    runner._candidate_graph_sha256(core_root, linear_root)
                 graph.write_bytes(original)
 
     def test_core_record_binding_rejects_stale_release_graph_and_failed_summary(self) -> None:
@@ -424,8 +260,11 @@ class LinearQualificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             paths = self._build_candidates(Path(temporary))
             core = verify_release(paths[0], paths[1])
-            binding = self._binding_for_candidates(*paths)
-            record = {"release": binding["releases"]["core"], "workflowGraphSha256": binding["graphSha256"], "summary": {"result": "passed"}}
+            record = self._core_record_for(paths[0], paths[1])
+            graph = record["workflowGraphSha256"]
+            checkpoint = runner.Checkpoint("core-qualification-binding", "separately-qualified-core-record")
+            runner._core_binding(checkpoint, core, record, graph)
+            self.assertEqual(checkpoint.assertion_count, 4)
             for path in [("release", key) for key in record["release"]] + [("workflowGraphSha256",), ("summary", "result")]:
                 wrong = copy.deepcopy(record)
                 target = wrong
@@ -433,7 +272,7 @@ class LinearQualificationTests(unittest.TestCase):
                     target = target[key]
                 target[path[-1]] = "wrong"
                 with self.subTest(path=path), self.assertRaises(runner.QualificationFailure):
-                    runner._core_binding(runner.Checkpoint("core-qualification-binding", "trusted-checked-qualification"), core, wrong, binding["graphSha256"])
+                    runner._core_binding(runner.Checkpoint("core-qualification-binding", "separately-qualified-core-record"), core, wrong, graph)
 
     def test_anti_vacuity_rejects_missing_reordered_and_empty_passing_evidence(self) -> None:
         runner = _load_runner()
@@ -448,16 +287,16 @@ class LinearQualificationTests(unittest.TestCase):
             malformed.append(wrong)
         for wrong in malformed:
             with self.subTest(scenarios=wrong), self.assertRaisesRegex(ValueError, "anti_vacuity"):
-                runner._finalize_record({}, "a" * 64, "b" * 64, "linear-receipt:" + "c" * 32, wrong, _collector_binding(), "d" * 64)
+                runner._finalize_record({}, "a" * 64, wrong)
 
-    def test_cli_removes_stale_success_after_unavailable_collection_or_failure(self) -> None:
+    def test_cli_removes_stale_success_after_unavailable_input_or_failure(self) -> None:
         runner = _load_runner()
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             record_path = directory / "record.json"
-            arguments = [value for name in ("core-archive", "core-metadata", "core-record", "linear-archive", "linear-metadata", "attestation", "collector-binding") for value in (f"--{name}", str(directory / name))]
+            arguments = [value for name in ("core-archive", "core-metadata", "core-record", "linear-archive", "linear-metadata") for value in (f"--{name}", str(directory / name))]
             arguments.extend(("--record", str(record_path)))
-            for error in (ValueError("collector unavailable"), OSError("receipt unavailable")):
+            for error in (ValueError("candidate unavailable"), OSError("record unavailable")):
                 record_path.write_text(_canonical_json({"summary": {"result": "passed"}}), encoding="utf-8")
                 with mock.patch.object(runner, "qualify", side_effect=error):
                     self.assertEqual(runner.main(arguments), 1)
@@ -467,24 +306,21 @@ class LinearQualificationTests(unittest.TestCase):
         runner = _load_runner()
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            result, record_path, attestation_path = self._run_qualification(directory, _host_attestation())
+            result, record_path = self._run_qualification(directory)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             record = json.loads(record_path.read_text(encoding="utf-8"))
             self.assertEqual(set(record), {
-                "attestationSha256", "candidate", "collectorBinding", "collectorBindingSha256",
-                "coreQualificationSha256", "proofBoundary", "receiptReference", "redaction",
+                "candidate", "coreQualificationSha256", "proofBoundary", "redaction",
                 "scenarios", "schemaVersion", "summary",
             })
             paths = (
                 directory / "core.zip", directory / "core.release.json", directory / "core-record.json",
-                directory / "linear.zip", directory / "linear.release.json", attestation_path,
-                directory / "collector-binding.json",
+                directory / "linear.zip", directory / "linear.release.json",
             )
             runner.validate_checked_record(record, *paths)
             changes = [
-                ("collectorBindingSha256", "d" * 64),
                 ("coreQualificationSha256", "d" * 64),
-                ("schemaVersion", "agent-skills-linear-qualification/1"),
+                ("schemaVersion", "agent-skills-linear-qualification/2"),
                 ("extra", True),
             ]
             for key, value in changes:
@@ -493,20 +329,13 @@ class LinearQualificationTests(unittest.TestCase):
                 with self.subTest(key=key), self.assertRaisesRegex(ValueError, "exact record mismatch"):
                     runner.validate_checked_record(wrong, *paths)
             wrong = copy.deepcopy(record)
-            wrong["collectorBinding"]["candidateRef"]["opaque"] = "stale candidate"
+            wrong["candidate"]["linear"]["releaseId"] = "stale release"
             with self.assertRaisesRegex(ValueError, "exact record mismatch"):
                 runner.validate_checked_record(wrong, *paths)
             wrong = copy.deepcopy(record)
             wrong["scenarios"][0]["evidence"].append("invented evidence")
             with self.assertRaisesRegex(ValueError, "exact record mismatch"):
                 runner.validate_checked_record(wrong, *paths)
-            tampered_attestation = directory / "tampered-attestation.json"
-            attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
-            attestation["sessionReference"] = "linear-session:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-            tampered_attestation.write_text(_canonical_json(attestation), encoding="utf-8")
-            tampered_paths = (*paths[:5], tampered_attestation, paths[6])
-            with self.assertRaisesRegex(ValueError, "attestation mismatch"):
-                runner.validate_checked_record(record, *tampered_paths)
             failed_core = json.loads(paths[2].read_text(encoding="utf-8"))
             failed_core["summary"]["result"] = "failed"
             paths[2].write_text(_canonical_json(failed_core), encoding="utf-8")
@@ -515,30 +344,117 @@ class LinearQualificationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "exact record mismatch"):
                 runner.validate_checked_record(failed, *paths)
 
+    def test_record_holds_exactly_the_four_offline_scenarios_and_no_live_member(self) -> None:
+        self.assertEqual(_load_runner().REQUIRED_SCENARIOS, (
+            "core-qualification-binding",
+            "linear-install-and-host-discovery",
+            "controlled-degraded-outcomes",
+            "forbidden-alternate-transport",
+        ))
+        with tempfile.TemporaryDirectory() as temporary:
+            result, record_path = self._run_qualification(Path(temporary))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            self.assertEqual(record["schemaVersion"], "agent-skills-linear-qualification/3")
+            self.assertEqual(
+                [scenario["id"] for scenario in record["scenarios"]],
+                list(_load_runner().REQUIRED_SCENARIOS),
+            )
+            self.assertTrue(all(scenario["result"] == "passed" for scenario in record["scenarios"]))
+            self.assertEqual(record["summary"]["requiredScenarioCount"], 4)
+            serialized = record_path.read_text(encoding="utf-8").casefold()
+            for word in ("attestation", "collector", "receipt"):
+                self.assertNotIn(word, serialized)
+
+    def test_command_line_takes_no_binding_or_attestation_input(self) -> None:
+        runner = _load_runner()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            arguments = [value for name in ("core-archive", "core-metadata", "core-record", "linear-archive", "linear-metadata", "record") for value in (f"--{name}", str(directory / name))]
+            for removed in ("--attestation", "--collector-binding"):
+                with self.subTest(removed=removed), mock.patch("sys.stderr"), self.assertRaises(SystemExit) as refused:
+                    runner.main([*arguments, removed, str(directory / "input.json")])
+                self.assertEqual(refused.exception.code, 2)
+
+    def test_degraded_outcome_gap_in_the_candidate_fails_closed(self) -> None:
+        def remove_outcome(root: Path) -> None:
+            contract_path = root / "skills/linear-tracker-adapter/references/adapter-contract.json"
+            contract = json.loads(contract_path.read_text(encoding="utf-8"))
+            del contract["failureOutcomes"]["mutation-timeout"]
+            contract_path.write_text(_canonical_json(contract), encoding="utf-8")
+
+        result, record = self._qualify_changed_linear(remove_outcome)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(record["summary"]["result"], "failed")
+        outcomes = {scenario["id"]: scenario["result"] for scenario in record["scenarios"]}
+        self.assertEqual(outcomes["controlled-degraded-outcomes"], "failed")
+
+    def test_direct_transport_action_in_the_candidate_fails_closed(self) -> None:
+        def add_transport(root: Path) -> None:
+            skill = root / "skills/linear-tracker-adapter/SKILL.md"
+            skill.write_text(
+                skill.read_text(encoding="utf-8") + "\ncurl https://api.linear.app/graphql\n",
+                encoding="utf-8",
+            )
+
+        result, record = self._qualify_changed_linear(add_transport)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(record["summary"]["result"], "failed")
+        failed = {scenario["id"]: scenario.get("failure") for scenario in record["scenarios"] if scenario["result"] != "passed"}
+        self.assertEqual(failed, {"forbidden-alternate-transport": "candidate alternate transport: direct-linear-endpoint"})
+
+    def _qualify_changed_linear(self, change) -> tuple[subprocess.CompletedProcess[str], dict]:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            core_archive, core_metadata, linear_archive, linear_metadata = self._build_candidates(directory)
+            changed = directory / "changed-source"
+            verify_release(linear_archive, linear_metadata, extract_to=changed)
+            change(changed)
+            # Source validation reads the lock, so the mutation carries its digest and the qualifier is what refuses.
+            lock_path = changed / "provenance.lock.json"
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            for entry in lock["entries"]:
+                for output in entry["outputs"]:
+                    if (changed / output["path"]).is_file():
+                        output["sha256"] = hashlib.sha256((changed / output["path"]).read_bytes()).hexdigest()
+            lock_path.write_text(_canonical_json(lock), encoding="utf-8")
+            changed_archive = directory / "changed-linear.zip"
+            changed_metadata = directory / "changed-linear.release.json"
+            build_release(changed, changed_archive, changed_metadata, release_id="linear-v2", profile_id="linear")
+            with mock.patch.object(self, "_build_candidates", return_value=(
+                core_archive, core_metadata, changed_archive, changed_metadata,
+            )):
+                result, record_path = self._run_qualification(directory)
+            return result, json.loads(record_path.read_text(encoding="utf-8"))
+
     def test_cli_failure_preserves_inputs_and_never_reuses_old_success(self) -> None:
         runner = _load_runner()
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            result, record_path, attestation_path = self._run_qualification(directory, _host_attestation())
+            result, record_path = self._run_qualification(directory)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             paths = {
                 "core-archive": directory / "core.zip", "core-metadata": directory / "core.release.json",
                 "core-record": directory / "core-record.json", "linear-archive": directory / "linear.zip",
-                "linear-metadata": directory / "linear.release.json", "attestation": attestation_path,
-                "collector-binding": directory / "collector-binding.json", "record": record_path,
+                "linear-metadata": directory / "linear.release.json", "record": record_path,
             }
             arguments = [value for name, path in paths.items() for value in (f"--{name}", str(path))]
-            binding_bytes = paths["collector-binding"].read_bytes()
-            aliased = arguments[:-2] + ["--record", str(paths["collector-binding"])]
-            self.assertEqual(runner.main(aliased), 1)
-            self.assertEqual(paths["collector-binding"].read_bytes(), binding_bytes)
-            paths["collector-binding"].unlink()
+            for input_name in ("core-archive", "core-metadata", "core-record", "linear-archive", "linear-metadata"):
+                input_bytes = paths[input_name].read_bytes()
+                aliased = arguments[:-2] + ["--record", str(paths[input_name])]
+                with self.subTest(aliased=input_name):
+                    self.assertEqual(runner.main(aliased), 1)
+                    self.assertEqual(paths[input_name].read_bytes(), input_bytes)
+            core_record_bytes = paths["core-record"].read_bytes()
+            paths["core-record"].unlink()
             self.assertEqual(runner.main(arguments), 1)
             self.assertFalse(record_path.exists())
-            paths["collector-binding"].write_bytes(binding_bytes)
-            attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
-            attestation["collector"] = None
-            attestation_path.write_text(_canonical_json(attestation), encoding="utf-8")
+            paths["core-record"].write_text("not json\n", encoding="utf-8")
+            record_path.write_text(_canonical_json({"summary": {"result": "passed"}}), encoding="utf-8")
+            self.assertEqual(runner.main(arguments), 1)
+            self.assertFalse(record_path.exists())
+            paths["core-record"].write_bytes(core_record_bytes)
+            paths["linear-metadata"].unlink()
             record_path.write_text(_canonical_json({"summary": {"result": "passed"}}), encoding="utf-8")
             self.assertEqual(runner.main(arguments), 1)
             self.assertFalse(record_path.exists())
@@ -582,32 +498,38 @@ class LinearQualificationTests(unittest.TestCase):
             with mock.patch.object(self, "_build_candidates", return_value=(
                 core_archive, core_metadata, changed_archive, changed_metadata,
             )):
-                outcome, record, _ = self._run_qualification(directory, _host_attestation())
+                outcome, record = self._run_qualification(directory)
             self.assertEqual(outcome.returncode, 1, outcome.stdout + outcome.stderr)
             self.assertFalse(record.exists())
+
+    def _core_record_for(self, core_archive: Path, core_metadata: Path) -> dict:
+        # Synthetic unit-test fixture, not qualification evidence.
+        release = verify_release(core_archive, core_metadata)
+        with zipfile.ZipFile(core_archive) as archive:
+            graph = _load_runner().digest_bytes(archive.read("workflows/delivery-v1.json"))
+        return {
+            "release": {
+                "archiveSha256": release.archive_sha256,
+                "metadataSha256": release.metadata_sha256,
+                "profile": release.profile_id,
+                "releaseId": release.release_id,
+            },
+            "workflowGraphSha256": graph,
+            "summary": {"result": "passed"},
+        }
 
     def _run_qualification(
         self,
         directory: Path,
-        attestation: dict,
-    ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+    ) -> tuple[subprocess.CompletedProcess[str], Path]:
         core_archive, core_metadata, linear_archive, linear_metadata = (
             self._build_candidates(directory)
         )
-        binding = self._binding_for_candidates(core_archive, core_metadata, linear_archive, linear_metadata)
-        binding_path = directory / "collector-binding.json"
-        binding_path.write_text(_canonical_json(binding), encoding="utf-8")
-        attestation = copy.deepcopy(attestation)
-        attestation["collectorBinding"] = copy.deepcopy(binding)
         core_record = directory / "core-record.json"
-        # Synthetic unit-test fixture, not checked qualification evidence.
-        core_record.write_text(_canonical_json({
-            "release": binding["releases"]["core"],
-            "workflowGraphSha256": binding["graphSha256"],
-            "summary": {"result": "passed"},
-        }), encoding="utf-8")
-        attestation_path = directory / "attestation.json"
-        attestation_path.write_text(_canonical_json(attestation), encoding="utf-8")
+        core_record.write_text(
+            _canonical_json(self._core_record_for(core_archive, core_metadata)),
+            encoding="utf-8",
+        )
         record_path = directory / "record.json"
         result = subprocess.run(
             [
@@ -623,10 +545,6 @@ class LinearQualificationTests(unittest.TestCase):
                 str(linear_archive),
                 "--linear-metadata",
                 str(linear_metadata),
-                "--attestation",
-                str(attestation_path),
-                "--collector-binding",
-                str(binding_path),
                 "--record",
                 str(record_path),
             ],
@@ -635,7 +553,7 @@ class LinearQualificationTests(unittest.TestCase):
             text=True,
             check=False,
         )
-        return result, record_path, attestation_path
+        return result, record_path
 
     def test_product_projection_compares_runtime_bytes_and_profile_binding(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -661,48 +579,26 @@ class LinearQualificationTests(unittest.TestCase):
             core = build("core")
             linear = build("linear")
             with mock.patch.object(self, "_build_candidates", return_value=(*core, *linear)):
-                result, record, _ = self._run_qualification(directory, _host_attestation())
+                result, record = self._run_qualification(directory)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue(record.exists())
 
             (runtime / "kernel.mjs").write_text("// different but honestly hashed implementation\n")
             linear = build("linear")
             with mock.patch.object(self, "_build_candidates", return_value=(*core, *linear)):
-                result, record, _ = self._run_qualification(directory, _host_attestation())
+                result, record = self._run_qualification(directory)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertFalse(record.exists())
             with self.assertRaisesRegex(ValueError, "different core bytes"):
-                _load_runner().qualify(*core, directory / "core-record.json", *linear,
-                                       directory / "attestation.json", directory / "collector-binding.json")
+                _load_runner().qualify(*core, directory / "core-record.json", *linear)
 
-    def _binding_for_candidates(
-        self, core_archive: Path, core_metadata: Path, linear_archive: Path, linear_metadata: Path,
-    ) -> dict:
-        binding = _collector_binding()
-        for archive, metadata in ((core_archive, core_metadata), (linear_archive, linear_metadata)):
-            release = verify_release(archive, metadata)
-            binding["releases"][release.profile_id] = {
-                "archiveSha256": release.archive_sha256,
-                "metadataSha256": release.metadata_sha256,
-                "profile": release.profile_id,
-                "releaseId": release.release_id,
-            }
-        with zipfile.ZipFile(core_archive) as archive:
-            binding["graphSha256"] = _load_runner().digest_bytes(archive.read("workflows/delivery-v1.json"))
-        return binding
-
-    def test_exact_linear_qualification_is_redacted_and_binds_retained_attestation(
-        self,
-    ) -> None:
+    def test_exact_linear_qualification_is_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             secret = "live-connector-secret-must-not-leak"
             environment = {**os.environ, "QUALIFICATION_SECRET_SENTINEL": secret}
             with mock.patch.dict(os.environ, environment, clear=True):
-                result, record_path, attestation_path = self._run_qualification(
-                    directory,
-                    _host_attestation(),
-                )
+                result, record_path = self._run_qualification(directory)
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             record = json.loads(record_path.read_text(encoding="utf-8"))
@@ -716,18 +612,11 @@ class LinearQualificationTests(unittest.TestCase):
                 record["candidate"]["linear"]["sourceTreeSha256"], r"^[a-f0-9]{64}$"
             )
             self.assertEqual(
-                record["attestationSha256"],
-                _load_runner().digest_bytes(attestation_path.read_bytes()),
-            )
-            self.assertEqual(
-                record["receiptReference"],
-                _host_attestation()["receipt"]["reference"],
+                record["coreQualificationSha256"],
+                _load_runner().digest_bytes((directory / "core-record.json").read_bytes()),
             )
             self.assertNotIn("auditReferences", record)
             self.assertNotIn("qualificationDriverSha256", record)
-            self.assertEqual(record["schemaVersion"], "agent-skills-linear-qualification/2")
-            self.assertEqual(record["collectorBinding"], json.loads(attestation_path.read_text())["collectorBinding"])
-            self.assertEqual(record["collectorBindingSha256"], _load_runner().digest_bytes((directory / "collector-binding.json").read_bytes()))
             self.assertTrue(
                 all("checkpointSha256" not in scenario for scenario in record["scenarios"])
             )
@@ -753,10 +642,7 @@ class LinearQualificationTests(unittest.TestCase):
                 "XDG_CONFIG_HOME": str(empty_home / "xdg"),
             }
             with mock.patch.dict(os.environ, environment, clear=True):
-                result, record_path, _ = self._run_qualification(
-                    directory,
-                    _host_attestation(),
-                )
+                result, record_path = self._run_qualification(directory)
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             record = json.loads(record_path.read_text(encoding="utf-8"))
@@ -773,48 +659,6 @@ class LinearQualificationTests(unittest.TestCase):
             self.assertNotIn(str(empty_home), record_path.read_text(encoding="utf-8"))
             self.assertFalse((empty_home / "codex").exists())
             self.assertFalse((empty_home / "claude").exists())
-
-    def test_attestation_rejects_duplicate_references_and_broken_operation_causality(
-        self,
-    ) -> None:
-        runner = _load_runner()
-        invalid_documents = []
-
-        duplicate_audit = _host_attestation()
-        duplicate_audit["auditReferences"][1] = duplicate_audit["auditReferences"][0]
-        invalid_documents.append(duplicate_audit)
-
-        duplicate_event = _host_attestation()
-        duplicate_event["events"][1]["eventReference"] = duplicate_event["events"][0][
-            "eventReference"
-        ]
-        invalid_documents.append(duplicate_event)
-
-        create_before_search = _host_attestation()
-        create_before_search["events"][0]["operation"] = "create"
-        invalid_documents.append(create_before_search)
-
-        repeated_create = _host_attestation()
-        repeated_create["events"][10]["operation"] = "create"
-        invalid_documents.append(repeated_create)
-
-        missing_cleanup = _host_attestation()
-        missing_cleanup["events"][-1]["outcome"] = "success"
-        invalid_documents.append(missing_cleanup)
-
-        for document in invalid_documents:
-            with self.subTest(document=document):
-                with self.assertRaisesRegex(ValueError, "linear_qualification.attestation"):
-                    runner.validate_attestation(document, _collector_binding())
-
-    def test_attestation_must_be_canonical_json(self) -> None:
-        runner = _load_runner()
-        with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "attestation.json"
-            path.write_text(json.dumps(_host_attestation()), encoding="utf-8")
-
-            with self.assertRaisesRegex(ValueError, "canonical"):
-                runner.load_attestation(path, _collector_binding())
 
     def test_controlled_boundary_matrix_covers_every_declared_degraded_outcome(self) -> None:
         runner = _load_runner()
@@ -1021,124 +865,30 @@ class LinearQualificationTests(unittest.TestCase):
                             contract,
                         )
 
-    def test_historical_protected_record_remains_bound_to_its_original_release_identities(
-        self,
-    ) -> None:
-        runner = _load_runner()
-        record = json.loads(HISTORICAL_RECORD.read_text(encoding="utf-8"))
-        with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            core_archive, core_metadata, linear_archive, linear_metadata = (
-                tuple(PRODUCT / name for name in ("core-product-v1.zip", "core-product-v1.release.json", "linear-product-v1.zip", "linear-product-v1.release.json"))
-            )
-            core_candidate, linear_candidate = directory / "core", directory / "linear"
-            core = verify_release(core_archive, core_metadata, extract_to=core_candidate)
-            linear = verify_release(linear_archive, linear_metadata, extract_to=linear_candidate)
-            binding = runner.load_collector_binding(HISTORICAL_BINDING)
-            attested = runner.load_attestation(HISTORICAL_ATTESTATION, binding)
-            runner.validate_candidate_binding(
-                binding, core, linear, core_candidate, linear_candidate
-            )
-            self.assertEqual(
-                record["candidate"],
-                {
-                    "core": runner._release_view(core, runner.source_tree_sha256(core_candidate)),
-                    "linear": runner._release_view(linear, runner.source_tree_sha256(linear_candidate)),
-                },
-            )
-            self.assertEqual(record["collectorBinding"], binding)
-            self.assertEqual(
-                record["collectorBindingSha256"],
-                hashlib.sha256(HISTORICAL_BINDING.read_bytes()).hexdigest(),
-            )
-            self.assertEqual(
-                record["attestationSha256"],
-                hashlib.sha256(HISTORICAL_ATTESTATION.read_bytes()).hexdigest(),
-            )
-            self.assertEqual(
-                record["coreQualificationSha256"],
-                hashlib.sha256((PRODUCT / "core-product-v1.json").read_bytes()).hexdigest(),
-            )
-            self.assertEqual(record["receiptReference"], attested["receiptReference"])
-            self.assertEqual(record["summary"]["result"], "passed")
-
     def test_historical_product_qualification_bytes_remain_immutable(self) -> None:
         for name, expected in HISTORICAL_PRODUCT_SHA256.items():
             with self.subTest(name=name):
                 self.assertEqual(hashlib.sha256((PRODUCT / name).read_bytes()).hexdigest(), expected)
 
-    def test_checked_product_linear_record_replays_exactly(self) -> None:
-        # The retained record was earned against the previous adapter contract;
-        # it is re-earned with the pending linear set.
-        skip_if_pending(self, "core", "linear")
-        replay = _load_runner().qualify(
-            PRODUCT / "core-draft-building-v1.zip",
-            PRODUCT / "core-draft-building-v1.release.json",
-            PRODUCT / "core-draft-building-v1.json",
-            PRODUCT / "linear-draft-building-v1.zip",
-            PRODUCT / "linear-draft-building-v1.release.json",
-            ATTESTATION,
-            BINDING,
-        )
-        self.assertEqual(_load_runner().canonical_json(replay).encode(), RECORD.read_bytes(),
-                         "the record replays byte for byte")
-
-    def test_the_frozen_collector_input_names_the_checked_archives_with_fresh_references(self) -> None:
-        # Ungated by the pending marker: the input is frozen before the live run, so it must already be right while
-        # the linear set waits for its attestation.
-        binding = _load_runner().load_collector_binding(BINDING)
-        sha256 = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
-        graphs = set()
-        for profile in ("core", "linear"):
-            product = PRODUCT / f"{profile}-draft-building-v1"
-            release = binding["releases"][profile]
-            self.assertEqual(release["archiveSha256"], sha256(product.with_suffix(".zip")), profile)
-            self.assertEqual(release["metadataSha256"], sha256(product.with_suffix(".release.json")), profile)
-            self.assertEqual(release["releaseId"], json.loads(product.with_suffix(".release.json").read_text())["releaseId"])
-            self.assertEqual(release["profile"], profile)
-            with zipfile.ZipFile(product.with_suffix(".zip")) as archive:
-                graphs.add(hashlib.sha256(archive.read("workflows/delivery-v1.json")).hexdigest())
-        self.assertEqual(graphs, {binding["graphSha256"]})
-        # Fresh references: no earlier collector input, current or retained, ever used them.
-        earlier = [path for path in [*PRODUCT.glob("*.collector-binding.json"), *(ROOT / "qualifications/history").glob("*collector-binding.json")]
-                   if path != BINDING]
-        self.assertTrue(earlier)
-        used = {json.loads(path.read_text())[ref]["opaque"] for path in earlier for ref in ("subjectRef", "candidateRef")}
-        for ref in ("subjectRef", "candidateRef"):
-            self.assertNotIn(binding[ref]["opaque"], used, ref)
-        # The collection steps name exactly this input.
-        notes = (ROOT / "docs/releases/draft-building-v1.md").read_text(encoding="utf-8")
-        for digest in (sha256(BINDING), binding["releases"]["core"]["archiveSha256"], binding["releases"]["linear"]["archiveSha256"]):
-            self.assertIn(digest, notes)
-
-    def test_checked_product_workflow_projection_matches_current_source(self) -> None:
-        current_products = {
-            "core": ("core-draft-building-v1", "51cd9926d94ab1ef6623c74fd7cb5d2324c9868029ca2e4001d8cd389fb43df0"),
-            "linear": ("linear-draft-building-v1", "b11c63362206988e81ce3ce355ccc74082ed0b23b9208c7334ee0c9e0587aca1"),
-            # The product an adopter installs: no qualification set gates it, so its projection always holds.
-            "run-delivery": ("run-delivery-draft-building-v1", "13c27a97ede0ddef6f730ec7590a0dd3e0c8f291229e88f26a3a04f3e61e7f10"),
-            # The product a Jira adopter installs, likewise ungated.
-            "jira": ("jira-draft-building-v1", "0bf4485626a0140a59cf3eaebc253807ef3837665172272f0fb95c2c87382a5c"),
-        }
+    def test_linear_record_from_tree_built_archives_replays(self) -> None:
+        # Both archives are built from the tree without a runtime, which the qualifier supports.
+        runner = _load_runner()
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            for profile in ("core", "linear", "run-delivery", "jira"):
-                product, expected_archive_sha256 = current_products[profile]
-                archive = PRODUCT / f"{product}.zip"
-                metadata = PRODUCT / f"{product}.release.json"
-                extracted = directory / profile
-                release = verify_release(archive, metadata, extract_to=extracted)
-                self.assertEqual(release.archive_sha256, expected_archive_sha256)
-                projected = build_release(extracted, directory / f"{profile}-projection.zip",
-                                          directory / f"{profile}-projection.json",
-                                          release_id=release.release_id, profile_id=profile)
-                current = build_release(ROOT, directory / f"{profile}-current.zip",
-                                        directory / f"{profile}-current.json",
-                                        release_id=release.release_id, profile_id=profile)
-                if profile in ("run-delivery", "jira") or pending(profile) is None:
-                    self.assertEqual(projected, current, "checked product workflows differ from current source")
-        self.assertIn("linear-draft-building-v1", (ROOT / "README.md").read_text())
-        skip_if_pending(self, "core", "linear")
+            result, record_path = self._run_qualification(directory)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            self.assertEqual(record["summary"]["result"], "passed")
+            self.assertEqual(record["summary"]["passedScenarioCount"], len(runner.REQUIRED_SCENARIOS))
+            for profile in ("core", "linear"):
+                self.assertNotIn("runtime", record["candidate"][profile])
+            with zipfile.ZipFile(directory / "linear.zip") as archive:
+                self.assertFalse(any(name.startswith("runtime/") for name in archive.namelist()))
+            runner.validate_checked_record(
+                record,
+                directory / "core.zip", directory / "core.release.json", directory / "core-record.json",
+                directory / "linear.zip", directory / "linear.release.json",
+            )
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
         durable_paths = [ROOT / "README.md"]
