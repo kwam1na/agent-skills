@@ -408,8 +408,10 @@ run the sync loop in this order:
      to `building`, so a lane starting its ticket moves its stop with no lead
      step. Work at `building` or in review that the tracker shows back in
      `backlog` is reported for the lead, never moved back.
-   - A change request is linked to its queue or planned item, and an open one
-     moves planned or building work to review.
+   - A change request is linked to its queue or planned item. A draft one
+     moves planned work at `planned` to `building`, so a delivery with no
+     tracker snapshot sees the stop move once the lane's draft opens; an open
+     one moves planned or building work to review.
    - Each ticket's tracker title and summary, for work the record holds, are
      kept in the state's `tickets`, keyed by subject, and written only when
      they change; the views show them in place of the lead's own text. A
