@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "plan": "docs/plans/2026-11-02-adoption-gaps.md",
+  "planSha256": "196c2582e65056e3f416c30f47ec0e35823f032277cfa72b4e7ff66e3182e8c6",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "outcome-correctness",
+    "adversarial"
+  ],
+  "reviews": [
+    {
+      "lens": "outcome-correctness",
+      "agent": "plan-review-outcome-correctness-r11",
+      "findings": []
+    },
+    {
+      "lens": "adversarial",
+      "agent": "plan-review-adversarial-r11",
+      "findings": []
+    }
+  ],
+  "residualRisks": [
+    "Eleven rounds without a round bound. P1 findings per round: 18, 6, 5, 1, 1, 2, 1, 2, 1, 1, 0 (each lens's count, deduplicated where both raised the same finding). The non-convergence signal fired after round 6; the lead continued by its own judgment, under the owner's standing authority over plan-review calls.",
+    "Rounds 6 to 10 each found a gap in the previous round's correction, all in one area: how --replace, the publisher's ledger and tracker markers interact. The Stale-record and Publisher scenarios pin each case found, and the Tracker publisher and Setup units should treat that area as their highest-risk tests.",
+    "Deferred notes from the final rounds, left to the implementing units: a decision.recorded whose command dies between its journal write and its mark is skipped and indistinguishable from an ordinary skip; the publisher should read the record's first journal entry's time rather than search for its summary; the start check should match any name in tracker.transitions.start, including names an adopter used before a --replace; tracker-published.jsonl is archived with the record on --replace; the runner's blocker is recognised by its summary prefix alone.",
+    "The friction logs the plan cites stay uncommitted in the owner's checkout (decision A6), so a later reader of this record can't open them from the tree.",
+    "The plan's review was composed by hand, outside run-delivery, because plan-review runs only inside a delivery; the plan's own C9 removes that gap.",
+    "After round 11, only the plan's front-matter status changed, from in-review to approved."
+  ]
+}

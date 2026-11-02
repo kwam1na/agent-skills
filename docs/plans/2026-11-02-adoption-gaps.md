@@ -1,7 +1,7 @@
 ---
 title: "feat: The workflow does the lead's and lane's mechanical duties itself"
 type: feat
-status: in-review
+status: approved
 date: 2026-11-02
 execution_posture: test-first
 context: Three leads delivered with run-delivery and orchestrate-work in eshyft's repositories, which use Bitbucket, Jira, protected long-lived dev-alt branches and an AI PR reviewer. Their friction logs hold about 100 entries. About half are fixed upstream or belong to work already in flight. Most of the rest are one failure repeated: the workflow names a duty in a guide or brief, nothing does it, and it waits for someone to remember. The other causes are a binding that serves one base, refusals that don't say how to recover, a plan review that only runs inside a delivery, and a guide that assumes GitHub and an unprotected `main`.
