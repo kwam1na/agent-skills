@@ -34,10 +34,10 @@ tracker, host or forge.
 
 - **Lead.** One session. Only the lead assigns tickets, starts the runner,
   holds or grants leases, approves releases with the operator, and moves
-  tracker items to their final state. The lead may also take tickets itself.
-- **Lane.** A session, or in degraded mode a subagent or the lead itself. A
-  lane delivers one assigned ticket at a time, and never merges, releases, or
-  holds a lease it was not granted.
+  tracker items to their final state.
+- **Lane.** A session of its own, always: never a subagent, and never the lead
+  working in its own session. A lane delivers one assigned ticket at a time,
+  and never merges, releases, or holds a lease it was not granted.
 - **State writers.** The lead writes every state field except the
   runner-owned and lane-owned ones. The runner writes only its result
   documents, journal entries, and its own fields: `queue[i].stage`,
@@ -64,6 +64,7 @@ The operator is brought in only for:
 - a change to the approved scope or finish line;
 - an irreversible or outward-facing action not already authorized;
 - a permission or access grant the lead does not hold;
+- a host that cannot start or message sessions, so no lane can start;
 - owner intent that is genuinely ambiguous, where neither the plan nor
   standing direction settles it.
 
@@ -117,8 +118,10 @@ Follow
 [the coordination protocol](references/orchestration-guide.md#coordination-protocol):
 one consolidated message per lane per milestone, a lane retitled in the same step
 as its assignment, undelivered messages kept in the lead's notes, and every
-lane report treated as a claim to check. Without a session capability, the
-lead runs lanes as subagents or in sequence. Leases, including those held
+lane report treated as a claim to check. Without a session capability, no lane
+starts: the lead records the blocker and brings it to the operator, who may
+choose to deliver the tickets one at a time through `$execute-work`. Subagents
+remain how a lane realizes its review lenses. Leases, including those held
 outside the epic, follow the same protocol.
 
 When a lane hands off, the state tool can suggest its next work. It ranks the

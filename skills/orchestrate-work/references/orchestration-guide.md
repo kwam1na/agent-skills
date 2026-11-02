@@ -516,6 +516,7 @@ The operator is brought in only for:
 - a change to the approved scope or finish line;
 - an irreversible or outward-facing action not already authorized;
 - a permission or access grant the lead does not hold;
+- a host that cannot start or message sessions, so no lane can start;
 - owner intent that is genuinely ambiguous, where neither the plan nor
   standing direction settles it.
 
@@ -557,7 +558,8 @@ operator.
 
 ## Coordination protocol
 
-These rules hold whatever the host offers for sessions and messages.
+These rules hold on any host that can start and message sessions. A host that
+cannot stops the delivery, under [Without a session capability](#without-a-session-capability).
 
 ### Messages
 
@@ -591,9 +593,11 @@ When a claim does not hold, return the hand-off to the lane with what failed.
 
 ### Without a session capability
 
-When the host cannot start or message other sessions, the lead runs each
-lane as a subagent, or runs the lanes in sequence itself. The lane profile,
-the hand-off and the queue are unchanged; only the transport differs.
+When the host cannot start or message other sessions, no lane starts. A lane
+is always a session of its own: never a subagent, and never the lead working in
+its own session. The lead journals `blocker.recorded` and brings it to the
+operator, who may choose to deliver the tickets one at a time through
+`$execute-work`. Subagents remain how a lane realizes its review lenses.
 
 ### Leases
 
