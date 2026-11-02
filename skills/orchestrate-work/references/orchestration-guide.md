@@ -126,7 +126,7 @@ proceeds and the lead notes the gap in its close-out.
 | `release.finished` | On the epic: the release shipped, its commit and targets, and who approved it. |
 | `finish.met` | On the epic: the finish line and the evidence that met it. |
 | `decision.recorded` | On the ticket the decision concerns, or the epic: what, why, and who decided, the operator or the lead. A deferred finding links its follow-up item. |
-| `blocker.recorded` | On the blocked ticket, or the epic when the blocker holds every ticket: the blocker, and whose answer or work unblocks it. |
+| `blocker.recorded` | On the blocked ticket, or the epic when every ticket is blocked: the blocker, and whose answer or work unblocks it. |
 | `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. |
 
 The lead posts the updates in this table, including every cross-lane
