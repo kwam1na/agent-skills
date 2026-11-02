@@ -30,6 +30,10 @@ class BootstrapQualificationTests(unittest.TestCase):
             record = runner.qualify(archive, metadata)
             replay = runner.qualify(archive, metadata)
         self.assertEqual(canonical_json(replay), canonical_json(record))
+        self.assertEqual(
+            set(record),
+            {"product", "qualificationDriverSha256", "release", "replay", "scenarios", "schemaVersion", "summary"},
+        )
         self.assertEqual(record["schemaVersion"], "agent-skills-bootstrap-qualification/1")
         self.assertEqual(record["release"]["profile"], "bootstrap")
         self.assertEqual(record["release"]["releaseId"], "bootstrap-qualification-fixture")
