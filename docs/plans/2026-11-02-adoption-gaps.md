@@ -157,9 +157,9 @@ In-flight items that already own an entry:
     holds. The close condition reads the holding items only, and the friction note lists the shown ones.
 
     Some resolutions are automatic:
-    - the runner's own blocker is resolved by `base.repaired`, or by the hold clearing. It is recognised as the
-      first `blocker.recorded` with no lane and no subject after a `base.broken` or a `meta.hold` being set, because
-      the journal records no writer;
+    - the runner's own blocker is resolved by the hold clearing, or by `base.repaired`. It is recognised as a
+      `blocker.recorded` with no lane and no subject, whose summary starts with the runner's own text ("Serving is
+      held:"), journalled right after `meta.hold` is set. The journal records no writer;
     - `lead-resolve full-health --why TEXT` reruns `fullHealth` at the current head, for a failure the lead judges
       flaky.
 
@@ -215,7 +215,11 @@ In-flight items that already own an entry:
       command;
     - `decision.recorded` is posted only when the run-delivery command that wrote it marks it. That covers a
       `lead-plan change`, a deferral, a `lead-resolve` and a blocker. The mark is the entry's journal id in
-      `flow-log/tracker-marks.jsonl`, because the journal records no writer. Every other entry gets a `skip` line.
+      the flow log's `tracker-marks` file, because the journal records no writer. The marking command holds the
+      publisher's ledger lock, waiting for it, across the journal write and the mark, so no publisher run sees the
+      entry unmarked. A command that dies between the two leaves the entry unmarked, and the publisher posts an
+      unmarked `decision.recorded` only on a pass after the one that first saw it, by which time a live command has
+      marked it. Every other entry gets a `skip` line.
       Nothing is added to the journal schema for this.
   - **Failure.** The supervisor's "Needs you" (C1) includes a publisher whose ledger lags the journal for more than one
     pass, naming its last error and the waiting entries. It clears when the lag does.
@@ -229,7 +233,8 @@ In-flight items that already own an entry:
     `run-delivery.json` sets `tracker.updates: "manual"`.
 - **C3. Every tracker move is configuration.** `run-delivery.json` `tracker.transitions` has three parts:
   - **`start`.** The publisher applies it for a story's `lane.assigned`, whatever `lead` says, once that story has
-    started. A story starts when `lane-start <key>` records it in `flow-log/lane-starts.jsonl`. Lane commands already
+    started. A story starts when `lane-start <key>` records it in the flow log's `lane-starts` file
+    (named with the delivery key, as every lead-side log is). Lane commands already
     write the lead-side flow log, and a lane may journal only `review.round`. Until then the publisher writes nothing
     for that entry and moves on. An adopter's existing `start` therefore keeps moving each ticket to started when its
     lane begins it, as the brief has the lane do today, with no new configuration. The move applies only on a story's first
@@ -242,7 +247,11 @@ In-flight items that already own an entry:
     move after review for people.
 
   `lead-assign` journals one `lane.assigned` per story key it assigns, so each ticket has an entry for its own start,
-  made when its lane begins it. An entry waiting for its story to start doesn't count as ledger lag in "Needs you". Each move reads the ticket's status first:
+  made when its lane begins it. The wait ends at the story's first `lane-start` record. If the journal reaches the
+  story's `candidate.handed`, its `candidate.merged` or its removal first, the wait ends there instead: the publisher
+  applies `start` then, and the status-first read skips a move already passed. Either way the entry gets a line.
+  While an entry waits, it isn't ledger lag in "Needs you". But during C6 step 3 it counts as uncovered and is shown,
+  naming the story. Each move reads the ticket's status first:
   - one already made by a person or an integration is skipped, and reported as made by someone else;
   - one not offered from the current status is recorded in the ledger as `handled`, shown in "Needs you" (C1), and
     neither retried nor journalled.
@@ -261,7 +270,7 @@ In-flight items that already own an entry:
     3. sets the lane's focus.
 
     The start transition and start update belong to `lane.assigned`, which the publisher handles under the guide's
-    table ("it moves to started") as soon as `lead-assign` journals it. Neither the lead nor the lane makes the move.
+    table ("it moves to started") once `lane-start` records the story's start (C3). Neither the lead nor the lane makes the move.
     For a tracker reachable only through the host, `lane-start` prints the start move and the start update for the
     lane to make, and records them. The orchestration guide's host-publisher line tells the lead's drain
     to skip `lane.assigned`'s start move and update when `lane-start` recorded them, so the start is posted once.
@@ -644,6 +653,8 @@ In-flight items that already own an entry:
   - a two-story `lead-assign` moves neither ticket until each one's `lane-start`, then moves each once;
   - a story removed before its `lane-start` never moves, and its entry gets a `skip` line;
   - a story reassigned after it reached review gets no second start move;
+  - a story handed off and merged with no `lane-start` gets one line for its `lane.assigned`, and the delivery closes;
+  - a publisher run started between a `lead-plan change`'s journal write and its mark still posts the update once;
   - an unmarked `decision.recorded`, such as an acceptance, gets a `skip` line, while a `lead-plan change`'s is
     posted.
 - **Adapter contract.** The publisher, run against a second fake adapter that implements only `tracker-adapter/1`
