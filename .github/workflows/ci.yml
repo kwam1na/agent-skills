@@ -53,6 +53,13 @@ jobs:
       - run: python tests/test_registry.py
       # The parallel runner the merge checks use: discover's verdict, across worker processes.
       - run: python scripts/run-tests.py
+      # The suite would miss a writer that runs after its last corpus validation.
+      - name: Check no bytecode was written under skills
+        if: always()
+        shell: bash
+        run: |
+          found=$(find skills \( -name __pycache__ -o -name '*.pyc' \) -print)
+          if [ -n "$found" ]; then echo "$found"; exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
           name: validation-${{ matrix.os }}-py${{ matrix.python-version }}
