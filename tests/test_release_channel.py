@@ -542,6 +542,27 @@ class WorkflowWiringTests(unittest.TestCase):
         guard, publish = jobs.split("\n  publish:\n", 1)
         self.guard, self.publish = guard, publish
 
+    def assert_line(self, job: str, line: str) -> None:
+        # A whole line, so a suffix such as `|| true` cannot neutralise a guard and leave this green.
+        self.assertRegex(job, rf"(?m)^ *{re.escape(line)}$")
+
+    def test_every_guard_is_a_whole_line_that_nothing_can_excuse(self) -> None:
+        same = 'test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$GITHUB_SHA"'
+        order = 'python scripts/release_channel.py order --tag "$TAG"'
+        fetch = 'git fetch --force --tags origin "refs/tags/$TAG:refs/tags/$TAG"'
+        for line in (fetch, same, order, 'test "$(git cat-file -t "refs/tags/$TAG")" = tag',
+                     'git merge-base --is-ancestor "refs/tags/$TAG^{commit}" origin/main',
+                     'run: python scripts/release_channel.py existing --tag "$TAG" >> "$GITHUB_OUTPUT"',
+                     'python scripts/release_channel.py ci --tag "$TAG" --repo "$REPOSITORY" --commit "$(git rev-parse "refs/tags/$TAG^{commit}")"'):
+            with self.subTest(line=line):
+                self.assert_line(self.guard, line)
+        for line in (fetch, same, order, 'gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" $flags "$OUT"/*'):
+            with self.subTest(line=line):
+                self.assert_line(self.publish, line)
+        self.assertEqual(self.guard.count("set -euo pipefail"), 2)
+        self.assertEqual(self.publish.count("set -euo pipefail"), 1)
+        self.assertNotIn("|| true", self.workflow)
+
     def test_only_version_tags_trigger_publish(self) -> None:
         self.assertRegex(self.head, r'(?m)^on:\n  push:\n    tags: \["v\[0-9\]\*"\]$')
         self.assertNotIn("branches:", self.head)
@@ -637,7 +658,7 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn('scripts/release_channel.py flags --tag "$TAG"', self.publish)
         self.assertIn("scripts/release_channel.py notes ", self.publish)
         self.assertIn('scripts/release_channel.py previous --tag "$TAG" --published "$RUNNER_TEMP/published.txt"', self.publish)
-        self.assertIn('gh release list --limit 1000 --json tagName --jq', self.publish)
+        self.assert_line(self.publish, 'gh release list --exclude-drafts --limit 1000 --json tagName --jq \'.[].tagName\' > "$RUNNER_TEMP/published.txt"')
         self.assertIn("--notes-file", self.publish)
         self.assertNotIn("--generate-notes", self.publish)
 

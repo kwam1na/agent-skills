@@ -95,7 +95,7 @@ jobs:
           test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$GITHUB_SHA"
           # The guard's check may be two and a half hours old by now, or from an earlier attempt of this run.
           python scripts/release_channel.py order --tag "$TAG"
-          gh release list --limit 1000 --json tagName --jq '.[].tagName' > "$RUNNER_TEMP/published.txt"
+          gh release list --exclude-drafts --limit 1000 --json tagName --jq '.[].tagName' > "$RUNNER_TEMP/published.txt"
           previous="$(python scripts/release_channel.py previous --tag "$TAG" --published "$RUNNER_TEMP/published.txt")"
           generate=(-f "tag_name=$TAG")
           if [ -n "$previous" ]; then generate+=(-f "previous_tag_name=$previous"); fi
