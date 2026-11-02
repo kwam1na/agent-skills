@@ -50,7 +50,11 @@ The `*-capture-observations-v1` files retain the previously qualified capture-ob
 release set, including its independently bound protected Linear attestation.
 Their bytes and identities remain immutable.
 
-The `*-lead-selected-checks-v1` files are the current product set. The bootstrap archive
+The `*-lead-selected-checks-v1` files retain the previously qualified lead-selected-checks
+release set, including its independently bound protected Linear attestation.
+Their bytes and identities remain immutable.
+
+The `*-draft-building-v1` files are the current product set. The bootstrap archive
 qualifies the minimal first-install profile and full product lifecycle. The core
 archive carries its exact current core and provider qualification records. The
 Linear qualification binds that exact core and Linear pair to a new

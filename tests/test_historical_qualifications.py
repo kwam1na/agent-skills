@@ -77,6 +77,13 @@ PR155_QUALIFICATION_SHA256 = {
 }
 
 
+PR156_QUALIFICATION_SHA256 = {
+    "qualifications/bootstrap-workflows-lead-selected-checks-v1.json": "319ddc80f6bace24cba85de75a8d07f6337cc0b18ab2241d85931c24cb71af98",
+    "qualifications/core-workflows-lead-selected-checks-v1.json": "350df77f3c134462c6cc55b8e06411dcf45acc696d693c5d3068b597cfb701e8",
+    "qualifications/provider-workflows-lead-selected-checks-v1.json": "0d108d1cffa1b00bc549f7dd96a3215cee93bd0a107b558bcb2c4a99aa58da13",
+}
+
+
 class HistoricalQualificationTests(unittest.TestCase):
     def test_prior_current_records_remain_byte_identical(self) -> None:
         for relative, digest in {
@@ -92,6 +99,7 @@ class HistoricalQualificationTests(unittest.TestCase):
             **PR152_QUALIFICATION_SHA256,
             **PR154_QUALIFICATION_SHA256,
             **PR155_QUALIFICATION_SHA256,
+            **PR156_QUALIFICATION_SHA256,
         }.items():
             with self.subTest(relative=relative):
                 self.assertEqual(
