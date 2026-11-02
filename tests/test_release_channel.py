@@ -563,6 +563,16 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertEqual(self.publish.count("set -euo pipefail"), 1)
         self.assertNotIn("|| true", self.workflow)
 
+    def test_the_conditions_that_decide_whether_a_guard_runs_are_pinned_too(self) -> None:
+        self.assert_line(self.guard, "publish: ${{ steps.existing.outputs.publish }}")
+        self.assert_line(self.guard, "if: steps.existing.outputs.publish == 'true'")
+        self.assert_line(self.publish, "if: needs.guard.outputs.publish == 'true'")
+        self.assertEqual(len(re.findall(r"(?m)^ *(?:- )?if: ", self.guard)), 1)
+        self.assertEqual(len(re.findall(r"(?m)^ *(?:- )?if: ", self.publish)), 1)
+        for forbidden in ("set +e", "exit 0", "always()", "cancelled()", "failure()"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, self.workflow)
+
     def test_only_version_tags_trigger_publish(self) -> None:
         self.assertRegex(self.head, r'(?m)^on:\n  push:\n    tags: \["v\[0-9\]\*"\]$')
         self.assertNotIn("branches:", self.head)
@@ -586,7 +596,6 @@ class WorkflowWiringTests(unittest.TestCase):
             with self.subTest(guard=guard):
                 self.assertIn(guard, self.guard)
         self.assertRegex(self.publish, r"(?m)^    needs: guard$")
-        self.assertIn("if: needs.guard.outputs.publish == 'true'", self.publish)
         self.assertNotIn("gh release create", self.guard)
 
     def test_the_guard_checks_the_commit_the_tag_names(self) -> None:
