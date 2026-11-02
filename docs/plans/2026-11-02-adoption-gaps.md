@@ -204,8 +204,10 @@ In-flight items that already own an entry:
     every later update or the close.
   - **Bodies.** Every comment is truncated to the adapter's declared limit (32,767 characters for Jira), with a
     pointer to the record for the rest.
-  - **Idempotency.** Each comment and move carries its journal id as a marker the adapter stores on the known ticket
-    (the Jira adapter uses an entity property). A created item carries a marker the tracker can search for without an
+  - **Idempotency.** Each comment and move carries a marker the adapter stores on the known ticket (the Jira adapter
+    uses an entity property). The marker is the delivery key, the record's init id (its `lead-init` time) and the
+    journal id together, because journal ids restart at 1 after a `--replace` and two deliveries can post to one
+    ticket. A created item carries a marker the tracker can search for without an
     installed app. The Jira adapter uses the label `agent-followup-<story>-<finding id>`, lowercased to Jira's label
     rules, and searches for it within the configured project. Before
     writing, the publisher asks the adapter for the marker. A crash between the write and the ledger line therefore
@@ -218,9 +220,9 @@ In-flight items that already own an entry:
       `lead-plan change`, a deferral, a `lead-resolve` and a blocker. The mark is the entry's journal id in
       the flow log's `tracker-marks` file, because the journal records no writer. The marking command holds the
       publisher's ledger lock, waiting for it, across the journal write and the mark, so no publisher run sees the
-      entry unmarked. The publisher decides on a `decision.recorded` (post if marked, else `skip`) only on a pass
-      after the one that first saw it. A command that dies between the journal write and the mark therefore leaves
-      the entry skipped. The friction note lists it as an unposted decision. Every other entry gets a `skip` line.
+      entry unmarked. Because the lock spans both writes, a live command's entry is never seen unmarked. A command
+      that dies between the two leaves the entry unmarked, and it gets a `skip` line. That is the only way a
+      tracker-worthy decision goes unposted, and the friction note can't tell it from an ordinary skip. Every other entry gets a `skip` line.
       Nothing is added to the journal schema for this.
   - **Failure.** The supervisor's "Needs you" (C1) includes a publisher whose ledger lags the journal for more than one
     pass, naming its last error and the waiting entries. It clears when the lag does.
@@ -252,7 +254,8 @@ In-flight items that already own an entry:
   story's `candidate.handed`, its `candidate.merged` or its removal first, the wait ends there instead. The publisher
   writes a `skip` line and makes no move, because a late start could move a ticket that is already in review back to
   started, and the adapter contract carries no status order. The friction note lists such a story as "start never
-  recorded". `start` is applied only on a `lane-start` record. Either way the entry gets a line.
+  recorded". `start` is applied only on a `lane-start` record, and never once the ledger holds the story's review move.
+  Either way the entry gets a line.
   While an entry waits, it isn't ledger lag in "Needs you". But during C6 step 3 it counts as uncovered and is shown,
   naming the story. Each move reads the ticket's status first:
   - one already made by a person or an integration is skipped, and reported as made by someone else;
@@ -341,8 +344,8 @@ In-flight items that already own an entry:
     still needs that setting on it, and `doctor` says so.
 - **C8. A fresh record starts a fresh plan log.** `lead-init` refuses when the state directory holds a record, or the
   flow log holds a snapshot or a supervisor lock, and names the delivery, its base and when it started. Pre-init
-  `lead-plan change` entries and `plan.lock` don't count. `lead-init --replace` stops any supervisor, confirms its pid is gone, archives both (carrying the `lane-starts` and
-  `tracker-marks` files over, so started stories and marked decisions survive),
+  `lead-plan change` entries and `plan.lock` don't count. `lead-init --replace` stops any supervisor, confirms its pid is gone, archives both, carrying nothing over (every
+  flow-log file names entries of the archived journal, whose ids the fresh journal reuses from 1),
   and starts fresh. The plan's approval snapshot is taken from the delivery file at that `lead-init`.
 - **C9. Plan review for any plan.** `plan-review prepare|reduce|end --plan <path> --lenses <ids>` works without a
   delivery file, binding or record. It keeps its rounds in a store under
@@ -686,6 +689,9 @@ In-flight items that already own an entry:
   - A pre-init `lead-plan change` doesn't count.
   - `--replace` archives the record and the flow log, and an edit made between the old init and the new one isn't
     reported as drift.
+  - After `--replace`, a new entry whose journal id equals one the old delivery posted to the same ticket is posted.
+  - A story in review before `--replace` and re-assigned after it keeps its review status: its new `lane.assigned`
+    waits for a new `lane-start`, or gets a `skip` line at hand-off.
 - **Doctor gaps.** `doctor --delivery` reports each of these, and `lead-init` refuses on each:
   - a story without a plan section;
   - a missing `context.sections` heading;
