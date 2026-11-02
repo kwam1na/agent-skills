@@ -150,14 +150,23 @@ In-flight items that already own an entry:
     - a lane whose state is `blocked`, or that is waiting on the lead. It clears when the lane's state changes;
     - a `blocker.recorded` the lead hasn't resolved. `lead-resolve <journal id> --why TEXT`, a new command, resolves
       it: it records the resolution in `flow-log/resolutions.jsonl` and journals a `decision.recorded` naming it;
-    - ledger `failed` and `handled` lines: tracker updates that couldn't be posted, and moves that weren't offered.
-      These are shown, but don't hold the close, and the friction note lists them;
+    - ledger `failed` and `handled` lines: tracker updates that couldn't be posted, and moves that weren't offered;
     - a supervisor child that won't stay up.
+
+    Each item is either **holding** or **shown**. Only ledger `failed` and `handled` lines are shown; everything else
+    holds. The close condition reads the holding items only, and the friction note lists the shown ones.
+
+    Some resolutions are automatic:
+    - the `blocker.recorded` the runner journals with `base.broken` or `meta.hold` is resolved by `base.repaired`, or
+      by the hold clearing;
+    - `lead-resolve` also accepts a `fullHealth` item, and reruns `fullHealth` at the current head, for a failure the
+      lead judges flaky.
 
     The line map shows the same list, and the close condition reads the same function, so an item clears when its
     condition clears. Nothing is added to the record's schema for it.
   - **Close condition.** Every planned and queued story is merged, or removed through `lead-plan change --kind
-    removed`. Every finish line is met. The queue is empty. Every lane is idle or done. "Needs you" is empty.
+    removed`. Every finish line is met. The queue is empty. Every lane is idle or done. No "Needs you" item is
+    holding.
   - **Lead commands** keep working when the supervisor is down, so a lead can always act by hand. The supervisor
     skips anything already done when it resumes.
   - **Cleanup waits for the lane.** It cleans up a merged story only once its lane has moved off it, idle or on its
@@ -185,7 +194,8 @@ In-flight items that already own an entry:
   - **Ordering.** It processes journal entries in id order and adds the ledger line after each one. A transient
     failure stops the run, and the next run retries from there. Transient means a network error, a timeout, a 5xx, a
     409, 423 or 429, a 401, or a 403 that the adapter's status read of the epic also returns, meaning the whole site
-    refuses the credentials.
+    refuses the credentials. A delivery with no epic, or an epic that is itself unreadable, makes that read against the
+    configured project instead.
   - **Permanent failures.** Any other 4xx is permanent, such as a deleted ticket or a body the tracker refuses. The
     publisher writes a `failed` line and goes on to later entries. It journals nothing, so a failure can't produce an
     entry that fails again. The failure shows in "Needs you" from the ledger (C1). So one rejected entry never holds
@@ -214,10 +224,18 @@ In-flight items that already own an entry:
   - **Refusals.** Either of these fails `doctor`: a tracker with an adapter but no tracker publisher, or a tracker
     reachable only through the host but with no host publisher. `lead-init` refuses either unless
     `run-delivery.json` sets `tracker.updates: "manual"`.
-- **C3. Every tracker move is configuration.** `run-delivery.json` `tracker.transitions` keeps `start` and `review`
-  for lanes. It gains `lead`, an object from journal kind to the transitions the publisher makes. If `lead` is absent,
-  or a kind maps to an empty list, no move is made and the update says the move belongs to people. That is the default, because
-  some teams reserve every move after review for people. Each move reads the ticket's status first:
+- **C3. Every tracker move is configuration.** `run-delivery.json` `tracker.transitions` has three parts:
+  - **`start`.** The publisher applies it on `lane.assigned`, whatever `lead` says. An adopter's existing `start`
+    therefore keeps moving tickets to started without new configuration. The move now comes at assignment rather than
+    when the lane begins, which is right because `lead-assign` is followed at once by the lane session it prints. The
+    guide says so.
+  - **`review`.** It stays with the lane commands, timed by `reviewWhen` (C5).
+  - **`lead`.** A new object from any later journal kind to the transitions the publisher makes, such as
+    `candidate.merged` or `delivery.closed`. If `lead` is absent, or a kind maps to an empty list, no move is made for
+    that kind and the update says the move belongs to people. That is the default, because some teams reserve every
+    move after review for people.
+
+  `lead-assign` journals one `lane.assigned` per story key it assigns, so each ticket moves. Each move reads the ticket's status first:
   - one already made by a person or an integration is skipped, and reported as made by someone else;
   - one not offered from the current status is recorded in the ledger as `handled`, shown in "Needs you" (C1), and
     neither retried nor journalled.
@@ -238,7 +256,7 @@ In-flight items that already own an entry:
     The start transition and start update belong to `lane.assigned`, which the publisher handles under the guide's
     table ("it moves to started") as soon as `lead-assign` journals it. Neither the lead nor the lane makes the move.
     For a tracker reachable only through the host, `lane-start` prints the move and post for the lane to make and
-    records them. `lane-start` replaces four steps the brief lists today. `lead-assign` prints it with the base filled
+    records them, and the host outbox carries `lane.assigned` without its start move, so the start is posted once. `lane-start` replaces four steps the brief lists today. `lead-assign` prints it with the base filled
     in.
   - **The review transition's timing is a setting, and the automatic move is opt-in.**
     `tracker.transitions.reviewWhen` is one of:
@@ -266,8 +284,10 @@ In-flight items that already own an entry:
      base head. Its result and output are kept in `flow-log/full-health.json`. A failure shows in "Needs you" (C1)
      and holds the close until `fullHealth` passes at a later head.
   2. **Follow-ups.** File one follow-up item for each deferred finding that has none, keyed by story and finding id
-     (`<story>-<finding id>`, since finding ids repeat across stories) against `followups[]`, through the tracker publisher. A failed filing holds the close and is retried on the next pass. A
-     tracker reachable only through the host raises the filings as "Needs you" instead.
+     (`<story>-<finding id>`, since finding ids repeat across stories), which is also the `followups[]` item's `id`.
+     Filing goes through the tracker publisher. A transient failure holds the close and is retried on the next pass.
+     A permanent one writes `failed`, is shown, and isn't retried. A tracker reachable only through the host raises the
+     filings as "Needs you" instead.
   3. **Close.** Journal `delivery.closed` and render, then wait until the tracker has every entry through
      `delivery.closed`. What that means depends on the tracker:
      - with a tracker publisher, its ledger covers that entry, skip lines included;
@@ -319,7 +339,8 @@ In-flight items that already own an entry:
   - **Forge adapters.** Both gain `ready` and `merge --strategy merge|squash`, which merges a pull request through the
     forge's API. The GitHub adapter gains `reviews`. The guide shows a binding whose `merge` argv calls the adapter, so
     an adopter no longer writes its own `merge.py`.
-  - `lead-resolve <journal id> --why TEXT` resolves a blocker (C1).
+  - `lead-resolve <journal id> --why TEXT` resolves a blocker, or reruns a failed `fullHealth` (C1). Its function
+    belongs to this unit, and its argument parsing to Setup.
   - `lead-accept --requeue <key>` re-queues a stopped candidate the lead has resolved, without a new hand-off from the
     lane.
   - `doctor --delivery` reports:
@@ -574,7 +595,10 @@ In-flight items that already own an entry:
   - With a host publisher, the close waits until the outbox is acked through `delivery.closed`. Under
     `tracker.updates: "manual"`, it doesn't wait.
   - A story removed through `lead-plan change --kind removed` doesn't hold the close.
-  - After a red `fullHealth` and a green one at a later base head, the delivery closes.
+  - After a red `fullHealth` and a green one at a later base head, the delivery closes. A `lead-resolve` of a red
+    `fullHealth` at the same head reruns it.
+  - A broken base, once repaired, doesn't hold the close: the runner's blocker clears with `base.repaired`.
+  - A permanently refused follow-up filing is shown, not retried, and doesn't hold the close.
   - A lane's `blocker.recorded` holds the close until `lead-resolve` resolves it, and then the delivery closes.
   - A host-only tracker with a host publisher passes `doctor` and `lead-init`.
   - Cleanup of a merged story waits until its lane has moved off it.
@@ -603,7 +627,10 @@ In-flight items that already own an entry:
 - **Moves.** With `tracker.transitions.lead` configured:
   - a move whose status was already reached is skipped, and reported as made by someone else;
   - a move not offered gets one `handled` line, is shown in "Needs you", and journals nothing;
-  - with `lead` absent, no move is made and the update says so.
+  - with `lead` absent, no later move is made and the update says so;
+  - with `start` set and `lead` absent, `lane.assigned` applies the start move once and posts the start update;
+  - with neither set, no move is made and the update says so;
+  - a two-story `lead-assign` moves both tickets.
 - **Adapter contract.** The publisher, run against a second fake adapter that implements only `tracker-adapter/1`
   (no Jira code), posts, moves and files exactly as it does against the Jira adapter.
 - **Host outbox.** With a tracker reachable only through the host, an undrained host outbox raises "Needs you", naming
