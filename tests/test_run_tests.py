@@ -335,7 +335,8 @@ class ParallelRunnerTests(unittest.TestCase):
         run, reference = self.run_runner("-p", "nothing_*.py"), subprocess.run(
             [sys.executable, "-B", "-m", "unittest", "discover", "-s", "suite", "-t", ".", "-p", "nothing_*.py"],
             cwd=self.root, capture_output=True, text=True, timeout=120)
-        self.assertEqual((run.returncode, reference.returncode), (5, 5), run.stdout)
+        # unittest itself reports an empty run as a failure only from Python 3.12.
+        self.assertEqual((run.returncode, reference.returncode), (5, 5 if sys.version_info >= (3, 12) else 0), run.stdout)
         self.assertIn("NO TESTS RAN", run.stdout)
 
     def test_a_serial_module_and_a_class_with_only_a_teardown_stay_whole(self) -> None:

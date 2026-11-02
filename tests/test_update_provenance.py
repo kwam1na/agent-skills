@@ -205,7 +205,8 @@ class UpdateProvenanceTests(unittest.TestCase):
         (self.root / LOCK).chmod(0o644)
         (self.root / LOCK).write_text(json.dumps(json.loads(canonical)), encoding="utf-8")
         self.assertEqual(self.write().returncode, 0)
-        self.assertEqual(stat.S_IMODE((self.root / LOCK).stat().st_mode), 0o644)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE((self.root / LOCK).stat().st_mode), 0o644)
         # A symlinked lock is refused rather than replaced by a regular file.
         moved = self.directory / "lock-elsewhere.json"
         (self.root / LOCK).rename(moved)
