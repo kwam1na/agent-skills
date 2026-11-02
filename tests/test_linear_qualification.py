@@ -366,6 +366,24 @@ class LinearQualificationTests(unittest.TestCase):
             for word in ("attestation", "collector", "receipt"):
                 self.assertNotIn(word, serialized)
 
+    def test_core_record_naming_another_graph_fails_against_the_candidates(self) -> None:
+        runner = _load_runner()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            result, _ = self._run_qualification(directory)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            core_record_path = directory / "core-record.json"
+            core_record = json.loads(core_record_path.read_text(encoding="utf-8"))
+            core_record["workflowGraphSha256"] = "d" * 64
+            core_record_path.write_text(_canonical_json(core_record), encoding="utf-8")
+            record = runner.qualify(
+                directory / "core.zip", directory / "core.release.json", core_record_path,
+                directory / "linear.zip", directory / "linear.release.json",
+            )
+            self.assertEqual(record["summary"]["result"], "failed")
+            failed = [scenario["id"] for scenario in record["scenarios"] if scenario["result"] != "passed"]
+            self.assertEqual(failed, ["core-qualification-binding"])
+
     def test_command_line_takes_no_binding_or_attestation_input(self) -> None:
         runner = _load_runner()
         with tempfile.TemporaryDirectory() as temporary:
@@ -881,9 +899,8 @@ class LinearQualificationTests(unittest.TestCase):
             self.assertEqual(record["summary"]["result"], "passed")
             self.assertEqual(record["summary"]["passedScenarioCount"], len(runner.REQUIRED_SCENARIOS))
             for profile in ("core", "linear"):
-                self.assertNotIn("runtime", record["candidate"][profile])
-            with zipfile.ZipFile(directory / "linear.zip") as archive:
-                self.assertFalse(any(name.startswith("runtime/") for name in archive.namelist()))
+                with zipfile.ZipFile(directory / f"{profile}.zip") as archive:
+                    self.assertFalse(any(name.startswith("runtime/") for name in archive.namelist()), profile)
             runner.validate_checked_record(
                 record,
                 directory / "core.zip", directory / "core.release.json", directory / "core-record.json",
