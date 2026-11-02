@@ -6,7 +6,8 @@ Commands:
     order --tag TAG                      refuse a tag that is not a version, or would go backwards
     ci --tag TAG --commit SHA --repo R   wait for CI's result on that commit, and require success
     flags --tag TAG                      print the `gh release create` latest flags, one a line
-    previous --tag TAG                   print the tag the generated list starts from, if any
+    existing --tag TAG                   print publish=false if the release exists, publish=true if it does not
+    previous --tag TAG --published FILE  print the published tag the generated list starts from, if any
     notes --tag TAG --out DIR --generated FILE    print the release notes
 
 Exit codes: 0 when the decision passes; 1 when it refuses. Nothing here publishes.
@@ -43,6 +44,9 @@ WAIT_LIMIT_SECONDS = 150 * 60
 # A run appears a few seconds after its push, so a tag pushed straight after a merge can arrive first.
 MISSING_LIMIT_SECONDS = 5 * 60
 POLL_SECONDS = 60
+
+
+NEVER_PUBLISHED = "; a version tag that never published may be deleted to clear this"
 
 
 class ChannelError(Exception):
@@ -93,16 +97,19 @@ def check_order(tag: str, root: Path) -> None:
         return
     highest = max(others, key=parse_version)
     if parse_version(highest) >= key:
-        raise ChannelError(f"{tag} is not above existing version tag {highest}")
+        raise ChannelError(f"{tag} is not above existing version tag {highest}{NEVER_PUBLISHED}")
     ancestor = _git(root, "merge-base", "--is-ancestor", f"refs/tags/{highest}^{{commit}}", f"refs/tags/{tag}^{{commit}}")
     if ancestor.returncode == 1:
-        raise ChannelError(f"{tag} does not descend from the highest version tag, {highest}")
+        raise ChannelError(f"{tag} does not descend from the highest version tag, {highest}{NEVER_PUBLISHED}")
     if ancestor.returncode != 0:
         raise ChannelError(f"could not compare {tag} with {highest}: {ancestor.stderr.strip()}")
 
 
 def previous_tag(tag: str, tags: Iterable[str]) -> str | None:
-    """Where the generated list starts: a final skips candidates, so promoting one still lists its changes."""
+    """Where the generated list starts, given the published tags.
+
+    A final skips candidates, so promoting one still lists its changes.
+    """
     key = parse_version(tag)
     if key is None:
         raise ChannelError(f"{tag!r} is not a version tag")
@@ -158,11 +165,18 @@ def decide(runs: list[dict], jobs_for: Callable[[int], list[dict]], commit: str,
     return Decision(PASS, f"{CI_WORKFLOW} run {run['id']} succeeded with every job")
 
 
+def _say(line: str) -> None:
+    # Flushed, so a wait is visible as it goes rather than only when it ends.
+    sys.stdout.write(line + "\n")
+    sys.stdout.flush()
+
+
 def wait_for_success(decision: Callable[[], Decision], *, limit: float = WAIT_LIMIT_SECONDS,
                      missing_limit: float = MISSING_LIMIT_SECONDS, interval: float = POLL_SECONDS,
-                     clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep,
-                     say: Callable[[str], None] = print) -> bool:
+                     clock: Callable[[], float] | None = None, sleep: Callable[[float], None] | None = None,
+                     say: Callable[[str], None] | None = None) -> bool:
     """Whether CI passed, waiting out a run still going. Anything but a pass publishes nothing."""
+    clock, sleep, say = clock or time.monotonic, sleep or time.sleep, say or _say
     started = clock()
     missing_since = None
     while True:
@@ -202,6 +216,16 @@ def _gh_json(path: str) -> dict:
     return document
 
 
+def release_absent(tag: str) -> bool:
+    """Whether no release exists for the tag. Anything but a clear answer refuses."""
+    done = subprocess.run(["gh", "release", "view", tag], capture_output=True, text=True, check=False)
+    if done.returncode == 0:
+        return False
+    if "release not found" in done.stderr:
+        return True
+    raise ChannelError(f"could not tell whether {tag} is published: {done.stderr.strip()}")
+
+
 def _ci_decision(repo: str, commit: str, branch: str) -> Decision:
     runs = _gh_json(f"repos/{repo}/actions/workflows/ci.yml/runs?head_sha={commit}&event=push&branch={branch}&per_page=100")
     return decide(runs.get("workflow_runs", []), lambda run_id: _gh_json(
@@ -211,12 +235,14 @@ def _ci_decision(repo: str, commit: str, branch: str) -> Decision:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("order", "ci", "flags", "previous", "notes"):
+    for name in ("order", "ci", "flags", "existing", "previous", "notes"):
         command = commands.add_parser(name)
         command.add_argument("--tag", required=True)
         if name == "ci":
             command.add_argument("--commit", required=True)
             command.add_argument("--repo", required=True)
+        if name == "previous":
+            command.add_argument("--published", type=Path, required=True)
         if name == "notes":
             command.add_argument("--out", type=Path, required=True)
             command.add_argument("--generated", type=Path, required=True)
@@ -230,11 +256,10 @@ def main(argv: list[str] | None = None) -> int:
                 raise ChannelError(f"CI has not passed on {args.commit}, so {args.tag} publishes nothing")
         elif args.command == "flags":
             print("\n".join(release_flags(args.tag)))
+        elif args.command == "existing":
+            print(f"publish={'true' if release_absent(args.tag) else 'false'}")
         elif args.command == "previous":
-            listed = _git(root, "tag", "--list")
-            if listed.returncode != 0:
-                raise ChannelError(f"could not list tags: {listed.stderr.strip()}")
-            previous = previous_tag(args.tag, listed.stdout.splitlines())
+            previous = previous_tag(args.tag, args.published.read_text(encoding="utf-8").splitlines())
             if previous is not None:
                 print(previous)
         else:

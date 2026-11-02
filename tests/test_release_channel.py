@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import contextlib
+import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -9,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -186,7 +190,9 @@ class ContinuousIntegrationDecisionTests(unittest.TestCase):
     def test_the_newest_run_for_the_commit_decides(self) -> None:
         older, newer = self.run_record(id=1, run_number=1, conclusion="failure"), self.run_record(id=2, run_number=2)
         self.assertEqual(self.decide([older, newer]), channel.PASS)
+        self.assertEqual(self.decide([newer, older]), channel.PASS)
         self.assertEqual(self.decide([newer, self.run_record(id=3, run_number=3, conclusion="failure")]), channel.REFUSE)
+        self.assertEqual(self.decide([self.run_record(id=3, run_number=3, conclusion="failure"), newer]), channel.REFUSE)
 
     def test_a_successful_run_with_a_failed_or_skipped_job_is_refused(self) -> None:
         for name in JOBS:
@@ -341,6 +347,191 @@ class NotesTests(unittest.TestCase):
         self.assertIsNone(channel.previous_tag("v0.1.0-rc.1", ["run-delivery-v1"]))
 
 
+FAKE_GH = """#!{python}
+import json, os, sys
+folder = os.environ["FAKE_GH"]
+with open(os.path.join(folder, "calls.jsonl"), "a", encoding="utf-8") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\\n")
+with open(os.path.join(folder, "script.json"), encoding="utf-8") as stream:
+    script = json.load(stream)
+key = "view" if sys.argv[1:3] == ["release", "view"] else ("jobs" if "/jobs" in sys.argv[2] else "runs")
+reply = script[key]
+sys.stdout.write(reply.get("stdout", ""))
+sys.stderr.write(reply.get("stderr", ""))
+sys.exit(reply.get("code", 0))
+"""
+
+
+class CommandLineTests(unittest.TestCase):
+    """The exit code and output are all release.yml consumes, so the commands themselves run here."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-q")
+        git(self.repo, "commit", "-q", "--allow-empty", "-m", "first")
+        self.commit = git(self.repo, "rev-parse", "HEAD").strip()
+
+    def run_command(self, *arguments: str, cwd: Path | None = None, environment: dict | None = None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([sys.executable, "-B", str(SCRIPT), *arguments], cwd=cwd or self.repo, capture_output=True, text=True,
+                              env={**os.environ, **(environment or {})})
+
+    def fake_gh(self, **replies) -> dict:
+        folder = self.root / "fake"
+        folder.mkdir(exist_ok=True)
+        (folder / "script.json").write_text(json.dumps(replies), encoding="utf-8")
+        tool = folder / "gh"
+        tool.write_text(FAKE_GH.format(python=sys.executable), encoding="utf-8")
+        tool.chmod(0o755)
+        return {"FAKE_GH": str(folder), "PATH": f"{folder}{os.pathsep}{os.environ['PATH']}"}
+
+    def calls(self) -> list[list[str]]:
+        lines = (self.root / "fake" / "calls.jsonl").read_text(encoding="utf-8").splitlines()
+        return [json.loads(line) for line in lines]
+
+    def ci_run(self, **changes) -> dict:
+        return {"id": 7, "name": "CI", "run_number": 3, "head_sha": self.commit, "event": "push", "head_branch": "main",
+                "status": "completed", "conclusion": "success", **changes}
+
+    def ci_replies(self, runs: list[dict], jobs: list[dict] | None = None) -> dict:
+        jobs = [{"name": name, "status": "completed", "conclusion": "success"} for name in JOBS] if jobs is None else jobs
+        return {"runs": {"stdout": json.dumps({"workflow_runs": runs})}, "jobs": {"stdout": json.dumps({"jobs": jobs})}}
+
+    def ci(self, environment: dict) -> subprocess.CompletedProcess[str]:
+        return self.run_command("ci", "--tag", "v1.0.0", "--repo", "owner/name", "--commit", self.commit, environment=environment)
+
+    def test_order_passes_with_exit_zero_and_refuses_with_exit_one(self) -> None:
+        git(self.repo, "tag", "-a", "-m", "m", "v2.0.0")
+        git(self.repo, "tag", "-a", "-m", "m", "v1.0.0")
+        git(self.repo, "tag", "-a", "-m", "m", "v3.0.0-rc.1")
+        self.assertEqual(self.run_command("order", "--tag", "v3.0.0-rc.1").returncode, 0)
+        refused = self.run_command("order", "--tag", "v1.0.0")
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("v3.0.0-rc.1", refused.stderr)
+        self.assertEqual(self.run_command("order", "--tag", "some-set-v1").returncode, 1)
+
+    def test_a_refusal_says_a_tag_that_never_published_may_be_deleted(self) -> None:
+        git(self.repo, "tag", "-a", "-m", "m", "v9.0.0")
+        git(self.repo, "tag", "-a", "-m", "m", "v1.0.0")
+        self.assertIn("never published", self.run_command("order", "--tag", "v1.0.0").stderr)
+
+    def test_order_fails_closed_when_git_cannot_answer(self) -> None:
+        outside = self.root / "outside"
+        outside.mkdir()
+        self.assertEqual(self.run_command("order", "--tag", "v1.0.0", cwd=outside).returncode, 1)
+        git(self.repo, "tag", "-a", "-m", "m", "v1.0.0")
+        self.assertEqual(self.run_command("order", "--tag", "v2.0.0").returncode, 1, "the tag being checked does not exist")
+
+    def test_flags_prints_one_flag_a_line(self) -> None:
+        self.assertEqual(self.run_command("flags", "--tag", "v1.2.3").stdout.split(), ["--latest"])
+        self.assertEqual(self.run_command("flags", "--tag", "v1.2.3-rc.1").stdout.split(), ["--prerelease", "--latest=false"])
+        self.assertEqual(self.run_command("flags", "--tag", "nope").returncode, 1)
+
+    def test_previous_starts_from_a_published_release_not_a_tag_that_never_published(self) -> None:
+        published = self.root / "published.txt"
+        published.write_text("v1.0.0\nrun-delivery-v1\n", encoding="utf-8")
+        for name in ("v1.0.0", "v1.1.0", "v1.1.1"):
+            git(self.repo, "tag", "-a", "-m", "m", name)
+        done = self.run_command("previous", "--tag", "v1.1.1", "--published", str(published))
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, "v1.0.0"))
+        published.write_text("run-delivery-v1\n", encoding="utf-8")
+        done = self.run_command("previous", "--tag", "v1.1.1", "--published", str(published))
+        self.assertEqual((done.returncode, done.stdout), (0, ""))
+
+    def test_notes_prints_the_annotation_the_digests_and_the_list(self) -> None:
+        git(self.repo, "tag", "-a", "-m", "The annotation.", "v1.2.3")
+        output = self.root / "out"
+        output.mkdir()
+        (output / "core-v1.2.3.release.json").write_text(
+            json.dumps({"profile": "core", "releaseId": "core-v1.2.3", "archiveSha256": "a" * 64}), encoding="utf-8")
+        generated = self.root / "generated.md"
+        generated.write_text("## What's Changed\n", encoding="utf-8")
+        arguments = ("notes", "--tag", "v1.2.3", "--out", str(output), "--generated", str(generated))
+        done = self.run_command(*arguments)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        positions = [done.stdout.index(text) for text in ("The annotation.", "a" * 64, "## What's Changed")]
+        self.assertEqual(positions, sorted(positions))
+        (output / "core-v1.2.3.release.json").unlink()
+        self.assertEqual(self.run_command(*arguments).returncode, 1)
+
+    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
+    def test_existing_tells_absent_from_present_and_stops_on_anything_else(self) -> None:
+        arguments = ("existing", "--tag", "v1.0.0")
+        done = self.run_command(*arguments, environment=self.fake_gh(view={"stdout": "title: v1.0.0\n"}))
+        self.assertEqual((done.returncode, done.stdout), (0, "publish=false\n"))
+        done = self.run_command(*arguments, environment=self.fake_gh(view={"stderr": "release not found\n", "code": 1}))
+        self.assertEqual((done.returncode, done.stdout), (0, "publish=true\n"))
+        done = self.run_command(*arguments, environment=self.fake_gh(view={"stderr": "HTTP 502: Bad Gateway\n", "code": 1}))
+        self.assertEqual((done.returncode, done.stdout), (1, ""))
+
+    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
+    def test_ci_passes_only_on_success_and_asks_for_exactly_this_commit_on_a_push_to_main(self) -> None:
+        self.assertEqual(self.ci(self.fake_gh(**self.ci_replies([self.ci_run()]))).returncode, 0)
+        runs, jobs = self.calls()
+        self.assertEqual(runs[:1], ["api"])
+        self.assertTrue(runs[1].startswith("repos/owner/name/actions/workflows/ci.yml/runs?"), runs[1])
+        for term in (f"head_sha={self.commit}", "event=push", "branch=main"):
+            self.assertIn(term, runs[1])
+        self.assertTrue(jobs[1].startswith("repos/owner/name/actions/runs/7/jobs?"), jobs[1])
+        self.assertIn("filter=latest", jobs[1])
+
+    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
+    def test_ci_refuses_a_failed_or_cancelled_run_with_exit_one(self) -> None:
+        for conclusion in ("failure", "cancelled"):
+            with self.subTest(conclusion=conclusion):
+                done = self.ci(self.fake_gh(**self.ci_replies([self.ci_run(conclusion=conclusion)])))
+                self.assertEqual(done.returncode, 1)
+                self.assertIn("publishes nothing", done.stderr)
+        failed = [{"name": name, "status": "completed", "conclusion": "failure"} for name in JOBS]
+        self.assertEqual(self.ci(self.fake_gh(**self.ci_replies([self.ci_run()], failed))).returncode, 1)
+
+    def waited(self, environment: dict) -> tuple[int, float, str]:
+        """Run `ci` in process with a fake clock, so the real limits apply without waiting them out."""
+        now = [0.0]
+
+        def advance(seconds: float) -> None:
+            now[0] += seconds
+
+        output = io.StringIO()
+        with mock.patch.dict(os.environ, environment), mock.patch.object(channel.time, "monotonic", lambda: now[0]), \
+                mock.patch.object(channel.time, "sleep", advance), contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            code = channel.main(["ci", "--tag", "v1.0.0", "--repo", "owner/name", "--commit", self.commit])
+        return code, now[0], output.getvalue()
+
+    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
+    def test_ci_gives_a_missing_run_only_the_real_grace(self) -> None:
+        code, waited, said = self.waited(self.fake_gh(**self.ci_replies([])))
+        self.assertEqual(code, 1)
+        self.assertGreater(waited, 0)
+        self.assertLessEqual(waited, 5 * 60)
+        self.assertIn("gave up", said)
+
+    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
+    def test_ci_waits_for_a_running_build_only_up_to_the_real_bound(self) -> None:
+        code, waited, said = self.waited(self.fake_gh(**self.ci_replies([self.ci_run(status="in_progress", conclusion=None)])))
+        self.assertEqual(code, 1)
+        self.assertGreater(waited, 140 * 60)
+        self.assertLessEqual(waited, 150 * 60)
+        self.assertIn("150 minutes", said)
+
+    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
+    def test_ci_retries_a_failing_lookup_and_never_reads_it_as_success_or_as_missing(self) -> None:
+        down = {"runs": {"stderr": "HTTP 502\n", "code": 1}, "jobs": {"stderr": "HTTP 502\n", "code": 1}}
+        code, waited, said = self.waited(self.fake_gh(**down))
+        self.assertEqual(code, 1)
+        self.assertGreater(waited, 140 * 60, "a lookup failure is retried, not treated as a missing run")
+        self.assertIn("could not read", said)
+
+    def test_the_wait_log_is_flushed_as_it_goes(self) -> None:
+        stream = mock.Mock()
+        with mock.patch.object(channel.sys, "stdout", stream):
+            channel._say("still waiting")
+        stream.flush.assert_called()
+
+
 class WorkflowWiringTests(unittest.TestCase):
     """Text pins cover only the wiring; the decisions above run for real."""
 
@@ -369,7 +560,7 @@ class WorkflowWiringTests(unittest.TestCase):
 
     def test_every_guard_precedes_publishing_and_the_publish_job_needs_the_guard(self) -> None:
         guards = ('test "$(git cat-file -t "refs/tags/$TAG")" = tag', 'git merge-base --is-ancestor "refs/tags/$TAG^{commit}" origin/main',
-                  'scripts/release_channel.py order --tag "$TAG"', 'gh release view "$TAG"', "scripts/release_channel.py ci ")
+                  'scripts/release_channel.py order --tag "$TAG"', 'scripts/release_channel.py existing --tag "$TAG"', "scripts/release_channel.py ci ")
         for guard in guards:
             with self.subTest(guard=guard):
                 self.assertIn(guard, self.guard)
@@ -380,9 +571,24 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_the_guard_checks_the_commit_the_tag_names(self) -> None:
         self.assertIn('--commit "$(git rev-parse "refs/tags/$TAG^{commit}")"', self.guard)
 
+    def test_a_moved_tag_publishes_nothing_because_both_jobs_tie_it_to_the_commit_they_run_on(self) -> None:
+        same = 'test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$GITHUB_SHA"'
+        fetch = 'git fetch --force --tags origin "refs/tags/$TAG:refs/tags/$TAG"'
+        for job in (self.guard, self.publish):
+            self.assertIn(same, job)
+            self.assertLess(job.index(fetch), job.index(same))
+        self.assertLess(self.guard.index(same), self.guard.index('release_channel.py order'))
+        self.assertLess(self.publish.index(same), self.publish.index("gh release create"))
+
+    def test_the_publish_step_checks_the_order_again_after_the_wait_and_the_build(self) -> None:
+        recheck = self.publish.index('scripts/release_channel.py order --tag "$TAG"')
+        self.assertLess(self.publish.index("scripts/cut-release.py"), recheck)
+        self.assertLess(self.publish.index('git fetch --force --tags origin'), recheck)
+        self.assertLess(recheck, self.publish.index("gh release create"))
+
     def test_an_existing_release_stops_later_jobs_and_is_never_replaced(self) -> None:
-        self.assertIn("publish=false", self.guard)
-        self.assertLess(self.guard.index('gh release view "$TAG"'), self.guard.index("scripts/release_channel.py ci "))
+        self.assertIn('scripts/release_channel.py existing --tag "$TAG" >> "$GITHUB_OUTPUT"', self.guard)
+        self.assertLess(self.guard.index("release_channel.py existing"), self.guard.index("scripts/release_channel.py ci "))
         for forbidden in ("--clobber", "gh release upload", "gh release delete"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, self.workflow)
@@ -430,7 +636,8 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_the_release_flags_and_notes_come_from_the_channel(self) -> None:
         self.assertIn('scripts/release_channel.py flags --tag "$TAG"', self.publish)
         self.assertIn("scripts/release_channel.py notes ", self.publish)
-        self.assertIn('scripts/release_channel.py previous --tag "$TAG"', self.publish)
+        self.assertIn('scripts/release_channel.py previous --tag "$TAG" --published "$RUNNER_TEMP/published.txt"', self.publish)
+        self.assertIn('gh release list --limit 1000 --json tagName --jq', self.publish)
         self.assertIn("--notes-file", self.publish)
         self.assertNotIn("--generate-notes", self.publish)
 

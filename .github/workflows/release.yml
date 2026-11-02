@@ -35,6 +35,8 @@ jobs:
           set -euo pipefail
           # Checkout can leave a lightweight copy of the tag; fetch the pushed object itself.
           git fetch --force --tags origin "refs/tags/$TAG:refs/tags/$TAG"
+          # This run builds the commit it started on, so a moved tag publishes nothing.
+          test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$GITHUB_SHA"
           python scripts/release_channel.py order --tag "$TAG"
           # A release tag is annotated and names a commit already merged to main.
           test "$(git cat-file -t "refs/tags/$TAG")" = tag
@@ -44,14 +46,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "$TAG is already published; a release is never replaced."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          fi
+        # A release is never replaced, and an unclear answer stops here rather than reading as absent.
+        run: python scripts/release_channel.py existing --tag "$TAG" >> "$GITHUB_OUTPUT"
       - name: Require CI's success on the tagged commit
         if: steps.existing.outputs.publish == 'true'
         env:
@@ -96,7 +92,11 @@ jobs:
           set -euo pipefail
           OUT="$RUNNER_TEMP/release"
           git fetch --force --tags origin "refs/tags/$TAG:refs/tags/$TAG"
-          previous="$(python scripts/release_channel.py previous --tag "$TAG")"
+          test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$GITHUB_SHA"
+          # The guard's check may be two and a half hours old by now, or from an earlier attempt of this run.
+          python scripts/release_channel.py order --tag "$TAG"
+          gh release list --limit 1000 --json tagName --jq '.[].tagName' > "$RUNNER_TEMP/published.txt"
+          previous="$(python scripts/release_channel.py previous --tag "$TAG" --published "$RUNNER_TEMP/published.txt")"
           generate=(-f "tag_name=$TAG")
           if [ -n "$previous" ]; then generate+=(-f "previous_tag_name=$previous"); fi
           gh api -X POST "repos/$REPOSITORY/releases/generate-notes" "${generate[@]}" --jq .body > "$RUNNER_TEMP/generated.md"
