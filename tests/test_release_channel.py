@@ -411,6 +411,22 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertGreater(minutes * 60, channel.WAIT_LIMIT_SECONDS)
         self.assertEqual(channel.WAIT_LIMIT_SECONDS, 150 * 60)
 
+    def test_ci_proves_the_release_path_with_nothing_above_read_permission(self) -> None:
+        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertRegex(ci, r"(?m)^permissions:\n  contents: read$")
+        self.assertNotIn("write", ci.split("\njobs:\n", 1)[0])
+        self.assertNotIn("workflow_call", ci)
+        job = ci.split("\n  cut-release:\n", 1)[1]
+        self.assertRegex(job, r"(?m)^    runs-on: ubuntu-latest$")
+        self.assertIn('scripts/cut-release.py --version v0.0.0-rc.0 --out "$RUNNER_TEMP/release"', job)
+        self.assertIn('git status --porcelain', job)
+
+    def test_ci_jobs_are_bounded_and_macos_sizes_its_workers_from_the_runner(self) -> None:
+        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"(?m)^    timeout-minutes: (\d+)$", ci), ["120", "120"])
+        self.assertRegex(ci, r"(?m)^      - if: runner\.os == 'macOS'\n        run: python scripts/run-tests\.py --workers \"\$\(sysctl -n hw\.ncpu\)\"$")
+        self.assertRegex(ci, r"(?m)^      - if: runner\.os != 'macOS'\n        run: python scripts/run-tests\.py$")
+
     def test_the_release_flags_and_notes_come_from_the_channel(self) -> None:
         self.assertIn('scripts/release_channel.py flags --tag "$TAG"', self.publish)
         self.assertIn("scripts/release_channel.py notes ", self.publish)
