@@ -157,10 +157,11 @@ In-flight items that already own an entry:
     holds. The close condition reads the holding items only, and the friction note lists the shown ones.
 
     Some resolutions are automatic:
-    - the `blocker.recorded` the runner journals with `base.broken` or `meta.hold` is resolved by `base.repaired`, or
-      by the hold clearing;
-    - `lead-resolve` also accepts a `fullHealth` item, and reruns `fullHealth` at the current head, for a failure the
-      lead judges flaky.
+    - the runner's own blocker is resolved by `base.repaired`, or by the hold clearing. It is recognised as the
+      first `blocker.recorded` with no lane and no subject after a `base.broken` or a `meta.hold` being set, because
+      the journal records no writer;
+    - `lead-resolve full-health --why TEXT` reruns `fullHealth` at the current head, for a failure the lead judges
+      flaky.
 
     The line map shows the same list, and the close condition reads the same function, so an item clears when its
     condition clears. Nothing is added to the record's schema for it.
@@ -212,8 +213,10 @@ In-flight items that already own an entry:
     posts:
     - an entry whose ledger already holds an action line is skipped, whoever wrote that line, the publisher or a lane
       command;
-    - `decision.recorded` is posted only for the subjects and writers the table names: a `lead-plan change`,
-      a deferral or a blocker. Every other entry gets a `skip` line. Nothing is added to the journal schema for this.
+    - `decision.recorded` is posted only when the run-delivery command that wrote it marks it. That covers a
+      `lead-plan change`, a deferral, a `lead-resolve` and a blocker. The mark is the entry's journal id in
+      `flow-log/tracker-marks.jsonl`, because the journal records no writer. Every other entry gets a `skip` line.
+      Nothing is added to the journal schema for this.
   - **Failure.** The supervisor's "Needs you" (C1) includes a publisher whose ledger lags the journal for more than one
     pass, naming its last error and the waiting entries. It clears when the lag does.
   - **Trackers reachable only through the host.** Some trackers are reachable only through the host's connector,
@@ -225,17 +228,21 @@ In-flight items that already own an entry:
     reachable only through the host but with no host publisher. `lead-init` refuses either unless
     `run-delivery.json` sets `tracker.updates: "manual"`.
 - **C3. Every tracker move is configuration.** `run-delivery.json` `tracker.transitions` has three parts:
-  - **`start`.** The publisher applies it on `lane.assigned`, whatever `lead` says. An adopter's existing `start`
-    therefore keeps moving tickets to started without new configuration. The move now comes at assignment rather than
-    when the lane begins, which is right because `lead-assign` is followed at once by the lane session it prints. The
-    guide says so.
+  - **`start`.** The publisher applies it for a story's `lane.assigned`, whatever `lead` says, once that story has
+    started. A story starts when `lane-start <key>` records it in `flow-log/lane-starts.jsonl`. Lane commands already
+    write the lead-side flow log, and a lane may journal only `review.round`. Until then the publisher writes nothing
+    for that entry and moves on. An adopter's existing `start` therefore keeps moving each ticket to started when its
+    lane begins it, as the brief has the lane do today, with no new configuration. The move applies only on a story's first
+    recorded start, so reassigning a story that is already past started never moves its ticket back. A story removed
+    or reassigned before it starts gets a `skip` line and never moves.
   - **`review`.** It stays with the lane commands, timed by `reviewWhen` (C5).
   - **`lead`.** A new object from any later journal kind to the transitions the publisher makes, such as
     `candidate.merged` or `delivery.closed`. If `lead` is absent, or a kind maps to an empty list, no move is made for
     that kind and the update says the move belongs to people. That is the default, because some teams reserve every
     move after review for people.
 
-  `lead-assign` journals one `lane.assigned` per story key it assigns, so each ticket moves. Each move reads the ticket's status first:
+  `lead-assign` journals one `lane.assigned` per story key it assigns, so each ticket has an entry for its own start,
+  made when its lane begins it. An entry waiting for its story to start doesn't count as ledger lag in "Needs you". Each move reads the ticket's status first:
   - one already made by a person or an integration is skipped, and reported as made by someone else;
   - one not offered from the current status is recorded in the ledger as `handled`, shown in "Needs you" (C1), and
     neither retried nor journalled.
@@ -255,8 +262,10 @@ In-flight items that already own an entry:
 
     The start transition and start update belong to `lane.assigned`, which the publisher handles under the guide's
     table ("it moves to started") as soon as `lead-assign` journals it. Neither the lead nor the lane makes the move.
-    For a tracker reachable only through the host, `lane-start` prints the move and post for the lane to make and
-    records them, and the host outbox carries `lane.assigned` without its start move, so the start is posted once. `lane-start` replaces four steps the brief lists today. `lead-assign` prints it with the base filled
+    For a tracker reachable only through the host, `lane-start` prints the start move and the start update for the
+    lane to make, and records them. The orchestration guide's host-publisher line tells the lead's drain
+    to skip `lane.assigned`'s start move and update when `lane-start` recorded them, so the start is posted once.
+    The Guide unit owns that line. `lane-start` replaces four steps the brief lists today. `lead-assign` prints it with the base filled
     in.
   - **The review transition's timing is a setting, and the automatic move is opt-in.**
     `tracker.transitions.reviewWhen` is one of:
@@ -282,7 +291,7 @@ In-flight items that already own an entry:
   must succeed before the next.
   1. **Health check.** Run the binding's `fullHealth` in a fresh detached checkout of the final base, at most once per
      base head. Its result and output are kept in `flow-log/full-health.json`. A failure shows in "Needs you" (C1)
-     and holds the close until `fullHealth` passes at a later head.
+     and holds the close until `fullHealth` passes, at a later head or on a `lead-resolve full-health` rerun.
   2. **Follow-ups.** File one follow-up item for each deferred finding that has none, keyed by story and finding id
      (`<story>-<finding id>`, since finding ids repeat across stories), which is also the `followups[]` item's `id`.
      Filing goes through the tracker publisher. A transient failure holds the close and is retried on the next pass.
@@ -296,7 +305,8 @@ In-flight items that already own an entry:
   4. **Archive.** Release every lease the lead holds, and archive the record. If the operator's checkout is clean and
      on the final base, fast-forward it. Otherwise name it in step 5, along with removing the lead's checkout once
      the operator no longer needs it.
-  5. **Friction note.** Write a friction note stub beside the archive for the lead's `compound-learning` pass, and
+  5. **Friction note.** Write a friction note stub beside the archive for the lead's `compound-learning` pass. It
+     lists every shown item, naming each permanently refused follow-up as an unfiled follow-up. Then
      raise it as the one remaining "Needs you" item, together with the host steps the workflow can't do, such as
      archiving lane sessions.
   6. **Stop.**
@@ -590,7 +600,8 @@ In-flight items that already own an entry:
     - a planned, unassigned story not covered by any finish line;
     - an open escalation;
     - a failing publisher.
-  - A failing `fullHealth` holds the close and isn't rerun until the base head changes.
+  - A failing `fullHealth` holds the close and isn't rerun until the base head changes or `lead-resolve full-health`
+    asks for a rerun.
   - A failed follow-up filing holds the close, and is retried and filed once.
   - With a host publisher, the close waits until the outbox is acked through `delivery.closed`. Under
     `tracker.updates: "manual"`, it doesn't wait.
@@ -628,16 +639,20 @@ In-flight items that already own an entry:
   - a move whose status was already reached is skipped, and reported as made by someone else;
   - a move not offered gets one `handled` line, is shown in "Needs you", and journals nothing;
   - with `lead` absent, no later move is made and the update says so;
-  - with `start` set and `lead` absent, `lane.assigned` applies the start move once and posts the start update;
+  - with `start` set and `lead` absent, a story's start move and update happen once, when its `lane-start` runs;
   - with neither set, no move is made and the update says so;
-  - a two-story `lead-assign` moves both tickets.
+  - a two-story `lead-assign` moves neither ticket until each one's `lane-start`, then moves each once;
+  - a story removed before its `lane-start` never moves, and its entry gets a `skip` line;
+  - a story reassigned after it reached review gets no second start move;
+  - an unmarked `decision.recorded`, such as an acceptance, gets a `skip` line, while a `lead-plan change`'s is
+    posted.
 - **Adapter contract.** The publisher, run against a second fake adapter that implements only `tracker-adapter/1`
   (no Jira code), posts, moves and files exactly as it does against the Jira adapter.
 - **Host outbox.** With a tracker reachable only through the host, an undrained host outbox raises "Needs you", naming
   the waiting updates.
 - **Lane start.**
-  - `lead-assign` journals `lane.assigned`, and the publisher applies the start transition and posts the start update
-    once.
+  - `lead-assign` journals `lane.assigned`. After `lane-start` records the story's start, the publisher applies the
+    start transition and posts the start update once.
   - `lane-start` creates the worktree from `--base` and sets focus, and makes no tracker call of its own.
   - Run twice, it changes nothing the second time.
   - A base outside `bases` is refused.
