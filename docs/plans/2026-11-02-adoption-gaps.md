@@ -205,8 +205,10 @@ In-flight items that already own an entry:
   - **Bodies.** Every comment is truncated to the adapter's declared limit (32,767 characters for Jira), with a
     pointer to the record for the rest.
   - **Idempotency.** Each comment and move carries a marker the adapter stores on the known ticket (the Jira adapter
-    uses an entity property). The marker is the delivery key, the record's init id and the journal id together. The init id is
-    the time of the plan log's approval snapshot, which every `lead-init` writes, so it needs no record field. It is
+    uses an entity property). The marker is the delivery key, the record's init id, the journal id and the action together. The
+    action is `comment`, `transition` with the transition's name, or `create`. The init id is the time of the
+    record's first journal entry, the "Record starts at base" `decision.recorded` that every `lead-init` writes,
+    criteria or not. It never changes during the record and needs no record field. It is
     combined this way because journal ids restart at 1 after a `--replace` and two deliveries can post to one
     ticket. A created item carries a marker the tracker can search for without an
     installed app. The Jira adapter uses the label `agent-followup-<story>-<finding id>`, lowercased to Jira's label
@@ -256,7 +258,8 @@ In-flight items that already own an entry:
   writes a `skip` line and makes no move, because a late start could move a ticket that is already in review back to
   started, and the adapter contract carries no status order. The friction note lists such a story as "start never
   recorded". `start` is applied only on a `lane-start` record, never once the ledger holds the story's review move, and never
-  when the adapter finds a start marker from the same delivery key under any init id on the ticket. In that last case
+  when the adapter finds a `transition` marker for the `start` transition from the same delivery key, under any init
+  id, on the ticket. In that last case
   the story was started under an earlier record, before a `--replace`, and the entry gets a `skip` line.
   Either way the entry gets a line.
   While an entry waits, it isn't ledger lag in "Needs you". But during C6 step 3 it counts as uncovered and is shown,
@@ -692,7 +695,9 @@ In-flight items that already own an entry:
   - A pre-init `lead-plan change` doesn't count.
   - `--replace` archives the record and the flow log, and an edit made between the old init and the new one isn't
     reported as drift.
-  - After `--replace`, a new entry whose journal id equals one the old delivery posted to the same ticket is posted.
+  - After `--replace`, a new entry whose journal id equals one the old delivery posted to the same ticket is posted,
+    for a delivery with criteria and for one without.
+  - After `--replace`, a story whose old delivery only commented on its ticket still gets its first start.
   - A story in review before `--replace`, re-assigned after it and given a new `lane-start`, keeps its review status.
     Its new `lane.assigned` gets a `skip` line, because the ticket holds the same delivery's start marker under the
     earlier init id.
