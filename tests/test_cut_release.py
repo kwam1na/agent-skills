@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -73,14 +75,22 @@ def _qualifier_double(fail: str | None = None, how: str = "exit"):
         failing = name == fail
         if failing and how == "exit":
             return subprocess.CompletedProcess(command, 1, "", "qualifier says no")
+        if failing and how == "stdout-only":
+            return subprocess.CompletedProcess(command, 1, '{"error": "qualifier says no on stdout"}', "")
+        if failing and how == "extra-file":
+            (record.parent / "stray.txt").write_text("stray\n", encoding="utf-8")
+            record.write_text(json.dumps({"summary": {"result": "passed"}}) + "\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, "", "")
         if failing and how == "no-record":
             return subprocess.CompletedProcess(command, 0, "", "")
         if failing and how == "malformed":
             record.write_text("not json\n", encoding="utf-8")
             return subprocess.CompletedProcess(command, 0, "", "")
         result = "failed" if failing else "passed"
-        record.write_text(json.dumps({"summary": {"result": result}}) + "\n", encoding="utf-8")
-        return subprocess.CompletedProcess(command, 0, "", "")
+        scenarios = [{"id": "named-scenario", "result": "failed", "failure": "named reason"}] if failing else []
+        record.write_text(json.dumps({"scenarios": scenarios, "summary": {"result": result}}) + "\n", encoding="utf-8")
+        exit_code = 1 if failing and how == "failed-record-exit" else 0
+        return subprocess.CompletedProcess(command, exit_code, "", "")
 
     return run, calls
 
@@ -262,13 +272,27 @@ class SetTests(unittest.TestCase):
 
     def test_any_qualifier_failing_leaves_no_set_over_an_earlier_run(self) -> None:
         for fail in ("core", "provider", "bootstrap", "linear"):
-            for how in ("exit", "failed-record", "no-record", "malformed"):
+            for how in ("exit", "stdout-only", "failed-record", "failed-record-exit", "no-record", "malformed", "extra-file"):
                 with self.subTest(fail=fail, how=how):
                     earlier, _ = self._cut(version="v1.0.0")
                     self.assertEqual(earlier, 0)
                     code, _ = self._cut(fail=fail, how=how)
                     self.assertEqual(code, 1)
                     self.assertEqual(list(self.directory.iterdir()), [])
+
+    def test_a_failing_qualifier_says_why(self) -> None:
+        for how, reason in (
+            ("exit", "qualifier says no"),
+            ("stdout-only", "qualifier says no on stdout"),
+            ("failed-record", "named-scenario: named reason"),
+            ("failed-record-exit", "named-scenario: named reason"),
+        ):
+            with self.subTest(how=how):
+                run, _ = _qualifier_double("provider", how)
+                stderr = io.StringIO()
+                with mock.patch.object(self.command.subprocess, "run", run), contextlib.redirect_stderr(stderr):
+                    self.assertEqual(self.command.main(["--version", VERSION, "--out", str(self.out)]), 1)
+                self.assertIn(reason, stderr.getvalue())
 
     def test_a_failed_build_leaves_no_set_over_an_earlier_run(self) -> None:
         self.assertEqual(self._cut()[0], 0)
@@ -286,10 +310,27 @@ class SetTests(unittest.TestCase):
         self.assertEqual(self._cut(version="v1.0.1")[0], 0)
         self.assertEqual({path.name for path in self.out.iterdir()}, _named_outputs("v1.0.1"))
 
-    def test_a_failure_while_publishing_leaves_no_set(self) -> None:
+    def test_a_failed_check_of_the_staged_set_leaves_no_set(self) -> None:
         self.assertEqual(self._cut()[0], 0)
-        with mock.patch.object(self.command, "verify_release", side_effect=ValueError("wrong")):
+        verify = self.command.verify_release
+        staged = []
+
+        def refuse_staged(archive: Path, metadata: Path):
+            if archive.parent.name.startswith(".out."):
+                staged.append(archive)
+                raise ValueError("the staged copy is wrong")
+            return verify(archive, metadata)
+
+        with mock.patch.object(self.command, "verify_release", refuse_staged):
             self.assertEqual(self._cut()[0], 1)
+        self.assertTrue(staged, "the staged set was never checked")
+        self.assertEqual(list(self.directory.iterdir()), [])
+
+    def test_a_failed_rename_leaves_no_set(self) -> None:
+        self.assertEqual(self._cut()[0], 0)
+        with mock.patch.object(self.command.os, "rename", side_effect=OSError("cannot rename")) as rename:
+            self.assertEqual(self._cut()[0], 1)
+        rename.assert_called_once()
         self.assertEqual(list(self.directory.iterdir()), [])
 
     def test_a_directory_holding_other_files_is_refused_and_they_are_kept(self) -> None:

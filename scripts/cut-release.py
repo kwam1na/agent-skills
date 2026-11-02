@@ -4,7 +4,9 @@
 The output directory ends up holding exactly five archives, five release files
 and four records, or none of them. An earlier set in that directory is removed
 before anything else happens, and a new set appears only once every product
-verifies and every record passes.
+verifies and every record passes. The command owns the output directory: it
+removes every release file there, of any version, and refuses a directory that
+holds anything else.
 
 Exit codes: 0 when the set is published; 1 when a build, verification or
 qualifier fails; 2 for a refused version or output directory.
@@ -102,15 +104,29 @@ def _run_qualifier(name: str, arguments: list[str], record: Path, work: Path) ->
         check=False,
     )
     if result.returncode != 0:
-        raise ValueError(f"cut_release.qualifier: {name} exited {result.returncode}: {result.stderr.strip()[-2000:]}")
+        # Some qualifiers report only on stdout, and the record goes with the temporary directory.
+        reason = _failed_scenarios(record) or result.stderr.strip()[-2000:] or result.stdout.strip()[-2000:]
+        raise ValueError(f"cut_release.qualifier: {name} exited {result.returncode}: {reason}")
     _require_passed(record)
+
+
+def _failed_scenarios(record: Path) -> str:
+    try:
+        scenarios = json.loads(record.read_text(encoding="utf-8"))["scenarios"]
+        return "; ".join(
+            f"{scenario['id']}: {scenario.get('failure', 'failed')}"
+            for scenario in scenarios
+            if scenario["result"] != "passed"
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
 
 
 def _require_passed(record: Path) -> None:
     # A qualifier's exit code alone does not say so: some exit 0 having written their record.
     summary = json.loads(record.read_text(encoding="utf-8")).get("summary", {})
     if summary.get("result") != "passed":
-        raise ValueError(f"cut_release.record: {record.name} did not pass")
+        raise ValueError(f"cut_release.record: {record.name} did not pass: {_failed_scenarios(record)}")
 
 
 def _qualify(version: str, directory: Path, work: Path) -> None:
@@ -203,10 +219,10 @@ def main(arguments: list[str] | None = None) -> int:
         print(f"cut-release refused: {error}", file=sys.stderr)
         return 2
     except OSError as error:
-        print(f"cut-release failed: {type(error).__name__}: {error}", file=sys.stderr)
+        print(f"cut-release failed: an earlier set may remain in {out}: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
     try:
-        with tempfile.TemporaryDirectory(prefix="agent-skills-cut-release-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="agent-skills-cut-release-", ignore_cleanup_errors=True) as temporary:
             built = Path(temporary) / "set"
             work = Path(temporary) / "work"
             built.mkdir()
