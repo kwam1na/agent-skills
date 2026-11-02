@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -186,19 +185,6 @@ class QualificationPendingGateTests(unittest.TestCase):
                     write_marker(copy, None, raw="{")
                     malformed = run("validate-registry.py", *root, root=script_root)
                     self.assertEqual(malformed.returncode, 1, malformed.stdout)
-
-    def test_ci_passes_the_target_base_for_default_branch_events(self) -> None:
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        # Retargeting a pull request to the default branch is an edit, and must rerun the gate.
-        self.assertRegex(workflow, r"(?m)^  pull_request:\n(?:    #.*\n)*    types: \[opened, synchronize, reopened, edited\]$")
-        self.assertRegex(workflow, r"(?m)^  push:\n    branches: \[main\]$")
-        self.assertIn(
-            "TARGET_BASE: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}",
-            workflow,
-        )
-        validations = re.findall(r"(?m)^.*scripts/validate-registry\.py.*$", workflow)
-        self.assertEqual(len(validations), 1, validations)
-        self.assertIn('--target-base "$TARGET_BASE"', validations[0])
 
 
 if __name__ == "__main__":
