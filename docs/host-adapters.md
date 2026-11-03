@@ -50,7 +50,7 @@ deletes only the now-inert stable links proven by the current receipt and leaves
 unrelated host entries untouched. Interrupted projection changes are restored
 or completed through the existing repository lifecycle journal.
 
-On Windows, directory links use native runtime separators and explicit
+On Windows, which is not validated (see the README), directory links use native runtime separators and explicit
 directory-link semantics. Because the standard library cannot atomically
 replace an existing directory link there, the journaled switch removes the
 shared `current` link before installing its prepared replacement. Both hosts

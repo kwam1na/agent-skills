@@ -9,6 +9,8 @@ repository-specific overlays without a separately approved unit.
 Use outcome names in durable docs and metadata. Keep ticket and plan-unit
 identifiers in delivery records rather than standing source language.
 
+`docs/solutions/` holds what past deliveries learned, one note per learning at `docs/solutions/<category>/<slug>-<YYYY-MM-DD>.md`, and is worth searching before changing a mechanism it names or writing another note.
+
 A `candidateRef` naming a review candidate resolves, in this repository, to the
 commit whose tree carries the reviewed text. For a verification round the
 executor supplies that resolution beside the exact reference text, and a lens
@@ -41,7 +43,8 @@ gating job blocks the next release: the release workflow publishes only on CI's
 success for the exact tagged commit. That gate is the Ubuntu job and `cut-release` on
 the push to the default branch. CI's macOS job runs there, and with a `full-matrix`
 label on a change request, to inform: its result, or its absence, neither allows nor
-blocks a release, and nothing waits for it.
+blocks a release. Nothing waits for it, except that a gating job absent while it runs
+is waited for, within the bound, and then refused.
 
 Before tagging, run the full suite locally on macOS with Python 3.11. The release job
 cannot verify this, so it rests on whoever tags. A newer Python can hide what the
@@ -152,7 +155,8 @@ It is development-only: bootstrap needs Node.js 20 or newer with npm and runs
 into the checkout's own `node_modules/`. No release archive carries the lane's
 package files.
 
-On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
+On Windows, which is not validated (see above), use `.venv\Scripts\python.exe` for
+the sensor commands.
 
 A corpus pin asserts that its phrase is present in the whitespace-normalized
 file, not that the phrase sits under any particular heading. Relocating a pinned

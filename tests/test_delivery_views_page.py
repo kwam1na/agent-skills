@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -34,28 +37,65 @@ def find_node() -> str | None:
     return node if major.isdigit() and int(major) >= NODE_MINIMUM else None
 
 
+def stop_tree(process: subprocess.Popen) -> None:
+    """Kill a process and what it started, by pid.
+
+    Not by group: the lane shares its worker's group, for the test runner's own
+    stop to reach it, so killing that group would kill the worker too.
+    """
+    if os.name == "nt":
+        process.kill()
+        return
+    # Held still first, so it starts nothing after the read.
+    process.send_signal(signal.SIGSTOP)
+    table = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, check=False).stdout
+    children: dict[int, list[int]] = {}
+    for line in table.splitlines():
+        pid, parent = map(int, line.split())
+        children.setdefault(parent, []).append(pid)
+    found, pending = [], [process.pid]
+    while pending:
+        found.append(pending.pop())
+        pending.extend(children.get(found[-1], []))
+    for pid in found:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+
+
 def run_lane(node: str, files: list[Path], timeout: float = 600) -> str | None:
     """Run the page tests and return why the lane failed, or None."""
+    process = subprocess.Popen(
+        [
+            node,
+            "--test",
+            f"--test-reporter={REPORTER.as_uri()}",
+            "--test-reporter-destination=stdout",
+            *(str(path) for path in files),
+        ],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     try:
-        result = subprocess.run(
-            [
-                node,
-                "--test",
-                f"--test-reporter={REPORTER.as_uri()}",
-                "--test-reporter-destination=stdout",
-                *(str(path) for path in files),
-            ],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        stop_tree(process)
+        # What had finished narrows a hang down to the tests that had not. Bounded, as anything missed holds the pipes.
+        try:
+            stdout, stderr = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired as expired:
+            process.kill()
+            stdout = expired.stdout.decode("utf-8", "replace") if isinstance(expired.stdout, bytes) else expired.stdout or ""
+            stderr = ""
+        return (
+            f"The page tests did not finish in {timeout:g}s. Reported so far:\n{stdout.strip()}"
+            + (f"\nTheir errors:\n{stderr.strip()}" if stderr.strip() else "")
         )
-    except subprocess.TimeoutExpired as expired:
-        # What had finished narrows a hang down to the tests that had not.
-        output = expired.stdout or b""
-        output = output.decode("utf-8", "replace") if isinstance(output, bytes) else output
-        return f"The page tests did not finish in {timeout:g}s. Reported so far:\n{output.strip()}"
+    except BaseException:
+        stop_tree(process)
+        raise
+    result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
     events = []
     for line in result.stdout.splitlines():
         try:
@@ -131,6 +171,32 @@ class PageLaneFailureTests(unittest.TestCase):
             )
             failure = run_lane(find_node(), [hanging], timeout=2)
         self.assertIn("did not finish in 2s", failure or "")
+
+    @unittest.skipIf(os.name == "nt", "POSIX processes")
+    def test_a_lane_that_hangs_leaves_no_test_process_behind(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            recorded = Path(temporary) / "pid"
+            hanging = Path(temporary) / "hangs.test.mjs"
+            hanging.write_text(
+                'import { writeFileSync } from "node:fs";\n'
+                'import { test } from "node:test";\n'
+                f"writeFileSync({json.dumps(str(recorded))}, String(process.pid));\n"
+                'test("hangs", () => new Promise((resolve) => setTimeout(resolve, 120000)));\n',
+                encoding="utf-8",
+            )
+            failure = run_lane(find_node(), [hanging], timeout=8)
+            self.assertIn("did not finish in 8s", failure or "")
+            pid = int(recorded.read_text(encoding="utf-8"))
+
+        def running() -> bool:
+            state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False)
+            return bool(state.stdout.strip()) and not state.stdout.strip().startswith("Z")
+
+        self.addCleanup(lambda: running() and os.kill(pid, signal.SIGKILL))
+        deadline = time.monotonic() + 5
+        while running() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(running(), "the hung lane's test process outlived the timeout")
 
     def write(self, directory: Path, name: str, body: str) -> Path:
         path = directory / name

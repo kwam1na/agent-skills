@@ -37,7 +37,8 @@ REQUIRED_JOBS = (
     "validate (ubuntu-latest, 3.11)",
     "cut-release",
 )
-# Informs whoever tags. Its result, or its absence, neither allows nor blocks a release, and nothing waits for it.
+# Informs whoever tags. Its result, or its absence, neither allows nor blocks a release. Nothing waits for it,
+# except that a gating job absent while it runs is waited for, within the bound, and then refused.
 INFORMING_JOBS = (
     "validate (macos-latest, 3.11)",
 )

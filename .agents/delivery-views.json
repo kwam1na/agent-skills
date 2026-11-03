@@ -1,6 +1,6 @@
 {
   "spec": "delivery-views-config/1",
-  "title": "Tag-driven releases",
+  "title": "Backlog follow-ups",
   "tracker": {
     "name": "Linear",
     "issueUrl": "https://linear.app/v26-technologies/issue/{key}",

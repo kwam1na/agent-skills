@@ -1,3 +1,14 @@
+---
+title: "Preserve reviewer reports without inventing a run"
+date: 2026-10-23
+category: design-patterns
+module: delivery-views
+problem_type: design_pattern
+severity: medium
+tags: [review, observations]
+applies_when: "A lane has native review outcomes but no product run"
+---
+
 # Preserve reviewer reports without inventing a run
 
 A journal's review-round counts can establish that review was observed, but

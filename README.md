@@ -43,7 +43,8 @@ timed out, while the rest of the run carries on:
 .venv/bin/python scripts/run-tests.py --timings .test-timings.json
 ```
 
-On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
+On Windows, which is not validated (see below), use `.venv\Scripts\python.exe` for
+the sensor commands.
 
 Build and verify the core profile:
 
@@ -333,7 +334,8 @@ drains:
 | `SIGQUIT` | Forward to the process group, escalate when needed, and return 131. |
 | `SIGKILL` | Uncatchable; the launcher cannot run cleanup when the launcher itself receives it. |
 
-Windows keeps its native `taskkill /T /F` tree cleanup for `SIGINT` and
+Windows, which is not validated (see above), keeps its native `taskkill /T /F` tree
+cleanup for `SIGINT` and
 `SIGTERM`. If bounded POSIX or Windows cleanup cannot establish that the tree
 drained, the CLI returns `product.cancellation_incomplete`. Its diagnostic lists
 only PIDs still running through the direct child handle; when tree liveness
