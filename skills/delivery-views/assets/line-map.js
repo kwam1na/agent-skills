@@ -1684,8 +1684,7 @@
   // Whether an answer holds the plan named, or one the record has yet to name: the file is written before its entry.
   function planMeets(held, named) { return isObject(held) && typeof held.updated === "string" && (held.updated === named || laterThan(held.updated, named)); }
   function followPlan(named) {
-    // An entry naming an earlier plan than the one in use is asked about once: the answer is the plan named, or a later one
-    // that the page rests on.
+    if (named !== planRested) { planRested = null; }
     if (named === null || named === planRested || (isObject(plan) && plan.updated === named)) {
       clearTimeout(planAsked);
       planAsked = null;
@@ -1718,11 +1717,15 @@
     // The record stopped naming another plan while the page asked, so there is nothing to take.
     if (planNamed === null) { return; }
     if (isObject(block) && planMeets(block.plan, planNamed)) {
-      if (isObject(plan) && plan.updated === block.plan.updated) {
+      if (!isObject(plan) || plan.updated !== block.plan.updated) { takePlan(block); return; }
+      // The same later plan may be a render still to come, of the earlier plan the record names, or the file ahead of its
+      // entry. It is the plan a reload would show once the server has gone on holding it, or has just come back with it.
+      planTries += 1;
+      if (planBehind || planTries >= PLAN_PATIENCE) {
         planRested = planNamed;
         safely(lastGood || shown);
       } else {
-        takePlan(block);
+        followPlan(planNamed);
       }
       return;
     }
@@ -1735,10 +1738,9 @@
   }
   // The new plan is only kept if the page can draw it: the plan in use goes back otherwise.
   function takePlan(block) {
-    var was = { PLAN: PLAN, plan: plan, named: planNamed, rested: planRested };
+    var was = { PLAN: PLAN, plan: plan, named: planNamed };
     PLAN = block;
     plan = block.plan;
-    if (plan.updated !== planNamed) { planRested = planNamed; }
     var place = planPlace();
     try {
       draw(lastGood || shown);
@@ -1746,7 +1748,6 @@
       PLAN = was.PLAN;
       plan = was.plan;
       planNamed = was.named;
-      planRested = was.rested;
       planBehind = true;
       safely(lastGood || shown);
     }

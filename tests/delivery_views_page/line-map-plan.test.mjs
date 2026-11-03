@@ -571,16 +571,73 @@ test("a failed refresh lands on a later try, and the note goes", async () => {
   expect(outcome(snaps[3].app)).toBe("The outcome the changed plan states.");
 });
 
-test("a live page holding a later plan than the record names asks once, and rests when the answer holds it too", async () => {
+test("a live page holding a later plan than the record names keeps asking, then rests when the server goes on holding it", async () => {
   const { document, plan } = recordOnlyDelivery();
   // The plan file is written before its journal entry, so a render can hold a plan the record doesn't name yet.
   const lagging = structuredClone(document);
   lagging.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:00:00Z; a unit changed" });
   const held = render(document, { ...plan, updated: "2026-10-30T14:00:00Z" });
-  const snaps = await live(held, held, [{ push: lagging }, SETTLE, { push: lagging }, QUIET]);
-  expect(snaps.fetched).toHaveLength(1);
+  const snaps = await live(held, held, [{ push: lagging }, { asked: 15 }, { push: lagging }, QUIET]);
+  expect(snaps.fetched).toHaveLength(15);
   expect(planNote(snaps[2].app)).toBeNull();
   expect(planNote(snaps[4].app)).toBeNull();
+});
+
+test("a plan a server still rendering hasn't reached yet is taken when it arrives, however early the page asked", async () => {
+  const { document, plan } = recordOnlyDelivery();
+  const restored = structuredClone(document);
+  restored.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null, summary: `Plan updated: ${plan.updated}; restored` });
+  const later = { ...plan, updated: "2026-10-30T14:00:00Z", outcome: { ...plan.outcome, summary: "The later plan's outcome." } };
+  const held = render(document, later);
+  let asked = 0;
+  const snaps = await live(held, () => (asked++ < 3 ? held : render(restored, plan)), [{ push: restored }, { asked: 3 }, { asked: 4 }]);
+  expect(outcome(snaps[2].app)).toBe("The later plan's outcome.");
+  expect(planNote(snaps[2].app)).toBeNull();
+  expect(outcome(snaps[3].app)).toBe(plan.outcome.summary);
+  expect(snaps.fetched).toHaveLength(4);
+});
+
+test("a name the page rested on is followed again when the record comes back to it", async () => {
+  const { document, plan } = recordOnlyDelivery();
+  const name = (record, id, stamp) => { const next = structuredClone(record); next.journal.push({ id, at: minute(40 + id), kind: "decision.recorded", lane: null, subject: null, summary: `Plan updated: ${stamp}; a change` }); return next; };
+  const first = name(document, 14, "2026-10-30T13:00:00Z");
+  const third = name(first, 15, "2026-10-30T15:00:00Z");
+  const fourth = name(third, 16, "2026-10-30T13:00:00Z");
+  const held = render(document, { ...plan, updated: "2026-10-30T14:00:00Z" });
+  const latest = render(third, { ...plan, updated: "2026-10-30T15:00:00Z" });
+  const restored = render(fourth, { ...plan, updated: "2026-10-30T13:00:00Z", outcome: { ...plan.outcome, summary: "The restored outcome." } });
+  let asked = 0;
+  const snaps = await live(held, () => (asked++ < 15 ? held : asked === 16 ? latest : restored),
+    [{ push: first }, { asked: 15 }, { push: third }, { asked: 16 }, { push: fourth }, { asked: 17 }]);
+  expect(outcome(snaps[6].app)).toBe("The restored outcome.");
+});
+
+test("once out of date, an answer holding the plan in use says it is current after all", async () => {
+  const { document, plan } = recordOnlyDelivery();
+  const lagging = structuredClone(document);
+  lagging.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:00:00Z; a unit changed" });
+  const held = render(document, { ...plan, updated: "2026-10-30T14:00:00Z" });
+  let asked = 0;
+  const snaps = await live(held, () => (asked++ === 0 ? new Error("down") : held), [{ push: lagging }, { asked: 1 }, { asked: 2 }], { quicker: 500 });
+  expect(planNote(snaps[2].app)).toBe(OUT_OF_DATE);
+  expect(planNote(snaps[3].app)).toBeNull();
+});
+
+test("a later plan that can't be drawn goes back too, with the note", async () => {
+  const { page, plan, changed, replanned } = replanning();
+  const broken = render(replanned, undefined, { planBlock: { plan: { ...changed, updated: "2026-10-30T14:00:00Z", units: [{ ...changed.units[0], removed: true, proofs: [null] }, ...changed.units.slice(1)] } } });
+  const snaps = await live(page, broken, [{ push: replanned }, SETTLE]);
+  expect(outcome(snaps[2].app)).toBe(plan.outcome.summary);
+  expect(planNote(snaps[2].app)).toBe(OUT_OF_DATE);
+});
+
+test("each newly named plan gets its own patience", async () => {
+  const { page, replanned } = replanning();
+  const again = structuredClone(replanned);
+  again.journal.push({ id: 15, at: minute(41), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:30:00Z; another change" });
+  const snaps = await live(page, page, [{ push: replanned }, { asked: 14 }, { push: again }, { asked: 28 }, { asked: 29 }], { quicker: 200 });
+  expect(planNote(snaps[4].app)).toBeNull();
+  expect(planNote(snaps[5].app)).toBe(OUT_OF_DATE);
 });
 
 test("a live page takes an earlier plan when the server holds the one the record names", async () => {
@@ -669,13 +726,13 @@ test("a plan that fails partway through its own chapter goes back too, with the 
   expect(snaps.fetched).toHaveLength(1);
 });
 
-test("a live page takes a later plan than the record names, and rests on it", async () => {
+test("a live page takes a later plan than the record names, and comes to rest on it", async () => {
   const { page, changed, replanned } = replanning();
   const newer = render(replanned, { ...changed, updated: "2026-10-30T14:00:00Z", outcome: { ...changed.outcome, summary: "A later outcome still." } });
-  const snaps = await live(page, newer, [{ push: replanned }, SETTLE, { push: replanned }, QUIET]);
+  const snaps = await live(page, newer, [{ push: replanned }, SETTLE, { asked: 16 }, { push: replanned }, QUIET]);
   expect(outcome(snaps[2].app)).toBe("A later outcome still.");
-  expect(planNote(snaps[4].app)).toBeNull();
-  expect(snaps.fetched).toHaveLength(1);
+  expect(planNote(snaps[3].app)).toBeNull();
+  expect(snaps.fetched).toHaveLength(16);
 });
 
 test("a live page whose plan couldn't be read when it opened takes the repaired one", async () => {

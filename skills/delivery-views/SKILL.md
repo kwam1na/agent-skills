@@ -300,9 +300,10 @@ A page the live server serves follows that entry with no reload. When the latest
 page fetches its own address and takes the plan from the block the renderer
 embedded there, so the renderer's validation is the only validation. It redraws
 with the reader's open folds and scroll position kept, and adds nothing to what
-the server serves. An answer holding a later plan than the one named is taken or
-kept, since the file is written before its entry. While the server has not yet
-rendered the named plan the page keeps asking and says nothing. An answer that
+the server serves. An answer holding a later plan than the one named is taken,
+since the file is written before its entry, and the page stops asking once the
+server has gone on holding it for about half a minute. While the server has not
+yet rendered the named plan the page keeps asking and says nothing. An answer that
 fails, a plan the renderer refused, one the page can't draw, or a render still
 behind after about half a minute leaves the current plan on screen with "The plan
 shown is out of date." beside the title, and the page keeps asking until the plan
