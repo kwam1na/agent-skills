@@ -962,6 +962,30 @@ ADOPTER_DEFAULTS = (
 )
 
 
+class BindingBasesSchemaTests(unittest.TestCase):
+    """The binding's optional bases: the schema declares it, and the fixture adopter's binding stays valid without it."""
+
+    def setUp(self) -> None:
+        self.schema = json.loads((ROOT / "skills/orchestrate-work/references/schemas.json").read_text(encoding="utf-8"))
+        self.binding = json.loads((FIXTURE / "binding.json").read_text(encoding="utf-8"))
+
+    def errors(self, binding: dict) -> list[str]:
+        # The skill's own validator, which loading the wrapper imported.
+        return sys.modules["delivery_state"].validate(binding, self.schema["orchestration-binding/1"])
+
+    def test_bases_is_an_optional_list_of_branch_names(self) -> None:
+        declared = self.schema["orchestration-binding/1"]
+        self.assertNotIn("bases", declared["required"])
+        self.assertEqual({key: value for key, value in declared["properties"]["bases"].items() if key != "description"},
+                         {"type": "array", "items": {"$ref": "#/$defs/name"}})
+        self.assertIn("* matches any run of characters within one segment", declared["properties"]["bases"]["description"])
+        self.assertEqual(self.errors({key: value for key, value in self.binding.items() if key != "bases"}), [])
+        self.assertEqual(self.errors({**self.binding, "bases": [BASE, "integration-*"]}), [])
+        for bad in ("integration-*", [""], [3], [None]):
+            with self.subTest(bases=bad):
+                self.assertTrue(self.errors({**self.binding, "bases": bad}))
+
+
 class AdopterNeutralityTests(unittest.TestCase):
     def tool_sources(self) -> list[Path]:
         return [*sorted(SCRIPTS.glob("*.py")), ROOT / "skills/orchestrate-work/references/schemas.json"]

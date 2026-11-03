@@ -79,6 +79,15 @@ names the reviewed tree SHA and both successful
 identity checks in its evidence. This evidence uses the existing evidence
 member; it adds no result or runtime-schema field.
 
+In that checkout the lens runs the adopting repository's scoped check set, never
+its full suite; the full suite runs once, outside the round, at the delivery's
+tail. A lens needing evidence beyond that set names each additional test file,
+one path at a time, with what it is evidence for, and never widens a run to a
+directory. A lens that mutates or injects faults limits both to the candidate's
+changed lines and the code that calls them, and says so in its evidence. The
+brief's `Checks this lens runs` member carries this rule and the executor's two
+fills for the round: the scoped sensor commands and the test files in scope.
+
 ## Observe each host realization
 
 Apply the shared `$execute-work/references/run-observation-contract.md`.
@@ -292,7 +301,8 @@ filled in, not composed. An executor realizing a lens fills the template's
 members rather than composing the brief's shape from this text, and its members
 are `Binding tuple`, `Round and bound`, `Round kind and scope`, `Fewest-rounds
 mandate`, `Carry-forward entries`, `Candidate reference resolutions`, `Charter`,
-`Result shape`, and `Observation binding and selected output`. This
+`Result shape`, `Observation binding and selected output`, and `Checks this
+lens runs`. This
 section states what those members must say; the template states where each one
 goes. The template is the shape of every lens brief, whether the realization is
 harness-supplied or follows the host convention. Its `Charter` member contains

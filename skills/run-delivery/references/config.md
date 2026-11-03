@@ -4,7 +4,10 @@ Most of what run-delivery needs, the repository already declares for agent-skill
 in this order of precedence:
 
 1. **The orchestrate-work binding** (`.agents/orchestration.json`), because it is what the merge queue actually runs:
-   - remote and delivery base: `base.remote`, `base.ref`
+   - remote and delivery base: `base.remote`, `base.ref`, and the other bases the binding serves, `bases`: exact
+     branch names or patterns whose `*` matches within one segment of the name, such as `["main", "integration-*"]`.
+     A delivery file's `baseBranch` must be `base.ref` or match `bases`, and `lead-setup` requires `--base` once
+     `bases` is declared
    - lane gates: the `fallback` checks, with `{baseHead}` meaning the base, each run in its `cwd` with its timeout
      (default: the binding's `checkTimeoutSeconds`). If the binding also selects checks with a `provider`,
      `alwaysRun` or `profiles`, the lane gates must be listed in `run-delivery.json` `gates`.
@@ -19,8 +22,9 @@ in this order of precedence:
    - extra review lenses: `additionalReviewLenses`, whose `charterPath` is a file in the repository
    - if the file exists but can't be read, every command except `config` stops, unless `run-delivery.json` says
      `"harness": "ignore"`
-   - a cross-check: its `baseRef` and `preparationCommands` must agree with the binding's base and fallback checks,
-     or `run_delivery.py` refuses and shows both
+   - a cross-check: its `baseRef` and `preparationCommands` must agree with the delivery's base and the fallback
+     checks, or `run_delivery.py` refuses and shows both. The delivery's base is the binding's `base.ref` unless the
+     binding declares `bases`, when it is the delivery file's
 4. **`.agents/run-delivery.json`** (`delivery-flow/1`), for what none of them declares, written once per repository.
    A `run-delivery.json` value that a higher source also declares, with a different value, is refused as a conflict: one
    side never wins silently.
@@ -28,12 +32,13 @@ in this order of precedence:
 
 `run_delivery.py config` prints every resolved setting and the file it came from.
 
-**Where a lane reads them.** In the lead's checkout (on the delivery base), these files are read from the working
+**Where a lane reads them.** In the lead's checkout (on a base the binding serves), these files are read from the working
 tree. In a lane's checkout they are read from the delivery base on the remote (`<remote>/<base>:<path>`): `run-delivery.json`,
 the binding, `delivery-views.json`, the delivery file, the plan and the brief notes. So the lead's pushed changes
 reach every lane at once, and a lane never merges the base, which would move its reviewed head, just to pick up a
-tooling change. `RUN_DELIVERY_LOCAL=1` reads the lane's working tree instead (for working on the tooling itself);
-`RUN_DELIVERY_CONFIG` names an explicit configuration file.
+tooling change. The lane's base is `RUN_DELIVERY_BASE`, or the base its checkout recorded when it was started, or else
+the binding's `base.ref`; a base the binding doesn't serve is refused. `RUN_DELIVERY_LOCAL=1` reads the lane's working
+tree instead (for working on the tooling itself); `RUN_DELIVERY_CONFIG` names an explicit configuration file.
 
 **Earlier names.** A repository set up under the tool's earlier name keeps working: `.agents/flow.json` is read when
 `.agents/run-delivery.json` is absent, and `DELIVERY_FLOW_CONFIG`, `DELIVERY_FLOW_DELIVERY` and `DELIVERY_FLOW_LOCAL`
@@ -110,8 +115,9 @@ checks may need no file at all.
   "schemaVersion": "delivery-flow-delivery/1",
   "delivery": "EPIC-1",                       // the parent tracker item: the record's tracker parent
   "headline": "EPIC-1: what the delivery does",
-  // "baseBranch" and "stateDirectory" are optional overrides: the binding names the base, and the record lives in
-  // the lead's checkout (laneCheckout with the delivery key) under the binding's state.directory.
+  // "baseBranch" and "stateDirectory" are optional overrides: the binding names the base (baseBranch must be its
+  // base.ref or match its bases), and the record lives in the lead's checkout (laneCheckout with the delivery key)
+  // under the binding's state.directory.
   "plan": "docs/plans/epic-1.md",
   "laneBrief": "docs/plans/epic-1.lane-brief.md",          // written by lead-brief
   "brief": { "notes": "docs/plans/epic-1.lane-notes.md" }, // this delivery's own rules, appended to the brief

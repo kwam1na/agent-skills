@@ -19,6 +19,8 @@ Lane:
 Lead:
   lead-setup <key> --plan P --base B --pattern RE ... | lead-init | lead-brief | lead-assign <key...> --lane L --title T
   lead-accept <key> [--accept-blocked LABEL ...] [--accept-restarts] | ship | adapter-test
+Anyone:
+  view [--archive PATH] [--port N]
 
 Run with python3 -B from anywhere inside a checkout of the delivery base or a lane branch. With several deliveries
 in the repository, name one with --delivery KEY (or RUN_DELIVERY_DELIVERY); otherwise the current branch picks it.
@@ -217,14 +219,51 @@ def load_json(path: Path) -> dict | None:
     return json.loads(path.read_text()) if path.exists() else None
 
 
+# Where a refusal of a base the binding doesn't serve sends the reader.
+BASE_MISMATCH = "the adoption guide, references/adopting.md#base-mismatch"
+# Where a lane's checkout records the base it was started on, inside its own git directory.
+LANE_BASE = "run-delivery/lane.json"
+
+
+def serves(binding: dict, base: str) -> bool:
+    """Whether the binding serves `base`: its base.ref, or a name or `*` pattern in its bases, where `*` matches any
+    run of characters within one segment of the branch name, never a `/`. The merge queue applies the same rule."""
+    names = [binding.get("base", {}).get("ref"), *binding.get("bases", [])]
+    return any(name and re.fullmatch("[^/]*".join(map(re.escape, name.split("*"))), base) for name in names)
+
+
+def unserved(binding: dict, base: str) -> Stop:
+    """The refusal of a base the binding doesn't serve."""
+    names = ", ".join(filter(None, [binding.get("base", {}).get("ref"), *binding.get("bases", [])]))
+    return Stop(f"the binding doesn't serve the base {base}: it serves {names}; add {base} to the binding's bases, "
+                f"or deliver to a base it serves (see {BASE_MISMATCH})")
+
+
+def lane_base_file(root: Path) -> Path:
+    return root / git("rev-parse", "--git-path", LANE_BASE, cwd=root)
+
+
+def record_lane_base(root: Path, base: str) -> None:
+    """Record in a lane's checkout the base it was started on, which its settings are then read from."""
+    path = lane_base_file(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"base": base}, indent=2) + "\n")
+
+
+def lane_base(root: Path) -> str | None:
+    """The base a lane names: RUN_DELIVERY_BASE, or the one its checkout recorded when it was started."""
+    return os.environ.get("RUN_DELIVERY_BASE") or (load_json(lane_base_file(root)) or {}).get("base")
+
+
 class Shelf:
     """Where the delivery's shared files are read from: the own config, the binding, delivery-views.json, the delivery
     file, the plan and the brief notes. The lead's checkout, on the delivery base, reads its own working tree. A lane
     reads them from the base on the remote, so what the lead pushes reaches every lane without a merge, and a lane
     never has to move its reviewed head to pick up a tooling change."""
 
-    def __init__(self, root: Path, ref: str | None = None):
-        self.root, self.ref = root, ref
+    def __init__(self, root: Path, ref: str | None = None, base: str | None = None, named: bool = False):
+        # base: the branch ref is on; named: the lane named it, rather than taking the binding's base.ref.
+        self.root, self.ref, self.base, self.named = root, ref, base, named
 
     def text(self, rel: str | Path) -> str | None:
         if self.ref:
@@ -251,20 +290,27 @@ class Shelf:
 
 
 def shelf_for(root: Path) -> Shelf:
-    """The lead (on the base branch) and explicit overrides read the working tree; a lane reads the base ref."""
+    """The lead (on a base the binding serves) and explicit overrides read the working tree; a lane reads its base
+    on the remote: the one it names (lane_base), checked against the binding, or else the binding's base.ref."""
     binding = load_json(root / ".agents/orchestration.json") or {}
     own = load_json(root / config_rel(Shelf(root))) or {}
     base = binding.get("base", {}).get("ref")
     remote = binding.get("base", {}).get("remote") or own.get("remote") or "origin"
     branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=root, check=False)
-    if not base or branch == base or setting("RUN_DELIVERY_LOCAL") == "1":
+    if not base or setting("RUN_DELIVERY_LOCAL") == "1":
         return Shelf(root)
+    named = lane_base(root)
+    if named and not serves(binding, named):
+        raise unserved(binding, named)
+    if branch == base or (binding.get("bases") and serves(binding, branch)):
+        return Shelf(root)
+    base = named or base
     ref = f"{remote}/{base}"
     if not OFFLINE:
         run(["git", "fetch", "-q", remote, base], cwd=root, check=False)
     if run(["git", "rev-parse", "--verify", "--quiet", ref], cwd=root, check=False).returncode != 0:
         return Shelf(root)  # no such ref yet (a fresh repository): nothing shared to read
-    return Shelf(root, ref)
+    return Shelf(root, ref, base, bool(named))
 
 
 def node_versions() -> list[tuple[str, tuple[int, ...]]]:
@@ -383,6 +429,7 @@ class Config:
         self.remote = take("remote", (b.get("base", {}).get("remote"), "orchestration binding"), flow=f.get("remote"),
                            default="origin")
         self.binding_base = b.get("base", {}).get("ref")
+        self.binding, self.bases = b, b.get("bases", [])
         work_root = b.get("workRoot")
         self.work = take("workDirectory", (str(Path(work_root).parent) if work_root else None,
                                            "orchestration binding (workRoot's folder)"),
@@ -454,15 +501,9 @@ class Config:
             self.gates = take("gates", (gates, "orchestration binding (fallback checks: what the merge queue runs)"),
                               flow=flow_gates, default=[],
                               same=lambda a, b: [(g["id"], g["argv"]) for g in a] == [(g["id"], g["argv"]) for g in b])
-        if h and h.get("preparationCommands") and self.gates and self.binding_base:
-            base_ref = f"{self.remote}/{self.binding_base}"
-            ours = [[base_ref if a == "{base}" else a for a in g["argv"]] for g in self.gates]
-            theirs = [list(cmd["command"]) for cmd in h["preparationCommands"]]
-            if ours != theirs:
-                self.conflicts.append(f"the lane gates {ours} and harness.config.ts preparationCommands {theirs} disagree")
-        if h and h.get("baseRef") and self.binding_base and h["baseRef"] != f"{self.remote}/{self.binding_base}":
-            self.conflicts.append(f"harness.config.ts baseRef {h['baseRef']} isn't the binding's base "
-                                  f"{self.remote}/{self.binding_base}")
+        self.harness_settings = h
+        if not self.bases:  # one base: check the harness config against it now; else against the delivery's base
+            self.conflicts += self.harness_conflicts(self.binding_base, "the binding's base")
         self.never_touch = take("neverTouch", flow=f.get("neverTouch"), default=[])
         self.in_app = f.get("inApp")
         self.sources["inApp"] = own if self.in_app else "none declared"
@@ -476,6 +517,28 @@ class Config:
         key = delivery or setting("RUN_DELIVERY_DELIVERY") or (self.pick_delivery(need_delivery) if pick else None)
         if key:
             self.load_delivery(key)
+
+    def harness_conflicts(self, base: str | None, whose: str) -> list[str]:
+        """Where harness.config.ts disagrees with the lane gates or the base: its baseRef and preparationCommands."""
+        h, found = self.harness_settings, []
+        if not h or not base:
+            return found
+        base_ref = f"{self.remote}/{base}"
+        if h.get("preparationCommands") and self.gates:
+            ours = [[base_ref if a == "{base}" else a for a in g["argv"]] for g in self.gates]
+            theirs = [list(cmd["command"]) for cmd in h["preparationCommands"]]
+            if ours != theirs:
+                found.append(f"the lane gates {ours} and harness.config.ts preparationCommands {theirs} disagree")
+        if h.get("baseRef") and h["baseRef"] != base_ref:
+            found.append(f"harness.config.ts baseRef {h['baseRef']} isn't {whose} {base_ref}")
+        return found
+
+    def base_hint(self) -> str:
+        """For a lane that read the binding's base.ref by default although the binding serves several bases."""
+        if self.bases and self.shelf.ref and not self.shelf.named:
+            return (f"; this checkout read {self.shelf.ref}, the binding's base.ref: a lane of a delivery to another "
+                    "base names it with RUN_DELIVERY_BASE")
+        return ""
 
     def delivery_keys(self) -> list[str]:
         return [name[:-len(".json")] for name in self.shelf.names(self.deliveries_rel, ".json")]
@@ -495,25 +558,34 @@ class Config:
             return matches[0]
         if required:
             raise Stop(f"can't tell which delivery this is (branch {branch}; deliveries: "
-                       f"{keys or 'none'}); pass --delivery KEY")
+                       f"{keys or 'none'}); pass --delivery KEY{self.base_hint()}")
         return None
 
     def load_delivery(self, key: str) -> None:
         path = self.deliveries / f"{key}.json"
         d = self.shelf.json(f"{self.deliveries_rel}/{key}.json")
         if d is None:
-            raise Stop(f"{self.shelf.where(f'{self.deliveries_rel}/{key}.json')} is missing (lead-setup writes it)")
+            raise Stop(f"{self.shelf.where(f'{self.deliveries_rel}/{key}.json')} is missing (lead-setup writes it)"
+                       f"{self.base_hint()}")
         if d.get("schemaVersion") != "delivery-flow-delivery/1":
             raise Stop(f"{path}: schemaVersion must be delivery-flow-delivery/1")
         self.raw, self.delivery_path = d, path
         self.delivery_where = self.shelf.where(f"{self.deliveries_rel}/{key}.json")
         self.delivery = d["delivery"]
         base = d.get("baseBranch")
-        if base and self.binding_base and base != self.binding_base:
-            raise Stop(f"{path} names base {base}, but the binding here serves {self.binding_base}")
+        if base and self.binding_base and not serves(self.binding, base):
+            raise Stop(f"{path} names base {base}, but the binding here serves "
+                       f"{', '.join([self.binding_base, *self.bases])}; add {base} to the binding's bases, or deliver "
+                       f"to a base it serves (see {BASE_MISMATCH})")
         self.base_branch = base or self.binding_base
         if not self.base_branch:
             raise Stop(f"no delivery base: the binding has no base.ref and {path} names no baseBranch")
+        if self.shelf.base and self.shelf.base != self.base_branch:
+            raise Stop(f"{self.delivery_where} names base {self.base_branch}, but this checkout read it from "
+                       f"{self.shelf.ref}; name the delivery's base with RUN_DELIVERY_BASE")
+        conflicts = self.harness_conflicts(self.base_branch, "the delivery's base") if self.bases else []
+        if conflicts:
+            raise Stop("the repository's configs disagree:\n  " + "\n  ".join(conflicts))
         self.sources["baseBranch"] = f"{path.name}" if base else "orchestration binding (base.ref)"
         self.base_ref = f"{self.remote}/{self.base_branch}"
         if os.environ.get("DELIVERY_STATE"):
@@ -813,6 +885,14 @@ def in_app_summary(key: str) -> str:
                                "whether each eval actually proves its acceptance criterion.")
 
 
+def scoped_checks(span: str) -> str:
+    """The brief's two per-round fills: the sensors to run, and the files the round's span changes."""
+    changed = git("diff", "--name-only", span).splitlines()
+    return ("- scoped sensor commands: the sensors the plan unit names, in the context refs below.\n"
+            f"- test files in scope for this round: the tests among the files `git diff {span}` changes, and the "
+            "tests that cover the rest: " + (", ".join(f"`{path}`" for path in changed) or "none") + ".")
+
+
 def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_base: str,
           checkout: Path, prior: list[dict], prior_candidate: str | None) -> str:
     c = cfg()
@@ -842,6 +922,7 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
                  "- `resolvedFindings`: required. One entry for every finding this lens raised in an earlier round, "
                  '`{"id", "state": "closed|fixed|withdrawn|deferred|open", "resolution": "..."}`. Every carried '
                  "finding must appear; a deferral (P2/P3 only) also carries `deferredIssue`.")
+    span = f"{merge_base}..{candidate}" if round_no == 1 else f"{prior_candidate}..{candidate}"
     if round_no <= c.bound:
         bound_text = f"`ordinary counted`: round {round_no} of {c.bound}, counted against the declared bound."
     else:
@@ -851,7 +932,7 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
         "releaseId": rel["releaseId"], "profile": str(rel["profile"]), "archiveSha256": rel["archiveSha256"],
         "metadataSha256": rel["metadataSha256"], "graph": graph_digest(), "bound_text": bound_text, "kind": kind,
         "carry": carry, "resolutions": resolutions, "charter": charter, "later": later, "checkout": str(checkout),
-        "context": context, "in_app": in_app_summary(key), "severities": STORY_SEVERITIES,
+        "context": context, "in_app": in_app_summary(key), "severities": STORY_SEVERITIES, "checks": scoped_checks(span),
     }
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
 
@@ -1018,9 +1099,24 @@ def round_counts(outcome: dict) -> tuple[dict, dict]:
     return verdicts, counts
 
 
-def ensure_journaled(key: str, outcome: dict, lane: str) -> None:
+def ensure_recorded(key: str, outcome: dict, lane: str, folder: Path) -> None:
+    """The round in the record as the lane's own: its review.round, then the rounds so far captured at the round's
+    candidate, so the live view shows the round's card and notes before hand-off. Each write is skipped once made,
+    so a re-run finishes what a failure left; a story with a product run is reviewed through its run instead."""
+    doc = load_state()
+    ensure_journaled(key, outcome, lane, doc)
+    item = next((i for i in [*doc["state"]["queue"], *doc["state"].get("planned", [])] if i["subject"] == key), None)
+    if item is None or item.get("runId"):
+        return
+    rounds = [folder / f"round-{k}.json" for k in range(1, outcome["round"] + 1)]
+    state_tool("capture-review", "--subject", key, "--candidate", outcome["entries"][0]["binding"]["candidateRef"],
+               *[x for p in rounds for x in ("--outcome", str(p))])
+
+
+def ensure_journaled(key: str, outcome: dict, lane: str, doc: dict) -> None:
     n = outcome["round"]
-    if any(e["review"]["round"] == n for e in journal_entries("review.round", key)):
+    if any(e.get("kind") == "review.round" and e.get("subject") == key and e["review"]["round"] == n
+           for e in doc["journal"]):
         return
     verdicts, counts = round_counts(outcome)
     review = {"round": n, "startedAt": outcome["startedAt"], "finishedAt": outcome["finishedAt"],
@@ -1069,7 +1165,7 @@ def review_reduce(args) -> None:
     done_path = folder / f"round-{n}.json"
     if done_path.exists():  # reduced already: never rewrite it, only finish the journaling if that failed
         outcome = json.loads(done_path.read_text())
-        ensure_journaled(key, outcome, lane)
+        ensure_recorded(key, outcome, lane, folder)
         summarize(key, outcome)
         return
     meta_path = folder / f"round-{n}.meta.json"
@@ -1179,7 +1275,7 @@ def review_reduce(args) -> None:
     done_path.write_text(json.dumps(outcome, indent=1) + "\n")
     for lens, (short, _) in c.lenses.items():
         remove_checkout(lens_checkout(key, n, short))
-    ensure_journaled(key, outcome, lane)
+    ensure_recorded(key, outcome, lane, folder)
     summarize(key, outcome)
 
 
@@ -1319,6 +1415,8 @@ def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, 
         "carry": carry, "resolutions": resolutions, "charter": Path(charter_file).read_text().strip(), "later": later,
         "checkout": str(checkout), "context": context, "in_app": "None: a plan review has no in-app evidence.",
         "severities": PLAN_SEVERITIES,
+        "checks": ("- scoped sensor commands: none; a plan review runs no checks, since the plan is the whole subject.\n"
+                   "- test files in scope for this round: none."),
     }
     template = (TOOL / "templates/round-brief.md").read_text()
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
@@ -3244,6 +3342,11 @@ def lanes_grant(args, existing: dict | None) -> dict | None:
 def lead_setup(args) -> None:
     """Draft .agents/deliveries/<key>.json from the approved plan (and, optionally, the tracker snapshot)."""
     c = Config(repo(), need_delivery=False)
+    if c.bases and not args.base:
+        raise Stop(f"the binding serves several bases ({', '.join([c.binding_base, *c.bases])}): pass --base to name "
+                   "the one this delivery lands on")
+    if args.base and c.binding_base and not serves(c.binding, args.base):
+        raise unserved(c.binding, args.base)
     key = args.key
     path = c.deliveries / f"{key}.json"
     if path.exists() and not args.force:
@@ -3746,6 +3849,64 @@ def delivery_processes(lead: Path, state: Path, delivery: str, main: Path) -> li
         if str(state) in command or (here and here.resolve() in homes):
             found.append((int(pid_text), command))
     return found
+
+
+def archived_record(path: Path) -> Path:
+    """The record in an archived copy: the folder itself when it holds state.json, else its one subfolder that does
+    (the supervisor's `latest` holds the record beside the flow log)."""
+    path = Path(os.path.abspath(os.path.expanduser(str(path))))
+    if (path / "state.json").is_file():
+        return path
+    found = sorted(child for child in path.iterdir() if (child / "state.json").is_file()) if path.is_dir() else []
+    if len(found) != 1:
+        held = "no record" if not found else "several records (" + ", ".join(child.name for child in found) + ")"
+        raise Stop(f"{path} holds {held}: name the folder that holds the record's state.json")
+    return found[0]
+
+
+def view(args) -> None:
+    """Serve the live view of the delivery's record, or of an archived copy of it, and print its address. Needs no
+    checkout of the delivery: the live record is found from the delivery file at the base, and an archive needs
+    nothing but itself. Views only: publishers never run from here."""
+    if args.archive:
+        # A copy outlives every checkout, so it is shown with the built-in page, which needs none and is drawn from
+        # the record in memory: no view is rendered into the copy.
+        record, release, root = archived_record(args.archive), GENERATION, None
+        config = {"renderers": [], "publishers": []}
+    else:
+        c = cfg()
+        record, release, root = c.state, c.release, c.root
+        if not (record / "state.json").is_file():
+            raise Stop(f"no record at {record}: it starts at lead-init. With the lead's checkout gone, serve the "
+                       "supervisor's copy: view --archive PATH")
+        binding = c.root / ".agents/orchestration.json"
+        config = json.loads(binding.read_text()).get("state") if binding.exists() else None
+    scripts = str(release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    sys.dont_write_bytecode = True  # the release's modules leave no bytecode in the installed generation
+    import render_state  # noqa: E402  (the installed release's own live view)
+    if config is None:
+        config = {"renderers": [dict(entry) for entry in render_state.DEFAULT_RENDERERS], "publishers": []}
+    try:
+        render_state.parse_config(config)
+        render_state.show(record)
+    except (render_state.ConfigError, render_state.StateError) as error:
+        raise Stop(f"can't serve {record}: {error}")
+    if root is not None:
+        os.chdir(root)  # the binding's renderers run from the checkout, as the lead's renders do
+
+    def announce(address: str) -> None:
+        print(f"http://{address}/", flush=True)
+        print(f"serving {record}" + (", an archived copy: it changes only when its writer copies the record again"
+                                     if args.archive else "") + "; stop with Ctrl-C", flush=True)
+
+    try:
+        render_state.serve_live(record, config, host="127.0.0.1", port=args.port, announce=announce)
+    except OSError as error:
+        raise Stop(f"can't serve the live view on port {args.port}: {error}")
+    except KeyboardInterrupt:
+        return
 
 
 def reconcile_once() -> list[str]:
@@ -4296,8 +4457,18 @@ class Doctor:
         self.binding = binding
         return "ok", f"{path.name} validates against orchestration-binding/1"
 
+    def base(self) -> str | None:
+        """The delivery base: the named delivery file's baseBranch, or the binding's base.ref (also when the file
+        can't be read, which the delivery row reports)."""
+        key = self.args.doctor_delivery or self.args.delivery or setting("RUN_DELIVERY_DELIVERY")
+        try:
+            d = self.c.shelf.json(f"{self.c.deliveries_rel}/{key}.json") if key else None
+        except ValueError:
+            d = None
+        return (d if isinstance(d, dict) else {}).get("baseBranch") or self.c.binding_base
+
     def base_ref(self) -> str | None:
-        base = self.c.binding_base
+        base = self.base()
         return f"{self.c.remote}/{base}" if base else None
 
     def committed(self):
@@ -4305,10 +4476,20 @@ class Doctor:
         if not ref:
             return "wrong", "no delivery base; fix: set base.ref in the binding"
         if not OFFLINE:  # what lanes will check out; --offline reads the local remote-tracking ref instead
-            run(["git", "fetch", "-q", self.c.remote, self.c.binding_base], cwd=self.root, check=False)
+            run(["git", "fetch", "-q", self.c.remote, self.base()], cwd=self.root, check=False)
         if run(["git", "rev-parse", "--verify", "--quiet", ref], cwd=self.root, check=False).returncode != 0:
             return "wrong", (f"the delivery base {ref} doesn't exist{' locally' if OFFLINE else ''}; fix: push the "
                              "delivery base")
+        shown = run(["git", "show", f"{ref}:.agents/orchestration.json"], cwd=self.root, check=False)
+        try:
+            theirs = json.loads(shown.stdout) if shown.returncode == 0 else None
+        except json.JSONDecodeError:
+            theirs = None
+        if isinstance(theirs, dict) and isinstance(theirs.get("base"), dict) and not serves(theirs, self.base()):
+            # Lanes and the merge queue read the binding from the base itself.
+            return "wrong", (f"{ref}'s binding doesn't serve the base {self.base()}, as a base cut before its binding "
+                             f"gained bases doesn't; fix: commit the binding with its bases on {self.base()} and push "
+                             f"it (see {BASE_MISMATCH})")
         entry = git("ls-tree", ref, ".agent-skills/current", cwd=self.root, check=False)
         fix = f"commit the installed release (.agent-skills) on {ref} and push it, so every lane resolves {TOOL_PATH}"
         if not entry:
@@ -4687,6 +4868,10 @@ def main(argv: list[str] | None = None) -> None:
     q = command(plan_commands, "why", help="give a recorded change its reason")
     q.add_argument("change"); q.add_argument("--why", required=True); q.set_defaults(fn=lead_plan)
     p = command(sub, "lead-close"); p.set_defaults(fn=lead_close)
+    p = command(sub, "view", help="serve the record's live view, or an archived copy's, without a checkout")
+    p.add_argument("--archive", type=Path, help="a copy of the record, such as the supervisor's latest")
+    p.add_argument("--port", type=int, default=0, help="the port; 0 picks a free one")
+    p.set_defaults(fn=view)
     p = command(sub, "ship"); p.add_argument("--no-gates", action="store_true", help="stage only; run the gates yourself")
     p.set_defaults(fn=ship)
     p = command(sub, "adapter-test"); p.set_defaults(fn=adapter_test)

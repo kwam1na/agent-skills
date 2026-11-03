@@ -41,6 +41,7 @@ from agent_skills import release
 from agent_skills.lifecycle import Lifecycle
 from agent_skills.release import build_release, verify_release
 from agent_skills.validate import LEAKAGE_PATTERNS
+from tests.test_merge_queue import SERVING_BINDING, SERVING_RULE  # the rule both tools apply
 
 
 # The cases share one fixture repository's in-app lease lock and the
@@ -766,6 +767,9 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         commit(wt, "FX-2: fix")
         code, out = flow_run("review-prepare", "FX-2", "--round", "2", cwd=wt)
         expect(code == 0 and "Resume the same reviewer" in out, out)
+        span = f"{sh('git', 'rev-parse', 'HEAD~1', cwd=wt).stdout.strip()}..{sh('git', 'rev-parse', 'HEAD', cwd=wt).stdout.strip()}"
+        expect(f"the files `git diff {span}` changes, and the tests that cover the rest: `src/one.txt`."
+               in (review / "brief-r2-adversarial-testing.md").read_text(), "round 2's scoped files aren't its own delta")
         write_results(review, 2, "FX-2", lenses)
         code, out = flow_run("review-reduce", "FX-2", "--round", "2", cwd=wt)
         expect(code == 2 and "carried finding" in out, f"a dropped finding was reduced: {out}")
@@ -1218,6 +1222,159 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         fresh, why = fx.call("record_is_current", stale, head, wt, cwd=wt)
         expect(not fresh and "can't be compared" in why, f"an uncomparable head counted as current: {why}")
 
+    def reduced_round_one(self, fx: Fixture, run_id: str | None = None) -> tuple[Path, Path, list]:
+        """FX-3 assigned and reviewed once, with one open P1, and not handed off: (lane checkout, review folder, lenses).
+        With a run id, FX-3's planned work names that product run before the round is reduced."""
+        m = fx.main
+        setup_delivery(fx)
+        fx.flow("lead-init", cwd=m)
+        fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        wt = fx.lane("FX-3")
+        (wt / "src/two.txt").write_text("two\n")
+        commit(wt, "FX-3: two")
+        review = wt / ".orchestration/review/FX-3"
+        review.mkdir(parents=True)
+        (review / "context.md").write_text("- evidence")
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, cwd=wt); expect(code == 0, out)
+        lenses = fx.lenses(wt)
+        short = lenses[0][1][0]
+        write_results(review, 1, "FX-3", lenses, findings=[{"id": f"{short}-r1-1", "severity": "P1",
+                                                            "summary": "the empty cart is not handled"}])
+        if run_id is not None:
+            record = fx.tmp / "record"
+            version = str(self.shown(record)["state"]["version"])
+            state_script = self.generation / "skills/orchestrate-work/scripts/delivery_state.py"
+            sh(sys.executable, "-B", state_script, "--dir", record, "patch", "--writer", "lead", "--version", version,
+               "--element", "planned[subject=FX-3]", "--patch", json.dumps({"runId": run_id}))
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt)
+        expect(code == 0 and "unresolved" in out, out)
+        return wt, review, lenses
+
+    def test_a_story_with_a_product_run_has_its_round_journaled_and_nothing_captured(self) -> None:
+        fx = self.fixture()
+        self.reduced_round_one(fx, run_id="run-1")
+        shown = self.shown(fx.tmp / "record")
+        kinds = [e["kind"] for e in shown["journal"] if e.get("subject") == "FX-3"
+                 and e["kind"] in ("review.round", "review.evidence")]
+        expect(kinds == ["review.round"], f"a run-backed round was recorded as {kinds}")
+        expect("FX-3" not in shown.get("reviewEvidence", {}), "a run-backed story got native evidence")
+
+    def shown(self, record: Path) -> dict:
+        state_script = self.generation / "skills/orchestrate-work/scripts/delivery_state.py"
+        return json.loads(sh(sys.executable, "-B", state_script, "--dir", record, "show").stdout)
+
+    def test_each_reduced_round_reaches_the_live_view_before_hand_off(self) -> None:
+        from tests.delivery_views_fixtures import render
+        fx = self.fixture()
+        wt, review, lenses = self.reduced_round_one(fx)
+        record = fx.tmp / "record"
+        first = json.loads((review / "round-1.json").read_text())["entries"][0]["binding"]["candidateRef"]
+        shown = self.shown(record)
+        expect(any(i["subject"] == "FX-3" for i in shown["state"]["planned"]), "FX-3 was handed off already")
+        observation = shown["reviewEvidence"]["FX-3"]
+        expect("unavailable" not in observation and observation["candidateRef"] == first, f"round 1 isn't shown: {observation}")
+        card = render.native_review_summaries(shown)["FX-3"]["roundDetail"]
+        expect([r["round"] for r in card] == [1] and card[0]["raised"][0]["summary"] == "the empty cart is not handled",
+               f"the round's card lacks its note: {card}")
+        kinds = lambda doc: [(e["kind"], e.get("lane")) for e in doc["journal"] if e.get("subject") == "FX-3"
+                             and e["kind"] in ("review.round", "review.evidence")]
+        expect(kinds(shown) == [("review.round", "lane-2"), ("review.evidence", "lane-2")], f"round 1 recorded as {kinds(shown)}")
+        # A re-run writes nothing more; a round whose capture failed is finished by one.
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt); expect(code == 0, out)
+        expect(kinds(self.shown(record)) == kinds(shown), "a second reduce wrote to the record again")
+        (wt / "src/two.txt").write_text("two, with an empty cart\n")
+        commit(wt, "FX-3: empty cart")
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 2, cwd=wt); expect(code == 0, out)
+        short = lenses[0][1][0]
+        write_results(review, 2, "FX-3", lenses, resolved=[{"id": f"{short}-r1-1", "state": "fixed", "resolution": "handled"}])
+        # The capture fails after the round is journaled: the live view shows it stale, and a re-run finishes it.
+        artifacts, aside = record / "review-artifacts", fx.tmp / "artifacts-aside"
+        artifacts.rename(aside)
+        artifacts.symlink_to(aside)
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 2, cwd=wt)
+        expect(code == 2 and (review / "round-2.json").exists(), f"a failed capture went unreported: {out}")
+        expect(kinds(self.shown(record)) == [("review.round", "lane-2"), ("review.evidence", "lane-2"), ("review.round", "lane-2")],
+               f"the round wasn't journaled before its capture: {kinds(self.shown(record))}")
+        expect(self.shown(record)["reviewEvidence"]["FX-3"].get("unavailable"), "an uncaptured round left round 1 current")
+        artifacts.unlink()
+        aside.rename(artifacts)
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 2, cwd=wt); expect(code == 0 and "aligned" in out, out)
+        shown = self.shown(record)
+        second = json.loads((review / "round-2.json").read_text())["entries"][0]["binding"]["candidateRef"]
+        expect(second != first and shown["reviewEvidence"]["FX-3"]["candidateRef"] == second,
+               f"round 2 isn't bound to its own candidate: {shown['reviewEvidence']['FX-3']}")
+        expect([r["outcome"] for r in render.native_review_summaries(shown)["FX-3"]["roundDetail"]] == ["changes", "approve"],
+               "the live view doesn't show both rounds")
+        expect(kinds(shown) == [("review.round", "lane-2"), ("review.evidence", "lane-2")] * 2, f"rounds recorded as {kinds(shown)}")
+
+    def served_document(self, argv: list, cwd: Path, env: dict, expect_record: Path) -> dict:
+        """Start the tool with these arguments, a `view`, check its first two lines, and return /document; it is stopped by pid."""
+        import urllib.request
+        served = subprocess.Popen([sys.executable, "-B", str(self.tool), *map(str, argv)], cwd=cwd, env=env,
+                                  text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            address = served.stdout.readline().strip()
+            expect(re.fullmatch(r"http://127\.0\.0\.1:\d+/", address), f"the first line isn't the address: {address}")
+            expect(str(expect_record) in served.stdout.readline(), "it doesn't say which record it serves")
+            with urllib.request.urlopen(address, timeout=10) as answer:
+                expect(answer.status == 200 and b"FX-3" in answer.read(), "the page isn't served")
+            with urllib.request.urlopen(address + "document", timeout=10) as answer:
+                return json.loads(answer.read())
+        finally:
+            served.send_signal(signal.SIGTERM)
+            served.communicate(timeout=10)
+
+    def test_view_serves_the_live_record_from_any_checkout_of_the_repository(self) -> None:
+        fx = self.fixture()
+        wt, _, _ = self.reduced_round_one(fx)
+        record = fx.tmp / "record"
+        for where in (wt, fx.main):
+            with self.subTest(where=where.name):
+                argv = ["--delivery", "FX-1", "view"] if where == fx.main else ["view"]
+                document = self.served_document(argv, where, fx.env, record)
+                rounds = [e["review"]["round"] for e in document["journal"]
+                          if e["kind"] == "review.round" and e["subject"] == "FX-3"]
+                expect(rounds == [1] and "unavailable" not in document["reviewEvidence"]["FX-3"],
+                       f"the live record's round isn't served: {rounds}, {document.get('reviewEvidence')}")
+        code, out = fx.flow("view", cwd=wt, env={**fx.env, "DELIVERY_STATE": str(fx.tmp / "gone")})
+        expect(code == 2 and "no record at" in out and "--archive" in out, f"a missing record was served: {out}")
+        # The binding's state member picks the views; its publishers never run from a view.
+        published = fx.tmp / "published"
+        (wt / ".agents/orchestration.json").write_text(json.dumps({"state": {
+            "renderers": [{"id": "notes", "builtin": "markdown", "output": "lead-notes.md"}],
+            "publishers": [{"id": "post", "argv": ["sh", "-c", f"touch {published}"]}]}}))
+        self.served_document(["view"], wt, fx.env, record)
+        expect((record / "lead-notes.md").is_file(), "the binding's own view wasn't rendered")
+        expect(not published.exists(), "a view ran the binding's publisher")
+
+    def test_view_serves_the_latest_copy_once_the_leads_checkout_is_gone(self) -> None:
+        fx = self.fixture()
+        self.reduced_round_one(fx)
+        record = fx.tmp / "record"
+        latest = fx.tmp / "archive" / "latest"
+        latest.mkdir(parents=True)
+        shutil.copytree(record, latest / "record")
+        (latest / "flow-log").mkdir()
+        before = sorted(p.name for p in (latest / "record").iterdir())
+        shutil.rmtree(fx.main)
+        shutil.rmtree(record)
+        outside = fx.tmp / "elsewhere"
+        outside.mkdir()
+        for path in (latest, latest / "record"):
+            with self.subTest(path=path.name):
+                document = self.served_document(["view", "--archive", path], outside, fx.env, latest / "record")
+                rounds = [e["review"]["round"] for e in document["journal"]
+                          if e["kind"] == "review.round" and e["subject"] == "FX-3"]
+                expect(rounds == [1], f"the copy's latest round isn't served: {rounds}")
+                expect("unavailable" not in document["reviewEvidence"]["FX-3"], "the copy's round has no evidence")
+        expect(sorted(p.name for p in (latest / "record").iterdir()) == sorted({*before, "state.lock"}),
+               "serving the copy rendered views into it")
+        code, out = fx.flow("view", "--archive", latest / "flow-log", cwd=outside)
+        expect(code == 2 and "holds no record" in out, f"a folder without a record was served: {out}")
+        shutil.copytree(latest / "record", latest / "another")
+        code, out = fx.flow("view", "--archive", latest, cwd=outside)
+        expect(code == 2 and "several records (another, record)" in out, f"one of several records was served: {out}")
+
     def test_changed_evals_and_discarded_rounds_are_visible(self) -> None:
         fx = self.fixture()
         flow_run = fx.flow
@@ -1620,6 +1777,27 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
         self.assertIn(f"`python3 -B {STABLE_TOOL_PATH} <command>`", lane_brief)
         self.assertNotIn("generations/", lane_brief)
         self.assertEqual(host_terms(lane_brief), [])
+
+    def test_a_prepared_brief_bounds_each_lens_to_the_scoped_checks(self) -> None:
+        fx = self.fixture()
+        wt = ready_lane(fx)
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, cwd=wt)
+        expect(code == 0, out)
+        head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        base = sh("git", "merge-base", "origin/feature/FX-1", "HEAD", cwd=wt).stdout.strip()
+        for lens in ("outcome-correctness", "adversarial-testing"):
+            with self.subTest(lens=lens):
+                text = " ".join((wt / f".orchestration/review/FX-3/brief-r1-{lens}.md").read_text().split())
+                self.assertIn("## Checks this lens runs Run the scoped check set below in your checkout, never the "
+                              "repository's full suite", text)
+                self.assertIn("Mutation and fault injection stay on the candidate's changed lines", text)
+                self.assertIn("- scoped sensor commands: the sensors the plan unit names", text)
+                self.assertIn(f"- test files in scope for this round: the tests among the files `git diff {base}..{head}` "
+                              "changes, and the tests that cover the rest: `src/two.txt`.", text)
+                self.assertNotIn("{{", text)
+        # A delta that changes no file puts no file in scope, rather than every file.
+        self.assertTrue(call(self.tool, "scoped_checks", f"{head}..{head}", cwd=wt, env=fx.env, delivery="FX-1")
+                        .endswith("the tests that cover the rest: none."))
 
     def test_an_older_generation_still_running_carries_the_previous_tuple(self) -> None:
         old, new, receipt_file = self.updated_install()
@@ -2657,6 +2835,7 @@ TROUBLESHOOTING_KEYS = [
     "the binding has no state.forgeSnapshot", "the binding has no tracker publisher", "and the runtime needs Node",
     "is below the runtime's nodeMinimum", "stories with no plan section", "context.sections the plan lacks",
     "no plan at", "has no configuration for lanes",
+    "binding doesn't serve the base",
 ]
 
 
@@ -3031,6 +3210,122 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         out = self.doctor(fx, "--offline")
         self.assertEqual(list(failing(out)), ["plan chapter"], out)
         self.assertIn("finish[0].covers.criteria[1]: names no criterion of the plan's units", failing(out)["plan chapter"])
+
+    def test_a_binding_serves_a_delivery_to_any_of_its_bases(self) -> None:
+        """Bases: a delivery committed only on integration-2 runs from the lead's setup to a lane's draft PR."""
+        fx = self.fixture()
+        m = fx.main
+        harness = lambda ref: (m / "harness.config.ts").write_text(
+            f"export default {{ baseRef: '{ref}', preparationCommands: ["
+            "{ id: 'lint', command: ['sh', '-c', 'test -f src/app.txt'] }, { id: 'test', command: ['true'] }] };\n")
+        before_bases = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        binding = {**doctor_binding(), "bases": ["feature/FX-1", "integration-*"]}
+        (m / ".agents/orchestration.json").write_text(json.dumps(binding, indent=2))
+        commit(m, "FX-1: the binding serves the integration bases")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        # The delivery is cut onto integration-2 and committed only there.
+        sh("git", "checkout", "-q", "-b", "integration-2", cwd=m)
+        path = m / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        path.write_text(json.dumps({**d, "baseBranch": "integration-2"}, indent=2))
+        if self.node22:
+            harness("origin/integration-2")
+        commit(m, "FX-1: deliver to integration-2")
+        sh("git", "push", "-q", "-u", "origin", "integration-2", cwd=m)
+        sh("git", "checkout", "-q", "feature/FX-1", cwd=m)
+        sh("git", "rm", "-q", ".agents/deliveries/FX-1.json", cwd=m)
+        commit(m, "FX-1: the delivery lives on integration-2")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        sh("git", "checkout", "-q", "integration-2", cwd=m)
+
+        # The lead, on integration-2, reads its working tree.
+        out = self.doctor(fx, "--offline", expect_code=0)
+        self.assertEqual(failing(out), {}, out)
+        self.assertIn("origin/integration-2 carries the installed generation",
+                      doctor_lines(out)["release on the delivery base"][1], out)
+        code, out = fx.flow("lead-init", cwd=m); expect(code == 0, out)
+        code, out = fx.flow("lead-brief", cwd=m); expect(code == 0, out)
+        self.assertIn("origin/integration-2", (m / "docs/lane-brief.md").read_text())
+
+        # A lane reads the delivery's settings from origin/integration-2, with the base it was given.
+        wt = m / "lanes/FX-2"
+        sh("git", "worktree", "add", "-q", "--no-track", "-b", "feature/FX-2", wt, "origin/integration-2", cwd=m)
+        code, out = fx.flow("gate", "FX-2", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("this checkout read origin/feature/FX-1, the binding's base.ref", out)
+        self.assertIn("RUN_DELIVERY_BASE", out)
+        lane_env = {**fx.env, "RUN_DELIVERY_BASE": "integration-2"}
+        code, out = fx.flow("gate", "FX-2", cwd=wt, env=lane_env); expect(code == 0, out)
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        sh("git", "push", "-q", "origin", "feature/FX-2", cwd=wt)
+        code, out = fx.flow("open-pr", "FX-2", "--title", "FX-2: one", "--body-file", "/dev/null", cwd=wt, env=lane_env)
+        expect(code == 0, out)
+        prs = json.loads((fx.tmp / "forge.json").read_text())
+        self.assertEqual([pr["destination"] for pr in prs.values()], ["integration-2"], prs)
+        # The base a lane was started on, recorded in its checkout, serves without the variable.
+        fx.call("record_lane_base", wt, "integration-2", cwd=wt)
+        c = fx.call("Config", wt, "FX-1", cwd=wt, attrs=["base_branch", "delivery_where"])
+        self.assertEqual(c["base_branch"], "integration-2")
+        self.assertTrue(c["delivery_where"].startswith("origin/integration-2:"), c)
+
+        # A base outside the bases is refused, naming the guide's anchor.
+        sh("git", "push", "-q", "origin", "origin/integration-2:refs/heads/release/1", cwd=m)
+        code, out = fx.flow("gate", "FX-2", cwd=wt, env={**fx.env, "RUN_DELIVERY_BASE": "integration-9/sub"})
+        self.assertEqual(code, 2, out)
+        self.assertIn("doesn't serve the base integration-9/sub", out)
+        sh("git", "push", "-q", "origin", "origin/integration-2:refs/heads/integration-3", cwd=m)
+        code, out = fx.flow("gate", "FX-2", cwd=wt, env={**fx.env, "RUN_DELIVERY_BASE": "integration-3"})
+        self.assertEqual(code, 2, out)
+        self.assertIn("names base integration-2, but this checkout read it from origin/integration-3", out)
+        served = {name: fx.call("serves", SERVING_BINDING, name, cwd=wt) for name in SERVING_RULE}
+        self.assertEqual(served, SERVING_RULE, "run-delivery and the merge queue disagree on which bases are served")
+        for code, out in (fx.flow("config", cwd=wt, env={**fx.env, "RUN_DELIVERY_BASE": "release/1"}),
+                          fx.flow("lead-setup", "FX-9", "--plan", "docs/plan.md", "--base", "release/1",
+                                  "--pattern", PATTERN, "--no-authority", cwd=m)):
+            self.assertEqual(code, 2, out)
+            self.assertIn("doesn't serve the base release/1", out)
+            self.assertIn("adopting.md#base-mismatch", out)
+        code, out = fx.flow("lead-setup", "FX-9", "--plan", "docs/plan.md", "--pattern", PATTERN, "--no-authority", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("pass --base", out)
+        self.assertFalse((m / ".agents/deliveries/FX-9.json").exists())
+        code, out = fx.flow("lead-setup", "FX-9", "--plan", "docs/plan.md", "--base", "integration-2",
+                            "--pattern", PATTERN, "--no-authority", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads((m / ".agents/deliveries/FX-9.json").read_text())["baseBranch"], "integration-2")
+        (m / ".agents/deliveries/FX-9.json").unlink()
+        if self.node22:
+            harness("origin/feature/FX-1")
+            code, out = fx.flow("config", cwd=m)
+            self.assertEqual(code, 2, out)
+            self.assertIn("isn't the delivery's base origin/integration-2", out)
+            harness("origin/integration-2")
+
+        # A base cut before its binding gained bases still needs that setting on it, and doctor says so.
+        sh("git", "push", "-q", "origin", f"{before_bases}:refs/heads/integration-old", cwd=m)
+        sh("git", "update-ref", "-d", "refs/remotes/origin/integration-old", cwd=m)
+        (m / ".agents/deliveries/FX-8.json").write_text(json.dumps({**d, "baseBranch": "integration-old"}, indent=2))
+        if self.node22:
+            harness("origin/integration-old")
+        _, out = fx.flow("doctor", cwd=m, env={**fx.env, "RUN_DELIVERY_DELIVERY": "FX-8"})  # the variable names it
+        status, detail = doctor_lines(out)["release on the delivery base"]
+        self.assertEqual(status, "wrong", out)
+        self.assertIn("origin/integration-old's binding doesn't serve the base integration-old", detail)
+        self.assertIn("as a base cut before its binding gained bases doesn't; fix: commit the binding", detail)
+        (m / ".agents/deliveries/FX-8.json").unlink()
+        if self.node22:
+            harness("origin/feature/FX-1")
+
+        # A binding without bases refuses integration-2 exactly as today.
+        (m / ".agents/orchestration.json").write_text(json.dumps(doctor_binding(), indent=2))
+        code, out = fx.flow("config", cwd=m, env={**fx.env, "RUN_DELIVERY_LOCAL": "1", "RUN_DELIVERY_DELIVERY": "FX-1"})
+        self.assertEqual(code, 2, out)
+        self.assertIn("names base integration-2, but the binding here serves feature/FX-1;", out)
+        (wt / ".agents/orchestration.json").write_text(json.dumps(doctor_binding(), indent=2))
+        code, out = fx.flow("config", cwd=wt, env=lane_env)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the binding doesn't serve the base integration-2: it serves feature/FX-1;", out)
 
     def test_a_clean_repository_passes_every_check(self) -> None:
         fx = self.fixture()
