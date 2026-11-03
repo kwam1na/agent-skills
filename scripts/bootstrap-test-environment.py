@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -71,11 +72,23 @@ def bootstrap(root: Path = ROOT, environment: str = DEFAULT_ENVIRONMENT) -> Path
     return interpreter
 
 
-if __name__ == "__main__":
+def environment_name(name: str) -> str:
+    # Only these are ignored by git, and a folder elsewhere would land outside the checkout or in the corpus.
+    if not re.fullmatch(r"\.venv(-[A-Za-z0-9._]+)?", name):
+        raise argparse.ArgumentTypeError(f"{name!r} is not .venv or a .venv-<name> folder in the checkout")
+    return name
+
+
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--environment",
+        type=environment_name,
         default=DEFAULT_ENVIRONMENT,
         help="the environment's folder in the checkout, so a second Python leaves .venv alone",
     )
-    print(bootstrap(environment=parser.parse_args().environment))
+    print(bootstrap(environment=parser.parse_args(argv).environment))
+
+
+if __name__ == "__main__":
+    main()

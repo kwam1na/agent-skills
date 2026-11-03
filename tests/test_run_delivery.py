@@ -3464,7 +3464,7 @@ class RunDeliveryArgumentTests(unittest.TestCase):
                 self.assertRaises(SystemExit) as refused:
             self.tool.main(["--deliv", "K", "app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one", "--", "x"])
         self.assertEqual(refused.exception.code, 2)
-        self.assertIn("--deliv", stderr.getvalue())
+        self.assertIn("invalid choice: 'K'", stderr.getvalue(), "read as a command, so never as an option's value")
 
     def test_no_separator_leaves_the_arguments_as_they_were(self) -> None:
         given = ["app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one"]

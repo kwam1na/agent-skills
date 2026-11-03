@@ -3467,7 +3467,8 @@ class SnapshotCleanupTests(unittest.TestCase):
                 os.waitid = waitid
 
     def after_the_first_freeze(self, *, interrupt: bool = False, blind: bool = False, without: Path | None = None,
-                               always: bool = False, restarted: Path | None = None):
+                               always: bool = False, restarted: Path | None = None, later: float = 60,
+                               last_read: str | None = None):
         """What happens at the first table read after a real freeze, however many reads came before it."""
         real_table, real_environment, real_signal = state_tool._process_table, state_tool._process_environment, state_tool._signal_selected
         froze, fired = [], []
@@ -3484,12 +3485,17 @@ class SnapshotCleanupTests(unittest.TestCase):
                 fired.append(True)
                 if interrupt:
                     raise KeyboardInterrupt
+            elif last_read is not None and froze and len(fired) == 2:
+                # With nothing new to freeze, the second read after the freeze is the last.
+                if last_read == "interrupted":
+                    raise KeyboardInterrupt
+                return None
             if froze and read is not None:
                 if without is not None and (always or len(fired) == 1):
                     read = {pid: row for pid, row in read.items() if pid != int(without.read_text())}
                 if restarted is not None and int(restarted.read_text()) in read:
                     pid = int(restarted.read_text())
-                    read = {**read, pid: (*read[pid][:3], read[pid][3] + 60)}
+                    read = {**read, pid: (*read[pid][:3], read[pid][3] + later)}
                 fired.append(True)
             return read
 
@@ -3587,16 +3593,13 @@ class SnapshotCleanupTests(unittest.TestCase):
             state_tool._run_bounded(argv, 20, 4096)
         return signalled
 
-    def test_a_frozen_pid_the_table_no_longer_holds_is_not_signalled_again(self) -> None:
+    def test_a_frozen_process_every_later_read_misses_is_still_killed(self) -> None:
         argv, pid_file = self.command(detached=True)
         self.previewed(argv, pid_file)
         argv, pid_file = self.command(detached=True)
-        # Every read after the freeze reports it gone, as if another actor killed it.
-        signalled = self.signalled_after_the_freeze(argv, without=pid_file, always=True)
-        child = int(pid_file.read_text())
-        self.assertNotIn(child, signalled, "its pid may be another process's by now")
-        with contextlib.suppress(OSError):
-            os.kill(child, signal.SIGKILL)
+        # The last read misses it too. A pid no process holds takes no harm from the signal, and a live one needs it.
+        self.signalled_after_the_freeze(argv, without=pid_file, always=True)
+        self.assertTrue(self.gone(int(pid_file.read_text())), "killed, not left stopped")
 
     def test_a_frozen_pid_now_held_by_a_later_process_is_not_signalled(self) -> None:
         argv, pid_file = self.command(detached=True)
@@ -3608,6 +3611,40 @@ class SnapshotCleanupTests(unittest.TestCase):
         self.assertNotIn(child, signalled, "that pid is another process's by now")
         with contextlib.suppress(OSError):
             os.kill(child, signal.SIGKILL)
+
+    def test_a_start_within_the_slack_is_the_same_process(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=True)
+        # Linux computes a start from the boot time, which a stepped clock moves between reads.
+        self.signalled_after_the_freeze(argv, restarted=pid_file, later=state_tool.START_SLACK_SECONDS)
+        self.assertTrue(self.gone(int(pid_file.read_text())), "killed, not left stopped")
+
+    def test_a_last_read_that_fails_still_kills_what_was_frozen(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=True)
+        self.signalled_after_the_freeze(argv, last_read="unreadable")
+        self.assertTrue(self.gone(int(pid_file.read_text())), "killed, not left stopped")
+
+    def test_an_interrupted_last_read_still_kills_what_was_frozen_and_the_interrupt_arrives(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=True)
+        with self.assertRaises(KeyboardInterrupt):
+            self.signalled_after_the_freeze(argv, last_read="interrupted")
+        self.assertTrue(self.gone(int(pid_file.read_text())), "killed, not left stopped")
+
+    def test_a_group_member_the_kill_removed_is_still_reported(self) -> None:
+        argv, pid_file = self.command(detached=False)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=False)
+        cleanup: list[dict] = []
+        state_tool._run_bounded(argv, 20, 4096, cleanup=cleanup)
+        child = int(pid_file.read_text())
+        self.assertTrue(self.gone(child))
+        self.assertIn(child, cleanup[0]["selected"], "whoever reads the result is told what was stopped")
+        self.assertIn(f"[{child}]", state_tool._cleanup_note(cleanup).get("cleanup", ""))
 
     def test_a_frozen_process_missing_from_one_read_is_still_killed(self) -> None:
         argv, pid_file = self.command(detached=True)

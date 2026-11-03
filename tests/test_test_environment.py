@@ -22,6 +22,18 @@ def _load_bootstrap():
 
 
 class NamedEnvironmentTests(unittest.TestCase):
+    def test_the_command_line_names_the_environment_and_only_a_venv_in_the_checkout(self) -> None:
+        bootstrap = _load_bootstrap()
+        with mock.patch.object(bootstrap, "bootstrap", return_value=Path("python")) as run, mock.patch("builtins.print"):
+            bootstrap.main([])
+            bootstrap.main(["--environment", ".venv-3.11"])
+        self.assertEqual([call.kwargs["environment"] for call in run.call_args_list], [".venv", ".venv-3.11"])
+        for refused in ("../outside", "/tmp/absolute", "skills", ".", "", "venv311", ".venv-a/b", ".venv-"):
+            with self.subTest(refused=refused), mock.patch.object(bootstrap, "bootstrap") as run, \
+                    mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+                bootstrap.main(["--environment", refused])
+            run.assert_not_called()
+
     def test_an_environment_can_be_named_and_the_default_stays_the_checkouts_venv(self) -> None:
         bootstrap = _load_bootstrap()
         with tempfile.TemporaryDirectory() as temporary, mock.patch.object(bootstrap.subprocess, "run") as run:

@@ -2821,8 +2821,13 @@ def _signal_frozen(pids: list[int], signum: signal.Signals) -> None:
 
 
 def _still_frozen(frozen: dict[int, float], table: dict | None) -> dict[int, float]:
-    """What was frozen, by the pid's start when frozen, less a pid this read shows started since: it is another process's."""
-    return {pid: start for pid, start in frozen.items() if table is None or pid not in table or table[pid][3] == start}
+    """What was frozen, by the pid's start when frozen, less a pid this read shows started since: it is another process's.
+
+    A pid the read lacks stays: a read can miss a live process, and a stopped one is
+    left stopped by nothing else, while the signal does no harm to a pid no process holds.
+    """
+    return {pid: start for pid, start in frozen.items()
+            if table is None or pid not in table or abs(table[pid][3] - start) <= START_SLACK_SECONDS}
 
 
 def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
@@ -2835,11 +2840,10 @@ def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
     when the passes are interrupted. A preview shows the first read only; a
     later pass may add processes spawned since, each under the same refusals.
 
-    One last read decides what is killed. A pid it shows started since was
-    reused, and one it lacks is gone, but one a single earlier read missed is
-    still killed, since only this run would ever kill it. When that last read
-    fails or is interrupted, everything frozen is killed: a stopped process
-    must not stay stopped.
+    One last read, before anything is killed, drops a pid it shows started
+    since: that pid was reused. Everything else frozen is killed and reported,
+    even when that read fails or is interrupted, because a stopped process must
+    not stay stopped, and the interrupt then carries on to the caller.
     """
     group = process.pid if _unreaped(process.pid) else None
     table: dict | None = None
@@ -2883,18 +2887,20 @@ def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
             frozen = {pid: start for pid, start in frozen.items() if pid not in refused_now}
     finally:
         # Never leave a frozen process behind: what was stopped is killed.
+        last, interrupted = None, None
+        try:
+            last = _process_table()
+        except KeyboardInterrupt as interrupt:
+            interrupted = interrupt
+        frozen = _still_frozen(frozen, last)
         if group is not None and whole_group:
             with contextlib.suppress(OSError):
                 os.killpg(group, signal.SIGKILL)
-        last = None
-        with contextlib.suppress(KeyboardInterrupt):
-            last = _process_table()
-        frozen = _still_frozen(frozen, last)
-        if last is not None:
-            frozen = {pid: start for pid, start in frozen.items() if pid in last}
         _signal_frozen(list(frozen), signal.SIGKILL)
         selection["selected"] = sorted(frozen)
         selection["whole_group"] = whole_group
+        if interrupted is not None:
+            raise interrupted
 
 
 def _stop_group(process: subprocess.Popen) -> None:

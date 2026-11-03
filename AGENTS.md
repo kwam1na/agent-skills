@@ -37,7 +37,7 @@ id does; an adopter verifies the final's own. See `docs/product-generation.md`.
 
 The default branch is unprotected, and CI on it informs rather than blocks. A merge
 can land on red, and it falls to whoever merges to read the result, because a red
-default branch blocks the next release: the release workflow publishes only on CI's
+gating job blocks the next release: the release workflow publishes only on CI's
 success for the exact tagged commit. That gate is the Ubuntu job and `cut-release` on
 the push to the default branch. CI's macOS job runs there, and with a `full-matrix`
 label on a change request, to inform: its result, or its absence, neither allows nor

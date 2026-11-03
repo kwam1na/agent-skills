@@ -198,6 +198,10 @@ class ContinuousIntegrationDecisionTests(unittest.TestCase):
         self.assertEqual(self.decide([going], [self.jobs()[0]]), channel.WAIT, "its job has not appeared yet")
         self.assertEqual(self.decide([going], [{"name": ubuntu, "status": "completed", "conclusion": "failure"}, unfinished]), channel.REFUSE)
 
+    def test_a_finished_run_with_any_gating_job_unfinished_is_refused(self) -> None:
+        extra = {"name": "something new", "status": "in_progress", "conclusion": None}
+        self.assertEqual(self.decide([self.run_record()], [*self.jobs(), extra]), channel.REFUSE)
+
     def test_a_finished_run_missing_a_required_job_is_refused_not_waited_for(self) -> None:
         self.assertEqual(self.decide([self.run_record(conclusion="cancelled")], [self.jobs()[0]]), channel.REFUSE)
 

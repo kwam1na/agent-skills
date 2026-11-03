@@ -17,7 +17,7 @@ from agent_skills.validate import validate_corpus
 ROOT = Path(__file__).resolve().parents[1]
 WRITER = ROOT / "scripts" / "update-provenance.py"
 LOCK = "provenance.lock.json"
-IGNORED = shutil.ignore_patterns(".git", ".venv", "__pycache__", "*.pyc", ".pytest_cache", "build", "dist")
+IGNORED = shutil.ignore_patterns(".git", ".venv", ".venv-*", "__pycache__", "*.pyc", ".pytest_cache", "build", "dist")
 
 
 def digest(path: Path) -> str:
