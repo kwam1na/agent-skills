@@ -30,7 +30,7 @@ it merges.
 
 ## Decisions
 
-- **Two lanes, reused.** The app cannot start a session from Remote Control, so the two sessions from the previous delivery carry this one. Lane-1 takes V26-3082, then V26-3078, then V26-3076. Lane-2 takes V26-3077, then V26-3051, then V26-3050.
+- **Two lanes, reused.** The app cannot start a session from Remote Control, so the two sessions from the previous delivery carry this one. Lane-1 took V26-3082, then V26-3051, and V26-3050 is next. Lane-2 took V26-3077, then V26-3078. A third lane, started once the operator asked for one, took V26-3076.
 - **How it reaches `main`.** Tiers 1 to 3 land on `delivery/backlog-followups` through the queue, and reach `main` through one integration
   change with the delivery's binding removed. V26-3050 needs a tag holding V26-3051 to install, so it starts from `main` after that
   integration and goes straight into `main`, since it adds the standing binding.
