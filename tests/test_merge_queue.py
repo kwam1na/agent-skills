@@ -10,6 +10,7 @@ import io
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -3407,6 +3408,59 @@ class ServeTests(MergeQueueTestCase):
                     capture_output=True, timeout=60,
                 )
                 self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_a_stop_that_lands_in_a_finalizer_takes_no_queued_candidate(self) -> None:
+        code = textwrap.dedent("""
+            import os, shutil, signal, sys
+            sys.path.insert(0, sys.argv[1])
+            import merge_queue
+            real, sent = shutil.rmtree, []
+            def rmtree(path, *args, **kwargs):
+                if "weakref" in sys._getframe(1).f_code.co_filename and not sent:
+                    sent.append(True)
+                    os.kill(os.getpid(), signal.SIGTERM)
+                return real(path, *args, **kwargs)
+            shutil.rmtree = rmtree
+            sys.argv = ["merge_queue.py", *sys.argv[2:]]
+            sys.exit(merge_queue.main())
+        """)
+        adopter = self.adopter()
+        self.candidate(adopter)
+        done = subprocess.run(
+            [PY, "-B", "-c", code, str(SCRIPTS), "--repo", str(adopter.operator), "--state", str(adopter.state),
+             "--remote", "origin", "--base", "main", "serve", "--poll", "0.2"],
+            capture_output=True, timeout=60,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+        self.assertEqual(done.stdout, b"")
+        self.assertEqual([item["stage"] for item in state_tool.read_state(adopter.state)["queue"]], ["queued"])
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_serve_started_with_sigint_ignored_keeps_ignoring_it_and_stops_on_sigterm(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        # As a shell starts a background job: the ignore is inherited through exec.
+        serving = subprocess.Popen(
+            ["sh", "-c", 'trap "" INT; exec "$@"', "sh", PY, "-B", str(SCRIPTS / "merge_queue.py"),
+             "--repo", str(adopter.operator), "--state", str(adopter.state), "--remote", "origin", "--base", "main",
+             "serve", "--poll", "0.2"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.addCleanup(lambda: serving.poll() is None and serving.kill())
+        deadline = threading.Timer(120, serving.kill)
+        deadline.start()
+        self.addCleanup(deadline.cancel)
+        # A document means its handlers are set, and the merge means serve is about to wait.
+        for line in serving.stdout:  # type: ignore[union-attr]
+            if json.loads(line)["outcome"] == "merged":
+                break
+        serving.send_signal(signal.SIGINT)
+        time.sleep(1.5)
+        self.assertIsNone(serving.poll(), "serve stopped on a SIGINT it inherited as ignored")
+        serving.terminate()
+        _, errors = serving.communicate(timeout=60)
+        self.assertEqual(serving.returncode, 0, errors.decode("utf-8", "replace"))
 
     def test_every_queue_stopping_stop_is_journaled_as_a_broken_base(self) -> None:
         adopter = self.adopter()

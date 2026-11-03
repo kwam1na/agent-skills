@@ -36,6 +36,27 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "skills/deliver-work/SKILL.md": (
         "call its read-only `resume` command before reusing evidence on continuation",
     ),
+    "skills/obtain-review/SKILL.md": (
+        "A lens stops only processes it started, by the pid it recorded, never by pattern with `pkill` or `killall`",
+    ),
+    "skills/obtain-review/references/round-brief-template.md": (
+        "It stops only processes it started, by the pid it recorded, never by pattern with `pkill` or `killall`",
+    ),
+    "skills/plan-work/SKILL.md": (
+        "Where the repository tracks plans, commit the saved plan under its rules before plan review or removing the"
+        " checkout",
+        "Whether plans are tracked stays the repository's call",
+    ),
+    "README.md": (
+        "On Windows, which is not validated (see below), use `.venv\\Scripts\\python.exe`",
+        "Windows, which is not validated (see above), keeps its native `taskkill /T /F` tree cleanup",
+    ),
+    "docs/host-adapters.md": (
+        "On Windows, which is not validated (see the README), directory links use",
+    ),
+    "docs/product-generation.md": (
+        "It can delay one only where a gating job is absent while it still runs",
+    ),
     "skills/review-work/SKILL.md": (
         "When the host reports no cost, record `coverage: unreported`; do not invent zero",
     ),
@@ -46,6 +67,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Stop only processes you started, by the pid you recorded, never by pattern",
     ),
     "AGENTS.md": (
+        "`docs/solutions/` holds what past deliveries learned, one note per learning at"
+        " `docs/solutions/<category>/<slug>-<YYYY-MM-DD>.md`",
+        "On Windows, which is not validated (see above), use `.venv\\Scripts\\python.exe`",
+        "a gating job absent while it runs is waited for, within the bound, and then refused",
         "Stop only processes you started, by the pid you recorded, and never by"
         " pattern with `pkill` or `killall`",
         "resolves, in this repository, to the commit whose tree carries the"

@@ -440,11 +440,11 @@
       "outputs": [
         {
           "path": "skills/obtain-review/SKILL.md",
-          "sha256": "01f58fd2e3a5e71a06d389a17f1656982a1095af34df79e9a10202e7ccc54cd0"
+          "sha256": "41217573fc07e39b9c8008979e35542dafdb98d893c7fe76239d2b3862ab60fd"
         },
         {
           "path": "skills/obtain-review/references/round-brief-template.md",
-          "sha256": "70ac557e9058c1c7db1094c4ee7886881af57f868e8e1c81d8622748131caa2e"
+          "sha256": "c6127a294426e4ae06d5959562825ccb12414a3fbcc9b18abdd18a5e792ed15f"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -485,7 +485,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "ebe7e6bd40399151ddc967565d2d4ccdcbcdf13089d80efd30fa9276a708cd1c"
+          "sha256": "af3da3fb5fc0525c76296e9d3ed12892b95e97056ab0f7442937b28039b3bef0"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
@@ -968,7 +968,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "6a5eb0b4fb3c9ab161c31f27aa4b33038113681ba9e76419adabc4e29952bcc0"
+          "sha256": "534168fc8342caf2309daa1bf635bb1aaca6dcc57d892b7726a9f5c0ef6de41e"
         }
       ],
       "owner": "agent-skills-corpus",
