@@ -1266,9 +1266,10 @@ def capture_review(directory: Path, *, subject: str, candidate: str, outcomes: l
 
 def review_observations(directory: Path, state: dict, journal: list[dict]) -> dict:
     references = {entry["subject"]: entry for entry in journal if entry["kind"] == "review.evidence"}
-    latest_rounds = {entry["subject"]: entry["id"] for entry in journal if entry["kind"] == "review.round"}
+    latest_rounds = {entry["subject"]: entry for entry in journal if entry["kind"] == "review.round"}
     observed, budget = {}, [REVIEW_READ_BUDGET]
     items = {item["subject"]: item for item in [*state["queue"], *state.get("planned", [])]}
+    queued = {item["subject"] for item in state["queue"]}
     for subject, event in references.items():
         reference = event["reviewArtifact"]
         if subject not in items or items[subject].get("runId"):
@@ -1276,15 +1277,21 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
         candidate = reference["candidateRef"]
         try:
             item = items[subject]
+            latest = latest_rounds.get(subject)
             # Bound to the reviewed head: a runner sync only merges the base in, under its own checks.
-            if item.get("head") != candidate:
+            if subject in queued and item.get("head") != candidate:
                 raise StateError("review_artifact_invalid", "review candidate is stale or unknown")
-            if latest_rounds.get(subject, 0) > event["id"]:
+            # Before hand-off there is no head: bound to the round the lane journaled last, captured after it.
+            if subject not in queued and latest is None:
+                raise StateError("review_artifact_invalid", "no review round is journaled for this capture")
+            if latest is not None and latest["id"] > event["id"]:
                 raise StateError("review_artifact_invalid", "a later review has not been captured")
             data = _read_review_file(_review_artifact_path(directory, reference["digest"]), REVIEW_ARTIFACT_LIMIT, budget)
             if hashlib.sha256(data).hexdigest() != reference["digest"]:
                 raise StateError("review_artifact_invalid", "review artifact digest mismatch")
             outcomes = _review_outcomes(_review_json(data), subject, candidate)
+            if subject not in queued and (latest.get("review") or {}).get("round") != len(outcomes):
+                raise StateError("review_artifact_invalid", "the capture is not of the latest journaled round")
             observed[subject] = {"candidateRef": candidate, "digest": reference["digest"], "outcomes": outcomes}
         except (StateError, OSError, ValueError, UnicodeError, RecursionError):
             observed[subject] = {"candidateRef": candidate, "unavailable": True}

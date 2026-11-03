@@ -1229,7 +1229,7 @@ class RunDeliveryTrackerCommandTests(unittest.TestCase):
         path.write_text(bound.replace('"publishers": [', '"publishers": [], "was": [', 1))
         code, out = fx.flow("lead-init", cwd=m)
         self.assertEqual(code, 2, out)
-        self.assertIn("tracker updates would be forgotten: the tracker has an adapter but no tracker publisher", out)
+        self.assertIn("the tracker has an adapter, but the binding has no tracker publisher", out)
         conf = json.loads((m / ".agents/run-delivery.json").read_text())
         (m / ".agents/run-delivery.json").write_text(json.dumps({**conf, "tracker": {**conf["tracker"], "updates": "manual"}}))
         path.write_text(bound.replace('"publishers": [', '"publishers": [], "was": [', 1).replace(', "was": [', ', "wasnt": [', 1))

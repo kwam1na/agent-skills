@@ -202,7 +202,8 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
 
 - The runner reads the repository's binding, `.agents/orchestration.json`,
   from the tip of `<remote>/<base>`, never from a candidate or the operator's
-  checkout. A binding that names a different base is refused with
+  checkout. A binding that doesn't serve `--base`, as its `base.ref` or one of
+  its `bases`, or that names a different remote, is refused with
   `binding_invalid`. Write and check the binding with
   [the binding guide](references/orchestration-guide.md#binding-guide).
 - `--lead` is the holder name the lead uses in `leases[]`; it defaults to

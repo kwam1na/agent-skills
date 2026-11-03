@@ -8,8 +8,8 @@
   "candidate": [
     "python3",
     "-B",
-    "/Users/kwamina/delivery-artifacts/backlog-followups/candidate.py",
-    "/Users/kwamina/delivery-artifacts/adoption-gaps/candidate.py"
+    "/Users/kwamina/delivery-artifacts/adoption-gaps/candidate.py",
+    "{candidate}"
   ],
   "prepare": [
     [
@@ -155,6 +155,22 @@
       }
     ],
     "publishers": [],
+    "trackerSnapshot": {
+      "argv": [
+        "python3",
+        "-B",
+        "skills/delivery-views/scripts/snapshot.py",
+        "--kind",
+        "linear",
+        "--parent",
+        "{parent}",
+        "--token-env",
+        "LINEAR_API_KEY",
+        "--timeout-seconds",
+        "100"
+      ],
+      "timeoutSeconds": 120
+    },
     "forgeSnapshot": {
       "argv": [
         "python3",
@@ -181,5 +197,15 @@
     },
     "refreshSeconds": 180,
     "liveHome": "line-map"
-  }
+  },
+  "flakes": [
+    {
+      "check": "full-suite",
+      "tests": [
+        "tests\\.test_merge_queue\\.BatchTests\\.test_a_base_push_before_the_first_landing_stops_the_queue_with_nothing_landed",
+        "tests\\.test_merge_queue\\.InterruptedRunTests\\.test_the_interruption_is_journalled_before_the_state_is_cleared"
+      ],
+      "ref": "https://linear.app/v26-technologies/issue/V26-3092"
+    }
+  ]
 }

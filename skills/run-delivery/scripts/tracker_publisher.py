@@ -251,6 +251,7 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
     problems = []
     if not isinstance(tracker, dict):
         return {"mode": None, "adapter": None, "project": None, "transitions": {}, "publisher": None, "host": None,
+                "snapshot": False,
                 "problems": [f"{named or 'run-delivery.json'} tracker must be an object"]}
     state = binding.get("state") or {}
     snapshot = (state.get("trackerSnapshot") or {}).get("argv") or []
@@ -305,6 +306,7 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
     elif set(lead) - set(UPDATES):
         problems.append(f"tracker.transitions.lead names kinds the journal doesn't have: {sorted(set(lead) - set(UPDATES))}")
     return {"mode": mode, "adapter": adapter, "project": tracker.get("project"), "transitions": transitions,
+            "snapshot": bool(snapshot),
             "followupType": tracker.get("followupType", "Task"), "publisher": publisher, "host": host,
             "problems": problems}
 
@@ -326,12 +328,18 @@ def refusal(conf: dict) -> str | None:
     if conf["problems"]:
         return "; ".join(conf["problems"]) + "; fix: correct `tracker` in the configuration (references/config.md)"
     if conf["mode"] == "publisher" and not conf["publisher"]:
-        return ("the tracker has an adapter but no tracker publisher in the binding's state.publishers; fix: run "
-                "lead-setup, which adds it, or set tracker.updates to \"manual\" to post updates by hand")
+        return ("the tracker has an adapter, but the binding has no tracker publisher, so nothing posts the delivery's "
+                "updates and moves to it; fix: add one to state.publishers (lead-setup adds run-delivery's tracker "
+                "publisher), or set tracker.updates to \"manual\" to post them by hand")
     if conf["mode"] == "host" and not conf["host"]:
-        return ("the tracker is reachable only through the host, but the binding's state.publishers has no host "
-                "publisher; fix: add {\"id\": \"tracker\", \"kind\": \"host\"} to it, or set tracker.updates to "
-                "\"manual\"")
+        return ("the tracker is reachable only through the host, but the binding has no host publisher; fix: add one "
+                "to state.publishers, {\"id\": \"tracker\", \"kind\": \"host\"}, whose outbox the lead publishes, "
+                "or set tracker.updates to \"manual\"")
+    if conf["mode"] is None and conf.get("snapshot") and not (conf["publisher"] or conf["host"]):
+        # A tracker the binding reads with no adapter run-delivery knows: some publisher must post to it.
+        return ("the tracker is configured, but the binding has no tracker publisher, so nothing posts the delivery's "
+                "moves to it; fix: add one to state.publishers: run-delivery's tracker publisher with an adapter, or "
+                "a host publisher whose outbox the lead publishes; or set tracker.updates to \"manual\"")
     return None
 
 

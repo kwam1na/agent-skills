@@ -31,7 +31,9 @@
 3. Review with two lenses as subagents, `lens.outcome-correctness` and `lens.adversarial-testing`. Pass them the
    ticket's contract and the plan unit, and tell them not to spawn subagents. Resume the same reviewers each round
    until both approve, within `$review-work`'s round bound. At the bound, stop and report the blocker to the lead.
-   The adversarial lens limits mutation and fault injection to your changed lines and the code that calls them.
+   The adversarial lens limits mutation and fault injection to your changed lines and the code that calls them, and
+   mutates only in a private export of the candidate (`git archive <head> | tar -x -C <tmp dir>`), never in your
+   worktree, so your own edits and sensor runs stay clean while it works.
 4. Run the repository's compounding check: decide with `$compound-learning` whether the unit taught something worth a
    solution note under `docs/solutions/`, and run `.venv/bin/python scripts/update-provenance.py --check`.
 5. Push your branch and open a draft change request:
