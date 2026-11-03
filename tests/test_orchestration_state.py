@@ -825,6 +825,7 @@ class ReconcileTests(unittest.TestCase):
             # Under way by its draft change request, but its ticket was never started: not back in backlog.
             {"subject": "work-drafted", "title": "Drafted", "lane": "lane-3", "stage": "building"},
             {"subject": "work-reviewed", "title": "Reviewed", "lane": "lane-4", "stage": "review"},
+            {"subject": "work-unset", "title": "Unset", "lane": "lane-5", "stage": "building", "trackerStarted": False},
         ]})
         before = self.bytes()
         code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", [
@@ -833,6 +834,7 @@ class ReconcileTests(unittest.TestCase):
             {"subject": "work-later", "title": "Later", "state": "backlog"},
             {"subject": "work-drafted", "title": "Drafted", "state": "backlog"},
             {"subject": "work-reviewed", "title": "Reviewed", "state": "backlog"},
+            {"subject": "work-unset", "title": "Unset", "state": "backlog"},
         ]))
         self.assertEqual((code, result["drift"], result["changes"]), (0, False, []))
         self.assertEqual(result["reports"], [
