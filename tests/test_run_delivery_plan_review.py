@@ -514,7 +514,7 @@ class PlanWriteTests(PlanReviewCase):
         (fx.main / "docs/plan.md").write_text(PILOT_PLAN)
         commit(fx.main, "FX-1: a plan shaped like the pilot's")
         setup = ("lead-setup", "FX-1", "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern", PATTERN,
-                 "--approvals-section", "Approval Handoffs", "--out-of-scope-section", "Out of scope")
+                 "--approvals-section", "Approval Handoffs", "--out-of-scope-section", "Out of scope", "--no-authority")
         code, out = fx.flow(*setup, cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertIn("drafted 3 approvals from 'Approval Handoffs'", out)
@@ -537,11 +537,13 @@ class PlanWriteTests(PlanReviewCase):
                          (d["approvals"], d["outOfScope"], d["planReview"]))
         # A named section that is missing, or holds no list, drafts nothing and says so; an unnamed one is silent.
         code, out = fx.flow("lead-setup", "FX-1", "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern", PATTERN,
-                            "--approvals-section", "Sign-offs", "--out-of-scope-section", "Risks", cwd=fx.main)
+                            "--approvals-section", "Sign-offs", "--out-of-scope-section", "Risks", "--no-authority",
+                            cwd=fx.main)
         self.assertEqual(code, 2, out)  # the file exists and --force wasn't given
         path.unlink()
         code, out = fx.flow("lead-setup", "FX-1", "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern", PATTERN,
-                            "--approvals-section", "Sign-offs", "--out-of-scope-section", "Risks", cwd=fx.main)
+                            "--approvals-section", "Sign-offs", "--out-of-scope-section", "Risks", "--no-authority",
+                            cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertIn("note: the plan has no 'Sign-offs' section: drafted no approvals", out)
         self.assertIn("note: the plan's 'Risks' section holds no list: drafted no out-of-scope items", out)
@@ -550,7 +552,7 @@ class PlanWriteTests(PlanReviewCase):
         self.assertNotIn("outOfScope", d)
         path.unlink()
         code, out = fx.flow("lead-setup", "FX-1", "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern", PATTERN,
-                            cwd=fx.main)
+                            "--no-authority", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertNotIn("approvals", out)
         self.assertNotIn("approvals", json.loads(path.read_text()))
@@ -562,7 +564,7 @@ class PlanWriteTests(PlanReviewCase):
         commit(fx.main, "FX-1: the plan")
         code, out = fx.flow("lead-setup", "FX-1", "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern", PATTERN,
                             "--approvals-section", "Approval Handoffs", "--out-of-scope-section", "Out of scope",
-                            cwd=fx.main)
+                            "--no-authority", cwd=fx.main)
         self.assertEqual(code, 0, out)
         path = fx.main / ".agents/deliveries/FX-1.json"
         d = json.loads(path.read_text())
