@@ -48,7 +48,7 @@ On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
 Build and verify the core profile:
 
 ```bash
-python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-workflows-draft-building-v1
+python3 scripts/build-release.py build --archive /tmp/core.zip --metadata /tmp/core.release.json --release-id core-v1.2.3
 python3 scripts/build-release.py verify \
   --archive /tmp/core.zip \
   --metadata /tmp/core.release.json \
@@ -61,7 +61,7 @@ Build the optional Linear profile with the same format and lifecycle:
 python3 scripts/build-release.py build \
   --archive /tmp/linear.zip \
   --metadata /tmp/linear.release.json \
-  --release-id linear-workflows-v3 \
+  --release-id linear-v1.2.3 \
   --profile linear
 python3 scripts/build-release.py verify \
   --archive /tmp/linear.zip \
@@ -84,16 +84,13 @@ source artifacts, and rolls back through installed bytes:
 python3 scripts/build-release.py build \
   --archive /tmp/bootstrap.zip \
   --metadata /tmp/bootstrap.release.json \
-  --release-id bootstrap-workflows-draft-building-v1 \
+  --release-id bootstrap-v1.2.3 \
   --profile bootstrap
 python3 scripts/qualify-bootstrap.py \
   --archive /tmp/bootstrap.zip \
   --metadata /tmp/bootstrap.release.json \
   --record /tmp/bootstrap.qualification.json
 ```
-
-The current checked qualification record is
-`qualifications/bootstrap-workflows-draft-building-v1.json`.
 
 The detached release metadata authenticates the ZIP before it is parsed. The
 manifest then authenticates the complete payload and its single profile group.
@@ -137,12 +134,13 @@ the others:
 python3 scripts/build-release.py build \
   --archive /tmp/run-delivery.zip \
   --metadata /tmp/run-delivery.release.json \
-  --release-id run-delivery-workflows-v1 \
+  --release-id run-delivery-v1.2.3 \
   --profile run-delivery
 ```
 
-The current product set is `draft-building-v1` under `qualifications/product/`;
-its release notes are `docs/releases/draft-building-v1.md`.
+A build like these is for working on the corpus. A release comes from a version tag; see
+[Getting a release](#getting-a-release) and
+[product generations](docs/product-generation.md#releases).
 
 The [portable workflow graph](docs/workflow-graph-v1.md) declares ten canonical
 stages and closed, exactly bound stage results. `diagnose-work` returns causal
@@ -181,70 +179,33 @@ rollback checkpoint derives a disposable prior fixture; the candidate archive
 named in the record remains the single release under qualification. That prior
 fixture is built only from the verified candidate extraction, never from the
 runner checkout corpus.
-The current workflow-only record is checked in at
-`qualifications/core-workflows-draft-building-v1.json`.
-Historical records retain their original bytes under `qualifications/history/`.
-Historical product records such as `linear-product-v1` also remain immutable
-under `qualifications/product/`.
-The exact runnable product pair and its new qualifications live under
+A release carries its records beside its archives, and nothing about a release is
+checked in. Historical records retain their original bytes under
+`qualifications/history/`, and historical product sets remain immutable under
 `qualifications/product/`; see [product generations](docs/product-generation.md).
 
-Qualify the optional Linear profile only after an authorized maintainer's
-configured host has exercised the live connector with clearly disposable work.
-Before any live operation, build and verify both archives, then independently
-freeze a canonical collector input. Never derive this expected input from the
-attestation it will later validate.
+Qualify the optional Linear profile offline, from the archives alone. It reaches no
+tracker and needs no credentials:
 
-The collector input is `agent-skills-linear-collector-binding/1`:
+```bash
+python3 scripts/qualify-linear.py \
+  --core-archive /tmp/core.zip \
+  --core-metadata /tmp/core.release.json \
+  --core-record /tmp/core.qualification.json \
+  --linear-archive /tmp/linear.zip \
+  --linear-metadata /tmp/linear.release.json \
+  --record /tmp/linear.qualification.json
+```
 
-| Field | Required value |
-| --- | --- |
-| `schemaVersion` | `agent-skills-linear-collector-binding/1` |
-| `releases` | Exactly `core` and `linear`, each with `releaseId`, `profile`, `archiveSha256`, and `metadataSha256` from independent archive verification |
-| `graphSha256` | SHA-256 of the exact `workflows/delivery-v1.json` bytes, identical in both extracted archives |
-| `subjectRef` | `workflow-subject-ref/1` with a nonempty opaque qualification identity |
-| `candidateRef` | `workflow-candidate-ref/1` with a nonempty opaque candidate identity |
-
-Each reference is an object with `schemaVersion` and `opaque`. Use fresh redacted
-opaque identities, not ticket identifiers, paths, or host payloads. Serialize the
-collector input and attestation with sorted keys, two-space indentation, and a
-final newline. The current checked input is
-`qualifications/product/linear-draft-building-v1.collector-binding.json`; it is not
-part of either archive.
+The record binds the passing core qualification and both exact archive and metadata
+identities. Its scenarios are the core binding, Linear install and host discovery,
+controlled degraded outcomes, and forbidden alternate transport.
 Qualification also rebuilds the supplied Linear archive's core projection and
 requires its archive and metadata bytes to match the separately qualified core.
 For product archives, every runtime component must be byte-identical across
 profiles; only the descriptor's verified workflow-content binding differs.
 
-The host searches for an exact random operation marker before each create,
-retains the redacted live event sequence, and cancels both disposable entities
-after create, read, update, search, relation, and reconciliation checks. The
-`agent-skills-linear-host-attestation/2` document includes `collectorBinding`
-equal to the frozen input, plus the existing collector, audit, entity, event,
-session, and receipt fields. `auditReferences` uses the same order as `entities`:
-primary first, then dependency. Post its digest and random receipt reference through
-the same host-native Linear MCP boundary. Then pass the retained attestation and
-the independently frozen input to the offline driver:
-
-```bash
-python3 scripts/qualify-linear.py \
-  --core-archive qualifications/product/core-draft-building-v1.zip \
-  --core-metadata qualifications/product/core-draft-building-v1.release.json \
-  --core-record qualifications/product/core-draft-building-v1.json \
-  --linear-archive qualifications/product/linear-draft-building-v1.zip \
-  --linear-metadata qualifications/product/linear-draft-building-v1.release.json \
-  --collector-binding qualifications/product/linear-draft-building-v1.collector-binding.json \
-  --attestation qualifications/product/linear-draft-building-v1.attestation.json \
-  --record /tmp/linear.qualification.json
-```
-
-The version-2 checked record at `qualifications/product/linear-draft-building-v1.json` binds the passing core
-qualification, both exact archive and metadata identities, canonical extracted
-source-tree digests, the frozen collector input and its digest, the exact retained
-attestation bytes, and its external receipt reference. Old unbound attestations,
-any candidate or graph mismatch, and unavailable protected collection block a
-new qualification; none may be copied forward as fresh evidence. The transport
-sensor inspects only the delta between
+The transport sensor inspects only the delta between
 the supplied extracted Linear and core candidates. Its tests prove rejection of
 concrete direct endpoint, SDK, Node HTTP(S), and command transport actions while
 allowing non-executable boundary terminology and unrelated extension code.
@@ -255,12 +216,10 @@ Install and host-discovery checks run inside qualification-owned temporary home,
 configuration, repository, Codex, and Claude roots, so they do not depend on or
 mutate a runner's existing host installation.
 
-The protected host-native run owns the external MCP provenance. Offline checks
-bind the retained attestation bytes to its receipt reference and exact candidate
-artifacts and independently frozen input, then deterministically replay the
-redacted event causality; they do not independently prove external calls or
-collector authorization. The retained attestation and record
-contain no host payloads, ticket identifiers, secrets, or local paths.
+These checks do not prove that a live connector works, and no release needs a live
+tracker run. When the connector or Linear-facing skill text changes, run the
+[on-demand connector check](docs/linear-connector-check.md), which gates nothing
+and retains no attestation.
 
 Qualify the installed delivery provider separately from any adopting
 repository's delivery runner:
@@ -279,8 +238,7 @@ exact protocol through line-delimited JSON and independently inspects the
 written manifest and reviewer artifacts. Its deterministic record covers
 success, blocked, failed, cancelled, interrupted, duplicate, unsupported
 version, reconciliation, anti-vacuity, completeness, and redaction behavior
-while retaining no local paths or opaque host references. The checked record is
-`qualifications/provider-workflows-draft-building-v1.json`.
+while retaining no local paths or opaque host references.
 Its `workflowGraphSha256` names the actual installed graph, and the installation
 scenario compares that graph and both new skill bodies with the verified
 candidate. A failed qualifier cannot leave an earlier success record at the
@@ -294,25 +252,49 @@ calls.
 
 ## Getting a release
 
-Each release set is published as a GitHub release named by its tag, such as
-`draft-building-v1`. It carries every product archive of the set with its
-`.release.json`, and its notes list each archive's sha256. Download one profile's
-pair, check the zip against the digest its `.release.json` records, and install
-it with `apply` below; `apply` verifies the archive against that file again
-before it writes anything:
+Each release is a GitHub release named by its version tag. It carries five product
+archives with their `.release.json` files and four qualification records, and its
+notes list each archive's sha256. With no tag named, `gh release download` takes the
+latest release. Download one profile's pair into an empty directory:
 
 ```bash
-gh release download draft-building-v1 --repo kwam1na/agent-skills \
-  --pattern 'run-delivery-draft-building-v1.*'
-shasum -a 256 run-delivery-draft-building-v1.zip
+gh release download --repo kwam1na/agent-skills --pattern 'run-delivery-*'
 ```
 
-A Jira adopter downloads the `jira-draft-building-v1.*` pair the same way.
+A Jira adopter downloads the `jira-*` pair the same way. Then verify each file's
+build provenance, pinned to the release workflow as signer:
 
-The release workflow publishes a set when its tag is pushed. It refuses a tag
-that is not annotated or not merged to `main`, verifies every archive first, and
-never replaces a release that already exists. The same bytes stay checked in
-under `qualifications/product/` at the tag.
+```bash
+gh attestation verify run-delivery-*.zip --repo kwam1na/agent-skills --signer-workflow kwam1na/agent-skills/.github/workflows/release.yml
+```
+
+```bash
+gh attestation verify run-delivery-*.release.json --repo kwam1na/agent-skills --signer-workflow kwam1na/agent-skills/.github/workflows/release.yml
+```
+
+Install the pair with `apply` below, which verifies the archive against its
+`.release.json` again before it writes anything.
+
+Releases before the first version tag carry no attestation, so that check finds
+nothing for them. Releases before the first version tag, which is what latest
+resolves to until then, carry a 0.7.7 runtime without the installed-data protocol,
+so an adopter whose installed runtime has `installed-data-proof/1` must not apply
+them. A candidate is never latest, so latest stays on those releases until the
+first final is published, even once a candidate exists. The version number cannot
+tell these apart, because a later runtime can declare 0.7.7 too. Look in the
+installed bytes instead, from the repository root:
+
+```bash
+grep -c 'installed-data-proof/1' .agent-skills/current/runtime/cli.mjs
+```
+
+Pushing an annotated version tag publishes a release from the tagged tree. A tag is
+`vMAJOR.MINOR.PATCH`, with `-rc.N` for a candidate. The release workflow refuses a
+tag that is not annotated, not merged to `main`, or not above every existing version
+tag. It publishes only on CI's success for that exact commit and never replaces a
+release that already exists. If anything fails, nothing is published. A candidate is
+never latest, so download one by naming its tag. See
+[product generations](docs/product-generation.md#releases).
 
 ## Repository lifecycle
 
