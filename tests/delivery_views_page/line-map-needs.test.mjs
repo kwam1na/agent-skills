@@ -121,3 +121,22 @@ test("a refresh whose page has no list drops the one shown", async () => {
   expect(snapshots[0].app.querySelectorAll(".needs-you li").length).toBe(3);
   expect(snapshots[2].app.querySelector(".needs-you")).toBeNull();
 });
+
+test("a closed delivery shows the box only while a running, current list still holds it", async () => {
+  const closed = document();
+  closed.journal = [{ id: 1, at: "2026-01-01T11:00:00Z", kind: "delivery.closed", lane: null, subject: null, summary: "closed" }];
+  const box = async (list) => (await openPage(renderPage(closed, { config, needs: list }), { now: NOW }))[0].app.querySelector(".needs-you");
+  expect((await box(needs())).textContent).toContain("The tracker publisher hasn't posted journal entries 12");
+  const shownOnly = needs().items.filter((item) => !item.holding);
+  for (const list of [{ ...needs(), items: shownOnly }, { ...needs(), items: [] }, { ...needs(), running: false }, { ...needs(), staleAfter: "2026-01-01T11:59:00Z" }, { unreadable: true }]) {
+    expect(await box(list)).toBeNull();
+  }
+  const open = await shown({ ...needs(), running: false });
+  expect(open.textContent).toContain("lead-run --resume starts it again");
+});
+
+test("each item in the box carries the page's own drawn mark", async () => {
+  const box = await shown(needs());
+  expect([...box.querySelectorAll("li .g")].map((mark) => mark.className)).toEqual(["g stop", "g stop", "g wait"]);
+  expect([...box.querySelectorAll("li .g")].every((mark) => mark.querySelector("svg") !== null && mark.textContent === "")).toBe(true);
+});

@@ -8,6 +8,7 @@ process they start; the pass cases run `lead-run --once`, one pass at a time, so
 from __future__ import annotations
 
 import datetime
+import importlib.util
 import json
 import os
 import re
@@ -265,6 +266,22 @@ def alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     return True
+
+
+class ProofStateTests(unittest.TestCase):
+    def test_a_merged_item_is_past_waiting_as_the_line_map_reads_it(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
+        spec = importlib.util.spec_from_file_location("run_delivery_for_proofs", path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(module)
+        def handed(item: dict) -> str:
+            return module.proof_state(None, {"proofKinds": [{"id": "handed"}]}, {"state": {"queue": [{"subject": "A", **item}]}}, {"subject": "A"}, "handed")
+        self.assertEqual(handed({"stage": "merged", "pending": True}), "done")
+        self.assertEqual(handed({"stage": "queued", "pending": True}), "open")
+        self.assertEqual(handed({"stage": "stopped"}), "open")
+        self.assertEqual(handed({"stage": "queued"}), "done")
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)

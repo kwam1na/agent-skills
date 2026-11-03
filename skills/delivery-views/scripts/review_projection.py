@@ -71,7 +71,7 @@ def round_detail(outcomes: list[dict], commits: dict[int, str] | None = None) ->
     review's: fixed closures carry their closing round's commit, the round's time is when it finished, and no entry
     says it is deferred or that its details are unavailable."""
     plan = commits is not None
-    rounds, states = [], {}
+    rounds, states, severities = [], {}, {}
     for outcome in outcomes:
         raised, settled, verdicts = [], [], {}
         candidate, complete = None, True
@@ -86,6 +86,8 @@ def round_detail(outcomes: list[dict], commits: dict[int, str] | None = None) ->
             for finding in result["findings"]:
                 state = "deferred" if finding.get("state") == "deferred" else "unresolved"
                 states[finding["id"]] = state
+                # A filed severity is a floor: the strongest filing stands, as the delivery state keeps it.
+                severities[finding["id"]] = min(finding["severity"], severities.get(finding["id"], finding["severity"]))
                 if plan:
                     raised.append({"id": finding["id"], "lens": lens, "severity": finding["severity"],
                                    "summary": _plan_text(finding["summary"], SUMMARY_LENGTH), "state": state})
@@ -106,9 +108,15 @@ def round_detail(outcomes: list[dict], commits: dict[int, str] | None = None) ->
                                 "fixCommit": closure.get("fixCommit"), "deferredIssue": issue(closure.get("deferredIssue")),
                                 "resolution": plain(said)[:RESOLUTION_LENGTH]})
         counts = {severity: sum(note["severity"] == severity for note in raised) for severity in SEVERITIES}
-        approved = complete and outcome.get("outcome") == "aligned" and all(word == "approve" for word in verdicts.values())
+        agreed = complete and all(word == "approve" for word in verdicts.values())
+        approved = agreed and outcome.get("outcome") == "aligned"
+        # Every lens approved and the round isn't closed: a stated result when a note is open, and one that blocks still needs changes.
+        unsettled = agreed and outcome.get("outcome") in ("unresolved", "blocked")
+        still_open = [ident for ident, state in states.items() if state == "unresolved"]
+        blocking = any(severities.get(ident) in ("P0", "P1") for ident in still_open)
         row = {"round": outcome["round"], "candidateRef": candidate, "at": None,
-               "outcome": "approve" if approved else "changes" if "changes" in verdicts.values() else None,
+               "outcome": "approve" if approved else "changes" if "changes" in verdicts.values() or (unsettled and blocking)
+                          else "notes-open" if unsettled and still_open else None,
                "findings": counts, "verdicts": verdicts, "raised": raised, "settled": settled}
         if plan:
             finished = outcome.get("finishedAt")
