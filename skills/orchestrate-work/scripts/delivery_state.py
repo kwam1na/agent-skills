@@ -1834,7 +1834,8 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                         change(subject, "in the tracker but not the record: added as a follow-up")
                     elif word == "started":
                         # Started means under way, so it joins as building, settled in this one pass.
-                        lead["planned"].append({"subject": subject, "title": title, "lane": None, "stage": "building"})
+                        lead["planned"].append({"subject": subject, "title": title, "lane": None, "stage": "building",
+                                                "trackerStarted": True})
                         change(subject, "started in the tracker but not in the record: added as planned work, building")
                     elif word == "completed":
                         report(subject, "completed in the tracker but never recorded")
@@ -1842,9 +1843,15 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                     report(subject, "a follow-up the tracker now shows started: assign it a lane")
                 elif word == "started" and planned(subject) and planned(subject)["stage"] == "planned":
                     # A lane moves its ticket to started as it begins; that alone moves the stop.
-                    planned(subject)["stage"] = "building"
+                    planned(subject).update(stage="building", trackerStarted=True)
                     change(subject, "started in the tracker: now building")
-                elif word == "backlog" and planned(subject) and planned(subject)["stage"] in ("building", "review"):
+                elif word == "started" and planned(subject) and not planned(subject).get("trackerStarted"):
+                    # Work a draft change request moved first: its ticket has now been started too.
+                    planned(subject)["trackerStarted"] = True
+                    change(subject, "started in the tracker: recorded as started")
+                elif (word == "backlog" and planned(subject) and planned(subject)["stage"] in ("building", "review")
+                      and planned(subject).get("trackerStarted")):
+                    # Only a ticket once seen started went back; one never started is simply not yet started.
                     report(subject, f"{where(planned(subject))} in the record but back in the tracker's backlog: check it")
                 elif word == "completed" and planned(subject):
                     report(subject, f"completed in the tracker but still {where(planned(subject))} in the record: check the forge")
