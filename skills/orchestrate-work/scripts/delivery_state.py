@@ -665,6 +665,9 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
             for item_before, item_after in zip(old, new):
                 for field in set(item_before) | set(item_after):
                     if field not in RUNNER_QUEUE and item_before.get(field) != item_after.get(field):
+                        # Recording a merge ends any wait for the lead; the runner clears it then and at no other time.
+                        if field == "pending" and item_after.get("stage") == "merged" and "pending" not in item_after:
+                            continue
                         violations.append(f"/queue[subject={item_before.get('subject')}]/{field} belongs to the lead")
         return violations
     for field in RUNNER_META:
@@ -916,7 +919,8 @@ def handoff(
 
 def _pending(state: dict, subject: str) -> dict:
     item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
-    if item is None or not item.get("pending"):
+    # A merged item an earlier version left carrying the flag has no hand-off left to accept or reject.
+    if item is None or not item.get("pending") or item["stage"] == "merged":
         raise StateError("handoff_invalid", f"{subject} has no hand-off waiting for the lead")
     return item
 
@@ -2211,7 +2215,9 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                 _write_atomically(directory / RECOVERY_FILE, dumps(intent))
                 try:
                     if item["stage"] != "merged":
-                        queue = [{**entry, "stage": "merged", "syncedHead": recovery["head"]} if entry is item else entry for entry in state["queue"]]
+                        merged = {**item, "stage": "merged", "syncedHead": recovery["head"]}
+                        merged.pop("pending", None)
+                        queue = [merged if entry is item else entry for entry in state["queue"]]
                         patch(directory, writer="runner", version=state["version"],
                               changes={"queue": queue, "lanes": lane_rows_after(directory, state, recovery["subject"])})
                 except StateError as error:

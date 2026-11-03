@@ -1225,6 +1225,61 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual((code, [change["recovery"] for change in result["changes"]]), (0, [True]), result)
         self.assertEqual(state_tool.show(self.directory)["state"]["queue"][0]["stage"], "merged")
 
+    def test_a_merge_recovered_from_the_forge_ends_the_wait_for_the_lead(self) -> None:
+        self.lead({"queue": [queue_item("work-m", changeRequest="change 41", pending=True)]})
+        forge = self.snapshot("forge", [{"subject": "work-m", "state": "merged", "changeRequest": "change 41",
+                                         "head": HEAD_B}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, [change["recovery"] for change in result["changes"]]), (0, [True]), result)
+        item = state_tool.show(self.directory)["state"]["queue"][0]
+        self.assertEqual((item["stage"], item["syncedHead"]), ("merged", HEAD_B))
+        self.assertNotIn("pending", item)
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["drift"]), (0, False), result)
+
+    def test_a_merged_item_that_already_carries_the_wait_keeps_it_and_nothing_acts_on_it(self) -> None:
+        self.lead({"queue": [queue_item("work-m", changeRequest="change 41")]})
+        forge = self.snapshot("forge", [{"subject": "work-m", "state": "merged", "changeRequest": "change 41",
+                                         "head": HEAD_B}])
+        self.assertEqual(run_tool(self.directory, "reconcile", "--snapshot", forge)[0], 0)
+        # The record as an earlier version of the tool left it.
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, selector="queue[subject=work-m]",
+                         changes={"pending": True})
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["drift"]), (0, False), result)
+        self.assertEqual(self.bytes(), before)
+        self.assertEqual(state_tool.show(self.directory)["state"]["queue"][0]["stage"], "merged")
+        # Its hand-off is over: rejecting it would send merged work back to the lane's plan.
+        for call in (lambda: state_tool.accept_handoff(self.directory, "work-m"),
+                     lambda: state_tool.reject_handoff(self.directory, "work-m", "no")):
+            with self.assertRaises(state_tool.StateError) as caught:
+                call()
+            self.assertEqual(caught.exception.code, "handoff_invalid")
+        self.assertEqual(self.bytes(), before)
+
+    def test_the_runner_clears_the_wait_only_by_recording_the_merge(self) -> None:
+        self.lead({"queue": [queue_item("work-m", pending=True)]})
+
+        def as_runner(item: dict) -> dict:
+            version = state_tool.show(self.directory)["state"]["version"]
+            return state_tool.patch(self.directory, writer="runner", version=version, changes={"queue": [item]})
+
+        item = state_tool.show(self.directory)["state"]["queue"][0]
+        without = {key: value for key, value in item.items() if key != "pending"}
+        with self.assertRaises(state_tool.StateError) as caught:
+            as_runner(without)
+        self.assertIn("pending belongs to the lead", str(caught.exception))
+        with self.assertRaises(state_tool.StateError) as caught:
+            as_runner({**without, "stage": "merged", "title": "Renamed"})
+        self.assertIn("title belongs to the lead", str(caught.exception))
+        as_runner({**without, "stage": "merged"})
+        self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
+        with self.assertRaises(state_tool.StateError) as caught:
+            as_runner({**without, "stage": "merged", "pending": True})
+        self.assertIn("pending belongs to the lead", str(caught.exception))
+
     def test_a_merge_the_runner_records_after_the_plan_is_left_as_the_runner_wrote_it(self) -> None:
         self.lead({"queue": [queue_item("work-r", changeRequest="change 51")]})
         forge = self.snapshot("forge", [{"subject": "work-r", "state": "merged", "changeRequest": "change 51",
