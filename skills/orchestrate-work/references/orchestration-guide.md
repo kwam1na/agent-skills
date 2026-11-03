@@ -32,7 +32,7 @@ it through the state tool, then render the views.
   `leadSelection`.
 - **Planned work and change requests are the lead's.** The optional
   `planned[]` list holds work under way but not yet handed to the queue,
-  `{subject, title, lane, stage: planned|building|review, changeRequest?, runId?}`, selected
+  `{subject, title, lane, stage: planned|building|review, changeRequest?, runId?, trackerStarted?}`, selected
   as `planned[subject=<subject>]`; a queue or planned element's optional
   `changeRequest` names its change request. `reconcile` maintains both from
   snapshots. A record that kept these under `extensions` moves them onto
