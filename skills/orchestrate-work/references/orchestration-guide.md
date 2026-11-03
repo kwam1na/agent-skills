@@ -482,9 +482,11 @@ and the lead records it.
 
 **Questions**
 
-Escalate only to the lead, never to the operator: set `focus --state blocked
---waiting-on lead`, so the lead's `wait` sees it, then send one short question
-and stop. The lead answers, or takes it to the operator.
+Escalate only to the lead, never to the operator: set `focus --text "<your one
+short question>" --state blocked --waiting-on lead`, so the lead's `wait` sees it
+and carries the question, then send the question and stop. The lead answers, or
+takes it to the operator. When the answer comes, set `focus --state working
+--waiting-on ""` before going on.
 
 **Local load**
 
@@ -643,22 +645,27 @@ forge. It returns on the first thing needing the lead:
   more than `--swap-growth-bytes` (4 GiB).
 
 It exits 0 on a wake, 1 on an error, such as a malformed journal or a missing
-state directory, and exits 3 when `--timeout` passes, 30 minutes by default. It
+state directory, 2 on a usage error, and exits 3 when `--timeout` passes, 30
+minutes by default. It
 prints what it found: `woke`, `events`, `blockedLanes`, `pressure`, `machine`,
 `unavailable`, `through` and `restart`. Without `--after` it starts after the
 journal's last entry, so pass it on every restart: `restart` holds the arguments
-for the next wait, so an entry written between two waits is not missed. They also
-mark a held condition as seen, so a lane still blocked, low disk or steady high
-load doesn't wake the lead again and again, and swap growth keeps its baseline.
-A seen condition that clears and returns wakes the lead again, and so does a
-different lane or signal. A machine value this system can't read is named in
+for the next wait, so an entry written between two waits is not missed, along with
+this wait's timeout, poll and limits. They also mark a held condition as seen, so
+a lane still blocked on the same question, low disk or steady high load doesn't
+wake the lead again and again, and swap growth keeps its baseline. A lane that
+blocks again or changes its question wakes the lead, even if nothing read it
+clear in between, and so does a different lane or signal. A held load or disk
+signal wakes it again once it is half as bad again, or after it clears 10% inside
+its limit and returns. A machine value this system can't read is named in
 `unavailable` and on stderr, and is never treated as healthy. Swap is read from
 `/proc/meminfo` or `vm.swapusage`; on any other system it is unavailable.
 
-Woken on pressure, the lead finds what is loading the machine before taking more
-work, and reduces this delivery's own load first: capped test workers, and one
-test run at a time per lane. It reports what it can't reduce, such as other work
-or a system service, and it never kills what it didn't start.
+Whenever a wait names pressure, whatever else woke it, the lead finds what is
+loading the machine before taking more work, and reduces this delivery's own
+load first: capped test workers, and one test run at a time per lane. It reports
+what it can't reduce to the operator, such as other work or a system service. It
+stops nothing it didn't start without the operator's word.
 
 ### Leases
 

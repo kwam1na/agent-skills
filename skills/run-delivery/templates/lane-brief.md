@@ -113,8 +113,9 @@ Say what you're doing as it changes, with the installed release's state tool:
 
 ## Questions
 
-Escalate only to the lead, never to the user: set `focus --state blocked --waiting-on lead`, so the lead's `wait` sees
-it, then send one short question and stop. The lead answers, or takes it to the user.
+Escalate only to the lead, never to the user: set `focus --text "<your one short question>" --state blocked --waiting-on
+lead`, so the lead's `wait` sees it and carries the question, then send the question and stop. The lead answers, or takes
+it to the user. When the answer comes, set `focus --state working --waiting-on ""` before going on.
 
 ## Local load
 

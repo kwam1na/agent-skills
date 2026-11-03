@@ -3390,6 +3390,10 @@ WAIT_POLL_SECONDS = 15.0
 WAIT_LOAD_MULTIPLE = 2.0
 WAIT_MIN_FREE_BYTES = 20 * 2**30
 WAIT_SWAP_GROWTH_BYTES = 4 * 2**30
+# A held signal clears only this far inside its limit, so a value hovering at the limit doesn't wake the lead each time.
+WAIT_CLEAR_MARGIN = 0.9
+# A held signal wakes the lead again once it is this much worse than the value last reported.
+WAIT_WORSENED_FACTOR = 1.5
 SWAP_UNITS = {"K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40}
 
 
@@ -3442,6 +3446,25 @@ def _machine_unavailable(reading: dict) -> list[str]:
     return missing
 
 
+def _blocked_token(lane: dict) -> str:
+    """Identifies one blocking, not the lane: a later blocking or a changed question is a different token."""
+    question = json.dumps([lane.get("since"), lane.get("waitingOn"), lane.get("focus")], sort_keys=True)
+    return f"{lane['id']}@{hashlib.sha256(question.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _seen_pressure(items: list[str] | None) -> dict[str, float]:
+    held = {}
+    for item in items or ():
+        name, _, value = item.partition("=")
+        try:
+            held[name] = float(value)
+        except ValueError:
+            raise StateError("wait_invalid", f"--seen-pressure {item}: expected load=<value> or disk=<value>") from None
+        if name not in ("load", "disk") or not math.isfinite(held[name]):
+            raise StateError("wait_invalid", f"--seen-pressure {item}: expected load=<value> or disk=<value>")
+    return held
+
+
 def wait_for_lead(
     directory: Path,
     *,
@@ -3461,11 +3484,12 @@ def wait_for_lead(
     """Read the record and the machine until something needs the lead, or the time is up. Writes nothing.
 
     A condition the lead has already seen stays quiet while it holds and is forgotten once it clears, so a restart
-    doesn't wake on it again and its return does. The result's ``restart`` carries that across waits.
+    doesn't wake on it again and its return does. A held signal that keeps worsening wakes the lead again. The
+    result's ``restart`` carries all of that across waits, with this wait's own limits.
     """
     deadline = clock() + timeout
     held_blocked = set(seen_blocked or ())
-    held_pressure = set(seen_pressure or ())
+    held_pressure = _seen_pressure(seen_pressure)
     baseline = swap_baseline
     said_unavailable = False
     while True:
@@ -3478,10 +3502,9 @@ def wait_for_lead(
             raise StateError("wait_invalid", f"--after {after} is past the journal's last entry, {through}")
         events = [entry for entry in entries if entry["id"] > after and entry["kind"] in WAIT_KINDS]
 
-        lanes = {lane["id"]: lane for lane in state["lanes"] if lane["state"] == "blocked"}
-        held_blocked &= set(lanes)
+        lanes = {_blocked_token(lane): lane for lane in state["lanes"] if lane["state"] == "blocked"}
         newly_blocked = sorted(set(lanes) - held_blocked)
-        held_blocked |= set(lanes)
+        held_blocked = set(lanes)
 
         reading = read_machine(directory)
         unavailable = _machine_unavailable(reading)
@@ -3491,17 +3514,19 @@ def wait_for_lead(
         pressure = []
         if "load" not in unavailable:
             limit = load_multiple * reading["cores"]
-            if reading["load5"] <= limit:
-                held_pressure.discard("load")
-            elif "load" not in held_pressure:
-                held_pressure.add("load")
-                pressure.append({"signal": "load", "value": reading["load5"], "limit": limit, "cores": reading["cores"]})
+            load5 = reading["load5"]
+            if load5 <= limit * WAIT_CLEAR_MARGIN:
+                held_pressure.pop("load", None)
+            elif load5 > limit and ("load" not in held_pressure or load5 >= held_pressure["load"] * WAIT_WORSENED_FACTOR):
+                held_pressure["load"] = load5
+                pressure.append({"signal": "load", "value": load5, "limit": limit, "cores": reading["cores"]})
         if "disk" not in unavailable:
-            if reading["diskFreeBytes"] >= min_free_bytes:
-                held_pressure.discard("disk")
-            elif "disk" not in held_pressure:
-                held_pressure.add("disk")
-                pressure.append({"signal": "disk", "value": reading["diskFreeBytes"], "limit": min_free_bytes})
+            free = reading["diskFreeBytes"]
+            if free * WAIT_CLEAR_MARGIN >= min_free_bytes:
+                held_pressure.pop("disk", None)
+            elif free < min_free_bytes and ("disk" not in held_pressure or free * WAIT_WORSENED_FACTOR <= held_pressure["disk"]):
+                held_pressure["disk"] = free
+                pressure.append({"signal": "disk", "value": free, "limit": min_free_bytes})
         if "swap" not in unavailable:
             used = reading["swapUsedBytes"]
             if baseline is None or used < baseline:
@@ -3513,18 +3538,19 @@ def wait_for_lead(
         remaining = deadline - clock()
         if events or newly_blocked or pressure or remaining <= 0:
             woke = "event" if events or newly_blocked else "pressure" if pressure else "expired"
-            restart = ["--after", str(through)]
-            for lane in sorted(held_blocked):
-                restart += ["--seen-blocked", lane]
-            for signal_name in sorted(held_pressure):
-                restart += ["--seen-pressure", signal_name]
+            restart = ["--after", str(through), "--timeout", repr(timeout), "--poll", repr(poll),
+                       "--load-multiple", repr(load_multiple), "--min-free-bytes", str(min_free_bytes),
+                       "--swap-growth-bytes", str(swap_growth_bytes)]
+            # The joined form, so a lane id starting with a dash still parses.
+            restart += [f"--seen-blocked={token}" for token in sorted(held_blocked)]
+            restart += [f"--seen-pressure={name}={held_pressure[name]}" for name in sorted(held_pressure)]
             if baseline is not None:
                 restart += ["--swap-baseline", str(baseline)]
             return (WAIT_EXPIRED_EXIT if woke == "expired" else 0), {
                 "ok": True,
                 "woke": woke,
                 "events": [{key: entry.get(key) for key in ("id", "kind", "lane", "subject", "summary")} for entry in events],
-                "blockedLanes": [{key: lanes[lane].get(key) for key in ("id", "focus", "waitingOn")} for lane in newly_blocked],
+                "blockedLanes": [{key: lanes[token].get(key) for key in ("id", "focus", "waitingOn")} for token in newly_blocked],
                 "pressure": pressure,
                 "machine": reading,
                 "unavailable": unavailable,
@@ -3538,8 +3564,8 @@ def _add_wait_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--after", type=int, help="the journal id to start after: the last entry when left out")
     parser.add_argument("--timeout", type=float, default=WAIT_TIMEOUT_SECONDS, help="seconds before it expires")
     parser.add_argument("--poll", type=float, default=WAIT_POLL_SECONDS, help="seconds between reads")
-    parser.add_argument("--seen-blocked", action="append", metavar="LANE", help="a blocked lane the lead already knows of")
-    parser.add_argument("--seen-pressure", action="append", choices=("load", "disk"), help="a held signal the lead already knows of")
+    parser.add_argument("--seen-blocked", action="append", metavar="LANE@TOKEN", help="a blocking the lead already knows of, as restart prints it")
+    parser.add_argument("--seen-pressure", action="append", metavar="SIGNAL=VALUE", help="a held signal the lead already knows of, as restart prints it")
     parser.add_argument("--swap-baseline", type=int, metavar="BYTES", help="swap in use to measure growth from")
     parser.add_argument("--load-multiple", type=float, default=WAIT_LOAD_MULTIPLE, help="five-minute load, as a multiple of the cores")
     parser.add_argument("--min-free-bytes", type=int, default=WAIT_MIN_FREE_BYTES, help="free disk under the state directory")
@@ -3556,6 +3582,8 @@ def wait_arguments(arguments: list[str]) -> argparse.Namespace:
 def _wait_command(args: argparse.Namespace) -> tuple[int, dict]:
     bounded = math.isfinite(args.timeout) and args.timeout >= 0 and math.isfinite(args.poll) and args.poll > 0
     thresholds = math.isfinite(args.load_multiple) and args.load_multiple >= 0 and args.min_free_bytes >= 0 and args.swap_growth_bytes >= 0
+    if any("@" not in item for item in args.seen_blocked or ()):
+        raise StateError("wait_invalid", "--seen-blocked takes the lane@token that restart prints")
     if not bounded or not thresholds or (args.after is not None and args.after < 0):
         raise StateError("wait_invalid", "--timeout, --poll, --after and the thresholds must be finite and not negative, and --poll above zero")
     return wait_for_lead(

@@ -64,16 +64,16 @@ class Record:
                             "since": "2026-11-03T00:00:00Z"} for lane in lanes]}
         self.tool("patch", "--writer", "lead", "--version", str(version), "--patch", json.dumps(patch))
 
-    def lane_state(self, lane: str, state: str) -> None:
-        self.tool("focus", "--lane", lane, "--text", state, "--state", state,
-                  "--waiting-on", "lead" if state == "blocked" else "")
+    def lane_state(self, lane: str, state: str, *, text: str = "", waiting_on: str = "lead") -> None:
+        self.tool("focus", f"--lane={lane}", "--text", text or state, "--state", state,
+                  f"--waiting-on={waiting_on if state == 'blocked' else ''}")
 
     def start_wait(self, *arguments: str, timeout: str = "20") -> subprocess.Popen:
         # Thresholds nothing here reaches, so only the record can end these waits.
         return subprocess.Popen(
-            [sys.executable, "-B", str(TOOL), "--dir", str(self.directory), "wait", "--poll", "0.05",
-             "--timeout", timeout, "--load-multiple", "1000000", "--min-free-bytes", "0",
-             "--swap-growth-bytes", str(2**60), *arguments],
+            [sys.executable, "-B", str(TOOL), "--dir", str(self.directory), "wait", "--load-multiple", "1000000",
+             "--min-free-bytes", "0", "--swap-growth-bytes", str(2**60), *arguments, "--poll", "0.05",
+             "--timeout", timeout],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
 
@@ -278,7 +278,7 @@ class BlockedLaneTests(RecordCase):
         self.record.lane_state("lane-1", "working")
         code, expired = self.record.wait(*woken["restart"])
         self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT)
-        self.assertNotIn("--seen-blocked", expired["restart"])
+        self.assertEqual(_seen_blocked(expired), [])
 
     def test_a_second_lane_blocking_wakes_it_while_the_first_is_seen(self) -> None:
         self.record.add_lanes("lane-1", "lane-2")
@@ -290,7 +290,89 @@ class BlockedLaneTests(RecordCase):
         code, result = _finish(process)
         self.assertEqual(code, 0)
         self.assertEqual([lane["id"] for lane in result["blockedLanes"]], ["lane-2"])
-        self.assertEqual(result["restart"].count("--seen-blocked"), 2)
+        self.assertEqual(len(_seen_blocked(result)), 2)
+
+    def test_a_lane_that_blocks_again_with_nothing_reading_it_clear_wakes_it(self) -> None:
+        self.record.add_lanes("lane-1")
+        self.record.lane_state("lane-1", "blocked", text="question one")
+        _, woken = self.record.wait()
+        self.record.lane_state("lane-1", "working")
+        time.sleep(0.01)
+        self.record.lane_state("lane-1", "blocked", text="question two")
+        code, result = self.record.wait(*woken["restart"])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["blockedLanes"][0]["focus"], "question two")
+
+    def test_a_lane_that_clears_and_returns_inside_one_poll_wakes_it(self) -> None:
+        self.record.add_lanes("lane-1")
+        self.record.lane_state("lane-1", "blocked")
+        _, woken = self.record.wait()
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(TOOL), "--dir", str(self.record.directory), "wait", *woken["restart"],
+             "--poll", "1.5", "--timeout", "8"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        time.sleep(0.5)
+        self.record.lane_state("lane-1", "working")
+        self.record.lane_state("lane-1", "blocked")
+        code, result = _finish(process)
+        self.assertEqual(code, 0)
+        self.assertEqual([lane["id"] for lane in result["blockedLanes"]], ["lane-1"])
+
+    def test_a_changed_question_or_addressee_while_still_blocked_wakes_it(self) -> None:
+        self.record.add_lanes("lane-1")
+        self.record.lane_state("lane-1", "blocked", text="for the operator", waiting_on="operator")
+        _, woken = self.record.wait()
+        self.record.lane_state("lane-1", "blocked", text="for the operator", waiting_on="lead")
+        code, woken = self.record.wait(*woken["restart"])
+        self.assertEqual(code, 0)
+        self.record.lane_state("lane-1", "blocked", text="another question", waiting_on="lead")
+        code, result = self.record.wait(*woken["restart"])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["blockedLanes"][0]["focus"], "another question")
+
+    def test_a_lane_id_starting_with_a_dash_survives_the_restart(self) -> None:
+        self.record.add_lanes("-odd")
+        self.record.lane_state("-odd", "blocked")
+        code, woken = self.record.wait()
+        self.assertEqual(code, 0)
+        code, _ = self.record.wait(*woken["restart"])
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT)
+
+    def test_a_seen_lane_without_its_token_is_refused(self) -> None:
+        code, result = self.record.wait("--seen-blocked", "lane-1")
+        self.assertEqual(code, 1)
+        self.assertEqual(result["code"], "wait_invalid")
+
+
+class RestartTests(RecordCase):
+    def test_a_printed_restart_alone_keeps_the_leads_limits(self) -> None:
+        done = subprocess.run(
+            [sys.executable, "-B", str(TOOL), "--dir", str(self.record.directory), "wait", "--timeout", "0.2", "--poll",
+             "0.05", "--load-multiple", "1000000", "--min-free-bytes", "0", "--swap-growth-bytes", str(2**60)],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        restart = json.loads(done.stdout)["restart"]
+        parsed = state_tool.wait_arguments(restart)
+        self.assertEqual((parsed.timeout, parsed.poll, parsed.load_multiple, parsed.min_free_bytes, parsed.swap_growth_bytes),
+                         (0.2, 0.05, 1000000.0, 0, 2**60))
+        again = subprocess.run(
+            [sys.executable, "-B", str(TOOL), "--dir", str(self.record.directory), "wait", *restart],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        self.assertEqual(again.returncode, state_tool.WAIT_EXPIRED_EXIT, again.stdout + again.stderr)
+        self.assertEqual(json.loads(again.stdout)["restart"], restart)
+
+    def test_a_held_signal_with_no_value_is_refused(self) -> None:
+        for item in ("disk", "swap=1", "load=nan", "load=many"):
+            with self.subTest(item=item):
+                code, result = self.record.wait(f"--seen-pressure={item}")
+                self.assertEqual(code, 1)
+                self.assertEqual(result["code"], "wait_invalid")
+
+
+def _seen_blocked(result: dict) -> list[str]:
+    return [argument for argument in result["restart"] if argument.startswith("--seen-blocked=")]
 
 
 def _reading(**values) -> dict:
@@ -330,7 +412,8 @@ def _restart_options(result: dict) -> dict:
     """The printed arguments, read as the command line would read them."""
     parsed = state_tool.wait_arguments(result["restart"])
     return {"after": parsed.after, "seen_blocked": parsed.seen_blocked, "seen_pressure": parsed.seen_pressure,
-            "swap_baseline": parsed.swap_baseline}
+            "swap_baseline": parsed.swap_baseline, "load_multiple": parsed.load_multiple,
+            "min_free_bytes": parsed.min_free_bytes, "swap_growth_bytes": parsed.swap_growth_bytes}
 
 
 class PressureTests(MachineCase):
@@ -401,6 +484,38 @@ class PressureTests(MachineCase):
                 code, returned = self.restart([_reading(**high), _reading(**low), _reading(**high)], held)
                 self.assertEqual(code, 0, "a condition that cleared and returned did not wake it")
                 self.assertEqual(returned["pressure"][0]["signal"], signal)
+
+    def test_a_held_signal_that_keeps_worsening_wakes_it_again(self) -> None:
+        for signal, first, slightly, much in (
+            ("load", {"load5": 40.0}, {"load5": 50.0}, {"load5": 60.0}),
+            ("disk", {"diskFreeBytes": 18 * GIB}, {"diskFreeBytes": 15 * GIB}, {"diskFreeBytes": 12 * GIB}),
+        ):
+            with self.subTest(signal=signal):
+                _, woken = self.run_wait([_reading(**first)])
+                code, held = self.restart([_reading(**slightly)], woken)
+                self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "a slightly worse value woke it")
+                code, worse = self.restart([_reading(**much)], held)
+                self.assertEqual(code, 0)
+                self.assertEqual(worse["pressure"][0]["signal"], signal)
+                code, _ = self.restart([_reading(**much)], worse)
+                self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "the worse value woke it twice")
+
+    def test_a_value_hovering_at_its_limit_wakes_it_once(self) -> None:
+        for high, near in (({"load5": 33.0}, {"load5": 31.0}), ({"diskFreeBytes": 19 * GIB}, {"diskFreeBytes": 21 * GIB})):
+            with self.subTest(high=high):
+                _, woken = self.run_wait([_reading(**high)])
+                code, _ = self.restart([_reading(**near), _reading(**high), _reading(**near), _reading(**high)], woken)
+                self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT)
+
+    def test_a_restart_keeps_an_overridden_threshold(self) -> None:
+        reading = _reading(diskFreeBytes=15 * GIB)
+        code, expired = self.run_wait([reading], min_free_bytes=5 * GIB)
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT)
+        code, _ = self.restart([reading], expired)
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "the restart went back to the default limit")
+        code, result = self.restart([_reading(diskFreeBytes=4 * GIB)], expired)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["pressure"][0]["limit"], 5 * GIB)
 
     def test_a_new_signal_wakes_it_while_another_is_seen(self) -> None:
         _, woken = self.run_wait([_reading(load5=40.0)])
@@ -501,18 +616,21 @@ class StandingTextTests(unittest.TestCase):
         for path in (SKILL, GUIDE):
             self.assert_phrases(
                 path,
+                "Whenever a wait names pressure, whatever else woke it",
                 "finds what is loading the machine before taking more work",
                 "reduces this delivery's own load first",
-                "reports what it can't reduce",
-                "never kills what it didn't start",
+                "what it can't reduce to the operator",
+                "It stops nothing it didn't start without the operator's word",
             )
 
     def test_both_lane_briefs_tell_a_lane_to_mark_itself_blocked(self) -> None:
         guide = GUIDE.read_text(encoding="utf-8")
         brief = " ".join(guide[guide.index("## Lane brief template"):guide.index("## Lead authority and escalation")].split())
-        self.assertIn("--state blocked --waiting-on lead", brief)
-        self.assertIn("so the lead's `wait` sees it", brief)
-        self.assert_phrases(RUN_DELIVERY_BRIEF, "--state blocked --waiting-on lead", "so the lead's `wait` sees it")
+        run_delivery = " ".join(RUN_DELIVERY_BRIEF.read_text(encoding="utf-8").split())
+        for text in (brief, run_delivery):
+            self.assertRegex(text, r'focus --text "<your one short question>" --state blocked --waiting-on lead')
+            self.assertIn("so the lead's `wait` sees it and carries the question", text)
+            self.assertIn('When the answer comes, set `focus --state working --waiting-on ""` before going on', text)
 
     def test_both_lane_briefs_cap_local_test_load(self) -> None:
         guide = GUIDE.read_text(encoding="utf-8")
