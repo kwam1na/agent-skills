@@ -137,9 +137,15 @@ class PlanReviewWithoutDeliveryTests(PlanReviewCase):
         self.assertEqual(code, 2, out)
         self.assertIn("--lenses", out)
         self.assertFalse(folder.exists())
+        code, out = self.flow(fx, "prepare", "--plan", "docs/plans/x.md", "--lenses", ",")
+        self.assertEqual(code, 2, out)
+        self.assertIn("--lenses must be 1 to 12 different lenses", out)
+        self.assertFalse(folder.exists())
         code, out = self.flow(fx, "prepare", "--plan", "docs/plans/x.md", "--lenses", f"{OC},{AT}")
         self.assertEqual(code, 0, out)
         self.assertIn("plan docs/plans/x.md plan review round 1", out)
+        self.assertIn("Then: python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py plan-review "
+                      "reduce --plan docs/plans/x.md", out)
         meta = json.loads((folder / "round-1.meta.json").read_text())
         self.assertEqual(meta["lenses"], [OC, AT])
         self.assertEqual(json.loads((folder / "store.json").read_text()),
@@ -153,6 +159,10 @@ class PlanReviewWithoutDeliveryTests(PlanReviewCase):
         code, out = self.flow(fx, "reduce", "--plan", "docs/plans/x.md")
         self.assertEqual(code, 0, out)
         self.assertIn("plan docs/plans/x.md plan review round 1: changes requested; 1 open finding", out)
+        self.assertIn("then: python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py plan-review "
+                      "prepare --plan docs/plans/x.md", out)
+        code, out = self.flow(fx, "reduce", "--plan", "docs/plans/x.md")
+        self.assertIn("plan-review prepare --plan docs/plans/x.md", out)
         self.assertFalse((folder / "checkouts" / OC).exists())
         plan = fx.main / "docs/plans/x.md"
         plan.write_text(plan.read_text() + "\nRound 1 is answered.\n")
@@ -169,6 +179,15 @@ class PlanReviewWithoutDeliveryTests(PlanReviewCase):
         self.assertEqual(code, 0, out)
         self.assertIn("isn't converging", out)
         self.assertIn("plan-review end --plan docs/plans/x.md --reason", out)
+        # A round whose checkouts are gone fails, and says how to prepare it again with --plan.
+        (folder / "round-3.meta.json").write_text((folder / "round-2.json").read_text())
+        still = [{"id": f"outcome-correctness-r{k}-1", "state": "open", "resolution": "Still open."} for k in (1, 2)]
+        results(fx, 3, {OC: {"resolved": still, "override": {"outcome": "changes-requested"}}}, folder, "x-plan.plan")
+        code, out = self.flow(fx, "reduce", "--plan", "docs/plans/x.md")
+        self.assertEqual(code, 2, out)
+        self.assertIn("plan-review prepare --plan docs/plans/x.md --restart", out)
+        for name in ("round-3.meta.json", "result-r3-outcome-correctness.json", "result-r3-adversarial-testing.json"):
+            (folder / name).unlink()
         code, out = self.flow(fx, "end", "--plan", "docs/plans/x.md", "--reason", "The operator decided.")
         self.assertEqual(code, 0, out)
         self.assertEqual(json.loads((folder / "ended.json").read_text())["reason"], "The operator decided.")
@@ -193,6 +212,17 @@ class PlanReviewWithoutDeliveryTests(PlanReviewCase):
         self.assertEqual(code, 2, out)
         self.assertIn("reviewSlug", out)
         self.assertFalse((fx.main / ".orchestration/plan-review").exists())
+        # Front matter is the file's leading block only; a quoted slug is the slug.
+        plan.write_text("# My plan\n\n---\nreviewSlug: r-plan\n---\n")
+        commit(fx.main, "a block below the title")
+        code, out = self.flow(fx, "prepare", "--plan", "docs/plans/My Plan.md", "--lenses", OC)
+        self.assertEqual(code, 2, out)
+        self.assertIn("has no review slug", out)
+        plan.write_text('---\nreviewSlug: "q-plan"\n---\n# My plan\n')
+        commit(fx.main, "a quoted slug")
+        code, out = self.flow(fx, "prepare", "--plan", "docs/plans/My Plan.md", "--lenses", OC)
+        self.assertEqual(code, 0, out)
+        self.assertTrue((slug_store(fx, "q-plan") / "round-1.meta.json").exists())
 
     def test_a_renamed_plan_keeps_its_review(self) -> None:
         fx = self.fixture()
@@ -274,6 +304,46 @@ class PlanReviewWithoutDeliveryTests(PlanReviewCase):
         self.assertTrue((store(fx) / "round-1.json").exists())
         plan_file = json.loads((fx.tmp / "record/plan.json").read_text())
         self.assertEqual(plan_file["planReview"]["state"], "aligned")
+        # Another plan's own review leaves this delivery's plan chapter alone, even with the delivery named.
+        before = (fx.tmp / "record/plan.json").read_bytes()
+        with_slug(fx, "docs/plans/next.md", "next-plan", "# Next\n")
+        env = {**fx.env, "RUN_DELIVERY_DELIVERY": "FX-1"}
+        code, out = fx.flow("plan-review", "prepare", "--plan", "docs/plans/next.md", "--lenses", OC, cwd=fx.main, env=env)
+        self.assertEqual(code, 0, out)
+        results(fx, 1, {OC: {"findings": [finding(OC, 1, 1)]}}, slug_store(fx, "next-plan"), "next-plan.plan")
+        code, out = fx.flow("plan-review", "reduce", "--plan", "docs/plans/next.md", cwd=fx.main, env=env)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("plan-review", "end", "--plan", "docs/plans/next.md", "--reason", "Stop.", cwd=fx.main,
+                            env=env)
+        self.assertEqual(code, 0, out)
+        self.assertEqual((fx.tmp / "record/plan.json").read_bytes(), before)
+
+    def test_a_delivery_with_its_own_plan_review_refuses_to_adopt_another(self) -> None:
+        fx = self.fixture()
+        with_slug(fx, "docs/plan.md", "fixture-plan")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        path = review_delivery(fx, (OC,))
+        code, out = self.flow(fx, "prepare")
+        self.assertEqual(code, 0, out)
+        results(fx, 1, {})
+        self.assertEqual(self.flow(fx, "reduce")[0], 0)
+        source = slug_store(fx, "fixture-plan")
+        code, out = self.flow(fx, "prepare", "--plan", "docs/plan.md", "--lenses", OC)
+        self.assertEqual(code, 0, out)
+        results(fx, 1, {}, source, "fixture-plan.plan")
+        self.assertEqual(self.flow(fx, "reduce", "--plan", "docs/plan.md")[0], 0)
+        drafted = path.read_bytes()
+        from tests.test_run_delivery import PATTERN
+        code, out = fx.flow("lead-setup", "FX-1", "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern", PATTERN,
+                            "--no-authority", "--force", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("already has a plan review", out)
+        self.assertEqual(path.read_bytes(), drafted)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("already has a plan review", out)
+        self.assertTrue((source / "round-1.json").exists())
+        self.assertFalse((source / "adopted.json").exists())
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)

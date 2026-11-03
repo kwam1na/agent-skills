@@ -1328,7 +1328,7 @@ def plan_review_lenses(c) -> list[str]:
         lenses = (c.raw.get("planReview") or {}).get("lenses")
         if not isinstance(lenses, list) or not lenses:
             raise Stop(f"{c.delivery_where} names no plan review lenses: set planReview.lenses, such as {list(c.lenses)}")
-    if len(lenses) > 12 or len(set(lenses)) != len(lenses):
+    if not lenses or len(lenses) > 12 or len(set(lenses)) != len(lenses):
         raise Stop(f"{where} must be 1 to 12 different lenses")
     unknown = [lens for lens in lenses if lens not in c.lenses or not PLAN_REVIEW_ID.fullmatch(lens)]
     if unknown:
@@ -1714,7 +1714,7 @@ def plan_review_reduce(args) -> None:
     for lens in meta["lenses"]:
         remove_checkout(folder / "checkouts" / lens)
     plan_review_summary(c, [*rounds, outcome])
-    if c.delivery and (c.state / "state.json").exists():
+    if not getattr(c, "plan_store", None) and (c.state / "state.json").exists():
         print(f"  {rebuild_plan_quietly(c)}")
 
 
@@ -1758,7 +1758,7 @@ def plan_review_end(args) -> None:
     (folder / "ended.json").write_text(json.dumps({"at": now(), "round": rounds[-1]["round"], "reason": reason},
                                                   indent=2) + "\n")
     print(f"{plan_review_name(c)} plan review ended after round {rounds[-1]['round']}: {reason}")
-    if c.delivery and (c.state / "state.json").exists():
+    if not getattr(c, "plan_store", None) and (c.state / "state.json").exists():
         print(f"  {rebuild_plan_quietly(c)}")
 
 

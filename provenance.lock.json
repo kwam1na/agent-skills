@@ -1042,7 +1042,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "b222c11ff6632437404f1b7164d9b13492e347495c8d52d9e92e50d63a08cb16"
+          "sha256": "63f3733b5ba92621fd9404ac5f82824f8bf17c6e8d49124c80c61d29c5414775"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",
