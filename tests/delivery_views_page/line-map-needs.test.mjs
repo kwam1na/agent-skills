@@ -95,3 +95,29 @@ test("a live push takes the list from the page the server renders after it", asy
   expect(pending.app.querySelectorAll(".needs-you li").length).toBe(3);
   expect(after.app.querySelector(".needs-you .needs-none").textContent).toContain("the supervisor isn't running");
 });
+
+test("an open page picks up a pass's new list on its timer, with no record push", async () => {
+  const first = renderPage(document(), { config, needs: needs() });
+  const later = renderPage(document(), { config, needs: needs({ at: "2026-01-01T12:00:30Z", staleAfter: "2026-01-01T12:02:30Z",
+    items: needs().items.filter((item) => item.source !== "fullHealth") }) });
+  const [before, after] = await openPage(first, { now: "2026-01-01T12:01:00Z", rendered: later, steps: [{ tick: true }, { wait: 3100 }] })
+    .then((snapshots) => [snapshots[0], snapshots[2]]);
+  expect(before.app.querySelectorAll(".needs-you li").length).toBe(3);
+  expect([...after.app.querySelectorAll(".needs-you li .a1")].map((row) => row.textContent)).toEqual([
+    "The tracker publisher hasn't posted journal entries 12", "FX-9: the move \"Done\" isn't offered from Review"]);
+});
+
+test("a list over the renderer's cap shows how many more it left out", async () => {
+  const many = Array.from({ length: 102 }, (_, n) => ({ holding: true, source: "s", text: `item ${n}`, clears: "c" }));
+  const box = await shown(needs({ items: many }));
+  expect(box.querySelectorAll("li").length).toBe(100);
+  expect(box.querySelector(".needs-more").textContent).toBe("2 more not shown.");
+});
+
+test("a refresh whose page has no list drops the one shown", async () => {
+  const first = renderPage(document(), { config, needs: needs() });
+  const later = renderPage(document(), { config });
+  const snapshots = await openPage(first, { now: NOW, rendered: later, steps: [{ tick: true }, { wait: 3100 }] });
+  expect(snapshots[0].app.querySelectorAll(".needs-you li").length).toBe(3);
+  expect(snapshots[2].app.querySelector(".needs-you")).toBeNull();
+});

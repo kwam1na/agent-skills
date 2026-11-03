@@ -5280,8 +5280,11 @@ class Supervisor:
                     return
         finally:
             self.stop_children()
-            with contextlib.suppress(OSError, Stop):
+            # Drawn and copied once more, so neither the line map nor `latest` keeps the last running list.
+            with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
                 write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic())
+                render_views(c, only="renderers")
+                copy_latest(c)
             fcntl.flock(self.handle, fcntl.LOCK_UN)
             self.handle.close()
 

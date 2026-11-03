@@ -227,6 +227,16 @@ def passes(fx: Fixture) -> list[dict]:
     return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
 
+def listed(case: unittest.TestCase, last: dict) -> dict:
+    """A pass, after checking that every "Needs you" item it found says whether it holds, where it comes from and
+    what clears it: the line map refuses a whole list over one item that doesn't."""
+    for item in last.get("needsYou", []):
+        case.assertIs(type(item.get("holding")), bool, item)
+        for name in ("source", "text", "clears"):
+            case.assertTrue(isinstance(item.get(name), str) and item[name].strip(), (name, item))
+    return last
+
+
 def queue_run(fx: Fixture, key: str) -> None:
     """The merge queue, run once by hand, as a lead does with the supervisor stopped."""
     sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/merge_queue.py", "--repo", fx.main,
@@ -518,7 +528,7 @@ class SupervisorPassTests(unittest.TestCase):
     def once(self, fx: Fixture) -> dict:
         code, out = fx.flow("lead-run", "--once", cwd=fx.main)
         self.assertEqual(code, 0, out)
-        return passes(fx)[-1]
+        return listed(self, passes(fx)[-1])
 
     def merged(self, fx: Fixture, key: str, lane: str) -> Path:
         wt = hand_off(fx, key, lane)
@@ -911,7 +921,7 @@ class SupervisorTrackerTests(unittest.TestCase):
     def once(self, fx: Fixture) -> dict:
         code, out = fx.flow("lead-run", "--once", cwd=fx.main)
         self.assertEqual(code, 0, out)
-        return passes(fx)[-1]
+        return listed(self, passes(fx)[-1])
 
     def closable(self, fx: Fixture, deferred: bool = False) -> None:
         """FX-2 merged, its lane done, and FX-3 removed: nothing but the tracker can hold the close."""
@@ -968,39 +978,44 @@ class SupervisorTrackerTests(unittest.TestCase):
         self.drawn(fx)
         self.closable(fx)
         (fx.tmp / "health").write_text("fail")
-        self.assertIn("fullHealth failed", json.dumps(self.once(fx)))
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        pid = wait_for(lambda: lock_of(fx).get("pid"), "a running supervisor")
+        self.addCleanup(lambda: alive(pid) and os.kill(pid, signal.SIGTERM))
+        wait_for(lambda: any("fullHealth failed" in json.dumps(p.get("closeOut")) for p in passes(fx)), "a failed fullHealth")
         with backend.edit() as store:
             store["token"] = "revoked"
         state_tool(fx, "journal", "--kind", "release.finished", "--summary", "Released for the tracker to hear about")
-        written = fx.tmp / "record/needs-you.json"
-        last = self.once(fx)
-        # Both hold the close, and the line map drawn in that pass lists both, from the same list the close read.
-        holding = [item for item in last["needsYou"] if item["holding"]]
-        self.assertEqual(sorted(item["source"] for item in holding), ["fullHealth", "tracker publisher"], last)
-        self.assertTrue(all(item["clears"] for item in last["needsYou"]), last["needsYou"])
-        for item in holding:
-            self.assertIn(item["text"], last["closeHeldBy"])
-        self.assertEqual(kinds(fx, "delivery.closed"), [])
-        drawn = self.embedded_needs((fx.tmp / "record/line-map.html").read_text())
+        page = fx.tmp / "record/line-map.html"
+        holding = lambda drawn: sorted(item["source"] for item in drawn["items"] if item["holding"])
+        # Both hold the close, and the line map the pass draws lists both, from the same list the close read.
+        drawn = wait_for(lambda: (lambda d: d if holding(d) == ["fullHealth", "tracker publisher"] else None)(
+            self.embedded_needs(page.read_text())), "both holding in the line map")
         self.assertTrue(drawn["running"], drawn)
-        self.assertEqual([(i["holding"], i["source"], i["text"], i["clears"]) for i in drawn["items"]],
-                         [(i["holding"], i["source"], i["text"], i["clears"]) for i in last["needsYou"]])
-        self.assertLess(drawn["at"], drawn["staleAfter"])
-        # The pass ended its run: the list written last says so, and a view drawn now shows none of it.
-        stopped = json.loads(written.read_text())
-        self.assertFalse(stopped["running"], stopped)
-        render = fx.release / "skills/delivery-views/scripts/render.py"
-        page = sh(sys.executable, "-B", render, "line-map", "--config", ".agents/delivery-views.json", "--binding",
-                  ".agents/orchestration.json", "--state-dir", fx.tmp / "record", cwd=fx.main,
-                  input=json.dumps(record(fx))).stdout
-        self.assertFalse(self.embedded_needs(page)["running"])
-        # Clearing one removes it on the next pass; the other still holds.
+        # Stale once a pass is overdue: the interval (1s here) and once more the longer of it and the pass's own time.
+        moment = lambda text: datetime.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ")
+        window = (moment(drawn["staleAfter"]) - moment(drawn["at"])).total_seconds()
+        self.assertTrue(2 <= window <= 61, window)
+        self.assertTrue(all(item["clears"] for item in drawn["items"]), drawn)
+        last = passes(fx)[-1]
+        for item in last["needsYou"]:
+            if item["holding"]:
+                self.assertIn(item["text"], last["closeHeldBy"])
+        self.assertEqual(kinds(fx, "delivery.closed"), [])
+        # Clearing one removes it on a following pass; the other still holds.
         code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=fx.main)
         self.assertEqual(code, 0, out)
-        self.once(fx)
-        drawn = self.embedded_needs((fx.tmp / "record/line-map.html").read_text())
-        self.assertEqual([i["source"] for i in drawn["items"] if i["holding"]], ["tracker publisher"], drawn)
+        wait_for(lambda: holding(self.embedded_needs(page.read_text())) == ["tracker publisher"], "fullHealth cleared")
         self.assertEqual(kinds(fx, "delivery.closed"), [])
+        # Stopped, it says so: the list, the line map and `latest` all say it isn't running, and keep no items.
+        os.kill(pid, signal.SIGTERM)
+        wait_for(lambda: not alive(pid), "the supervisor to stop")
+        written = json.loads((fx.tmp / "record/needs-you.json").read_text())
+        self.assertEqual((written["running"], written["items"]), (False, []), written)
+        self.assertFalse(self.embedded_needs(page.read_text())["running"])
+        latest = fx.tmp / "archive/FX-1/latest/record"
+        self.assertFalse(json.loads((latest / "needs-you.json").read_text())["running"])
+        self.assertFalse(self.embedded_needs((latest / "line-map.html").read_text())["running"])
 
     def test_a_follow_up_whose_filing_fails_once_holds_the_close_and_is_filed_once(self) -> None:
         fx, backend = self.fixture()
@@ -1062,8 +1077,11 @@ class SupervisorTrackerTests(unittest.TestCase):
                 ack = lambda: state_tool(fx, "ack", "--version", str(record(fx)["state"]["version"]), "--through",
                                          str(max(e["id"] for e in record(fx)["journal"])))
                 if updates == "host":
-                    held = self.once(fx)["closeHeldBy"]
+                    first = self.once(fx)
+                    held = first["closeHeldBy"]
                     self.assertTrue(any(h.startswith("The host outbox holds") for h in held), held)
+                    self.assertIn(("host outbox", "posting the updates with your tracker tools, then ack"),
+                                  [(i["source"], i["clears"]) for i in first["needsYou"] if i["holding"]])
                     ack()
                     last = self.once(fx)
                     self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)

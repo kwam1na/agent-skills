@@ -124,12 +124,14 @@ export async function openPage(page, scenario = {}) {
   const stream = { document: [], error: [] };
   let answerRead = null;
   const animations = [];
+  const intervals = [];
   const dom = new JSDOM(page, {
     ...(scenario.rendered ? { url: VIEW_ADDRESS } : {}),
     runScripts: "dangerously",
     beforeParse(window) {
       if (scenario.now) window.Date.now = () => Date.parse(scenario.now);
-      window.setInterval = () => 0;
+      // Held, not run: a `tick` step runs each one as the page's timer would.
+      window.setInterval = (callback) => { intervals.push(callback); return 0; };
       if (scenario.motion) {
         const reduced = Boolean(scenario.motion.reduced);
         window.matchMedia = (query) => ({ media: query, matches: query.includes("prefers-reduced-motion: reduce") && reduced,
@@ -206,6 +208,7 @@ export async function openPage(page, scenario = {}) {
     if ("leave" in step) document.querySelector(step.leave).dispatchEvent(new dom.window.Event("mouseleave"));
     if ("click" in step) { const node = document.querySelectorAll(step.click)[step.index || 0]; node.focus(); node.click(); }
     if ("toggle" in step) { const node = document.querySelector(step.toggle); node.open = !node.open; }
+    if ("tick" in step) intervals.forEach((callback) => callback());
     await new Promise((resolve) => setTimeout(resolve, step.wait || 5));
     snapshots.push(snapshot());
   }

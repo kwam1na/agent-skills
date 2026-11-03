@@ -2046,7 +2046,8 @@
     }
   }
   // Relative times and running checks follow the page's own clock between writes.
-  if (typeof setInterval === "function") { setInterval(function () { safely(lastGood || shown); }, 30000); }
+  // Each tick also re-reads the served page: a supervisor's pass rewrites its Needs you list without a record push.
+  if (typeof setInterval === "function") { setInterval(function () { refreshRuns(); safely(lastGood || shown); }, 30000); }
   // The run line is drawn at the page's width, so a new width redraws it.
   var resizing = null;
   if (typeof addEventListener === "function") {
