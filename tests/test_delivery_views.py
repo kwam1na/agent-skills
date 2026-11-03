@@ -407,7 +407,7 @@ class BoundedCommandTests(unittest.TestCase):
     def test_the_runs_argv_takes_the_repository_root(self) -> None:
         config = views.validate_config(copy.deepcopy(CONFIG))
         self.assertEqual(views.runs_argv(config, Path("/repo")),
-                         ["python3", "-B", ".agent-skills/current", "--root", "/repo", "harness"])
+                         ["python3", "-B", ".agent-skills/current", "--root", str(Path("/repo")), "harness"])
         self.assertIsNone(views.runs_argv(views.validate_config({"spec": "delivery-views-config/1"}), Path("/repo")))
 
 
@@ -623,7 +623,7 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             copy_root = directory / "corpus"
-            shutil.copytree(ROOT, copy_root, ignore=shutil.ignore_patterns(".venv", ".git", ".worktrees", "__pycache__",
+            shutil.copytree(ROOT, copy_root, ignore=shutil.ignore_patterns(".venv", ".venv-*", ".git", ".worktrees", "__pycache__",
                                                                            "*.egg-info", "qualifications"))
             (copy_root / "profiles/delivery-views.json").unlink()
             from agent_skills import release

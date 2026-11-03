@@ -126,7 +126,7 @@ proceeds and the lead notes the gap in its close-out.
 | `release.finished` | On the epic: the release shipped, its commit and targets, and who approved it. |
 | `finish.met` | On the epic: the finish line and the evidence that met it. |
 | `decision.recorded` | On the ticket the decision concerns, or the epic: what, why, and who decided, the operator or the lead. A deferred finding links its follow-up item. |
-| `blocker.recorded` | On the blocked ticket: the blocker, and whose answer or work unblocks it. |
+| `blocker.recorded` | On the blocked ticket, or the epic when every ticket is blocked: the blocker, and whose answer or work unblocks it. |
 | `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. |
 
 The lead posts the updates in this table, including every cross-lane
@@ -482,8 +482,16 @@ and the lead records it.
 
 **Questions**
 
-Escalate only to the lead, never to the operator: one short question, then
-stop. The lead answers, or takes it to the operator.
+Escalate only to the lead, never to the operator: set `focus --text "<your one
+short question>" --state blocked --waiting-on lead`, so the lead's `wait` sees it
+and carries the question, then send the question and stop. The lead answers, or
+takes it to the operator. When the answer comes, set `focus --text "<what you are
+doing>" --state working --waiting-on ""` before going on.
+
+**Local load**
+
+Run at most `<worker cap, default 4>` local test workers. Stop only processes you
+started, by the pid you recorded, never by pattern.
 
 **Run events**
 
@@ -516,6 +524,7 @@ The operator is brought in only for:
 - a change to the approved scope or finish line;
 - an irreversible or outward-facing action not already authorized;
 - a permission or access grant the lead does not hold;
+- a host that cannot start or message sessions, so no lane can start;
 - owner intent that is genuinely ambiguous, where neither the plan nor
   standing direction settles it.
 
@@ -557,7 +566,9 @@ operator.
 
 ## Coordination protocol
 
-These rules hold whatever the host offers for sessions and messages.
+These rules hold on any host that can start and message sessions. On a host
+that cannot, no lane starts, under
+[Without a session capability](#without-a-session-capability).
 
 ### Messages
 
@@ -571,7 +582,9 @@ These rules hold whatever the host offers for sessions and messages.
 - When the host holds or refuses a message, keep the undelivered text in the
   lead's notes, inform the operator once (a notice, not a question), and send
   it when delivery resumes.
-  Never repeat a message to force it through.
+  Never repeat a message to force it through. A refusal that persists means the
+  host cannot message sessions: follow
+  [Without a session capability](#without-a-session-capability).
 - A lane that is blocked on a decision it cannot make sends the lead one
   short question and stops. Lanes never go to the operator directly; the lead
   answers, or escalates under the lead authority rules. Progress and results
@@ -591,9 +604,67 @@ When a claim does not hold, return the hand-off to the lane with what failed.
 
 ### Without a session capability
 
-When the host cannot start or message other sessions, the lead runs each
-lane as a subagent, or runs the lanes in sequence itself. The lane profile,
-the hand-off and the queue are unchanged; only the transport differs.
+When the host cannot start or message other sessions, no lane starts. A lane
+is always a session of its own: never a subagent, and never the lead working in
+its own session. The lead journals `blocker.recorded` and brings it to the
+operator, who may choose to deliver the tickets one at a time through
+`$execute-work`. Subagents remain how a lane realizes its review lenses.
+
+A host that loses the ability to start or message sessions during a delivery is
+this blocker and not a held message. So is one that still refuses a message one
+retry later, at the next milestone or, with nothing else pending, at the lead's
+next event. No further lane starts. A candidate a lane hands off is still checked
+as a claim: it enters the queue if the report holds. One whose report fails
+returns to the lane on a host that can still message it, and otherwise waits for
+the operator's answer. On a host that can still message its running lanes, they
+keep working and the lead keeps assigning them as usual. On one that cannot, each
+running lane reaches its hand-off and takes no new assignment, which is not an
+idle-lane defect.
+
+### The lead's wake
+
+A lead does not end its turn while a lane is working or a candidate is queued
+unless a `wait` is running in the background. It restarts the wait after each
+wake, with the arguments the last one printed. The host's notes are a
+convenience and never the lead's only wake. Where nothing can run in the
+background, the lead tells the operator that it won't wake on its own.
+
+```bash
+python3 -B <skill>/scripts/delivery_state.py --dir <state> wait [--after <journal id>] [--timeout <seconds>] [--poll <seconds>]
+```
+
+`wait` reads the record and the machine only, writes nothing, and reads no CI or
+forge. It returns on the first thing needing the lead:
+
+- a journal entry after `--after` of kind `candidate.handed`,
+  `candidate.merged`, `candidate.stopped`, `base.broken` or `blocker.recorded`;
+- a lane in the `blocked` state;
+- machine pressure: five-minute load above `--load-multiple` times the cores
+  (2 by default), free disk under `--min-free-bytes` (20 GiB), or swap grown by
+  more than `--swap-growth-bytes` (4 GiB).
+
+It exits 0 on a wake, 1 on an error, such as a malformed journal or a missing
+state directory, 2 on a usage error, and exits 3 when `--timeout` passes, 30
+minutes by default. It
+prints what it found: `woke`, `events`, `blockedLanes`, `pressure`, `machine`,
+`unavailable`, `through` and `restart`. Without `--after` it starts after the
+journal's last entry, so pass it on every restart: `restart` holds the arguments
+for the next wait, so an entry written between two waits is not missed, along with
+this wait's timeout, poll and limits. They also mark a held condition as seen, so
+a lane still blocked on the same question, low disk or steady high load doesn't
+wake the lead again and again, and swap growth keeps its baseline. A lane that
+blocks again or changes its question wakes the lead, even if nothing read it
+clear in between, and so does a different lane or signal. A held load or disk
+signal wakes it again only once it has cleared, 10% inside its limit, and
+returned. A machine value this system can't read is named in
+`unavailable` and on stderr, and is never treated as healthy. Swap is read from
+`/proc/meminfo` or `vm.swapusage`; on any other system it is unavailable.
+
+Whenever a wait names pressure, whatever else woke it, the lead finds what is
+loading the machine before taking more work, and reduces this delivery's own
+load first, such as by capping test workers. It reports what it can't reduce to
+the operator, such as other work or a system service. It stops nothing it didn't
+start without the operator's word.
 
 ### Leases
 

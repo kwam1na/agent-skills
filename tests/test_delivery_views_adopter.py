@@ -125,7 +125,7 @@ class OutsideAdopterTests(unittest.TestCase):
         self.adopter = OutsideAdopter(self.temporary, self.archive, self.metadata)
 
     def test_the_repository_holds_configuration_only(self) -> None:
-        own = sorted(str(path.relative_to(FIXTURE / "repository")) for path in (FIXTURE / "repository").rglob("*")
+        own = sorted(path.relative_to(FIXTURE / "repository").as_posix() for path in (FIXTURE / "repository").rglob("*")
                      if path.is_file())
         self.assertEqual(own, [".agents/delivery-views.json", ".agents/orchestration.json", "README.md", "src/app.js"])
         for path in (FIXTURE / "repository").rglob("*"):

@@ -15,7 +15,11 @@ their own signal handlers, working directory and module state.
 
 from __future__ import annotations
 
+import argparse
+import contextlib
 import hashlib
+import io
+import importlib.util
 import json
 import os
 import re
@@ -47,8 +51,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills/run-delivery"
 PROFILE = "run-delivery"
 TOOL_RELATIVE = "skills/run-delivery/scripts/run_delivery.py"
-# The current qualification set's core product carries the runtime this profile's product is rebound from.
-RUNTIME_SOURCE = ROOT / "qualifications/product/core-draft-building-v1.zip"
+# The stored runtime this profile's product is rebound from.
+RUNTIME_SOURCE = ROOT / "product-runtime"
 RUNTIME_VERSION = "0.7.7"
 # The fixture page adapter-test serves, byte for byte as the tool's own fixture page was before it moved in.
 ADAPTER_FIXTURE_SHA256 = "31257fd55d83ebc6aa602b7a508248d6f44776991f54e1127ce1629b0bf59a81"
@@ -280,7 +284,8 @@ EXAMPLE_BLOCK = re.compile(r"^```[^\n]*\bexample\b[^\n]*\n.*?^```[ \t]*$", re.MU
 
 
 def host_terms(text: str) -> list[str]:
-    outside = EXAMPLE_BLOCK.sub("", text)
+    # Where this checkout lives is the machine's, not the tool's: its path may hold a host's folder name.
+    outside = EXAMPLE_BLOCK.sub("", text).replace(str(ROOT), "")
     return [name for name, pattern in HOST_TERMS if pattern.search(outside)]
 
 
@@ -449,13 +454,11 @@ def installed_release() -> types.SimpleNamespace:
     built = types.SimpleNamespace()
     built.build = Path(tempfile.mkdtemp(prefix="run-delivery-release-"))
     unittest.addModuleCleanup(shutil.rmtree, built.build, True)
-    # The runtime the current core product carries, with only its descriptor's workflow digest rebound to this
-    # profile's workflow projection.
+    # The stored runtime, with only its descriptor's workflow digest rebound to this profile's workflow projection.
     runtime = built.build / "runtime"
     runtime.mkdir()
-    with zipfile.ZipFile(RUNTIME_SOURCE) as source:
-        for name in release.RUNTIME_FILES:
-            (runtime / name).write_bytes(source.read(f"runtime/{name}"))
+    for name in release.RUNTIME_FILES:
+        (runtime / name).write_bytes((RUNTIME_SOURCE / name).read_bytes())
     descriptor_text = (runtime / "runtime.json").read_text(encoding="utf-8")
     built.descriptor = json.loads(descriptor_text)
     view = release._release_view(ROOT, PROFILE)
@@ -2485,6 +2488,19 @@ class RunDeliveryPlanTests(unittest.TestCase):
         fx.flow("lead-reconcile", cwd=m)
         self.assertEqual(self.plan(fx)["evidence"]["FX-2"]["in-app-loaded"]["state"], "todo")
 
+    def test_a_second_separator_reaches_the_adapter_as_given(self) -> None:
+        fx = self.fixture()
+        plan_delivery(fx)
+        fx.flow("lead-init", cwd=fx.main)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        fx.flow("gate", "FX-2", cwd=wt)
+        code, out = fx.flow("app-check", "FX-2", "reader", "--mode", "loaded", "--path", "/one", "--eval", "true",
+                            "--", "--", "--fixture-user", "reader", cwd=wt)
+        record = json.loads((wt / ".orchestration/review/FX-2/app-checks/reader.json").read_text())
+        self.assertEqual(record["passthrough"], ["--", "--fixture-user", "reader"], out)
+
     def test_a_check_stays_current_through_commits_that_change_no_shipped_file(self) -> None:
         fx = self.fixture()
         plan_delivery(fx)
@@ -3358,6 +3374,107 @@ class RunDeliveryLeakageTests(unittest.TestCase):
         with mock.patch(f"{__name__}.FIRST_ADOPTER_TERM_DIGESTS",
                         frozenset({hashlib.sha256(planted.encode()).hexdigest()})):
             self.assertEqual(self.findings(f"a {planted.upper()}-thing"), ["first-adopter term"])
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class RunDeliveryArgumentTests(unittest.TestCase):
+    """Python 3.11's argparse refuses `--` after a positional that takes any number of values; 3.11 is a declared minimum."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location("run_delivery_for_arguments", ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        cls.tool = importlib.util.module_from_spec(spec)
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(cls.tool)
+        finally:
+            sys.dont_write_bytecode = previous
+
+    def parsed(self, *argv: str) -> list[list[str]]:
+        """What reaches argparse, and what the command then receives."""
+        seen, received = [], []
+        real = argparse.ArgumentParser.parse_args
+
+        def recording(parser, args=None, namespace=None):
+            if parser.prog == "run_delivery.py":
+                seen.append(list(args))
+            return real(parser, args, namespace)
+
+        with mock.patch.object(argparse.ArgumentParser, "parse_args", recording), \
+                mock.patch.object(self.tool, "app_check", lambda args: received.append(list(args.passthrough))), \
+                mock.patch.object(self.tool, "app_video", lambda args: received.append(list(args.passthrough))), \
+                mock.patch.object(self.tool.signal, "signal"):
+            self.tool.main(list(argv))
+        return [seen[0], received[0]]
+
+    def test_arguments_after_the_separator_go_to_the_adapter_and_never_reach_argparse(self) -> None:
+        for command in (["app-check", "FX-1", "page"], ["app-video", "FX-1", "clip"]):
+            for tail in (["--fixture-user", "reader"], ["--password=x"], ["plain", "--flag"], []):
+                with self.subTest(command=command[0], tail=tail):
+                    given = [*command, "--mode", "loaded", "--path", "/one"]
+                    reached, received = self.parsed(*given, "--", *tail)
+                    self.assertEqual(reached, given)
+                    self.assertEqual(received, tail)
+
+    def test_a_later_separator_belongs_to_the_adapter(self) -> None:
+        given = ["app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one"]
+        self.assertEqual(self.parsed(*given, "--", "a", "--", "b")[1], ["a", "--", "b"])
+
+    def test_a_command_without_pass_through_arguments_parses_as_it_always_did(self) -> None:
+        # A required positional may follow the separator, as argparse allows.
+        seen, received = [], []
+        real = argparse.ArgumentParser.parse_args
+
+        def recording(parser, args=None, namespace=None):
+            if parser.prog == "run_delivery.py":
+                seen.append(list(args))
+            return real(parser, args, namespace)
+
+        given = ["lead-assign", "--lane", "lane-1", "--title", "A title", "--", "FX-1"]
+        with mock.patch.object(argparse.ArgumentParser, "parse_args", recording), \
+                mock.patch.object(self.tool, "lead_assign", lambda args: received.append(list(args.keys))), \
+                mock.patch.object(self.tool.signal, "signal"):
+            self.tool.main(given)
+        self.assertEqual(seen, [given])
+        self.assertEqual(received, [["FX-1"]])
+
+    def test_only_the_command_decides_not_a_value_that_spells_one(self) -> None:
+        for given, keys in ((["lead-assign", "FX-1", "--lane", "app-check", "--title", "t"], ["FX-1"]),
+                            (["lead-assign", "FX-1", "--lane", "l", "--title", "app-video"], ["FX-1"]),
+                            (["--delivery", "app-check", "lead-assign", "FX-1", "--lane", "l", "--title", "t"], ["FX-1"]),
+                            (["lead-assign", "--lane", "app-check", "--title", "t", "--", "FX-1"], ["FX-1"])):
+            with self.subTest(given=given):
+                received = []
+                with mock.patch.object(self.tool, "lead_assign", lambda args: received.append(list(args.keys))), \
+                        mock.patch.object(self.tool.signal, "signal"):
+                    self.tool.main(given)
+                self.assertEqual(received, [keys])
+        received = []
+        with mock.patch.object(self.tool, "app_check", lambda args: received.append(list(args.passthrough))), \
+                mock.patch.object(self.tool.signal, "signal"):
+            self.tool.main(["--delivery", "lead-assign", "app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one", "--", "x"])
+            self.tool.main(["--delivery=lead-assign", "app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one", "--", "y"])
+        self.assertEqual(received, [["x"], ["y"]])
+
+    def test_an_abbreviated_top_level_option_is_refused_on_every_python(self) -> None:
+        # The command is found after `--delivery` as spelled, so a shortened spelling is an error, not a 3.11-only one.
+        with mock.patch.object(self.tool, "app_check", side_effect=AssertionError("reached the command")), \
+                mock.patch.object(self.tool.signal, "signal"), contextlib.redirect_stderr(io.StringIO()) as stderr, \
+                self.assertRaises(SystemExit) as refused:
+            self.tool.main(["--deliv", "K", "app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one", "--", "x"])
+        self.assertEqual(refused.exception.code, 2)
+        self.assertIn("invalid choice: 'K'", stderr.getvalue(), "read as a command, so never as an option's value")
+
+    def test_no_separator_leaves_the_arguments_as_they_were(self) -> None:
+        given = ["app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one"]
+        self.assertEqual(self.parsed(*given), [given, []])
+
+    def test_a_flag_after_the_separator_is_not_read_as_the_tools_own(self) -> None:
+        given = ["app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one"]
+        reached, received = self.parsed(*given, "--", "--path", "/other")
+        self.assertEqual(reached, given)
+        self.assertEqual(received, ["--path", "/other"])
 
 
 class RunDeliveryContinuousIntegrationTests(unittest.TestCase):

@@ -13,6 +13,7 @@ any release that exceeds the old limit.
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 import zipfile
@@ -83,15 +84,29 @@ class EntryBudgetTests(unittest.TestCase):
         self.assertIsNone(budget_problem("linear", MAX_ENTRIES))
 
     def test_a_product_is_its_workflow_entries_plus_every_runtime_file(self) -> None:
-        # A checked product archive shows the shape the budget models: its
+        # A product built from the tree shows the shape the budget models: its
         # runtime files are exactly the runtime set, and everything else is
         # the workflow release.
-        product = ROOT / "qualifications/product/linear-draft-building-v1.zip"
-        with zipfile.ZipFile(product) as opened:
-            names = [info.filename for info in opened.infolist()]
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            view = release._release_view(ROOT, "linear")
+            runtime_directory = directory / "runtime"
+            runtime_directory.mkdir()
+            for name in RUNTIME_FILES:
+                (runtime_directory / name).write_bytes((ROOT / "product-runtime" / name).read_bytes())
+            descriptor = runtime_directory / "runtime.json"
+            stored = json.loads(descriptor.read_bytes())["workflowContentSha256"]
+            descriptor.write_bytes(descriptor.read_bytes().replace(
+                stored.encode(), release._path_digest(sorted(view), view).encode(),
+            ))
+            product = directory / "linear.zip"
+            build_release(ROOT, product, directory / "linear.json", release_id="entry-budget",
+                          profile_id="linear", runtime_directory=runtime_directory)
+            with zipfile.ZipFile(product) as opened:
+                names = [info.filename for info in opened.infolist()]
         runtime = [name for name in names if name.startswith("runtime/")]
         self.assertEqual({name.removeprefix("runtime/") for name in runtime}, set(RUNTIME_FILES))
-        self.assertEqual(len(names), (len(names) - len(runtime)) + len(RUNTIME_FILES))
+        self.assertEqual(len(names), workflow_entries(ROOT, "linear") + len(RUNTIME_FILES))
         # The budget counts the same way for the current tree.
         for profile in PROFILES:
             with self.subTest(profile=profile):

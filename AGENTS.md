@@ -16,17 +16,75 @@ matches the pair by exact text rather than by parsing the reference.
 
 Cut releases at batch boundaries, not per ruling. Operator rulings
 accumulate as merged text on the default branch, and one release carries
-them. Tag each release with an annotated tag named exactly its set name, such
-as `run-delivery-v1`, on the merge commit that carries its archives and
-records. Never move or reuse a release tag. Pushing the tag publishes the
-set as a GitHub release of the same name, carrying its verified product
-archives and release files; that release is the channel adopters download
-from.
+them. Tag each release with an annotated version tag, `vMAJOR.MINOR.PATCH` with
+an optional `-rc.N` and no leading zeros, on a commit CI ran on as the tip of a
+push to the default branch, such as a merge commit. Major means an adopter must act, minor is additive, and patch changes no
+contract. Release ids are `<profile>-<version>`. A tag's version must be strictly
+greater than every existing version tag, with a candidate below its final, and its
+commit must equal or descend from the highest one's; a backport to an older line is
+unsupported. Never move or reuse a release tag. A version tag that never published
+may be deleted to clear that guard, which is neither. Pushing the tag publishes a
+GitHub release of the same name from the tagged tree, carrying its verified product
+archives, release files and records with their build provenance; that release is
+the channel adopters download from. A release edits no file in the repository and
+needs no live tracker run. Older set-named tags remain, frozen in place with their
+checked-in bytes, and do not match the publish trigger.
+
+A runtime or record-shape change goes out first as a candidate, is applied in one
+adopter, and is then promoted by tagging the final version on the same commit. The
+final is built again, so its digests differ from the candidate's because its release
+id does; an adopter verifies the final's own. See `docs/product-generation.md`.
+
+The default branch is unprotected, and CI on it informs rather than blocks. A merge
+can land on red, and it falls to whoever merges to read the result, because a red
+gating job blocks the next release: the release workflow publishes only on CI's
+success for the exact tagged commit. That gate is the Ubuntu job and `cut-release` on
+the push to the default branch. CI's macOS job runs there, and with a `full-matrix`
+label on a change request, to inform: its result, or its absence, neither allows nor
+blocks a release, and nothing waits for it.
+
+Before tagging, run the full suite locally on macOS with Python 3.11. The release job
+cannot verify this, so it rests on whoever tags. A newer Python can hide what the
+declared minimum shows, so a run on one doesn't count. The separate environment
+leaves `.venv` alone:
+
+```bash
+uv python install 3.11
+uv run --no-project --python 3.11 python scripts/bootstrap-test-environment.py --environment .venv-3.11
+.venv-3.11/bin/python scripts/run-tests.py
+```
+
+Windows is not validated. Its code fixes and guards stay, unproven, and CI does not
+run it.
+
+`runtimeVersion` does not identify runtime bytes: two different runtimes can declare
+the same version, so compare digests. `scripts/cut-release.py` prints nothing on
+success, so read its exit code and its output directory.
+
+A green local run does not prove the declared minimum Python or another operating
+system. Reproducing a CI failure has to clear the local environment's variables
+first, keeping the runner's baseline, such as `PATH`, `HOME` and the git identity CI
+configures, and setting what the workflow's own `env` block sets, because a variable
+left in the session's shell can hide the failure. Never point `TMPDIR` under a checkout: tests that copy the
+repository root then recurse into their own copy without bound. A local suite run
+can leave bytecode under `skills/`, and `scripts/cut-release.py` then fails with
+`release.source_validation`. Clear it, then cut again:
+
+```bash
+find skills -type d -name __pycache__ -prune -exec rm -rf {} +
+```
+
+An instruction that allows a fallback gets read as permission to use it, so a ruling
+that withdraws one needs a search by meaning across every skill in its profile, with
+absence pins on the synonyms. A lens's follow-up does not outrank a binding ruling:
+check it against the rulings before adopting it. A test for "clears and returns"
+must include the case where nothing observes the clear.
 
 When a releasable skill changes, update its catalog entry, every selected
-profile, and the corresponding provenance output digest in the same change,
-with qualification records re-earned against the candidate's release, not
-restamped. Retained historical qualification records keep their original bytes.
+profile, and the corresponding provenance output digest in the same change.
+`scripts/cut-release.py` earns a release's qualification records against that
+release's exact archives, so no record is restamped or checked in. Retained
+historical qualification records keep their original bytes.
 Keep JSON serialized as two-space-indented UTF-8 with a final newline. Bootstrap
 the worktree-private test environment before running the sensors; a shared
 editable install stores one checkout path in site-packages, so concurrent
@@ -58,6 +116,11 @@ usable file; `0` sets no limit.
 Mark a test class `run_serially = True`, or a module `RUN_SERIALLY = True`,
 when it cannot share the machine: a fixed port, a fixed path outside its own
 temporary folder, or process-wide state.
+
+Stop only processes you started, by the pid you recorded, and never by pattern with
+`pkill` or `killall`. BSD `pkill` stops reading options at the first pattern, so one
+such command, meant for a test's children, signalled other applications across the
+machine.
 
 Refresh output digests with the provenance writer rather than by hand. It
 recomputes the sha256 of every output `provenance.lock.json` lists, changes

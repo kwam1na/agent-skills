@@ -19,6 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "skills" / "deliver
 import render  # noqa: E402
 import views_common  # noqa: E402
 
+# Pages and records are UTF-8 whatever a Windows console's default is, as the views' own commands write them.
+sys.stdin.reconfigure(encoding="utf-8")
+sys.stdout.reconfigure(encoding="utf-8", newline="\n")
 request = json.loads(sys.stdin.read())
 if "page" in request:
     asked = request["page"]

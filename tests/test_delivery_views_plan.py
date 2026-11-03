@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -192,10 +193,10 @@ class PlanContractTests(unittest.TestCase):
             with self.assertRaises(views.ConfigError) as refused:
                 views.read_plan(Path(folder))
             self.assertIn("couldn't be read", str(refused.exception))
-            # A path under a regular file fails at stat, before anything is read.
+            # A path under a regular file fails at stat, before anything is read. Windows calls it not found.
             with self.assertRaises(views.ConfigError) as refused:
                 views.read_plan(path / "plan.json")
-            self.assertIn("couldn't be read", str(refused.exception))
+            self.assertIn("doesn't exist" if os.name == "nt" else "couldn't be read", str(refused.exception))
             path.write_text("{not json " + SECRET)
             with self.assertRaises(views.ConfigError) as refused:
                 views.read_plan(path)

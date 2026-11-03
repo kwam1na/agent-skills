@@ -6,31 +6,87 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PROFILES = ("bootstrap", "core", "jira", "linear", "run-delivery")
+
+
+def _readme() -> str:
+    return (ROOT / "README.md").read_text(encoding="utf-8")
+
+
+def _section(heading: str) -> str:
+    text = _readme()
+    marker = f"\n## {heading}\n"
+    start = text.index(marker) + len(marker)
+    end = text.find("\n## ", start)
+    return text[start:] if end == -1 else text[start:end]
+
+
+def _checked_in_sets() -> set[str]:
+    """Every release set with an archive under `qualifications/product/`, whichever came last."""
+    sets = set()
+    for archive in (ROOT / "qualifications/product").glob("*.zip"):
+        for profile in PROFILES:
+            if archive.stem.startswith(f"{profile}-"):
+                sets.add(archive.stem[len(profile) + 1 :])
+    return sets
 
 
 class ReadmeLifecycleTests(unittest.TestCase):
     def test_named_qualification_artifacts_exist(self) -> None:
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        readme = _readme()
         paths = set(re.findall(r"(?<![\w/])qualifications/[\w./-]+", readme))
         self.assertTrue(paths, "README must name its qualification evidence")
         for relative in sorted(paths):
             with self.subTest(path=relative):
                 self.assertTrue((ROOT / relative).exists(), relative)
 
-    def test_the_current_linear_evidence_is_named_once_it_is_earned(self) -> None:
-        # While the linear set is pending, its attestation and record don't exist yet, so the README can't name their
-        # checked paths; once the set is earned it must, so the existence check above covers them again.
-        from tests.qualification_pending_support import pending
+    def test_it_points_at_history(self) -> None:
+        readme = _readme()
+        self.assertIn("`qualifications/history/`", readme)
+        self.assertIn("`qualifications/product/`", readme)
 
-        if pending("linear") is not None:
-            self.skipTest(pending("linear"))
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        for name in ("linear-draft-building-v1.attestation.json", "linear-draft-building-v1.json"):
+    def test_it_names_no_release_set(self) -> None:
+        sets = _checked_in_sets()
+        self.assertGreater(len(sets), 10)
+        readme = _readme()
+        for name in sorted(sets):
             with self.subTest(name=name):
-                self.assertIn(f"qualifications/product/{name}", readme)
+                # A set called `run-delivery-v1` is not named by the release id `run-delivery-v1.2.3`.
+                self.assertIsNone(re.search(re.escape(name) + r"(?!\.\d)", readme))
+
+    def test_it_describes_no_current_set_and_no_live_run(self) -> None:
+        readme = " ".join(_readme().split())
+        for phrase in (
+            "current product set",
+            "current checked",
+            "current workflow-only record",
+            "--collector-binding",
+            "--attestation",
+            "auditReferences",
+            "collector input",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertNotIn(phrase, readme)
+
+    def test_the_install_section_downloads_latest_and_verifies_the_signer(self) -> None:
+        section = _section("Getting a release")
+        self.assertRegex(section, r"gh release download --repo kwam1na/agent-skills\b")
+        self.assertIn("--signer-workflow kwam1na/agent-skills/.github/workflows/release.yml", section)
+        self.assertIn("gh attestation verify", section)
+        self.assertIn("carry no attestation", " ".join(section.split()))
+
+    def test_the_install_section_warns_about_releases_before_the_first_version_tag(self) -> None:
+        section = " ".join(_section("Getting a release").split())
+        for phrase in (
+            "Releases before the first version tag, which is what latest resolves to until then, carry a 0.7.7"
+            " runtime without the installed-data protocol",
+            "an adopter whose installed runtime has `installed-data-proof/1` must not apply them",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
 
     def test_public_lifecycle_guidance_covers_session_refresh_and_first_removal(self) -> None:
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        readme = _readme()
 
         self.assertIn("start a fresh agent session", readme)
         self.assertIn("rollback --maintenance", readme)

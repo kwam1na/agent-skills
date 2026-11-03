@@ -1652,19 +1652,25 @@ def _is_loopback(name: str) -> bool:
     return address.is_loopback
 
 
+def _is_unspecified(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    # Older Python patches, 3.11.9 among them, judge a mapped address as IPv6, so ::ffff:0.0.0.0 reads as a specific one.
+    mapped = getattr(address, "ipv4_mapped", None)
+    return address.is_unspecified or (mapped is not None and mapped.is_unspecified)
+
+
 def _is_wildcard(name: str) -> bool:
     """Whether a host would listen on every address: empty, or naming or resolving to an unspecified one."""
     if not name.strip():
         return True
     try:
-        return ipaddress.ip_address(name).is_unspecified
+        return _is_unspecified(ipaddress.ip_address(name))
     except ValueError:
         pass
     try:
         found = socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)
     except (OSError, UnicodeError):
         return False  # the bind then fails on its own
-    return any(ipaddress.ip_address(entry[4][0].split("%")[0]).is_unspecified for entry in found)
+    return any(_is_unspecified(ipaddress.ip_address(entry[4][0].split("%")[0])) for entry in found)
 
 
 def _split_host(header: str) -> tuple[str, str] | None:

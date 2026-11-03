@@ -1760,7 +1760,7 @@ def app_check(args) -> None:
         raise Stop("--baseline and --probe don't combine")
     if args.probe and (args.mode != "loaded" or args.hold or args.fail):
         raise Stop("a probe is a plain load (--mode loaded, no --hold or --fail): it looks things up, it isn't a check")
-    passthrough = args.passthrough[1:] if args.passthrough[:1] == ["--"] else list(args.passthrough)
+    passthrough = list(args.passthrough)
     smuggled = [a for a in passthrough if a.split("=")[0] in SPEC_FLAGS]
     if smuggled:
         raise Stop(f"{smuggled} belong to the check spec: pass them to app-check itself, not after --")
@@ -1904,7 +1904,7 @@ def app_video(args) -> None:
         raise Stop(f"{c.path} declares no inApp.baseline build to record the 'before' on")
     if args.mode == "hold" and not args.hold or args.mode == "fail" and not args.fail:
         raise Stop(f"a {args.mode} video needs at least one --{args.mode} pattern")
-    passthrough = args.passthrough[1:] if args.passthrough[:1] == ["--"] else list(args.passthrough)
+    passthrough = list(args.passthrough)
     smuggled = [a for a in passthrough if a.split("=")[0] in SPEC_FLAGS]
     if smuggled:
         raise Stop(f"{smuggled} belong to the spec: pass them to app-video itself, not after --")
@@ -4252,7 +4252,7 @@ def doctor(args) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     global DELIVERY_ARG
-    parser = argparse.ArgumentParser(prog="run_delivery.py", description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(prog="run_delivery.py", description=__doc__.split("\n\n")[0], allow_abbrev=False)
     parser.add_argument("--delivery", help="the delivery key, when the repository has several")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("review-prepare"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
@@ -4347,7 +4347,16 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--run-adapters", action="store_true", help="also run the in-app adapters on the fixture page")
     p.add_argument("--run-gates", action="store_true", help="also run the gates on the base, in a fresh checkout")
     p.set_defaults(fn=doctor)
-    args = parser.parse_args(argv)
+    # What follows `--` is the adapter's. Python 3.11's argparse refuses it after a positional taking any number of values.
+    argv = list(sys.argv[1:] if argv is None else argv)
+    separator = argv.index("--") if "--" in argv else len(argv)
+    # The command is the first word after the top-level option, which a value elsewhere may spell too.
+    first = 2 if argv[:1] == ["--delivery"] else 1 if argv[:1] and argv[0].startswith("--delivery=") else 0
+    if argv[first:first + 1] in (["app-check"], ["app-video"]):
+        args = parser.parse_args(argv[:separator])
+        args.passthrough = [*args.passthrough, *argv[separator + 1:]]
+    else:
+        args = parser.parse_args(argv)
     DELIVERY_ARG = args.delivery
     for _signal in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(_signal, _terminate)

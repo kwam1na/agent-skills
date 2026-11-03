@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -70,6 +72,9 @@ class ExportSummaryTests(unittest.TestCase):
 
 
 class CollectHistoryTests(unittest.TestCase):
+    # Its deadline cases time real reads, which a runner with every core busy can make miss.
+    run_serially = True
+
     def setUp(self) -> None:
         self.folder = tempfile.TemporaryDirectory()
         self.root = Path(self.folder.name)
@@ -334,6 +339,30 @@ class HistoryCommandTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 10)
         [row] = block(result.stdout.decode("utf-8"), "delivery-history")["rows"]
         self.assertEqual(row["note"], "Its run could not be read from the product.")
+
+    def test_both_pages_are_utf_8_with_plain_newlines_whatever_the_console_uses(self) -> None:
+        # A Windows console's default encoding can't hold the pages' characters.
+        Repository(self.root, {"spec": views_common.CONFIG_SPEC}, self.RENDERERS)
+        for command in ("history", "line-map"):
+            with self.subTest(command=command):
+                result = subprocess.run([sys.executable, "-B", str(RENDER), command, "--config", ".agents/delivery-views.json",
+                                         "--binding", ".agents/orchestration.json"], cwd=self.root, input=b"{}",
+                                        capture_output=True, timeout=120, env={**os.environ, "PYTHONIOENCODING": "cp1252"})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                page = result.stdout.decode("utf-8")
+                self.assertIn("\u2304", page)
+                self.assertNotIn("\r", page)
+
+    def test_the_views_scripts_leave_no_bytecode_beside_them_without_the_variable(self) -> None:
+        skills = Path(RENDER).parents[2]
+        for name in ("delivery-views", "orchestrate-work"):
+            shutil.copytree(skills / name, self.root / "skills" / name, ignore=shutil.ignore_patterns("__pycache__"))
+        environment = {key: value for key, value in os.environ.items() if key != "PYTHONDONTWRITEBYTECODE"}
+        for script in ("render.py", "snapshot.py", "review_projection.py"):
+            with self.subTest(script=script):
+                subprocess.run([sys.executable, str(self.root / "skills/delivery-views/scripts" / script), "--help"],
+                               capture_output=True, timeout=60, env=environment, cwd=self.root)
+                self.assertEqual(list((self.root / "skills").rglob("__pycache__")), [])
 
     def test_the_page_inlines_its_own_and_the_run_summarys_assets(self) -> None:
         result = self.render({}, {"spec": views_common.CONFIG_SPEC})

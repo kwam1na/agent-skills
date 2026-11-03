@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "plan": "docs/plans/2026-11-02-tag-driven-releases.md",
+  "planSha256": "f7de6d1cc08035036756133dae2a1a7aa7f08e22ab9b2ff86fb987518b0dcc4f",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "outcome-correctness",
+    "adversarial"
+  ],
+  "reviews": [
+    {
+      "lens": "outcome-correctness",
+      "agent": "plan-review-outcome-correctness-r4",
+      "findings": []
+    },
+    {
+      "lens": "adversarial",
+      "agent": "plan-review-adversarial-r4",
+      "findings": []
+    }
+  ],
+  "residualRisks": [
+    "release.yml cannot run before a real tag; the channel tests, cut-release in CI and the candidate path carry that risk.",
+    "macOS and Windows failing sets are unknown until the Green CI scout reports; a failure this plan excludes stops the delivery for an operator ruling.",
+    "A connector break can ship and surface only at an on-demand check or in an adopter's run.",
+    "The seeded runtime was exercised by the run-delivery and product suites on macOS only during plan review."
+  ]
+}

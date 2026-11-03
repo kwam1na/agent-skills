@@ -83,6 +83,13 @@ PR156_QUALIFICATION_SHA256 = {
     "qualifications/provider-workflows-lead-selected-checks-v1.json": "0d108d1cffa1b00bc549f7dd96a3215cee93bd0a107b558bcb2c4a99aa58da13",
 }
 
+# The last set whose records were checked in. Releases now carry their records, so this table stops growing.
+DRAFT_BUILDING_QUALIFICATION_SHA256 = {
+    "qualifications/bootstrap-workflows-draft-building-v1.json": "2cad6599a53afd1fee453317d60bbba36c13d38a05edd145f33808e2bc2f9a56",
+    "qualifications/core-workflows-draft-building-v1.json": "e392dd3416a04bca23215e249098ba8f25b633ee59bf0871894b0e108da96099",
+    "qualifications/provider-workflows-draft-building-v1.json": "1ca4d56dfe251ef3efcfa34a5aec42e5580081bc41425b4e2c3179058f016d47",
+}
+
 
 class HistoricalQualificationTests(unittest.TestCase):
     def test_prior_current_records_remain_byte_identical(self) -> None:
@@ -100,6 +107,7 @@ class HistoricalQualificationTests(unittest.TestCase):
             **PR154_QUALIFICATION_SHA256,
             **PR155_QUALIFICATION_SHA256,
             **PR156_QUALIFICATION_SHA256,
+            **DRAFT_BUILDING_QUALIFICATION_SHA256,
         }.items():
             with self.subTest(relative=relative):
                 self.assertEqual(

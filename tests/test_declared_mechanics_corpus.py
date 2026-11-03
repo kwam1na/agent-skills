@@ -25,6 +25,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "For parallel units and review lenses, list shared ports, browser"
         " sessions, databases, and caches alongside file ownership",
         "Record sensors whose assertions compare to the merge base",
+        "Save the plan in the planning folder the repository's instructions"
+        " declare, otherwise at `docs/plans/<key>.md`, where `<key>` names the"
+        " work, and report the path",
     ),
     "skills/linear-tracker-adapter/SKILL.md": (
         "Apart from `schemaVersion`, which identifies the document format, it"
@@ -36,7 +39,15 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "skills/review-work/SKILL.md": (
         "When the host reports no cost, record `coverage: unreported`; do not invent zero",
     ),
+    "skills/run-delivery/templates/lane-brief.md": (
+        "Stop only processes you started, by the pid you recorded, never by pattern",
+    ),
+    "skills/orchestrate-work/references/orchestration-guide.md": (
+        "Stop only processes you started, by the pid you recorded, never by pattern",
+    ),
     "AGENTS.md": (
+        "Stop only processes you started, by the pid you recorded, and never by"
+        " pattern with `pkill` or `killall`",
         "resolves, in this repository, to the commit whose tree carries the"
         " reviewed text",
         "For a verification round the executor supplies that resolution beside"
@@ -46,9 +57,23 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Cut releases at batch boundaries, not per ruling. Operator rulings"
         " accumulate as merged text on the default branch, and one release"
         " carries them",
-        "Tag each release with an annotated tag named exactly its set name",
+        "Tag each release with an annotated version tag",
+        "strictly greater than every existing version tag",
         "Never move or reuse a release tag",
+        "A version tag that never published may be deleted to clear that guard",
         "that release is the channel adopters download from",
+        "promoted by tagging the final version on the same commit",
+        "its digests differ from the candidate's because its release id does",
+        "The default branch is unprotected, and CI on it informs rather than blocks",
+        "the release workflow publishes only on CI's success for the exact tagged commit",
+        "`runtimeVersion` does not identify runtime bytes",
+        "A green local run does not prove the declared minimum Python or another operating system",
+        "clear the local environment's variables first",
+        "Never point `TMPDIR` under a checkout",
+        "`scripts/cut-release.py` prints nothing on success",
+        "An instruction that allows a fallback gets read as permission to use it",
+        "A lens's follow-up does not outrank a binding ruling",
+        "must include the case where nothing observes the clear",
         "by mutating a file `provenance.lock.json` covers takes the digests"
         " with it",
         "mutating the pinned text alone raises"
@@ -66,18 +91,14 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " neighbouring text carried with it as one phrase or both the expected"
         " heading and the forbidden deeper heading, rather than anchoring every"
         " pin in the corpus to a heading",
-        "qualification records re-earned against the candidate's release, not"
-        " restamped",
+        "`scripts/cut-release.py` earns a release's qualification records"
+        " against that release's exact archives",
         "Refresh output digests with the provenance writer rather than by hand",
         "When a rebase or merge conflicts only in `provenance.lock.json`, take"
         " either side of the lock, run the writer, then validate the registry"
         " before continuing",
         "The writer never adds or removes an output, so when one side added or"
         " removed a listed output, take that side",
-    ),
-    "README.md": (
-        "`auditReferences` uses the same order as `entities`: primary first,"
-        " then dependency",
     ),
     "docs/host-adapters.md": (
         "An adopting repository's overlay names what that repository adds: its"
@@ -182,6 +203,11 @@ class DeclaredMechanicsCorpusTests(unittest.TestCase):
         moved = dict(texts)
         moved[relative] = texts[relative].replace(phrase, "", 1) + " ## Unrelated " + phrase
         self.assertEqual(missing_phrases(moved), missing_phrases(texts))
+
+    def test_where_a_plan_is_saved_sits_in_the_handoff(self) -> None:
+        text = (ROOT / "skills/plan-work/SKILL.md").read_text(encoding="utf-8")
+        section = " ".join(markdown_section(text, "Handoff").split())
+        self.assertIn("Save the plan in the planning folder", section)
 
     def test_host_convention_is_not_named_as_independence(self) -> None:
         text = (ROOT / "skills/obtain-review/SKILL.md").read_text(encoding="utf-8")

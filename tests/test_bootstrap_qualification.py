@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_skills.release import build_release, verify_release
+from agent_skills.release import build_release
 from agent_skills.validate import canonical_json
-from tests.qualification_pending_support import pending, skip_if_pending
+from tests.built_product import build_product
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,52 +23,26 @@ def load_runner():
 
 
 class BootstrapQualificationTests(unittest.TestCase):
-    def test_current_bootstrap_product_replays_and_matches_source(self) -> None:
-        # The retained record's driver digest covers the corpus validator, whose
-        # provider rule changed; it is re-earned with the pending bootstrap set.
-        skip_if_pending(self, "bootstrap")
-        product = ROOT / "qualifications/product/bootstrap-draft-building-v1"
-        archive = product.with_suffix(".zip")
-        metadata = product.with_suffix(".release.json")
-        with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            extracted = directory / "installed"
-            release = verify_release(archive, metadata, extract_to=extracted)
-            self.assertEqual(
-                release.archive_sha256,
-                "98969d62a61390e665326eb13c8bd69459ea9c67b941184e6f2bf1ef55bb3379",
-            )
-            self.assertEqual(canonical_json(load_runner().qualify(archive, metadata)).encode(),
-                             product.with_suffix(".json").read_bytes(), "the record replays byte for byte")
-            projected = build_release(
-                extracted, directory / "projected.zip", directory / "projected.json",
-                release_id=release.release_id, profile_id="bootstrap",
-            )
-            current = build_release(
-                ROOT, directory / "current.zip", directory / "current.json",
-                release_id=release.release_id, profile_id="bootstrap",
-            )
-            if pending("bootstrap") is None:
-                self.assertEqual(projected, current)
-        skip_if_pending(self, "bootstrap")
-
-    def test_checked_bootstrap_qualification_replays_exactly(self) -> None:
+    def test_bootstrap_product_built_from_the_tree_qualifies_and_replays(self) -> None:
         runner = load_runner()
         with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            archive = directory / "bootstrap.zip"
-            metadata = directory / "bootstrap.release.json"
-            build_release(
-                ROOT,
-                archive,
-                metadata,
-                release_id="bootstrap-workflows-draft-building-v1",
-                profile_id="bootstrap",
-            )
+            archive, metadata = build_product(Path(temporary), "bootstrap", "bootstrap-qualification-fixture")
+            record = runner.qualify(archive, metadata)
             replay = runner.qualify(archive, metadata)
-        checked = (ROOT / "qualifications/bootstrap-workflows-draft-building-v1.json").read_bytes()
-        skip_if_pending(self, "bootstrap")
-        self.assertEqual(canonical_json(replay).encode(), checked, "the record replays byte for byte")
+        self.assertEqual(canonical_json(replay), canonical_json(record))
+        self.assertEqual(
+            set(record),
+            {"product", "qualificationDriverSha256", "release", "replay", "scenarios", "schemaVersion", "summary"},
+        )
+        self.assertEqual(record["schemaVersion"], "agent-skills-bootstrap-qualification/1")
+        self.assertEqual(record["release"]["profile"], "bootstrap")
+        self.assertEqual(record["release"]["releaseId"], "bootstrap-qualification-fixture")
+        self.assertEqual(record["product"], {"installedReady": True, "runtimeIncluded": True})
+        self.assertEqual(record["summary"]["result"], "passed")
+        self.assertEqual(
+            [scenario["id"] for scenario in record["scenarios"]],
+            ["fresh-install", "profile-validation", "rollback"],
+        )
 
     def test_bootstrap_profile_is_releasable_installable_and_qualified(self) -> None:
         runner = load_runner()
@@ -80,7 +54,7 @@ class BootstrapQualificationTests(unittest.TestCase):
                 ROOT,
                 archive,
                 metadata,
-                release_id="bootstrap-workflows-draft-building-v1",
+                release_id="bootstrap-qualification-fixture",
                 profile_id="bootstrap",
             )
             record = runner.qualify(archive, metadata)

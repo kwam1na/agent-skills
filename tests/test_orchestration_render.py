@@ -5,7 +5,9 @@ import copy
 import datetime
 import hashlib
 import http.client
+import http.server
 import importlib.util
+import ipaddress
 import json
 import os
 import re
@@ -355,7 +357,7 @@ class BoundedCommandTests(DeliveryStateFixture):
     # One signal, then two in quick succession: a repeated interrupt, or a
     # supervisor that terminates after interrupting.
     SIGNALS = (
-        (signal.SIGINT,), (signal.SIGTERM,), (signal.SIGHUP,),
+        (signal.SIGINT,), (signal.SIGTERM,), *(() if os.name == "nt" else ((signal.SIGHUP,),)),
         (signal.SIGINT, signal.SIGTERM), (signal.SIGTERM, signal.SIGINT),
     )
 
@@ -1272,6 +1274,7 @@ class LiveTests(DeliveryStateFixture):
             with self.subTest(name=name):
                 self.assertEqual(client.get(name)[0], 404, "the record's files are never served")
 
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
     def test_an_interrupt_ends_it_non_zero_with_no_process_left(self) -> None:
         process, url = self.start()
         client = self.client(url)
@@ -1389,6 +1392,39 @@ class LiveTests(DeliveryStateFixture):
                               "--state-config", json.dumps({**config, "liveHome": home})])
                 self.assertEqual((result.returncode, json.loads(result.stdout)["code"]), (2, "config_invalid"))
 
+    def older_is_unspecified(self):
+        # As Python 3.11.9 does: a mapped address is judged as IPv6, so ::ffff:0.0.0.0 is not "unspecified".
+        return mock.patch.object(ipaddress.IPv6Address, "is_unspecified", property(lambda address: int(address) == 0))
+
+    def test_the_mapped_any_address_is_a_wildcard_on_any_python(self) -> None:
+        with self.older_is_unspecified():
+            self.assertFalse(ipaddress.ip_address("::ffff:0.0.0.0").is_unspecified, "the simulation holds")
+            for host in ("::ffff:0.0.0.0", "::ffff:0:0", "::", "0.0.0.0"):
+                with self.subTest(host=host):
+                    self.assertTrue(render_state._is_wildcard(host))
+            for host in ("::1", "127.0.0.1", "::ffff:127.0.0.1", "::ffff:8.8.8.8", "localhost"):
+                with self.subTest(host=host):
+                    self.assertFalse(render_state._is_wildcard(host))
+
+    def test_the_mapped_any_address_is_refused_before_a_socket_exists_on_any_python(self) -> None:
+        def no_socket(*args, **kwargs):
+            raise AssertionError("a server was built for a wildcard")
+
+        with self.older_is_unspecified(), mock.patch.object(render_state, "_LiveServer6", no_socket), \
+                mock.patch.object(render_state, "_LiveServer", no_socket):
+            code, result = render_state._live_from_args(["--dir", str(self.state_dir), "--host", "::ffff:0.0.0.0"])
+        self.assertEqual((code, result["ok"], result["code"]), (2, False, "live_refused"))
+
+    @unittest.skipIf(os.name == "nt", "Windows has not been seen to take this bind")
+    def test_the_mapped_any_address_really_listens_on_every_ipv4_address(self) -> None:
+        # Why the refusal must come first: this bind succeeds, so nothing later would stop it serving.
+        server = render_state._LiveServer6(("::ffff:0.0.0.0", 0), http.server.BaseHTTPRequestHandler)
+        self.addCleanup(server.server_close)
+        with socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=5):
+            pass
+        with self.older_is_unspecified():
+            self.assertTrue(render_state._is_wildcard(str(server.server_address[0])), "the check after the bind reads it too")
+
     def test_a_wildcard_bind_is_refused_before_anything_listens(self) -> None:
         for host in ("0.0.0.0", "::", "0:0:0:0:0:0:0:0", "::ffff:0.0.0.0", "", " ", "0"):
             with self.subTest(host=host):
@@ -1396,6 +1432,10 @@ class LiveTests(DeliveryStateFixture):
                               "--host", host])
                 self.assertEqual(result.returncode, 2)
                 refused = json.loads(result.stdout)
+                if os.name == "nt" and host == "0":
+                    # Windows doesn't resolve this name, so the bind itself fails and nothing listens.
+                    self.assertEqual((refused["ok"], refused["code"]), (False, "live_unavailable"))
+                    continue
                 self.assertEqual((refused["ok"], refused["code"]), (False, "live_refused"))
                 self.assertEqual(refused["error"], "the live view serves this machine only; bind a loopback address")
 

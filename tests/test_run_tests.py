@@ -330,12 +330,19 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         self.assertIn("Ran 7 tests", run.stdout)
 
+    def test_entering_the_test_package_stops_bytecode_for_it_and_what_it_starts(self) -> None:
+        environment = {key: value for key, value in os.environ.items() if key != "PYTHONDONTWRITEBYTECODE"}
+        script = "import os, sys, tests; print(sys.dont_write_bytecode, os.environ.get('PYTHONDONTWRITEBYTECODE'))"
+        done = subprocess.run([sys.executable, "-c", script], cwd=ROOT, capture_output=True, text=True, timeout=60, env=environment)
+        self.assertEqual(done.stdout.split(), ["True", "1"], done.stderr)
+
     def test_no_tests_is_no_pass(self) -> None:
         self.passing_suite()
         run, reference = self.run_runner("-p", "nothing_*.py"), subprocess.run(
             [sys.executable, "-B", "-m", "unittest", "discover", "-s", "suite", "-t", ".", "-p", "nothing_*.py"],
             cwd=self.root, capture_output=True, text=True, timeout=120)
-        self.assertEqual((run.returncode, reference.returncode), (5, 5), run.stdout)
+        # unittest itself reports an empty run as a failure only from Python 3.12.
+        self.assertEqual((run.returncode, reference.returncode), (5, 5 if sys.version_info >= (3, 12) else 0), run.stdout)
         self.assertIn("NO TESTS RAN", run.stdout)
 
     def test_a_serial_module_and_a_class_with_only_a_teardown_stay_whole(self) -> None:

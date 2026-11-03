@@ -895,7 +895,7 @@ class FixtureAdopterLiveViewTests(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=adopter.environment, cwd=adopter.root)
 
         def stop() -> None:
-            if process.poll() is None:
+            if process.poll() is None and os.name != "nt":  # Windows has no SIGINT to send.
                 process.send_signal(signal.SIGINT)
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     process.wait(10)
@@ -941,6 +941,8 @@ class FixtureAdopterLiveViewTests(unittest.TestCase):
         self.assertIn(text("The live view follows the record"), adopter.view())
         with contextlib.suppress(Exception):
             connection.sock.shutdown(socket.SHUT_RDWR)
+        if os.name == "nt":
+            return  # No SIGINT to send; the fixture's cleanup stops it.
         process.send_signal(signal.SIGINT)
         self.assertEqual(process.wait(10), 128 + signal.SIGINT)
 

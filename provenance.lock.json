@@ -41,7 +41,7 @@
       "outputs": [
         {
           "path": "skills/compound-delivery-kernel/SKILL.md",
-          "sha256": "857c8dc6d1af9aa0a447acdf1d9fdb98dc3ee21e15ee9054c5c3e005850d3899"
+          "sha256": "6395c9c185de9ddadba81d26c98243ece568d8d7cc66d66feb2906946006f558"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -60,13 +60,13 @@
       "id": "compound-learning",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The reusable-learning threshold is narrowed to an evidence-backed caller-owned decision; repository knowledge formats remain overlays.",
+        "reason": "The reusable-learning threshold requires evidence from the delivery; a default note location and shape apply unless a repository declares its own, and the source's machinery is left out.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/compound-learning/SKILL.md",
-          "sha256": "16a53ddf49d2f366e606dd49026635fa8d231b3dc52c30c2c5d1c165a9b05506"
+          "sha256": "266698753b1ec7f3eab6098b0e1f3cf88744ca0d132c2cac5802ba7108f3a25a"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -230,15 +230,15 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "b28bfc5d56604d3cb041416523ebab644d978e8103e26f737dbcd229fbf5f013"
+          "sha256": "110fbcb66963354c0a361b9f1276b6848fad785b2aade7b2af9eb808959bf33a"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
-          "sha256": "1cf0c5552260bdb6f96c7477e259898a476f8fb2785f990a15d3e5a146a4a914"
+          "sha256": "b1b12bf78d58faf5fef47e241b19560002d885cc1c110800b390d7b42ace1777"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
-          "sha256": "23fb941c4d3a47e6d322f02cef6fe1710c40f08969319f26566d1be6455c53a4"
+          "sha256": "649f83486772c74507c338933acde3d462d583bf7569cc0ce3cf9f458b1e97e2"
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
@@ -469,11 +469,11 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "0e4840547b562783fec6a5d74420993dc2e664e832d0d284ae58971c9e5e763a"
+          "sha256": "880229b7aaefc5dea072674b6670796d6af18d3f8806061f5818d4f8dae9294b"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "27b1fe169a4306217e778a66f049c631e0c44fad0fafa490ff9f6e906858b9e4"
+          "sha256": "1867ef57cbfd99ec486c6c83b248bd9c15cf9959e29487b0059eb619d9eb314b"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -481,15 +481,15 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "40b4e5e06d377e79a1fd1381e3e94b44f9613af62c496fbe782893f1259e9499"
+          "sha256": "935110873bcb92890860ec057f760ea9b4b63735d820546702eb53b9be36dc32"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "3f1bc9e1da68ae6b13d89051723c945cdb4bfefc0118a992164c0e952cb08927"
+          "sha256": "ebe7e6bd40399151ddc967565d2d4ccdcbcdf13089d80efd30fa9276a708cd1c"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "a5d3021cfc6e9ca6e847cd447978a38346ab123d1808e1276852793344b88abd"
+          "sha256": "7203ad1428b4e82967f012d3372ba0fb6da40f5011b2f42751a71224b6531560"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -968,7 +968,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "0b2bb9c7d711d9548aea8527b8de1bfa609db07e5d6cd55a0cc6865d68211175"
+          "sha256": "6a5eb0b4fb3c9ab161c31f27aa4b33038113681ba9e76419adabc4e29952bcc0"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -1018,7 +1018,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "de230bf095c5898f8e793d80357bc33a51b23c316c589ebc8788d14944ffa413"
+          "sha256": "93c3b8535c7bf28267c47191e634d2336d56b8d0b55fe99ae445b9e1e1452628"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1034,7 +1034,7 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "fe88abaf70784c7c8be1610b4a01264114474421e16815deb8cd4152e069a9a0"
+          "sha256": "fb42fe5b7fa1e1925a70ce4d6122a019e99a46a1de1677bf3f68f6f5e036f2bf"
         },
         {
           "path": "skills/run-delivery/references/config.md",
@@ -1042,7 +1042,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "7f9e0a2c2c48a27a486751435a8a3ddd65bf27f9a7488ac8e622d4ce3fc46412"
+          "sha256": "18343a0834bf1b34e7ac678cb2f901e79861804bd593cc0013f134991c518628"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",
@@ -1054,7 +1054,7 @@
         },
         {
           "path": "skills/run-delivery/templates/lane-brief.md",
-          "sha256": "4067852659da8ec87a74a42747414fdb9253ec87da95568a7cd7193e8e0e5221"
+          "sha256": "48636915c2e24a44cf62b8452690556cb237e49c754ebc1d62a13d4d402d69e7"
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",
