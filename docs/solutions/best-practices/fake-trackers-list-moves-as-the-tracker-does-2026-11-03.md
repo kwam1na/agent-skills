@@ -1,3 +1,14 @@
+---
+title: "Fake a tracker's moves as the tracker lists them, not as its workflow defines them"
+date: 2026-11-03
+category: best-practices
+module: tracker-publisher
+problem_type: best_practice
+severity: medium
+tags: [tests, tracker, fake-server, jira]
+applies_when: "A test fake stands in for a tracker whose moves depend on the ticket's current status"
+---
+
 # Fake a tracker's moves as the tracker lists them, not as its workflow defines them
 
 A tracker publisher has to tell a move a person already made apart from a move

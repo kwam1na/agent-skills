@@ -1,3 +1,14 @@
+---
+title: "Prove each condition of a gate on its own, with the gate still shut"
+date: 2026-11-03
+category: best-practices
+module: lead-supervisor
+problem_type: best_practice
+severity: high
+tags: [tests, mutation, close-condition, gates]
+applies_when: "A gate opens only when several conditions all hold, and its tests reach it only from the happy path"
+---
+
 # Prove each condition of a gate on its own, with the gate still shut
 
 A gate that opens only when several conditions all hold, such as a close that waits until every story is merged,

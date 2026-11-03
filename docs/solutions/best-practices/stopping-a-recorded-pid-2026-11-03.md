@@ -1,3 +1,14 @@
+---
+title: "Stop a recorded pid only while its lock is held, and test it in a session of its own"
+date: 2026-11-03
+category: best-practices
+module: lead-supervisor
+problem_type: best_practice
+severity: high
+tags: [processes, signals, locks, tests]
+applies_when: "A command stops a process by a pid it recorded earlier, or a test exercises that path"
+---
+
 # Stop a recorded pid only while its lock is held, and test it in a session of its own
 
 A command that stops another process by a pid read from a file trusts that file. A pid in a lock nobody holds may

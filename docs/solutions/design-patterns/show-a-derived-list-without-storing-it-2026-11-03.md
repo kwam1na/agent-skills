@@ -1,3 +1,14 @@
+---
+title: "Show a derived list in the live view without storing it as truth"
+date: 2026-11-03
+category: design-patterns
+module: delivery-views
+problem_type: design_pattern
+severity: medium
+tags: [live-view, supervisor, derived-state, staleness]
+applies_when: "A view must show a list a process derives each pass, without the list becoming stored state"
+---
+
 # Show a derived list in the live view without storing it as truth
 
 Some of what a lead needs to see is derived, never stored, such as the supervisor's
