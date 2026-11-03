@@ -969,12 +969,15 @@ def plan_block(plan: dict, share: int = PLAN_SHARE_BYTES) -> dict:
     return block
 
 
-def read_plan_block(state_directory: Path) -> dict | None:
-    """The page's plan block: None with no plan.json, one line naming the key path for a file that can't be trusted,
-    or the valid plan within its share."""
+def read_plan_block(state_directory: Path, document: object = None) -> dict | None:
+    """The page's plan block: None with no plan.json, what the record names when it says a plan is on file, one line
+    naming the key path for a file that can't be trusted, or the valid plan within its share."""
     path = state_directory / "plan.json"
     if not path.exists() and not path.is_symlink():
-        return None
+        state = document.get("state") if isinstance(document, dict) else None
+        meta = state.get("meta") if isinstance(state, dict) else None
+        named = meta.get("planFile") if isinstance(meta, dict) else None
+        return {"absent": named} if isinstance(named, str) and named else None
     try:
         plan = views_common.read_plan(path)
     except views_common.ConfigError as error:
@@ -1081,7 +1084,7 @@ def line_map(arguments: argparse.Namespace) -> int:
     page = render_line_map(document, runs, inputs.config,
                            theme_key=views_common.theme_key(inputs.state_directory),
                            history=_renderer_output(inputs.binding, "history"),
-                           plan=read_plan_block(inputs.state_directory))
+                           plan=read_plan_block(inputs.state_directory, document))
     sys.stdout.write(page)
     return 0
 

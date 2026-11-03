@@ -10,7 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # A checkout's environments, other checkouts and generated files: only .git and __pycache__ used to be left out,
 # so a copy also wrote every file of each virtual environment and node_modules.
-NEVER_COPIED = (".git", ".venv", ".venv-*", "node_modules", ".worktrees", ".claude", ".agent-skills", ".pytest_cache",
+NEVER_COPIED = (".git", ".venv", ".venv-*", "node_modules", ".worktrees", ".claude", ".agent-skills", ".orchestration",
+                ".pytest_cache",
                 "__pycache__", "*.pyc", "*.egg-info", ".test-timings.json")
 
 
@@ -27,7 +28,9 @@ def copy_corpus(target: Path, *, source: Path = ROOT, leaving_out: tuple[str, ..
     def ignored(folder: str, names: list[str]) -> set[str]:
         # Each time, because the target and the folders leading to it exist only once the copy has begun.
         leading = {_identity(path) for path in (destination, *destination.parents)} - {None}
-        return set(patterns(folder, names)) | {name for name in names if _identity(Path(folder) / name) in leading}
+        # .agents/skills is an installed generation's links, and only under .agents is that name not the corpus's own.
+        exposed = {"skills"} if Path(folder).name == ".agents" else set()
+        return set(patterns(folder, names)) | exposed | {name for name in names if _identity(Path(folder) / name) in leading}
 
     shutil.copytree(source, target, ignore=ignored)
     return target

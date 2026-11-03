@@ -727,6 +727,17 @@ class GithubTests(SnapshotCase):
         # An open request made before the epic now wins for its subject.
         self.assertEqual(items["ENG-101"]["changeRequest"], "https://github.com/example-org/example-repo/pull/10")
 
+    def test_a_title_opening_with_its_subject_counts_as_a_bracketed_one_does(self) -> None:
+        pull = {**GITHUB["page-1"][0], "title": "ENG-101: the title run-delivery's open-pr requires"}
+        code, out, _ = self.run_kind(self.args(), Transport((PULLS, 200, [pull])), self.environ, cwd=self.root)
+        self.assertEqual(code, 0)
+        self.assertEqual([item["subject"] for item in json.loads(out)["items"]], ["ENG-101"])
+        for title in ("fix: nothing the record holds", "Mentions ENG-101: in passing", "ENG-101 without a colon"):
+            with self.subTest(title):
+                code, out, _ = self.run_kind(self.args(), Transport((PULLS, 200, [{**pull, "title": title}])), self.environ, cwd=self.root)
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(out)["items"], [])
+
     def test_the_cap_counts_only_pull_requests_in_the_window(self) -> None:
         recent = [{**GITHUB["page-1"][0], "number": index, "title": f"[ENG-{index}]: x"} for index in range(450)]
         older = [{**pull, "number": 1000 + index, "created_at": "2026-10-01T00:00:00Z"}

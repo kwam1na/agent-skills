@@ -1,0 +1,332 @@
+{
+  "adjudications": [
+    {
+      "disposition": "adapted",
+      "personaId": "persona.adversarial-document",
+      "reason": "Anchors the document-level adversarial lens: premise challenge, assumption surfacing, decision stress-testing, simplification pressure, and alternative blindness, with depth calibrated to document size and stakes.",
+      "sourceFile": "ce-adversarial-document-reviewer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.adversarial",
+      "reason": "Anchors the code-level adversarial lens. Its framing — construct the failure rather than check against criteria — and its calibration of depth by diff size and risk domain are the charter shape the whole set is modelled on.",
+      "sourceFile": "ce-adversarial-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "surface-bound",
+      "reason": "Reviews parity between a user-facing interface and an agent-facing one. A repository with neither surface has no subject for this lens, and the parity rule is a product decision an adopter makes, not a default the product should assert.",
+      "sourceFile": "ce-agent-native-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Authors documentation to a named individual's template. It reviews nothing, and it is person-named as well.",
+      "sourceFile": "ce-ankane-readme-writer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.api-contract",
+      "reason": "Anchors the contract lens: breaking changes to a published surface, missing versioning or migration path, divergent failure shapes, and silent semantic drift.",
+      "sourceFile": "ce-api-contract-reviewer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.architecture",
+      "reason": "Anchors the architecture lens: placement, dependency direction, boundary erosion, and the long-term cost of decisions that are expensive to reverse.",
+      "sourceFile": "ce-architecture-strategist"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Gathers external conventions and guidance. It produces input to a decision rather than a judgement about a candidate.",
+      "sourceFile": "ce-best-practices-researcher"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "stack-bound",
+      "reason": "Reviews command-line surfaces against a readiness rubric. Repositories that ship no command-line surface have no subject, and the rubric is a second grading mechanism beside the shipped severity vocabulary.",
+      "sourceFile": "ce-cli-agent-readiness-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "stack-bound",
+      "reason": "The diff-triggered variant of the same command-line readiness lens; excluded for the same reason.",
+      "sourceFile": "ce-cli-readiness-reviewer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.simplicity",
+      "reason": "Anchors the simplicity lens as a final pass: the subtraction test, generality without a second consumer, and the smallest version that would have worked.",
+      "sourceFile": "ce-code-simplicity-reviewer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.coherence",
+      "reason": "Anchors the document-consistency lens: contradiction, counts that disagree with their contents, unresolvable references, terminology drift, and ambiguity that would split implementers.",
+      "sourceFile": "ce-coherence-reviewer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.outcome-correctness",
+      "reason": "Anchors the mandatory outcome-correctness lens: boundaries, absent values, ordering and interleaving, invalid state transitions, and broken failure propagation.",
+      "sourceFile": "ce-correctness-reviewer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.data-integrity",
+      "reason": "Anchors the durable-data lens: irreversible transformations, transitions that assume a quiet system, constraints that do not hold, partial writes, dangling relationships, and sensitive values in the wrong place.",
+      "sourceFile": "ce-data-integrity-guardian"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "stack-bound",
+      "reason": "Validates migrations against a specific storage technology and its query language. Its transferable substance — irreversible transformation and partial application — is already carried by persona.data-integrity.",
+      "sourceFile": "ce-data-migration-expert"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "stack-bound",
+      "reason": "The diff-triggered variant of the same storage-specific migration lens; its transferable substance is carried by persona.data-integrity.",
+      "sourceFile": "ce-data-migrations-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Produces a release checklist with queries, rollback steps, and monitoring plans. It directs an operational procedure rather than judging a candidate.",
+      "sourceFile": "ce-deployment-verification-agent"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "tool-bound",
+      "reason": "Compares a rendered interface against a design held in a specific external design tool. The tool dependency is precisely the per-host binding the set forbids.",
+      "sourceFile": "ce-design-implementation-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Runs repeated change-and-inspect cycles to improve an interface. It performs work rather than reviewing it.",
+      "sourceFile": "ce-design-iterator"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "surface-bound",
+      "reason": "The genuine borderline case, decided against inclusion. It reviews planning documents for missing interface decisions — information architecture, interaction states, user flows — which presupposes a human-facing product surface. A general delivery product installs into libraries, services, and command-line tools where the lens has no subject at all, so shipping it by default would activate a lens most adopters cannot satisfy. Its dimensional rating rubric is also a second grading mechanism beside the shipped severity vocabulary. An adopter with an interface surface can supply it as a repository-owned charter at a protected path, which the policy layer already resolves by identity and digest.",
+      "sourceFile": "ce-design-lens-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "person-named",
+      "reason": "Encodes a named individual's opinions, and is bound to a single web framework as well.",
+      "sourceFile": "ce-dhh-rails-reviewer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.feasibility",
+      "reason": "Anchors the feasibility lens: conflicts with what exists, missing dependencies, ordering that cannot hold, and transitions with no path from the deployed shape to the proposed one.",
+      "sourceFile": "ce-feasibility-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Detects and applies visual differences against a specific external design tool. It edits rather than reviews, and is tool-bound as well.",
+      "sourceFile": "ce-figma-design-sync"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Gathers documentation for a dependency. It produces reference material, not a judgement.",
+      "sourceFile": "ce-framework-docs-researcher"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Traces how code came to be as it is. Useful context for a reviewer; not itself a review bar.",
+      "sourceFile": "ce-git-history-analyzer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Summarises reported problems across a tracker. It analyses a corpus rather than judging a candidate, and depends on a specific tracker surface.",
+      "sourceFile": "ce-issue-intelligence-analyst"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "person-named",
+      "reason": "Encodes a named individual's opinions, and is bound to specific front-end libraries. Its transferable substance — ordering and interleaving faults — is carried by persona.outcome-correctness and persona.adversarial.",
+      "sourceFile": "ce-julik-frontend-races-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "person-named",
+      "reason": "Encodes a named individual's bar for one language.",
+      "sourceFile": "ce-kieran-python-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "person-named",
+      "reason": "Encodes a named individual's bar for one web framework.",
+      "sourceFile": "ce-kieran-rails-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "person-named",
+      "reason": "Encodes a named individual's bar for one language.",
+      "sourceFile": "ce-kieran-typescript-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Searches recorded past learnings for applicable prior art. It supplies context before work rather than judging a candidate after it.",
+      "sourceFile": "ce-learnings-researcher"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.maintainability",
+      "reason": "Anchors the maintainability lens: premature abstraction, unnecessary indirection, dead code, coupling without a reason in the domain, and names that obscure intent.",
+      "sourceFile": "ce-maintainability-reviewer"
+    },
+    {
+      "disposition": "merged",
+      "personaId": "persona.maintainability",
+      "reason": "Covers pattern and anti-pattern consistency and duplication, which is the maintainability lens seen from the other side. Folded in as the duplication-that-will-drift and naming clauses rather than shipped as a near-duplicate persona.",
+      "sourceFile": "ce-pattern-recognition-specialist"
+    },
+    {
+      "disposition": "merged",
+      "personaId": "persona.performance",
+      "reason": "Covers algorithmic complexity, memory, and scalability alongside the same query and hot-path concerns. Folded into the single performance charter as its complexity-class and unbounded-growth clauses.",
+      "sourceFile": "ce-performance-oracle"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.performance",
+      "reason": "Anchors the performance lens: repeated lookups inside a loop, unbounded growth, missing limits at a boundary, hot-path work that could be done once, and blocking work where the caller cannot afford it.",
+      "sourceFile": "ce-performance-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Assesses existing review threads and implements fixes. It acts on review output rather than producing it, and depends on a hosting platform's thread surface.",
+      "sourceFile": "ce-pr-comment-resolver"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "tool-bound",
+      "reason": "Checks whether prior feedback was addressed, which requires a hosting platform's review-thread surface. The general property it protects — that a repair round actually repaired what was raised — belongs to the delivery loop's own review-round reduction, not to a shipped charter.",
+      "sourceFile": "ce-previous-comments-reviewer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.product",
+      "reason": "Anchors the product lens: premise challenge before solution, and strategic consequences across trajectory, positioning, adoption, opportunity cost, and compounding direction.",
+      "sourceFile": "ce-product-lens-reviewer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.project-standards",
+      "reason": "Anchors the standards lens, and is the one lens whose criteria are the adopting repository's own written rules rather than anything the product ships. The charter carries the discipline — cite the rule or do not file — without carrying any specific repository's rules.",
+      "sourceFile": "ce-project-standards-reviewer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.reliability",
+      "reason": "Anchors the reliability lens: unhandled failure at a boundary, retries without a ceiling, missing deadlines, swallowed failures, cascades, and partial work left behind.",
+      "sourceFile": "ce-reliability-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Researches a repository's structure and conventions for someone about to work in it. It orients rather than judges.",
+      "sourceFile": "ce-repo-research-analyst"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "stack-bound",
+      "reason": "Cross-references a generated schema artifact specific to one framework's migration tooling.",
+      "sourceFile": "ce-schema-drift-detector"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.scope",
+      "reason": "Anchors the scope lens: what already exists, the minimum change set, work serving no stated goal, abstractions ahead of consumers, and priority that does not order.",
+      "sourceFile": "ce-scope-guardian-reviewer"
+    },
+    {
+      "disposition": "merged",
+      "personaId": "persona.security",
+      "reason": "Covers security at the planning-document level. Folded into the single security charter as its design-level clause, so one identity serves the lens whether the subject is code or a plan.",
+      "sourceFile": "ce-security-lens-reviewer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.security",
+      "reason": "Anchors the security lens: traced injection paths, authentication and authorization gaps, secrets, unsafe decoding, outbound requests and path handling, and its deliberately lower threshold with the residual-risk discipline that keeps that from becoming speculation.",
+      "sourceFile": "ce-security-reviewer"
+    },
+    {
+      "disposition": "merged",
+      "personaId": "persona.security",
+      "reason": "Covers the same territory as a standing audit rather than a diff-scoped review. Its transferable substance is folded into the single security charter; its checklist framing is deliberately not carried, because the charter reviews the delivered subject rather than auditing the repository.",
+      "sourceFile": "ce-security-sentinel"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Searches prior working sessions for context. It supplies history, and it enumerates specific host products by name, which the set forbids.",
+      "sourceFile": "ce-session-historian"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Searches a specific messaging product for organizational context. It gathers rather than judges, and is tool-bound as well.",
+      "sourceFile": "ce-slack-researcher"
+    },
+    {
+      "disposition": "merged",
+      "personaId": "persona.coherence",
+      "reason": "Analyses a specification for flow completeness and gaps, which is the coherence lens applied to described sequences. Folded in as the completeness-of-described-flows clause rather than shipped as a near-duplicate persona.",
+      "sourceFile": "ce-spec-flow-analyzer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "stack-bound",
+      "reason": "Reviews one language and one mobile platform's project, entitlement, and signing artifacts.",
+      "sourceFile": "ce-swift-ios-reviewer"
+    },
+    {
+      "disposition": "adapted",
+      "personaId": "persona.testing-policy",
+      "reason": "Anchors the mandatory testing-policy lens: untested branches, assertions that prove nothing, rows coupled to implementation, missing failure-path coverage, and behavioural change with no test movement.",
+      "sourceFile": "ce-testing-reviewer"
+    },
+    {
+      "disposition": "excluded",
+      "exclusionRule": "not-a-reviewer",
+      "reason": "Performs external research and returns grounding material. It informs work rather than judging it.",
+      "sourceFile": "ce-web-researcher"
+    }
+  ],
+  "dispositions": {
+    "adapted": "This file is the primary basis for one shipped charter. Its substance is rewritten as host- and stack-neutral charter prose; its agent frontmatter and host bindings are not carried over.",
+    "excluded": "This file does not ship. The exclusionRule states which rule decided it.",
+    "merged": "This file covers a lens another file already anchors. Its substance is folded into that charter rather than shipped as a near-duplicate persona."
+  },
+  "exclusionRules": {
+    "not-a-reviewer": "The file directs research, authoring, synthesis, or another action rather than reviewing a delivery candidate against a bar. A charter that tells a reviewer to go and do something is a second source of orchestration authority, which the persona set must not carry.",
+    "person-named": "The file encodes a named individual's taste. A general product ships lens categories, not personalities.",
+    "stack-bound": "The file is written against a specific language, framework, or storage technology. Shipping it would import one adopter's stack into a set that must stay neutral.",
+    "surface-bound": "The file presupposes a product surface that a large fraction of adopting repositories do not have.",
+    "tool-bound": "The file depends on a specific external tool or hosting platform surface, which is exactly the per-host binding the persona set forbids."
+  },
+  "purpose": "One recorded include/exclude decision, with a reason, for every reviewer-agent source file considered as a basis for the shipped reviewer charter set. The exclusions are the substantive claim: without this record a later persona release would silently re-litigate the same calls.",
+  "schemaVersion": "reviewer-persona-source-adjudication/1",
+  "source": {
+    "authors": "Kieran Klaassen, EveryInc",
+    "license": "MIT",
+    "observedFileCount": 51,
+    "observedVia": "kwamina/athena .agents/agents/ce-*.agent.md",
+    "project": "compound-engineering plugin",
+    "repository": "github.com/EveryInc/compound-engineering-plugin"
+  }
+}

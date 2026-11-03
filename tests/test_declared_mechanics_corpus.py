@@ -75,6 +75,32 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "skills/orchestrate-work/references/orchestration-guide.md": (
         "Stop only processes you started, by the pid you recorded, never by pattern",
+        # The lane brief's review step.
+        "Ask each lens for its result in review-lens-result/1, on top of the shape `$obtain-review`'s round brief gives",
+        "Save every lens's result for every round, one outcome file per round, as the lens returned it, outside your"
+        " checkout, and keep the files until close-out",
+        "Right after your hand-off, which gives the record your reviewed head, capture every round in order",
+        "A round's outcome is `aligned` only when every lens aligned and no finding is open",
+        "`state` is one of `closed`, `fixed`, `withdrawn`, `dropped`, `deferred` or `open`, and a `deferred` one also"
+        " carries `deferredIssue`, naming its follow-up item.",
+        "capture-review --subject <subject> --candidate <reviewed head> --outcome <round-1.json> --outcome <round-2.json>",
+        # The hand-off check.
+        "review evidence was captured for the reviewed head, or the lane said why not.",
+        "`delivery_state.py review-evidence --subject <subject>` says which",
+        # The lead checklist.
+        "A brief written from the template below keeps its review step; a delivery run through `run-delivery` gets the"
+        " same from `review-reduce` instead.",
+        "`meta.planFile` names the approved plan, so a line map with no plan chapter says so",
+        "`plan.json` in the state directory is the plan chapter's one input",
+        "names it in `liveHome`, and the live view starts with `--binding`",
+    ),
+    "skills/orchestrate-work/SKILL.md": (
+        "the live view shows the built-in page and says so",
+        "`review-evidence --subject <subject>` reports `captured`, `not-captured`, `incomplete`, `unavailable` or `run-named`",
+    ),
+    "docs/own-deliveries.md": (
+        "The binding declares no affected-checks provider, on purpose.",
+        "Nothing here reads a `.env`, this repository's or another's.",
     ),
     "AGENTS.md": (
         "`docs/solutions/` holds what past deliveries learned, one note per learning at"

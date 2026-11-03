@@ -114,13 +114,14 @@
     return isObject(target) && typeof target.label === "string" && typeof target.href === "string" ? target : null;
   }
   function pageTitle() { return typeof VIEW.title === "string" && VIEW.title ? VIEW.title : "Delivery"; }
-  // The delivery's plan, as the renderer validated and embedded it: { plan, clipped? }, or { unreadable } naming the key
-  // path that failed. With no block the page has no plan chapter at all.
+  // The delivery's plan, as the renderer validated and embedded it: { plan, clipped? }, { unreadable } naming the key
+  // path that failed, or { absent } naming the plan the record says is on file when no plan.json came with it. With no
+  // block the page has no plan chapter at all.
   var PLAN = null;
   var planBlock = document.getElementById("delivery-plan");
   if (planBlock) {
     try { PLAN = JSON.parse(planBlock.textContent); } catch (error) { PLAN = null; }
-    if (!isObject(PLAN) || (!isObject(PLAN.plan) && typeof PLAN.unreadable !== "string")) { PLAN = { unreadable: "" }; }
+    if (!isObject(PLAN) || (!isObject(PLAN.plan) && typeof PLAN.unreadable !== "string" && typeof PLAN.absent !== "string")) { PLAN = { unreadable: "" }; }
   }
   var plan = PLAN && isObject(PLAN.plan) ? PLAN.plan : null;
   function changeLink(changeRequest) {
@@ -1791,7 +1792,9 @@
     var nodes = [el("div", "kicker", "The plan")];
     if (!plan) {
       var reason = PLAN && text(PLAN.unreadable) ? PLAN.unreadable : "";
-      nodes.push(flagList([{ title: "The plan couldn't be read", why: reason }]));
+      nodes.push(flagList([PLAN && typeof PLAN.absent === "string"
+        ? { title: "The plan chapter is missing", why: PLAN.absent + " is the plan on file, and nothing has written plan.json for this page." }
+        : { title: "The plan couldn't be read", why: reason }]));
       inner.replaceChildren.apply(inner, nodes);
       return;
     }

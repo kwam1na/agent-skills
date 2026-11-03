@@ -39,8 +39,17 @@ class CopyCorpusTests(unittest.TestCase):
         (self.source / "skills/one/SKILL.md").write_text("one\n", encoding="utf-8")
         (self.source / "catalog.json").write_text("{}\n", encoding="utf-8")
 
+    def test_a_host_roots_links_are_left_out_and_the_corpus_skills_stay(self) -> None:
+        (self.source / ".agents/skills").mkdir(parents=True)
+        (self.source / ".agents/skills/one").symlink_to("../../skills/one")
+        (self.source / ".agents/tracker-properties.json").write_text("{}\n", encoding="utf-8")
+        copied = copy_corpus(self.base / "copy", source=self.source)
+        self.assertFalse((copied / ".agents/skills").exists())
+        self.assertTrue((copied / ".agents/tracker-properties.json").is_file())
+        self.assertTrue((copied / "skills/one/SKILL.md").is_file())
+
     def test_what_no_fixture_reads_is_left_out_at_any_depth(self) -> None:
-        for name in (".git", ".venv", ".venv-3.11", "node_modules", ".worktrees", ".claude", ".agent-skills",
+        for name in (".git", ".venv", ".venv-3.11", "node_modules", ".worktrees", ".claude", ".agent-skills", ".orchestration",
                      "__pycache__", "agent_skills_corpus.egg-info"):
             (self.source / name).mkdir()
             (self.source / name / "held").write_text("x\n", encoding="utf-8")

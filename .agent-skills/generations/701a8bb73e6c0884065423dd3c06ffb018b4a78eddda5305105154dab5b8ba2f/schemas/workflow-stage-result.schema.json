@@ -1,0 +1,663 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Workflow stage result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": "workflow-stage-result/1"
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "releaseId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "profile": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "archiveSha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "metadataSha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "releaseId",
+        "profile",
+        "archiveSha256",
+        "metadataSha256"
+      ]
+    },
+    "graphSha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "stageId": {
+      "enum": [
+        "intake",
+        "diagnose",
+        "plan",
+        "implement",
+        "review.acquire",
+        "review.reduce",
+        "publish.handoff",
+        "feedback.handoff",
+        "finish.verify",
+        "compound"
+      ]
+    },
+    "subjectRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "workflow-subject-ref/1"
+        },
+        "opaque": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "opaque"
+      ]
+    },
+    "candidateRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "workflow-candidate-ref/1"
+        },
+        "opaque": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "opaque"
+      ]
+    },
+    "status": {
+      "enum": [
+        "succeeded",
+        "blocked",
+        "failed",
+        "indeterminate"
+      ]
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "scoped-subject",
+            "confirmed",
+            "bounded-plan",
+            "delivery-candidate",
+            "review-acquisition-envelope",
+            "review-round-aligned",
+            "review-round-changes-requested",
+            "published",
+            "feedback-available",
+            "feedback-empty",
+            "finish-evidence-satisfied",
+            "learning-required",
+            "no-reusable-learning"
+          ]
+        },
+        "evidenceRef": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "adapterRef": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "trust": {
+          "const": "untrusted"
+        },
+        "preservationHandoffRef": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "kind",
+        "evidenceRef"
+      ]
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      },
+      "uniqueItems": true
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      },
+      "uniqueItems": true
+    },
+    "nextStep": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "release",
+    "graphSha256",
+    "stageId",
+    "subjectRef",
+    "status",
+    "evidenceRefs",
+    "limitations"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "const": "implement"
+          },
+          "status": {
+            "const": "succeeded"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "candidateRef"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "succeeded"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "output"
+        ],
+        "not": {
+          "required": [
+            "nextStep"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "nextStep"
+        ],
+        "not": {
+          "required": [
+            "output"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "const": "intake"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "succeeded",
+              "blocked",
+              "failed"
+            ]
+          },
+          "output": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "scoped-subject"
+                ]
+              }
+            }
+          }
+        },
+        "not": {
+          "required": [
+            "candidateRef"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "const": "diagnose"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "succeeded",
+              "blocked",
+              "failed",
+              "indeterminate"
+            ]
+          },
+          "output": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "confirmed"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "const": "plan"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "succeeded",
+              "blocked",
+              "failed"
+            ]
+          },
+          "output": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "bounded-plan"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "const": "implement"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "succeeded",
+              "blocked",
+              "failed",
+              "indeterminate"
+            ]
+          },
+          "output": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "delivery-candidate"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "const": "review.acquire"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "succeeded",
+              "blocked",
+              "failed",
+              "indeterminate"
+            ]
+          },
+          "output": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "review-acquisition-envelope"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "candidateRef"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "const": "review.reduce"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "succeeded",
+              "blocked",
+              "failed"
+            ]
+          },
+          "output": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "review-round-aligned",
+                  "review-round-changes-requested"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "candidateRef"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "const": "publish.handoff"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "succeeded",
+              "blocked",
+              "failed",
+              "indeterminate"
+            ]
+          },
+          "output": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "published"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "candidateRef"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "const": "feedback.handoff"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "succeeded",
+              "blocked",
+              "failed",
+              "indeterminate"
+            ]
+          },
+          "output": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "feedback-available",
+                  "feedback-empty"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "candidateRef"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "const": "finish.verify"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "succeeded",
+              "blocked",
+              "failed",
+              "indeterminate"
+            ]
+          },
+          "output": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "finish-evidence-satisfied"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "candidateRef"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "const": "compound"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "succeeded",
+              "blocked",
+              "failed"
+            ]
+          },
+          "output": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "learning-required",
+                  "no-reusable-learning"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "candidateRef"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "enum": [
+              "publish.handoff",
+              "feedback.handoff"
+            ]
+          },
+          "status": {
+            "const": "succeeded"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "output": {
+            "required": [
+              "adapterRef"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "output": {
+            "not": {
+              "required": [
+                "adapterRef"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stageId": {
+            "const": "feedback.handoff"
+          },
+          "status": {
+            "const": "succeeded"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "output": {
+            "required": [
+              "trust"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "output": {
+            "not": {
+              "required": [
+                "trust"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "output": {
+            "properties": {
+              "kind": {
+                "const": "learning-required"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "output"
+        ]
+      },
+      "then": {
+        "properties": {
+          "output": {
+            "required": [
+              "preservationHandoffRef"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "output": {
+            "not": {
+              "required": [
+                "preservationHandoffRef"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

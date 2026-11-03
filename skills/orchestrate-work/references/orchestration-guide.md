@@ -141,6 +141,19 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   evidence beside it.
 - Initialise the state with the epic's headline, and record each finish line
   in `finish[]` with `met: false`.
+- Give the delivery what its views need, before the first lane starts:
+  - `meta.planFile` names the approved plan, so a line map with no plan chapter
+    says so rather than rendering as if nothing were missing.
+  - `plan.json` in the state directory is the plan chapter's one input, a
+    delivery-plan/1 document. `run-delivery`'s `lead-init` writes it. Without
+    `run-delivery`, write it from the approved plan and check it with the
+    delivery-views `check-plan` command.
+  - The binding's `state` member declares the line map as a renderer and names it
+    in `liveHome`, and the live view starts with `--binding`, or the built-in page
+    shows instead and says so.
+  - Each lane keeps its review evidence. A brief written from the template below
+    keeps its review step; a delivery run through `run-delivery` gets the same
+    from `review-reduce` instead.
 
 ### 2. Decompose
 
@@ -441,6 +454,39 @@ in the delivery record:
 python3 -B <skill>/scripts/delivery_state.py --dir <state> journal --writer lane --kind review.round --subject <subject> --lane <lane> --review '{"round": <n>, "startedAt": "<dispatched>", "finishedAt": "<last verdict>", "verdicts": {"<lens>": "approve"}, "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}'
 ```
 
+**Review evidence**
+
+Ask each lens for its result in review-lens-result/1, on top of the shape
+`$obtain-review`'s round brief gives, and put these fields in each lens's brief:
+`schemaVersion` set to that name, `lensId` its lens, `subjectRef` your subject,
+`candidateRef` the full commit it reviewed, `round`, `outcome` as `aligned` or
+`changes-requested`, `evidence`, and `findings`, each with `id`, `severity` and
+`summary`. From round 2 on add `resolvedFindings`, each finding of that lens still
+open going into the round, with its `id`, `state` and `resolution`; a finding closed
+in evidence alone stays open. `state` is one of `closed`, `fixed`, `withdrawn`,
+`dropped`, `deferred` or `open`, and a `deferred` one also carries `deferredIssue`,
+naming its follow-up item. Only a P2 or P3 can be deferred.
+
+Save every lens's result for every round, one outcome file per round, as the lens
+returned it, outside your checkout, and keep the files until close-out:
+
+```json
+{"round": <n>, "outcome": "<round outcome>", "entries": [{"lens": "<lens>", "state": "obtained", "binding": {"subjectRef": "<subject>", "candidateRef": "<commit reviewed>", "round": <n>}, "result": <the lens's result>}]}
+```
+
+A round's outcome is `aligned` only when every lens aligned and no finding is open,
+and `changes-requested` otherwise. Right after your hand-off, which gives the record
+your reviewed head, capture every round in order against that candidate:
+
+```bash
+python3 -B <skill>/scripts/delivery_state.py --dir <state> capture-review --subject <subject> --candidate <reviewed head> --outcome <round-1.json> --outcome <round-2.json>
+```
+
+Then send the lead your closing message, with what the capture returned, or why you
+couldn't capture. A missing earlier round is refused, and journal counts alone show
+no review on the line map, so a round's file can't be written afterwards from
+memory.
+
 **Focus and hand-off**
 
 Say what you are doing as it changes, and hand your work off yourself, through
@@ -598,7 +644,12 @@ Treat every lane report as a claim to check before acting on it:
 - the reported validation names commands and results, not adjectives;
 - the review rounds name each lens's verdict, and every blocking finding is
   closed by the lens that raised it;
-- every declared lead input exists in the binding.
+- every declared lead input exists in the binding;
+- review evidence was captured for the reviewed head, or the lane said why not.
+  Check this on the lane's closing message, which follows its capture.
+  `delivery_state.py review-evidence --subject <subject>` says which, and exits 1
+  unless every journaled round is captured at that head. An item naming a run says
+  `run-named`, since that run keeps its own evidence: confirm it in the run's history.
 
 When a claim does not hold, return the hand-off to the lane with what failed.
 

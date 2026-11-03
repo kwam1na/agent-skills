@@ -640,9 +640,9 @@ GITHUB_RANK = {"open": 0, "draft": 0, "merged": 1, "closed": 2}
 LINK_NEXT = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
 
 
-def _bracketed(title: str) -> list[str]:
-    """The subjects a title names in its opening brackets, as ``[A-1]: ...`` or ``[A-1, A-2]: ...``."""
-    named = re.match(r"^\[([^\]]+)\]", title.strip())
+def _named_subjects(title: str) -> list[str]:
+    """The subjects a title opens with, as ``[A-1]: ...``, ``[A-1, A-2]: ...`` or ``A-1: ...``."""
+    named = re.match(r"^\[([^\]]+)\]", title.strip()) or re.match(r"^([^\s:\[\]]+):\s", title.strip())
     return [part for part in re.split(r"[\s,]+", named.group(1)) if part] if named else []
 
 
@@ -692,7 +692,7 @@ def github_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
             # The latest of a kind by when it merged or closed, not by a later comment.
             when = pull.get("merged_at") or pull.get("closed_at") or pull.get("updated_at")
             when_moment = _moment(when, f"{where}'s merged_at, closed_at or updated_at").isoformat()
-            for subject in _bracketed(title):
+            for subject in _named_subjects(title):
                 if subject not in subjects or not pattern.search(subject):
                     continue
                 current = chosen.get(subject)
