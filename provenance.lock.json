@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "017a79608a067f761f20c5c25659d435555ebf5dd456bf0c49b536cc7b6b0443"
+          "sha256": "d3d75079f7683b3e92c15087851f57ddd873596c103f0320299f65193868bcd0"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -238,7 +238,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
-          "sha256": "649f83486772c74507c338933acde3d462d583bf7569cc0ce3cf9f458b1e97e2"
+          "sha256": "28e31672a85717033a90a516b82c71056e1878ceda51301fb37cd4617a007b1a"
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
@@ -469,11 +469,11 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "13a79eb8985b2ff32bfc59bd9eb3d9cfcdc6a9e971a40926c63c7a17b978249b"
+          "sha256": "1885235b62d5c6448f91d65c5868dd92ca5e53c3e99a2b6815f14868666c588a"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "546bc64fe525a189f4d30b555d15b94331b358b2337e3dadb49e806a1226b713"
+          "sha256": "0807f1a4a93f21a0c5001acf60cc67e9d81bb38a82b8b62c3f2c2717974d0bab"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -481,7 +481,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "6c0c4f65aaa07f4833fb165c1c9e467bc7892b7a29c22c3d13288b4d63eee43e"
+          "sha256": "f6072466c6906d3062766c57d736ac0f9b23eb1957b01bcf7bc499da6b558a1e"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
@@ -489,7 +489,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "48f96e5606cf15221f9a71299b5626b381f349bbcb2a9c911dcdeea429a415b8"
+          "sha256": "b1fd224cee4742781bdcb89d905fe13e786e2b94b664ce03f2e37019d98b38b0"
         }
       ],
       "owner": "delivery-agent/user-delegated",

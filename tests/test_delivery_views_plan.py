@@ -844,6 +844,23 @@ class MissingViewInputTests(unittest.TestCase):
         self.assertIn("names no liveHome", said["flags"][0])
         self.assertIn("names no liveHome", page)
 
+    def test_a_plan_written_with_no_record_write_clears_the_flag(self) -> None:
+        self.name_plan()
+        home = self.write_binding(self.folder / ".agents/orchestration.json", home=True)
+        said, page = self.live("--binding", str(home))
+        self.assertIn('"absent"', page)
+        (self.state / "plan.json").write_text(json.dumps(plan()))
+        connection = http.client.HTTPConnection(said["live"], timeout=10)
+        self.addCleanup(connection.close)
+        for _ in range(100):
+            connection.request("GET", "/")
+            page = connection.getresponse().read().decode("utf-8")
+            if '"absent"' not in page:
+                break
+            time.sleep(0.1)
+        self.assertNotIn('"absent"', page)
+        self.assertIn('id="delivery-plan"', page)
+
     def test_a_live_view_on_its_home_says_nothing(self) -> None:
         home = self.write_binding(self.folder / ".agents/orchestration.json", home=True)
         said, page = self.live("--binding", str(home))

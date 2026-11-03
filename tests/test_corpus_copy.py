@@ -49,7 +49,7 @@ class CopyCorpusTests(unittest.TestCase):
         self.assertTrue((copied / "skills/one/SKILL.md").is_file())
 
     def test_what_no_fixture_reads_is_left_out_at_any_depth(self) -> None:
-        for name in (".git", ".venv", ".venv-3.11", "node_modules", ".worktrees", ".claude", ".agent-skills",
+        for name in (".git", ".venv", ".venv-3.11", "node_modules", ".worktrees", ".claude", ".agent-skills", ".orchestration",
                      "__pycache__", "agent_skills_corpus.egg-info"):
             (self.source / name).mkdir()
             (self.source / name / "held").write_text("x\n", encoding="utf-8")

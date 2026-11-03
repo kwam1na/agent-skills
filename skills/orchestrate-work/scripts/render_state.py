@@ -1435,6 +1435,7 @@ def _let_handlers_run() -> None:
 # ---------------------------------------------------------------------------
 # The live view: re-render on every record write, and push to open pages
 
+PLAN_FILE = "plan.json"  # The line map's plan chapter reads it; the record never names it.
 LIVE_POLL_SECONDS = 0.25
 LIVE_KEEPALIVE_SECONDS = 15.0
 # An HTML view opts in to the live stream with this in its head.
@@ -1452,11 +1453,12 @@ class LiveView:
         self.document: dict | None = None
         self.encoded = b""
         self.fingerprint: tuple | None = None
+        self.plan_seen: tuple | None = None
         self.stopping = threading.Event()
 
     def watch_key(self) -> tuple:
         keys = []
-        for name in (CHANGES_FILE, STATE_FILE, JOURNAL_FILE):
+        for name in (CHANGES_FILE, STATE_FILE, JOURNAL_FILE, PLAN_FILE):
             try:
                 stat = (self.directory / name).stat()
                 keys.append((stat.st_size, stat.st_mtime_ns))
@@ -1479,14 +1481,17 @@ class LiveView:
         encoded = json.dumps(shown, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
         # The whole document, so a record replaced at the same version still counts as moved.
         fingerprint = encoded
-        if fingerprint == self.fingerprint:
+        plan = self.watch_key()[-1]
+        if fingerprint == self.fingerprint and plan == self.plan_seen:
             return False
+        self.plan_seen = plan
         # Pages first: they need only the record, never the rendered files, so
-        # no slow view delays them.
-        with self.changed:
-            self.document, self.encoded, self.fingerprint = shown, encoded, fingerprint
-            self.generation += 1
-            self.changed.notify_all()
+        # no slow view delays them. A plan that moved alone leaves the record's pages be.
+        if fingerprint != self.fingerprint:
+            with self.changed:
+                self.document, self.encoded, self.fingerprint = shown, encoded, fingerprint
+                self.generation += 1
+                self.changed.notify_all()
         with contextlib.suppress(Exception):
             render(self.directory, _views_only(self.config))
         return True

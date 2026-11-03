@@ -10,7 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # A checkout's environments, other checkouts and generated files: only .git and __pycache__ used to be left out,
 # so a copy also wrote every file of each virtual environment and node_modules.
-NEVER_COPIED = (".git", ".venv", ".venv-*", "node_modules", ".worktrees", ".claude", ".agent-skills", ".pytest_cache",
+NEVER_COPIED = (".git", ".venv", ".venv-*", "node_modules", ".worktrees", ".claude", ".agent-skills", ".orchestration",
+                ".pytest_cache",
                 "__pycache__", "*.pyc", "*.egg-info", ".test-timings.json")
 
 

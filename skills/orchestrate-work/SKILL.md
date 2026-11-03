@@ -636,8 +636,8 @@ python3 -B scripts/delivery_state.py --dir <state directory> capture-review \
 ```
 
 `review-evidence --subject <subject>` reports `captured`, `not-captured`,
-`incomplete`, `unavailable` or `product-run`, and exits 1 for anything short of
-the first or last. The lead reads it when checking a hand-off.
+`incomplete`, `unavailable` or `run-named`, and exits 1 for anything but `captured`.
+The lead reads it when checking a hand-off.
 
 The command stores original outcome bytes in a digest-addressed
 `review-artifacts/` file and appends a `review.evidence` observation. Repeating

@@ -105,6 +105,21 @@ class StandingBinding(unittest.TestCase):
         pattern = binding["state"]["forgeSnapshot"]["argv"]
         self.assertEqual(pattern[pattern.index("--subject-pattern") + 1], "V26-[0-9]+")
 
+    def test_the_candidate_step_takes_the_key_only_where_a_title_opens_with_it(self) -> None:
+        def candidate(key: str, *titles: str) -> subprocess.CompletedProcess:
+            with tempfile.TemporaryDirectory() as folder:
+                pulls = [{"headRefName": f"branch-{index}", "headRefOid": "a" * 40, "title": title} for index, title in enumerate(titles)]
+                gh = Path(folder) / "gh"
+                gh.write_text("#!/bin/sh\ncat <<'EOF'\n" + json.dumps(pulls) + "\nEOF\n", encoding="utf-8")
+                gh.chmod(0o755)
+                return subprocess.run([sys.executable, "-B", str(ROOT / ".agents/delivery/candidate.py"), key], capture_output=True, text=True,
+                                      env={**os.environ, "PATH": os.pathsep.join([folder, os.environ["PATH"]])})
+
+        for title in ("V26-1: the opened form", "[V26-1]: the bracketed form"):
+            done = candidate("V26-1", title, "V26-2: Follow up on V26-1", "V26-12: a longer key")
+            self.assertEqual(json.loads(done.stdout)["branch"], "branch-0", done.stderr)
+        self.assertEqual(candidate("V26-1", "V26-2: Follow up on V26-1").returncode, 1)
+
     def test_the_delivery_folders_are_ignored(self) -> None:
         for path in (".orchestration/lanes/x", ".orchestration/state/state.json", ".worktrees/x", ".claude/worktrees/x"):
             done = subprocess.run(["git", "check-ignore", "-q", "--no-index", path], cwd=ROOT)

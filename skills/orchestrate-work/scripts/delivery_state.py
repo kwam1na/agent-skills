@@ -1399,10 +1399,12 @@ def review_evidence(directory: Path, subject: str) -> dict:
                  if item["subject"] == subject), None)
     if item is None:
         raise StateError("subject_unknown", f"the record holds no work named {subject}")
+    # A run keeps its own evidence, which this record can't confirm, and a capture for it is refused.
     if item.get("runId"):
-        return {"subject": subject, "evidence": "product-run", "head": item.get("head")}
+        return {"subject": subject, "evidence": "run-named", "head": item.get("head"), "runId": item["runId"]}
     observed = document.get("reviewEvidence", {}).get(subject)
-    rounds = sum(1 for entry in document["journal"] if entry["subject"] == subject and entry["kind"] == "review.round")
+    rounds = len({entry["review"]["round"] for entry in document["journal"]
+                  if entry["subject"] == subject and entry["kind"] == "review.round"})
     found = {"subject": subject, "head": item.get("head"), "roundsJournaled": rounds}
     if observed is None:
         return {**found, "evidence": "not-captured"}
@@ -3931,7 +3933,7 @@ def main(argv: list[str] | None = None) -> int:
             return code
         elif args.command == "review-evidence":
             result = {"ok": True, **review_evidence(args.dir, args.subject)}
-            if result["evidence"] not in ("captured", "product-run"):
+            if result["evidence"] != "captured":
                 emit(result)
                 return 1
         elif args.command == "capture-review":

@@ -440,7 +440,7 @@ related to it as blockers, other than the parent. Any `lin_api_` key in a refusa
 from the REST API, newest first, paged by the `Link` header, with a Bearer
 token, until one was created before the since time (`--since`, else the
 record's first journal entry). A pull request counts for each subject its
-title names in opening brackets, as `[A-1]: ...` or `[A-1, A-2]: ...`, that
+title opens with, as `[A-1]: ...`, `[A-1, A-2]: ...` or `A-1: ...`, that
 the record holds and the pattern matches. For a subject with several, an open
 one wins, else the latest merged, else the latest closed, by when it merged
 or closed. An open pull request is `open` (`draft` when marked draft), a

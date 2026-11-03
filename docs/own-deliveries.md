@@ -14,11 +14,17 @@ hand. Corpus validation, provenance and `cut-release` read `skills/`, `catalog.j
 and `profiles/`, so a generation is never a source for a release, and bytecode that
 lands in one affects none of them. A test's corpus copy leaves it out.
 
-Update it from a new empty folder, as an adopter does, and commit the result:
+Update it as an adopter does, and commit the result. Download into a new empty folder
+and verify each file as `README.md` says:
 
 ```bash
-gh release download <version> --repo kwam1na/agent-skills --pattern 'linear-*'
-python3 -B linear-<version>.zip --root . --product apply --archive linear-<version>.zip --metadata linear-<version>.release.json --maintenance
+gh release download <version> --repo kwam1na/agent-skills --pattern 'linear-*' --dir <new empty folder>
+```
+
+Then apply it from this repository's top level:
+
+```bash
+python3 -B <folder>/linear-<version>.zip --root . --product apply --archive <folder>/linear-<version>.zip --metadata <folder>/linear-<version>.release.json --maintenance
 ```
 
 The views and the state tool a delivery runs are the generation's, so a change made
@@ -37,8 +43,14 @@ the lead's shell, from wherever you keep such things:
 export GITHUB_TOKEN="$(gh auth token)"
 ```
 
-The setup check names either one that's unset, and the views scrub both from what
-they show.
+The setup check names `LINEAR_API_KEY` when it's unset. It doesn't check
+`GITHUB_TOKEN`, and a missing one shows up when the forge snapshot runs. The views
+scrub both from what they show.
+
+The forge snapshot of the generation at `v1.1.0-rc.1` reads only titles opening
+`[<key>]:`, so it sees no change request `run-delivery`'s `open-pr` titled `<key>: `
+until a release that reads both is applied. Until then that source succeeds with an
+empty answer, so a change request merged or closed outside the queue goes unseen.
 
 ## Checks
 
