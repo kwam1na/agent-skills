@@ -1330,6 +1330,14 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                        f"the live record's round isn't served: {rounds}, {document.get('reviewEvidence')}")
         code, out = fx.flow("view", cwd=wt, env={**fx.env, "DELIVERY_STATE": str(fx.tmp / "gone")})
         expect(code == 2 and "no record at" in out and "--archive" in out, f"a missing record was served: {out}")
+        # The binding's state member picks the views; its publishers never run from a view.
+        published = fx.tmp / "published"
+        (wt / ".agents/orchestration.json").write_text(json.dumps({"state": {
+            "renderers": [{"id": "notes", "builtin": "markdown", "output": "lead-notes.md"}],
+            "publishers": [{"id": "post", "argv": ["sh", "-c", f"touch {published}"]}]}}))
+        self.served_document(["view"], wt, fx.env, record)
+        expect((record / "lead-notes.md").is_file(), "the binding's own view wasn't rendered")
+        expect(not published.exists(), "a view ran the binding's publisher")
 
     def test_view_serves_the_latest_copy_once_the_leads_checkout_is_gone(self) -> None:
         fx = self.fixture()
