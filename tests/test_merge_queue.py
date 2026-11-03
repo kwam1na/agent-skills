@@ -251,8 +251,9 @@ if sys.argv[1] == "ready":
 branch, expected = sys.argv[2], sys.argv[3]
 if os.environ.get("MQ_MERGE") == "refuse" or tip(branch) != expected:
     sys.exit(1)
-base = tip("main")
-git("fetch", "--quiet", remote, "+refs/heads/main:refs/forge/main", "+refs/heads/" + branch + ":refs/forge/candidate")
+onto = sys.argv[sys.argv.index("--onto") + 1] if "--onto" in sys.argv else "main"
+base = tip(onto)
+git("fetch", "--quiet", remote, "+refs/heads/" + onto + ":refs/forge/main", "+refs/heads/" + branch + ":refs/forge/candidate")
 tree = git("rev-parse", expected + "^{tree}")
 if os.environ.get("MQ_MERGE") == "unverified":
     tree = git("rev-parse", base + "^{tree}")
@@ -262,7 +263,8 @@ if os.environ.get("MQ_MERGE") == "squash":
     parents = ["-p", base]
 commit = git("commit-tree", tree, *parents, "-m", "Merge " + branch)
 # The forge is the adopter's own tool: it, not the runner, owns its push settings.
-git("-c", "push.gpgSign=false", "push", "--quiet", "--force-with-lease=refs/heads/main:" + base, remote, commit + ":refs/heads/main")
+git("-c", "push.gpgSign=false", "push", "--quiet", "--force-with-lease=refs/heads/" + onto + ":" + base, remote,
+    commit + ":refs/heads/" + onto)
 """,
     "lease.py": """
 import os, pathlib, sys
@@ -573,6 +575,77 @@ class CheckModeTests(MergeQueueTestCase):
         adopter = self.adopter(self.hooks())
         self.assertEqual(queue.binding_errors(adopter.binding), [])
         self.assertTrue(Draft202012Validator(schema("orchestration-binding")).is_valid(adopter.binding))
+
+
+# The rule for which bases a binding serves; run-delivery's copy of it is pinned to the same table.
+SERVING_BINDING = {"base": {"remote": "origin", "ref": "main"}, "bases": ["integration-*", "hotfix", "release-1.2", "rel?ase"]}
+SERVING_RULE = {"main": True, "hotfix": True, "integration-2": True, "integration-": True, "integration-[2]": True,
+                "integration-2/x": False, "release/1": False, "hotfix-1": False, "xintegration-2": False,
+                "release-1.2": True, "release-1x2": False, "rel?ase": True, "release": False, "relase": False}
+
+
+class BasesTests(MergeQueueTestCase):
+    """A binding that names its bases serves a delivery to any of them; one without serves only base.ref."""
+
+    def cut(self, adopter: Adopter, branch: str) -> None:
+        run("push", "--quiet", "origin", f"origin/main:refs/heads/{branch}", cwd=adopter.lane)
+
+    def runner_on(self, adopter: Adopter, base: str) -> "queue.Runner":
+        return queue.Runner(adopter.operator, adopter.state, remote="origin", base=base)
+
+    def bases_adopter(self, bases: list[str] | None) -> Adopter:
+        merge = [PY, "tools/forge.py", "merge", "{branch}", "{expectedHead}", "--onto", "{base}"]
+        return self.adopter({"merge": merge, **({"bases": bases} if bases is not None else {})})
+
+    def test_a_queue_merge_lands_on_a_base_the_binding_serves(self) -> None:
+        adopter = self.bases_adopter(["main", "integration-*"])
+        self.cut(adopter, "integration-2")
+        before_main = adopter.tip("main")
+        head = adopter.lane_commit("feature", {"src/app.txt": "app two\n"}, start="origin/integration-2")
+        adopter.enqueue("feature", head)
+        results = self.runner_on(adopter, "integration-2").run_command("run", ["feature"])
+        self.assertEqual(results[-1].outcome, "merged", results[-1].document())
+        self.assertEqual(adopter.show("origin/integration-2", "src/app.txt"), "app two")
+        self.assertEqual(adopter.tip("main"), before_main, "the merge landed on another base")
+
+    def test_a_base_outside_the_bases_is_refused_with_the_guide_anchor(self) -> None:
+        adopter = self.bases_adopter(["main", "integration-*"])
+        for branch in ("release/1", "integration-2/sub"):
+            self.cut(adopter, branch)
+            with self.subTest(branch=branch):
+                head = adopter.lane_commit(f"feature-{len(branch)}", {"src/app.txt": "app two\n"},
+                                           start=f"origin/{branch}")
+                adopter.enqueue(f"feature-{len(branch)}", head)
+                results = self.runner_on(adopter, branch).run_command("run", [f"feature-{len(branch)}"])
+                document = self.assertStopped(results, "binding_invalid")
+                self.assertIn(f"the binding doesn't serve the base {branch}", document["stop"]["detail"])
+                self.assertIn("bases", document["stop"]["detail"])
+                self.assertIn("orchestration-guide.md#base-mismatch", document["stop"]["detail"])
+
+    def test_a_binding_without_bases_refuses_another_base_as_before(self) -> None:
+        adopter = self.bases_adopter(None)
+        self.cut(adopter, "integration-2")
+        head = adopter.lane_commit("feature", {"src/app.txt": "app two\n"}, start="origin/integration-2")
+        adopter.enqueue("feature", head)
+        results = self.runner_on(adopter, "integration-2").run_command("run", ["feature"])
+        document = self.assertStopped(results, "binding_invalid")
+        self.assertIn("the binding doesn't serve the base integration-2", document["stop"]["detail"])
+        results = self.runner_on(adopter, "main").run_command("run", ["feature"])
+        self.assertEqual(results[-1].outcome, "merged", results[-1].document())
+
+    def test_a_binding_naming_another_remote_is_still_refused(self) -> None:
+        adopter = self.bases_adopter(["main"])
+        binding = {**adopter.binding, "base": {"remote": "upstream", "ref": "main"}}
+        adopter.advance_base({".agents/orchestration.json": json.dumps(binding, indent=2) + "\n"})
+        self.candidate(adopter)
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "binding_invalid")
+        self.assertIn("remote", document["stop"]["detail"])
+
+    def test_the_serving_rule(self) -> None:
+        for name, expected in SERVING_RULE.items():
+            with self.subTest(base=name):
+                self.assertEqual(queue.serves(SERVING_BINDING, name), expected)
+        self.assertFalse(queue.serves({"base": {"remote": "origin", "ref": "main"}}, "integration-2"))
 
 
 class CandidatePinningTests(MergeQueueTestCase):

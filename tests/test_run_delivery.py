@@ -40,6 +40,7 @@ from agent_skills import release
 from agent_skills.lifecycle import Lifecycle
 from agent_skills.release import build_release, verify_release
 from agent_skills.validate import LEAKAGE_PATTERNS
+from tests.test_merge_queue import SERVING_BINDING, SERVING_RULE  # the rule both tools apply
 
 
 # The cases share one fixture repository's in-app lease lock and the
@@ -2665,6 +2666,7 @@ TROUBLESHOOTING_KEYS = [
     "the in-app adapters break the contract", "lease held by", "video evidence needs both", "which video evidence uses",
     "needs Node 22.6 or newer", "no runtime loader", "harness.config.ts not read", "is missing (lead-setup writes it)",
     "stories without a lane", "lanes own the same files", "fails on", "isn't a valid delivery-plan/1",
+    "binding doesn't serve the base",
 ]
 
 
@@ -2768,6 +2770,122 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         out = self.doctor(fx, "--offline")
         self.assertEqual(list(failing(out)), ["plan chapter"], out)
         self.assertIn("finish[0].covers.criteria[1]: names no criterion of the plan's units", failing(out)["plan chapter"])
+
+    def test_a_binding_serves_a_delivery_to_any_of_its_bases(self) -> None:
+        """Bases: a delivery committed only on integration-2 runs from the lead's setup to a lane's draft PR."""
+        fx = self.fixture()
+        m = fx.main
+        harness = lambda ref: (m / "harness.config.ts").write_text(
+            f"export default {{ baseRef: '{ref}', preparationCommands: ["
+            "{ id: 'lint', command: ['sh', '-c', 'test -f src/app.txt'] }, { id: 'test', command: ['true'] }] };\n")
+        before_bases = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        binding = {**doctor_binding(), "bases": ["feature/FX-1", "integration-*"]}
+        (m / ".agents/orchestration.json").write_text(json.dumps(binding, indent=2))
+        commit(m, "FX-1: the binding serves the integration bases")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        # The delivery is cut onto integration-2 and committed only there.
+        sh("git", "checkout", "-q", "-b", "integration-2", cwd=m)
+        path = m / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        path.write_text(json.dumps({**d, "baseBranch": "integration-2"}, indent=2))
+        if self.node22:
+            harness("origin/integration-2")
+        commit(m, "FX-1: deliver to integration-2")
+        sh("git", "push", "-q", "-u", "origin", "integration-2", cwd=m)
+        sh("git", "checkout", "-q", "feature/FX-1", cwd=m)
+        sh("git", "rm", "-q", ".agents/deliveries/FX-1.json", cwd=m)
+        commit(m, "FX-1: the delivery lives on integration-2")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        sh("git", "checkout", "-q", "integration-2", cwd=m)
+
+        # The lead, on integration-2, reads its working tree.
+        out = self.doctor(fx, "--offline", expect_code=0)
+        self.assertEqual(failing(out), {}, out)
+        self.assertIn("origin/integration-2 carries the installed generation",
+                      doctor_lines(out)["release on the delivery base"][1], out)
+        code, out = fx.flow("lead-init", cwd=m); expect(code == 0, out)
+        code, out = fx.flow("lead-brief", cwd=m); expect(code == 0, out)
+        self.assertIn("origin/integration-2", (m / "docs/lane-brief.md").read_text())
+
+        # A lane reads the delivery's settings from origin/integration-2, with the base it was given.
+        wt = m / "lanes/FX-2"
+        sh("git", "worktree", "add", "-q", "--no-track", "-b", "feature/FX-2", wt, "origin/integration-2", cwd=m)
+        code, out = fx.flow("gate", "FX-2", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("this checkout read origin/feature/FX-1, the binding's base.ref", out)
+        self.assertIn("RUN_DELIVERY_BASE", out)
+        lane_env = {**fx.env, "RUN_DELIVERY_BASE": "integration-2"}
+        code, out = fx.flow("gate", "FX-2", cwd=wt, env=lane_env); expect(code == 0, out)
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        sh("git", "push", "-q", "origin", "feature/FX-2", cwd=wt)
+        code, out = fx.flow("open-pr", "FX-2", "--title", "FX-2: one", "--body-file", "/dev/null", cwd=wt, env=lane_env)
+        expect(code == 0, out)
+        prs = json.loads((fx.tmp / "forge.json").read_text())
+        self.assertEqual([pr["destination"] for pr in prs.values()], ["integration-2"], prs)
+        # The base a lane was started on, recorded in its checkout, serves without the variable.
+        fx.call("record_lane_base", wt, "integration-2", cwd=wt)
+        c = fx.call("Config", wt, "FX-1", cwd=wt, attrs=["base_branch", "delivery_where"])
+        self.assertEqual(c["base_branch"], "integration-2")
+        self.assertTrue(c["delivery_where"].startswith("origin/integration-2:"), c)
+
+        # A base outside the bases is refused, naming the guide's anchor.
+        sh("git", "push", "-q", "origin", "origin/integration-2:refs/heads/release/1", cwd=m)
+        code, out = fx.flow("gate", "FX-2", cwd=wt, env={**fx.env, "RUN_DELIVERY_BASE": "integration-9/sub"})
+        self.assertEqual(code, 2, out)
+        self.assertIn("doesn't serve the base integration-9/sub", out)
+        sh("git", "push", "-q", "origin", "origin/integration-2:refs/heads/integration-3", cwd=m)
+        code, out = fx.flow("gate", "FX-2", cwd=wt, env={**fx.env, "RUN_DELIVERY_BASE": "integration-3"})
+        self.assertEqual(code, 2, out)
+        self.assertIn("names base integration-2, but this checkout read it from origin/integration-3", out)
+        served = {name: fx.call("serves", SERVING_BINDING, name, cwd=wt) for name in SERVING_RULE}
+        self.assertEqual(served, SERVING_RULE, "run-delivery and the merge queue disagree on which bases are served")
+        for code, out in (fx.flow("config", cwd=wt, env={**fx.env, "RUN_DELIVERY_BASE": "release/1"}),
+                          fx.flow("lead-setup", "FX-9", "--plan", "docs/plan.md", "--base", "release/1",
+                                  "--pattern", PATTERN, cwd=m)):
+            self.assertEqual(code, 2, out)
+            self.assertIn("doesn't serve the base release/1", out)
+            self.assertIn("adopting.md#base-mismatch", out)
+        code, out = fx.flow("lead-setup", "FX-9", "--plan", "docs/plan.md", "--pattern", PATTERN, cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("pass --base", out)
+        self.assertFalse((m / ".agents/deliveries/FX-9.json").exists())
+        code, out = fx.flow("lead-setup", "FX-9", "--plan", "docs/plan.md", "--base", "integration-2",
+                            "--pattern", PATTERN, cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads((m / ".agents/deliveries/FX-9.json").read_text())["baseBranch"], "integration-2")
+        (m / ".agents/deliveries/FX-9.json").unlink()
+        if self.node22:
+            harness("origin/feature/FX-1")
+            code, out = fx.flow("config", cwd=m)
+            self.assertEqual(code, 2, out)
+            self.assertIn("isn't the delivery's base origin/integration-2", out)
+            harness("origin/integration-2")
+
+        # A base cut before its binding gained bases still needs that setting on it, and doctor says so.
+        sh("git", "push", "-q", "origin", f"{before_bases}:refs/heads/integration-old", cwd=m)
+        sh("git", "update-ref", "-d", "refs/remotes/origin/integration-old", cwd=m)
+        (m / ".agents/deliveries/FX-8.json").write_text(json.dumps({**d, "baseBranch": "integration-old"}, indent=2))
+        if self.node22:
+            harness("origin/integration-old")
+        _, out = fx.flow("doctor", cwd=m, env={**fx.env, "RUN_DELIVERY_DELIVERY": "FX-8"})  # the variable names it
+        status, detail = doctor_lines(out)["release on the delivery base"]
+        self.assertEqual(status, "wrong", out)
+        self.assertIn("origin/integration-old's binding doesn't serve the base integration-old", detail)
+        self.assertIn("as a base cut before its binding gained bases doesn't; fix: commit the binding", detail)
+        (m / ".agents/deliveries/FX-8.json").unlink()
+        if self.node22:
+            harness("origin/feature/FX-1")
+
+        # A binding without bases refuses integration-2 exactly as today.
+        (m / ".agents/orchestration.json").write_text(json.dumps(doctor_binding(), indent=2))
+        code, out = fx.flow("config", cwd=m, env={**fx.env, "RUN_DELIVERY_LOCAL": "1", "RUN_DELIVERY_DELIVERY": "FX-1"})
+        self.assertEqual(code, 2, out)
+        self.assertIn("names base integration-2, but the binding here serves feature/FX-1;", out)
+        (wt / ".agents/orchestration.json").write_text(json.dumps(doctor_binding(), indent=2))
+        code, out = fx.flow("config", cwd=wt, env=lane_env)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the binding doesn't serve the base integration-2: it serves feature/FX-1;", out)
 
     def test_a_clean_repository_passes_every_check(self) -> None:
         fx = self.fixture()
