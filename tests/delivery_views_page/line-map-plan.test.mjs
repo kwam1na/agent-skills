@@ -636,9 +636,11 @@ test("a later plan taken after a failed ask shows no note", async () => {
 test("a later plan that can't be drawn goes back too, with the note", async () => {
   const { page, plan, changed, replanned } = replanning();
   const broken = render(replanned, undefined, { planBlock: { plan: { ...changed, updated: "2026-10-30T14:00:00Z", units: [{ ...changed.units[0], removed: true, proofs: [null] }, ...changed.units.slice(1)] } } });
-  const snaps = await live(page, broken, [{ push: replanned }, SETTLE]);
+  const snaps = await live(page, broken, [{ push: replanned }, SETTLE, QUIET]);
   expect(outcome(snaps[2].app)).toBe(plan.outcome.summary);
   expect(planNote(snaps[2].app)).toBe(OUT_OF_DATE);
+  // It goes back to asking at the slow pace, which is longer than this test waited.
+  expect(snaps.fetched).toHaveLength(1);
 });
 
 test("each newly named plan gets its own patience", async () => {

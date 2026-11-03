@@ -1139,6 +1139,16 @@
   }
 
   /* 3. Who */
+  // An hour, the same as a wait's quiet lane: long reviews can be longer, so the mark says may, and only of an active row.
+  var ROW_OLD_SECONDS = 3600;
+  /** How old a row's words are, marked once they may be out of date; a time that can't be read says so. */
+  function rowAge(lane) {
+    var at = seconds(lane.focusAt);
+    var delta = at === null ? -1 : Date.now() / 1000 - at;
+    if (delta < 0) { return el("p", "said", "No time recorded"); }
+    var old = delta > ROW_OLD_SECONDS && lane.state !== "idle" && lane.state !== "done";
+    return el("p", "said" + (old ? " old" : ""), (delta < 45 ? "Said just now" : "Said " + duration(delta) + " ago") + (old ? "; may be out of date" : ""));
+  }
   function drawWho(doc, all) {
     var inner = parts.who;
     var lanes = list(doc.state.lanes).filter(isObject);
@@ -1161,7 +1171,7 @@
         row.style.setProperty("--c", colours[lane.id] || "var(--soft)");
         var who = add(el("div"), el("h3", null, text(lane.title) || text(lane.id)));
         var doing = text(lane.focus) || text(focus[lane.id]);
-        if (doing) { who.appendChild(el("p", "doing", doing)); }
+        if (doing) { add(who, el("p", "doing", doing), rowAge(lane)); }
         var st = add(el("div", "st"), el("span", "chip" + (LANE_WORDS[lane.state] ? " " + lane.state : ""), LANE_WORDS[lane.state] || "Unknown"));
         if (lane.waitingOn) { st.appendChild(el("span", "on blocked", "waiting on " + text(lane.waitingOn))); }
         else if (heldFor(lane.since)) { st.appendChild(el("span", "on", heldFor(lane.since))); }
@@ -1750,6 +1760,9 @@
       plan = was.plan;
       planNamed = was.named;
       planBehind = true;
+      // The failed draw may have asked at the quick pace; this answer says to ask at the slow one.
+      clearTimeout(planAsked);
+      planAsked = null;
       safely(lastGood || shown);
     }
     keepPlace(place);

@@ -380,6 +380,14 @@
             },
             "since": {
               "$ref": "#/$defs/timestamp"
+            },
+            "focusAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "focusBy": {
+              "enum": [
+                "runner"
+              ]
             }
           }
         }
