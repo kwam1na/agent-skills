@@ -1727,6 +1727,43 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
         issue = backend.read()["issues"]["FX-3"]
         self.assertEqual(issue["status"], "In Progress", "the owed review move didn't hold back the start")
         self.assertEqual(sum(c["text"].startswith("Started") for c in issue["comments"]), 1)
+        conf = tp.settings(fx.main, json.loads(Path(fx.env["RUN_DELIVERY_CONFIG"]).read_text()), {})
+        items = tp.needs_you(self.record(fx), fx.tmp / "record", fx.tmp / "flow-log", "FX-1", conf)
+        self.assertTrue(any("FX-3: its review move (Submit for review) couldn't be made at hand-off" in i["text"]
+                            for i in items), items)
+
+    def test_a_review_move_made_or_not_offered_before_the_start_holds_the_start_back(self) -> None:
+        for review, status, outcome in ((["Submit for review"], "In Review", "skip"), (["Complete"], "Backlog", "handled")):
+            with self.subTest(outcome=outcome):
+                fx, backend = self.lane({"start": ["Start work"], "review": review, "reviewWhen": "pr-open",
+                                         "targets": {"Submit for review": "In Review"}})
+                with backend.edit() as store:
+                    store["issues"]["FX-3"]["status"] = status
+                wt = self.started(fx)
+                record = self.record(fx)
+                [assigned] = [e for e in record["journal"] if e["kind"] == "lane.assigned"]
+                # The start's entry already carries a line, so the review move isn't held back for it.
+                with tp.ledger_lock(fx.tmp / "record", wait=True):
+                    tp.append_ledger(fx.tmp / "record", {"journal": assigned["id"], "init": tp.init_id(record["journal"]),
+                                                         "outcome": "skip", "writer": "publisher", "kind": "x"})
+                self.opened(fx, wt)
+                self.assertEqual([l["outcome"] for l in tp.read_ledger(fx.tmp / "record") if l.get("move") == "review"],
+                                 [outcome])
+                start = tp.Publisher(record, fx.tmp / "record", {"transitions": {}}, None, "FX-1", fx.tmp / "flow-log")
+                self.assertEqual(start.start_decision(assigned), "the story is already in review")
+
+    def test_this_records_own_review_marker_is_a_move_found_not_one_from_an_earlier_record(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pr-open"})
+        wt = self.started(fx)
+        self.publish(fx)
+        init = tp.init_id(self.record(fx)["journal"])
+        with backend.edit() as store:
+            store["issues"]["FX-3"]["status"] = "In Review"
+            store["issues"]["FX-3"]["markers"].append(f"agent-delivery:FX-1:{init}:0:transition:Submit for review")
+        out = self.opened(fx, wt)
+        self.assertNotIn("earlier record", out)
+        [line] = [l for l in tp.read_ledger(fx.tmp / "record") if l.get("move") == "review"]
+        self.assertEqual((line["outcome"], line.get("found")), ("transition", True))
 
     def test_a_review_move_made_under_an_earlier_record_isnt_made_again(self) -> None:
         fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pr-open"})
