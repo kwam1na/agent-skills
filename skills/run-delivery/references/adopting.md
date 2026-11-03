@@ -39,7 +39,9 @@ delivery is `orchestrate-work`'s.
 ## 3. Install a release
 
 Install a `run-delivery` release into the repository with the product installer, then commit what it installs, so
-every lane's checkout of the base carries the same generation:
+every lane's checkout of the base carries the same generation. A repository on the `linear` or `jira` profile already
+has these commands: keep installing its own tracker's release, because a generation holds one profile and a
+`run-delivery` release would remove the tracker's skills.
 
 ```text example outline
 python3 -B /path/to/product.zip --root . --product apply \

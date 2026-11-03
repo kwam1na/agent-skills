@@ -20,8 +20,8 @@ generation. Host projection metadata in the active receipt describes discovery
 only and cannot redefine behavior.
 
 The core profile exposes `diagnose-work` and `obtain-review` through both roots
-alongside the existing workflows; the Linear profile contains that same core
-plus its tracker adapter and the two tracking workflows that reach the tracker
+alongside the existing workflows; the Linear profile contains that same core,
+the delivery views and `run-delivery`, plus its tracker adapter and the two tracking workflows that reach the tracker
 through it. `deliver-work` remains the single intake entry point. Its additive
 `RouteDecision.workflow_skill` property names the released downstream workflow
 only for direct or degraded routes; an unresolved handoff has no executable
