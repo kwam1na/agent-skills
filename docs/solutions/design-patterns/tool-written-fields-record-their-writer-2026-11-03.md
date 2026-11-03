@@ -44,7 +44,7 @@ A lane's `focus` command takes over from the queue's words and ends the queue's
 
 Ending the queue's `waitingOn` is tied to `focusBy`, not to who set `waitingOn`. A
 lane's `patch --set /focus` drops `focusBy` and keeps the queue's `waitingOn`, and a
-later `focus` then can't clear it. The documented `focus` route and `patch --patch`
+later `focus` then leaves it unless it passes `--waiting-on`. The documented `focus` route and `patch --patch`
 both end it.
 
 Importing a `TestCase` class into a test module makes `unittest` run its whole suite
