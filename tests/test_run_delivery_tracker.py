@@ -77,9 +77,11 @@ def take_failure(store: dict, op: str, ticket: str | None) -> int | None:
 
 
 def offered(store: dict, key: str) -> list[dict]:
+    """The moves out of the ticket's status, as Jira lists them: never a move from another status, and never a global
+    move to the status the ticket is already in."""
     status = store["issues"][key]["status"]
-    return [{"id": t["id"], "name": t["name"], "to": t["to"], "offered": t["from"] is None or status in t["from"]}
-            for t in WORKFLOW]
+    return [{"id": t["id"], "name": t["name"], "to": t["to"], "offered": True} for t in WORKFLOW
+            if (t["from"] is None and t["to"] != status) or (t["from"] is not None and status in t["from"])]
 
 
 class FakeJira:
@@ -185,8 +187,8 @@ class FakeJira:
                 listed = [t for t in listed if t["isAvailable"]]
             return 200, {"transitions": listed}
         if method == "POST" and tail == "/transitions":
-            chosen = next(t for t in offered(self.store, key) if t["id"] == document["transition"]["id"])
-            if not chosen["offered"]:
+            chosen = next((t for t in offered(self.store, key) if t["id"] == document["transition"]["id"]), None)
+            if chosen is None:
                 return 400, {"errorMessages": ["transition not offered"]}
             issue["status"] = chosen["to"]
             issue["markers"] += [p["key"] for p in document.get("properties", [])]
@@ -242,7 +244,8 @@ with open(STORE + ".lock", "a") as lock:
     issues = store["issues"]
     def offered(key):
         status = issues[key]["status"]
-        return [{"name": t["name"], "to": t["to"], "offered": t["from"] is None or status in t["from"]} for t in WORKFLOW]
+        return [{"name": t["name"], "to": t["to"], "offered": True} for t in WORKFLOW
+                if (t["from"] is None and t["to"] != status) or (t["from"] is not None and status in t["from"])]
     if args.op == "markers" and args.project:
         print(json.dumps({"items": [{"key": k} for k, i in issues.items()
                                     if args.marker in i["labels"] and k.startswith(args.project + "-")]}))
@@ -435,8 +438,32 @@ class Delivery:
     def ledger(self) -> list[dict]:
         return tp.read_ledger(self.state_dir)
 
+    def init(self) -> str:
+        return tp.init_id(self.journal)
+
+    def command_line(self, entry: dict, outcome: str = "comment", **detail) -> None:
+        """A lane or lead command's own line for an entry it journalled."""
+        tp.append_ledger(self.state_dir, {"journal": entry["id"], "init": self.init(), "outcome": outcome,
+                                          "writer": "lane", "ticket": entry.get("subject"), **detail})
+
+    def unreachable(self) -> None:
+        """The tracker can't be reached: the adapter reports no HTTP status."""
+        if self.backend.name == "jira":
+            self.tracker["site"] = "http://127.0.0.1:9"
+            self.write_config()
+        else:
+            self.fail("comment", None, times=-1)
+
+    def reachable(self) -> None:
+        if self.backend.name == "jira":
+            self.tracker["site"] = self.backend.adapter()["site"]
+            self.write_config()
+        else:
+            with self.backend.edit() as store:
+                store["failures"] = []
+
     def lines(self, journal_id: int) -> list[dict]:
-        return [line for line in self.ledger() if line["journal"] == journal_id]
+        return [line for line in self.ledger() if line["journal"] == journal_id and line["init"] == self.init()]
 
     def outcomes(self, journal_id: int) -> list[str]:
         return [line["outcome"] for line in self.lines(journal_id)]
@@ -476,8 +503,7 @@ class Scenarios:
         marked = d.entry("decision.recorded", "EP-2", "Plan change: EP-3 removed")
         d.mark(marked)
         lane_posted = d.entry("candidate.handed", "EP-2", "Handed off by its lane")
-        tp.append_ledger(d.state_dir, {"journal": lane_posted["id"], "outcome": "comment", "writer": "lane",
-                                       "ticket": "EP-2", "action": "comment"})
+        d.command_line(lane_posted, action="comment")
         self.published(d)
         self.published(d)  # A second run changes nothing.
         ledger = d.ledger()
@@ -512,7 +538,7 @@ class Scenarios:
         self.assertEqual(d.lines(eleven["id"]), [])
         self.assertEqual(d.lines(twelve["id"]), [], "nothing after a transient failure is posted in that run")
         # The lane posted entry 12 meanwhile; the next run posts only 11.
-        tp.append_ledger(d.state_dir, {"journal": twelve["id"], "outcome": "comment", "writer": "lane", "ticket": "EP-2"})
+        d.command_line(twelve)
         self.published(d)
         self.assertEqual(len(d.comments("EP-2")), 1)
         self.assertIn(f"journal entry {eleven['id']} ", d.comments("EP-2")[0])
@@ -665,7 +691,8 @@ class Scenarios:
     # Moves.
 
     def test_a_move_already_made_is_skipped_and_said_to_be_someone_elses(self) -> None:
-        d = self.delivery({"lead": {"candidate.merged": ["Complete"]}})
+        # The tracker lists only the moves out of Done, so the configured target says where "Complete" goes.
+        d = self.delivery({"lead": {"candidate.merged": ["Complete"]}, "targets": {"Complete": "Done"}})
         d.ticket("EP-2", status="Done")
         entry = d.entry("candidate.merged", "EP-2")
         self.published(d)
@@ -811,9 +838,8 @@ class Scenarios:
         d.entry("lease.granted", "EP-3")
         self.published(d)
         self.assertEqual(d.status("EP-2"), "In Review")
-        # --replace: a fresh journal from 1, a fresh ledger and flow log, a later init time.
+        # --replace: a fresh journal from 1 and flow log, a later init time; the old ledger is left where it was.
         shutil.rmtree(d.flow_log)
-        (d.state_dir / tp.LEDGER).unlink()
         d.journal = []
         d.clock += 1000
         d.entry("decision.recorded", summary="Record starts at base def5678 on origin/main.")
@@ -829,6 +855,147 @@ class Scenarios:
         self.assertEqual(d.status("EP-3"), "In Progress")
 
 
+    def test_a_move_whose_target_the_tracker_cant_say_is_handled_not_guessed(self) -> None:
+        # Without a configured target, a move not listed from the ticket's status is the people's to judge.
+        d = self.delivery({"lead": {"candidate.merged": ["Complete"]}})
+        d.ticket("EP-2", status="Done")
+        entry = d.entry("candidate.merged", "EP-2")
+        self.published(d)
+        self.assertEqual(d.outcomes(entry["id"]), ["handled", "comment"])
+
+    def test_an_entry_left_part_done_is_finished_once_with_what_it_did(self) -> None:
+        d = self.delivery({"lead": {"candidate.merged": ["Complete"]}})
+        d.ticket("EP-2", status="In Review")
+        entry = d.entry("candidate.merged", "EP-2")
+        d.fail("comment", 503, ticket="EP-2")
+        code, out = d.publish()
+        self.assertEqual(code, 1, out)
+        self.assertEqual(d.outcomes(entry["id"]), ["transition"], "the move landed before the comment failed")
+        self.assertNotIn(entry["id"], tp.covered(d.ledger(), d.init()))
+        self.published(d)
+        self.published(d)
+        self.assertEqual(d.outcomes(entry["id"]), ["transition", "comment"])
+        [text] = d.comments("EP-2")
+        self.assertIn('Moved with "Complete".', text)
+        self.assertEqual(len([c for c in d.calls() if c[0] == "transition"]), 1)
+
+    def test_a_skipped_move_left_part_done_is_neither_written_twice_nor_forgotten(self) -> None:
+        d = self.delivery({"lead": {"candidate.merged": ["Complete"]}, "targets": {"Complete": "Done"}})
+        d.ticket("EP-2", status="Done")
+        entry = d.entry("candidate.merged", "EP-2")
+        d.fail("comment", 503, ticket="EP-2", times=2)
+        for _ in range(2):
+            self.assertEqual(d.publish()[0], 1)
+        self.published(d)
+        self.assertEqual(d.outcomes(entry["id"]), ["skip", "comment"])
+        self.assertIn("already made by someone else", d.comments("EP-2")[0])
+
+    def test_a_story_reassigned_before_its_start_starts_once_for_its_last_lane(self) -> None:
+        for moves in ({"start": ["Start work"]}, {}):
+            for between in (False, True):
+                with self.subTest(moves=moves, run_between=between):
+                    d = self.delivery(moves)
+                    d.ticket("EP-2")
+                    first = d.entry("lane.assigned", "EP-2", lane="lane-1")
+                    second = d.entry("lane.assigned", "EP-2", lane="lane-2")
+                    if between:
+                        self.published(d)
+                    d.lane_start("EP-2")
+                    self.published(d)
+                    self.published(d)
+                    self.assertEqual(d.outcomes(first["id"]), ["skip"])
+                    self.assertEqual(d.outcomes(second["id"]), ["transition", "comment"] if moves else ["comment"])
+                    started = [t for t in d.comments("EP-2") if t.startswith("Started")]
+                    self.assertEqual(len(started), 1)
+                    self.assertIn("(lane-2)", started[0])
+
+    def test_a_crash_after_a_move_and_before_its_line_moves_nothing_again(self) -> None:
+        for moves, kind, status in (({"start": ["Start work"]}, "lane.assigned", "Backlog"),
+                                    ({"lead": {"candidate.merged": ["Complete"]}}, "candidate.merged", "In Review")):
+            with self.subTest(kind=kind):
+                d = self.delivery(moves)
+                d.ticket("EP-2", status=status)
+                entry = d.entry(kind, "EP-2", lane="lane-1")
+                d.lane_start("EP-2")
+                code, out = d.publish(env={"TRACKER_PUBLISHER_EXIT_AFTER": "transition"})
+                self.assertNotEqual(code, 0, out)
+                self.assertEqual(d.lines(entry["id"]), [])
+                self.published(d)
+                self.assertEqual(d.outcomes(entry["id"]), ["transition", "comment"])
+                self.assertTrue(d.lines(entry["id"])[0].get("found"))
+                self.assertEqual(len([c for c in d.calls() if c[0] == "transition"]), 1)
+                [text] = d.comments("EP-2")
+                self.assertNotIn("someone else", text)
+
+    def test_every_transient_class_is_retried_and_posted_once(self) -> None:
+        for status in (423, 429, 500, None):
+            with self.subTest(status=status):
+                d = self.delivery()
+                d.ticket("EP-2")
+                entry = d.entry("lease.granted", "EP-2")
+                if status is None:
+                    d.unreachable()
+                else:
+                    d.fail("comment", status, ticket="EP-2")
+                code, out = d.publish()
+                self.assertEqual((code, d.lines(entry["id"])), (1, []), out)
+                self.assertIn("the next run retries from there", out)
+                self.assertNotIn("Traceback", out)
+                if status is None:
+                    d.reachable()
+                self.published(d)
+                self.assertEqual(d.outcomes(entry["id"]), ["comment"])
+                self.assertEqual(len(d.comments("EP-2")), 1)
+
+    def test_a_start_after_the_review_move_or_before_the_assignment_is_not_taken(self) -> None:
+        d = self.delivery({"start": ["Start work"]})
+        d.ticket("EP-2")
+        d.ticket("EP-3")
+        d.lane_start("EP-3")  # Recorded before EP-3's assignment: not its start.
+        three = d.entry("lane.assigned", "EP-3", lane="lane-1")
+        two = d.entry("lane.assigned", "EP-2", lane="lane-1")
+        opened = d.entry("lease.granted", "EP-2")
+        d.command_line(opened, "transition", move="review", transition="Submit for review")
+        d.lane_start("EP-2")
+        self.published(d)
+        self.assertEqual(d.lines(three["id"]), [], "a start recorded before the assignment leaves it waiting")
+        self.assertEqual(d.outcomes(two["id"]), ["skip"])
+        self.assertEqual(d.lines(two["id"])[0]["reason"], "the story is already in review")
+        self.assertEqual((d.status("EP-2"), d.status("EP-3")), ("Backlog", "Backlog"))
+
+    def test_a_ledger_left_beside_a_replaced_record_covers_none_of_its_entries(self) -> None:
+        d = self.delivery()
+        d.ticket("EP-2")
+        d.entry("lease.granted", "EP-2")
+        self.published(d)
+        d.journal, d.clock = [], d.clock + 1000
+        d.entry("decision.recorded", summary="Record starts again.")
+        again = d.entry("lease.granted", "EP-2", "The lease, under the new record")
+        self.published(d)
+        self.assertEqual(d.outcomes(again["id"]), ["comment"])
+        self.assertEqual(len(d.comments("EP-2")), 2)
+
+    def test_the_cut_is_said_and_counted_as_the_tracker_counts(self) -> None:
+        d = self.delivery()
+        d.ticket("EP-2")
+        entry = d.entry("blocker.recorded", "EP-2", "\U0001F600" * 20000)
+        self.published(d)
+        [text] = d.comments("EP-2")
+        self.assertLessEqual(tp.units(text), 32767)
+        self.assertIn("[Cut to the tracker's 32767-character limit; the rest is in the EP-1 delivery record, "
+                      f"journal entry {entry['id']}.]", text)
+        self.assertEqual(d.outcomes(entry["id"]), ["comment"])
+
+    def test_a_torn_ledger_line_loses_only_itself(self) -> None:
+        d = self.delivery()
+        d.ticket("EP-2")
+        first = d.entry("lease.granted", "EP-2")
+        second = d.entry("lease.released", "EP-2")
+        (d.state_dir / tp.LEDGER).write_text('{"journal": 1, "outc')
+        self.published(d)
+        self.assertEqual((d.outcomes(1), d.outcomes(first["id"]), d.outcomes(second["id"])),
+                         (["skip"], ["comment"], ["comment"]))
+
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class JiraPublisherTests(Scenarios, unittest.TestCase):
     BACKEND = JiraBackend
@@ -843,7 +1010,8 @@ class ContractOnlyPublisherTests(Scenarios, unittest.TestCase):
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class AdapterContractTests(unittest.TestCase):
     def run_story(self, backend) -> tuple:
-        d = Delivery(self, backend, {"start": ["Start work"], "lead": {"candidate.merged": ["Submit for review"]}})
+        d = Delivery(self, backend, {"start": ["Start work"], "lead": {"candidate.merged": ["Submit for review"]},
+                                     "targets": {"Submit for review": "In Review"}})
         d.ticket("EP-2")
         d.ticket("EP-3", status="In Review")
         d.entry("lane.assigned", "EP-2", lane="lane-1")
@@ -1017,8 +1185,34 @@ class RunDeliveryTrackerCommandTests(unittest.TestCase):
         written = [e for e in self.journal(fx)[before:] if e["kind"] == "decision.recorded"]
         self.assertEqual(len(written), 1, written)
         marks = tp.read_flow(fx.tmp / "flow-log", "FX-1", tp.MARKS)
+        self.assertEqual(marks[-1]["journal"], written[0]["id"])
         self.assertEqual([mark["journal"] for mark in marks], [written[0]["id"]],
                          "only the lead's plan change is marked: lead-init's plan build isn't")
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class MarkedDecisionTests(unittest.TestCase):
+    def test_a_marked_decision_holds_the_ledger_lock_across_its_journal_write_and_mark(self) -> None:
+        import types
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec = importlib.util.spec_from_file_location("run_delivery_under_test", SCRIPTS / "run_delivery.py")
+            run_delivery = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(run_delivery)
+        finally:
+            sys.dont_write_bytecode = previous
+        tmp = Path(tempfile.mkdtemp(prefix="tracker-mark-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        c = types.SimpleNamespace(state=tmp / "state", flow_log=tmp / "flow-log", delivery="EP-1")
+        with run_delivery.marked_decision(c) as written:
+            with run_delivery.tracker_publisher.ledger_lock(c.state, wait=False) as taken:
+                self.assertFalse(taken, "a publisher run inside the window must find the ledger held")
+            written.append(7)
+            self.assertEqual(tp.read_flow(c.flow_log, "EP-1", tp.MARKS), [], "the mark follows the journal write")
+        self.assertEqual([m["journal"] for m in tp.read_flow(c.flow_log, "EP-1", tp.MARKS)], [7])
+        with run_delivery.tracker_publisher.ledger_lock(c.state, wait=False) as taken:
+            self.assertTrue(taken, "released once marked")
 
 
 if __name__ == "__main__":

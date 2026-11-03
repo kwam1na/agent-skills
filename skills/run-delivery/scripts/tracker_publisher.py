@@ -128,21 +128,36 @@ def read_ledger(state_dir: Path) -> list[dict]:
     return lines
 
 
+def _fresh_line(path: Path) -> str:
+    """A newline first when a crash left the file's last line unended, so the cut line never swallows the next."""
+    try:
+        with open(path, "rb") as stream:
+            stream.seek(-1, os.SEEK_END)
+            return "" if stream.read(1) == b"\n" else "\n"
+    except OSError:
+        return ""
+
+
 def append_ledger(state_dir: Path, line: dict) -> dict:
-    """Add one line; the caller holds the ledger's lock."""
+    """Add one line; the caller holds the ledger's lock. Every line names the record's `init` id, so a ledger left
+    beside a replaced record never covers the new record's entries."""
     if line.get("outcome") not in OUTCOMES or not isinstance(line.get("journal"), int):
         raise ValueError(f"a ledger line needs a journal id and one of {', '.join(OUTCOMES)}")
+    if not isinstance(line.get("init"), str):
+        raise ValueError("a ledger line names the record's init id (init_id of its journal)")
     line = {**line, "at": now()}
     with open(state_dir / LEDGER, "a", encoding="utf-8") as ledger:
-        ledger.write(json.dumps(line, ensure_ascii=True, sort_keys=True) + "\n")
+        ledger.write(_fresh_line(state_dir / LEDGER) + json.dumps(line, ensure_ascii=True, sort_keys=True) + "\n")
         ledger.flush()
         os.fsync(ledger.fileno())
     return line
 
 
-def covered(ledger: list[dict]) -> set[int]:
-    """The journal ids the ledger covers: every line a command wrote, and every publisher line that ends its entry."""
-    return {line["journal"] for line in ledger if line.get("writer") != "publisher" or line.get("final")}
+def covered(ledger: list[dict], init: str) -> set[int]:
+    """The journal ids of the record with this init id that the ledger covers: every line a command wrote, and every
+    publisher line that ends its entry."""
+    return {line["journal"] for line in ledger
+            if line.get("init") == init and (line.get("writer") != "publisher" or line.get("final"))}
 
 
 def flow_file(flow_log: Path, delivery: str, name: str) -> Path:
@@ -166,7 +181,7 @@ def append_flow(flow_log: Path, delivery: str, name: str, entry: dict) -> dict:
     flow_log.mkdir(parents=True, exist_ok=True)
     entry = {**entry, "at": now()}
     with open(flow_file(flow_log, delivery, name), "a", encoding="utf-8") as log:
-        log.write(json.dumps(entry, sort_keys=True) + "\n")
+        log.write(_fresh_line(flow_file(flow_log, delivery, name)) + json.dumps(entry, sort_keys=True) + "\n")
         log.flush()
         os.fsync(log.fileno())
     return entry
@@ -280,6 +295,9 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
         value = transitions.get(part, [])
         if not isinstance(value, list) or not all(isinstance(name, str) and name for name in value):
             problems.append(f"tracker.transitions.{part} must be a list of transition names")
+    targets = transitions.get("targets", {})
+    if not isinstance(targets, dict) or not all(isinstance(v, str) and v for v in targets.values()):
+        problems.append("tracker.transitions.targets must map transition names to the status each moves to")
     lead = transitions.get("lead", {})
     if not isinstance(lead, dict) or not all(isinstance(names, list) and all(isinstance(n, str) and n for n in names)
                                              for names in lead.values()):
@@ -385,17 +403,26 @@ def crash_seam(action: str) -> None:
 
 # What each entry gets.
 
+def units(text: str) -> int:
+    """Length as trackers count it: UTF-16 code units (Jira's 32,767 is one)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def cut(text: str, limit: int) -> str:
+    return text.encode("utf-16-le")[:2 * max(0, limit)].decode("utf-16-le", errors="ignore")
+
+
 def body_of(entry: dict, heading: str, notes: list[str], delivery: str, limit: int | None) -> str:
     who = f" ({entry['lane']})" if entry.get("lane") else ""
     text = f"{heading}{who}: {entry.get('summary', '')}"
     if notes:
         text += "\n\n" + "\n".join(notes)
     footer = f"\n\n{delivery} delivery record, journal entry {entry['id']} ({entry['kind']})."
-    if limit is not None and len(text) + len(footer) > limit:
+    if limit is not None and units(text) + units(footer) > limit:
         pointer = (f"\n\n[Cut to the tracker's {limit}-character limit; the rest is in the {delivery} delivery "
                    f"record, journal entry {entry['id']}.]")
-        text = text[:max(0, limit - len(pointer) - len(footer))] + pointer
-    return (text + footer)[:limit] if limit is not None else text + footer
+        text = cut(text, limit - units(pointer) - units(footer)) + pointer
+    return cut(text + footer, limit) if limit is not None else text + footer
 
 
 class Publisher:
@@ -413,14 +440,17 @@ class Publisher:
 
     # The ledger.
 
-    def write(self, entry: dict, outcome: str, final: bool = False, **detail) -> None:
-        line = append_ledger(self.state_dir, {"journal": entry["id"], "outcome": outcome, "writer": "publisher",
-                                              "kind": entry["kind"], **({"final": True} if final else {}), **detail})
+    def write(self, entry: dict, outcome: str, final: bool = False, **detail) -> dict:
+        line = append_ledger(self.state_dir, {"journal": entry["id"], "init": self.init, "outcome": outcome,
+                                              "writer": "publisher", "kind": entry["kind"],
+                                              **({"final": True} if final else {}), **detail})
         self.ledger.append(line)
+        return line
 
-    def done(self, entry: dict, action: str) -> bool:
-        """This entry's action already has a ledger line, from a run that stopped before the entry ended."""
-        return any(line["journal"] == entry["id"] and line.get("action") == action for line in self.ledger)
+    def done(self, entry: dict, action: str) -> dict | None:
+        """This entry's line for the action, from a run that stopped before the entry ended, or None."""
+        return next((line for line in self.ledger if line["journal"] == entry["id"] and line.get("init") == self.init
+                     and line.get("action") == action), None)
 
     # The start wait (C3).
 
@@ -438,11 +468,15 @@ class Publisher:
         started = [moment(s["at"]) for s in self.starts if s.get("subject") == subject and moment(s["at"]) >= at]
         later = [e for e in self.journal if e["id"] > entry["id"] and e.get("subject") == subject]
         past = [moment(e["at"]) for e in later if e["kind"] in PAST_START]
+        reassigned = [moment(e["at"]) for e in later if e["kind"] == "lane.assigned"]
+        # Only the story's last assignment before its first start takes that start.
+        if started and reassigned and min(reassigned) <= min(started):
+            return "reassigned before it started"
         if started and not (past and min(past) < min(started)):
             return None
         if past:
             return "start never recorded: the story was handed off or merged first"
-        if any(e["kind"] == "lane.assigned" for e in later):
+        if reassigned:
             return "reassigned before it started"
         if subject not in self.held:
             return "removed before it started"
@@ -483,22 +517,43 @@ class Publisher:
     def move(self, entry: dict, ticket: str, move: str, names: list[str], markers: set[str], notes: list[str]) -> None:
         status = self.adapter.status(ticket)
         offered = {t.get("name"): t for t in status.get("transitions") or [] if isinstance(t, dict)}
-        last = offered.get(names[-1], {}).get("to")
-        if last is not None and last == status.get("status") and not any(
-                marker(self.delivery, self.init, entry["id"], f"transition:{name}") in markers for name in names):
+        targets = (self.conf.get("transitions") or {}).get("targets") or {}
+        # A tracker lists only the moves out of the current status: the configured target names the rest.
+        target = lambda name: (offered.get(name) or {}).get("to") or targets.get(name)
+        whole = f"transition:{names[-1]}:made"
+        earlier = self.done(entry, whole)
+        if earlier:
+            notes.append(f"Its move to {earlier.get('status')} was already made by someone else.")
+            return
+        ours = any(marker(self.delivery, self.init, entry["id"], f"transition:{name}") in markers for name in names)
+        last = target(names[-1])
+        if last is not None and last == status.get("status") and not ours and not any(
+                self.done(entry, f"transition:{name}") for name in names):
             notes.append(f"Its move to {last} was already made by someone else.")
-            self.write(entry, "skip", move=move, ticket=ticket, reason=f"already {last}: made by someone else")
+            self.write(entry, "skip", move=move, ticket=ticket, action=whole, status=last,
+                       reason=f"already {last}: made by someone else")
             return
         for name in names:
             action = f"transition:{name}"
             stamp = marker(self.delivery, self.init, entry["id"], action)
-            if self.done(entry, action):
-                continue
-            if stamp in markers:
-                self.write(entry, "transition", move=move, ticket=ticket, transition=name, action=action, found=True)
+            line = self.done(entry, action)
+            if line is None and stamp in markers:
+                line = self.write(entry, "transition", move=move, ticket=ticket, transition=name, action=action,
+                                  found=True)
+            if line is not None:
+                # What an earlier run did for this move, said again in the update it never posted.
+                if line["outcome"] == "transition":
+                    notes.append(f"Moved with \"{name}\".")
+                elif line["outcome"] == "skip":
+                    notes.append(f"Its move \"{name}\" was already made by someone else.")
+                else:
+                    notes.append(f"The move \"{name}\" isn't offered from {line.get('status')}; it belongs to people now.")
+                    return
+                status = self.adapter.status(ticket)
+                offered = {t.get("name"): t for t in status.get("transitions") or [] if isinstance(t, dict)}
                 continue
             transition = offered.get(name)
-            if transition and transition.get("to") is not None and transition.get("to") == status.get("status"):
+            if target(name) is not None and target(name) == status.get("status"):
                 notes.append(f"Its move \"{name}\" was already made by someone else.")
                 self.write(entry, "skip", move=move, ticket=ticket, transition=name, action=action,
                            reason="made by someone else")
@@ -509,6 +564,7 @@ class Publisher:
                            status=status.get("status"))
                 return
             self.adapter.call("transition", "--ticket", ticket, "--name", name, "--marker", stamp)
+            crash_seam("transition")
             self.write(entry, "transition", move=move, ticket=ticket, transition=name, action=action)
             notes.append(f"Moved with \"{name}\".")
             status = self.adapter.status(ticket)
@@ -516,7 +572,9 @@ class Publisher:
 
     def followup(self, entry: dict, wanted: dict, notes: list[str]) -> None:
         label = followup_label(wanted["story"], wanted["finding"])
-        if self.done(entry, "create"):
+        line = self.done(entry, "create")
+        if line:
+            notes.append(f"Follow-up: {line.get('ticket')}.")
             return
         if self.project is None:
             raise Permanent("no tracker project to file the follow-up in (set tracker.project)")
@@ -611,7 +669,7 @@ class Publisher:
         return False
 
     def run(self) -> tuple[int, str | None]:
-        done = covered(self.ledger)
+        done = covered(self.ledger, self.init)
         for entry in self.journal:
             if entry["id"] in done:
                 continue
@@ -650,7 +708,7 @@ def waiting(doc: dict, state_dir: Path, flow_log: Path, delivery: str) -> tuple[
     ledger = read_ledger(state_dir)
     publisher = Publisher(doc, state_dir, {"transitions": {}}, None, delivery, flow_log)
     publisher.ledger = ledger
-    done = covered(ledger)
+    done = covered(ledger, publisher.init)
     lagging, starts = [], []
     for entry in sorted(doc["journal"], key=lambda e: e["id"]):
         if entry["id"] in done:
@@ -678,7 +736,10 @@ def needs_you(doc: dict, state_dir: Path, flow_log: Path, delivery: str, conf: d
             for entry in starts:
                 items.append({"holding": False, "text": f"{entry.get('subject')}: start never recorded "
                               f"(journal entry {entry['id']} waits for its lane-start)"})
+        init = init_id(sorted(doc["journal"], key=lambda e: e["id"]))
         for line in read_ledger(state_dir):
+            if line.get("init") != init:
+                continue
             if line["outcome"] == "failed":
                 items.append({"holding": False, "text": f"Tracker update for journal entry {line['journal']} was "
                               f"refused: {line.get('error')}"})

@@ -84,7 +84,9 @@ checks may need no file at all.
       "lead": {                               // later journal kinds to the moves the publisher makes for them
         "candidate.merged": ["Complete"],     // absent, or an empty list: no move, and the update says the move
         "delivery.closed": ["Close epic"]     // belongs to people (the default)
-      }
+      },
+      "targets": { "Complete": "Done" }       // the status a move leads to, for a move the tracker doesn't list
+                                              // from the ticket's status, so one already made reads as made
     }
   },
   "harness": "ignore",                        // only to skip an unreadable harness.config.ts on purpose
@@ -220,11 +222,12 @@ How a delivery's tracker updates (the orchestration guide's tracker-update table
   adapter but no tracker publisher, or a host-only tracker without a host publisher.
 
 **The ledger.** The publisher keeps `tracker-published.jsonl` beside the record, one JSON line per journal id and
-outcome: `{"journal", "outcome", "writer", "at", "ticket"?, "action"?, "move"?, "transition"?, "reason"?, "error"?,
+outcome: `{"journal", "init", "outcome", "writer", "at", "ticket"?, "action"?, "move"?, "transition"?, "reason"?, "error"?,
 "final"?}`. The outcomes are `comment`, `transition` and `create` for an action taken, `skip` for an entry with nothing
 to post, `handled` for a move not offered from the ticket's status, and `failed` for a permanent rejection. Every entry
 gets at least one line; the ledger covers an entry once a command's line names it or the publisher's line for it is
-`final`. A lane or lead command that posts or moves for an entry it journals takes the ledger's lock
+`final`. `init` is the record's init id (below): a ledger left beside a replaced record covers none of the new
+record's entries. A lane or lead command that posts or moves for an entry it journals takes the ledger's lock
 (`tracker-published.lock`, waiting for it) across its journal write, its tracker call and its line, writes the line
 with its own `writer` and the `ticket`, and `"move": "review"` for a review move; when the call fails it writes no line
 and the publisher posts it later. A run that finds the lock held exits 0 at once.
@@ -244,7 +247,8 @@ story: never after the ledger holds the story's start or review move, and never 
 marker from the same delivery under an earlier record. An entry whose story is handed off, merged, reassigned or
 removed before it starts gets a `skip` line. The `lead` moves are made for their kinds. Each move reads the ticket's
 status first: a move whose target status the ticket already has is skipped and reported as made by someone else, and
-one the tracker doesn't offer from the current status is `handled`: shown, never retried or journalled.
+one the tracker doesn't offer from the current status is `handled`: shown, never retried or journalled. A move's
+target is what the tracker lists for it, or else its `targets` entry; with neither, a move not listed is `handled`.
 
 **Markers.** Each comment and move carries a marker the adapter stores on the ticket:
 `agent-delivery:<delivery>:<init id>:<journal id>:<action>`, where the init id is the time of the record's first
@@ -256,7 +260,9 @@ publisher reads the ticket's markers, so a run that died between a write and its
 The command is called with one of these, and prints one JSON object on stdout:
 
 - `status --ticket KEY` prints `{"status", "transitions": [{"name", "to", "offered"}], "commentLimit"}`: the ticket's
-  status, and every transition of its workflow with its target status and whether the current status offers it.
+  status, and the transitions the tracker lists for it, each with its target status (or null) and whether it is
+  offered now. A tracker may list only the moves out of the current status, as Jira does; `commentLimit` counts
+  UTF-16 code units.
   `status --project P` prints `{}` when the project can be read.
 - `markers --ticket KEY` prints `{"markers": [...]}`, every marker stored on the ticket, its comments' included.
   `markers --project P --marker LABEL` prints `{"items": [{"key"}]}`, the project's items carrying that label.
