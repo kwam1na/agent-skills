@@ -776,7 +776,11 @@ def needs_you(doc: dict, state_dir: Path, flow_log: Path, delivery: str, conf: d
         for line in read_ledger(state_dir):
             if line.get("init") != init:
                 continue
-            if line["outcome"] == "failed":
+            if line["outcome"] == "failed" and line.get("move") == "review":
+                items.append({"holding": False, "text": f"{line.get('ticket')}: its review move "
+                              f"({', '.join(line.get('transitions') or [])}) couldn't be made at hand-off: "
+                              f"{line.get('error')}; make it by hand"})
+            elif line["outcome"] == "failed":
                 items.append({"holding": False, "text": f"Tracker update for journal entry {line['journal']} was "
                               f"refused: {line.get('error')}"})
             elif line["outcome"] == "handled":

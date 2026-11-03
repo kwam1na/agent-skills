@@ -451,8 +451,9 @@ RELEASE_CACHE: dict[str, types.SimpleNamespace] = {}
 
 def installed_release() -> types.SimpleNamespace:
     """The run-delivery release built from this tree and installed once, shared by every class in the module."""
-    if "release" in RELEASE_CACHE:
+    if "release" in RELEASE_CACHE and RELEASE_CACHE["release"].receipt.exists():
         return RELEASE_CACHE["release"]
+    # Not built yet, or built for another module whose cleanup has since removed it: build one for this module.
     built = types.SimpleNamespace()
     built.build = Path(tempfile.mkdtemp(prefix="run-delivery-release-"))
     unittest.addModuleCleanup(shutil.rmtree, built.build, True)

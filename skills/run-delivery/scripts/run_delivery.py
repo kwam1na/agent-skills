@@ -2559,14 +2559,40 @@ def lane_print(c, key: str, what: dict) -> None:
     tracker_publisher.append_flow(c.flow_log, c.delivery, "lane-prints", {"subject": key, **what})
 
 
-def review_move_made(c, key: str) -> bool:
-    """Whether this record's ledger already holds the story's review move: made, found made, or not offered."""
+def review_move_made(c, key: str, names: list[str]) -> bool:
+    """Whether this record's ledger holds the story's whole review move: every step made or made by someone else, or
+    the move found made or not offered. A move a refusal stopped partway isn't made: the next run resumes it."""
     init = tracker_publisher.init_id(sorted(load_state()["journal"], key=lambda e: e["id"]))
-    return any(line.get("init") == init and line.get("ticket") == key and line.get("move") == "review"
-               for line in tracker_publisher.read_ledger(c.state))
+    lines = [line for line in tracker_publisher.read_ledger(c.state) if line.get("init") == init
+             and line.get("ticket") == key and line.get("move") == "review"]
+    if any(line["outcome"] == "handled" or str(line.get("action", "")).endswith(":made") for line in lines):
+        return True
+    done = {line.get("transition") for line in lines if line["outcome"] in ("transition", "skip")}
+    return all(name in done for name in names)
 
 
-def review_move(c, key: str, when: str) -> None:
+def start_owed(c, doc: dict, key: str) -> bool:
+    """Whether the story's latest assignment has no ledger line yet under this record: its start isn't posted."""
+    journal = sorted(doc["journal"], key=lambda e: e["id"])
+    assigned = [e for e in journal if e["kind"] == "lane.assigned" and e.get("subject") == key]
+    if not assigned:
+        return False
+    init = tracker_publisher.init_id(journal)
+    return not any(line["journal"] == assigned[-1]["id"] and line.get("init") == init
+                   for line in tracker_publisher.read_ledger(c.state))
+
+
+def append_owed(c, doc: dict, key: str, names: list[str], why: str, locked: bool = False) -> None:
+    """A review move the hand-off couldn't make, left in the ledger as `failed`, where Needs you shows it. `locked`:
+    the caller already holds the ledger's lock (a second lock from this process would wait on itself)."""
+    init = tracker_publisher.init_id(sorted(doc["journal"], key=lambda e: e["id"]))
+    with tracker_publisher.ledger_lock(c.state, wait=True) if not locked else contextlib.nullcontext():
+        tracker_publisher.append_ledger(c.state, {
+            "journal": tracker_publisher.LANE_MOVE, "init": init, "outcome": "failed", "writer": "lane",
+            "kind": "lane.review", "ticket": key, "move": "review", "transitions": names, "error": why[:500]})
+
+
+def review_move(c, key: str, when: str, last: bool = False) -> None:
     """The story's review move, at the moment `when` names. With the tracker publisher and that reviewWhen, the
     command makes it through the ledger; otherwise it prints it for the lane, as the brief did. A move the tracker
     refuses writes no line and doesn't fail the command: running the command again, or `handoff`, retries it."""
@@ -2583,14 +2609,25 @@ def review_move(c, key: str, when: str) -> None:
     if configured != when:
         return
     if conf["mode"] != "publisher":
+        if conf["mode"] == "host" and any(p.get("subject") == key and p.get("move") == "review" for p in
+                                          tracker_publisher.read_flow(c.flow_log, c.delivery, "lane-prints")):
+            return  # Printed once already; handoff's retry doesn't print it again.
         print(f"Tracker move (your story {key}): {said_moves(names)}, with your tracker tools.")
         if conf["mode"] == "host":
             lane_print(c, key, {"move": "review", "transitions": names})
         return
-    if review_move_made(c, key):
+    if review_move_made(c, key, names):
         print(f"{key}'s review move is already made.")
         return
     doc = load_state()
+    if start_owed(c, doc, key):
+        # A review move before the start is posted would leave the start skipped and the ticket behind.
+        if last:
+            append_owed(c, doc, key, names, "the story's start hadn't been posted yet")
+            print(f"{key}'s review move waits for its start to be posted; the lead's Needs you shows it, to make by hand")
+        else:
+            print(f"{key}'s review move waits for its start to be posted; run this command again, or hand off, later")
+        return
     with tracker_publisher.ledger_lock(c.state, wait=True):
         publisher = tracker_publisher.Publisher(doc, c.state, conf, tracker_publisher.Adapter(conf, c.root),
                                                 c.delivery, c.flow_log, writer="lane")
@@ -2598,9 +2635,23 @@ def review_move(c, key: str, when: str) -> None:
         entry = {"id": tracker_publisher.LANE_MOVE, "kind": "lane.review", "subject": key}
         notes: list[str] = []
         try:
-            publisher.move(entry, key, "review", names, publisher.adapter.markers(key), notes)
+            markers = publisher.adapter.markers(key)
+            earlier = [m for m in markers if m.startswith(f"agent-delivery:{c.delivery}:")
+                       and m.endswith(f":transition:{names[-1]}")]
+            if earlier:
+                # Made under an earlier record of this delivery, before a --replace: not made again.
+                publisher.write(entry, "skip", move="review", ticket=key, action=f"transition:{names[-1]}:made",
+                                reason="made under an earlier record")
+                print(f"{key}'s review move was made under an earlier record of this delivery.")
+                return
+            publisher.move(entry, key, "review", names, markers, notes)
         except (tracker_publisher.AdapterFailure, tracker_publisher.Transient, tracker_publisher.Stop) as failure:
-            print(f"{key}'s review move wasn't made ({failure}); run this command again, or hand off, to retry it")
+            if not last:
+                print(f"{key}'s review move wasn't made ({failure}); run this command again, or hand off, to retry it")
+                return
+            # The hand-off is the lane's last chance: the owed move is left in the ledger, where Needs you shows it.
+            append_owed(c, doc, key, names, str(failure), locked=True)
+            print(f"{key}'s review move wasn't made ({failure}); the lead's Needs you shows it, to make by hand")
             return
     print(f"Tracker move (your story {key}): " + (" ".join(notes) or "made."))
 
@@ -2610,10 +2661,13 @@ def handoff_and_post(c, key: str, lane: str, head: str, pr: str, rounds: int, po
     holding the ledger's lock across the journal write, the post and its line. Returns what was posted, or None when the
     lane posts it (no publisher) or the publisher will (the call failed, so no line was written)."""
     conf = tracker_conf(c)
-    if conf["mode"] != "publisher" or conf["problems"]:
+    lead_moves = ((conf["transitions"].get("lead") or {}).get("candidate.handed")) if not conf["problems"] else None
+    if conf["mode"] != "publisher" or conf["problems"] or lead_moves:
+        # With lead moves for a hand-off, the publisher makes them and posts the update with what they did.
         state_tool("handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", pr,
                    "--rounds", str(rounds))
-        return None
+        return ("Tracker post: the tracker publisher posts the hand-off update, with its moves." if lead_moves
+                and conf["mode"] == "publisher" else None)
     with tracker_publisher.ledger_lock(c.state, wait=True):
         state_tool("handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", pr,
                    "--rounds", str(rounds))
@@ -2661,27 +2715,36 @@ def lane_start(args) -> None:
         current = git("rev-parse", "--abbrev-ref", "HEAD", cwd=path, check=False)
         if current != branch:
             raise Stop(f"{path} exists on {current or 'no branch'}, not {branch}: move it aside, or start from it by hand")
+        recorded = (load_json(lane_base_file(path)) or {}).get("base")
+        if recorded and recorded != base:
+            raise Stop(f"{path} was started on {recorded}, not {base}: finish it on {recorded}, or move it aside")
     else:
         git("fetch", "-q", c.remote, base, cwd=c.main)
         if run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=c.main, check=False).returncode == 0:
+            if run(["git", "merge-base", branch, f"{c.remote}/{base}"], cwd=c.main, check=False).returncode != 0:
+                raise Stop(f"the branch {branch} shares no history with {c.remote}/{base}: delete it, or start it by hand")
             git("worktree", "add", "-q", str(path), branch, cwd=c.main)
+            did.append(f"made {path} on the existing branch {branch}")
         else:
             git("worktree", "add", "-q", "--no-track", "-b", branch, str(path), f"{c.remote}/{base}", cwd=c.main)
+            did.append(f"made {path} on {branch} from {c.remote}/{base}")
         record_lane_base(path, base)
+    prepared = lane_base_file(path).with_name("prepared")
+    if not prepared.exists():
+        # Marked only once every prepare step passed, so a failed one runs again on the next lane-start.
         for argv in prepare_commands():
             run(argv, cwd=path)
-        did.append(f"made {path} on {branch} from {c.remote}/{base}, prepared")
-    focus = f"{key}: started"
-    lanes = {entry["id"]: entry for entry in load_state()["state"]["lanes"]}
-    if (lanes.get(lane) or {}).get("focus") != focus:
-        state_tool("focus", "--lane", lane, "--text", focus, "--state", "working", "--waiting-on", "")
-        did.append(f"set {lane}'s focus")
+        prepared.write_text(now() + "\n")
+        did.append("prepared it")
     journal = load_state()["journal"]
     assigned = [e for e in journal if e["kind"] == "lane.assigned" and e.get("subject") == key]
     since = assigned[-1]["at"] if assigned else None
     starts = [s for s in tracker_publisher.read_flow(c.flow_log, c.delivery, tracker_publisher.LANE_STARTS)
               if s.get("subject") == key and (since is None or s.get("at", "") >= since)]
     if not starts:
+        # The focus is set only with the start, so running it again never resets what the lane has said since.
+        state_tool("focus", "--lane", lane, "--text", f"{key}: started", "--state", "working", "--waiting-on", "")
+        did.append(f"set {lane}'s focus")
         tracker_publisher.record_lane_start(c.flow_log, c.delivery, key, lane)
         did.append("recorded the start")
         conf = tracker_conf(c)
@@ -2869,7 +2932,7 @@ def handoff(args) -> None:
     when = conf["transitions"].get("reviewWhen")
     if when and when != "pipeline-green" or when == "pipeline-green" and pr_line:
         # A review move a refused call left owed is retried here, at the latest.
-        review_move(c, key, when)
+        review_move(c, key, when, last=True)
     post = f"hand-off: {args.pr}, head {head[:10]}, {len(rounds)} review round(s); {validation}."
     posted = handoff_and_post(c, key, lane, head, args.pr, len(rounds), post)
     histories = [f"r{o['round']}: {round_history_text(o)}" for o in outcomes if round_history_text(o)]
