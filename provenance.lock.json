@@ -469,15 +469,15 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "880229b7aaefc5dea072674b6670796d6af18d3f8806061f5818d4f8dae9294b"
+          "sha256": "3d11654ce2bb11ac4f2137e8c9eabfb29e04197b53343fb20b53c8dd317b1b26"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "1867ef57cbfd99ec486c6c83b248bd9c15cf9959e29487b0059eb619d9eb314b"
+          "sha256": "e62f5b22da69d4ffd40d4e87b2819f8b4d80c4d90ee856ca1dd6835cc057d746"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "230d9c779915b17eb85ccb07f289a3d08d92551131fae8953c95681926058c08"
+          "sha256": "6ac61494316529c3042b990fd43cf02d67a97e6f2bea7ea70017c7de046b47e2"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
@@ -485,7 +485,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "ebe7e6bd40399151ddc967565d2d4ccdcbcdf13089d80efd30fa9276a708cd1c"
+          "sha256": "385a293a94a8a2c6a34fbb44aff4587d8b3d95e4efee12c3721d7ad69614f931"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
@@ -1034,15 +1034,15 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "fb42fe5b7fa1e1925a70ce4d6122a019e99a46a1de1677bf3f68f6f5e036f2bf"
+          "sha256": "d0ccc01ff0ef09a3aad774d388fa6194550ba178268713debd2ab0efe8959b15"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "a1191cfbbe0affeb5e424812927effe858b9b518e27f64f9e24bdd74ef5dea27"
+          "sha256": "b46f74f79e1dbf4a344c879c8b409dee66d4714785418c3a90daf367b9694030"
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "bed4d754e35ec7508d57881c0d95cfc19a3fd764962015d44abd797fd96f9106"
+          "sha256": "e91c8bd220b8ffaec40d44db15760e299cffd3de6640588aff6465b2d4197b9f"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",
