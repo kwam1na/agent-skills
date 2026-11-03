@@ -47,6 +47,13 @@ The setup check names `LINEAR_API_KEY` when it's unset. It doesn't check
 `GITHUB_TOKEN`, and a missing one shows up when the forge snapshot runs. The views
 scrub both from what they show.
 
+## Tracker updates
+
+Linear is reachable only through the host's tools here, so the binding names a host
+publisher. Its outbox holds the delivery's tracker updates and moves, and the lead posts
+them with those tools. The close waits on them, and the line map's Needs you box shows
+what is still held.
+
 ## Checks
 
 The binding declares no affected-checks provider, on purpose. Nearly every test here
