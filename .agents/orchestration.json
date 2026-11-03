@@ -157,7 +157,12 @@
         "timeoutSeconds": 60
       }
     ],
-    "publishers": [],
+    "publishers": [
+      {
+        "id": "tracker",
+        "kind": "host"
+      }
+    ],
     "trackerSnapshot": {
       "argv": [
         "python3",

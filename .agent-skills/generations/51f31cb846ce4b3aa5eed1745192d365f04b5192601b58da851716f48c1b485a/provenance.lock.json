@@ -1,0 +1,966 @@
+{
+  "entries": [
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "compound-delivery-kernel",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The portable delivery posture is narrowed to repository authority, bounded execution, review, and compounding outcomes. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/compound-delivery-kernel/SKILL.md",
+          "sha256": "6395c9c185de9ddadba81d26c98243ece568d8d7cc66d66feb2906946006f558"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "delivery-kernel-skill",
+        "kind": "repository-source",
+        "path": ".agents/skills/compound-delivery-kernel/SKILL.md",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "30d72ae4d855b508b7ab59720874e8e76091885992a712d3bd5ccb6e510d451e"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "compound-learning",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The reusable-learning threshold requires evidence from the delivery; a default note location and shape apply unless a repository declares its own, and the source's machinery is left out.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/compound-learning/SKILL.md",
+          "sha256": "266698753b1ec7f3eab6098b0e1f3cf88744ca0d132c2cac5802ba7108f3a25a"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "compound-skill",
+        "kind": "repository-source",
+        "path": ".agents/skills/ce-compound",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "bfaf2f0e34460bb3baaa55da7e34e61b134cd139fe7ff6a7bd81a4a9db6da73d"
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
+      "id": "create-linear-ticket",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The retained tracker source is narrowed to a decomposition workflow that reaches the tracker only through the optional adapter.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/create-linear-ticket/SKILL.md",
+          "sha256": "894ef53b9a3bd192409facf64eb4d2d3af99d55e38f25ca87ad204d30a21010b"
+        },
+        {
+          "path": "skills/create-linear-ticket/agents/openai.yaml",
+          "sha256": "a3f6f571700d3036747f461efb3540fafee79de345866374048bb6c679c19084"
+        },
+        {
+          "path": "skills/create-linear-ticket/references/atomic-plan-template.md",
+          "sha256": "f2f8dbc01c4cb7790a460e220249ea44e25a3d0959b4185e9af0448f0175f950"
+        },
+        {
+          "path": "skills/create-linear-ticket/references/atomic-ticket-template.md",
+          "sha256": "ba18fac7ca2ada7b2ba3e20b62a328f89b0f57a4cdfb8a5cc901ed536f5a311b"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "track-skill",
+        "kind": "repository-source",
+        "path": ".agents/skills/track",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "d0b51b5efd0ed6a0518b24a201de7b042c04673e965d9e06bf10d03d0687518b"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "deliver-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The baseline routing slice is rewritten as a portable router and neutral capability contract while provider-specific source remains separate.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/deliver-work/SKILL.md",
+          "sha256": "e18e0655702418838ea2ccb046fca9564134bceac35f799f384a0c9a4aabab2e"
+        },
+        {
+          "path": "skills/deliver-work/agents/openai.yaml",
+          "sha256": "335c1f6f152230f5c7dfac0bce52bd2295d4f44349226eac3fc59de1715d2c04"
+        },
+        {
+          "path": "skills/deliver-work/references/capability-contract.md",
+          "sha256": "f41bc821e57fe7cbe54346fcad991d4addb4320ebff2fb25ea007eb6c637d6fc"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "deliver-work-skill",
+        "kind": "repository-source",
+        "path": ".agents/skills/deliver-work",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "9479db1160edb91ba40cbad27c0bfd1df6b6932a85b48d36919478221350acd3"
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
+      "id": "delivery-views",
+      "license": "NOASSERTION",
+      "modification": {
+        "reason": "Independently authored configurable delivery views: the line map, history page, snapshot commands and their shared configuration, link, bounded-command and round-report rails, kept out of the core workflow so it stays provider-neutral.",
+        "status": "independently-authored"
+      },
+      "outputs": [
+        {
+          "path": "skills/delivery-views/SKILL.md",
+          "sha256": "3cbdeec9570a91016f2fbbf1f60888c78215043e00e4dc8d957fa984a464e99d"
+        },
+        {
+          "path": "skills/delivery-views/assets/history.css",
+          "sha256": "08ac41c4bd6b6cbffa87f56c90d57b3fafe99bb899c7ea8fad993c17e0b7aab5"
+        },
+        {
+          "path": "skills/delivery-views/assets/history.js",
+          "sha256": "cadb8bf66ff89d708ab7340ee972d98110273110577585ad6561aa5c93f8280d"
+        },
+        {
+          "path": "skills/delivery-views/assets/line-map.css",
+          "sha256": "41f63cc068093c1ea25eb638021aea68999ca8224fa113138b0fd6224cf8a910"
+        },
+        {
+          "path": "skills/delivery-views/assets/line-map.js",
+          "sha256": "de863983498e8abba7ba594c9461fd9ea7a5196e8b022ee9ef2eaeed025ba2f8"
+        },
+        {
+          "path": "skills/delivery-views/assets/run-summary.css",
+          "sha256": "b776d86777a440f9ee307c45c49c04e439aa8d10ef2a214b3ab65a1b007e64ab"
+        },
+        {
+          "path": "skills/delivery-views/assets/run-summary.js",
+          "sha256": "08f713e7e3c28aa0fe0823922bf598cbccdeb7c939aa99e026a92f53144e0f15"
+        },
+        {
+          "path": "skills/delivery-views/references/delivery-plan.schema.json",
+          "sha256": "f0112e3d5af332bd2a3b2cc45b1783e1680baaf64d6d4560bc0af49a287128f1"
+        },
+        {
+          "path": "skills/delivery-views/scripts/render.py",
+          "sha256": "4b2d8d19ad9adcfb97e756ac49fd4f64f0d39a9c71d3d644109cfb65b8db224d"
+        },
+        {
+          "path": "skills/delivery-views/scripts/review_projection.py",
+          "sha256": "4f5a7ffe717fc5db4fa4a414e748cfc1df86fdfb852d036ce8f089becf934983"
+        },
+        {
+          "path": "skills/delivery-views/scripts/snapshot.py",
+          "sha256": "28e31672a85717033a90a516b82c71056e1878ceda51301fb37cd4617a007b1a"
+        },
+        {
+          "path": "skills/delivery-views/scripts/views_common.py",
+          "sha256": "a3f7bc1960fb0f2ea7e17159f256f23cd0a909ce3d3c1f39e16f807f047bb225"
+        }
+      ],
+      "owner": "delivery-agent/user-delegated",
+      "source": {
+        "kind": "independent-origin",
+        "ownerApproval": {
+          "owner": "delivery-agent/user-delegated",
+          "reference": "plan-review:the approved configurable delivery views plan"
+        },
+        "rationale": "Authored from the approved plan that makes the delivery line map a configurable product view. Under that plan the line map's page program and style are carried over from the owner's own line map, with its adopter-specific addresses, names and storage keys made configuration; the rest is not copied from adopter source."
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "diagnose-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "Evidence-first causal diagnosis is extracted without repository policy, tool selection, or fix authority.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/diagnose-work/SKILL.md",
+          "sha256": "1e1ac2dba414784f6af0b68cd4eca2db89fdd5d7b03d4056391880ad7283e77b"
+        }
+      ],
+      "owner": "delivery-agent/user-delegated",
+      "source": {
+        "kind": "repository-source",
+        "path": ".agents/skills/ce-debug/SKILL.md",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "6bc5dd51457bb4a640f15b12609912b53bda193699def51e3bfce5966dabd11a"
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
+      "id": "execute-linear-ticket",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The retained execution source is narrowed to an execution workflow that reaches the tracker only through the optional adapter.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/execute-linear-ticket/SKILL.md",
+          "sha256": "018351bb475fe01d65ff62c4a89fbd9e27b645d1835cd07c1c771a9055d23bf9"
+        },
+        {
+          "path": "skills/execute-linear-ticket/agents/openai.yaml",
+          "sha256": "b6d90a3ba0dfede39e1721c789a1468aaf64563cb84d3abb940f37bce2238f18"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "execute-skill",
+        "kind": "repository-source",
+        "path": ".agents/skills/execute",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "f8a66cf662013f931eabb7f149c8ade7a253d0b06ac534facb347aabeadb1d27"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "execute-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The baseline execution slice is narrowed to incremental work, repository sensor evidence, explicit blockers, approval handoffs, and honest completion states. Shared host-neutral v2 observations, immutable replacement attempts, and durable selected-output capture preserve existing review authority. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/execute-work/SKILL.md",
+          "sha256": "09eb0b0737b3f0ad408c6b04ee772651bddf76651c63a54accd261151a6a3377"
+        },
+        {
+          "path": "skills/execute-work/references/run-observation-contract.md",
+          "sha256": "a009b0f88c599df6a7c56210f06c1e7d48b1283e395f52f27bf0bf9ef41b5068"
+        },
+        {
+          "path": "skills/execute-work/scripts/report_observation.py",
+          "sha256": "d04b3ada9e06268c901f82a28f569194cf30f6f5c71a180fa1481d9f3d023f29"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "work-skill",
+        "kind": "repository-source",
+        "path": ".agents/skills/ce-work",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "43f883389cbfbf5bbf556fdd9fd7acfecd577bf3a6879263e11ea12a7c00c222"
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
+      "id": "linear-tracker-adapter",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The provider-specific planning and execution source is narrowed to a host-native adapter for the neutral tracker contract. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/linear-tracker-adapter/SKILL.md",
+          "sha256": "f64e907b59abe4782cce65b1b941d278b10a2b5d2d190362056c8bf28386a511"
+        },
+        {
+          "path": "skills/linear-tracker-adapter/references/adapter-contract.json",
+          "sha256": "82b9bd2de7a3a38b866dbdccca66cc0b37fd253b58a816412984f67484b94f45"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "track-skill",
+        "kind": "repository-source",
+        "path": ".agents/skills/track",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "d0b51b5efd0ed6a0518b24a201de7b042c04673e965d9e06bf10d03d0687518b"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "obtain-review",
+      "license": "NOASSERTION",
+      "modification": {
+        "reason": "Independently authored portable acquisition and projection contract; no repository-source derivation or new license grant is asserted. Exact content-based base-move reopening, shared host-neutral v2 observations, and durable selected-output capture preserve existing review authority. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
+        "status": "independently-authored"
+      },
+      "outputs": [
+        {
+          "path": "skills/obtain-review/SKILL.md",
+          "sha256": "600fe98efac4c09cc4c824ea9756b027f4f4b3c5c9799f7fd1254da73ec4b4d8"
+        },
+        {
+          "path": "skills/obtain-review/references/round-brief-template.md",
+          "sha256": "de3080d465738b289bfb023464d7bd594effa80da0ccd46523168c4d52107f0d"
+        }
+      ],
+      "owner": "delivery-agent/user-delegated",
+      "source": {
+        "kind": "independent-origin",
+        "ownerApproval": {
+          "owner": "delivery-agent/user-delegated",
+          "reference": "codex-thread:01a04fe6-13db-76b0-b049-b66771e85314"
+        },
+        "rationale": "Authored from the approved portable review acquisition contract, not derived from Athena source; realization and authority remain upstream."
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "orchestrate-work",
+      "license": "NOASSERTION",
+      "modification": {
+        "reason": "Independently authored portable orchestration contract: a lead session coordinating lane sessions through a lead-owned merge queue and a versioned delivery state document and journal, with standard-library tools and their schemas shipped inside the skill.",
+        "status": "independently-authored"
+      },
+      "outputs": [
+        {
+          "path": "skills/orchestrate-work/SKILL.md",
+          "sha256": "64314d8bb8efb434ecaafd1282c27b01df9781a2b8a25133608ca9c5e861a8ce"
+        },
+        {
+          "path": "skills/orchestrate-work/references/orchestration-guide.md",
+          "sha256": "13392a7bdfc119a9bf6e3e4c17447620ef9962b4587eee771cc1030753126baf"
+        },
+        {
+          "path": "skills/orchestrate-work/references/schemas.json",
+          "sha256": "6ab62ee76b703dd96c4ca4d2687c29824240f921e27cf9668e52ccedf387a7d1"
+        },
+        {
+          "path": "skills/orchestrate-work/scripts/delivery_state.py",
+          "sha256": "8c759d75f5d57f3aaaa4ac34a79373233ab34137759b7dcc41d45c9026469bb7"
+        },
+        {
+          "path": "skills/orchestrate-work/scripts/merge_queue.py",
+          "sha256": "3c53d1c91c887d42023a6a6912812f4d91cae0e15c6b48c792815fa3de104bc4"
+        },
+        {
+          "path": "skills/orchestrate-work/scripts/render_state.py",
+          "sha256": "7b962a43db5e6b083d70bc13f7af186375b5fc88123afba28f65b41d63874024"
+        }
+      ],
+      "owner": "delivery-agent/user-delegated",
+      "source": {
+        "kind": "independent-origin",
+        "ownerApproval": {
+          "owner": "delivery-agent/user-delegated",
+          "reference": "plan-review:docs/plans/2026-10-20-epic-orchestration-workflow.review.json"
+        },
+        "rationale": "Authored from the approved portable epic orchestration plan, not derived from adopter source; the workflow it encodes was practised by the lead before it was written down."
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-adversarial",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/adversarial.md",
+          "sha256": "ae9969a9835d66a8fd0b4dca434915f23e2904b5f3865035f887583338571b0d"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-adversarial-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-adversarial-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "10c048173c86e8cdbf295fb6e7f04595902466dad201bf56d29e23fcc317a8bc"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-adversarial-document",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/adversarial-document.md",
+          "sha256": "57f13fa7506e0906d900a96da56e52671d6aed37662492dd69bb8ddccf42db21"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-adversarial-document-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-adversarial-document-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "64f53b939d70fef8b98081e0e716ac57245a4223f4693b50b68a341d6735d400"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-api-contract",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/api-contract.md",
+          "sha256": "a04f0415e773b55526cfc9407dbd4f89a7553954930a12060c1625ab14498524"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-api-contract-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-api-contract-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "a72c578e0ef9ec36b5e8038b4e21685df73e99d4bc16227f717d104bfdbfeb0a"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-architecture",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/architecture.md",
+          "sha256": "c06bb9aa9103c9cefbf5973d963d253e71729267afa082e8c7d48c75a5e7383f"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-architecture-strategist",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-architecture-strategist.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "fc4b7f1509c18abc21733a41214a7e946780de8900c53cf04de2186685550215"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-coherence",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped. Substance from ce-spec-flow-analyzer is folded in rather than shipped as a near-duplicate charter.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/coherence.md",
+          "sha256": "4d95807647528c32157179ccf5dde11c669757e1849b7a602b838a91f62c3865"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-coherence-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-coherence-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "f37c49be80d20673f189f08184000dfe4d842c384436bd9141ae0ef9cacad354"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-data-integrity",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/data-integrity.md",
+          "sha256": "61b75cb83fc65b8b6fa9a25502362280b4c2761d564166041e1b65e5b179d871"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-data-integrity-guardian",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-data-integrity-guardian.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "347d596bf1e88296bd0caddb7de32a9b9ea2ac8f849d09aa3323d346310a2a86"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-feasibility",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/feasibility.md",
+          "sha256": "96d39502ab285500af7257aba122684042e0a7e28af6183f6d0336b65961f0df"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-feasibility-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-feasibility-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "3473e9b00cbaa0ffa11f85548cabc27ffd1d0db17d2fc27e66b556a42ab36b01"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-maintainability",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped. Substance from ce-pattern-recognition-specialist is folded in rather than shipped as a near-duplicate charter.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/maintainability.md",
+          "sha256": "1da8efccc419a012f5f9ed48c206dadab56efdb44b4488d6ad54ad076e56c691"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-maintainability-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-maintainability-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "961aa326d70c5aacffd0da239373b369030661a7c85c41556c4187b81b850cde"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-outcome-correctness",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/outcome-correctness.md",
+          "sha256": "a5d96a825150e40b840cd91b55c2d7480f5ee7e481004464062afb8ef5430e2c"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-correctness-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-correctness-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "ad9109c34c38e6992f5b1a48090d97b8a66b5f943a9d0525ad290325a3aa3254"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-performance",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped. Substance from ce-performance-oracle is folded in rather than shipped as a near-duplicate charter.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/performance.md",
+          "sha256": "c2081d53c1170217f85c41e25058ebf21b1705d17428ccc881422dac3e10abd7"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-performance-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-performance-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "efbc47187e7c1db5d6a866af85cbd17793b050c9eb17562a1fb640af653e74a6"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-product",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/product.md",
+          "sha256": "05bdfbf83f85b101c407fdb9ed809dbe33af3ed2314cf4cd130bf6df03240970"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-product-lens-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-product-lens-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "3640eb11e238ffad994e0c182723b27550dadbdf262972af62c3f8da567b8d4e"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-project-standards",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/project-standards.md",
+          "sha256": "72b547422e66609403b3e3382d22f18f242f1ff71b3d3c94ad8c2bc3dcb833d7"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-project-standards-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-project-standards-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "912946be877ee20974fbb32f312a1811af945bb0668fc786ff99fba8167d473e"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-reliability",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/reliability.md",
+          "sha256": "427bd06015a4ef32d3423e3e56c4a0a113fb1a28a73bad6e7b6068b08e3bb6c3"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-reliability-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-reliability-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "fc932495cc074f830c61324ea66066927756d7fba995b2d13023aa3a5b732354"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-scope",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/scope.md",
+          "sha256": "117fe6a8ab8cdd125460b2b80ab2510000ca7ab1ac68b10643b27480bb428e6c"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-scope-guardian-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-scope-guardian-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "a1f85b17849c59b156f15380f2e47f6c84ac44830796a86e11fb93be8f317280"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-security",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped. Substance from ce-security-lens-reviewer, ce-security-sentinel is folded in rather than shipped as a near-duplicate charter.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/security.md",
+          "sha256": "f66e55bec2638faaf7ae981bdcba192c09cdc5170f8f2405ff6d890643a04a06"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-security-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-security-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "b44acfab82dab3c0dd03a3a9df523fefad63b7065577cbe97af889aabcf02fdd"
+      }
+    },
+    {
+      "classification": "reviewer-persona-metadata",
+      "distribution": "releasable",
+      "id": "persona-set-metadata",
+      "license": "Apache-2.0",
+      "modification": {
+        "reason": "The shipped-charter manifest and the include/exclude adjudication covering every reviewer-agent source file considered. Independently authored metadata about the adapted set; it carries no adapted prose.",
+        "status": "independently-authored"
+      },
+      "outputs": [
+        {
+          "path": "personas/manifest.json",
+          "sha256": "c982e2835063de1fe3986130093e33538f65605eb62124e461d957fbedca1e4e"
+        },
+        {
+          "path": "personas/source-adjudication.json",
+          "sha256": "15a07326dcafbc2cdfc96152014aa5c64e117111dff12087c826a8d9dbf6640f"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "kind": "independent-origin",
+        "ownerApproval": {
+          "owner": "agent-skills-corpus",
+          "reference": "V26-1492 reviewer-persona set adjudication"
+        },
+        "rationale": "The manifest and the adjudication are decisions about which upstream reviewer files ship and which do not. They restate no upstream prose."
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-simplicity",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/simplicity.md",
+          "sha256": "c2e88a11be816b1a8aace86154f05f8fa9a0aba6634806ab0524c24a535b3aaa"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-code-simplicity-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-code-simplicity-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "46d0c51deba4d370ca729ad0138c535395d170c0547070c4b1d9dd8d5ee30f64"
+      }
+    },
+    {
+      "classification": "reviewer-persona",
+      "distribution": "releasable",
+      "id": "persona-testing-policy",
+      "license": "MIT",
+      "modification": {
+        "reason": "Adapted from the compound-engineering plugin by Kieran Klaassen / EveryInc (github.com/EveryInc/compound-engineering-plugin), MIT. Rewritten as host- and stack-neutral charter prose; the source agent frontmatter and its host, model, and presentation bindings are dropped.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "personas/testing-policy.md",
+          "sha256": "47aa12bd7fce80026be46a84eca73816ea707f50c2947f1fa4c9d0138587ed38"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "ce-testing-reviewer",
+        "kind": "repository-source",
+        "path": ".agents/agents/ce-testing-reviewer.agent.md",
+        "repository": "kwamina/athena",
+        "revision": "a592212dcf598f904300c0615ef14d43bb7a5598",
+        "sha256": "251aebac37d54edc4356485d6f37711bc58839d8a9920a337ae93de51a90e50e"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "plan-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The baseline planning slice is narrowed to scope, finish-line, dependency, posture, sensor, and approval-handoff decisions without implementation behavior. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/plan-work/SKILL.md",
+          "sha256": "7f89f2d80f11b92284fde3092314c4c9253d7c37faf2cd3bd1d64519cc740d76"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "plan-skill",
+        "kind": "repository-source",
+        "path": ".agents/skills/ce-plan",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "5408cccdbafb0ce69e5de1293c2eb40defd313f8e833db09dd0a59e0f2dea438"
+      }
+    },
+    {
+      "classification": "portable-core",
+      "distribution": "releasable",
+      "id": "review-work",
+      "license": "LicenseRef-Athena-internal",
+      "modification": {
+        "reason": "The review source is narrowed to caller-selected lenses, evidence-bearing convergence, visible dissent, typed failure, bounded outcomes, and exact base-move reopening; repository reviewer policy remains an overlay. Versioned deferral scope and shared host-neutral v2 observations preserve existing review authority. Round accounting, review brief scope, resource isolation, and document referents are clarified under the recorded coherence decisions.",
+        "status": "modified-derivative"
+      },
+      "outputs": [
+        {
+          "path": "skills/review-work/SKILL.md",
+          "sha256": "ee5e3f1c542893dcc00cf026c2b7f3af4fbf31d6fe1cd6092fe0e8575d609320"
+        }
+      ],
+      "owner": "agent-skills-corpus",
+      "source": {
+        "baselineSourceId": "review-skill",
+        "kind": "repository-source",
+        "path": ".agents/skills/ce-code-review",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53",
+        "sha256": "54ee28663a49d11d0e8afa5c213b9c9819feef3b93f7ccd8afd02bc60446032e"
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
+      "id": "run-delivery",
+      "license": "FSL-1.1-ALv2",
+      "modification": {
+        "reason": "Independently authored delivery commands: the owner's own command-line tool for the mechanical steps of an orchestrated delivery, with its reference forge adapters, templates, adapter fixture page and configuration reference, contributed by its owner and kept out of the core workflow.",
+        "status": "independently-authored"
+      },
+      "outputs": [
+        {
+          "path": "skills/run-delivery/SKILL.md",
+          "sha256": "016fc5dcbec9046cbff4a6959a27b179a1d6e4fee03d59d53e0b7cd58680f57c"
+        },
+        {
+          "path": "skills/run-delivery/adapters/forge_bitbucket.py",
+          "sha256": "168d7e87c07d6b67f526bcf3a85245ce3586c6eb50e1ea4683a203995dbfe35d"
+        },
+        {
+          "path": "skills/run-delivery/adapters/forge_github.py",
+          "sha256": "b4315b3a9e3cab0d2a994718480d020a3768e2a066910ad8122ca12ba388ca65"
+        },
+        {
+          "path": "skills/run-delivery/adapters/tracker_jira.py",
+          "sha256": "f0fc5c61a510d07adb3b7b597a27ae3d156e120221e0dcc0f8d32a3f7cbf91e0"
+        },
+        {
+          "path": "skills/run-delivery/assets/adapter-fixture/index.html",
+          "sha256": "31257fd55d83ebc6aa602b7a508248d6f44776991f54e1127ce1629b0bf59a81"
+        },
+        {
+          "path": "skills/run-delivery/references/adopting.md",
+          "sha256": "50bc86ae8c1dcd4b2d151c91c72281c7b41453f3ea9dc81da03430619630115b"
+        },
+        {
+          "path": "skills/run-delivery/references/config.md",
+          "sha256": "89b711f6635909933c7d69f90da48a9287a455efca131809f89c7cd08b13ee46"
+        },
+        {
+          "path": "skills/run-delivery/scripts/run_delivery.py",
+          "sha256": "7798e9c41b4d98eb5e3b6bfcea41b89c55e54f3514ab463e1362f737dfbd2f9b"
+        },
+        {
+          "path": "skills/run-delivery/scripts/tracker_publisher.py",
+          "sha256": "8432d95eaf8b688ea0f16b68fc1781428efe83ceb4fa59b12bae1c7194d62fb2"
+        },
+        {
+          "path": "skills/run-delivery/templates/evidence.html",
+          "sha256": "e9b9f603c2c325e156f6162dedc0670374b911b4c79226743a82ad99c57f3228"
+        },
+        {
+          "path": "skills/run-delivery/templates/lane-brief.in-app.md",
+          "sha256": "682fee2df7892a26eabce9511e1653ac9a93d7b865d49d6fe844537d3195cd1f"
+        },
+        {
+          "path": "skills/run-delivery/templates/lane-brief.md",
+          "sha256": "ce8698ebfb97011776715e2d2a0c712b3d7aa9a3004132f16df7257553672cbc"
+        },
+        {
+          "path": "skills/run-delivery/templates/round-brief.md",
+          "sha256": "000855081c10e9df5e78af137397c5ab946e123828345e335968e19e5cfa8e12"
+        }
+      ],
+      "owner": "delivery-agent/user-delegated",
+      "source": {
+        "kind": "independent-origin",
+        "ownerApproval": {
+          "owner": "delivery-agent/user-delegated",
+          "reference": "plan-review:the approved run-delivery plan, with the owner's approval to contribute the tool's code given on 2026-10-29"
+        },
+        "rationale": "Moved in from the owner's own uncommitted delivery tool under the approved run-delivery plan; it wraps the release's state tool, round validator, round-brief template and lens charters, and copies no adopter source."
+      }
+    }
+  ],
+  "schemaVersion": "agent-skills-provenance/2",
+  "sourceBaseline": {
+    "baselineId": "athena-portable-workflows-v1-2026-08-27",
+    "baselinePath": ".agents/portable-overlay-map.json",
+    "repository": "kwamina/athena",
+    "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53"
+  }
+}
