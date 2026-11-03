@@ -1171,7 +1171,8 @@
         row.style.setProperty("--c", colours[lane.id] || "var(--soft)");
         var who = add(el("div"), el("h3", null, text(lane.title) || text(lane.id)));
         var doing = text(lane.focus) || text(focus[lane.id]);
-        if (doing) { add(who, el("p", "doing", doing), rowAge(lane)); }
+        if (doing) { who.appendChild(el("p", "doing", doing)); }
+        if (text(lane.focus)) { who.appendChild(rowAge(lane)); }
         var st = add(el("div", "st"), el("span", "chip" + (LANE_WORDS[lane.state] ? " " + lane.state : ""), LANE_WORDS[lane.state] || "Unknown"));
         if (lane.waitingOn) { st.appendChild(el("span", "on blocked", "waiting on " + text(lane.waitingOn))); }
         else if (heldFor(lane.since)) { st.appendChild(el("span", "on", heldFor(lane.since))); }

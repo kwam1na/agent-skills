@@ -61,6 +61,13 @@ test("a row with nothing said shows no age", async () => {
   expect(age(await first([lane({ focus: "", focusAt: minutesAgo(5) })]))).toBeNull();
 });
 
+test("words the record derives for a lane with no focus of its own show no age", async () => {
+  const doc = { ...document([lane({ focus: "" })]), focus: { "lane-1": "queued, rounds unknown" } };
+  const app = (await openPage(pageWithRuns(doc, {}, { config: CONFIG }), { now: NOW, store: false }))[0].app;
+  expect(row(app).querySelector(".doing").textContent).toBe("queued, rounds unknown");
+  expect(age(app)).toBeNull();
+});
+
 test("the record's words render as text, and the row still draws with fields missing", async () => {
   const app = await first([{ id: "lane-1" }, lane({ id: "lane-2", focus: "<b>Hi</b>", focusAt: minutesAgo(1) })]);
   expect(app.querySelectorAll(".person")).toHaveLength(2);

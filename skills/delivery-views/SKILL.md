@@ -30,7 +30,8 @@ Each lane's row says how old its words are, from the `focusAt` the state tool
 keeps. An active row older than an hour also says it may be out of date; a row at
 rest isn't marked, since an old "merged" is still true. A row with no readable
 time, as in a record written before the tool kept one, says "No time recorded"
-rather than reading as fresh.
+rather than reading as fresh. Words the record derives from the line, for a lane with
+no focus of its own, carry no age.
 
 ## Dependencies
 

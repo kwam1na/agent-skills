@@ -13,8 +13,9 @@ applies_when: "A test suite's temporary files load the machine, or a fixture cha
 
 ## Problem
 
-The suite wrote about 850,000 files per run, which loaded the machine and its file
-event daemon. Most of that wasn't what the fixtures meant to write.
+The suite counted about 780,000 to 860,000 file writes per run, which loaded the
+machine and its file event daemon. The count is of writes, not distinct files. Most
+of them weren't what the fixtures meant to write.
 
 ## Solution
 
@@ -35,9 +36,11 @@ The volume came from:
 
 ## Why This Matters
 
-Measuring before and after on one tree is what makes the ratio mean anything. A base
-that moves during a delivery takes the ratio with it: this work read 49.4% at one
-tree and 49.66% at the next, against different totals.
+Measure before and after on one tree, because a base that moves during a delivery
+changes both totals. This work kept 384,400 of 778,461 writes on one tree, and 425,058
+of 855,878 on the next, each from one run per side. Unrelated modules move by more
+than the gap between those two ratios, so neither shows a trend, and "about half" is
+as much as they support.
 
 ## Prevention
 

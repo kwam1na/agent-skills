@@ -43,5 +43,5 @@ each wait.
 
 ## Related
 
-A stop landing in a finalizer during a turn is still honoured only after that
-turn. Nothing drops a finalizer there today.
+A stop landing in a finalizer during a turn, such as a dropped `Popen`'s, is still
+honoured only after that turn.
