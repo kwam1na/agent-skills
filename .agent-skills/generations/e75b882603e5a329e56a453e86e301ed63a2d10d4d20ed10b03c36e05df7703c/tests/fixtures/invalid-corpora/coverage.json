@@ -1,0 +1,4 @@
+{
+  "description": "Focused tests create hostile corpora by mutating a disposable copy of the checked-in positive control.",
+  "id": "invalid-corpora/focused-mutations"
+}
