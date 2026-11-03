@@ -558,6 +558,70 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertTrue(json.loads((fx.tmp / "forge.json").read_text())["https://forge.test/pr/1"]["draft"],
                         "a refused acceptance marked the draft ready")
 
+    def merged_by_hand(self, fx: Fixture, key: str, lane: str) -> Path:
+        """A story handed off and waiting for the lead, then merged outside the queue with its head landing on the base."""
+        wt = hand_off(fx, key, lane)
+        head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        sh("git", "push", "-q", "origin", "HEAD:refs/heads/feature/FX-1", cwd=wt)
+        forge = json.loads((fx.tmp / "forge.json").read_text())
+        url = next(u for u, pr in forge.items() if pr["source"] == f"feature/{key}")
+        forge[url].update(state="merged", head=head)
+        (fx.tmp / "forge.json").write_text(json.dumps(forge))
+        (fx.main / "tools/snapshot.py").write_text(
+            "import datetime, json\n"
+            "print(json.dumps({'takenAt': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), "
+            f"'source': 'forge', 'items': [{{'subject': {key!r}, 'state': 'merged', 'head': {head!r}, "
+            f"'changeRequest': {url!r}}}]}}))\n")
+        return wt
+
+    def test_a_merge_before_the_lead_accepted_keeps_its_checkout_and_says_so_until_accepted(self) -> None:
+        fx = self.fixture()
+        wt = self.merged_by_hand(fx, "FX-2", "lane-1")
+        last = self.once(fx)
+        self.assertTrue(wt.exists(), "the pass removed the checkout lead-accept reads")
+        self.assertTrue(any("before the lead accepted it" in line for line in last["reconcile"]), last["reconcile"])
+        waiting = [item for item in last["needsYou"] if "merged before you accepted" in item["text"]]
+        self.assertEqual([item["holding"] for item in waiting], [True], last["needsYou"])
+        self.assertIn("(candidate.merged)", waiting[0]["source"])
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        last = self.once(fx)
+        self.assertEqual([item for item in last["needsYou"] if "merged before you accepted" in item["text"]], [])
+        self.assertFalse(wt.exists(), "the checkout outlived the lead's decision")
+
+    def test_a_journaled_decision_also_ends_the_wait_on_a_merge_before_the_lead_accepted(self) -> None:
+        fx = self.fixture()
+        wt = self.merged_by_hand(fx, "FX-2", "lane-1")
+        self.once(fx)
+        self.assertTrue(wt.exists())
+        state_tool(fx, "journal", "--kind", "decision.recorded", "--subject", "FX-3", "--summary", "About other work")
+        last = self.once(fx)
+        self.assertTrue(wt.exists(), "a decision on other work released this checkout")
+        self.assertTrue([item for item in last["needsYou"] if "merged before you accepted" in item["text"]])
+        state_tool(fx, "journal", "--kind", "decision.recorded", "--subject", "FX-2", "--summary", "Merged as it stands")
+        last = self.once(fx)
+        self.assertEqual([item for item in last["needsYou"] if "merged before you accepted" in item["text"]], [])
+        self.assertFalse(wt.exists())
+
+    def test_a_merge_through_the_queue_needs_no_decision_and_cleans_up(self) -> None:
+        fx = self.fixture()
+        wt = self.merged(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        last = self.once(fx)
+        self.assertEqual([item for item in last["needsYou"] if "merged before you accepted" in item["text"]], [])
+        self.assertFalse(wt.exists())
+
+    def test_a_leftover_wait_on_a_merged_item_does_not_open_its_handed_proof(self) -> None:
+        fx = self.fixture()
+        doc = {"state": {"queue": [{"subject": subject, "stage": stage, **({"pending": True} if waits else {})}
+                                   for subject, stage, waits in (("left", "merged", True), ("done", "merged", False),
+                                                                 ("waits", "queued", True), ("taken", "queued", False),
+                                                                 ("stopped", "stopped", False))]}, "journal": []}
+        states = {subject: fx.call("proof_state", None, {}, doc, {"subject": subject}, "handed", cwd=fx.main)
+                  for subject in ("left", "done", "waits", "taken", "stopped", "absent")}
+        self.assertEqual(states, {"left": "done", "done": "done", "waits": "open", "taken": "done", "stopped": "open",
+                                  "absent": "open"})
+
     def closable(self, fx: Fixture) -> None:
         """No finish lines, FX-2 merged, its lane done, FX-3 removed: nothing holds the close."""
         path = fx.main / ".agents/deliveries/FX-1.json"

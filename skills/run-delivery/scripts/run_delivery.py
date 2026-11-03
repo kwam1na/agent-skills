@@ -4415,6 +4415,8 @@ def reconcile_once() -> list[str]:
         done = state_tool("reconcile", "--snapshot", str(snapshot), "--binding", str(binding), check=False)
         summary = re.search(r'"summary":\s*"([^"]*)"', done.stdout or "")
         lines.append(f"{name}: " + (summary.group(1) if summary else (done.stderr or done.stdout).strip()[-200:]))
+        with contextlib.suppress(ValueError):
+            lines += [f"{name}: {report['subject']}: {report['note']}" for report in json.loads(done.stdout).get("reports", [])]
     if plan_declared(c) or plan_log_path(c).exists():
         lines.append(rebuild_plan_quietly(c))
     return lines
@@ -4520,6 +4522,8 @@ CHILD_FLAPS, CHILD_FLAP_SECONDS = 3, 600
 SUPERVISOR_WAIT_SECONDS = 120
 # The runner's own blocker, which the hold clearing or base.repaired resolves (merge_queue.py writes it).
 RUNNER_HELD = "Serving is held:"
+# How the state tool's journal entry ends for a merge recovered before the lead accepted it.
+MERGE_SKIPPED_ACCEPTANCE = " before the lead accepted it"
 LANE_DONE = ("idle", "done")
 
 
@@ -4700,6 +4704,17 @@ def lane_moved_off(doc: dict, item: dict, words: dict | None = None) -> bool:
     return bool(later)
 
 
+def unaccepted_merge(doc: dict, item: dict) -> dict | None:
+    """The merge entry of a story recovered from the forge before the lead accepted it, while no decision follows it."""
+    subject = item["subject"]
+    merges = [e for e in doc["journal"] if e["kind"] == "candidate.merged" and e.get("subject") == subject]
+    if not merges or not merges[-1].get("summary", "").endswith(MERGE_SKIPPED_ACCEPTANCE):
+        return None
+    if any(e["kind"] == "decision.recorded" and e.get("subject") == subject and e["id"] > merges[-1]["id"] for e in doc["journal"]):
+        return None
+    return None if any(entry.get("head") == item["head"] for entry in read_log("acceptance", subject)) else merges[-1]
+
+
 def cleanup_merged(c, doc: dict, words: dict | None = None) -> list[str]:
     """What lead-cleanup does, for each merged story whose lane has moved off it. A story already cleaned up, by hand
     or by an earlier pass, has nothing left to clean and journals nothing."""
@@ -4709,6 +4724,10 @@ def cleanup_merged(c, doc: dict, words: dict | None = None) -> list[str]:
             continue
         if not lane_moved_off(doc, item, words):
             said.append(f"{item['subject']}: waits for {item['lane']} to move off it")
+            continue
+        # lead-accept reads the lane's evidence from its checkout, so the checkout stays until the lead has decided.
+        if unaccepted_merge(doc, item):
+            said.append(f"{item['subject']}: waits for the lead's decision on its merge")
             continue
         status, done, left = clean_story(item["subject"])
         if status not in ("nothing", "waiting"):
@@ -4728,7 +4747,9 @@ def proof_state(c, plan: dict, doc: dict, unit: dict, kind: str) -> str:
             return "todo"
         return "stale" if item and entry.get("head") != item.get("head") else entry["state"]
     if kind == "handed":
-        return "done" if item and item["stage"] != "stopped" and not item.get("pending") else "open"
+        # A merged item may still carry a wait an earlier version left; its merge ended that wait.
+        waiting = item and item["stage"] != "merged" and (item["stage"] == "stopped" or item.get("pending"))
+        return "done" if item and not waiting else "open"
     if kind == "merged":
         return "done" if item and item["stage"] == "merged" else "open"
     if kind == "review":
@@ -4881,6 +4902,13 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
         elif lane.get("waitingOn") == "lead":
             items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane no longer waiting on you",
                           "text": f"{lane['id']} waits on you: {lane.get('focus', '')}"})
+    for item in doc["state"]["queue"]:
+        merge = unaccepted_merge(doc, item) if item["stage"] == "merged" else None
+        if merge:
+            items.append({"holding": True, "source": f"journal entry {merge['id']} (candidate.merged)",
+                          "text": f"{item['subject']} merged before you accepted it, and its checkout is kept until you decide",
+                          "clears": f"{flow_command()} lead-accept {item['subject']}, or journalling decision.recorded "
+                          "for it if it never had a hand-off"})
     resolutions = {entry.get("journal") for entry in read_log("resolutions", c.delivery)}
     for entry in doc["journal"]:
         if entry["kind"] == "blocker.recorded" and not blocker_resolved(c, doc, entry, resolutions):
