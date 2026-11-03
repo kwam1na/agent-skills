@@ -103,7 +103,7 @@ compression-ratio, and elapsed-time limits. The archive contains the validator,
 catalog, selected profile closure, provenance, schemas, inventory, and selected
 skills. Core excludes optional profile bodies; Linear and Jira each add their
 adapter and the two tracking workflows that call the adapter to the complete
-core closure.
+`run-delivery` closure.
 
 An installed product verifies an incoming release against its own limits, so
 raising a limit takes a stepping-stone release. The release that raises a limit
@@ -129,7 +129,9 @@ history page, and tracker and forge snapshots. `run-delivery` adds
 `delivery-views` and the commands that carry out an orchestrated delivery: lens
 round briefs, gate runs, in-app checks under a lease, draft change requests,
 lane hand-offs, and the lead's setup, acceptance, evidence, ship and close-out.
-Its product archive is the one an adopter installs to run deliveries; its
+Its product archive is the one an adopter with no supported tracker installs to run
+deliveries, and an adopter on a tracker gets the same commands from their tracker's
+archive and keeps installing that one, because a generation holds one profile. The
 adoption guide is `skills/run-delivery/references/adopting.md`, and
 `run_delivery.py doctor` checks a repository's setup. Build either profile like
 the others:
@@ -198,19 +200,23 @@ python3 scripts/qualify-linear.py \
   --core-record /tmp/core.qualification.json \
   --linear-archive /tmp/linear.zip \
   --linear-metadata /tmp/linear.release.json \
+  --run-delivery-archive /tmp/run-delivery.zip \
+  --run-delivery-metadata /tmp/run-delivery.release.json \
   --record /tmp/linear.qualification.json
 ```
 
-The record binds the passing core qualification and both exact archive and metadata
-identities. Its scenarios are the core binding, Linear install and host discovery,
+The record binds the passing core qualification and the exact core, Linear and
+`run-delivery` archive and metadata identities. Its scenarios are the core binding, Linear install and host discovery,
 controlled degraded outcomes, and forbidden alternate transport.
 Qualification also rebuilds the supplied Linear archive's core projection and
-requires its archive and metadata bytes to match the separately qualified core.
+requires its archive and metadata bytes to match the separately qualified core, and
+does the same for its `run-delivery` projection.
 For product archives, every runtime component must be byte-identical across
 profiles; only the descriptor's verified workflow-content binding differs.
 
 The transport sensor inspects only the delta between
-the supplied extracted Linear and core candidates. Its tests prove rejection of
+the supplied extracted Linear and `run-delivery` candidates, so it covers what the
+Linear profile adds and not the forge adapters and views it builds on. Its tests prove rejection of
 concrete direct endpoint, SDK, Node HTTP(S), and command transport actions while
 allowing non-executable boundary terminology and unrelated extension code.
 Authentication, unavailable, unsupported,

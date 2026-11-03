@@ -351,6 +351,21 @@ def inspect_candidate_transport_boundary(
     ]
 
 
+def _same_runtime(first: Path, second: Path) -> bool:
+    """Whether two product profiles hold one runtime: only the descriptor's workflow binding may differ."""
+    if first.exists() != second.exists():
+        return False
+    if not first.exists():
+        return True
+    descriptors = [_load_document(runtime / "runtime.json", "runtime") for runtime in (first, second)]
+    for descriptor in descriptors:
+        descriptor.pop("workflowContentSha256")
+    return descriptors[0] == descriptors[1] and all(
+        (first / name).read_bytes() == (second / name).read_bytes()
+        for name in RUNTIME_FILES - {"runtime.json"}
+    )
+
+
 def _record(checkpoint: Checkpoint, result: str, failure: str | None = None) -> dict:
     return {
         "assertionCount": checkpoint.assertion_count,
@@ -592,17 +607,8 @@ def qualify(
         # before using the core descriptor for the exact core reconstruction.
         core_runtime = core_candidate / "runtime"
         linear_runtime = linear_candidate / "runtime"
-        if core_runtime.exists() != linear_runtime.exists():
+        if not _same_runtime(core_runtime, linear_runtime):
             raise ValueError("linear_qualification.core_binding: Linear contains different core bytes")
-        if core_runtime.exists():
-            descriptors = [_load_document(runtime / "runtime.json", "runtime") for runtime in (core_runtime, linear_runtime)]
-            for descriptor in descriptors:
-                descriptor.pop("workflowContentSha256")
-            if descriptors[0] != descriptors[1] or any(
-                (core_runtime / name).read_bytes() != (linear_runtime / name).read_bytes()
-                for name in RUNTIME_FILES - {"runtime.json"}
-            ):
-                raise ValueError("linear_qualification.core_binding: Linear contains different core bytes")
         projected_core = build_release(
             linear_candidate,
             candidate_root / "projected-core.zip",
@@ -615,7 +621,7 @@ def qualify(
             raise ValueError("linear_qualification.core_binding: Linear contains different core bytes")
         # The transport sensor's base: anything it holds leaves the delta, so it must be exactly what Linear builds on.
         base_runtime = run_delivery_candidate / "runtime"
-        if base_runtime.exists() != linear_runtime.exists():
+        if not _same_runtime(base_runtime, linear_runtime):
             raise ValueError("linear_qualification.run_delivery_binding: Linear contains different run-delivery bytes")
         projected_run_delivery = build_release(
             linear_candidate,

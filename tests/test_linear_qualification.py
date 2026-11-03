@@ -628,6 +628,17 @@ class LinearQualificationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "different core bytes"):
                 _load_runner().qualify(*core, directory / "core-record.json", *linear, *base)
 
+            # The core still matching, a base on another runtime is refused in its own right.
+            (runtime / "kernel.mjs").write_text("// product projection fixture\n")
+            core = build("core")
+            linear = build("linear")
+            (runtime / "kernel.mjs").write_text("// different but honestly hashed implementation\n")
+            other_base = build("run-delivery")
+            core_record = directory / "core-record.json"
+            core_record.write_text(_canonical_json(self._core_record_for(*core)), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "different run-delivery bytes"):
+                _load_runner().qualify(*core, core_record, *linear, *other_base)
+
     def test_a_base_other_than_what_linear_builds_on_is_refused(self) -> None:
         # Anything the base holds leaves the sensor's delta, so a base holding a planted file would hide it.
         runner = _load_runner()

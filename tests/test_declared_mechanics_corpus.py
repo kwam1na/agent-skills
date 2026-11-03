@@ -45,6 +45,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "skills/run-delivery/templates/round-brief.md": (
         "It stops only processes it started, by the pid it recorded, never by pattern with `pkill` or `killall`",
     ),
+    "skills/run-delivery/references/adopting.md": (
+        "keep installing its own tracker's release, because a generation holds one profile",
+    ),
     "skills/plan-work/SKILL.md": (
         "Where the repository tracks plans, commit the saved plan under its rules before plan review or removing the"
         " checkout",
@@ -53,6 +56,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "README.md": (
         "On Windows, which is not validated (see below), use `.venv\\Scripts\\python.exe`",
         "Both tracker profiles build on `run-delivery`, so an adopter on one gets the delivery commands too",
+        "--run-delivery-archive /tmp/run-delivery.zip",
+        "the supplied extracted Linear and `run-delivery` candidates",
+        "an adopter on a tracker gets the same commands from their tracker's archive and keeps installing that one",
         "Windows, which is not validated (see above), keeps its native `taskkill /T /F` tree cleanup",
     ),
     "docs/host-adapters.md": (
