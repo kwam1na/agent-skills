@@ -102,6 +102,14 @@ a repository that merges through its forge points them at that instead.
 }
 ```
 
+A repository that delivers to more than one long-lived base, such as `main` and a run of integration branches, lists
+them in the binding's optional `bases`, beside `base.ref`, which stays the default:
+`"bases": ["main", "integration-*"]`. Each entry is an exact branch name, or a pattern whose `*` matches within one
+segment of the name. A delivery to any base that matches then needs no edit to the binding. `lead-setup` requires
+`--base` once `bases` is declared, so where the work lands is settled before any lane starts. Lanes and the merge queue
+read the binding from the delivery's own base, so every base it serves carries a binding that lists it: cut a new base
+after the binding gained `bases`, or commit the binding there too.
+
 The queue's `candidate` step turns a story key into its branch and that branch's tip on the remote:
 
 ```python example file .agents/delivery/candidate.py
@@ -447,6 +455,7 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
 - **`doesn't validate`**: correct the binding against `orchestration-binding/1`; the line names the first problems.
 - **`no delivery base`**: set `base.ref` (and `base.remote`) in the binding.
 - **`the delivery base`**: the base branch isn't on the remote (or, with `--offline`, isn't fetched yet). Push it.
+- **`binding doesn't serve the base`**: see [Base mismatch](#base-mismatch).
 - **`has no .agent-skills/current`**, **`isn't a link inside the repository`**, **`doesn't carry`** or
   **`carries generation`**: commit the installed release (`.agent-skills`, with its `current` link) on the delivery base
   and push it. Lanes resolve the tool from their own checkout of the base.
@@ -483,6 +492,23 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
 - **`fails on`**: a gate fails on the delivery base itself. Repair the base before any lane starts.
 - **`isn't a valid delivery-plan/1`**: the stories' criteria and the finish lines' covers make a plan the view can't
   read. Correct the delivery file at the key path the line names.
+
+### Base mismatch
+
+A delivery's base must be the binding's `base.ref` or match one of its `bases`. That holds for the delivery file's
+`baseBranch`, `lead-setup --base`, a lane's base, and the merge queue's `--base`. Each refuses any other base, naming
+the bases the binding serves:
+
+- **To deliver to that base**, add it, or a pattern that matches it, to the binding's `bases`. In a pattern, `*`
+  matches within one segment of the branch name, so `integration-*` serves `integration-2` but not
+  `integration-2/fix`, and `release/1` needs its own entry or `release/*`.
+- **A base cut before its binding gained `bases`** still holds the old binding, and lanes and the merge queue read the
+  binding from the base itself. `doctor` says so on its release line. Commit the binding with `bases` on that base and
+  push it.
+- **A lane** reads the delivery's settings from `<remote>/<base>`. The base comes from the base the lane was started
+  on, which its checkout records, or from `RUN_DELIVERY_BASE`. Without either, it reads the binding's `base.ref`, and a
+  delivery committed only on another base is missing there: set `RUN_DELIVERY_BASE` to the delivery's base.
+- **The lead** reads its own working tree while its checkout is on a base the binding serves.
 
 ### The merge queue
 

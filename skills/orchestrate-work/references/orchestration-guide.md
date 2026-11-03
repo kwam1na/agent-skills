@@ -739,8 +739,8 @@ by the `orchestration-binding/1` schema in the skill's `schemas.json`, beside
 this guide. The runner reads it from the tip of the remote base branch named
 on its command line, never from a
 candidate or the operator's checkout, so a candidate can never change how it
-is itself checked or merged. A binding whose `base` names a different branch
-is refused with `binding_invalid`.
+is itself checked or merged. A binding that serves a different branch, by
+neither its `base` nor its `bases`, is refused with `binding_invalid`.
 
 ### Commands and placeholders
 
@@ -763,7 +763,8 @@ it is not a freshness proof or permission to skip any admission check.
 | Field | Contents |
 | --- | --- |
 | `schemaVersion` | `orchestration-binding/1`. |
-| `base` | `{remote, ref}`: the branch every candidate merges into. It must match the runner's `--remote` and `--base`. |
+| `base` | `{remote, ref}`: the default branch candidates merge into. `remote` must match the runner's `--remote`, and `--base` must be `ref` or match `bases`. |
+| `bases` | Optional: the other long-lived branches this binding serves, such as `["main", "integration-*"]`. Each entry is an exact branch name, or a pattern whose `*` matches any run of characters within one segment of the name, never a `/`. The runner reads the binding from the base it merges into, so each base it serves carries a binding that lists it. Without `bases`, the binding serves `ref` alone. |
 | `workRoot` | The directory for the runner's temporary checkouts, relative to the checkout's top level unless absolute. The runner deletes what it finds there, so it checks the path against git's own view, never the current directory: `--repo` must be a checkout's top level; `workRoot` must not contain any checkout git lists, the git directory or the common git directory; inside a git directory it sits beside git's own folders there (`objects`, `refs`, `reftable`, `worktrees`, `hooks`, `info`, `logs`, `modules`, `lfs`, `rr-cache`, `branches`, `remotes`, `rebase-merge`, `rebase-apply`, `sequencer`), never in one; inside any checkout it holds no tracked file, sits in no submodule, and is ignored there; `checkouts` and `empty-hooks` under it are never symlinks or junctions. Paths are compared without case or Unicode normal form. The runner marks each checkout it adds, so a killed run's leftovers under `workRoot/checkouts` are pruned at the next start; an unmarked worktree there is refused until its owner removes it with `git worktree remove`. Each refusal is `binding_invalid`, naming the rule. |
 | `candidate` | An argv that resolves a candidate reference to `{branch, head}` as JSON. |
 | `prepare` | An argv list run in every fresh checkout, such as installing dependencies or creating a ref the checks need from `{baseHead}`. |
