@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -915,6 +916,63 @@ class SupervisorTrackerTests(unittest.TestCase):
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1)
         self.assertEqual(len([text for text in epic_comments(backend) if "Delivery closed" in text]), 1,
                          epic_comments(backend))
+
+    def drawn(self, fx: Fixture) -> None:
+        """The binding also renders the line map into the record, as an adopter's live view does."""
+        m = fx.main
+        (m / ".agents/delivery-views.json").write_text(json.dumps({"spec": "delivery-views-config/1"}))
+        binding_path = m / ".agents/orchestration.json"
+        binding = json.loads(binding_path.read_text())
+        binding["state"]["renderers"] = [{"id": "line-map", "output": "line-map.html", "timeoutSeconds": 60, "argv": [
+            sys.executable, "-B", str(fx.release / "skills/delivery-views/scripts/render.py"), "line-map", "--config",
+            ".agents/delivery-views.json", "--binding", ".agents/orchestration.json", "--state-dir", "{stateDirectory}"]}]
+        binding_path.write_text(json.dumps(binding, indent=2))
+        commit(m, "FX-1: the line map in the record")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+
+    def embedded_needs(self, page: str) -> dict:
+        found = re.search(r'<script type="application/json" id="delivery-needs">([^<]*)</script>', page)
+        self.assertIsNotNone(found, "the line map embeds no Needs you list")
+        return json.loads(found.group(1))
+
+    def test_the_line_map_shows_each_pass_s_needs_you_and_none_once_the_supervisor_stops(self) -> None:
+        fx, backend = self.fixture(JiraBackend)
+        self.drawn(fx)
+        self.closable(fx)
+        (fx.tmp / "health").write_text("fail")
+        self.assertIn("fullHealth failed", json.dumps(self.once(fx)))
+        with backend.edit() as store:
+            store["token"] = "revoked"
+        state_tool(fx, "journal", "--kind", "release.finished", "--summary", "Released for the tracker to hear about")
+        written = fx.tmp / "record/needs-you.json"
+        last = self.once(fx)
+        # Both hold the close, and the line map drawn in that pass lists both, from the same list the close read.
+        holding = [item for item in last["needsYou"] if item["holding"]]
+        self.assertEqual(sorted(item["source"] for item in holding), ["fullHealth", "tracker publisher"], last)
+        self.assertTrue(all(item["clears"] for item in last["needsYou"]), last["needsYou"])
+        for item in holding:
+            self.assertIn(item["text"], last["closeHeldBy"])
+        self.assertEqual(kinds(fx, "delivery.closed"), [])
+        drawn = self.embedded_needs((fx.tmp / "record/line-map.html").read_text())
+        self.assertTrue(drawn["running"], drawn)
+        self.assertEqual([(i["holding"], i["source"], i["text"], i["clears"]) for i in drawn["items"]],
+                         [(i["holding"], i["source"], i["text"], i["clears"]) for i in last["needsYou"]])
+        self.assertLess(drawn["at"], drawn["staleAfter"])
+        # The pass ended its run: the list written last says so, and a view drawn now shows none of it.
+        stopped = json.loads(written.read_text())
+        self.assertFalse(stopped["running"], stopped)
+        render = fx.release / "skills/delivery-views/scripts/render.py"
+        page = sh(sys.executable, "-B", render, "line-map", "--config", ".agents/delivery-views.json", "--binding",
+                  ".agents/orchestration.json", "--state-dir", fx.tmp / "record", cwd=fx.main,
+                  input=json.dumps(record(fx))).stdout
+        self.assertFalse(self.embedded_needs(page)["running"])
+        # Clearing one removes it on the next pass; the other still holds.
+        code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.once(fx)
+        drawn = self.embedded_needs((fx.tmp / "record/line-map.html").read_text())
+        self.assertEqual([i["source"] for i in drawn["items"] if i["holding"]], ["tracker publisher"], drawn)
+        self.assertEqual(kinds(fx, "delivery.closed"), [])
 
     def test_a_follow_up_whose_filing_fails_once_holds_the_close_and_is_filed_once(self) -> None:
         fx, backend = self.fixture()
