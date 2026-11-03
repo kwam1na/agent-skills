@@ -780,6 +780,21 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(len([e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]), 1)
         self.assertFalse(any("lane-1" in h for h in held), held)
 
+    def test_a_lane_that_says_it_is_done_after_its_hand_off_is_cleaned_up_when_its_story_merges(self) -> None:
+        fx = self.fixture()
+        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        # The lane's own last word, since its hand-off and seen by a pass before the merge, is that it is done.
+        wt = hand_off(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "finished", "--state", "done")
+        self.once(fx)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        self.once(fx)
+        self.assertFalse(wt.exists(), "a lane done since its hand-off kept its checkout after the merge")
+        self.assertEqual(len([e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]), 1)
+
     def test_the_close_waits_for_its_condition_and_each_failure_path_holds_it(self) -> None:
         fx = self.fixture()
         m = fx.main
