@@ -38,6 +38,8 @@ Plan -> Work -> Review -> Compound.
   bound.
 - Later rounds verify closure and review the delta; only P0 and P1 findings
   block; the lens, not the executor, closes or defers a finding.
+- Decide the compounding response before the final review-and-merge loop, so a
+  note is part of the reviewed candidate.
 - Use specialized review only when the change's risk warrants it.
 - Treat concrete findings as work, then rerun the proving sensor.
 - Do not expand scope for speculative hardening or unrelated cleanup.
@@ -45,8 +47,8 @@ Plan -> Work -> Review -> Compound.
 ## Compound
 
 Choose the smallest durable response to a reusable learning: update existing
-guidance, add a focused sensor, record a follow-up, or explicitly record that no
-durable learning emerged. Do not create documentation for obvious one-off work.
+guidance, add a focused sensor, save a solution note, record a follow-up, or
+explicitly record that no durable learning emerged. Do not create documentation for obvious one-off work.
 Name the tracked follow-up item recorded for every deferral any lens filed as
 part of the delivery's record. One tracked item may carry several deferrals,
 one item per shippable outcome. Where no tracker is configured, those follow-up

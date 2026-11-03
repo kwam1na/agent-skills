@@ -109,7 +109,7 @@ exceeds the old limit.
 The default `core` profile contains the portable delivery posture, normalized
 router, neutral tracker capability contract, bounded planning and execution
 workflows, evidence-first diagnosis, exact caller-selected review acquisition,
-bounded multi-lens review convergence, and a caller-owned compounding decision.
+bounded multi-lens review convergence, and a compounding decision with a default home for solution notes.
 Bootstrap guidance is opt-in. The optional Linear profile adds a
 host-native MCP adapter plus the decomposition and tracked-execution workflows
 that reach the tracker only through it, without changing core behavior when

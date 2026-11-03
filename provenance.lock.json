@@ -41,7 +41,7 @@
       "outputs": [
         {
           "path": "skills/compound-delivery-kernel/SKILL.md",
-          "sha256": "857c8dc6d1af9aa0a447acdf1d9fdb98dc3ee21e15ee9054c5c3e005850d3899"
+          "sha256": "6395c9c185de9ddadba81d26c98243ece568d8d7cc66d66feb2906946006f558"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -60,13 +60,13 @@
       "id": "compound-learning",
       "license": "LicenseRef-Athena-internal",
       "modification": {
-        "reason": "The reusable-learning threshold is narrowed to an evidence-backed caller-owned decision; repository knowledge formats remain overlays.",
+        "reason": "The reusable-learning threshold requires evidence from the delivery; a default note location and shape apply unless a repository declares its own, and the source's machinery is left out.",
         "status": "modified-derivative"
       },
       "outputs": [
         {
           "path": "skills/compound-learning/SKILL.md",
-          "sha256": "16a53ddf49d2f366e606dd49026635fa8d231b3dc52c30c2c5d1c165a9b05506"
+          "sha256": "266698753b1ec7f3eab6098b0e1f3cf88744ca0d132c2cac5802ba7108f3a25a"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -968,7 +968,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "0b2bb9c7d711d9548aea8527b8de1bfa609db07e5d6cd55a0cc6865d68211175"
+          "sha256": "6a5eb0b4fb3c9ab161c31f27aa4b33038113681ba9e76419adabc4e29952bcc0"
         }
       ],
       "owner": "agent-skills-corpus",

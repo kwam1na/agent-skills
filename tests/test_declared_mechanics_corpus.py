@@ -25,6 +25,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "For parallel units and review lenses, list shared ports, browser"
         " sessions, databases, and caches alongside file ownership",
         "Record sensors whose assertions compare to the merge base",
+        "Save the plan in the planning folder the repository's instructions"
+        " declare, otherwise at `docs/plans/<key>.md`, where `<key>` names the"
+        " work, and report the path",
     ),
     "skills/linear-tracker-adapter/SKILL.md": (
         "Apart from `schemaVersion`, which identifies the document format, it"
@@ -200,6 +203,11 @@ class DeclaredMechanicsCorpusTests(unittest.TestCase):
         moved = dict(texts)
         moved[relative] = texts[relative].replace(phrase, "", 1) + " ## Unrelated " + phrase
         self.assertEqual(missing_phrases(moved), missing_phrases(texts))
+
+    def test_where_a_plan_is_saved_sits_in_the_handoff(self) -> None:
+        text = (ROOT / "skills/plan-work/SKILL.md").read_text(encoding="utf-8")
+        section = " ".join(markdown_section(text, "Handoff").split())
+        self.assertIn("Save the plan in the planning folder", section)
 
     def test_host_convention_is_not_named_as_independence(self) -> None:
         text = (ROOT / "skills/obtain-review/SKILL.md").read_text(encoding="utf-8")
