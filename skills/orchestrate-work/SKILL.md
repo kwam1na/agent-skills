@@ -46,8 +46,11 @@ tracker, host or forge.
   or stops that lane's candidate, in the same write: `focus`, `state`,
   `waitingOn` and `since`. A lane with nothing else open rests. A row that doesn't
   name the candidate stays if its lane has another assignment open, or is
-  active and has spoken since its hand-off, and any later `focus` wins. The tool
-  alone keeps a row's `focusAt`. A lane writes only its own
+  active and has spoken since its hand-off. So does a blocked lane's row while it
+  has other work open. Any later `focus` wins, and ends a `waitingOn` the queue
+  wrote unless it sets its own; a new hand-off, or the queue putting the candidate
+  back, ends the queue's words. The tool alone keeps a row's `focusAt` and
+  `focusBy`, which says the queue wrote its words. A lane writes only its own
   lane's `focus`, `state` and `waitingOn`, its own review rounds, and its own
   hand-off, which the tool turns into a queue element, with any suite evidence
   it gives in `queue[i].evidence`, which only a hand-off writes. Every write goes

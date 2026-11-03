@@ -2189,7 +2189,7 @@ class Runner:
                     if stop.reason == "batch_tree_mismatch":
                         # Nothing of it landed; it is batched again once the base is confirmed.
                         with contextlib.suppress(Stop, delivery_state.StateError):
-                            self.set_item(member.subject, stage="queued", checks=[])
+                            self.write(build=_put_back(member.subject))
                     requeue([other.subject for other in keep[keep.index(member) + 1:]] +
                             [other.subject for other in later], stop, queue_stopped=bool(landed))
                     return []
@@ -2415,6 +2415,15 @@ def _finish_build(directory: Path, subject: str, stage: str, stopped: str | None
     return build
 
 
+def _put_back_rows(current: dict, subject: str, fields: dict) -> dict:
+    queue = [{**item, **fields} if item["subject"] == subject else item for item in current["queue"]]
+    return {"queue": queue, "lanes": delivery_state.lane_rows_put_back(current, subject)}
+
+
+def _put_back(subject: str) -> Callable[[dict], tuple[dict, dict]]:
+    return lambda current: (_put_back_rows(current, subject, {"stage": "queued", "checks": []}), {})
+
+
 def _refused_stop(directory: Path, subject: str, head: str | None, reason: str) -> Callable[[dict], tuple[dict, dict]]:
     """Stop a refused candidate only as serve took it: a lane that handed it off again since keeps its new head."""
     finish = _finish_build(directory, subject, "stopped", reason)
@@ -2500,15 +2509,15 @@ def hold_for_setup(state_directory: Path, detail: str, kept: Iterable[str] = (),
     return False
 
 
-def _requeue(subject: str, head: str | None) -> Callable[[dict], tuple[dict | None, dict]]:
+def _requeue(subject: str, head: str | None) -> Callable[[dict], tuple[dict, dict]]:
     """Put a candidate back to queued, as serve took it: a lane that handed it off again since keeps its own."""
 
-    def build(current: dict) -> tuple[dict | None, dict]:
+    def build(current: dict) -> tuple[dict, dict]:
         item = next((entry for entry in current["queue"] if entry["subject"] == subject), None)
         if item is None or item["head"] != head or item["stage"] not in ("queued", "synced", "checked", "stopped"):
             raise Stop("candidate_unknown", f"{subject} changed since serve took it")
         # syncedHead stays: sync may already have pushed it to the candidate's branch, and the next sync accepts it.
-        return None, {"/stage": "queued", "/checks": []}
+        return _put_back_rows(current, subject, {"stage": "queued", "checks": []}), {}
 
     return build
 
@@ -2534,7 +2543,7 @@ def _requeue_after_setup(runner: Runner, taken: list[Result],
             kept.append(subject)
             continue
         with contextlib.suppress(Stop, delivery_state.StateError):
-            runner.write(selector=f"queue[subject={subject}]", build=_requeue(subject, heads.get(subject)))
+            runner.write(build=_requeue(subject, heads.get(subject)))
             requeued.append(subject)
     return requeued, kept
 

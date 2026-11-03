@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from typing import Callable
 from unittest import mock
 
+from tests import test_merge_queue
 from tests.test_merge_queue import MergeQueueTestCase, queue, state_tool
 
 
@@ -97,6 +100,199 @@ class TheQueueWritesTheRow(LaneRowCase):
         self.assertEqual(self.row("lane-2"), before)
 
 
+class TwoCandidatesFromOneLane(LaneRowCase):
+    def both(self) -> None:
+        self.candidate(self.record)
+        self.handed()
+        self.candidate(self.record, {"src/lib.txt": "lib two\n"}, name="second")
+        self.handed("second")
+
+    def test_the_queues_own_words_arent_the_lane_moving_on(self) -> None:
+        self.lanes(lane_entry(focus="feature: review done", state="handed"))
+        self.both()
+        self.run_queue(self.record, "feature")
+        self.assertEqual((self.row()["focus"], self.row()["state"]), ("feature merged", "assigned"))
+        self.run_queue(self.record, "second")
+        self.assertEqual((self.row()["focus"], self.row()["state"], self.row()["waitingOn"]), ("second merged", "idle", None))
+
+    def test_a_batch_rests_the_lane_too(self) -> None:
+        self.lanes(lane_entry(focus="feature: review done", state="handed"))
+        self.both()
+        self.record.runner().run_command("batch", ["feature", "second"])
+        self.assertEqual((self.row()["state"], self.row()["waitingOn"]), ("idle", None))
+        self.assertIn("merged", self.row()["focus"])
+
+    def test_the_queue_saying_one_stopped_stays_while_it_is_open(self) -> None:
+        self.lanes(lane_entry(focus="feature: building"))
+        self.candidate(self.record, {"tests/test_new.txt": "FAIL\n"})
+        self.candidate(self.record, {"src/lib.txt": "lib two\n"}, name="second")
+        self.run_queue(self.record, "feature")
+        self.assertEqual(self.row()["focus"], "feature stopped: check_failed")
+        self.run_queue(self.record, "second")
+        self.assertEqual((self.row()["focus"], self.row()["waitingOn"]), ("feature stopped: check_failed", "lead"))
+
+    def test_a_merged_earlier_candidate_is_no_assignment(self) -> None:
+        self.lanes(lane_entry(focus="feature: building"))
+        self.candidate(self.record)
+        self.run_queue(self.record, "feature")
+        state_tool.set_focus(self.record.state, "lane-1", "second: building", state="working")
+        self.candidate(self.record, {"src/lib.txt": "lib two\n"}, name="second")
+        self.run_queue(self.record, "second")
+        self.assertEqual((self.row()["focus"], self.row()["state"]), ("second merged", "idle"))
+
+
+class AfterAStop(LaneRowCase):
+    def stop(self) -> str:
+        self.lanes(lane_entry())
+        head = self.candidate(self.record, {"tests/test_new.txt": "FAIL\n"})
+        self.run_queue(self.record, "feature")
+        self.assertEqual(self.row()["waitingOn"], "lead")
+        return head
+
+    def test_the_lanes_focus_ends_what_the_queue_said_it_waits_on(self) -> None:
+        self.stop()
+        state_tool.set_focus(self.record.state, "lane-1", "fixing the failing test", state="working")
+        row = self.row()
+        self.assertEqual((row["focus"], row["state"], row["waitingOn"]), ("fixing the failing test", "working", None))
+        self.assertNotIn("focusBy", row)
+
+    def test_a_focus_can_say_it_still_waits(self) -> None:
+        self.stop()
+        state_tool.set_focus(self.record.state, "lane-1", "asking", state="blocked", waiting_on="the lead's answer")
+        self.assertEqual(self.row()["waitingOn"], "the lead's answer")
+
+    def test_a_lanes_own_waiting_on_survives_a_focus_that_doesnt_mention_it(self) -> None:
+        self.lanes(lane_entry())
+        state_tool.set_focus(self.record.state, "lane-1", "asking", state="blocked", waiting_on="the lead's answer")
+        state_tool.set_focus(self.record.state, "lane-1", "still asking")
+        self.assertEqual(self.row()["waitingOn"], "the lead's answer")
+
+    def test_a_new_hand_off_ends_the_queues_words(self) -> None:
+        self.stop()
+        head = self.record.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
+        state_tool.handoff(self.record.state, lane="lane-1", subject="feature", head=head, change_request="c1", rounds=1)
+        row = self.row()
+        self.assertEqual((row["focus"], row["state"], row["waitingOn"]), ("", "handed", None))
+        self.assertNotIn("focusAt", row)
+        self.assertNotIn("focusBy", row)
+        self.assertIn("feature", state_tool.lane_focus(state_tool.read_state(self.record.state))["lane-1"])
+
+    def test_a_new_hand_off_leaves_a_lanes_own_words(self) -> None:
+        self.stop()
+        state_tool.set_focus(self.record.state, "lane-1", "feature fixed", state="working")
+        head = self.record.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
+        state_tool.handoff(self.record.state, lane="lane-1", subject="feature", head=head, change_request="c1", rounds=1)
+        self.assertEqual(self.row()["focus"], "feature fixed")
+
+
+class ABlockedLane(LaneRowCase):
+    def test_with_other_work_open_keeps_its_question(self) -> None:
+        self.lanes({**lane_entry(focus="second: blocked until feature lands", state="blocked"), "waitingOn": "feature landing"})
+        self.candidate(self.record)
+        self.candidate(self.record, {"src/lib.txt": "lib two\n"}, name="second")
+        before = self.row()
+        self.run_queue(self.record, "feature")
+        self.assertEqual(self.row(), before)
+
+    def test_that_has_spoken_since_its_hand_off_keeps_its_row(self) -> None:
+        self.lanes(lane_entry())
+        self.candidate(self.record)
+        self.handed()
+        state_tool.set_focus(self.record.state, "lane-1", "a question", state="blocked", waiting_on="the lead")
+        before = self.row()
+        self.run_queue(self.record, "feature")
+        self.assertEqual(self.row(), before)
+
+
+class TheNameMatch(LaneRowCase):
+    def spoken_since(self, words: str, subject: str = "feature") -> None:
+        self.lanes(lane_entry())
+        self.candidate(self.record, name=subject)
+        self.handed(subject)
+        state_tool.set_focus(self.record.state, "lane-1", words, state="working")
+        self.run_queue(self.record, subject)
+
+    def test_a_longer_name_before_it_is_not_the_candidate(self) -> None:
+        self.spoken_since("pre-feature: building")
+        self.assertEqual(self.row()["focus"], "pre-feature: building")
+
+    def test_a_name_is_matched_as_written_not_as_a_pattern(self) -> None:
+        self.spoken_since("fxature: building", "f.ature")
+        self.assertEqual(self.row()["focus"], "fxature: building")
+
+    def test_at_the_same_moment_as_the_hand_off_the_lane_counts_as_having_spoken(self) -> None:
+        self.lanes(lane_entry())
+        self.candidate(self.record)
+        with mock.patch.object(state_tool, "now", return_value="2031-01-01T00:00:00.000000Z"):
+            self.handed()
+            state_tool.set_focus(self.record.state, "lane-1", "another ticket", state="working")
+        self.run_queue(self.record, "feature")
+        self.assertEqual(self.row()["focus"], "another ticket")
+
+    def test_an_unreadable_journal_keeps_the_row_and_still_writes_the_stage(self) -> None:
+        self.lanes(lane_entry(focus="other words"))
+        self.candidate(self.record)
+        state = state_tool.read_state(self.record.state)
+        with mock.patch.object(state_tool, "read_journal", side_effect=state_tool.StateError("journal_invalid", "unreadable")):
+            rows = state_tool.lane_rows_after(self.record.state, state, "feature")
+        self.assertEqual(rows, state["lanes"])
+
+
+class RoutesOtherThanTheMerge(LaneRowCase):
+    """Each other way the queue or the record moves a stage."""
+
+    # Taken from the class, not imported, so its own tests aren't run again here.
+    break_checkout = test_merge_queue.ServeTests.break_checkout
+    serve = test_merge_queue.ServeTests.serve
+
+    def forge_says_merged(self, head: str) -> None:
+        snapshot = self.directory / "forge.json"
+        snapshot.write_text(json.dumps({"takenAt": state_tool.now(), "source": "forge",
+                                        "items": [{"subject": "feature", "state": "merged", "changeRequest": "change 7", "head": head}]}))
+        state_tool.reconcile(self.record.state, [snapshot])
+
+    def test_a_merge_recorded_from_the_forge_writes_the_row(self) -> None:
+        self.lanes(lane_entry(state="handed"))
+        head = self.candidate(self.record)
+        self.forge_says_merged(head)
+        self.assertEqual(self.record.item("feature")["stage"], "merged")
+        self.assertEqual((self.row()["focus"], self.row()["state"]), ("feature merged", "idle"))
+
+    def test_a_merge_recovered_after_an_interruption_replaces_the_queues_stop(self) -> None:
+        self.lanes(lane_entry())
+        head = self.candidate(self.record)
+        self.record.lead_write(lambda state: state_tool.patch(
+            self.record.state, writer="runner", version=state["version"], selector="queue[subject=feature]", assignments={"/stage": "merging"}))
+        self.record.runner().recover()
+        self.assertEqual(self.row()["focus"], "feature stopped: interrupted")
+        self.forge_says_merged(head)
+        self.assertEqual(self.record.item("feature")["stage"], "merged")
+        self.assertEqual((self.row()["focus"], self.row()["state"], self.row()["waitingOn"]), ("feature merged", "idle", None))
+
+    def test_a_candidate_put_back_after_a_setup_break_no_longer_says_it_stopped(self) -> None:
+        self.lanes(lane_entry(state="handed"))
+        self.candidate(self.record)
+        restore: list[Callable[[], None]] = []
+
+        def break_once(runner, subject) -> None:
+            if not restore:
+                restore.append(self.break_checkout(self.record))
+
+        self.serve(self.record, seams={"after_sync": break_once})
+        self.assertEqual(self.record.item("feature")["stage"], "queued")
+        row = self.row()
+        self.assertEqual((row["focus"], row["state"], row["waitingOn"]), ("", "handed", None))
+
+    def test_serve_says_why_it_stopped_a_refused_candidate(self) -> None:
+        self.lanes(lane_entry(state="handed"))
+        head = self.record.lane_commit("feature", {"src/app.txt": "app two\n"})
+        self.record.enqueue("feature", head, lead_inputs=["no-such-input"])
+        results = self.serve(self.record)
+        reason = results[-1].document()["stop"]["reason"]
+        self.assertEqual(self.record.item("feature")["stage"], "stopped")
+        self.assertEqual(self.row()["focus"], f"feature stopped: {reason}")
+
+
 class TheLanesOwnWordWins(LaneRowCase):
     def test_a_focus_after_the_queues_update_takes_over(self) -> None:
         self.lanes(lane_entry())
@@ -184,6 +380,28 @@ class FieldOwnership(LaneRowCase):
         written = state_tool.patch(self.record.state, writer="runner", version=state["version"],
                                    changes={"lanes": [{**self.row(), "focus": "said", "state": "idle", "waitingOn": None}]})
         self.assertEqual(written["lanes"][0]["focus"], "said")
+
+    def test_a_lead_writing_a_strange_lane_id_is_refused_cleanly(self) -> None:
+        state = state_tool.read_state(self.record.state)
+        with self.assertRaises(state_tool.StateError) as refusal:
+            state_tool.patch(self.record.state, writer="lead", version=state["version"], changes={"lanes": [{"id": ["x"]}]})
+        self.assertEqual(refusal.exception.code, "patch_invalid")
+
+    def test_who_said_it_is_the_tools_alone(self) -> None:
+        self.lanes(lane_entry())
+        self.refused({"lanes": [{**self.row(), "focusBy": "runner"}]})
+        state = state_tool.read_state(self.record.state)
+        written = state_tool.patch(self.record.state, writer="lead", version=state["version"],
+                                   changes={"lanes": [{**self.row(), "focusBy": "runner"}]})
+        self.assertNotIn("focusBy", written["lanes"][0])
+        state = state_tool.read_state(self.record.state)
+        written = state_tool.patch(self.record.state, writer="runner", version=state["version"],
+                                   changes={"lanes": [{**self.row(), "focus": "said"}]})
+        self.assertEqual(written["lanes"][0]["focusBy"], "runner")
+        state = state_tool.read_state(self.record.state)
+        written = state_tool.patch(self.record.state, writer="lead", version=state["version"],
+                                   changes={"lanes": [{**self.row(), "focus": "the lead said"}]})
+        self.assertNotIn("focusBy", written["lanes"][0])
 
     def test_the_time_is_the_tools_alone(self) -> None:
         self.lanes({**lane_entry(), "focusAt": "2020-01-01T00:00:00Z"})

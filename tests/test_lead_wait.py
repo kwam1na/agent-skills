@@ -428,6 +428,14 @@ class QuietLaneTests(RecordCase):
         self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT)
         self.assertEqual([lane["id"] for lane in result["quietLanes"]], ["lane-1"])
 
+    def test_an_impossible_time_doesnt_stop_a_wait_ending(self) -> None:
+        self.record.add_lanes("lane-1")
+        state = state_tool.read_state(self.record.directory)
+        state["lanes"][0]["since"] = "2026-13-45T00:00:00Z"
+        (self.record.directory / "state.json").write_text(state_tool.dumps(state), encoding="utf-8")
+        code, result = self.quiet()
+        self.assertEqual((code, result["quietLanes"]), (state_tool.WAIT_EXPIRED_EXIT, []))
+
     def test_the_threshold_must_be_finite_and_not_negative(self) -> None:
         for value in ("-1", "nan", "inf"):
             with self.subTest(value):

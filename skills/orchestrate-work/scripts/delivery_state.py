@@ -79,7 +79,7 @@ STATE_VERSION = "delivery-state/1"
 WRITERS = ("lead", "runner", "lane")
 # What a lane writes about itself, through the tool.
 LANE_FIELDS = ("focus", "state", "waitingOn", "since")
-# The runner writes a row only to say what became of a candidate; focusAt is the tool's alone, for every writer.
+# The runner writes a row only to say what became of a candidate; focusAt and focusBy are the tool's alone, for every writer.
 RUNNER_LANE = ("focus", "state", "waitingOn", "since")
 # A review round is the lead's or a lane's record of its own review; the runner
 # never reviews, so it never writes one.
@@ -704,29 +704,34 @@ def _stamp_lane(before: dict, after: dict, lane: str) -> None:
         new["since"] = now() if new["state"] != old.get("state") else old.get("since")
 
 
-def _stamp_focus(before: dict, after: dict, spoke: str | None) -> None:
-    """The tool keeps focusAt: it moves when a row's words change or its lane says them again, whoever wrote them."""
+def _stamp_focus(before: dict, after: dict, writer: str, spoke: str | None) -> None:
+    """The tool keeps focusAt and focusBy: when a row's words last changed or its lane said them again, and whether the queue said them."""
     rows = after.get("lanes")
     if not isinstance(rows, list):
         return
     old = {entry.get("id"): entry for entry in before.get("lanes", [])}
     for entry in rows:
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
             continue
-        previous = old.get(entry.get("id"))
+        previous = old.get(entry["id"])
         entry.pop("focusAt", None)
-        if previous is None or previous.get("focus") != entry.get("focus") or entry.get("id") == spoke:
+        entry.pop("focusBy", None)
+        if previous is None or previous.get("focus") != entry.get("focus") or entry["id"] == spoke:
             if entry.get("focus"):
                 entry["focusAt"] = now()
-        elif "focusAt" in previous:
-            entry["focusAt"] = previous["focusAt"]
+                if writer == "runner":
+                    entry["focusBy"] = "runner"
+        else:
+            entry.update({key: previous[key] for key in ("focusAt", "focusBy") if key in previous})
 
 
 def lane_rows_after(directory: Path, state: dict, subject: str, *, stopped: str | None = None) -> list[dict]:
     """The lanes once the queue has merged a candidate, or stopped it for ``stopped``, so the row can't contradict the line.
 
     A row about other work stays: the lane's own word wins. That is one that doesn't name the candidate, from a lane with
-    another assignment open, or still active and speaking since its hand-off. A lane with nothing else open rests.
+    another assignment open, or still active and speaking since its hand-off. A lane blocked with other work open keeps its
+    question, and the queue's word that another candidate stopped stays while that candidate is open. A lane with nothing
+    else open rests.
     """
     rows = [dict(entry) for entry in state["lanes"]]
     lane = next((item.get("lane") for item in state["queue"] if item["subject"] == subject), None)
@@ -736,11 +741,21 @@ def lane_rows_after(directory: Path, state: dict, subject: str, *, stopped: str 
     work = [*state["queue"], *state.get("planned", [])]
     waiting = any(item.get("lane") == lane and item["subject"] != subject and item.get("stage") != "merged" for item in work)
     names = re.search(rf"(?<![\w-]){re.escape(subject)}(?![\w-])", row["focus"]) is not None
-    if row["focus"] and not names:
-        handed = [entry["at"] for entry in read_journal(directory) if entry["kind"] == "candidate.handed" and entry.get("subject") == subject]
-        moved_on = row["state"] in ("assigned", "working", "reviewing", "blocked") and "focusAt" in row and bool(handed) \
-            and _parse_time(row["focusAt"], exact=True) >= _parse_time(handed[-1], exact=True)
-        if waiting or moved_on:
+    by_queue = row.get("focusBy") == "runner"
+    if waiting and row["state"] == "blocked":
+        return rows
+    if by_queue and not names and waiting and row["waitingOn"]:
+        return rows
+    if row["focus"] and not names and not by_queue:
+        if waiting:
+            return rows
+        try:
+            handed = [entry["at"] for entry in read_journal(directory) if entry["kind"] == "candidate.handed" and entry.get("subject") == subject]
+        except (StateError, OSError):
+            # The stage still has to be written, and a row can't be judged without its hand-off, so it stays.
+            return rows
+        if row["state"] in ("assigned", "working", "reviewing", "blocked") and "focusAt" in row and handed \
+                and _parse_time(row["focusAt"], exact=True) >= _parse_time(handed[-1], exact=True):
             return rows
     resting = row["state"]
     if not waiting:
@@ -751,6 +766,18 @@ def lane_rows_after(directory: Path, state: dict, subject: str, *, stopped: str 
         row["since"] = now()
     row.update(focus=f"{subject} merged" if stopped is None else f"{subject} stopped: {stopped}", state=resting,
                waitingOn=None if stopped is None else "lead")
+    return rows
+
+
+def lane_rows_put_back(state: dict, subject: str) -> list[dict]:
+    """The lanes once the queue has put a candidate back: a row saying it stopped no longer holds, so the record's words take over."""
+    rows = [dict(entry) for entry in state["lanes"]]
+    lane = next((item.get("lane") for item in state["queue"] if item["subject"] == subject), None)
+    for row in rows:
+        if row["id"] == lane and row.get("focusBy") == "runner" and row["focus"].startswith(f"{subject} stopped:"):
+            if row["state"] != "handed":
+                row["since"] = now()
+            row.update(focus="", state="handed", waitingOn=None)
     return rows
 
 
@@ -869,6 +896,12 @@ def handoff(
         if state["meta"].get("handoffsNeedAcceptance"):
             item["pending"] = True
         _set_lane_state(state, lane, "handed")
+        for entry in state["lanes"]:
+            # A new hand-off ends what the queue said: the record's derived words read from the line again.
+            if entry["id"] == lane and entry.get("focusBy") == "runner":
+                entry.update(focus="", waitingOn=None)
+                del entry["focusBy"]
+                entry.pop("focusAt", None)
         return copy.deepcopy(item)
 
     _, item = _tool_write(directory, change)
@@ -1020,6 +1053,9 @@ def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None
     # waitingOn is set exactly: a merge patch would read None as removing it, and the record requires it.
     assignments = {} if waiting_on is ... else {"/waitingOn": waiting_on}
     current = read_state(directory)
+    # What the queue said a lane waits on ends when the lane speaks, unless the lane says it still does.
+    if waiting_on is ... and any(entry["id"] == lane and entry.get("focusBy") == "runner" for entry in current["lanes"]):
+        assignments = {"/waitingOn": None}
     return patch(directory, writer="lane", lane=lane, version=current["version"], changes=changes,
                  selector=f"lanes[id={lane}]", assignments=assignments)
 
@@ -1060,12 +1096,12 @@ def patch(
             if violations:
                 raise StateError("writer_not_owned", "; ".join(violations))
             _stamp_lane(current, updated, lane)
-            _stamp_focus(current, updated, lane if isinstance(changes, dict) and "focus" in changes else None)
+            _stamp_focus(current, updated, writer, lane if isinstance(changes, dict) and "focus" in changes else None)
         else:
             violations = ownership_violations(current, updated, writer)
             if violations:
                 raise StateError("field_not_owned", "; ".join(sorted(set(violations))))
-            _stamp_focus(current, updated, None)
+            _stamp_focus(current, updated, writer, None)
         updated["version"] = version + 1
         if isinstance(updated.get("meta"), dict):
             updated["meta"]["updatedAt"] = now()
@@ -2149,8 +2185,9 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                 _write_atomically(directory / RECOVERY_FILE, dumps(intent))
                 try:
                     if item["stage"] != "merged":
-                        patch(directory, writer="runner", version=state["version"], selector=selector,
-                              changes={"stage": "merged", "syncedHead": recovery["head"]})
+                        queue = [{**entry, "stage": "merged", "syncedHead": recovery["head"]} if entry is item else entry for entry in state["queue"]]
+                        patch(directory, writer="runner", version=state["version"],
+                              changes={"queue": queue, "lanes": lane_rows_after(directory, state, recovery["subject"])})
                 except StateError as error:
                     (directory / RECOVERY_FILE).unlink(missing_ok=True)
                     if error.code != "version_stale":
@@ -3568,7 +3605,11 @@ def _quiet_lanes(state: dict, limit: float, at: float) -> dict[str, dict]:
     for lane in state["lanes"]:
         if lane["state"] not in ("assigned", "working", "reviewing"):
             continue
-        moved = max(_parse_time(lane[key], exact=True).timestamp() for key in ("focusAt", "since") if key in lane)
+        try:
+            moved = max(_parse_time(lane[key], exact=True).timestamp() for key in ("focusAt", "since") if key in lane)
+        except ValueError:
+            # The pattern admits an impossible date, and a wait must still end with its events.
+            continue
         if at - moved > limit:
             quiet[_quiet_token(lane)] = {"id": lane["id"], "focus": lane["focus"], "state": lane["state"],
                                          "waitingOn": lane["waitingOn"], "quietSeconds": int(at - moved)}
