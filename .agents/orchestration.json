@@ -155,6 +155,22 @@
       }
     ],
     "publishers": [],
+    "trackerSnapshot": {
+      "argv": [
+        "python3",
+        "-B",
+        "skills/delivery-views/scripts/snapshot.py",
+        "--kind",
+        "linear",
+        "--parent",
+        "{parent}",
+        "--token-env",
+        "LINEAR_API_KEY",
+        "--timeout-seconds",
+        "100"
+      ],
+      "timeoutSeconds": 120
+    },
     "forgeSnapshot": {
       "argv": [
         "python3",
