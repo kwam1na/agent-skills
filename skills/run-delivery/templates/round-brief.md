@@ -85,6 +85,15 @@ A lens is read-only, files no tracked item itself, and cannot return `failed`.
   signals are exposed to you; record that limitation in evidence.
 - Do NOT spawn subagents. Do not push, commit, or touch any checkout other than yours.
 
+## Checks this lens runs
+
+Run the scoped check set below in your checkout, never the repository's full suite: the full suite runs once, outside
+the round, at the delivery's tail. Evidence beyond that set names each additional test file, one
+path at a time, with what it is evidence for; never widen a run to a directory. Mutation and fault injection stay on
+the candidate's changed lines and the code that calls them, and your `evidence` says so.
+
+{{checks}}
+
 ## In-app evidence so far
 
 {{in_app}}
