@@ -1,0 +1,4 @@
+{
+  "description": "The checked-in corpus is the complete positive control; tests copy it before mutation.",
+  "id": "valid-corpus/checked-in"
+}
