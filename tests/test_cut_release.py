@@ -295,6 +295,8 @@ class SetTests(unittest.TestCase):
         self.assertEqual(named(linear, "--core-record"), f"core-{VERSION}.json")
         self.assertEqual(named(linear, "--linear-archive"), f"linear-{VERSION}.zip")
         self.assertEqual(named(linear, "--linear-metadata"), f"linear-{VERSION}.release.json")
+        self.assertEqual(named(linear, "--run-delivery-archive"), f"run-delivery-{VERSION}.zip")
+        self.assertEqual(named(linear, "--run-delivery-metadata"), f"run-delivery-{VERSION}.release.json")
         self.assertEqual(named(linear, "--record"), f"linear-{VERSION}.json")
         self.assertNotIn("--attestation", linear)
         self.assertNotIn("--collector-binding", linear)

@@ -59,7 +59,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
                 self.assertEqual(decision.workflow_skill, expected)
 
     def test_profiles_and_release_payload_include_exact_new_closure(self) -> None:
-        profiles = {name: json.loads((ROOT / f"profiles/{name}.json").read_text()) for name in ("core", "delivery-views", "linear")}
+        profiles = {name: json.loads((ROOT / f"profiles/{name}.json").read_text()) for name in ("core", "delivery-views", "linear", "run-delivery")}
         core_members = resolve_profile("core", profiles)
         self.assertIn("diagnose-work", core_members)
         self.assertIn("obtain-review", core_members)
@@ -71,6 +71,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
                 "delivery-views",
                 "execute-linear-ticket",
                 "linear-tracker-adapter",
+                "run-delivery",
             ]),
         )
         core = _release_view(ROOT, "core")
@@ -79,6 +80,18 @@ class ReleaseIntegrationTests(unittest.TestCase):
         self.assertEqual(set(linear) - set(core), {
             "profiles/delivery-views.json",
             "profiles/linear.json",
+            "profiles/run-delivery.json",
+            "skills/run-delivery/SKILL.md",
+            "skills/run-delivery/adapters/forge_bitbucket.py",
+            "skills/run-delivery/adapters/forge_github.py",
+            "skills/run-delivery/assets/adapter-fixture/index.html",
+            "skills/run-delivery/references/adopting.md",
+            "skills/run-delivery/references/config.md",
+            "skills/run-delivery/scripts/run_delivery.py",
+            "skills/run-delivery/templates/evidence.html",
+            "skills/run-delivery/templates/lane-brief.in-app.md",
+            "skills/run-delivery/templates/lane-brief.md",
+            "skills/run-delivery/templates/round-brief.md",
             "skills/delivery-views/SKILL.md",
             "skills/delivery-views/scripts/snapshot.py",
             "skills/delivery-views/assets/history.css",
@@ -109,10 +122,10 @@ class ReleaseIntegrationTests(unittest.TestCase):
         self.assertEqual(inventories[0], inventories[1])
         self.assertEqual(core_scenarios, [row for row in linear_scenarios if row["profile"] == "core"])
         self.assertEqual({row["profile"] for row in core_scenarios}, {"core"})
-        self.assertEqual({row["profile"] for row in linear_scenarios}, {"core", "delivery-views", "linear"})
+        self.assertEqual({row["profile"] for row in linear_scenarios}, {"core", "delivery-views", "linear", "run-delivery"})
         self.assertEqual(
             {row["skill"] for row in linear_scenarios if row["profile"] == "linear"},
-            set(resolve_profile("linear", profiles)) - set(core_members) - {"delivery-views"},
+            set(resolve_profile("linear", profiles)) - set(core_members) - {"delivery-views", "run-delivery"},
         )
         for path in NEW_PAYLOAD:
             self.assertEqual(core[path], (ROOT / path).read_bytes(), path)
@@ -127,7 +140,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             resolve_profile("run-delivery", profiles),
             sorted([*resolve_profile("delivery-views", profiles), "run-delivery"]),
         )
-        self.assertNotIn("run-delivery", resolve_profile("linear", profiles))
+        self.assertIn("run-delivery", resolve_profile("linear", profiles))
         views = _release_view(ROOT, "delivery-views")
         run_delivery = _release_view(ROOT, "run-delivery")
         own = {path for path in run_delivery if path.startswith("skills/run-delivery/")}
@@ -143,7 +156,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             {"id": "orchestrate-work", "requirement": "required"},
         ])
         self.assertEqual(entry["externalTools"], ["git", "python3", "ps", "lsof", "ffmpeg", "ffprobe", "node", "gh"])
-        self.assertEqual(entry["profiles"], ["run-delivery"])
+        self.assertEqual(entry["profiles"], ["jira", "linear", "run-delivery"])
         scenarios = json.loads((ROOT / "validation-inventory.json").read_text())["scenarios"]
         self.assertIn(
             {"hosts": ["claude-code", "codex"], "id": "run-delivery-profile-selects-run-delivery",

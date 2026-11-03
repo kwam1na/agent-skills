@@ -3,6 +3,9 @@ from __future__ import annotations
 import ast
 import json
 import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -253,6 +256,103 @@ class LinearProfileTests(unittest.TestCase):
                         (extracted / f"skills/{skill}/SKILL.md").is_file()
                     )
 
+    def _earlier_linear(self, directory: Path) -> tuple[Path, Path]:
+        """A linear product as it was before it built on run-delivery."""
+        current, current_metadata = self.build(directory, "current")
+        tree = directory / "earlier-tree"
+        verify_release(current, current_metadata, extract_to=tree)
+        shutil.rmtree(tree / "skills/run-delivery")
+        profile = json.loads((tree / "profiles/linear.json").read_text(encoding="utf-8"))
+        profile["includes"].remove("run-delivery")
+        profile["expectedFiles"] = [path for path in profile["expectedFiles"] if not path.startswith("skills/run-delivery/")]
+        (tree / "profiles/linear.json").write_text(canonical_json(profile), encoding="utf-8")
+        catalog = json.loads((tree / "catalog.json").read_text(encoding="utf-8"))
+        catalog["skills"] = [skill for skill in catalog["skills"] if skill["id"] != "run-delivery"]
+        for skill in catalog["skills"]:
+            skill["profiles"] = [name for name in skill["profiles"] if name != "run-delivery"]
+        (tree / "catalog.json").write_text(canonical_json(catalog), encoding="utf-8")
+        (tree / "profiles/run-delivery.json").unlink()
+        lock = json.loads((tree / "provenance.lock.json").read_text(encoding="utf-8"))
+        lock["entries"] = [entry for entry in lock["entries"] if entry["id"] != "run-delivery"]
+        (tree / "provenance.lock.json").write_text(canonical_json(lock), encoding="utf-8")
+        inventory = json.loads((tree / "validation-inventory.json").read_text(encoding="utf-8"))
+        inventory["scenarios"] = [row for row in inventory["scenarios"]
+                                  if "run-delivery" not in (row.get("profile"), row.get("skill"))]
+        inventory["expectedScenarioCount"] = len(inventory["scenarios"])
+        (tree / "validation-inventory.json").write_text(canonical_json(inventory), encoding="utf-8")
+        archive, metadata = directory / "earlier.zip", directory / "earlier.release.json"
+        build_release(tree, archive, metadata, release_id="earlier-linear", profile_id="linear")
+        return archive, metadata
+
+    def test_an_adopter_on_the_earlier_linear_profile_takes_run_delivery_on_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            earlier, earlier_metadata = self._earlier_linear(directory)
+            current, current_metadata = self.build(directory, "next")
+            repository = initialize_repository(directory)
+            with mock.patch.dict(os.environ, {"AGENT_SKILLS_EXECUTION_CONTEXT": "", "GITHUB_EVENT_NAME": ""}):
+                Lifecycle(repository).install(earlier, earlier_metadata, maintainer=True)
+                self.assertFalse((repository / ".agents/skills/run-delivery").exists())
+                # What the apply command calls.
+                result = Lifecycle(repository).install(current, current_metadata, maintainer=True)
+            self.assertEqual(result["status"]["lifecycle"], "current")
+            self.assertEqual(result["status"]["active"]["profile"], "linear")
+            self.assertTrue(all(exposure["state"] == "current" for exposure in result["status"]["exposures"]))
+            for host in (".agents", ".claude"):
+                with self.subTest(host=host):
+                    self.assertTrue((repository / host / "skills/run-delivery/SKILL.md").is_file())
+                    self.assertTrue((repository / host / "skills/linear-tracker-adapter/SKILL.md").is_file())
+            done = subprocess.run(
+                [sys.executable, "-B", ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py", "doctor", "--offline"],
+                cwd=repository, capture_output=True, text=True, check=False, timeout=120,
+            )
+            # 1 names what this repository has yet to set up; 2 would be a tool that cannot run here.
+            self.assertIn(done.returncode, (0, 1), done.stdout + done.stderr)
+            self.assertNotIn("Traceback", done.stderr)
+            self.assertIn("POSIX", done.stdout)
+
+    def test_a_skill_of_the_adopters_own_named_run_delivery_is_a_conflict_not_an_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            earlier, earlier_metadata = self._earlier_linear(directory)
+            current, current_metadata = self.build(directory, "next")
+            repository = initialize_repository(directory)
+            with mock.patch.dict(os.environ, {"AGENT_SKILLS_EXECUTION_CONTEXT": "", "GITHUB_EVENT_NAME": ""}):
+                Lifecycle(repository).install(earlier, earlier_metadata, maintainer=True)
+                own = repository / ".agents/skills/run-delivery/SKILL.md"
+                own.parent.mkdir(parents=True)
+                own.write_text("the adopter's own\n", encoding="utf-8")
+                with self.assertRaises(Exception) as refused:
+                    Lifecycle(repository).install(current, current_metadata, maintainer=True)
+            self.assertIn("conflict", str(refused.exception).casefold())
+            self.assertEqual(own.read_text(encoding="utf-8"), "the adopter's own\n")
+
+    def test_run_delivery_asks_nothing_of_a_host_that_only_installs_linear(self) -> None:
+        # What can be shown off Windows: the install runs nothing of run-delivery's and needs none of its tools,
+        # and no path in the archive is one Windows cannot hold. The tool's own refusal on Windows is tested with it.
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            archive, metadata = self.build(directory, "windows")
+            with zipfile.ZipFile(archive) as release:
+                for name in release.namelist():
+                    for part in name.split("/"):
+                        with self.subTest(part=part):
+                            self.assertNotRegex(part, r'[<>:"|?*\\]|[. ]$')
+                            self.assertNotRegex(part.split(".")[0].upper(), r"^(CON|PRN|AUX|NUL|COM\d|LPT\d)$")
+                lowered = [name.casefold() for name in release.namelist()]
+                self.assertEqual(len(lowered), len(set(lowered)))
+            tools = directory / "tools"
+            tools.mkdir()
+            (tools / "git").symlink_to(shutil.which("git"))
+            repository = initialize_repository(directory)
+            with mock.patch.dict(os.environ, {"AGENT_SKILLS_EXECUTION_CONTEXT": "", "GITHUB_EVENT_NAME": "",
+                                              "PATH": str(tools)}), \
+                    mock.patch.object(subprocess, "Popen", wraps=subprocess.Popen) as started:
+                result = Lifecycle(repository).install(archive, metadata, maintainer=True)
+            self.assertEqual(result["status"]["lifecycle"], "current")
+            for call in started.call_args_list:
+                self.assertNotIn("run_delivery", str(call.args[0]))
+
     def test_linear_archive_is_deterministic_verified_and_installable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -329,14 +429,14 @@ class LinearProfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             archive, _ = self.build(directory, "linear")
-            core_archive = directory / "core.zip"
-            core_metadata = directory / "core.release.json"
+            base_archive = directory / "run-delivery.zip"
+            base_metadata = directory / "run-delivery.release.json"
             build_release(
                 ROOT,
-                core_archive,
-                core_metadata,
-                release_id="core-v1",
-                profile_id="core",
+                base_archive,
+                base_metadata,
+                release_id="run-delivery-v1",
+                profile_id="run-delivery",
             )
             with zipfile.ZipFile(archive) as release:
                 names = release.namelist()
@@ -350,8 +450,8 @@ class LinearProfileTests(unittest.TestCase):
                     for name in names
                     if name.startswith("skills/linear-tracker-adapter/")
                 }
-            with zipfile.ZipFile(core_archive) as release:
-                core_python_sources = {
+            with zipfile.ZipFile(base_archive) as release:
+                base_python_sources = {
                     name: release.read(name).decode("utf-8")
                     for name in release.namelist()
                     if name.endswith(".py")
@@ -378,13 +478,8 @@ class LinearProfileTests(unittest.TestCase):
                         for alias in node.names
                     )
                     self.assertTrue(forbidden_imports.isdisjoint(imported))
-            # The linear profile also includes the delivery-views profile, whose
-            # views and snapshot commands are not the tracker adapter's transport.
-            self.assertEqual(
-                {name: source for name, source in python_sources.items()
-                 if not name.startswith("skills/delivery-views/")},
-                core_python_sources,
-            )
+            # The tracker profile adds no Python to the run-delivery profile it builds on.
+            self.assertEqual(python_sources, base_python_sources)
             self.assertEqual(
                 set(adapter_files),
                 {
