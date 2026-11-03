@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_ENVIRONMENT = ".venv"
 NODE_MINIMUM = 20
 NODE_MISSING = (
     "Node.js 20 or newer, with npm, is required for the page-test lane; "
@@ -24,9 +26,9 @@ def environment_python(environment: Path) -> Path:
     return environment / "bin" / "python"
 
 
-def create_environment(root: Path) -> Path:
+def create_environment(root: Path, name: str = DEFAULT_ENVIRONMENT) -> Path:
     root = root.resolve(strict=True)
-    environment = root / ".venv"
+    environment = root / name
     subprocess.run(
         [sys.executable, "-m", "venv", str(environment)],
         cwd=root,
@@ -48,13 +50,13 @@ def node_tools() -> tuple[str, str]:
     raise SystemExit(NODE_MISSING)
 
 
-def bootstrap(root: Path = ROOT) -> Path:
+def bootstrap(root: Path = ROOT, environment: str = DEFAULT_ENVIRONMENT) -> Path:
     root = root.resolve(strict=True)
     # The page-test lane is development-only: a checkout that declares it
     # installs its locked packages into the checkout, never into a release.
     page_lane = (root / "package-lock.json").is_file()
     npm = node_tools()[1] if page_lane else None
-    interpreter = create_environment(root)
+    interpreter = create_environment(root, environment)
     subprocess.run(
         [str(interpreter), "-m", "pip", "install", "-e", ".[test]"],
         cwd=root,
@@ -70,4 +72,10 @@ def bootstrap(root: Path = ROOT) -> Path:
 
 
 if __name__ == "__main__":
-    print(bootstrap())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--environment",
+        default=DEFAULT_ENVIRONMENT,
+        help="the environment's folder in the checkout, so a second Python leaves .venv alone",
+    )
+    print(bootstrap(environment=parser.parse_args().environment))

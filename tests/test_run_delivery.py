@@ -16,7 +16,9 @@ their own signal handlers, working directory and module state.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -2486,6 +2488,19 @@ class RunDeliveryPlanTests(unittest.TestCase):
         fx.flow("lead-reconcile", cwd=m)
         self.assertEqual(self.plan(fx)["evidence"]["FX-2"]["in-app-loaded"]["state"], "todo")
 
+    def test_a_second_separator_reaches_the_adapter_as_given(self) -> None:
+        fx = self.fixture()
+        plan_delivery(fx)
+        fx.flow("lead-init", cwd=fx.main)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        fx.flow("gate", "FX-2", cwd=wt)
+        code, out = fx.flow("app-check", "FX-2", "reader", "--mode", "loaded", "--path", "/one", "--eval", "true",
+                            "--", "--", "--fixture-user", "reader", cwd=wt)
+        record = json.loads((wt / ".orchestration/review/FX-2/app-checks/reader.json").read_text())
+        self.assertEqual(record["passthrough"], ["--", "--fixture-user", "reader"], out)
+
     def test_a_check_stays_current_through_commits_that_change_no_shipped_file(self) -> None:
         fx = self.fixture()
         plan_delivery(fx)
@@ -3441,6 +3456,15 @@ class RunDeliveryArgumentTests(unittest.TestCase):
             self.tool.main(["--delivery", "lead-assign", "app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one", "--", "x"])
             self.tool.main(["--delivery=lead-assign", "app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one", "--", "y"])
         self.assertEqual(received, [["x"], ["y"]])
+
+    def test_an_abbreviated_top_level_option_is_refused_on_every_python(self) -> None:
+        # The command is found after `--delivery` as spelled, so a shortened spelling is an error, not a 3.11-only one.
+        with mock.patch.object(self.tool, "app_check", side_effect=AssertionError("reached the command")), \
+                mock.patch.object(self.tool.signal, "signal"), contextlib.redirect_stderr(io.StringIO()) as stderr, \
+                self.assertRaises(SystemExit) as refused:
+            self.tool.main(["--deliv", "K", "app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one", "--", "x"])
+        self.assertEqual(refused.exception.code, 2)
+        self.assertIn("--deliv", stderr.getvalue())
 
     def test_no_separator_leaves_the_arguments_as_they_were(self) -> None:
         given = ["app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one"]

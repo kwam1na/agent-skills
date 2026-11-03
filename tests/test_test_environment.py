@@ -21,6 +21,20 @@ def _load_bootstrap():
     return module
 
 
+class NamedEnvironmentTests(unittest.TestCase):
+    def test_an_environment_can_be_named_and_the_default_stays_the_checkouts_venv(self) -> None:
+        bootstrap = _load_bootstrap()
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(bootstrap.subprocess, "run") as run:
+            root = Path(temporary)
+            named = bootstrap.bootstrap(root, environment=".venv-3.11")
+            default = bootstrap.bootstrap(root)
+        root = root.resolve()
+        self.assertEqual(named, bootstrap.environment_python(root / ".venv-3.11"))
+        self.assertEqual(default, bootstrap.environment_python(root / ".venv"))
+        created = [call.args[0][-1] for call in run.call_args_list if "venv" in call.args[0]]
+        self.assertEqual(created, [str(root / ".venv-3.11"), str(root / ".venv")])
+
+
 def _write_dependency_wheel(path: Path, identity: str) -> None:
     dist_info = "fixture_dependency-1.0.dist-info"
     files = {

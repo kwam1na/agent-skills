@@ -3466,7 +3466,8 @@ class SnapshotCleanupTests(unittest.TestCase):
             if absent and waitid is not None:
                 os.waitid = waitid
 
-    def after_the_first_freeze(self, *, interrupt: bool = False, blind: bool = False, without: Path | None = None):
+    def after_the_first_freeze(self, *, interrupt: bool = False, blind: bool = False, without: Path | None = None,
+                               always: bool = False, restarted: Path | None = None):
         """What happens at the first table read after a real freeze, however many reads came before it."""
         real_table, real_environment, real_signal = state_tool._process_table, state_tool._process_environment, state_tool._signal_selected
         froze, fired = [], []
@@ -3483,11 +3484,18 @@ class SnapshotCleanupTests(unittest.TestCase):
                 fired.append(True)
                 if interrupt:
                     raise KeyboardInterrupt
-                if without is not None and read is not None:
+            if froze and read is not None:
+                if without is not None and (always or len(fired) == 1):
                     read = {pid: row for pid, row in read.items() if pid != int(without.read_text())}
+                if restarted is not None and int(restarted.read_text()) in read:
+                    pid = int(restarted.read_text())
+                    read = {**read, pid: (*read[pid][:3], read[pid][3] + 60)}
+                fired.append(True)
             return read
 
         def environment(pid: int) -> list[bytes] | None:
+            if restarted is not None and froze and pid == int(restarted.read_text()):
+                return []  # the process that took the pid carries no marker of this run
             return None if blind and fired else real_environment(pid)
 
         return mock.patch.multiple(state_tool, _process_table=table, _process_environment=environment, _signal_selected=signalled)
@@ -3568,20 +3576,74 @@ class SnapshotCleanupTests(unittest.TestCase):
             with contextlib.suppress(OSError, ValueError):
                 os.kill(int(second.read_text()), signal.SIGKILL)
 
-    def test_a_frozen_pid_the_table_no_longer_holds_is_not_signalled_again(self) -> None:
-        argv, pid_file = self.command(detached=True)
-        self.previewed(argv, pid_file)
-        argv, pid_file = self.command(detached=True)
+    def signalled_after_the_freeze(self, argv: list[str], **freeze: Path | bool) -> list[int]:
         real_frozen, signalled = state_tool._signal_frozen, []
 
         def frozen(pids: list[int], signum: signal.Signals) -> None:
             signalled.extend(pids)
             real_frozen(pids, signum)
 
-        # The read after the freeze reports it gone, as if another actor killed it.
-        with self.after_the_first_freeze(without=pid_file), mock.patch.object(state_tool, "_signal_frozen", frozen):
+        with self.after_the_first_freeze(**freeze), mock.patch.object(state_tool, "_signal_frozen", frozen):
             state_tool._run_bounded(argv, 20, 4096)
-        self.assertNotIn(int(pid_file.read_text()), signalled, "its pid may be another process's by now")
+        return signalled
+
+    def test_a_frozen_pid_the_table_no_longer_holds_is_not_signalled_again(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=True)
+        # Every read after the freeze reports it gone, as if another actor killed it.
+        signalled = self.signalled_after_the_freeze(argv, without=pid_file, always=True)
+        child = int(pid_file.read_text())
+        self.assertNotIn(child, signalled, "its pid may be another process's by now")
+        with contextlib.suppress(OSError):
+            os.kill(child, signal.SIGKILL)
+
+    def test_a_frozen_pid_now_held_by_a_later_process_is_not_signalled(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=True)
+        # The table holds the pid with a later start: another actor killed it and the pid was reused.
+        signalled = self.signalled_after_the_freeze(argv, restarted=pid_file)
+        child = int(pid_file.read_text())
+        self.assertNotIn(child, signalled, "that pid is another process's by now")
+        with contextlib.suppress(OSError):
+            os.kill(child, signal.SIGKILL)
+
+    def test_a_frozen_process_missing_from_one_read_is_still_killed(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=True)
+        # One read missed it; it is alive and stopped, and only this run would ever kill it.
+        self.signalled_after_the_freeze(argv, without=pid_file)
+        child = int(pid_file.read_text())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not self.gone_now(child):
+            time.sleep(0.05)
+        self.assertTrue(self.gone_now(child), "killed, not left stopped")
+
+    def test_an_interrupt_before_the_first_read_leaves_what_it_never_selected_running(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        real_table, calls = state_tool._process_table, []
+
+        def table() -> dict | None:
+            calls.append(True)
+            if len(calls) == 1:
+                raise KeyboardInterrupt
+            return real_table()
+
+        with mock.patch.object(state_tool, "_process_table", table), self.assertRaises(KeyboardInterrupt):
+            state_tool._run_bounded(argv, 20, 4096)
+        child = int(pid_file.read_text())
+        self.addCleanup(lambda: self.kill_quietly(child))
+        self.assertFalse(self.gone_now(child))
+        self.assertNotIn("T", self.state(child), "never frozen")
+        docstring = " ".join(state_tool._run_bounded.__doc__.split())
+        self.assertIn("An interrupt during its first read of the process table leaves them running", docstring)
+
+    @staticmethod
+    def kill_quietly(pid: int) -> None:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
 
     def test_a_command_reaped_elsewhere_is_previewed_without_its_group(self) -> None:
         argv, pid_file = self.command(detached=False)

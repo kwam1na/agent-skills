@@ -21,7 +21,7 @@ PLAN_CASES = ("plan-in-app", "plan-record-only", "plan-review")
 RECORDS = CORPUS / "plan-records"
 HEX = re.compile(r"\b[0-9a-f]{40}\b|\b[0-9a-f]{64}\b")
 TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z")
-SECONDS = re.compile(r'"(\w*[Ss]econds|durationSeconds)": \d+')
+SECONDS = re.compile(r'"(?:\w*[Ss]econds|runs)": (?:\d+|\[[\d\s,]*\])')
 
 
 def shape(text: str) -> str:
@@ -31,7 +31,7 @@ def shape(text: str) -> str:
     def token(match: re.Match) -> str:
         return seen.setdefault(match.group(0), f"<{len(seen)}>")
 
-    return SECONDS.sub(lambda match: f'"{match.group(1)}": 0', TIME.sub("<time>", HEX.sub(token, text)))
+    return SECONDS.sub(lambda match: re.sub(r"\d+", "0", match.group(0)), TIME.sub("<time>", HEX.sub(token, text)))
 
 
 def load_capture():
@@ -71,6 +71,15 @@ class PlanFixtureTests(unittest.TestCase):
                     fresh = (out / f"{name}.json").read_text(encoding="utf-8")
                     committed = (RECORDS / f"{name}.json").read_text(encoding="utf-8")
                     self.assertEqual(shape(committed), shape(fresh))
+
+    def test_a_shape_holds_no_duration_however_long_a_check_took(self) -> None:
+        # A slower system takes a second where the capture took none, in the history's lists as much as anywhere.
+        def record(seconds: int) -> str:
+            return json.dumps({"durationSeconds": seconds, "checkHistory": {"checks": {"unit": {"flakes": 0, "seconds": [seconds, 0]}},
+                                                                            "runs": [seconds, 0]}}, indent=2) + "\n"
+
+        self.assertEqual(shape(record(0)), shape(record(7)))
+        self.assertNotEqual(shape(json.dumps({"flakes": [0, 0]}, indent=2)), shape(json.dumps({"flakes": [1, 0]}, indent=2)))
 
     def test_the_synced_records_carry_a_runner_synced_head_and_keep_the_reviewed_heads_observation(self) -> None:
         # The runner moves syncedHead; the captured review stays an available observation of the head it reviewed.
