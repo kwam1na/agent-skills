@@ -465,8 +465,10 @@ What waits on you is what holds the close, and every lead command ends by saying
 supervisor's last pass found, as `doctor --delivery` does too. Each pass writes the same list to the flow log's
 `<delivery-key>.supervisor.jsonl`. It names a story not yet merged, a finish line not met, a lane still busy, and
 "Needs you": a failed `fullHealth`, a broken base, a lane that is blocked or waits on you, an unresolved blocker, a
-child process that won't stay up, and the tracker publisher's own items. The live view doesn't show this list. Resolve
-a blocker, or rerun a `fullHealth` you judge flaky, with `lead-resolve`:
+child process that won't stay up, and the tracker publisher's own items. The line map's Now chapter shows the same
+"Needs you" from the supervisor's last pass, what holds the close first, each item with where it comes from and what
+clears it. While the supervisor isn't running, or its list is a pass overdue, the chapter says the list is
+unavailable. Resolve a blocker, or rerun a `fullHealth` you judge flaky, with `lead-resolve`:
 
 ```text example outline
 run_delivery.py lead-resolve <journal id> --why "<what was decided>"

@@ -4751,11 +4751,14 @@ def journal_finish_met(c, doc: dict) -> list[str]:
     return said
 
 
-def render_views(c) -> str:
-    """Render with the binding's whole `state` member, publishers included, as the runner's writes do."""
+def render_views(c, only: str | None = None) -> str:
+    """Render with the binding's whole `state` member, publishers included, as the runner's writes do; `only`
+    "publishers" or "renderers" runs just that half, so a pass can derive "Needs you" between the two."""
     config = binding_state(c)
     if config is None:
         return "no binding: nothing to render"
+    if only is not None:
+        config = {**config, "renderers" if only == "publishers" else "publishers": []}
     script = c.release / "skills/orchestrate-work/scripts/render_state.py"
     done = run([sys.executable, "-B", str(script), "--dir", str(c.state), "--state-config", json.dumps(config)],
                cwd=c.root, check=False, timeout=300)
@@ -4806,42 +4809,91 @@ def blocker_resolved(c, doc: dict, entry: dict, resolutions: set[int]) -> bool:
     return False
 
 
+def tracker_item(item: dict, mode: str | None) -> dict:
+    """A tracker "Needs you" item with where it comes from and what clears it: the publisher's lag clears when it
+    posts, the host outbox's when it is posted and acknowledged; a ledger line is only shown, and stays."""
+    if not item["holding"]:
+        return {**item, "source": "tracker ledger", "clears": "nothing: it stays listed for the friction note"}
+    if mode == "host":
+        return {**item, "source": "host outbox", "clears": "posting the updates with your tracker tools, then ack"}
+    return {**item, "source": "tracker publisher", "clears": "the publisher posting those entries on a later pass"}
+
+
 def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = False) -> list[dict]:
-    """What waits on the lead or the operator, each {holding, text}: holding items hold the close; shown ones are
-    listed in the friction note. The close condition and the supervisor's pass log read this same list."""
-    items = tracker_publisher.needs_you(doc, c.state, c.flow_log, c.delivery, tracker_conf(c), closing=closing)
+    """What waits on the lead or the operator, each {holding, source, text, clears}: holding items hold the close;
+    shown ones are listed in the friction note. The close condition, the supervisor's pass log and the line map read
+    this same list."""
+    conf = tracker_conf(c)
+    items = [tracker_item(item, conf.get("mode")) for item in
+             tracker_publisher.needs_you(doc, c.state, c.flow_log, c.delivery, conf, closing=closing)]
     head = base_head(c)
     last, rerun = full_health_results(c, head) if head else (None, False)
     if last and last["result"] == "failed" and not rerun:
-        items.append({"holding": True, "text": f"fullHealth failed at {head[:10]}: {last.get('output', '')[-300:]}. It "
+        items.append({"holding": True, "source": "fullHealth",
+                      "text": f"fullHealth failed at {head[:10]}: {last.get('output', '')[-300:]}. It "
                       f"runs again at a later base head, or when you judge it flaky: {flow_command()} lead-resolve "
-                      "full-health --why TEXT"})
+                      "full-health --why TEXT",
+                      "clears": f"a pass at a later base head, or {flow_command()} lead-resolve full-health --why TEXT"})
     events = [e for e in doc["journal"] if e["kind"] in ("base.broken", "base.repaired")]
     if events and events[-1]["kind"] == "base.broken":
-        items.append({"holding": True, "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. "
-                      "Repair it, then journal base.repaired"})
+        items.append({"holding": True, "source": f"journal entry {events[-1]['id']} (base.broken)",
+                      "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. "
+                      "Repair it, then journal base.repaired", "clears": "journalling base.repaired"})
     for lane in doc["state"]["lanes"]:
         if lane.get("state") == "blocked":
-            items.append({"holding": True, "text": f"{lane['id']} is blocked: {lane.get('focus', '')}"})
+            items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane's state changing",
+                          "text": f"{lane['id']} is blocked: {lane.get('focus', '')}"})
         elif lane.get("waitingOn") == "lead":
-            items.append({"holding": True, "text": f"{lane['id']} waits on you: {lane.get('focus', '')}"})
+            items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane no longer waiting on you",
+                          "text": f"{lane['id']} waits on you: {lane.get('focus', '')}"})
     resolutions = {entry.get("journal") for entry in read_log("resolutions", c.delivery)}
     for entry in doc["journal"]:
         if entry["kind"] == "blocker.recorded" and not blocker_resolved(c, doc, entry, resolutions):
-            items.append({"holding": True, "text": f"Blocker {entry['id']}"
+            runners = not entry.get("lane") and not entry.get("subject") and entry.get("summary", "").startswith(RUNNER_HELD)
+            items.append({"holding": True, "source": f"journal entry {entry['id']} (blocker.recorded)",
+                          "text": f"Blocker {entry['id']}"
                           + (f" ({entry.get('subject') or entry.get('lane')})" if entry.get("subject") or entry.get("lane")
                              else "") + f": {entry.get('summary', '')[:300]}. Resolve it with {flow_command()} "
-                          f"lead-resolve {entry['id']} --why TEXT"})
+                          f"lead-resolve {entry['id']} --why TEXT",
+                          "clears": ("the runner's hold clearing, journalling base.repaired, or " if runners else "")
+                          + f"{flow_command()} lead-resolve {entry['id']} --why TEXT"})
     for name in flapping:
-        items.append({"holding": True, "text": f"The supervisor's {name} won't stay up; its log is "
+        items.append({"holding": True, "source": f"the supervisor's {name}", "clears": f"the {name} staying up",
+                      "text": f"The supervisor's {name} won't stay up; its log is "
                       f"{lead_file(c, f'supervisor.{name}.log')}"})
     if c.forge.get("mergeNeedsReady") and not authority().get("readyPullRequests"):
         drafts = [item["subject"] for item in doc["state"]["queue"] if item["stage"] != "merged" and not item.get("pending")
                   and not any(a.get("ready") for a in read_log("acceptance", item["subject"]))]
         if drafts:
-            items.append({"holding": True, "text": f"Accepted as drafts while the merge step refuses drafts: "
-                          f"{', '.join(drafts)}. Mark each ready, then lead-accept --requeue it if it stopped"})
+            items.append({"holding": True, "source": "acceptance", "text": f"Accepted as drafts while the merge step "
+                          f"refuses drafts: {', '.join(drafts)}. Mark each ready, then lead-accept --requeue it if it "
+                          "stopped", "clears": "marking each ready, then lead-accept --requeue for one that stopped"})
     return items
+
+
+NEEDS_FILE = "needs-you.json"
+
+
+def write_needs(c, items: list[dict] | None, number: int, started: float) -> None:
+    """Replace the record's "Needs you" list, which renderers read: this pass's items, or, with None, the word that
+    the supervisor isn't running. A running list is stale once one pass is overdue: after the pass interval and once
+    more the longer of that interval and this pass's own time so far."""
+    at = datetime.datetime.now(datetime.timezone.utc)
+    written: dict = {"spec": "delivery-needs-you/1", "running": items is not None, "pass": number,
+                     "at": at.strftime("%Y-%m-%dT%H:%M:%SZ"), "items": items or []}
+    if items is not None:
+        interval = supervisor_pass_seconds(c)
+        stale = at + datetime.timedelta(seconds=interval + max(interval, time.monotonic() - started))
+        written["staleAfter"] = stale.strftime("%Y-%m-%dT%H:%M:%SZ")
+    path = c.state / NEEDS_FILE
+    staging = path.with_name(f".{NEEDS_FILE}.{os.getpid()}")
+    staging.write_text(json.dumps(written, indent=2) + "\n")
+    with open(c.state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            os.replace(staging, path)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def removed_subjects(c) -> set[str]:
@@ -5148,14 +5200,25 @@ class Supervisor:
 
     def one_pass(self, number: int) -> bool:
         c = self.c
+        started = time.monotonic()
         entry: dict = {"pass": number, "startedAt": now()}
         try:
             c.load_delivery(c.delivery)
         except (Stop, ValueError) as error:  # a delivery file saved mid-edit
             entry["delivery"] = f"not reread: {error}"
+        derived: dict = {}
+
+        def derive() -> str:
+            # After the publishers, so their ledger is current; before the views, so the line map shows this list.
+            derived["doc"] = load_state()
+            derived["needs"] = needs_you(c, derived["doc"], self.flapping())
+            write_needs(c, derived["needs"], number, started)
+            return f"{len(derived['needs'])} item(s)"
+
         steps = (("reconcile", reconcile_once), ("cleanup", lambda: cleanup_merged(c, load_state())),
-                 ("finish", lambda: journal_finish_met(c, load_state())), ("render", lambda: render_views(c)),
-                 ("latest", lambda: str(copy_latest(c))))
+                 ("finish", lambda: journal_finish_met(c, load_state())),
+                 ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
+                 ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:
             try:
                 entry[name] = step()
@@ -5163,8 +5226,8 @@ class Supervisor:
                 entry[name] = f"failed: {error}"
         closed = False
         try:
-            doc = load_state()
-            needs = needs_you(c, doc, self.flapping())
+            doc = derived.get("doc") or load_state()
+            needs = derived["needs"] if "needs" in derived else needs_you(c, doc, self.flapping())
             holds = close_holds(c, doc, needs)
             entry["needsYou"], entry["closeHeldBy"] = needs, holds
             if not holds:
@@ -5217,6 +5280,11 @@ class Supervisor:
                     return
         finally:
             self.stop_children()
+            # Drawn and copied once more, so neither the line map nor `latest` keeps the last running list.
+            with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic())
+                render_views(c, only="renderers")
+                copy_latest(c)
             fcntl.flock(self.handle, fcntl.LOCK_UN)
             self.handle.close()
 

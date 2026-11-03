@@ -4252,6 +4252,13 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
         self.assertIsNotNone(embedded, "the installed renderer drew no plan chapter")
         self.assertEqual([c["kind"] for c in json.loads(embedded.group(1))["plan"]["changes"]], ["relaxed"])
 
+    def test_the_guide_says_the_line_map_shows_needs_you_and_when_it_is_unavailable(self) -> None:
+        text = " ".join(GUIDE.read_text(encoding="utf-8").split())
+        self.assertIn("The line map's Now chapter shows the same \"Needs you\" from the supervisor's last pass, what "
+                      "holds the close first, each item with where it comes from and what clears it. While the supervisor "
+                      "isn't running, or its list is a pass overdue, the chapter says the list is unavailable.", text)
+        self.assertNotIn("The live view doesn't show this list", text)
+
     def test_every_block_is_marked_and_every_section_is_there(self) -> None:
         text = GUIDE.read_text(encoding="utf-8")
         fences = re.findall(r"^```(.*)$", text, re.MULTILINE)
@@ -4547,6 +4554,35 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         reached, received = self.parsed(*given, "--", "--path", "/other")
         self.assertEqual(reached, given)
         self.assertEqual(received, ["--path", "/other"])
+
+
+class RunDeliveryRenderHalvesTests(unittest.TestCase):
+    """A supervisor pass publishes, derives "Needs you", then renders: each half runs only its own entries."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location("run_delivery_for_halves", ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        cls.tool = importlib.util.module_from_spec(spec)
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(cls.tool)
+        finally:
+            sys.dont_write_bytecode = previous
+
+    def test_each_half_runs_only_its_own_entries_and_no_half_runs_both(self) -> None:
+        state = {"directory": "s", "renderers": [{"id": "page", "builtin": "static-page", "output": "p.html"}],
+                 "publishers": [{"id": "post", "argv": ["true"]}]}
+        c = types.SimpleNamespace(release=Path("/release"), state=Path("/record"), root=Path("/repo"))
+        for only, expected in ((None, state), ("publishers", {**state, "renderers": []}),
+                               ("renderers", {**state, "publishers": []})):
+            with self.subTest(only=only):
+                seen = []
+                done = types.SimpleNamespace(returncode=0, stdout="", stderr="")
+                with mock.patch.object(self.tool, "binding_state", lambda _: state), \
+                        mock.patch.object(self.tool, "run", lambda argv, **_: seen.append(argv) or done):
+                    self.assertEqual(self.tool.render_views(c, only=only), "rendered")
+                self.assertEqual(json.loads(seen[0][seen[0].index("--state-config") + 1]), expected)
 
 
 class RunDeliveryContinuousIntegrationTests(unittest.TestCase):

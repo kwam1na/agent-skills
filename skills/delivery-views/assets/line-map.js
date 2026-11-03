@@ -123,6 +123,14 @@
     if (!isObject(PLAN) || (!isObject(PLAN.plan) && typeof PLAN.unreadable !== "string")) { PLAN = { unreadable: "" }; }
   }
   var plan = PLAN && isObject(PLAN.plan) ? PLAN.plan : null;
+  // The supervisor's "Needs you" list, as the renderer embedded it from the record: { running, at, staleAfter, items },
+  // or { unreadable }. With no block no supervisor wrote one, and the Now chapter has no Needs you box.
+  function readNeeds(textContent) {
+    try { var block = JSON.parse(textContent); } catch (error) { return { unreadable: true }; }
+    return isObject(block) ? block : { unreadable: true };
+  }
+  var needsBlock = document.getElementById("delivery-needs");
+  var NEEDS = needsBlock ? readNeeds(needsBlock.textContent) : null;
   function changeLink(changeRequest) {
     var target = changeTarget(changeRequest);
     if (!target) { return el("span", "pr-num", text(changeRequest)); }
@@ -496,6 +504,8 @@
     if (panel) { nodes.push(panel); }
     var needs = attention(doc);
     if (needs) { nodes.push(needs); }
+    var supervisor = needsYou();
+    if (supervisor) { nodes.push(supervisor); }
     nodes.push(journey(doc, all, landed));
     nodes.push(since(meta));
     inner.replaceChildren.apply(inner, nodes);
@@ -797,6 +807,40 @@
     return add(box, el("div", "ah", "Needs attention"), ul);
   }
 
+  /**
+   * The supervisor's "Needs you": what holds the close first, then what is only shown, each with where it comes from
+   * and what clears it. A list from a supervisor that isn't running, one past its staleAfter (a pass is overdue), or
+   * one that can't be read is never shown: the box says which instead.
+   */
+  function needsYou() {
+    if (NEEDS === null) { return null; }
+    var box = add(el("div", "attention needs-you"), el("div", "ah", "Needs you"));
+    function none(words) { return add(box, el("p", "needs-none", words)); }
+    if (NEEDS.unreadable === true) { return none("Unavailable: the supervisor's list can't be read, so it isn't shown."); }
+    if (NEEDS.running !== true) {
+      return none("Unavailable: the supervisor isn't running, so its list isn't shown. lead-run --resume starts it again.");
+    }
+    var stale = seconds(NEEDS.staleAfter);
+    if (stale === null || Date.now() / 1000 > stale) {
+      return none("Unavailable: the supervisor's list is from " + (ago(NEEDS.at) || "an unknown time") +
+        ", more than a pass old, so it isn't shown. Its supervisor may have stopped.");
+    }
+    var items = list(NEEDS.items).filter(isObject);
+    if (!items.length) { return none("Nothing needs you; the supervisor's last pass found nothing."); }
+    [[true, "Holds the close", "▲"], [false, "Shown only", "◇"]].forEach(function (kind) {
+      var mine = items.filter(function (item) { return item.holding === kind[0]; });
+      if (!mine.length) { return; }
+      var ul = el("ul");
+      mine.forEach(function (item) {
+        ul.appendChild(add(el("li"), el("span", kind[0] ? "g" : "g wait", kind[2]), add(el("div"), el("div", "a1", text(item.text)),
+          el("div", "a2", "From " + text(item.source) + ". Clears with " + text(item.clears) + "."))));
+      });
+      box.appendChild(add(el("div", "needs-group"), el("div", "needs-kind", kind[1]), ul));
+    });
+    if (typeof NEEDS.more === "number" && NEEDS.more > 0) { box.appendChild(el("p", "needs-more", NEEDS.more + " more not shown.")); }
+    return box;
+  }
+
   function journey(doc, all, landed) {
     var finish = list(doc.state.finish).filter(isObject);
     var met = finish.filter(function (line) { return line.met === true; }).length;
@@ -1086,6 +1130,8 @@
         if (linked) { readLinks(JSON.parse(linked[1])); }
         var reviews = /<script type="application\/json" id="delivery-reviews">([^<]*)<\/script>/.exec(page);
         if (reviews) { nativeReviews = JSON.parse(reviews[1]); }
+        var listed = /<script type="application\/json" id="delivery-needs">([^<]*)<\/script>/.exec(page);
+        NEEDS = listed ? readNeeds(listed[1]) : null;
         if (isObject(next)) { runs = next; safely(lastGood || shown); }
       }).catch(function () { /* the runs already shown stay */ });
     }, 3000);
@@ -2000,7 +2046,8 @@
     }
   }
   // Relative times and running checks follow the page's own clock between writes.
-  if (typeof setInterval === "function") { setInterval(function () { safely(lastGood || shown); }, 30000); }
+  // Each tick also re-reads the served page: a supervisor's pass rewrites its Needs you list without a record push.
+  if (typeof setInterval === "function") { setInterval(function () { refreshRuns(); safely(lastGood || shown); }, 30000); }
   // The run line is drawn at the page's width, so a new width redraws it.
   var resizing = null;
   if (typeof addEventListener === "function") {

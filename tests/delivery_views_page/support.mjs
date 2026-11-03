@@ -53,14 +53,15 @@ export function renderIn(root, document, extra = []) {
 
 /**
  * Renders a page in a throwaway repository and returns it, failing on a non-zero exit. A `plan` is placed as the
- * state directory's plan.json: an object as its JSON, a string as its exact text.
+ * state directory's plan.json, and `needs` as its needs-you.json: an object as its JSON, a string as its exact text.
  */
-export function renderPage(document, { config, runsCommands = null, plan = null } = {}) {
+export function renderPage(document, { config, runsCommands = null, plan = null, needs = null } = {}) {
   const root = repository({ config, runsCommands });
   try {
-    if (plan !== null) {
+    for (const [name, value] of [["plan.json", plan], ["needs-you.json", needs]]) {
+      if (value === null) continue;
       mkdirSync(path.join(root, "state"), { recursive: true });
-      writeFileSync(path.join(root, "state", "plan.json"), typeof plan === "string" ? plan : JSON.stringify(plan));
+      writeFileSync(path.join(root, "state", name), typeof value === "string" ? value : JSON.stringify(value));
     }
     const { page, status, stderr } = renderIn(root, document);
     if (status !== 0) throw new Error(`render.py exited ${status}: ${stderr}`);
@@ -123,12 +124,14 @@ export async function openPage(page, scenario = {}) {
   const stream = { document: [], error: [] };
   let answerRead = null;
   const animations = [];
+  const intervals = [];
   const dom = new JSDOM(page, {
     ...(scenario.rendered ? { url: VIEW_ADDRESS } : {}),
     runScripts: "dangerously",
     beforeParse(window) {
       if (scenario.now) window.Date.now = () => Date.parse(scenario.now);
-      window.setInterval = () => 0;
+      // Held, not run: a `tick` step runs each one as the page's timer would.
+      window.setInterval = (callback) => { intervals.push(callback); return 0; };
       if (scenario.motion) {
         const reduced = Boolean(scenario.motion.reduced);
         window.matchMedia = (query) => ({ media: query, matches: query.includes("prefers-reduced-motion: reduce") && reduced,
@@ -205,6 +208,7 @@ export async function openPage(page, scenario = {}) {
     if ("leave" in step) document.querySelector(step.leave).dispatchEvent(new dom.window.Event("mouseleave"));
     if ("click" in step) { const node = document.querySelectorAll(step.click)[step.index || 0]; node.focus(); node.click(); }
     if ("toggle" in step) { const node = document.querySelector(step.toggle); node.open = !node.open; }
+    if ("tick" in step) intervals.forEach((callback) => callback());
     await new Promise((resolve) => setTimeout(resolve, step.wait || 5));
     snapshots.push(snapshot());
   }

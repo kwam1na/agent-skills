@@ -246,16 +246,20 @@ and every lead command repeats it. It keeps the merge queue's `serve` and the li
 1. the reconcile sweep, as `lead-reconcile` runs it;
 2. what `lead-cleanup` does, for each merged story whose lane has moved off it;
 3. `finish.met`, once for each finish line whose covered criteria have every covered proof done;
-4. a render with the binding's whole `state` member, publishers included;
+4. the binding's `state` publishers; then "Needs you", written over the last pass's list in the record's
+   `needs-you.json`; then the binding's renderers, so the line map shows this pass's list;
 5. a copy of the record and the flow log into `latest` at the archive location, under the state lock;
 6. the close-out, when the close condition holds.
 
 The close condition: every planned and queued story merged or removed, every finish line met, every lane idle or
-done, and no "Needs you" item holding. "Needs you" is derived each pass, never stored: a failed `fullHealth` at the
+done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,
+never read back: a failed `fullHealth` at the
 current base head, a broken base, a blocked lane or one waiting on the lead, an unresolved `blocker.recorded`, a
 child that won't stay up, and the tracker publisher's own items. `lead-resolve <journal id> --why TEXT` resolves a
 blocker; `lead-resolve full-health --why TEXT` asks the next pass to rerun a failed `fullHealth`. The runner's own
-blocker clears when its hold does, or with `base.repaired`.
+blocker clears when its hold does, or with `base.repaired`. Each item says whether it holds the close or is only
+shown, where it comes from and what clears it. The line map's Now chapter lists the holding items first. A list
+from a supervisor that has stopped, or one more than a pass overdue, is shown as unavailable rather than stale.
 
 The close-out runs in order, each step succeeding before the next: `fullHealth`, once per base head, in a fresh
 checkout of the base; a follow-up for each deferred finding, keyed `<story>-<finding id>`; `delivery.closed`, then
