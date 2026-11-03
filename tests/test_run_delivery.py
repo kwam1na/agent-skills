@@ -765,6 +765,9 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         commit(wt, "FX-2: fix")
         code, out = flow_run("review-prepare", "FX-2", "--round", "2", cwd=wt)
         expect(code == 0 and "Resume the same reviewer" in out, out)
+        span = f"{sh('git', 'rev-parse', 'HEAD~1', cwd=wt).stdout.strip()}..{sh('git', 'rev-parse', 'HEAD', cwd=wt).stdout.strip()}"
+        expect(f"the files `git diff {span}` changes, and the tests that cover the rest: `src/one.txt`."
+               in (review / "brief-r2-adversarial-testing.md").read_text(), "round 2's scoped files aren't its own delta")
         write_results(review, 2, "FX-2", lenses)
         code, out = flow_run("review-reduce", "FX-2", "--round", "2", cwd=wt)
         expect(code == 2 and "carried finding" in out, f"a dropped finding was reduced: {out}")
@@ -1610,6 +1613,23 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
         self.assertIn(f"`python3 -B {STABLE_TOOL_PATH} <command>`", lane_brief)
         self.assertNotIn("generations/", lane_brief)
         self.assertEqual(host_terms(lane_brief), [])
+
+    def test_a_prepared_brief_bounds_each_lens_to_the_scoped_checks(self) -> None:
+        fx = self.fixture()
+        wt = ready_lane(fx)
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, cwd=wt)
+        expect(code == 0, out)
+        for lens in ("outcome-correctness", "adversarial-testing"):
+            with self.subTest(lens=lens):
+                text = " ".join((wt / f".orchestration/review/FX-3/brief-r1-{lens}.md").read_text().split())
+                self.assertIn("## Checks this lens runs Run the scoped check set below in your checkout, never the "
+                              "repository's full suite", text)
+                self.assertIn("Mutation and fault injection stay on the candidate's changed lines", text)
+                self.assertIn("- scoped sensor commands: the sensors the plan unit names", text)
+                self.assertRegex(text, r"- test files in scope for this round: the tests among the files `git diff "
+                                       r"[0-9a-f]{40}\.\.[0-9a-f]{40}` changes, and the tests that cover the rest: "
+                                       r"`src/two\.txt`\.")
+                self.assertNotIn("{{", text)
 
     def test_an_older_generation_still_running_carries_the_previous_tuple(self) -> None:
         old, new, receipt_file = self.updated_install()

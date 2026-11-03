@@ -70,4 +70,9 @@ candidate did not change, and do not ask for a test framework, a fixture layer,
 or a helper that does not already exist. Prefer one row that would have caught
 the defect over five that describe it.
 
+Limit mutation and fault injection to the candidate's changed lines and the
+code that calls them. A mutant planted anywhere else tests code the candidate
+did not change. Run the scoped check set your brief names, never the full
+suite, and say in your evidence that your mutants kept to that scope.
+
 Record any finding you declined together with the reason.
