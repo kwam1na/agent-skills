@@ -1,5 +1,5 @@
 {
-  "description": "Optional host-native Jira tracker adapter layered on the complete core and delivery-views profiles. The adapter maps the neutral tracker operations onto the host's Atlassian MCP connector, configured by the repository's tracker properties, and the decomposition and tracked-execution workflows reach Jira only through it, without changing core behavior when tracking is unavailable.",
+  "description": "Optional host-native Jira tracker adapter layered on the run-delivery profile, whose commands run on POSIX hosts only. The adapter maps the neutral tracker operations onto the host's Atlassian MCP connector, configured by the repository's tracker properties, and the decomposition and tracked-execution workflows reach Jira only through it, without changing core behavior when tracking is unavailable.",
   "expectedFiles": [
     "skills/compound-delivery-kernel/SKILL.md",
     "skills/compound-learning/SKILL.md",
@@ -39,12 +39,26 @@
     "skills/orchestrate-work/scripts/merge_queue.py",
     "skills/orchestrate-work/scripts/render_state.py",
     "skills/plan-work/SKILL.md",
-    "skills/review-work/SKILL.md"
+    "skills/review-work/SKILL.md",
+    "skills/run-delivery/SKILL.md",
+    "skills/run-delivery/adapters/forge_bitbucket.py",
+    "skills/run-delivery/adapters/forge_github.py",
+    "skills/run-delivery/adapters/tracker_jira.py",
+    "skills/run-delivery/assets/adapter-fixture/index.html",
+    "skills/run-delivery/references/adopting.md",
+    "skills/run-delivery/references/config.md",
+    "skills/run-delivery/scripts/run_delivery.py",
+    "skills/run-delivery/scripts/tracker_publisher.py",
+    "skills/run-delivery/templates/evidence.html",
+    "skills/run-delivery/templates/lane-brief.in-app.md",
+    "skills/run-delivery/templates/lane-brief.md",
+    "skills/run-delivery/templates/round-brief.md"
   ],
   "id": "jira",
   "includes": [
     "core",
-    "delivery-views"
+    "delivery-views",
+    "run-delivery"
   ],
   "members": [
     "create-jira-ticket",

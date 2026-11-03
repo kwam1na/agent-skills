@@ -330,14 +330,14 @@ class JiraProfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             archive, _ = self.build(directory, "jira")
-            core_archive = directory / "core.zip"
-            core_metadata = directory / "core.release.json"
+            base_archive = directory / "run-delivery.zip"
+            base_metadata = directory / "run-delivery.release.json"
             build_release(
                 ROOT,
-                core_archive,
-                core_metadata,
-                release_id="core-v1",
-                profile_id="core",
+                base_archive,
+                base_metadata,
+                release_id="run-delivery-v1",
+                profile_id="run-delivery",
             )
             with zipfile.ZipFile(archive) as release:
                 names = release.namelist()
@@ -351,8 +351,8 @@ class JiraProfileTests(unittest.TestCase):
                     for name in names
                     if name.startswith("skills/jira-tracker-adapter/")
                 }
-            with zipfile.ZipFile(core_archive) as release:
-                core_python_sources = {
+            with zipfile.ZipFile(base_archive) as release:
+                base_python_sources = {
                     name: release.read(name).decode("utf-8")
                     for name in release.namelist()
                     if name.endswith(".py")
@@ -379,13 +379,8 @@ class JiraProfileTests(unittest.TestCase):
                         for alias in node.names
                     )
                     self.assertTrue(forbidden_imports.isdisjoint(imported))
-            # The jira profile also includes the delivery-views profile, whose
-            # views and snapshot commands are not the tracker adapter's transport.
-            self.assertEqual(
-                {name: source for name, source in python_sources.items()
-                 if not name.startswith("skills/delivery-views/")},
-                core_python_sources,
-            )
+            # The tracker profile adds no Python to the run-delivery profile it builds on.
+            self.assertEqual(python_sources, base_python_sources)
             self.assertEqual(
                 set(adapter_files),
                 {

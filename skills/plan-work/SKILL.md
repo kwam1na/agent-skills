@@ -124,6 +124,10 @@ completion blocker.
 Save the plan in the planning folder the repository's instructions declare,
 otherwise at `docs/plans/<key>.md`, where `<key>` names the work, and report the
 path. A plan left only in the conversation or a scratch directory can be lost.
+Where the repository tracks plans, commit the saved plan under its rules before
+plan review or removing the checkout: an untracked plan goes with its checkout,
+and a tool that needs a clean checkout refuses it. Whether plans are tracked stays
+the repository's call.
 
 Return the normalized scope, non-goals, finish line, dependencies, scenarios,
 posture, sensors, approval handoffs, and any unavailable optional operations.

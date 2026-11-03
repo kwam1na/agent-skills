@@ -91,6 +91,7 @@ if __name__ == "__main__":
 import argparse
 import contextlib
 import datetime
+import html
 import http.server
 import ipaddress
 import json
@@ -865,7 +866,7 @@ _LIVE_ADAPTER = """
 """.strip()
 
 
-def render_static_page(document: dict, *, live: bool = False) -> str:
+def render_static_page(document: dict, *, live: bool = False, flags: tuple[str, ...] = ()) -> str:
     adapter = f"<script>\n{_LIVE_ADAPTER}\n</script>\n" if live else ""
     return (
         "<!doctype html>\n"
@@ -877,6 +878,7 @@ def render_static_page(document: dict, *, live: bool = False) -> str:
         f"<style>\n{_PAGE_STYLE}\n</style>\n"
         "</head>\n"
         "<body>\n"
+        + "".join(f'<p role="alert"><strong>{html.escape(flag)}</strong></p>\n' for flag in flags) +
         '<main id="app" data-source="embedded"></main>\n'
         '<p id="live-status" class="status" hidden></p>\n'
         f'<script type="application/json" id="delivery-state">{_page_embed(document)}</script>\n'
@@ -1435,6 +1437,7 @@ def _let_handlers_run() -> None:
 # ---------------------------------------------------------------------------
 # The live view: re-render on every record write, and push to open pages
 
+PLAN_FILE = "plan.json"  # The line map's plan chapter reads it; the record never names it.
 LIVE_POLL_SECONDS = 0.25
 LIVE_KEEPALIVE_SECONDS = 15.0
 # An HTML view opts in to the live stream with this in its head.
@@ -1452,11 +1455,12 @@ class LiveView:
         self.document: dict | None = None
         self.encoded = b""
         self.fingerprint: tuple | None = None
+        self.plan_seen: tuple | None = None
         self.stopping = threading.Event()
 
     def watch_key(self) -> tuple:
         keys = []
-        for name in (CHANGES_FILE, STATE_FILE, JOURNAL_FILE):
+        for name in (CHANGES_FILE, STATE_FILE, JOURNAL_FILE, PLAN_FILE):
             try:
                 stat = (self.directory / name).stat()
                 keys.append((stat.st_size, stat.st_mtime_ns))
@@ -1479,14 +1483,17 @@ class LiveView:
         encoded = json.dumps(shown, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
         # The whole document, so a record replaced at the same version still counts as moved.
         fingerprint = encoded
-        if fingerprint == self.fingerprint:
+        plan = self.watch_key()[-1]
+        if fingerprint == self.fingerprint and plan == self.plan_seen:
             return False
+        self.plan_seen = plan
         # Pages first: they need only the record, never the rendered files, so
-        # no slow view delays them.
-        with self.changed:
-            self.document, self.encoded, self.fingerprint = shown, encoded, fingerprint
-            self.generation += 1
-            self.changed.notify_all()
+        # no slow view delays them. A plan that moved alone leaves the record's pages be.
+        if fingerprint != self.fingerprint:
+            with self.changed:
+                self.document, self.encoded, self.fingerprint = shown, encoded, fingerprint
+                self.generation += 1
+                self.changed.notify_all()
         with contextlib.suppress(Exception):
             render(self.directory, _views_only(self.config))
         return True
@@ -1516,7 +1523,7 @@ class LiveView:
             self.changed.notify_all()
 
 
-def _live_handler(view: LiveView, accepts: Callable[[str], bool]) -> type:
+def _live_handler(view: LiveView, accepts: Callable[[str], bool], flags: tuple[str, ...] = ()) -> type:
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -1548,7 +1555,7 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool]) -> type:
                 if document is None:
                     self._plain(503, b"the record is not readable yet\n")
                     return
-                page = render_static_page(document, live=True).encode("utf-8")
+                page = render_static_page(document, live=True, flags=flags).encode("utf-8")
                 self._plain(200, page, "text/html; charset=utf-8")
             elif path == "/document":
                 with view.changed:
@@ -1609,6 +1616,29 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool]) -> type:
                 return
 
     return Handler
+
+
+def _live_flags(directory: Path, config: object, given: bool) -> tuple[str, ...]:
+    """What the live view is missing against what this repository configures, in words for its reader."""
+    if _live_home(config) is not None:
+        return ()
+    if given:
+        html_views = [renderer["id"] for renderer in _live_renderers(config)
+                      if renderer["argv"] is not None and renderer["output"].endswith(".html")]
+        if html_views:
+            return (f"This live view has no configured home: the binding names no liveHome, so the built-in page is "
+                    f"showing instead of {html_views[0]}.",)
+        return ()
+    for folder in (Path.cwd(), *Path.cwd().parents, directory.resolve(), *directory.resolve().parents):
+        try:
+            binding = json.loads((folder / ".agents/orchestration.json").read_bytes().decode("utf-8-sig"))
+            home = binding["state"]["liveHome"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if isinstance(home, str) and home:
+            return (f"This live view was started without its binding, so the built-in page is showing instead of "
+                    f"{home}. Start it with --binding .agents/orchestration.json.",)
+    return ()
 
 
 def _views_only(config: object) -> object:
@@ -1702,18 +1732,19 @@ def _live_hosts(host: str, port: int) -> Callable[[str], bool]:
     return accepts
 
 
-def serve_live(directory: Path, config: object, *, host: str, port: int, announce: Callable[[str], None]) -> None:
+def serve_live(directory: Path, config: object, *, host: str, port: int, announce: Callable[[str], None],
+               flags: tuple[str, ...] = ()) -> None:
     """Serve the live view until interrupted. Renders on every record change; never writes the record."""
     view = LiveView(directory, config)
     view.refresh()
-    server = (_LiveServer6 if ":" in host else _LiveServer)((host, port), _live_handler(view, lambda header: False))
+    server = (_LiveServer6 if ":" in host else _LiveServer)((host, port), _live_handler(view, lambda header: False, flags))
     if _is_wildcard(str(server.server_address[0])):
         # A name that only resolved to every address once bound: never serve on it.
         server.server_close()
         raise OSError("the live view serves this machine only; bind a loopback address")
     bound = server.server_address[1]
     shown_host = f"[{host}]" if ":" in host else host
-    server.RequestHandlerClass = _live_handler(view, _live_hosts(host, bound))
+    server.RequestHandlerClass = _live_handler(view, _live_hosts(host, bound), flags)
     watcher = threading.Thread(target=view.watch, name="live-watch", daemon=True)
     serving = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2}, name="live-serve",
                                daemon=True)
@@ -1761,13 +1792,16 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
     except StateError as error:
         return 2, {"ok": False, "code": error.code, "error": str(error)}
 
+    flags = _live_flags(args.dir, config, args.binding is not None or args.state_config is not None)
+
     def announce(address: str) -> None:
-        line = json.dumps({"ok": True, "live": address}, ensure_ascii=True, separators=(",", ":")) + "\n"
+        said = {"ok": True, "live": address, **({"flags": list(flags)} if flags else {})}
+        line = json.dumps(said, ensure_ascii=True, separators=(",", ":")) + "\n"
         sys.stdout.buffer.write(line.encode("ascii"))
         sys.stdout.flush()
 
     try:
-        serve_live(args.dir, config, host=args.host, port=args.port, announce=announce)
+        serve_live(args.dir, config, host=args.host, port=args.port, announce=announce, flags=flags)
     except OSError as error:
         return 2, {"ok": False, "code": "live_unavailable",
                    "error": f"cannot listen on {args.host}:{args.port}: {error.strerror or error}"}

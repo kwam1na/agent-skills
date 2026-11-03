@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "fdc92f53c920d5227a85a51e1769e8ce9396b3d42d3f960d974acb8a711875a4"
+          "sha256": "d3d75079f7683b3e92c15087851f57ddd873596c103f0320299f65193868bcd0"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -210,11 +210,11 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
-          "sha256": "74915ef07b8dbdff183e608b85a3adda3aa9f875d5dca1211f63a0a48c649982"
+          "sha256": "341774e5e2718b49170e28ff924a343b007b78a09e83710d91ccd09b441501fb"
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "7edd196750c8bbf9dd2df54846c8f4a1ba1dc3131a8d1f27a21e7271d8267928"
+          "sha256": "8b56db44c59a6889b6b8033127234a84be59549356743b08d0b2541cf50f5133"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -230,7 +230,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "52afdffe947434df2f9b60abaadce99f4b6a2b820001442d2ec3a20700fc4b8c"
+          "sha256": "4b2d8d19ad9adcfb97e756ac49fd4f64f0d39a9c71d3d644109cfb65b8db224d"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
@@ -238,7 +238,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
-          "sha256": "649f83486772c74507c338933acde3d462d583bf7569cc0ce3cf9f458b1e97e2"
+          "sha256": "28e31672a85717033a90a516b82c71056e1878ceda51301fb37cd4617a007b1a"
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
@@ -440,11 +440,11 @@
       "outputs": [
         {
           "path": "skills/obtain-review/SKILL.md",
-          "sha256": "77be338d9f7e62f8f139bfa50b4b88e846f23f3c53c7bf147046afd955b301f2"
+          "sha256": "600fe98efac4c09cc4c824ea9756b027f4f4b3c5c9799f7fd1254da73ec4b4d8"
         },
         {
           "path": "skills/obtain-review/references/round-brief-template.md",
-          "sha256": "35e7ca096e6f0d16d6207dd8ca4280864f46978917518acab4e0d1c6483c8aed"
+          "sha256": "de3080d465738b289bfb023464d7bd594effa80da0ccd46523168c4d52107f0d"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -469,27 +469,27 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "f45d71c6c1ebbf0f2e838a444c25cc4fd720bb905168c9a9957376e61239f618"
+          "sha256": "64314d8bb8efb434ecaafd1282c27b01df9781a2b8a25133608ca9c5e861a8ce"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "b6aa630b6b87f8adf100df8132b685ac9ddad94b04e2184fcffb554ba5f2ca4b"
+          "sha256": "13392a7bdfc119a9bf6e3e4c17447620ef9962b4587eee771cc1030753126baf"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "45fdda7945ad8c54c88156b39e7b9f1db8ac4355e2665651e07f5ed22ede55d1"
+          "sha256": "6ab62ee76b703dd96c4ca4d2687c29824240f921e27cf9668e52ccedf387a7d1"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "a6b8bc7d3421b514b8b6ebf579ca2a2c6a6d31426312159cb53b760f159c4061"
+          "sha256": "8c759d75f5d57f3aaaa4ac34a79373233ab34137759b7dcc41d45c9026469bb7"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "385a293a94a8a2c6a34fbb44aff4587d8b3d95e4efee12c3721d7ad69614f931"
+          "sha256": "3c53d1c91c887d42023a6a6912812f4d91cae0e15c6b48c792815fa3de104bc4"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "06a4aeb459b139dd7d8a3400d0b012b72dbfa88e39e8ed74aeb0be3a87c29f85"
+          "sha256": "7b962a43db5e6b083d70bc13f7af186375b5fc88123afba28f65b41d63874024"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -968,7 +968,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "e1fac2aca5ba58fb02b11be4c3893a9c06b5ec3cb2d7ba460674009a45e52ff5"
+          "sha256": "7f89f2d80f11b92284fde3092314c4c9253d7c37faf2cd3bd1d64519cc740d76"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -1038,7 +1038,7 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "e0a481f25d19563b9dcd6f23e15f49488a9cbc11aacf3cfa4a263d6510454e1b"
+          "sha256": "50bc86ae8c1dcd4b2d151c91c72281c7b41453f3ea9dc81da03430619630115b"
         },
         {
           "path": "skills/run-delivery/references/config.md",
@@ -1066,7 +1066,7 @@
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",
-          "sha256": "044dd6284c396f17aefbbae3f69617fe1f4379accc61cb24fa7fc14f5d1b25f2"
+          "sha256": "000855081c10e9df5e78af137397c5ab946e123828345e335968e19e5cfa8e12"
         }
       ],
       "owner": "delivery-agent/user-delegated",

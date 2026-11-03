@@ -79,6 +79,8 @@ STATE_VERSION = "delivery-state/1"
 WRITERS = ("lead", "runner", "lane")
 # What a lane writes about itself, through the tool.
 LANE_FIELDS = ("focus", "state", "waitingOn", "since")
+# The runner writes a row only to say what became of a candidate; focusAt and focusBy are the tool's alone, for every writer.
+RUNNER_LANE = ("focus", "state", "waitingOn", "since")
 # A review round is the lead's or a lane's record of its own review; the runner
 # never reviews, so it never writes one.
 REVIEW_KIND = "review.round"
@@ -638,7 +640,7 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
         violations.append("/meta/updatedAt is maintained by the tool")
     if writer == "runner":
         for field in set(before) | set(after):
-            if field in TOOL_OWNED or field in ("meta", "queue"):
+            if field in TOOL_OWNED or field in ("meta", "queue", "lanes"):
                 continue
             if before.get(field) != after.get(field):
                 violations.append(f"/{field} belongs to the lead")
@@ -648,6 +650,14 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
                 if field == "hold" and not meta_before.get("hold") and meta_after.get("hold"):
                     continue
                 violations.append(f"/meta/{field} belongs to the lead")
+        rows_before, rows_after = before.get("lanes", []), after.get("lanes", [])
+        if [entry.get("id") for entry in rows_before] != [entry.get("id") for entry in rows_after]:
+            violations.append("/lanes elements are added, removed and ordered by the lead")
+        else:
+            for row_before, row_after in zip(rows_before, rows_after):
+                for field in set(row_before) | set(row_after):
+                    if field not in RUNNER_LANE and row_before.get(field) != row_after.get(field):
+                        violations.append(f"/lanes[id={row_before.get('id')}]/{field} belongs to the lead")
         old, new = before.get("queue", []), after.get("queue", [])
         if [item.get("subject") for item in old] != [item.get("subject") for item in new]:
             violations.append("/queue elements are added, removed and ordered by the lead")
@@ -692,6 +702,83 @@ def _stamp_lane(before: dict, after: dict, lane: str) -> None:
     new = next(entry for entry in after["lanes"] if entry["id"] == lane)
     if "state" in new:
         new["since"] = now() if new["state"] != old.get("state") else old.get("since")
+
+
+def _stamp_focus(before: dict, after: dict, writer: str, spoke: str | None) -> None:
+    """The tool keeps focusAt and focusBy: when a row's words last changed or its lane said them again, and whether the queue said them."""
+    rows = after.get("lanes")
+    if not isinstance(rows, list):
+        return
+    old = {entry.get("id"): entry for entry in before.get("lanes", [])}
+    for entry in rows:
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+            continue
+        previous = old.get(entry["id"])
+        entry.pop("focusAt", None)
+        entry.pop("focusBy", None)
+        if previous is None or previous.get("focus") != entry.get("focus") or entry["id"] == spoke:
+            if entry.get("focus"):
+                entry["focusAt"] = now()
+                if writer == "runner":
+                    entry["focusBy"] = "runner"
+        else:
+            entry.update({key: previous[key] for key in ("focusAt", "focusBy") if key in previous})
+
+
+def lane_rows_after(directory: Path, state: dict, subject: str, *, stopped: str | None = None) -> list[dict]:
+    """The lanes once the queue has merged a candidate, or stopped it for ``stopped``, so the row can't contradict the line.
+
+    A row about other work stays: the lane's own word wins. That is one that doesn't name the candidate, from a lane with
+    another assignment open, or still active and speaking since its hand-off. A lane blocked with other work open keeps its
+    question, and the queue's word that another candidate stopped stays while that candidate is open. A lane with nothing
+    else open rests.
+    """
+    rows = [dict(entry) for entry in state["lanes"]]
+    lane = next((item.get("lane") for item in state["queue"] if item["subject"] == subject), None)
+    row = next((entry for entry in rows if entry["id"] == lane), None)
+    if row is None:
+        return rows
+    work = [*state["queue"], *state.get("planned", [])]
+    waiting = any(item.get("lane") == lane and item["subject"] != subject and item.get("stage") != "merged" for item in work)
+    names = re.search(rf"(?<![\w-]){re.escape(subject)}(?![\w-])", row["focus"]) is not None
+    by_queue = row.get("focusBy") == "runner"
+    if waiting and row["state"] == "blocked":
+        return rows
+    if by_queue and not names and waiting and row["waitingOn"]:
+        return rows
+    if row["focus"] and not names and not by_queue:
+        if waiting:
+            return rows
+        try:
+            handed = [entry["at"] for entry in read_journal(directory) if entry["kind"] == "candidate.handed" and entry.get("subject") == subject]
+        except (StateError, OSError):
+            # The stage still has to be written, and a row can't be judged without its hand-off, so it stays.
+            return rows
+        if row["state"] in ("assigned", "working", "reviewing", "blocked") and "focusAt" in row and handed \
+                and _parse_time(row["focusAt"], exact=True) >= _parse_time(handed[-1], exact=True):
+            return rows
+    resting = row["state"]
+    if not waiting:
+        resting = "idle"
+    elif resting == "handed":
+        resting = "assigned"
+    if resting != row["state"]:
+        row["since"] = now()
+    row.update(focus=f"{subject} merged" if stopped is None else f"{subject} stopped: {stopped}", state=resting,
+               waitingOn=None if stopped is None else "lead")
+    return rows
+
+
+def lane_rows_put_back(state: dict, subject: str) -> list[dict]:
+    """The lanes once the queue has put a candidate back: a row saying it stopped no longer holds, so the record's words take over."""
+    rows = [dict(entry) for entry in state["lanes"]]
+    lane = next((item.get("lane") for item in state["queue"] if item["subject"] == subject), None)
+    for row in rows:
+        if row["id"] == lane and row.get("focusBy") == "runner" and row["focus"].startswith(f"{subject} stopped:"):
+            if row["state"] != "handed":
+                row["since"] = now()
+            row.update(focus="", state="handed", waitingOn=None)
+    return rows
 
 
 def _tool_write(directory: Path, change: Callable[[dict], object]) -> tuple[dict, object]:
@@ -809,6 +896,12 @@ def handoff(
         if state["meta"].get("handoffsNeedAcceptance"):
             item["pending"] = True
         _set_lane_state(state, lane, "handed")
+        for entry in state["lanes"]:
+            # A new hand-off ends what the queue said: the record's derived words read from the line again.
+            if entry["id"] == lane and entry.get("focusBy") == "runner":
+                entry.update(focus="", waitingOn=None)
+                del entry["focusBy"]
+                entry.pop("focusAt", None)
         return copy.deepcopy(item)
 
     _, item = _tool_write(directory, change)
@@ -1000,10 +1093,18 @@ def patch(
             if violations:
                 raise StateError("writer_not_owned", "; ".join(violations))
             _stamp_lane(current, updated, lane)
+            speaks = isinstance(changes, dict) and "focus" in changes
+            # What the queue said a lane waits on ends when the lane speaks, unless the lane says it still does.
+            if speaks and "waitingOn" not in changes and "/waitingOn" not in (assignments or {}):
+                previous = next(entry for entry in current["lanes"] if entry["id"] == lane)
+                if previous.get("focusBy") == "runner":
+                    next(entry for entry in updated["lanes"] if entry["id"] == lane)["waitingOn"] = None
+            _stamp_focus(current, updated, writer, lane if speaks else None)
         else:
             violations = ownership_violations(current, updated, writer)
             if violations:
                 raise StateError("field_not_owned", "; ".join(sorted(set(violations))))
+            _stamp_focus(current, updated, writer, None)
         updated["version"] = version + 1
         if isinstance(updated.get("meta"), dict):
             updated["meta"]["updatedAt"] = now()
@@ -1296,6 +1397,29 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
         except (StateError, OSError, ValueError, UnicodeError, RecursionError):
             observed[subject] = {"candidateRef": candidate, "unavailable": True}
     return observed
+
+
+def review_evidence(directory: Path, subject: str) -> dict:
+    """Whether a subject's review evidence is captured for its reviewed head, for the lead's hand-off check."""
+    document = show(directory)
+    item = next((item for item in [*document["state"]["queue"], *document["state"].get("planned", [])]
+                 if item["subject"] == subject), None)
+    if item is None:
+        raise StateError("subject_unknown", f"the record holds no work named {subject}")
+    # A run keeps its own evidence, which this record can't confirm, and a capture for it is refused.
+    if item.get("runId"):
+        return {"subject": subject, "evidence": "run-named", "head": item.get("head"), "runId": item["runId"]}
+    observed = document.get("reviewEvidence", {}).get(subject)
+    rounds = len({entry["review"]["round"] for entry in document["journal"]
+                  if entry["subject"] == subject and entry["kind"] == "review.round"})
+    found = {"subject": subject, "head": item.get("head"), "roundsJournaled": rounds}
+    if observed is None:
+        return {**found, "evidence": "not-captured"}
+    if observed.get("unavailable"):
+        return {**found, "evidence": "unavailable"}
+    if len(observed["outcomes"]) < rounds:
+        return {**found, "evidence": "incomplete", "roundsCaptured": len(observed["outcomes"])}
+    return {**found, "evidence": "captured", "roundsCaptured": len(observed["outcomes"])}
 
 
 def show(directory: Path, *, between_reads: Callable[[], None] | None = None) -> dict:
@@ -2101,8 +2225,9 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                 _write_atomically(directory / RECOVERY_FILE, dumps(intent))
                 try:
                     if item["stage"] != "merged":
-                        patch(directory, writer="runner", version=state["version"], selector=selector,
-                              changes={"stage": "merged", "syncedHead": recovery["head"]})
+                        queue = [{**entry, "stage": "merged", "syncedHead": recovery["head"]} if entry is item else entry for entry in state["queue"]]
+                        patch(directory, writer="runner", version=state["version"],
+                              changes={"queue": queue, "lanes": lane_rows_after(directory, state, recovery["subject"])})
                 except StateError as error:
                     (directory / RECOVERY_FILE).unlink(missing_ok=True)
                     if error.code != "version_stale":
@@ -3447,6 +3572,7 @@ WAIT_POLL_SECONDS = 15.0
 WAIT_LOAD_MULTIPLE = 2.0
 WAIT_MIN_FREE_BYTES = 20 * 2**30
 WAIT_SWAP_GROWTH_BYTES = 4 * 2**30
+WAIT_QUIET_SECONDS = 3600.0
 # A held signal clears only this far inside its limit, so a value hovering at the limit doesn't wake the lead each time.
 WAIT_CLEAR_MARGIN = 0.9
 SWAP_UNITS = {"K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40}
@@ -3507,6 +3633,29 @@ def _blocked_token(lane: dict) -> str:
     return f"{lane['id']}@{hashlib.sha256(question.encode('utf-8')).hexdigest()[:16]}"
 
 
+def _quiet_token(lane: dict) -> str:
+    """Identifies one quiet stretch: the row moving starts another."""
+    stretch = json.dumps([lane.get("focusAt"), lane.get("since"), lane.get("focus")], sort_keys=True)
+    return f"{lane['id']}@{hashlib.sha256(stretch.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _quiet_lanes(state: dict, limit: float, at: float) -> dict[str, dict]:
+    """The active lanes whose row hasn't moved for more than ``limit`` seconds, by stretch, with how long."""
+    quiet = {}
+    for lane in state["lanes"]:
+        if lane["state"] not in ("assigned", "working", "reviewing"):
+            continue
+        try:
+            moved = max(_parse_time(lane[key], exact=True).timestamp() for key in ("focusAt", "since") if key in lane)
+        except ValueError:
+            # The pattern admits an impossible date, and a wait must still end with its events.
+            continue
+        if at - moved > limit:
+            quiet[_quiet_token(lane)] = {"id": lane["id"], "focus": lane["focus"], "state": lane["state"],
+                                         "waitingOn": lane["waitingOn"], "quietSeconds": int(at - moved)}
+    return quiet
+
+
 def wait_for_lead(
     directory: Path,
     *,
@@ -3519,6 +3668,8 @@ def wait_for_lead(
     load_multiple: float = WAIT_LOAD_MULTIPLE,
     min_free_bytes: int = WAIT_MIN_FREE_BYTES,
     swap_growth_bytes: int = WAIT_SWAP_GROWTH_BYTES,
+    seen_quiet: list[str] | None = None,
+    quiet_seconds: float = WAIT_QUIET_SECONDS,
     read_machine: Callable[[Path], dict] = machine_reading,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
@@ -3527,7 +3678,7 @@ def wait_for_lead(
 
     A condition the lead has already seen stays quiet while it holds and is forgotten once it clears, so a restart
     doesn't wake on it again and its return does. The result's ``restart`` carries that across waits, with this
-    wait's own limits.
+    wait's own limits. A quiet lane is information: it ends no wait, and rides on whatever does, once a stretch.
     """
     deadline = clock() + timeout
     held_blocked = set(seen_blocked or ())
@@ -3586,6 +3737,9 @@ def wait_for_lead(
             # The joined form, so a lane id starting with a dash still parses.
             restart += [f"--seen-blocked={token}" for token in sorted(held_blocked)]
             restart += [f"--seen-pressure={name}" for name in sorted(held_pressure)]
+            quiet = _quiet_lanes(state, quiet_seconds, time.time())
+            restart += ["--quiet-seconds", repr(quiet_seconds)]
+            restart += [f"--seen-quiet={token}" for token in sorted(quiet)]
             if baseline is not None:
                 restart += ["--swap-baseline", str(baseline)]
             return (WAIT_EXPIRED_EXIT if woke == "expired" else 0), {
@@ -3594,6 +3748,7 @@ def wait_for_lead(
                 "events": [{key: entry.get(key) for key in ("id", "kind", "lane", "subject", "summary")} for entry in events],
                 "blockedLanes": [{key: lanes[token].get(key) for key in ("id", "focus", "waitingOn")} for token in newly_blocked],
                 "pressure": pressure,
+                "quietLanes": [quiet[token] for token in sorted(set(quiet) - set(seen_quiet or ()))],
                 "machine": reading,
                 "unavailable": unavailable,
                 "through": through,
@@ -3608,6 +3763,8 @@ def _add_wait_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--poll", type=float, default=WAIT_POLL_SECONDS, help="seconds between reads")
     parser.add_argument("--seen-blocked", action="append", metavar="LANE@TOKEN", help="a blocking the lead already knows of, as restart prints it")
     parser.add_argument("--seen-pressure", action="append", choices=("load", "disk"), help="a held signal the lead already knows of")
+    parser.add_argument("--seen-quiet", action="append", metavar="LANE@TOKEN", help="a quiet stretch the lead already knows of")
+    parser.add_argument("--quiet-seconds", type=float, default=WAIT_QUIET_SECONDS, help="how long a row may stand still before the lane is reported quiet")
     parser.add_argument("--swap-baseline", type=int, metavar="BYTES", help="swap in use to measure growth from")
     parser.add_argument("--load-multiple", type=float, default=WAIT_LOAD_MULTIPLE, help="five-minute load, as a multiple of the cores")
     parser.add_argument("--min-free-bytes", type=int, default=WAIT_MIN_FREE_BYTES, help="free disk under the state directory")
@@ -3626,6 +3783,10 @@ def _wait_command(args: argparse.Namespace) -> tuple[int, dict]:
     thresholds = math.isfinite(args.load_multiple) and args.load_multiple >= 0 and args.min_free_bytes >= 0 and args.swap_growth_bytes >= 0
     if any("@" not in item for item in args.seen_blocked or ()):
         raise StateError("wait_invalid", "--seen-blocked takes the lane@token that restart prints")
+    if any("@" not in item for item in args.seen_quiet or ()):
+        raise StateError("wait_invalid", "--seen-quiet takes the lane@token that restart prints")
+    if not math.isfinite(args.quiet_seconds) or args.quiet_seconds < 0:
+        raise StateError("wait_invalid", "--quiet-seconds must be finite and not negative")
     if not bounded or not thresholds or (args.after is not None and args.after < 0):
         raise StateError("wait_invalid", "--timeout, --poll, --after and the thresholds must be finite and not negative, and --poll above zero")
     return wait_for_lead(
@@ -3639,6 +3800,8 @@ def _wait_command(args: argparse.Namespace) -> tuple[int, dict]:
         load_multiple=args.load_multiple,
         min_free_bytes=args.min_free_bytes,
         swap_growth_bytes=args.swap_growth_bytes,
+        seen_quiet=args.seen_quiet,
+        quiet_seconds=args.quiet_seconds,
     )
 
 
@@ -3668,6 +3831,9 @@ def main(argv: list[str] | None = None) -> int:
     entry.add_argument("--writer", choices=("lead", "lane"), default="lead",
                        help="lane: a lane journals a review round of its own work")
     _add_wait_arguments(commands.add_parser("wait", help="read the record and the machine until something needs the lead"))
+    evidence = commands.add_parser("review-evidence",
+                                   help="say whether a subject's review evidence is captured for its reviewed head")
+    evidence.add_argument("--subject", required=True)
     capture = commands.add_parser("capture-review", help="retain native review outcomes for display without a run")
     capture.add_argument("--subject", required=True)
     capture.add_argument("--candidate", required=True)
@@ -3779,6 +3945,11 @@ def main(argv: list[str] | None = None) -> int:
             code, result = _wait_command(args)
             emit(result)
             return code
+        elif args.command == "review-evidence":
+            result = {"ok": True, **review_evidence(args.dir, args.subject)}
+            if result["evidence"] != "captured":
+                emit(result)
+                return 1
         elif args.command == "capture-review":
             result = {"ok": True, "entry": capture_review(args.dir, subject=args.subject, candidate=args.candidate, outcomes=args.outcome)}
         elif args.command == "handoff":

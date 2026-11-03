@@ -38,7 +38,6 @@ jobs:
       # The run-delivery tool is POSIX-only. Its video evidence cases need ffmpeg and ffprobe, and its harness
       # configuration case needs the runtime's minimum Node, so they run here rather than skip.
       - uses: actions/setup-node@v4
-        if: runner.os != 'Windows'
         with:
           node-version: "22.6.0"
       - name: Install ffmpeg

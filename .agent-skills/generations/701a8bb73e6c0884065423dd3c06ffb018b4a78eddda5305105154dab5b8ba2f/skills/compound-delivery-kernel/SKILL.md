@@ -1,0 +1,61 @@
+---
+name: compound-delivery-kernel
+description: Use when agent work needs one portable delivery posture across planning, implementation, review, and skill updates.
+---
+
+# Compound Delivery Kernel
+
+## Purpose
+
+Apply one small delivery loop across repositories while leaving repository
+authority in the repository. The loop is:
+
+Plan -> Work -> Review -> Compound.
+
+## Plan
+
+- Confirm the outcome, constraints, acceptance criteria, and non-goals.
+- Read repository instructions and discover the smallest honest sensors.
+- Choose `test-first`, `characterization-first`, or `sensor-only` posture.
+- Capture the named scenarios before implementation.
+
+## Work
+
+- Isolate non-trivial work and preserve unrelated changes.
+- Prove the selected posture before changing behavior.
+- Implement the smallest slice that satisfies the named scenario.
+- Run the narrowest relevant sensor after each meaningful slice.
+- Classify failures as repairable drift, semantic blockers, or unrelated
+  environmental blockers.
+
+## Review
+
+- Review against acceptance criteria, repository authority, and sensor evidence.
+- Declare the delivery-review round bound before its first round; every round
+  of delivery review counts, except one grace round obtained at the bound and a round reopened
+  because the base moved under an unchanged deliverable identity; the default is
+  four rounds. Unbounded plan-review rounds count against no delivery-review
+  bound.
+- Later rounds verify closure and review the delta; only P0 and P1 findings
+  block; the lens, not the executor, closes or defers a finding.
+- Decide the compounding response before the final review-and-merge loop, so a
+  note is part of the reviewed candidate.
+- Use specialized review only when the change's risk warrants it.
+- Treat concrete findings as work, then rerun the proving sensor.
+- Do not expand scope for speculative hardening or unrelated cleanup.
+
+## Compound
+
+Choose the smallest durable response to a reusable learning: update existing
+guidance, add a focused sensor, save a solution note, record a follow-up, or
+explicitly record that no durable learning emerged. Do not create documentation for obvious one-off work.
+Name the tracked follow-up item recorded for every deferral any lens filed as
+part of the delivery's record. One tracked item may carry several deferrals,
+one item per shippable outcome. Where no tracker is configured, those follow-up
+items are the actionable tracking handoff in the executor's delivery result
+rather than a blocker.
+
+## Handoff
+
+Report the changed outcome, sensors run, review result, residual risk,
+compounding decision, and any blocked validation with its exact cause.

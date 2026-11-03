@@ -13,11 +13,11 @@ from pathlib import Path
 
 from agent_skills.validate import validate_corpus
 
+from corpus_copy import SharedCorpus, copy_corpus
 
 ROOT = Path(__file__).resolve().parents[1]
 WRITER = ROOT / "scripts" / "update-provenance.py"
 LOCK = "provenance.lock.json"
-IGNORED = shutil.ignore_patterns(".git", ".venv", ".venv-*", "__pycache__", "*.pyc", ".pytest_cache", "build", "dist")
 
 
 def digest(path: Path) -> str:
@@ -34,7 +34,8 @@ class UpdateProvenanceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.pristine = Path(tempfile.mkdtemp(prefix="provenance-corpus-"))
-        shutil.copytree(ROOT, cls.pristine / "corpus", ignore=IGNORED)
+        copy_corpus(cls.pristine / "corpus", leaving_out=("build", "dist"))
+        cls.corpus = SharedCorpus(cls.pristine / "working" / "corpus", source=cls.pristine / "corpus")
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -43,8 +44,8 @@ class UpdateProvenanceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = Path(tempfile.mkdtemp(prefix="provenance-"))
         self.addCleanup(shutil.rmtree, self.directory, True)
-        self.root = self.directory / "corpus"
-        shutil.copytree(self.pristine / "corpus", self.root)
+        self.addCleanup(self.corpus.restored)
+        self.root = self.corpus.restored()
 
     def write(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(

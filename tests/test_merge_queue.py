@@ -10,6 +10,7 @@ import io
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from jsonschema import Draft202012Validator
 
 import agent_skills
 from agent_skills.validate import LEAKAGE_PATTERNS
+from quiet_git import quiet_clone, quieten
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -309,6 +311,17 @@ def run(*args: str, cwd: Path, check: bool = True) -> str:
     return completed.stdout.strip()
 
 
+def seed_base(remote: Path, files: dict[str, str]) -> None:
+    """Commit ``files`` as main's first commit straight into a bare ``remote``, with no checkout to write and remove."""
+    stream = io.BytesIO()
+    stream.write(f"commit refs/heads/main\ncommitter t <t@t> {int(time.time())} +0000\ndata 4\nbase\n".encode())
+    for relative, text in files.items():
+        data = text.encode("utf-8")
+        stream.write(f"M 100644 inline {relative}\ndata {len(data)}\n".encode() + data + b"\n")
+    subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "fastimport.unpackLimit=1", "fast-import", "--quiet"], cwd=remote,
+                   input=stream.getvalue(), capture_output=True, check=True)
+
+
 def check_entry(cid: str, *args: str, **more: object) -> dict:
     entry = {"id": cid, "argv": [PY, "tools/check.py", cid, *args], "cwd": ".", "reasons": [cid], "prerequisites": []}
     entry.update(more)
@@ -322,33 +335,31 @@ class Adopter:
         self.root = root
         self.remote = root / "remote.git"
         self.operator = root / "operator"
-        self.lane = root / "lane"
         self.state = root / "state"
         self.work = root / "work"
         self.log = root / "log.txt"
         self.log.write_text("")
         run("init", "--quiet", "--bare", "--initial-branch=main", str(self.remote), cwd=root)
-        seed = root / "seed"
-        run("clone", "--quiet", "--config", "core.autocrlf=false", str(self.remote), str(seed), cwd=root)
-        run("checkout", "--quiet", "-b", "main", cwd=seed)
-        for name, text in TOOLS.items():
-            self.write(seed, f"tools/{name}", text.lstrip())
-        self.write(seed, "tools/provider-mode.txt", mode + "\n")
-        self.write(seed, "src/app.txt", "app one\n")
-        self.write(seed, "src/lib.txt", "lib one\n")
-        self.write(seed, "gen/generated.txt", "app one\nlib one\n")
-        self.write(seed, "tests/test_base.txt", "ok\n")
+        quieten(self.remote)
+        files = {f"tools/{name}": text.lstrip() for name, text in TOOLS.items()}
+        files |= {"tools/provider-mode.txt": mode + "\n", "src/app.txt": "app one\n", "src/lib.txt": "lib one\n",
+                  "gen/generated.txt": "app one\nlib one\n", "tests/test_base.txt": "ok\n"}
         self.binding = self.default_binding()
         for key, value in (binding_changes or {}).items():
             self.binding[key] = value
-        self.write(seed, ".agents/orchestration.json", json.dumps(self.binding, indent=2) + "\n")
-        run("add", "--all", cwd=seed)
-        run("commit", "--quiet", "-m", "base", cwd=seed)
-        run("push", "--quiet", "origin", "main", cwd=seed)
-        run("clone", "--quiet", str(self.remote), str(self.operator), cwd=root)
-        # The lane commits the bytes it means: Git for Windows' system setting would convert them, from the clone's own checkout on.
-        run("clone", "--quiet", "--config", "core.autocrlf=false", str(self.remote), str(self.lane), cwd=root)
+        files[".agents/orchestration.json"] = json.dumps(self.binding, indent=2) + "\n"
+        seed_base(self.remote, files)
+        quiet_clone(self.remote, self.operator)
         state_tool.init(self.state, "Fixture delivery")
+
+    @property
+    def lane(self) -> Path:
+        """The lane's clone, made when a test first reaches for it: many only ever read the binding or the queue."""
+        lane = self.root / "lane"
+        if not lane.exists():
+            # The lane commits the bytes it means: Git for Windows' system setting would convert them, from the clone's own checkout on.
+            quiet_clone(self.remote, lane, settings="[core]\n\tautocrlf = false\n")
+        return lane
 
     def default_binding(self) -> dict:
         return {
@@ -3461,6 +3472,8 @@ class ServeTests(MergeQueueTestCase):
             sys.path.insert(0, sys.argv[1])
             import merge_queue
             real, sent, stop = shutil.rmtree, [], getattr(signal, sys.argv[2])
+            # However the suite was started: serve keeps a SIGINT it inherits as ignored.
+            signal.signal(signal.SIGINT, signal.default_int_handler)
             def rmtree(path, *args, **kwargs):
                 # Only from the finalizer: the same folder also goes by a plain call, where a stop arrives as usual.
                 if "weakref" in sys._getframe(1).f_code.co_filename and not sent:
@@ -3480,6 +3493,59 @@ class ServeTests(MergeQueueTestCase):
                     capture_output=True, timeout=60,
                 )
                 self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_a_stop_that_lands_in_a_finalizer_takes_no_queued_candidate(self) -> None:
+        code = textwrap.dedent("""
+            import os, shutil, signal, sys
+            sys.path.insert(0, sys.argv[1])
+            import merge_queue
+            real, sent = shutil.rmtree, []
+            def rmtree(path, *args, **kwargs):
+                if "weakref" in sys._getframe(1).f_code.co_filename and not sent:
+                    sent.append(True)
+                    os.kill(os.getpid(), signal.SIGTERM)
+                return real(path, *args, **kwargs)
+            shutil.rmtree = rmtree
+            sys.argv = ["merge_queue.py", *sys.argv[2:]]
+            sys.exit(merge_queue.main())
+        """)
+        adopter = self.adopter()
+        self.candidate(adopter)
+        done = subprocess.run(
+            [PY, "-B", "-c", code, str(SCRIPTS), "--repo", str(adopter.operator), "--state", str(adopter.state),
+             "--remote", "origin", "--base", "main", "serve", "--poll", "0.2"],
+            capture_output=True, timeout=60,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+        self.assertEqual(done.stdout, b"")
+        self.assertEqual([item["stage"] for item in state_tool.read_state(adopter.state)["queue"]], ["queued"])
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_serve_started_with_sigint_ignored_keeps_ignoring_it_and_stops_on_sigterm(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        # As a shell starts a background job: the ignore is inherited through exec.
+        serving = subprocess.Popen(
+            ["sh", "-c", 'trap "" INT; exec "$@"', "sh", PY, "-B", str(SCRIPTS / "merge_queue.py"),
+             "--repo", str(adopter.operator), "--state", str(adopter.state), "--remote", "origin", "--base", "main",
+             "serve", "--poll", "0.2"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.addCleanup(lambda: serving.poll() is None and serving.kill())
+        deadline = threading.Timer(120, serving.kill)
+        deadline.start()
+        self.addCleanup(deadline.cancel)
+        # A document means its handlers are set, and the merge means serve is about to wait.
+        for line in serving.stdout:  # type: ignore[union-attr]
+            if json.loads(line)["outcome"] == "merged":
+                break
+        serving.send_signal(signal.SIGINT)
+        time.sleep(1.5)
+        self.assertIsNone(serving.poll(), "serve stopped on a SIGINT it inherited as ignored")
+        serving.terminate()
+        _, errors = serving.communicate(timeout=60)
+        self.assertEqual(serving.returncode, 0, errors.decode("utf-8", "replace"))
 
     def test_every_queue_stopping_stop_is_journaled_as_a_broken_base(self) -> None:
         adopter = self.adopter()
@@ -3502,6 +3568,8 @@ class ServeTests(MergeQueueTestCase):
             [PY, "-B", str(SCRIPTS / "merge_queue.py"), "--repo", str(adopter.operator), "--state", str(adopter.state),
              "--remote", "origin", "--base", "main", "serve", "--poll", "0.2"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            # Killed below, so it cannot remove its temp folder: this test's own folder takes that with it.
+            env={**os.environ, "TMPDIR": str(self.directory)},
         )
         deadline = time.monotonic() + 120
         while not started.exists() and serving.poll() is None and time.monotonic() < deadline:
@@ -3843,6 +3911,8 @@ class InterruptedRunTests(MergeQueueTestCase):
             [PY, "-B", str(SCRIPTS / "merge_queue.py"), "--repo", str(adopter.operator), "--state", str(adopter.state),
              "--remote", "origin", "--base", "main", "run", "feature"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            # Killed below, so it cannot remove its temp folder: this test's own folder takes that with it.
+            env={**os.environ, "TMPDIR": str(self.directory)},
         )
         deadline = time.monotonic() + 120
         while not started.exists() and runner.poll() is None and time.monotonic() < deadline:

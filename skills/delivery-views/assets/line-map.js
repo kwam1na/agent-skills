@@ -114,13 +114,14 @@
     return isObject(target) && typeof target.label === "string" && typeof target.href === "string" ? target : null;
   }
   function pageTitle() { return typeof VIEW.title === "string" && VIEW.title ? VIEW.title : "Delivery"; }
-  // The delivery's plan, as the renderer validated and embedded it: { plan, clipped? }, or { unreadable } naming the key
-  // path that failed. With no block the page has no plan chapter at all.
+  // The delivery's plan, as the renderer validated and embedded it: { plan, clipped? }, { unreadable } naming the key
+  // path that failed, or { absent } naming the plan the record says is on file when no plan.json came with it. With no
+  // block the page has no plan chapter at all.
   var PLAN = null;
   var planBlock = document.getElementById("delivery-plan");
   if (planBlock) {
     try { PLAN = JSON.parse(planBlock.textContent); } catch (error) { PLAN = null; }
-    if (!isObject(PLAN) || (!isObject(PLAN.plan) && typeof PLAN.unreadable !== "string")) { PLAN = { unreadable: "" }; }
+    if (!isObject(PLAN) || (!isObject(PLAN.plan) && typeof PLAN.unreadable !== "string" && typeof PLAN.absent !== "string")) { PLAN = { unreadable: "" }; }
   }
   var plan = PLAN && isObject(PLAN.plan) ? PLAN.plan : null;
   // The supervisor's "Needs you" list, as the renderer embedded it from the record: { running, at, staleAfter, items },
@@ -1204,6 +1205,16 @@
   }
 
   /* 3. Who */
+  // An hour, the same as a wait's quiet lane: long reviews can be longer, so the mark says may, and only of an active row.
+  var ROW_OLD_SECONDS = 3600;
+  /** How old a row's words are, marked once they may be out of date; a time that can't be read says so. */
+  function rowAge(lane) {
+    var at = seconds(lane.focusAt);
+    var delta = at === null ? -1 : Date.now() / 1000 - at;
+    if (delta < 0) { return el("p", "said", "No time recorded"); }
+    var old = delta > ROW_OLD_SECONDS && lane.state !== "idle" && lane.state !== "done";
+    return el("p", "said" + (old ? " old" : ""), (delta < 45 ? "Said just now" : "Said " + duration(delta) + " ago") + (old ? "; may be out of date" : ""));
+  }
   function drawWho(doc, all) {
     var inner = parts.who;
     var lanes = list(doc.state.lanes).filter(isObject);
@@ -1227,6 +1238,7 @@
         var who = add(el("div"), el("h3", null, text(lane.title) || text(lane.id)));
         var doing = text(lane.focus) || text(focus[lane.id]);
         if (doing) { who.appendChild(el("p", "doing", doing)); }
+        if (text(lane.focus)) { who.appendChild(rowAge(lane)); }
         var st = add(el("div", "st"), el("span", "chip" + (LANE_WORDS[lane.state] ? " " + lane.state : ""), LANE_WORDS[lane.state] || "Unknown"));
         if (lane.waitingOn) { st.appendChild(el("span", "on blocked", "waiting on " + text(lane.waitingOn))); }
         else if (heldFor(lane.since)) { st.appendChild(el("span", "on", heldFor(lane.since))); }
@@ -1308,8 +1320,8 @@
   }
 
   /* The plan: is the work still what was agreed, and what proves it? */
-  // Proofs are derived from each record the page draws, by the same lookups The line uses; the plan itself is fixed at
-  // render. Every unit, row and fold is found through these maps, never through a selector built from plan text.
+  // Proofs are derived from each record the page draws, by the same lookups The line uses; the plan itself comes from the
+  // renderer, at load and from each page it renders after. Every unit, row and fold is found through these maps, never through a selector built from plan text.
   var planFolds = Object.create(null);
   var planAsApproved = false;
   var planRows = Object.create(null);
@@ -1731,22 +1743,133 @@
     return fold("review", "Plan review (" + count + (count === 1 ? " round)" : " rounds)"), null, box);
   }
 
+  // The plan a live page holds follows the record. The server renders the page again when the record moves, so the plan
+  // comes from that page's block: what the renderer's validator accepted, or { unreadable }. It renders after it pushes,
+  // so an answer holding an older plan means not yet; asking stops being quiet after PLAN_PATIENCE of those. Once it has
+  // said the plan is out of date it goes on saying so until the plan is current.
+  var PLAN_FIRST = 1000, PLAN_AGAIN = 2000, PLAN_BEHIND = 30000, PLAN_PATIENCE = 15;
+  var planNamed = null, planRested = null, planTries = 0, planBehind = false, planAsked = null, planAsking = false;
+  function servedLive() {
+    return isObject(globalThis.deliveryStateStore) && typeof fetch === "function" && typeof location === "object" && /^https?:$/.test(location.protocol);
+  }
+  /** The `updated` value of the latest "Plan updated:" decision in a record, or null. */
+  function planNamedBy(doc) {
+    var updates = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "decision.recorded" && /^Plan updated:/.test(text(entry.summary)); });
+    var latest = updates.length ? /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/.exec(text(updates[updates.length - 1].summary)) : null;
+    return latest ? latest[0] : null;
+  }
+  // Whether an answer holds the plan named, or one the record has yet to name: the file is written before its entry.
+  function planMeets(held, named) { return isObject(held) && typeof held.updated === "string" && (held.updated === named || laterThan(held.updated, named)); }
+  function followPlan(named) {
+    if (named !== planRested) { planRested = null; }
+    if (named === null || named === planRested || (isObject(plan) && plan.updated === named)) {
+      clearTimeout(planAsked);
+      planAsked = null;
+      planNamed = null;
+      planBehind = false;
+      return;
+    }
+    if (named !== planNamed) {
+      clearTimeout(planAsked);
+      planAsked = null;
+      planNamed = named;
+      planTries = 0;
+      planBehind = false;
+    }
+    if (planAsked !== null || planAsking) { return; }
+    planAsked = setTimeout(askPlan, planBehind ? PLAN_BEHIND : planTries ? PLAN_AGAIN : PLAN_FIRST);
+  }
+  function askPlan() {
+    planAsked = null;
+    planAsking = true;
+    fetch(location.href, { cache: "no-store" }).then(function (answer) {
+      if (!answer.ok) { throw new Error("no page"); }
+      return answer.text();
+    }).then(function (page) {
+      return JSON.parse(new DOMParser().parseFromString(page, "text/html").getElementById("delivery-plan").textContent);
+    }).then(answeredPlan).catch(function () { answeredPlan(null); });
+  }
+  function answeredPlan(block) {
+    planAsking = false;
+    // The record stopped naming another plan while the page asked, so there is nothing to take.
+    if (planNamed === null) { return; }
+    if (isObject(block) && planMeets(block.plan, planNamed)) {
+      if (!isObject(plan) || plan.updated !== block.plan.updated) { takePlan(block); return; }
+      // The same later plan may be a render still to come, of the earlier plan the record names, or the file ahead of its
+      // entry. It is the plan a reload would show once the server has gone on holding it, or has just come back with it.
+      planTries += 1;
+      if (planBehind || planTries >= PLAN_PATIENCE) {
+        planRested = planNamed;
+        safely(lastGood || shown);
+      } else {
+        followPlan(planNamed);
+      }
+      return;
+    }
+    var older = isObject(block) && isObject(block.plan) && typeof block.plan.updated === "string" && seconds(block.plan.updated) !== null;
+    planTries += 1;
+    var behind = planBehind || !older || planTries >= PLAN_PATIENCE;
+    if (behind !== planBehind) { planBehind = behind; safely(lastGood || shown); }
+    // Only a change of note drew, so ask again from here too; a second ask is refused while one is waiting.
+    followPlan(planNamed);
+  }
+  // The new plan is only kept if the page can draw it: the plan in use goes back otherwise.
+  function takePlan(block) {
+    var was = { PLAN: PLAN, plan: plan, named: planNamed };
+    PLAN = block;
+    plan = block.plan;
+    planBehind = false;
+    var place = planPlace();
+    try {
+      draw(lastGood || shown);
+    } catch (error) {
+      PLAN = was.PLAN;
+      plan = was.plan;
+      planNamed = was.named;
+      planBehind = true;
+      // The failed draw may have asked at the quick pace; this answer says to ask at the slow one.
+      clearTimeout(planAsked);
+      planAsked = null;
+      safely(lastGood || shown);
+    }
+    keepPlace(place);
+  }
+  // Where the reader is. Past the chapter, a plan of another height moves what they are reading, along with anything the
+  // new plan changed above it, so the window moves with the chapter's end; anywhere else it stays.
+  function planPlace() {
+    if (typeof scrollY !== "number") { return null; }
+    var bottom = parts.plan.getBoundingClientRect().bottom;
+    return { y: scrollY, past: bottom <= 0, end: bottom + scrollY };
+  }
+  function keepPlace(place) {
+    if (!place) { return; }
+    var y = place.y + (place.past ? parts.plan.getBoundingClientRect().bottom + scrollY - place.end : 0);
+    // The page scrolls smoothly for its links; this is no movement the reader asked for.
+    if (scrollY !== y && typeof scrollTo === "function") { scrollTo({ top: y, behavior: "instant" }); }
+  }
+
   function drawPlan(doc) {
     var inner = parts.plan;
+    var live = servedLive();
+    var named = planNamedBy(doc);
+    if (live) { followPlan(named); }
     planRows = Object.create(null);
     var nodes = [el("div", "kicker", "The plan")];
     if (!plan) {
       var reason = PLAN && text(PLAN.unreadable) ? PLAN.unreadable : "";
-      nodes.push(flagList([{ title: "The plan couldn't be read", why: reason }]));
+      nodes.push(flagList([PLAN && typeof PLAN.absent === "string"
+        ? { title: "The plan chapter is missing", why: PLAN.absent + " is the plan on file, and nothing has written plan.json for this page." }
+        : { title: "The plan couldn't be read", why: reason }]));
       inner.replaceChildren.apply(inner, nodes);
       return;
     }
     var counts = planCounts(doc);
     var title = add(el("h2", "title plan-title"), planTitle(doc, counts));
-    // A pushed record says when the producer rewrote the plan; this page holds the plan it was rendered with.
-    var updates = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "decision.recorded" && /^Plan updated:/.test(text(entry.summary)); });
-    var latest = updates.length ? /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/.exec(text(updates[updates.length - 1].summary)) : null;
-    if (latest && latest[0] !== plan.updated) { title.appendChild(el("span", "plan-reload", "The plan changed. Reload to see it.")); }
+    // A record says when the producer rewrote the plan. A live page fetches it and speaks only if that fails; a static
+    // page holds the plan it was rendered with.
+    if (live ? planBehind : named && named !== plan.updated) {
+      title.appendChild(el("span", "plan-reload", live ? "The plan shown is out of date." : "The plan changed. Reload to see it."));
+    }
     var review = planReview();
     nodes.push(title, el("p", "say plan-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")));
     if (review) { nodes.push(approvalLine(review)); }

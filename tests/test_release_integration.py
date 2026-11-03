@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,6 +15,7 @@ from agent_skills.release import _release_view, build_release, verify_release
 from agent_skills.router import WorkflowRequest, route_workflow
 from agent_skills.validate import canonical_json, validate_corpus
 from lifecycle_support import initialize_repository
+from corpus_copy import SharedCorpus, copy_corpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,7 +59,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
                 self.assertEqual(decision.workflow_skill, expected)
 
     def test_profiles_and_release_payload_include_exact_new_closure(self) -> None:
-        profiles = {name: json.loads((ROOT / f"profiles/{name}.json").read_text()) for name in ("core", "delivery-views", "linear")}
+        profiles = {name: json.loads((ROOT / f"profiles/{name}.json").read_text()) for name in ("core", "delivery-views", "linear", "run-delivery")}
         core_members = resolve_profile("core", profiles)
         self.assertIn("diagnose-work", core_members)
         self.assertIn("obtain-review", core_members)
@@ -71,6 +71,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
                 "delivery-views",
                 "execute-linear-ticket",
                 "linear-tracker-adapter",
+                "run-delivery",
             ]),
         )
         core = _release_view(ROOT, "core")
@@ -79,6 +80,18 @@ class ReleaseIntegrationTests(unittest.TestCase):
         self.assertEqual(set(linear) - set(core), {
             "profiles/delivery-views.json",
             "profiles/linear.json",
+            "profiles/run-delivery.json",
+            "skills/run-delivery/SKILL.md",
+            "skills/run-delivery/adapters/forge_bitbucket.py",
+            "skills/run-delivery/adapters/forge_github.py",
+            "skills/run-delivery/assets/adapter-fixture/index.html",
+            "skills/run-delivery/references/adopting.md",
+            "skills/run-delivery/references/config.md",
+            "skills/run-delivery/scripts/run_delivery.py",
+            "skills/run-delivery/templates/evidence.html",
+            "skills/run-delivery/templates/lane-brief.in-app.md",
+            "skills/run-delivery/templates/lane-brief.md",
+            "skills/run-delivery/templates/round-brief.md",
             "skills/delivery-views/SKILL.md",
             "skills/delivery-views/scripts/snapshot.py",
             "skills/delivery-views/assets/history.css",
@@ -109,10 +122,10 @@ class ReleaseIntegrationTests(unittest.TestCase):
         self.assertEqual(inventories[0], inventories[1])
         self.assertEqual(core_scenarios, [row for row in linear_scenarios if row["profile"] == "core"])
         self.assertEqual({row["profile"] for row in core_scenarios}, {"core"})
-        self.assertEqual({row["profile"] for row in linear_scenarios}, {"core", "delivery-views", "linear"})
+        self.assertEqual({row["profile"] for row in linear_scenarios}, {"core", "delivery-views", "linear", "run-delivery"})
         self.assertEqual(
             {row["skill"] for row in linear_scenarios if row["profile"] == "linear"},
-            set(resolve_profile("linear", profiles)) - set(core_members) - {"delivery-views"},
+            set(resolve_profile("linear", profiles)) - set(core_members) - {"delivery-views", "run-delivery"},
         )
         for path in NEW_PAYLOAD:
             self.assertEqual(core[path], (ROOT / path).read_bytes(), path)
@@ -127,7 +140,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             resolve_profile("run-delivery", profiles),
             sorted([*resolve_profile("delivery-views", profiles), "run-delivery"]),
         )
-        self.assertNotIn("run-delivery", resolve_profile("linear", profiles))
+        self.assertIn("run-delivery", resolve_profile("linear", profiles))
         views = _release_view(ROOT, "delivery-views")
         run_delivery = _release_view(ROOT, "run-delivery")
         own = {path for path in run_delivery if path.startswith("skills/run-delivery/")}
@@ -143,7 +156,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             {"id": "orchestrate-work", "requirement": "required"},
         ])
         self.assertEqual(entry["externalTools"], ["git", "python3", "ps", "lsof", "ffmpeg", "ffprobe", "node", "gh"])
-        self.assertEqual(entry["profiles"], ["run-delivery"])
+        self.assertEqual(entry["profiles"], ["jira", "linear", "run-delivery"])
         scenarios = json.loads((ROOT / "validation-inventory.json").read_text())["scenarios"]
         self.assertIn(
             {"hosts": ["claude-code", "codex"], "id": "run-delivery-profile-selects-run-delivery",
@@ -173,19 +186,20 @@ class ReleaseIntegrationTests(unittest.TestCase):
                 self.assertEqual(enums, [expected])
 
     def test_new_runtime_is_scanned_for_provider_and_repository_leakage(self) -> None:
-        for relative in sorted(path for path in NEW_PAYLOAD if path.startswith("agent_skills/")):
-            with self.subTest(path=relative), tempfile.TemporaryDirectory() as temporary:
-                copied = Path(temporary) / "corpus"
-                shutil.copytree(ROOT, copied, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.egg-info"))
-                path = copied / relative
-                path.write_text(path.read_text() + "\n# forbidden Linear transport\n")
-                findings = validate_corpus(copied).findings
-                self.assertTrue(any(f.rule_id == "core.boundary" and f.artifact == relative for f in findings), findings)
+        with tempfile.TemporaryDirectory() as temporary:
+            corpus = SharedCorpus(Path(temporary) / "corpus")
+            for relative in sorted(path for path in NEW_PAYLOAD if path.startswith("agent_skills/")):
+                with self.subTest(path=relative):
+                    copied = corpus.restored()
+                    path = copied / relative
+                    path.write_text(path.read_text() + "\n# forbidden Linear transport\n")
+                    findings = validate_corpus(copied).findings
+                    self.assertTrue(any(f.rule_id == "core.boundary" and f.artifact == relative for f in findings), findings)
 
     def test_runtime_requirements_follow_members_without_expanding_legacy_closure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             copied = Path(temporary) / "corpus"
-            shutil.copytree(ROOT, copied, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.egg-info"))
+            copy_corpus(copied)
             runtime = {path for path in NEW_PAYLOAD if path.startswith("agent_skills/")}
             for relative in runtime:
                 (copied / relative).unlink()

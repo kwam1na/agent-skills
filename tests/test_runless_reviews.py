@@ -3,6 +3,8 @@ import base64
 import hashlib
 import json
 import re
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -323,3 +325,126 @@ class RunlessReviewTests(unittest.TestCase):
             product, native = [json.loads(block) for block in blocks]
             self.assertEqual(bool(product["run-1"].get("unavailable")), budget == low_budget)
             self.assertEqual(native["work-a"]["roundDetail"][-1]["outcome"], "approve")
+
+
+class ReviewEvidenceCheckTests(unittest.TestCase):
+    """A lane keeps every round and captures them after hand-off; the hand-off check reads what it did."""
+
+    setUp = fixtures.ReconcileTests.setUp
+    lead = fixtures.ReconcileTests.lead
+
+    def files(self):
+        paths = []
+        for number, data in enumerate([outcome(1, fixtures.HEAD_A, finding=True), outcome(2, fixtures.HEAD_B, resolved=True)], 1):
+            path = self.root / f"round{number}.json"
+            path.write_text(json.dumps(data, indent=2) + "\n")
+            paths.append(path)
+        return paths
+
+    def journal_rounds(self, count):
+        for number in range(1, count + 1):
+            state_tool.append_journal(self.directory, kind="review.round", subject="work-a", lane="lane-1",
+                                      summary=f"round {number}", review={
+                                          "round": number, "startedAt": "2026-01-01T00:00:00Z", "finishedAt": "2026-01-01T00:01:00Z",
+                                          "verdicts": {"lens.outcome-correctness": "approve"},
+                                          "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}})
+
+    def test_two_rounds_captured_after_hand_off_show_at_the_queue_items_head(self):
+        self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})
+        self.journal_rounds(2)
+        self.assertEqual(state_tool.review_evidence(self.directory, "work-a")["evidence"], "not-captured")
+        state_tool.capture_review(self.directory, subject="work-a", candidate=fixtures.HEAD_B, outcomes=self.files())
+        checked = state_tool.review_evidence(self.directory, "work-a")
+        self.assertEqual((checked["evidence"], checked["roundsCaptured"], checked["head"]), ("captured", 2, fixtures.HEAD_B))
+        observed = state_tool.show(self.directory)["reviewEvidence"]["work-a"]
+        self.assertEqual(observed["candidateRef"], fixtures.HEAD_B)
+        self.assertEqual([entry["round"] for entry in observed["outcomes"]], [1, 2])
+
+    def test_only_round_two_kept_is_refused_and_the_check_flags_it(self):
+        self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})
+        self.journal_rounds(2)
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.capture_review(self.directory, subject="work-a", candidate=fixtures.HEAD_B, outcomes=self.files()[1:])
+        self.assertEqual(refused.exception.code, "review_artifact_invalid")
+        self.assertEqual(state_tool.review_evidence(self.directory, "work-a")["evidence"], "not-captured")
+
+    def test_fewer_rounds_captured_than_journaled_is_incomplete(self):
+        self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})
+        self.journal_rounds(2)
+        lone = self.root / "lone.json"
+        lone.write_text(json.dumps(outcome(1, fixtures.HEAD_B)) + "\n")
+        state_tool.capture_review(self.directory, subject="work-a", candidate=fixtures.HEAD_B, outcomes=[lone])
+        checked = state_tool.review_evidence(self.directory, "work-a")
+        self.assertEqual((checked["evidence"], checked["roundsCaptured"], checked["roundsJournaled"]), ("incomplete", 1, 2))
+
+    def test_a_later_round_with_no_capture_is_flagged(self):
+        self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})
+        lone = self.root / "lone.json"
+        lone.write_text(json.dumps(outcome(1, fixtures.HEAD_B)) + "\n")
+        state_tool.capture_review(self.directory, subject="work-a", candidate=fixtures.HEAD_B, outcomes=[lone])
+        self.journal_rounds(1)
+        self.assertEqual(state_tool.review_evidence(self.directory, "work-a")["evidence"], "unavailable")
+
+    def test_a_re_journaled_round_counts_once(self):
+        self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})
+        self.journal_rounds(1)
+        self.journal_rounds(2)
+        state_tool.capture_review(self.directory, subject="work-a", candidate=fixtures.HEAD_B, outcomes=self.files())
+        checked = state_tool.review_evidence(self.directory, "work-a")
+        self.assertEqual((checked["evidence"], checked["roundsJournaled"]), ("captured", 2))
+
+    def test_an_item_naming_a_run_is_for_the_lead_to_confirm(self):
+        self.lead({"queue": [{**fixtures.queue_item("work-a", head=fixtures.HEAD_B), "runId": "ci-123"}]})
+        checked = state_tool.review_evidence(self.directory, "work-a")
+        self.assertEqual((checked["evidence"], checked["runId"]), ("run-named", "ci-123"))
+        done = subprocess.run([sys.executable, "-B", str(state_tool.__file__), "--dir", str(self.directory), "review-evidence",
+                               "--subject", "work-a"], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 1, done.stdout)
+
+    def template_round(self, number, candidate, results):
+        """A round file built from the words the lane brief template gives, and nothing else."""
+        guide = (Path(state_tool.__file__).resolve().parents[1] / "references/orchestration-guide.md").read_text(encoding="utf-8")
+        section = guide.split("**Review evidence**", 1)[1]
+        wrapper = re.search(r"```json\n(.*?)\n```", section, re.S).group(1)
+        for name in ("schemaVersion", "lensId", "subjectRef", "candidateRef", "round", "outcome", "evidence", "findings",
+                     "resolvedFindings", "id", "severity", "summary", "state", "resolution", "deferred", "deferredIssue"):
+            self.assertIn(f"`{name}`", section.split("```json", 1)[0], name)
+        def entry(lens, result):
+            text = wrapper.split('"entries": [', 1)[1].rsplit("]}", 1)[0]
+            for placeholder, value in (("<lens>", lens), ("<subject>", "work-a"), ("<commit reviewed>", candidate), ("<n>", str(number))):
+                text = text.replace(placeholder, value)
+            return text.replace("<the lens's result>", json.dumps(result))
+        outcome_word = "aligned" if all(r["outcome"] == "aligned" for r in results.values()) else "changes-requested"
+        head = wrapper.split('"entries": [', 1)[0].replace("<n>", str(number)).replace("<round outcome>", outcome_word)
+        path = self.root / f"template-round-{number}.json"
+        path.write_text(head + '"entries": [' + ", ".join(entry(l, r) for l, r in results.items()) + "]}\n", encoding="utf-8")
+        json.loads(path.read_text(encoding="utf-8"))
+        return path
+
+    def test_a_lane_following_the_template_leaves_files_capture_review_accepts(self):
+        self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})
+        identity = lambda lens, number, candidate: {"schemaVersion": "review-lens-result/1", "lensId": lens, "subjectRef": "work-a",
+                                                    "candidateRef": candidate, "round": number}
+        correctness, testing = "lens.outcome-correctness", "lens.adversarial-testing"
+        first = self.template_round(1, fixtures.HEAD_A, {
+            correctness: {**identity(correctness, 1, fixtures.HEAD_A), "outcome": "changes-requested", "evidence": "read it",
+                          "findings": [{"id": "F1", "severity": "P1", "summary": "wrong"}]},
+            testing: {**identity(testing, 1, fixtures.HEAD_A), "outcome": "changes-requested", "evidence": "ran it",
+                      "findings": [{"id": "T1", "severity": "P3", "summary": "thin"}]}})
+        second = self.template_round(2, fixtures.HEAD_B, {
+            correctness: {**identity(correctness, 2, fixtures.HEAD_B), "outcome": "aligned", "evidence": "read it", "findings": [],
+                          "resolvedFindings": [{"id": "F1", "state": "fixed", "resolution": "now right"}]},
+            testing: {**identity(testing, 2, fixtures.HEAD_B), "outcome": "aligned", "evidence": "ran it", "findings": [],
+                      "resolvedFindings": [{"id": "T1", "state": "deferred", "resolution": "later", "deferredIssue": "WORK-1"}]}})
+        self.journal_rounds(2)
+        state_tool.capture_review(self.directory, subject="work-a", candidate=fixtures.HEAD_B, outcomes=[first, second])
+        self.assertEqual(state_tool.review_evidence(self.directory, "work-a")["evidence"], "captured")
+        observed = state_tool.show(self.directory)["reviewEvidence"]["work-a"]
+        self.assertEqual([round_["outcome"] for round_ in observed["outcomes"]], ["changes-requested", "aligned"])
+        # What the line map's review cards read.
+        self.assertEqual(len(render.native_review_summaries(state_tool.show(self.directory))["work-a"]["roundDetail"]), 2)
+
+    def test_a_subject_the_record_lacks_is_refused(self):
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.review_evidence(self.directory, "work-z")
+        self.assertEqual(refused.exception.code, "subject_unknown")

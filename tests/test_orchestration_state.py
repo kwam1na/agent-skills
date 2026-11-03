@@ -130,7 +130,7 @@ class StateToolTests(unittest.TestCase):
         self.assertEqual(code, 0, shown)
         self.assertEqual(shown["state"], patched["state"])
         self.assertEqual(shown["state"]["version"], 2)
-        self.assertEqual(shown["state"]["lanes"], [lane])
+        self.assertEqual(shown["state"]["lanes"], [{**lane, "focusAt": shown["state"]["lanes"][0]["focusAt"]}])
         self.assertEqual(shown["state"]["queue"], [queue_item("pr-1")])
         self.assertEqual(shown["journal"], [])
         self.assertEqual(run_tool(fresh, "validate"), (0, {"ok": True}))
@@ -320,7 +320,8 @@ class StateToolTests(unittest.TestCase):
             "--patch", json.dumps({"state": "working"}), "--set", json.dumps({"/waitingOn": None}),
         )
         self.assertEqual(code, 0, patched)
-        self.assertEqual(patched["state"]["lanes"][0], {**lane, "state": "working", "waitingOn": None})
+        row = patched["state"]["lanes"][0]
+        self.assertEqual(row, {**lane, "state": "working", "waitingOn": None, "focusAt": row["focusAt"]})
         patched = state_tool.patch(self.directory, writer="lead", version=5, selector="queue[subject=pr-1]",
                                    assignments={"/runId": None, "/lane": None, "/reportedRounds": None})
         self.assertEqual(patched["queue"][0], queue_item("pr-1", lane=None, reportedRounds=None))
@@ -4653,7 +4654,7 @@ def bullets_after(text: str, lead_in: str) -> list[str]:
 # written into its state directory, as views, the outbox or the
 # acknowledgement, not shipped with the skill.
 ADOPTER_FILES = frozenset({".agents/orchestration.json", "delivery.md", "delivery.html", "outbox/outbox.json",
-                           "published.json", "recovery.json", "changes.jsonl"})
+                           "published.json", "recovery.json", "changes.jsonl", "plan.json"})
 
 
 class SkillTextTests(unittest.TestCase):

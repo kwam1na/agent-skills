@@ -1,0 +1,63 @@
+{
+  "$id": "https://agent-skills.dev/schemas/catalog/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": "agent-skills-catalog/1"
+    },
+    "skills": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "degradedBehavior": {
+            "type": "string"
+          },
+          "dependencies": {
+            "type": "array"
+          },
+          "externalTools": {
+            "type": "array"
+          },
+          "hosts": {
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "profiles": {
+            "type": "array"
+          },
+          "provenanceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dependencies",
+          "externalTools",
+          "hosts",
+          "id",
+          "path",
+          "profiles",
+          "provenanceId"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "skills"
+  ],
+  "type": "object"
+}

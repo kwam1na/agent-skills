@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "delivery-flow/1",
+  "branchPattern": "claude/{key}",
+  "gates": [
+    {
+      "id": "validate-registry",
+      "argv": [
+        "python3",
+        "-B",
+        "scripts/validate-registry.py"
+      ],
+      "timeoutSeconds": 300
+    },
+    {
+      "id": "provenance",
+      "argv": [
+        "python3",
+        "-B",
+        "scripts/update-provenance.py",
+        "--check"
+      ],
+      "timeoutSeconds": 300
+    }
+  ]
+}

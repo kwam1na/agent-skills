@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from agent_skills.validate import safe_relative_path, validate_corpus
+from corpus_copy import SharedCorpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,11 +31,16 @@ def tree_digest(root: Path) -> str:
 
 
 class CorpusValidationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        holder = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(holder.cleanup)
+        cls.corpus = SharedCorpus(Path(holder.name) / "corpus")
+
     def copied_corpus(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
-        temporary = tempfile.TemporaryDirectory()
-        copied = Path(temporary.name) / "corpus"
-        shutil.copytree(ROOT, copied, ignore=shutil.ignore_patterns(".git", "__pycache__"))
-        return temporary, copied
+        """The class's one copy, as it first was, and a folder of this test's own beside it."""
+        self.addCleanup(self.corpus.restored)
+        return tempfile.TemporaryDirectory(), self.corpus.restored()
 
     def test_valid_corpus_is_stable_and_read_only(self) -> None:
         before = tree_digest(ROOT)

@@ -103,17 +103,30 @@ export function block(page, id) {
 
 const VIEW_ADDRESS = "http://localhost/view/line-map.html";
 
+/** Where a page's plan chapter ends under `scroll`, from a live page or a snapshot: 10 pixels for each element up to its end. */
+export function planEnd(app) {
+  const inner = app.querySelector("#plan .inner");
+  const everything = [...app.querySelectorAll("*")];
+  return everything.filter((node) => node === inner || inner.contains(node) || (node.compareDocumentPosition(inner) & 4) !== 0).length * 10;
+}
+
 /**
  * Opens a page and returns what it shows after each step, as the source's harness did. The scenario is
  * { now, store?, server?, rendered?, steps }: `store` puts a fake live store in place ({ read: "pending" |
  * "reject" | "manual" | <document>, subscribeThrows?, onStatusThrows? }); `server: { document }` stands in for
  * the live server's adapter; `rendered: <page>` serves the page at its /view/ address as the server's next
- * render. Steps: { push }, { status }, { resolve }, { event }, { dropped }, { hover }, { leave },
- * { click, index? } (focus, then click), { toggle } or { wait }. Each snapshot is { app, text, focused, source,
+ * render, and a function gives each answer in turn: a page, { refuse: <status>, body }, an Error it fails with, or a promise
+ * of one, to hold an answer open. `strayFetch` gives a page with no address a fetch that records any call. Steps: { push }, { status }, { resolve }, { event }, { dropped }, { hover }, { leave },
+ * { click, index? } (focus, then click), { toggle }, { run: <function> }, { asked: <n> } (until the page has fetched its address n times and
+ * taken in the answer) or { wait }. Each snapshot is { app, text, focused, source,
  * titled }, titled counting the elements anywhere in the document that carry a title attribute.
  *
  * `stored: { key: value }` puts values in the page's storage before it loads; storage needs an address, so it goes with
  * `rendered`.
+ *
+ * `quicker: <n>` runs the page's timers n times faster. `scroll: { y }` places the reader, with the plan chapter ending at
+ * `planEnd`, and the result's `scrollY` says where the window ended. The result's `fetched` lists fetches of the page's
+ * address and `fetchOptions` what each asked for.
  *
  * `motion: { reduced? }` stands in for what jsdom lacks to move things: elements get a height that grows with what
  * they hold, `matchMedia` answers the reduced-motion query as `reduced` says, and each `animate` call is recorded, as
@@ -125,6 +138,8 @@ export async function openPage(page, scenario = {}) {
   let answerRead = null;
   const animations = [];
   const intervals = [];
+  const fetched = [];
+  const fetchOptions = [];
   const dom = new JSDOM(page, {
     ...(scenario.rendered ? { url: VIEW_ADDRESS } : {}),
     runScripts: "dangerously",
@@ -132,6 +147,23 @@ export async function openPage(page, scenario = {}) {
       if (scenario.now) window.Date.now = () => Date.parse(scenario.now);
       // Held, not run: a `tick` step runs each one as the page's timer would.
       window.setInterval = (callback) => { intervals.push(callback); return 0; };
+      if (scenario.quicker) {
+        // The runs refresh keeps its own three seconds, so every fetch a quickened test sees is the plan's.
+        const wait = window.setTimeout.bind(window);
+        window.setTimeout = (run, delay, ...rest) => wait(run, delay === 3000 ? delay : (delay || 0) / scenario.quicker, ...rest);
+      }
+      if (scenario.scroll) {
+        // What jsdom lacks to place a page: where the reader is, and a plan chapter that ends where what it and the
+        // chapters above it hold, at 10 pixels an element, say. A redraw that moves the window goes through `scrollTo`.
+        let at = scenario.scroll.y;
+        Object.defineProperty(window, "scrollY", { configurable: true, get() { return at; } });
+        window.scrollTo = ({ top, behavior }) => { if (behavior !== "instant") throw new Error("the reader's place moved smoothly"); at = top; };
+        const sized = window.Element.prototype.getBoundingClientRect;
+        window.Element.prototype.getBoundingClientRect = function () {
+          if (!this.closest("#plan")) return sized.call(this);
+          return { bottom: planEnd(window.document.getElementById("app")) - at, top: 0, left: 0, right: 0, width: 0, height: 0 };
+        };
+      }
       if (scenario.motion) {
         const reduced = Boolean(scenario.motion.reduced);
         window.matchMedia = (query) => ({ media: query, matches: query.includes("prefers-reduced-motion: reduce") && reduced,
@@ -166,9 +198,20 @@ export async function openPage(page, scenario = {}) {
           : Promise.reject(new Error("unexpected fetch " + url));
       }
       if (scenario.rendered) {
-        window.fetch = (url) => url === VIEW_ADDRESS
-          ? Promise.resolve({ text: () => Promise.resolve(scenario.rendered) })
-          : Promise.reject(new Error("unexpected fetch " + url));
+        window.fetch = (url, options) => {
+          if (url !== VIEW_ADDRESS) return Promise.reject(new Error("unexpected fetch " + url));
+          fetched.push(url);
+          fetchOptions.push(options);
+          const answer = typeof scenario.rendered === "function" ? scenario.rendered() : scenario.rendered;
+          return Promise.resolve(answer).then((given) => {
+            if (given instanceof Error) throw given;
+            if (typeof given === "object") return { ok: false, status: given.refuse, text: () => Promise.resolve(given.body) };
+            return { ok: true, status: 200, text: () => Promise.resolve(given) };
+          });
+        };
+      }
+      if (scenario.strayFetch) {
+        window.fetch = (url, options) => { fetched.push(url); fetchOptions.push(options); return Promise.reject(new Error("no ask expected")); };
       }
       const store = scenario.store ?? { read: "pending" };
       if (store) {
@@ -209,12 +252,21 @@ export async function openPage(page, scenario = {}) {
     if ("click" in step) { const node = document.querySelectorAll(step.click)[step.index || 0]; node.focus(); node.click(); }
     if ("toggle" in step) { const node = document.querySelector(step.toggle); node.open = !node.open; }
     if ("tick" in step) intervals.forEach((callback) => callback());
+    if ("run" in step) step.run();
+    if ("asked" in step) {
+      const deadline = Date.now() + 20000;
+      while (fetched.length < step.asked) {
+        if (Date.now() > deadline) throw new Error(`the page fetched ${fetched.length} times, not ${step.asked}`);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
+    }
     await new Promise((resolve) => setTimeout(resolve, step.wait || 5));
     snapshots.push(snapshot());
   }
+  const scrollY = dom.window.scrollY;
   const storedTheme = (() => { try { return { ...dom.window.localStorage }; } catch { return null; } })();
   dom.window.close();
-  return Object.assign(snapshots, { storage: storedTheme, animations });
+  return Object.assign(snapshots, { storage: storedTheme, animations, fetched, fetchOptions, scrollY });
 }
 
 const TOOLS = path.join(ROOT, "tests", "delivery_views_page", "page_tools.py");

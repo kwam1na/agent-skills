@@ -43,7 +43,17 @@ timed out, while the rest of the run carries on:
 .venv/bin/python scripts/run-tests.py --timings .test-timings.json
 ```
 
-On Windows, use `.venv\Scripts\python.exe` for the sensor commands.
+`scripts/measure-test-writes.py` runs the same suite and reports, per test module,
+the files it wrote to temp folders and what it left there. It counts file events,
+so it measures on macOS; `--compare` shows two runs side by side anywhere:
+
+```bash
+.venv/bin/python scripts/measure-test-writes.py --workers 4 --output after.json
+.venv/bin/python scripts/measure-test-writes.py --compare before.json after.json
+```
+
+On Windows, which is not validated (see below), use `.venv\Scripts\python.exe` for
+the sensor commands.
 
 Build and verify the core profile:
 
@@ -69,6 +79,9 @@ python3 scripts/build-release.py verify \
   --extract-to /tmp/linear-standalone
 ```
 
+Both tracker profiles build on `run-delivery`, so an adopter on one gets the delivery
+commands too. Those run on POSIX hosts only, which doesn't stop a tracker profile
+installing on Windows, though Windows is not validated (see below).
 The optional Jira profile builds the same way with `--profile jira`. It reaches
 Jira only through the host's Atlassian MCP connector, configured by the adopting
 repository's `.agents/tracker-properties.json`, whose `jira` block names the
@@ -99,7 +112,7 @@ compression-ratio, and elapsed-time limits. The archive contains the validator,
 catalog, selected profile closure, provenance, schemas, inventory, and selected
 skills. Core excludes optional profile bodies; Linear and Jira each add their
 adapter and the two tracking workflows that call the adapter to the complete
-core closure.
+`run-delivery` closure.
 
 An installed product verifies an incoming release against its own limits, so
 raising a limit takes a stepping-stone release. The release that raises a limit
@@ -125,7 +138,9 @@ history page, and tracker and forge snapshots. `run-delivery` adds
 `delivery-views` and the commands that carry out an orchestrated delivery: lens
 round briefs, gate runs, in-app checks under a lease, draft change requests,
 lane hand-offs, and the lead's setup, acceptance, evidence, ship and close-out.
-Its product archive is the one an adopter installs to run deliveries; its
+Its product archive is the one an adopter with no supported tracker installs to run
+deliveries, and an adopter on a tracker gets the same commands from their tracker's
+archive and keeps installing that one, because a generation holds one profile. The
 adoption guide is `skills/run-delivery/references/adopting.md`, and
 `run_delivery.py doctor` checks a repository's setup. Build either profile like
 the others:
@@ -194,19 +209,23 @@ python3 scripts/qualify-linear.py \
   --core-record /tmp/core.qualification.json \
   --linear-archive /tmp/linear.zip \
   --linear-metadata /tmp/linear.release.json \
+  --run-delivery-archive /tmp/run-delivery.zip \
+  --run-delivery-metadata /tmp/run-delivery.release.json \
   --record /tmp/linear.qualification.json
 ```
 
-The record binds the passing core qualification and both exact archive and metadata
-identities. Its scenarios are the core binding, Linear install and host discovery,
+The record binds the passing core qualification and the exact core, Linear and
+`run-delivery` archive and metadata identities. Its scenarios are the core binding, Linear install and host discovery,
 controlled degraded outcomes, and forbidden alternate transport.
 Qualification also rebuilds the supplied Linear archive's core projection and
-requires its archive and metadata bytes to match the separately qualified core.
+requires its archive and metadata bytes to match the separately qualified core, and
+does the same for its `run-delivery` projection.
 For product archives, every runtime component must be byte-identical across
 profiles; only the descriptor's verified workflow-content binding differs.
 
 The transport sensor inspects only the delta between
-the supplied extracted Linear and core candidates. Its tests prove rejection of
+the supplied extracted Linear and `run-delivery` candidates, so it covers what the
+Linear profile adds and not the forge adapters and views it builds on. Its tests prove rejection of
 concrete direct endpoint, SDK, Node HTTP(S), and command transport actions while
 allowing non-executable boundary terminology and unrelated extension code.
 Authentication, unavailable, unsupported,
@@ -333,7 +352,8 @@ drains:
 | `SIGQUIT` | Forward to the process group, escalate when needed, and return 131. |
 | `SIGKILL` | Uncatchable; the launcher cannot run cleanup when the launcher itself receives it. |
 
-Windows keeps its native `taskkill /T /F` tree cleanup for `SIGINT` and
+Windows, which is not validated (see above), keeps its native `taskkill /T /F` tree
+cleanup for `SIGINT` and
 `SIGTERM`. If bounded POSIX or Windows cleanup cannot establish that the tree
 drained, the CLI returns `product.cancellation_incomplete`. Its diagnostic lists
 only PIDs still running through the direct child handle; when tree liveness

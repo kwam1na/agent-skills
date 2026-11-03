@@ -42,7 +42,17 @@ tracker, host or forge.
   runner-owned and lane-owned ones. The runner writes only its result
   documents, journal entries, and its own fields: `queue[i].stage`,
   `queue[i].checks`, `queue[i].syncedHead`, `meta.checking`, `meta.baseHead`,
-  `meta.releasedHead` and `meta.checkHistory`. A lane writes only its own
+  `meta.releasedHead` and `meta.checkHistory`, and one lane row when it merges
+  or stops that lane's candidate, in the same write: `focus`, `state`,
+  `waitingOn` and `since`. A lane with nothing else open rests. A row that doesn't
+  name the candidate stays if its lane has another assignment open, or is
+  active and has spoken since its hand-off. So does a blocked lane's row while it
+  has other work open. Any later `focus` wins, and ends a `waitingOn` the queue
+  wrote unless it sets its own; a new hand-off, or the queue putting the candidate
+  back, ends the queue's words. A lead who drops a stopped candidate from the
+  queue also clears a row still saying it stopped, since no later queue write
+  will. The tool alone keeps a row's `focusAt` and
+  `focusBy`, which says the queue wrote its words. A lane writes only its own
   lane's `focus`, `state` and `waitingOn`, its own review rounds, and its own
   hand-off, which the tool turns into a queue element, with any suite evidence
   it gives in `queue[i].evidence`, which only a hand-off writes. Every write goes
@@ -166,6 +176,9 @@ python3 -B scripts/delivery_state.py --dir <state directory> wait [--after <jour
 
 The wait reads the record and the machine only, and returns on a hand-off, a
 merge, a stop, a broken base, a blocker, a blocked lane, or machine pressure.
+A lane whose row has stood still past `--quiet-seconds`, an hour by default, is
+information, not a reason to return: `quietLanes` names it when the wait next ends,
+once a quiet stretch, and it may be waiting on a long review for good reason.
 Whenever a wait names pressure, whatever else woke it, the lead finds what is
 loading the machine before taking more work, and reduces this delivery's own
 load first, such as by capping test workers. It reports what it can't reduce to
@@ -329,6 +342,10 @@ the operator the address it prints:
 ```bash
 python3 -B scripts/render_state.py live --dir <state directory> --binding .agents/orchestration.json
 ```
+
+Started without the binding that names its `liveHome`, or from a binding that
+declares a page view and names no home, the live view shows the built-in page and
+says so: in the line it prints and at the top of that page.
 
 - Every successful write through the state tool, by the lead, the runner or a
   lane, appends one line to `changes.jsonl` in the state directory; a write
@@ -627,6 +644,10 @@ python3 -B scripts/delivery_state.py --dir <state directory> capture-review \
   --subject <subject> --candidate <reviewed candidate> \
   --outcome <round-1.json> --outcome <round-2.json>
 ```
+
+`review-evidence --subject <subject>` reports `captured`, `not-captured`,
+`incomplete`, `unavailable` or `run-named`, and exits 1 for anything but `captured`.
+The lead reads it when checking a hand-off.
 
 The command stores original outcome bytes in a digest-addressed
 `review-artifacts/` file and appends a `review.evidence` observation. Repeating

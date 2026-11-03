@@ -42,6 +42,7 @@ from agent_skills import release
 from agent_skills.lifecycle import Lifecycle
 from agent_skills.release import build_release, verify_release
 from agent_skills.validate import LEAKAGE_PATTERNS
+from quiet_git import quieten
 from tests.test_merge_queue import SERVING_BINDING, SERVING_RULE  # the rule both tools apply
 
 
@@ -303,7 +304,9 @@ class Fixture:
         # The supervisor's own cases start it; every other case runs the lead's commands by hand.
         self.env = {**clean_environment(), "FAKE_FORGE_STATE": str(self.tmp / "forge.json"), "RUN_DELIVERY_SUPERVISOR": "off"}
         sh("git", "init", "-q", "--bare", "-b", "main", self.origin)
+        quieten(self.origin)
         sh("git", "clone", "-q", self.origin, self.main)
+        quieten(self.main)
         m = self.main
         (m / "src").mkdir()
         (m / "src/app.txt").write_text("app\n")
@@ -4457,6 +4460,29 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         given = ["app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one"]
         self.assertEqual(self.parsed(*given, "--", "a", "--", "b")[1], ["a", "--", "b"])
 
+    def test_a_second_separator_reaches_the_video_recording_as_given(self) -> None:
+        recorded = []
+
+        def recording(dist, spec, passthrough, *rest):
+            recorded.append(list(passthrough))
+            raise self.tool.Stop("recorded enough")
+
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(self.tool, "cfg", lambda: mock.Mock(require=lambda key: key)), \
+                mock.patch.object(self.tool, "video_tools_problem", lambda: None), \
+                mock.patch.object(self.tool, "need_in_app", lambda: {"baseline": "before", "build": {"artifact": "after"}}), \
+                mock.patch.object(self.tool, "repo", lambda: Path(folder)), \
+                mock.patch.object(self.tool, "stamped", lambda dist: {"head": "h"}), \
+                mock.patch.object(self.tool, "clean_head", lambda: "h"), \
+                mock.patch.object(self.tool, "review_dir", lambda key: Path(folder)), \
+                mock.patch.object(self.tool, "run_in_app", recording), \
+                mock.patch.object(self.tool.signal, "signal"), \
+                contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.suppress(SystemExit):
+            self.tool.main(["app-video", "FX-1", "clip", "--mode", "loaded", "--path", "/one",
+                            "--", "--", "--fixture-user", "reader"])
+        self.assertEqual(recorded, [["--", "--fixture-user", "reader"]])
+
     def test_a_command_without_pass_through_arguments_parses_as_it_always_did(self) -> None:
         # A required positional may follow the separator, as argparse allows.
         seen, received = [], []
@@ -4588,10 +4614,11 @@ class RunDeliveryRenderHalvesTests(unittest.TestCase):
 class RunDeliveryContinuousIntegrationTests(unittest.TestCase):
     def test_posix_runners_install_what_the_video_and_harness_cases_need(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertRegex(workflow, r"(?m)^      - uses: actions/setup-node@v4\n        if: runner\.os != 'Windows'\n"
+        self.assertRegex(workflow, r"(?m)^      - uses: actions/setup-node@v4\n"
                                    r"        with:\n          node-version: \"22\.6\.0\"$")
         self.assertRegex(workflow, r"(?m)^        if: runner\.os == 'Linux'\n        run: .*apt-get install -y ffmpeg$")
         self.assertRegex(workflow, r"(?m)^        if: runner\.os == 'macOS'\n        run: brew install ffmpeg$")
+        self.assertNotIn("Windows", workflow)
         # Both are in place before the suite runs.
         self.assertLess(workflow.index("install -y ffmpeg"), workflow.index("scripts/run-tests.py"))
         self.assertLess(workflow.index("brew install ffmpeg"), workflow.index("scripts/run-tests.py"))

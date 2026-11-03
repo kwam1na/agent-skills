@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import re
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
 from agent_skills.release import ReleaseError, build_release
+from corpus_copy import copy_corpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +36,37 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "skills/deliver-work/SKILL.md": (
         "call its read-only `resume` command before reusing evidence on continuation",
     ),
+    "skills/obtain-review/SKILL.md": (
+        "A lens stops only processes it started, by the pid it recorded, never by pattern with `pkill` or `killall`",
+    ),
+    "skills/obtain-review/references/round-brief-template.md": (
+        "It stops only processes it started, by the pid it recorded, never by pattern with `pkill` or `killall`",
+    ),
+    "skills/run-delivery/templates/round-brief.md": (
+        "It stops only processes it started, by the pid it recorded, never by pattern with `pkill` or `killall`",
+    ),
+    "skills/run-delivery/references/adopting.md": (
+        "keep installing its own tracker's release, because a generation holds one profile",
+    ),
+    "skills/plan-work/SKILL.md": (
+        "Where the repository tracks plans, commit the saved plan under its rules before plan review or removing the"
+        " checkout",
+        "Whether plans are tracked stays the repository's call",
+    ),
+    "README.md": (
+        "On Windows, which is not validated (see below), use `.venv\\Scripts\\python.exe`",
+        "Both tracker profiles build on `run-delivery`, so an adopter on one gets the delivery commands too",
+        "--run-delivery-archive /tmp/run-delivery.zip",
+        "the supplied extracted Linear and `run-delivery` candidates",
+        "an adopter on a tracker gets the same commands from their tracker's archive and keeps installing that one",
+        "Windows, which is not validated (see above), keeps its native `taskkill /T /F` tree cleanup",
+    ),
+    "docs/host-adapters.md": (
+        "On Windows, which is not validated (see the README), directory links use",
+    ),
+    "docs/product-generation.md": (
+        "It can delay one only where a gating job is absent while it still runs",
+    ),
     "skills/review-work/SKILL.md": (
         "When the host reports no cost, record `coverage: unreported`; do not invent zero",
     ),
@@ -44,8 +75,38 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "skills/orchestrate-work/references/orchestration-guide.md": (
         "Stop only processes you started, by the pid you recorded, never by pattern",
+        # The lane brief's review step.
+        "Ask each lens for its result in review-lens-result/1, on top of the shape `$obtain-review`'s round brief gives",
+        "Save every lens's result for every round, one outcome file per round, as the lens returned it, outside your"
+        " checkout, and keep the files until close-out",
+        "Right after your hand-off, which gives the record your reviewed head, capture every round in order",
+        "A round's outcome is `aligned` only when every lens aligned and no finding is open",
+        "`state` is one of `closed`, `fixed`, `withdrawn`, `dropped`, `deferred` or `open`, and a `deferred` one also"
+        " carries `deferredIssue`, naming its follow-up item.",
+        "capture-review --subject <subject> --candidate <reviewed head> --outcome <round-1.json> --outcome <round-2.json>",
+        # The hand-off check.
+        "review evidence was captured for the reviewed head, or the lane said why not.",
+        "`delivery_state.py review-evidence --subject <subject>` says which",
+        # The lead checklist.
+        "A brief written from the template below keeps its review step; a delivery run through `run-delivery` gets the"
+        " same from `review-reduce` instead.",
+        "`meta.planFile` names the approved plan, so a line map with no plan chapter says so",
+        "`plan.json` in the state directory is the plan chapter's one input",
+        "names it in `liveHome`, and the live view starts with `--binding`",
+    ),
+    "skills/orchestrate-work/SKILL.md": (
+        "the live view shows the built-in page and says so",
+        "`review-evidence --subject <subject>` reports `captured`, `not-captured`, `incomplete`, `unavailable` or `run-named`",
+    ),
+    "docs/own-deliveries.md": (
+        "The binding declares no affected-checks provider, on purpose.",
+        "Nothing here reads a `.env`, this repository's or another's.",
     ),
     "AGENTS.md": (
+        "`docs/solutions/` holds what past deliveries learned, one note per learning at"
+        " `docs/solutions/<category>/<slug>-<YYYY-MM-DD>.md`",
+        "On Windows, which is not validated (see above), use `.venv\\Scripts\\python.exe`",
+        "a gating job absent while it runs is waited for, within the bound, and then refused",
         "Stop only processes you started, by the pid you recorded, and never by"
         " pattern with `pkill` or `killall`",
         "resolves, in this repository, to the commit whose tree carries the"
@@ -237,11 +298,7 @@ class DeclaredMechanicsCorpusTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             copied = Path(temporary) / "corpus"
-            shutil.copytree(
-                ROOT,
-                copied,
-                ignore=shutil.ignore_patterns(".git", "__pycache__"),
-            )
+            copy_corpus(copied)
             skill = copied / "skills/execute-work/SKILL.md"
             skill.write_text(
                 skill.read_text(encoding="utf-8") + "\nInvalidates provenance.\n",

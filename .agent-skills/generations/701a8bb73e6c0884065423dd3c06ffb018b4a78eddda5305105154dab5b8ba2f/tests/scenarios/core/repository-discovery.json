@@ -1,0 +1,20 @@
+{
+  "scenarios": [
+    {
+      "expectedWorkflow": "plan",
+      "hostWorkflowHint": " REVIEW ",
+      "repositoryWorkflow": " PLAN ",
+      "request": "Implement the bounded parser change"
+    },
+    {
+      "expectedWorkflow": "review",
+      "hostWorkflowHint": " REVIEW ",
+      "request": "Implement the bounded parser change"
+    },
+    {
+      "expectedWorkflow": "implement",
+      "request": "Implement the bounded parser change"
+    }
+  ],
+  "schemaVersion": "agent-skills-repository-precedence-scenarios/1"
+}
