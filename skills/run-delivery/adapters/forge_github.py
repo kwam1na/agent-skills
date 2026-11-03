@@ -3,11 +3,17 @@
 
   find --source BRANCH                                   -> {"url": ...} for its open PR, or {}
   open --source B --destination D --title T --body-file F -> {"url": ...}  (opened as a draft)
-  get  --url URL                                          -> {"url", "state": open|merged|closed, "head", "source", "destination"}
+  get  --url URL                                          -> {"url", "state": open|merged|closed, "draft", "head", "source",
+                                                              "destination"}
+  reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at"}],
+                                                              "reviews": [{"author", "at", "body"}]}
+  ready --url URL                                         -> {"url", "draft": false}
+  merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
 
 Environment: FLOW_FORGE_REPOSITORY (owner/name). Prints JSON on stdout; exits 1 with a message on stderr otherwise.
-Its only write is opening a pull request as a draft. It has no `reviews` command. A token gh reads from the
-environment is never printed.
+It writes three ways: it opens a pull request as a draft (a lane's open-pr), marks one ready (the lead's acceptance,
+under the delivery's readyPullRequests grant), and merges one (the binding's merge step), refusing a head that moved
+when --head is given. A token gh reads from the environment is never printed.
 """
 
 import argparse
@@ -40,6 +46,17 @@ def gh(*args):
     return done.stdout
 
 
+# A check run's conclusion, or a status context's state, as the pipeline review reads it.
+CHECK_STATES = {"SUCCESS": "passed", "NEUTRAL": "passed", "SKIPPED": "passed", "FAILURE": "failed", "ERROR": "failed",
+                "CANCELLED": "failed", "TIMED_OUT": "failed", "ACTION_REQUIRED": "failed", "STARTUP_FAILURE": "failed"}
+
+
+def pull_request(url):
+    if not re.fullmatch(rf"https://github\.com/{re.escape(REPO)}/pull/\d+/?", url):
+        fail(f"github: {url!r} is not a pull request of {REPO}")
+    return url
+
+
 def main():
     if not REPO:
         fail("github: set FLOW_FORGE_REPOSITORY (owner/name)")
@@ -49,6 +66,10 @@ def main():
     p = sub.add_parser("open"); p.add_argument("--source", required=True); p.add_argument("--destination", required=True)
     p.add_argument("--title", required=True); p.add_argument("--body-file", required=True)
     p = sub.add_parser("get"); p.add_argument("--url", required=True)
+    p = sub.add_parser("reviews"); p.add_argument("--url", required=True); p.add_argument("--head", required=True)
+    p = sub.add_parser("ready"); p.add_argument("--url", required=True)
+    p = sub.add_parser("merge"); p.add_argument("--url", required=True)
+    p.add_argument("--strategy", choices=("merge", "squash"), required=True); p.add_argument("--head")
     args = parser.parse_args()
     if args.command == "find":
         found = json.loads(gh("pr", "list", "--head", args.source, "--state", "open", "--json", "url"))
@@ -57,12 +78,29 @@ def main():
         url = gh("pr", "create", "--draft", "--head", args.source, "--base", args.destination, "--title", args.title,
                  "--body-file", args.body_file).strip().splitlines()[-1]
         print(json.dumps({"url": url}))
+    elif args.command == "reviews":
+        pr = json.loads(gh("pr", "view", pull_request(args.url), "--json", "headRefOid,reviews,statusCheckRollup"))
+        # The rollup is the pull request's current head's: at any other head nothing has run yet.
+        rollup = (pr.get("statusCheckRollup") or []) if pr["headRefOid"].startswith(args.head) else []
+        checks = [{"name": entry.get("name") or entry.get("context") or "",
+                   "state": CHECK_STATES.get(entry.get("conclusion") or entry.get("state") or "", "pending"),
+                   "at": entry.get("completedAt") or entry.get("startedAt") or ""} for entry in rollup]
+        reviews = [{"author": (entry.get("author") or {}).get("login", ""), "at": entry.get("submittedAt", ""),
+                    "body": entry.get("body", "")} for entry in pr.get("reviews") or []]
+        print(json.dumps({"checks": checks, "reviews": reviews}))
+    elif args.command == "ready":
+        gh("pr", "ready", pull_request(args.url))
+        print(json.dumps({"url": args.url, "draft": False}))
+    elif args.command == "merge":
+        guard = ["--match-head-commit", args.head] if args.head else []
+        gh("pr", "merge", pull_request(args.url), f"--{args.strategy}", *guard)
+        print(json.dumps({"url": args.url, "state": "merged"}))
     else:
-        if not re.fullmatch(rf"https://github\.com/{re.escape(REPO)}/pull/\d+/?", args.url):
-            fail(f"github: {args.url!r} is not a pull request of {REPO}")
-        pr = json.loads(gh("pr", "view", args.url, "--json", "url,state,headRefOid,headRefName,baseRefName"))
+        pr = json.loads(gh("pr", "view", pull_request(args.url), "--json",
+                           "url,state,isDraft,headRefOid,headRefName,baseRefName"))
         print(json.dumps({"url": pr["url"], "state": {"OPEN": "open", "MERGED": "merged"}.get(pr["state"], "closed"),
-                          "head": pr["headRefOid"], "source": pr["headRefName"], "destination": pr["baseRefName"]}))
+                          "draft": bool(pr.get("isDraft")), "head": pr["headRefOid"], "source": pr["headRefName"],
+                          "destination": pr["baseRefName"]}))
 
 
 if __name__ == "__main__":

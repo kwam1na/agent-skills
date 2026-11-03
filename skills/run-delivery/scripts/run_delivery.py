@@ -77,7 +77,7 @@ OFFLINE = False
 # Process names lead-close recognizes as this tool, the earlier name included.
 TOOL_NAMES = ("run_delivery.py", "flow.py")
 # The commands each shipped forge adapter answers; an adopter's own argv adapter is taken to answer all four.
-ADAPTER_COMMANDS = {"bitbucket": ("find", "open", "get", "reviews"), "github": ("find", "open", "get")}
+ADAPTER_COMMANDS = {name: ("find", "open", "get", "reviews", "ready", "merge") for name in ("bitbucket", "github")}
 DEFAULT_ARCHIVE = "~/.local/share/run-delivery/archive/{repo}/{delivery}"
 # Adapter arguments that would carry a sign-in value into records, logs and evidence (flag name or assignment key).
 SECRET_ARGUMENT = re.compile(r"password|passwd|token|secret|api[-_]?key|credential", re.IGNORECASE)
@@ -3667,10 +3667,22 @@ def remote_base_problem(c) -> str | None:
     return None
 
 
+def ready_problem(c) -> str | None:
+    """A merge step that refuses drafts, with no grant for the lead to mark them ready at acceptance."""
+    if c.forge.get("mergeNeedsReady") and not (c.raw.get("authority") or {}).get("readyPullRequests"):
+        return (f"forge.mergeNeedsReady says the merge step refuses a draft, but the delivery grants no "
+                f"readyPullRequests; fix: add \"readyPullRequests\": true to `authority` in {c.delivery_where}, so "
+                "lead-accept marks each draft ready, or remove forge.mergeNeedsReady")
+    return None
+
+
 def setup_problems(c) -> list[str]:
     """Every duty the workflow can't do for this delivery here, each with its fix: what doctor --delivery reports and
     lead-init refuses on."""
     problems = plan_problems(c, list(c.stories)) + context_problems(c)
+    ready = ready_problem(c)
+    if ready:
+        problems.append(ready)
     binding = c.shelf.json(".agents/orchestration.json")
     if binding is not None:
         problems += publishing_problems(c, binding)
@@ -3931,6 +3943,10 @@ def lead_init(args) -> None:
             rebuild_plan(c)
     print(f"initialized {c.state} with {len(planned)} planned stories across {len(c.lanes)} lanes"
           + (f"; wrote {c.state / PLAN_FILE}" if (c.state / PLAN_FILE).exists() else ""))
+    if args.no_supervisor or supervisor_off():
+        print(f"supervisor: not started; start it with {flow_command()} lead-run --resume")
+    else:
+        print(f"supervisor: running; live view {start_supervisor(c)}")
 
 
 def planned_entry(c, key: str) -> dict:
@@ -4045,13 +4061,13 @@ def lead_assign(args) -> None:
           "lead. The lead checks the hand-off and tells you when to start your next story.")
 
 
-def lead_resolve(args) -> None:
-    """Resolve the blocker a journal entry records, or rerun a failed fullHealth, with the lead's reason."""
-    raise Stop("lead-resolve resolves through the delivery's supervisor, which this release doesn't run yet")
-
-
 def lead_accept(args) -> None:
     c = cfg()
+    if args.requeue:
+        requeue(c, c.require(args.requeue))
+        return
+    if not args.key:
+        raise Stop("name the story to accept, or --requeue a stopped one")
     key = c.require(args.key)
     doc = load_state()
     item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
@@ -4144,6 +4160,15 @@ def lead_accept(args) -> None:
             decisions.append("accepted review restarts (" + "; ".join(histories) + ")")
     else:
         problems.append(f"can't read the lane's gate, in-app and review evidence: no checkout at {lane_root}")
+    ready = bool(authority().get("readyPullRequests"))
+    if ready and not problems and pr.get("draft") is not False:
+        # Before the hand-off is released, so the runner never takes a draft the merge step would refuse.
+        try:
+            forge("ready", "--url", item.get("changeRequest") or "")
+        except Stop as error:
+            problems.append(f"the draft pull request couldn't be marked ready, so the hand-off stays pending: {error}")
+        else:
+            decisions.append(f"marked {item.get('changeRequest')} ready under the delivery's readyPullRequests grant")
     if problems:
         print(f"NOT accepted: {key}")
         for p in problems:
@@ -4151,8 +4176,8 @@ def lead_accept(args) -> None:
         sys.exit(1)
     state_tool("handoff", "--accept", key)
     # What the plan's producer proofs are judged by: the accepted head and the in-app items accepted as blocked.
-    append_log("acceptance", key, {"head": head, "blocked": {label: reason for label, reason in blocked.items()
-                                                             if label in accepted_blocked}})
+    append_log("acceptance", key, {"head": head, "ready": ready, "blocked": {label: reason for label, reason in
+                                                                           blocked.items() if label in accepted_blocked}})
     state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                f"Hand-off checked as a claim: {c.remote}/{branch} at {head[:10]}, its PR open at that head into "
                f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, review evidence "
@@ -4275,7 +4300,7 @@ def delivery_processes(lead: Path, state: Path, delivery: str, main: Path) -> li
     for line in listing.splitlines():
         pid_text, _, command = line.strip().partition(" ")
         names = "|".join(re.escape(name) for name in TOOL_NAMES)
-        if not re.search(rf"(merge_queue|render_state)\.py|(?:^|/|\s)(?:{names})\s.*\blead-reconcile\b", command) \
+        if not re.search(rf"(merge_queue|render_state)\.py|(?:^|/|\s)(?:{names})\s.*\blead-(?:reconcile|run)\b", command) \
                 or int(pid_text) == os.getpid():
             continue
         named = re.search(r"--delivery[ =](\S+)", command)
@@ -4283,7 +4308,7 @@ def delivery_processes(lead: Path, state: Path, delivery: str, main: Path) -> li
             continue
         cwd = run(["lsof", "-a", "-p", pid_text, "-d", "cwd", "-Fn"], check=False).stdout
         here = next((Path(l[1:]) for l in cwd.splitlines() if l.startswith("n")), None)
-        homes = [lead.resolve()] + ([main.resolve()] if "lead-reconcile" in command else [])
+        homes = [lead.resolve()] + ([main.resolve()] if re.search(r"\blead-(?:reconcile|run)\b", command) else [])
         if str(state) in command or (here and here.resolve() in homes):
             found.append((int(pid_text), command))
     return found
@@ -4383,20 +4408,17 @@ def reconcile_once() -> list[str]:
 
 
 def lead_reconcile(args) -> None:
-    while True:
-        try:
-            print(now(), "; ".join(reconcile_once()), flush=True)
-        except Stop as error:
-            if not args.every:
-                raise
-            print(now(), f"skipped: {error}", flush=True)
-        if not args.every:
-            return
-        time.sleep(args.every)
+    """One reconcile sweep, by hand: the supervisor's every pass runs it."""
+    print(now(), "; ".join(reconcile_once()), flush=True)
 
 
 def lead_close(args) -> None:
     c = cfg()
+    settings = [".agents", str(c.binding_path.relative_to(c.root))]
+    dirty = git("status", "--porcelain", "--", *settings, cwd=c.root, check=False)
+    if dirty:
+        raise Stop(f"the lead's settings have uncommitted changes; commit or drop them first:\n{dirty[:600]}")
+    # Everything that can refuse is checked before the supervisor, and the serve it keeps, is stopped.
     doc = load_state()
     if not any(e.get("kind") == "delivery.closed" for e in doc["journal"]):
         raise Stop("journal delivery.closed first (orchestrate-work's close-out): lead-close runs after it")
@@ -4404,6 +4426,9 @@ def lead_close(args) -> None:
     busy = [q["subject"] for q in state["queue"] if q.get("stage") not in ("merged", "stopped")]
     if busy or (state["meta"].get("checking") or {}).get("now"):
         raise Stop(f"the queue still holds work ({busy or 'a check is running'}); let it finish or stop it first")
+    stopped = ask_supervisor_to_stop(c)
+    if stopped:
+        print(stopped)
     lead = c.lane_checkout(c.delivery)
     done, left = [], []
     for key in c.stories:
@@ -4418,16 +4443,11 @@ def lead_close(args) -> None:
             done.append("rendered the views one last time")
         else:
             left.append(f"the final render failed: {(rendered.stderr or rendered.stdout).strip()[-300:]}")
-    archive_root = Path(expand((c.flow_raw.get("cleanup") or {}).get(
-        "archive", DEFAULT_ARCHIVE), repo=c.main.name, delivery=c.delivery))
-    archive = archive_root / datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
-    archive.mkdir(parents=True)
-    for source in (c.state, c.flow_log, c.flow_log.parent / "evidence"):
-        if source.exists():
-            shutil.copytree(source, archive / source.name)
-    reviewed = archive_plan_review(archive)
-    done.append(f"archived the record, the lead-side logs{', the plan review' if reviewed else ''} and the lanes' "
-                f"evidence in {archive}")
+    archive, archived = archive_delivery(c)
+    done += archived
+    c.flow_log.mkdir(parents=True, exist_ok=True)
+    lead_file(c, "closed.json").write_text(json.dumps({"archive": str(archive), "said": archived, "by": "lead-close",
+                                                       "at": now()}, indent=2) + "\n")
     for pid, command in delivery_processes(lead, c.state, c.delivery, c.main):
         try:
             os.kill(pid, signal.SIGTERM)
@@ -4477,6 +4497,787 @@ def lead_close(args) -> None:
           f"checkout {lead} when you no longer need it (its record is archived above).")
     if left:
         sys.exit(1)
+
+
+# -- lead: the supervisor ------------------------------------------------------------------
+
+SUPERVISOR_PASS_SECONDS = 60
+# A child restarted this many times within the window won't stay up, and says so in "Needs you".
+CHILD_FLAPS, CHILD_FLAP_SECONDS = 3, 600
+SUPERVISOR_WAIT_SECONDS = 120
+# The runner's own blocker, which the hold clearing or base.repaired resolves (merge_queue.py writes it).
+RUNNER_HELD = "Serving is held:"
+LANE_DONE = ("idle", "done")
+
+
+def lead_file(c, name: str) -> Path:
+    """A lead-side file beside the flow logs, named with the delivery key as every lead-side file is."""
+    return c.flow_log / f"{c.delivery}.{name}"
+
+
+def valid_pid(pid: object) -> bool:
+    return isinstance(pid, int) and not isinstance(pid, bool) and pid > 1
+
+
+def group_of(pid: int) -> int | None:
+    try:
+        return os.getpgid(pid)
+    except (ProcessLookupError, PermissionError):
+        return None
+
+
+def supervisor_line(c) -> str | None:
+    """What every lead command repeats: the supervisor's state and the live view's address, or how to restart it."""
+    if not (c.state / "state.json").exists():
+        return None
+    held, recorded = read_lock(supervisor_lock_path(c))
+    if held:
+        return f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
+    closed = load_json(lead_file(c, "closed.json"))
+    if closed:
+        return "supervisor: stopped; the delivery is closed. " + closed_words(closed)
+    return f"supervisor: down; restart it with {flow_command()} lead-run --resume"
+
+
+def closed_words(closed: dict) -> str:
+    """Where a closed delivery went, and what is left: the friction note to write up, and the host's steps."""
+    note = closed.get("friction")
+    return f"Archive {closed.get('archive')}" + (f"; write up the friction note {note}, then archive the lane "
+                                                  "sessions" if note else "")
+
+
+def supervisor_off() -> bool:
+    """RUN_DELIVERY_SUPERVISOR=off: lead-init starts no supervisor, as --no-supervisor says."""
+    return os.environ.get("RUN_DELIVERY_SUPERVISOR") == "off"
+
+
+def start_supervisor(c) -> str:
+    """Start `lead-run` detached, in a session of its own, and return the live view's address once it holds the lock."""
+    log = lead_file(c, "supervisor.log")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    argv = [sys.executable, "-B", str(Path(__file__).resolve()), "--delivery", c.delivery, "lead-run"]
+    with open(log, "a") as out:
+        proc = subprocess.Popen(argv, cwd=c.root, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+    deadline = time.monotonic() + SUPERVISOR_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        held, recorded = read_lock(supervisor_lock_path(c))
+        if held and recorded.get("pid") == proc.pid and recorded.get("address"):
+            return recorded["address"]
+        if proc.poll() is not None:
+            raise Stop(f"the supervisor stopped as it started: {log.read_text()[-600:].strip()}; its log is {log}")
+        time.sleep(0.1)
+    raise Stop(f"the supervisor didn't start within {SUPERVISOR_WAIT_SECONDS}s; its log is {log}")
+
+
+def stop_orphans(c) -> list[str]:
+    """Stop the children an earlier supervisor left running: each recorded child still in its group, by that group.
+    A pid now outside the group belongs to someone else and is left alone."""
+    lock = supervisor_lock_path(c)
+    held, recorded = read_lock(lock)
+    if held:
+        raise Stop(f"a supervisor already runs (pid {recorded.get('pid')}); live view {recorded.get('address')}")
+    group = recorded.get("pid")
+    if not valid_pid(group):
+        return []
+    left = [child for child in recorded.get("children") or []
+            if isinstance(child, dict) and valid_pid(child.get("pid")) and group_of(child["pid"]) == group]
+    if not left:
+        return []
+    for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(group, sig)
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline and any(group_of(child["pid"]) == group for child in left):
+            time.sleep(0.1)
+        if not any(group_of(child["pid"]) == group for child in left):
+            break
+    else:
+        raise Stop(f"the earlier supervisor's children (group {group}) are still running after SIGKILL; stop them, "
+                   "then run lead-run --resume again")
+    return [f"stopped {child.get('name')} (pid {child['pid']}), left by the earlier supervisor (pid {group})"
+            for child in left]
+
+
+def ask_supervisor_to_stop(c) -> str | None:
+    """Ask a running supervisor to stop after its pass, and wait for it to release its lock."""
+    lock = supervisor_lock_path(c)
+    held, recorded = read_lock(lock)
+    if not held:
+        return None
+    request = lead_file(c, "supervisor.stop")
+    request.write_text(now() + "\n")
+    deadline = time.monotonic() + SUPERVISOR_WAIT_SECONDS + supervisor_pass_seconds(c)
+    while time.monotonic() < deadline:
+        if not read_lock(lock)[0]:
+            request.unlink(missing_ok=True)
+            return f"stopped the supervisor (pid {recorded.get('pid')}) after its pass"
+        time.sleep(0.2)
+    raise Stop(f"the supervisor (pid {recorded.get('pid')}) didn't stop after its pass; see "
+               f"{lead_file(c, 'supervisor.log')}")
+
+
+def supervisor_pass_seconds(c) -> float:
+    value = (c.flow_raw.get("supervisor") or {}).get("passSeconds", SUPERVISOR_PASS_SECONDS)
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        raise Stop(f"{c.name} supervisor.passSeconds must be a positive number of seconds")
+    return float(value)
+
+
+def binding_state(c) -> dict | None:
+    binding = c.shelf.json(".agents/orchestration.json")
+    return binding.get("state") if binding else None
+
+
+def base_head(c) -> str:
+    return git("rev-parse", c.base_ref, check=False)
+
+
+# One pass's steps. Each returns what it did, in a line or a few.
+
+def lane_moved_off(doc: dict, item: dict) -> bool:
+    """A merged story's lane has moved off it: it is idle or done, or was assigned other work after the merge."""
+    lane = next((entry for entry in doc["state"]["lanes"] if entry["id"] == item["lane"]), None)
+    if lane is None or lane.get("state") in LANE_DONE:
+        return True
+    merged = max((e["id"] for e in doc["journal"] if e["kind"] == "candidate.merged" and e.get("subject") == item["subject"]),
+                 default=None)
+    later = [e for e in doc["journal"] if e["kind"] == "lane.assigned" and e.get("lane") == item["lane"]
+             and merged is not None and e["id"] > merged and e.get("subject") != item["subject"]]
+    return bool(later)
+
+
+def cleanup_merged(c, doc: dict) -> list[str]:
+    """What lead-cleanup does, for each merged story whose lane has moved off it. A story already cleaned up, by hand
+    or by an earlier pass, has nothing left to clean and journals nothing."""
+    said = []
+    for item in doc["state"]["queue"]:
+        if item["stage"] != "merged" or item["subject"] not in c.stories:
+            continue
+        if not lane_moved_off(doc, item):
+            said.append(f"{item['subject']}: waits for {item['lane']} to move off it")
+            continue
+        status, done, left = clean_story(item["subject"])
+        if status not in ("nothing", "waiting"):
+            said.append(f"{item['subject']}: {status}" + "".join(f"; {line}" for line in left))
+    return said
+
+
+def proof_state(c, plan: dict, doc: dict, unit: dict, kind: str) -> str:
+    """A unit's proof, as the line map judges it: a producer proof from the plan's evidence at the queued head; handed,
+    merged and review from the record, review as the lead's acceptance at the queued head."""
+    subject = unit["subject"]
+    item = next((entry for entry in doc["state"]["queue"] if entry["subject"] == subject), None)
+    source = next((k.get("source") for k in plan.get("proofKinds", []) if k.get("id") == kind), None)
+    if source == "producer":
+        entry = ((plan.get("evidence") or {}).get(subject) or {}).get(kind)
+        if not entry or entry.get("state") == "todo":
+            return "todo"
+        return "stale" if item and entry.get("head") != item.get("head") else entry["state"]
+    if kind == "handed":
+        return "done" if item and item["stage"] != "stopped" and not item.get("pending") else "open"
+    if kind == "merged":
+        return "done" if item and item["stage"] == "merged" else "open"
+    if kind == "review":
+        accepted = read_log("acceptance", subject)
+        return "done" if item and accepted and accepted[-1].get("head") == item.get("head") else "open"
+    return "open"
+
+
+def finished_lines(c, plan: dict, doc: dict) -> list[str]:
+    """The finish lines whose covered criteria have every covered proof done (a waiver isn't done)."""
+    units = [unit for unit in plan.get("units", []) if not unit.get("removed")]
+    criteria = [(item["id"], unit) for unit in units for item in unit.get("criteria", [])]
+    ready = []
+    for line in plan.get("finish", []):
+        covers = line.get("covers") or {"criteria": "all", "proofs": []}
+        named = covers.get("criteria")
+        if named == "all":
+            rows = [unit for _, unit in criteria]
+        elif not named:
+            rows = units
+        else:
+            rows = [unit for cid, unit in criteria if cid in named]
+        kinds = covers.get("proofs") or []
+
+        def settled(unit: dict) -> bool:
+            owed = unit.get("proofs", [])
+            wanted = kinds or owed
+            return all(kind not in owed or proof_state(c, plan, doc, unit, kind) == "done" for kind in wanted)
+        if rows and all(settled(unit) for unit in rows):
+            ready.append(line["id"])
+    return ready
+
+
+def journal_finish_met(c, doc: dict) -> list[str]:
+    """Mark and journal each finish line whose criteria and proofs are all done, once: a line the lead already
+    marked or journalled by hand is left as it is."""
+    plan = load_json(c.state / PLAN_FILE)
+    if not plan:
+        return []
+    ready = set(finished_lines(c, plan, doc))
+    said = []
+    for line in doc["state"]["finish"]:
+        if line["id"] not in ready:
+            continue
+        journalled = any(e["kind"] == "finish.met" and (e.get("subject") == line["id"] or re.search(
+            rf"(?<![\w-]){re.escape(line['id'])}(?![\w-])", e.get("summary", ""))) for e in doc["journal"])
+        if not line.get("met"):
+            fresh = load_state()
+            finish = [{**entry, "met": True} if entry["id"] == line["id"] else entry for entry in fresh["state"]["finish"]]
+            patch({"finish": finish}, fresh["state"]["version"])
+        if not journalled:
+            state_tool("journal", "--kind", "finish.met", "--subject", line["id"], "--summary",
+                       f"{line['id']}: {line['text']} Every criterion it covers has its proofs done.")
+            said.append(f"finish line {line['id']} met")
+    return said
+
+
+def render_views(c) -> str:
+    """Render with the binding's whole `state` member, publishers included, as the runner's writes do."""
+    config = binding_state(c)
+    if config is None:
+        return "no binding: nothing to render"
+    script = c.release / "skills/orchestrate-work/scripts/render_state.py"
+    done = run([sys.executable, "-B", str(script), "--dir", str(c.state), "--state-config", json.dumps(config)],
+               cwd=c.root, check=False, timeout=300)
+    return "rendered" if done.returncode == 0 else f"render failed ({done.returncode}): " \
+        f"{(done.stderr or done.stdout).strip()[-300:]}"
+
+
+def copy_latest(c) -> Path:
+    """Copy the record and the flow log, under the state lock, into the archive location's one `latest` folder, so a
+    current copy outlives the lead's checkout."""
+    target = archive_root(c) / "latest"
+    staging = target.with_name(f".latest.{os.getpid()}")
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    with open(c.state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            shutil.copytree(c.state, staging / c.state.name, ignore=shutil.ignore_patterns("*.lock"))
+            if c.flow_log.exists():
+                shutil.copytree(c.flow_log, staging / "flow-log", ignore=shutil.ignore_patterns("*.lock"))
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+    old = target.with_name(f".latest.{os.getpid()}.old")
+    if target.exists():
+        os.replace(target, old)
+    os.replace(staging, target)
+    shutil.rmtree(old, ignore_errors=True)
+    return target
+
+
+# "Needs you": derived each pass from live conditions, never stored.
+
+def full_health_results(c, head: str) -> tuple[dict | None, bool]:
+    """(the latest fullHealth result at this base head, whether the lead asked for a rerun after it)."""
+    entries = read_log("full-health", c.delivery)
+    results = [e for e in entries if e.get("head") == head and e.get("result")]
+    last = results[-1] if results else None
+    rerun = last is not None and any(e.get("rerun") and e.get("head") == head and e["at"] > last["at"] for e in entries)
+    return last, rerun
+
+
+def blocker_resolved(c, doc: dict, entry: dict, resolutions: set[int]) -> bool:
+    if entry["id"] in resolutions:
+        return True
+    if not entry.get("lane") and not entry.get("subject") and entry.get("summary", "").startswith(RUNNER_HELD):
+        repaired = any(e["kind"] == "base.repaired" and e["id"] > entry["id"] for e in doc["journal"])
+        return repaired or not doc["state"]["meta"].get("hold")
+    return False
+
+
+def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = False) -> list[dict]:
+    """What waits on the lead or the operator, each {holding, text}: holding items hold the close; shown ones are
+    listed in the friction note. The close condition and the supervisor's pass log read this same list."""
+    items = tracker_publisher.needs_you(doc, c.state, c.flow_log, c.delivery, tracker_conf(c), closing=closing)
+    head = base_head(c)
+    last, rerun = full_health_results(c, head) if head else (None, False)
+    if last and last["result"] == "failed" and not rerun:
+        items.append({"holding": True, "text": f"fullHealth failed at {head[:10]}: {last.get('output', '')[-300:]}. It "
+                      f"runs again at a later base head, or when you judge it flaky: {flow_command()} lead-resolve "
+                      "full-health --why TEXT"})
+    events = [e for e in doc["journal"] if e["kind"] in ("base.broken", "base.repaired")]
+    if events and events[-1]["kind"] == "base.broken":
+        items.append({"holding": True, "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. "
+                      "Repair it, then journal base.repaired"})
+    for lane in doc["state"]["lanes"]:
+        if lane.get("state") == "blocked":
+            items.append({"holding": True, "text": f"{lane['id']} is blocked: {lane.get('focus', '')}"})
+        elif lane.get("waitingOn") == "lead":
+            items.append({"holding": True, "text": f"{lane['id']} waits on you: {lane.get('focus', '')}"})
+    resolutions = {entry.get("journal") for entry in read_log("resolutions", c.delivery)}
+    for entry in doc["journal"]:
+        if entry["kind"] == "blocker.recorded" and not blocker_resolved(c, doc, entry, resolutions):
+            items.append({"holding": True, "text": f"Blocker {entry['id']}"
+                          + (f" ({entry.get('subject') or entry.get('lane')})" if entry.get("subject") or entry.get("lane")
+                             else "") + f": {entry.get('summary', '')[:300]}. Resolve it with {flow_command()} "
+                          f"lead-resolve {entry['id']} --why TEXT"})
+    for name in flapping:
+        items.append({"holding": True, "text": f"The supervisor's {name} won't stay up; its log is "
+                      f"{lead_file(c, f'supervisor.{name}.log')}"})
+    if c.forge.get("mergeNeedsReady") and not authority().get("readyPullRequests"):
+        drafts = [item["subject"] for item in doc["state"]["queue"] if item["stage"] != "merged" and not item.get("pending")
+                  and not any(a.get("ready") for a in read_log("acceptance", item["subject"]))]
+        if drafts:
+            items.append({"holding": True, "text": f"Accepted as drafts while the merge step refuses drafts: "
+                          f"{', '.join(drafts)}. Mark each ready, then lead-accept --requeue it if it stopped"})
+    return items
+
+
+def removed_subjects(c) -> set[str]:
+    return {key for entry in read_plan_log(c) if entry.get("type") == "change" and entry.get("kind") == "removed"
+            for key in entry.get("subjects", [])}
+
+
+def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
+    """What holds the close: the close condition, read as the reasons it doesn't hold yet."""
+    state, removed = doc["state"], removed_subjects(c)
+    holds = []
+    planned = [p["subject"] for p in state.get("planned", []) if p["subject"] not in removed]
+    if planned:
+        holds.append(f"not handed off: {', '.join(planned)}")
+    unmerged = [q["subject"] for q in state["queue"] if q["stage"] != "merged" and q["subject"] not in removed]
+    if unmerged:
+        holds.append(f"not merged: {', '.join(unmerged)}")
+    unmet = [line["id"] for line in state["finish"] if not line.get("met")]
+    if unmet:
+        holds.append(f"finish lines not met: {', '.join(unmet)}")
+    busy = [lane["id"] for lane in state["lanes"] if lane.get("state") not in LANE_DONE]
+    if busy:
+        holds.append(f"lanes not idle or done: {', '.join(busy)}")
+    holds += [item["text"] for item in needs if item["holding"]]
+    return holds
+
+
+# The close-out (C6): each step must succeed before the next, and each is skipped once done.
+
+def full_health_step(c) -> tuple[bool, str]:
+    binding = c.shelf.json(".agents/orchestration.json") or {}
+    argv = binding.get("fullHealth")
+    if not argv:
+        return True, "fullHealth: the binding declares none"
+    git("fetch", "-q", c.remote, c.base_branch, check=False)
+    head = base_head(c)
+    last, rerun = full_health_results(c, head)
+    if last and last["result"] == "passed":
+        return True, f"fullHealth passed at {head[:10]}"
+    if last and not rerun:
+        return False, f"fullHealth failed at {head[:10]}; it runs again at a later head, or on lead-resolve full-health"
+    checkout = Path(tempfile.mkdtemp(prefix="run-delivery-full-health-")) / "base"
+    try:
+        git("worktree", "add", "--detach", "-q", str(checkout), head, cwd=c.root)
+        for step in prepare_commands():
+            run(step, cwd=checkout)
+        code, out = run_group(list(argv), checkout, int(binding.get("checkTimeoutSeconds", 1800)))
+    except Stop as error:
+        code, out = 1, str(error)
+    finally:
+        run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
+        shutil.rmtree(checkout.parent, ignore_errors=True)
+    result = "passed" if code == 0 else "failed"
+    append_log("full-health", c.delivery, {"head": head, "result": result, "output": out[-2000:]})
+    return result == "passed", f"fullHealth {result} at {head[:10]}"
+
+
+def deferred_findings(c) -> list[dict]:
+    """Every finding a story's review deferred, {story, finding, title}: from the lane's review folder, or the
+    evidence kept beside the record once its checkout is gone."""
+    found: dict[tuple[str, str], dict] = {}
+    for key in c.stories:
+        for folder in (c.lane_checkout(key) / c.work / "review" / key, evidence_dir(key)):
+            for path in round_files(folder) if folder.is_dir() else []:
+                outcome = json.loads(path.read_text())
+                for entry in outcome.get("entries", []):
+                    for finding in (entry.get("result") or {}).get("findings", []):
+                        if finding.get("state") == "deferred":
+                            found[(key, finding["id"])] = {"story": key, "finding": finding["id"],
+                                                           "title": str(finding.get("deferredIssue", ""))[:200]}
+    return list(found.values())
+
+
+FOLLOWUP = "Deferred finding {finding} of {story} becomes follow-up {story}-{finding}: {title}"
+
+
+def followups_step(c, doc: dict) -> tuple[bool, str]:
+    """One follow-up item per deferred finding, keyed by story and finding id, which is also its followups[] id.
+    Each is journalled as a decision marked for the tracker publisher to file; the step holds until the publisher's
+    ledger covers every one: a transient failure is retried by its next run, and a permanent one is shown. Through
+    the host, the outbox carries the filings; by hand, the record's followups are all there is."""
+    have = {item["id"] for item in doc["state"]["followups"]}
+    missing = [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
+    for finding in missing:
+        with marked_decision(c, followup=finding) as written:
+            written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--subject",
+                                                 finding["story"], "--summary", FOLLOWUP.format(**finding))))
+    if missing:
+        fresh = load_state()
+        followups = [*fresh["state"]["followups"], *({"id": f"{f['story']}-{f['finding']}", "title": f["title"],
+                                                      "reference": None} for f in missing)]
+        patch({"followups": followups}, fresh["state"]["version"])
+        render_views(c)
+        doc = load_state()
+    if tracker_conf(c)["mode"] != "publisher":
+        return True, f"follow-ups: {len(doc['state']['followups'])} recorded"
+    marks = {entry["journal"] for entry in tracker_publisher.read_flow(c.flow_log, c.delivery, tracker_publisher.MARKS)
+             if entry.get("followup")}
+    journal = sorted(doc["journal"], key=lambda e: e["id"])
+    done = tracker_publisher.covered(tracker_publisher.read_ledger(c.state), tracker_publisher.init_id(journal))
+    waiting = sorted(marks - done)
+    if waiting:
+        return False, f"follow-ups: waiting for the tracker publisher to file journal entries {', '.join(map(str, waiting))}"
+    return True, f"follow-ups: {len(marks)} filed or refused"
+
+
+def closed_step(c) -> tuple[bool, str]:
+    """Journal delivery.closed once, render, then wait until the tracker has every entry through it."""
+    doc = load_state()
+    closed = next((e for e in doc["journal"] if e["kind"] == "delivery.closed"), None)
+    if closed is None:
+        state_tool("journal", "--kind", "delivery.closed", "--summary",
+                   f"{c.delivery} closed: every story merged or removed, every finish line met, and nothing holding.")
+        render_views(c)
+        doc = load_state()
+        closed = next(e for e in doc["journal"] if e["kind"] == "delivery.closed")
+    mode = tracker_conf(c)["mode"]
+    if mode == "publisher":
+        journal = sorted(doc["journal"], key=lambda e: e["id"])
+        done = tracker_publisher.covered(tracker_publisher.read_ledger(c.state), tracker_publisher.init_id(journal))
+        owed = [e["id"] for e in journal if e["id"] <= closed["id"] and e["id"] not in done]
+        if owed:
+            return False, f"waiting for the tracker publisher to cover journal entries {', '.join(map(str, owed[:10]))}"
+    elif mode == "host":
+        through = (load_json(c.state / "published.json") or {}).get("journalThrough", 0)
+        if through < closed["id"]:
+            return False, f"waiting for the host outbox to be acked through journal entry {closed['id']}"
+    return True, f"delivery.closed is journal entry {closed['id']}"
+
+
+def archive_delivery(c) -> tuple[Path, list[str]]:
+    """Copy the record, the lead-side logs, the lanes' evidence and the plan review into a new archive folder."""
+    archive = archive_root(c) / datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    archive.mkdir(parents=True)
+    for source in (c.state, c.flow_log, c.flow_log.parent / "evidence"):
+        if source.exists():
+            shutil.copytree(source, archive / source.name)
+    reviewed = archive_plan_review(archive)
+    return archive, [f"archived the record, the lead-side logs{', the plan review' if reviewed else ''} and the lanes' "
+                     f"evidence in {archive}"]
+
+
+def archive_step(c) -> tuple[Path, list[str]]:
+    """Release every lease the lead holds, archive the record, and fast-forward the operator's checkout when it is
+    clean and on the final base. Done once: a resumed close-out finds its archive."""
+    marker = lead_file(c, "closed.json")
+    kept = load_json(marker)
+    if kept:
+        return Path(kept["archive"]), kept["said"]
+    doc = load_state()
+    leases = doc["state"]["leases"]
+    held = [lease for lease in leases if lease.get("holder") == "lead"]
+    said = []
+    if held:
+        patch({"leases": [lease for lease in leases if lease.get("holder") != "lead"]}, doc["state"]["version"])
+        said.append(f"released the lead's leases: {', '.join(str(lease.get('id')) for lease in held)}")
+    archive, archived = archive_delivery(c)
+    said += archived
+    operator = c.main
+    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=operator, check=False)
+    dirty = git("status", "--porcelain", cwd=operator, check=False)
+    if branch == c.base_branch and not dirty:
+        moved = run(["git", "merge", "--ff-only", "-q", c.base_ref], cwd=operator, check=False)
+        said.append(f"fast-forwarded {operator} to {c.base_ref}" if moved.returncode == 0
+                    else f"left {operator} where it is: it can't fast-forward to {c.base_ref}")
+    else:
+        said.append(f"left {operator} where it is: " + ("it has uncommitted changes" if dirty else f"it is on {branch}"))
+    marker.write_text(json.dumps({"archive": str(archive), "said": said, "at": now()}, indent=2) + "\n")
+    return archive, said
+
+
+def friction_step(c, archive: Path, said: list[str], shown: list[str]) -> Path:
+    """The friction note stub beside the archive, for the lead's compound-learning pass."""
+    note = archive.parent / f"{archive.name}.friction.md"
+    if note.exists():
+        return note
+    lines = [f"# {c.delivery}: friction", "", "Written by the supervisor at close-out. Add what was hard and why, then "
+             "run compound-learning on it.", "", "## Shown, never holding", ""]
+    lines += [f"- {text}" for text in shown] or ["- (none)"]
+    lines += ["", "## What the close-out left to you", ""]
+    lines += [f"- {text}" for text in said if text.startswith("left ")]
+    lines += [f"- Remove the lead's checkout {c.lane_checkout(c.delivery)} once you no longer need it.",
+              "- Archive the lane sessions with your host's own tools.", ""]
+    note.write_text("\n".join(lines))
+    return note
+
+
+def close_out(c, flapping: tuple[str, ...] = ()) -> tuple[list[str], bool]:
+    """C6, in order. Returns (what it did, whether the delivery is closed and the supervisor may stop)."""
+    said = []
+    for step in (full_health_step, lambda c: followups_step(c, load_state()), closed_step):
+        ok, line = step(c)
+        said.append(line)
+        if not ok:
+            return said, False
+    archive, archived = archive_step(c)
+    said += archived
+    # Read once the steps above ran, so a filing the publisher refused for good during them is listed.
+    shown = [item["text"] for item in needs_you(c, load_state(), flapping, closing=True) if not item["holding"]]
+    note = friction_step(c, archive, archived, shown)
+    marker = lead_file(c, "closed.json")
+    marker.write_text(json.dumps({**load_json(marker), "friction": str(note)}, indent=2) + "\n")
+    said.append(f"wrote the friction note stub {note}: write it up, and archive the lane sessions")
+    return said, True
+
+
+class Supervisor:
+    """lead-run: one process per record. It holds the flow log's supervisor lock, recording its pid, start time,
+    children and the live view's address; keeps `serve` and the live view running; and runs one pass after another
+    until the delivery closes or lead-close asks it to stop."""
+
+    def __init__(self, c, once: bool):
+        self.c, self.once = c, once
+        self.children: dict[str, subprocess.Popen] = {}
+        self.restarts: dict[str, list[float]] = {}
+        self.address: str | None = None
+        self.handle = None
+        self.started = now()
+
+    def write_lock(self) -> None:
+        self.handle.seek(0)
+        self.handle.truncate()
+        self.handle.write(json.dumps({"pid": os.getpid(), "startedAt": self.started, "address": self.address,
+                                      "children": [{"name": name, "pid": proc.pid} for name, proc in self.children.items()]}))
+        self.handle.flush()
+
+    def child_argv(self, name: str) -> list[str] | None:
+        c = self.c
+        scripts = c.release / "skills/orchestrate-work/scripts"
+        config = binding_state(c)
+        if name == "live":
+            return [sys.executable, "-B", str(scripts / "render_state.py"), "live", "--dir", str(c.state),
+                    *(["--state-config", json.dumps(config)] if config is not None else [])]
+        if config is None:
+            return None  # the queue needs a binding
+        return [sys.executable, "-B", str(scripts / "merge_queue.py"), "--repo", str(c.root), "--state", str(c.state),
+                "--remote", c.remote, "--base", c.base_branch, "serve", "--poll",
+                str(min(30.0, supervisor_pass_seconds(c)))]
+
+    def start(self, name: str) -> None:
+        argv = self.child_argv(name)
+        if argv is None:
+            return
+        log = lead_file(self.c, f"supervisor.{name}.log")
+        with open(log, "a") as out:
+            # In the supervisor's own group, so stopping the group stops them; signals are the defaults it set.
+            self.children[name] = subprocess.Popen(argv, cwd=self.c.root, stdin=subprocess.DEVNULL, stdout=out,
+                                                   stderr=subprocess.STDOUT)
+        self.write_lock()
+
+    def start_live(self) -> None:
+        log = lead_file(self.c, "supervisor.live.log")
+        offset = log.stat().st_size if log.exists() else 0
+        self.start("live")
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            for line in log.read_text()[offset:].splitlines():
+                with contextlib.suppress(ValueError):
+                    said = json.loads(line)
+                    if said.get("live") and said.get("ok"):
+                        self.address = f"http://{said['live']}/"
+                        self.write_lock()
+                        return
+            if self.children["live"].poll() is not None:
+                raise Stop(f"the live view stopped as it started: {log.read_text()[offset:][-400:].strip()}")
+            time.sleep(0.1)
+        raise Stop(f"the live view didn't start within 60s; its log is {log}")
+
+    def flapping(self) -> tuple[str, ...]:
+        horizon = time.monotonic() - CHILD_FLAP_SECONDS
+        return tuple(name for name, times in self.restarts.items()
+                     if len([t for t in times if t > horizon]) >= CHILD_FLAPS)
+
+    def keep_alive(self) -> None:
+        """Restart a child that exited, at most once a pass once it has exited CHILD_FLAPS times in the window: a
+        child that won't stay up is shown in "Needs you", and a restart that fails never ends the supervisor."""
+        for name, proc in list(self.children.items()):
+            if proc.poll() is None:
+                continue
+            times = self.restarts.setdefault(name, [])
+            if name in self.flapping() and times and time.monotonic() - times[-1] < supervisor_pass_seconds(self.c):
+                continue
+            times.append(time.monotonic())
+            try:
+                self.start_live() if name == "live" else self.start(name)
+            except (Stop, OSError) as error:
+                with open(lead_file(self.c, f"supervisor.{name}.log"), "a") as log:
+                    log.write(f"{now()} restart failed: {error}\n")
+
+    def stop_asked(self) -> bool:
+        return lead_file(self.c, "supervisor.stop").exists()
+
+    def stop_children(self) -> None:
+        for proc in self.children.values():
+            if proc.poll() is None:
+                proc.terminate()
+        deadline = time.monotonic() + 10
+        for proc in self.children.values():
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+    def one_pass(self, number: int) -> bool:
+        c = self.c
+        entry: dict = {"pass": number, "startedAt": now()}
+        try:
+            c.load_delivery(c.delivery)
+        except (Stop, ValueError) as error:  # a delivery file saved mid-edit
+            entry["delivery"] = f"not reread: {error}"
+        steps = (("reconcile", reconcile_once), ("cleanup", lambda: cleanup_merged(c, load_state())),
+                 ("finish", lambda: journal_finish_met(c, load_state())), ("render", lambda: render_views(c)),
+                 ("latest", lambda: str(copy_latest(c))))
+        for name, step in steps:
+            try:
+                entry[name] = step()
+            except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
+                entry[name] = f"failed: {error}"
+        closed = False
+        try:
+            doc = load_state()
+            needs = needs_you(c, doc, self.flapping())
+            holds = close_holds(c, doc, needs)
+            entry["needsYou"], entry["closeHeldBy"] = needs, holds
+            if not holds:
+                entry["closeOut"], closed = close_out(c, self.flapping())
+                render_views(c)
+        except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
+            entry["close"] = f"failed: {error}"
+        entry["finishedAt"] = now()
+        append_log("supervisor", c.delivery, entry)
+        return closed
+
+    def run(self) -> None:
+        c = self.c
+        # Detached by its own session, never by ignoring signals: its children start with the defaults.
+        for number in (signal.SIGINT, signal.SIGQUIT):
+            signal.signal(number, signal.SIG_DFL)
+        lock = supervisor_lock_path(c)
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        held, recorded = read_lock(lock)
+        if held:
+            raise Stop(f"a supervisor already runs (pid {recorded.get('pid')}); live view {recorded.get('address')}")
+        orphans = [child for child in recorded.get("children") or [] if isinstance(child, dict)
+                   and valid_pid(child.get("pid")) and group_of(child["pid"]) == recorded.get("pid")]
+        if orphans:
+            raise Stop(f"the earlier supervisor (pid {recorded.get('pid')}) left children running; "
+                       f"{flow_command()} lead-run --resume stops them and starts it again")
+        self.handle = open(lock, "a+")
+        try:
+            fcntl.flock(self.handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            self.handle.close()
+            raise Stop("another supervisor took the lock first")
+        lead_file(c, "supervisor.stop").unlink(missing_ok=True)
+        try:
+            self.write_lock()
+            if not self.once:
+                self.start_live()
+                self.start("serve")
+                print(self.address, flush=True)  # the first line: where the delivery is watched
+            number = len(read_log("supervisor", c.delivery))
+            while True:
+                number += 1
+                if self.one_pass(number) or self.once or self.stop_asked():
+                    return
+                deadline = time.monotonic() + supervisor_pass_seconds(c)
+                while time.monotonic() < deadline and not self.stop_asked():
+                    self.keep_alive()
+                    time.sleep(0.2)
+                if self.stop_asked():
+                    return
+        finally:
+            self.stop_children()
+            fcntl.flock(self.handle, fcntl.LOCK_UN)
+            self.handle.close()
+
+
+def lead_run(args) -> None:
+    """The delivery's supervisor: lead-init starts it; --resume stops what an earlier one left and starts it again;
+    --once runs one pass in the foreground."""
+    c = cfg()
+    if not (c.state / "state.json").exists():
+        raise Stop(f"no record at {c.state}: lead-init starts it, and its supervisor")
+    closed = load_json(lead_file(c, "closed.json"))
+    if closed and closed.get("by") == "lead-close":
+        raise Stop("the delivery is closed: lead-close closed it. " + closed_words(closed))
+    if args.resume:
+        for line in stop_orphans(c):
+            print(line)
+        address = start_supervisor(c)
+        print(f"supervisor: running; live view {address}")
+        return
+    Supervisor(c, once=args.once).run()
+
+
+def lead_resolve(args) -> None:
+    """Resolve the blocker a journal entry records, or ask the next pass to rerun a failed fullHealth, with the lead's
+    reason. The resolution is the flow log's; the journal says so."""
+    c = cfg()
+    doc = load_state()
+    if args.id == "full-health":
+        head = base_head(c)
+        last, rerun = full_health_results(c, head)
+        if not last or last["result"] != "failed":
+            raise Stop(f"fullHealth hasn't failed at the base head {head[:10]}; there is nothing to rerun")
+        if rerun:
+            raise Stop(f"a rerun of fullHealth at {head[:10]} is already asked for; the supervisor's next pass runs it")
+        append_log("full-health", c.delivery, {"rerun": True, "head": head, "why": args.why})
+        with marked_decision(c) as written:
+            written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary",
+                                                 f"fullHealth at {head[:10]} runs again on the supervisor's next pass: "
+                                                 f"{args.why}")))
+        print(f"asked the supervisor's next pass to rerun fullHealth at {head[:10]}")
+        return
+    try:
+        number = int(args.id)
+    except ValueError:
+        raise Stop(f"lead-resolve takes a journal id or full-health, not {args.id!r}")
+    entry = next((e for e in doc["journal"] if e["id"] == number), None)
+    if entry is None or entry["kind"] != "blocker.recorded":
+        raise Stop(f"journal entry {number} isn't a blocker.recorded" + (f" ({entry['kind']})" if entry else ""))
+    resolutions = {r.get("journal") for r in read_log("resolutions", c.delivery)}
+    if blocker_resolved(c, doc, entry, resolutions):
+        raise Stop(f"blocker {number} is already resolved")
+    append_log("resolutions", c.delivery, {"journal": number, "why": args.why})
+    with marked_decision(c) as written:
+        written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary",
+                                             f"Blocker {number} resolved: {args.why}",
+                                             *(["--subject", entry["subject"]] if entry.get("subject") else []))))
+    print(f"resolved blocker {number}")
+
+
+def requeue(c, key: str) -> None:
+    """Put a stopped candidate the lead has resolved back to queued at its handed head, with no new hand-off. The
+    stage is the runner's, so the write is the runner's, exactly as the queue puts back what it takes again."""
+    doc = load_state()
+    item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
+    if item is None or item["stage"] != "stopped":
+        raise Stop(f"{key} isn't stopped ({item['stage'] if item else 'not queued'}); --requeue takes back a "
+                   "stopped candidate")
+    if item.get("pending"):
+        raise Stop(f"{key}'s hand-off still waits for acceptance; accept it instead")
+    if remote_head(c.branch(key)) not in (item["head"], item.get("syncedHead")):
+        raise Stop(f"{c.remote}/{c.branch(key)} moved from the handed head {item['head'][:10]}"
+                   + (f" and the queue's synced head {item['syncedHead'][:10]}" if item.get("syncedHead") else "")
+                   + ": the lane hands it off again")
+    state_tool("patch", "--writer", "runner", "--version", str(doc["state"]["version"]), "--element",
+               f"queue[subject={key}]", "--set", json.dumps({"/stage": "queued", "/checks": []}))
+    state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
+               f"{key} re-queued at {item['head'][:10]} once its stop was resolved, with no new hand-off")
+    print(f"re-queued {key}; the runner takes it again")
+
 
 
 def apply_patch(diff: str, cwd: Path) -> subprocess.CompletedProcess:
@@ -4793,6 +5594,8 @@ class Doctor:
             ("plan-sections", "plan sections", ("delivery",), self.stories_planned),
             ("context-sections", "context sections", ("delivery",), self.context_planned),
             ("remote-base", "configuration on the remote base", ("delivery",), self.remote_base),
+            ("ready", "pull requests marked ready", ("delivery",), self.ready),
+            ("supervisor", "delivery supervisor", ("delivery",), self.supervisor),
             ("base-gates", "gates on the base", ("gates", "committed"), self.base_gates),
         ]
 
@@ -5186,6 +5989,41 @@ class Doctor:
         problem = remote_base_problem(d)
         return ("wrong", problem) if problem else ("ok", f"{d.base_ref} carries the configuration and the delivery file")
 
+    def ready(self):
+        problem = ready_problem(self.delivery)
+        if problem:
+            return "wrong", problem
+        if not self.delivery.forge.get("mergeNeedsReady"):
+            return self.not_applicable("the merge step takes a draft (no forge.mergeNeedsReady)")
+        return "ok", "lead-accept marks each draft ready under the readyPullRequests grant"
+
+    def supervisor(self):
+        d = self.delivery
+        if not (d.state / "state.json").exists():
+            return self.not_applicable("no record yet: lead-init starts it, and its supervisor")
+        held, recorded = read_lock(supervisor_lock_path(d))
+        if not held:
+            closed = load_json(lead_file(d, "closed.json"))
+            if closed:
+                return "ok", "stopped; the delivery is closed. " + closed_words(closed)
+            return "wrong", f"the supervisor is down; fix: {flow_command()} lead-run --resume"
+        if not Path("/proc/self/status").exists():
+            return "ok", (f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}. Its children's "
+                          "signal dispositions can't be read on this host (no /proc); it starts them with the defaults")
+        ignored = []
+        for child in recorded.get("children") or []:
+            status = Path(f"/proc/{child.get('pid')}/status")
+            mask = next((int(line.split()[1], 16) for line in status.read_text().splitlines()
+                         if line.startswith("SigIgn:")), 0) if status.exists() else 0
+            names = [name for name, number in (("SIGINT", 2), ("SIGHUP", 1), ("SIGQUIT", 3)) if mask >> (number - 1) & 1]
+            if names:
+                ignored.append(f"{child.get('name')} (pid {child.get('pid')}) ignores {', '.join(names)}")
+        if ignored:
+            return "wrong", (f"the supervisor's children don't have the default signal dispositions: "
+                             f"{'; '.join(ignored)}, so their checks fail as a broken base; fix: lead-close or stop "
+                             f"them, then {flow_command()} lead-run --resume")
+        return "ok", f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}"
+
     def base_gates(self):
         if not self.args.run_gates:
             return "skipped", "(needs --run-gates)"
@@ -5291,18 +6129,25 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "lead-init")
     p.add_argument("--replace", action="store_true",
                    help="stop the earlier record's supervisor and archive its record and flow log, then start afresh")
+    p.add_argument("--no-supervisor", action="store_true", help="start no supervisor; lead-run --resume starts it later")
     p.set_defaults(fn=lead_init)
+    p = command(sub, "lead-run", help="the delivery's supervisor: every mechanical lead duty, pass after pass")
+    p.add_argument("--resume", action="store_true", help="stop what an earlier supervisor left, then start it again")
+    p.add_argument("--once", action="store_true", help="run one pass in the foreground, then stop")
+    p.set_defaults(fn=lead_run)
     p = command(sub, "lead-brief"); p.set_defaults(fn=lead_brief)
     p = command(sub, "lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
     p.add_argument("--title", required=True); p.add_argument("--note"); p.set_defaults(fn=lead_assign)
-    p = command(sub, "lead-accept"); p.add_argument("key"); p.add_argument("--accept-blocked", action="append")
+    p = command(sub, "lead-accept"); p.add_argument("key", nargs="?"); p.add_argument("--accept-blocked", action="append")
+    p.add_argument("--requeue", metavar="KEY", help="re-queue a stopped candidate you resolved, with no new hand-off")
     p.add_argument("--accept-restarts", action="store_true")
     p.add_argument("--accept-discarded", action="append", type=int, metavar="ROUND"); p.set_defaults(fn=lead_accept)
     p = command(sub, "lead-resolve", help="resolve a recorded blocker, or rerun a failed fullHealth")
-    p.add_argument("id", type=int, help="the journal id"); p.add_argument("--why", required=True)
+    p.add_argument("id", help="the blocker's journal id, or full-health to rerun a failed fullHealth")
+    p.add_argument("--why", required=True)
     p.set_defaults(fn=lead_resolve)
     p = command(sub, "lead-cleanup"); p.add_argument("keys", nargs="*"); p.set_defaults(fn=lead_cleanup)
-    p = command(sub, "lead-reconcile"); p.add_argument("--every", type=int, default=0)
+    p = command(sub, "lead-reconcile", help="one reconcile sweep; the supervisor runs one every pass")
     p.set_defaults(fn=lead_reconcile)
     p = command(sub, "lead-evidence"); p.add_argument("action", choices=["record", "page", "published", "status"])
     p.add_argument("--url", help="published: the page's address")
@@ -5360,6 +6205,11 @@ def main(argv: list[str] | None = None) -> None:
     except Stop as error:
         print(f"run-delivery: {error}", file=sys.stderr)
         sys.exit(2)
+    if args.command.startswith("lead-") and args.command not in ("lead-setup", "lead-init", "lead-run"):
+        with contextlib.suppress(Stop, ValueError, OSError):
+            line = supervisor_line(cfg())
+            if line:
+                print(line)
 
 
 if __name__ == "__main__":

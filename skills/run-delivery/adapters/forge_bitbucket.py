@@ -3,13 +3,18 @@
 
   find --source BRANCH                                   -> {"url": ...} for its open PR, or {}
   open --source B --destination D --title T --body-file F -> {"url": ...}  (opened as a draft)
-  get  --url URL                                          -> {"url", "state": open|merged|closed, "head", "source", "destination"}
+  get  --url URL                                          -> {"url", "state": open|merged|closed, "draft", "head", "source",
+                                                              "destination"}
   reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at"}],
                                                               "reviews": [{"author", "at", "body"}]}
+  ready --url URL                                         -> {"url", "draft": false}
+  merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
 
 Environment: FLOW_FORGE_REPOSITORY (workspace/repo) and FLOW_FORGE_TOKEN_ENV (the name of the variable holding a
 token Bitbucket accepts as a bearer token). Prints JSON on stdout; exits 1 with a message on stderr otherwise.
-Its only write is opening a pull request as a draft. Neither the token nor the Authorization value is ever printed.
+It writes three ways: it opens a pull request as a draft (a lane's open-pr), marks one ready (the lead's acceptance,
+under the delivery's readyPullRequests grant), and merges one (the binding's merge step), refusing a head that moved
+when --head is given. Neither the token nor the Authorization value is ever printed.
 """
 
 import argparse
@@ -59,10 +64,11 @@ def call(method, path, body=None):
 
 def describe(pr):
     return {"url": pr["links"]["html"]["href"], "state": STATES.get(pr["state"], pr["state"].lower()),
-            "head": pr["source"]["commit"]["hash"], "source": pr["source"]["branch"]["name"],
+            "draft": bool(pr.get("draft")), "head": pr["source"]["commit"]["hash"], "source": pr["source"]["branch"]["name"],
             "destination": pr["destination"]["branch"]["name"]}
 
 
+STRATEGIES = {"merge": "merge_commit", "squash": "squash"}
 CHECK_STATES = {"SUCCESSFUL": "passed", "FAILED": "failed", "STOPPED": "failed", "INPROGRESS": "pending"}
 
 
@@ -88,6 +94,9 @@ def main():
     p.add_argument("--title", required=True); p.add_argument("--body-file", required=True)
     p = sub.add_parser("get"); p.add_argument("--url", required=True)
     p = sub.add_parser("reviews"); p.add_argument("--url", required=True); p.add_argument("--head", required=True)
+    p = sub.add_parser("ready"); p.add_argument("--url", required=True)
+    p = sub.add_parser("merge"); p.add_argument("--url", required=True)
+    p.add_argument("--strategy", choices=tuple(STRATEGIES), required=True); p.add_argument("--head")
     args = parser.parse_args()
     if args.command == "find":
         query = urllib.parse.quote(f'source.branch.name="{args.source}" AND state="OPEN"')
@@ -108,6 +117,19 @@ def main():
                    for c in pages(f"/pullrequests/{number}/comments?pagelen=100")
                    if not c.get("deleted") and not c.get("inline") and not c.get("parent")]
         print(json.dumps({"checks": checks, "reviews": reviews}))
+    elif args.command == "ready":
+        call("PUT", f"/pullrequests/{pr_number(args.url)}", {"draft": False})
+        print(json.dumps({"url": args.url, "draft": False}))
+    elif args.command == "merge":
+        number = pr_number(args.url)
+        if args.head:
+            # Bitbucket's merge takes no expected head, so the head is checked just before it.
+            head = call("GET", f"/pullrequests/{number}")["source"]["commit"]["hash"]
+            if not (head.startswith(args.head) or args.head.startswith(head)):
+                fail(f"bitbucket: {args.url} is at {head[:12]}, not {args.head[:12]}; not merged")
+        call("POST", f"/pullrequests/{number}/merge", {"merge_strategy": STRATEGIES[args.strategy],
+                                                       "close_source_branch": False})
+        print(json.dumps({"url": args.url, "state": "merged"}))
     else:
         print(json.dumps(describe(call("GET", f"/pullrequests/{pr_number(args.url)}"))))
 
