@@ -220,6 +220,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "In that checkout the lens runs the adopting repository's scoped check"
         " set, never its full suite; the full suite runs once, outside the"
         " round, at the delivery's tail",
+        "A lens needing evidence beyond that set names each additional test"
+        " file, one path at a time, with what it is evidence for, and never"
+        " widens a run to a directory",
         "A lens that mutates or injects faults limits both to the candidate's"
         " changed lines and the code that calls them, and says so in its"
         " evidence",
@@ -258,11 +261,15 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " repository's full suite",
         "Mutation and fault injection stay on the candidate's changed lines and"
         " the code that calls them, and your `evidence` says so",
+        "names each additional test file, one path at a time, with what it is"
+        " evidence for; never widen a run to a directory",
+        "the full suite runs once, outside the round, at the delivery's tail",
     ),
     "personas/testing-policy.md": (
         "Limit mutation and fault injection to the candidate's changed lines and"
         " the code that calls them",
         "say in your evidence that your mutants kept to that scope",
+        "Run the scoped check set your brief names, never the full suite",
     ),
     "skills/execute-work/SKILL.md": (
         "state the bound in effect for the delivery",

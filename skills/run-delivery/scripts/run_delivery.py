@@ -777,6 +777,14 @@ def in_app_summary(key: str) -> str:
                                "whether each eval actually proves its acceptance criterion.")
 
 
+def scoped_checks(span: str) -> str:
+    """The brief's two per-round fills: the sensors to run, and the files the round's span changes."""
+    changed = git("diff", "--name-only", span).splitlines()
+    return ("- scoped sensor commands: the sensors the plan unit names, in the context refs below.\n"
+            f"- test files in scope for this round: the tests among the files `git diff {span}` changes, and the "
+            "tests that cover the rest: " + (", ".join(f"`{path}`" for path in changed) or "none") + ".")
+
+
 def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_base: str,
           checkout: Path, prior: list[dict], prior_candidate: str | None) -> str:
     c = cfg()
@@ -807,10 +815,6 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
                  '`{"id", "state": "closed|fixed|withdrawn|deferred|open", "resolution": "..."}`. Every carried '
                  "finding must appear; a deferral (P2/P3 only) also carries `deferredIssue`.")
     span = f"{merge_base}..{candidate}" if round_no == 1 else f"{prior_candidate}..{candidate}"
-    changed = git("diff", "--name-only", span).splitlines()
-    checks = ("- scoped sensor commands: the sensors the plan unit names, in the context refs below.\n"
-              f"- test files in scope for this round: the tests among the files `git diff {span}` changes, and the "
-              "tests that cover the rest: " + (", ".join(f"`{path}`" for path in changed) or "none") + ".")
     if round_no <= c.bound:
         bound_text = f"`ordinary counted`: round {round_no} of {c.bound}, counted against the declared bound."
     else:
@@ -820,7 +824,7 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
         "releaseId": rel["releaseId"], "profile": str(rel["profile"]), "archiveSha256": rel["archiveSha256"],
         "metadataSha256": rel["metadataSha256"], "graph": graph_digest(), "bound_text": bound_text, "kind": kind,
         "carry": carry, "resolutions": resolutions, "charter": charter, "later": later, "checkout": str(checkout),
-        "context": context, "in_app": in_app_summary(key), "severities": STORY_SEVERITIES, "checks": checks,
+        "context": context, "in_app": in_app_summary(key), "severities": STORY_SEVERITIES, "checks": scoped_checks(span),
     }
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
 

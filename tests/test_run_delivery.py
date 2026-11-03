@@ -1619,6 +1619,8 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
         wt = ready_lane(fx)
         code, out = fx.flow("review-prepare", "FX-3", "--round", 1, cwd=wt)
         expect(code == 0, out)
+        head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        base = sh("git", "merge-base", "origin/feature/FX-1", "HEAD", cwd=wt).stdout.strip()
         for lens in ("outcome-correctness", "adversarial-testing"):
             with self.subTest(lens=lens):
                 text = " ".join((wt / f".orchestration/review/FX-3/brief-r1-{lens}.md").read_text().split())
@@ -1626,10 +1628,12 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
                               "repository's full suite", text)
                 self.assertIn("Mutation and fault injection stay on the candidate's changed lines", text)
                 self.assertIn("- scoped sensor commands: the sensors the plan unit names", text)
-                self.assertRegex(text, r"- test files in scope for this round: the tests among the files `git diff "
-                                       r"[0-9a-f]{40}\.\.[0-9a-f]{40}` changes, and the tests that cover the rest: "
-                                       r"`src/two\.txt`\.")
+                self.assertIn(f"- test files in scope for this round: the tests among the files `git diff {base}..{head}` "
+                              "changes, and the tests that cover the rest: `src/two.txt`.", text)
                 self.assertNotIn("{{", text)
+        # A delta that changes no file puts no file in scope, rather than every file.
+        self.assertTrue(call(self.tool, "scoped_checks", f"{head}..{head}", cwd=wt, env=fx.env, delivery="FX-1")
+                        .endswith("the tests that cover the rest: none."))
 
     def test_an_older_generation_still_running_carries_the_previous_tuple(self) -> None:
         old, new, receipt_file = self.updated_install()

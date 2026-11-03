@@ -88,7 +88,7 @@ A lens is read-only, files no tracked item itself, and cannot return `failed`.
 ## Checks this lens runs
 
 Run the scoped check set below in your checkout, never the repository's full suite: the full suite runs once, outside
-the round, when the merge queue takes the candidate. Evidence beyond that set names each additional test file, one
+the round, at the delivery's tail. Evidence beyond that set names each additional test file, one
 path at a time, with what it is evidence for; never widen a run to a directory. Mutation and fault injection stay on
 the candidate's changed lines and the code that calls them, and your `evidence` says so.
 
