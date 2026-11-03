@@ -1139,6 +1139,21 @@ class HostOutboxTests(unittest.TestCase):
             self.assertTrue(tp.refusal(conf))
             self.assertEqual(tp.untargeted(conf), [], "a malformed tracker is refused, never read for its moves")
 
+    def test_a_tracker_with_no_known_adapter_needs_some_publisher_unless_manual(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="tracker-unknown-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for snapshot in (["tools/own_snapshot.py", "{parent}"], ["snapshot.py", "--kind", "other"]):
+            with self.subTest(snapshot=snapshot):
+                binding = {"state": {"publishers": [], "trackerSnapshot": {"argv": snapshot}}}
+                conf = tp.settings(tmp, {}, binding)
+                self.assertIsNone(conf["mode"])
+                self.assertIn("the binding has no tracker publisher", tp.refusal(conf))
+                binding["state"]["publishers"] = [{"id": "tracker", "kind": "host"}]
+                self.assertIsNone(tp.refusal(tp.settings(tmp, {}, binding)))
+                binding["state"]["publishers"] = []
+                self.assertIsNone(tp.refusal(tp.settings(tmp, {"tracker": {"updates": "manual"}}, binding)))
+        self.assertIsNone(tp.refusal(tp.settings(tmp, {}, {"state": {"publishers": []}})), "no tracker, no refusal")
+
     def test_a_host_tracker_without_a_host_publisher_is_refused_unless_manual(self) -> None:
         tmp = Path(tempfile.mkdtemp(prefix="tracker-host-"))
         self.addCleanup(shutil.rmtree, tmp, True)
@@ -1194,6 +1209,10 @@ class RunDeliveryTrackerCommandTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         from tests import test_run_delivery as harness
         cls.harness = harness
+        cached = harness.RELEASE_CACHE.get("release")
+        if cached is not None and not cached.receipt.exists():
+            # Built for test_run_delivery's own run and removed by its module cleanup: build one for this module.
+            harness.RELEASE_CACHE.pop("release")
         for name, value in vars(harness.installed_release()).items():
             setattr(cls, name, value)
 
