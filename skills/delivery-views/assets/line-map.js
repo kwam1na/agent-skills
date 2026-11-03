@@ -1741,6 +1741,7 @@
     var was = { PLAN: PLAN, plan: plan, named: planNamed };
     PLAN = block;
     plan = block.plan;
+    planBehind = false;
     var place = planPlace();
     try {
       draw(lastGood || shown);

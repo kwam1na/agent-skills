@@ -512,7 +512,7 @@ test("a live page keeps asking until the server has rendered the plan the record
 test("a render that never holds the named plan ends in the out-of-date note, until one does", async () => {
   const { page, plan, replanned, after } = replanning();
   let asked = 0;
-  const snaps = await live(page, () => (asked++ < 16 ? page : after), [{ push: replanned, asked: 14 }, { asked: 15 }, { asked: 16 }, { asked: 17 }], { quicker: 200 });
+  const snaps = await live(page, () => (asked++ < 16 ? page : after), [{ push: replanned, asked: 14 }, { asked: 15 }, { asked: 16 }, { asked: 17 }]);
   // Quiet while it may yet be rendered, then saying so, and still asking.
   expect(planNote(snaps[1].app)).toBeNull();
   expect(outcome(snaps[3].app)).toBe(plan.outcome.summary);
@@ -623,6 +623,16 @@ test("once out of date, an answer holding the plan in use says it is current aft
   expect(planNote(snaps[3].app)).toBeNull();
 });
 
+test("a later plan taken after a failed ask shows no note", async () => {
+  const { page, changed, replanned } = replanning();
+  const newer = render(replanned, { ...changed, updated: "2026-10-30T14:00:00Z", outcome: { ...changed.outcome, summary: "A later outcome still." } });
+  let asked = 0;
+  const snaps = await live(page, () => (asked++ === 0 ? new Error("down") : newer), [{ push: replanned }, { asked: 1 }, { asked: 2 }], { quicker: 500 });
+  expect(planNote(snaps[2].app)).toBe(OUT_OF_DATE);
+  expect(outcome(snaps[3].app)).toBe("A later outcome still.");
+  expect(planNote(snaps[3].app)).toBeNull();
+});
+
 test("a later plan that can't be drawn goes back too, with the note", async () => {
   const { page, plan, changed, replanned } = replanning();
   const broken = render(replanned, undefined, { planBlock: { plan: { ...changed, updated: "2026-10-30T14:00:00Z", units: [{ ...changed.units[0], removed: true, proofs: [null] }, ...changed.units.slice(1)] } } });
@@ -635,7 +645,7 @@ test("each newly named plan gets its own patience", async () => {
   const { page, replanned } = replanning();
   const again = structuredClone(replanned);
   again.journal.push({ id: 15, at: minute(41), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:30:00Z; another change" });
-  const snaps = await live(page, page, [{ push: replanned }, { asked: 14 }, { push: again }, { asked: 28 }, { asked: 29 }], { quicker: 200 });
+  const snaps = await live(page, page, [{ push: replanned }, { asked: 14 }, { push: again }, { asked: 28 }, { asked: 29 }]);
   expect(planNote(snaps[4].app)).toBeNull();
   expect(planNote(snaps[5].app)).toBe(OUT_OF_DATE);
 });
