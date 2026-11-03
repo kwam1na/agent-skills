@@ -810,8 +810,8 @@ def _plan_review_entry(entry: object, at: str, lenses: list[str]) -> dict:
     _text(entry["candidateRef"], f"{at}.candidateRef", PLAN_REVIEW_CANDIDATE)
     if entry["at"] is not None:
         _plan_time(entry["at"], f"{at}.at")
-    if entry["outcome"] not in (None, "approve", "changes"):
-        raise ConfigError(f"{at}.outcome: must be approve, changes or null")
+    if entry["outcome"] not in (None, "approve", "changes", "notes-open"):
+        raise ConfigError(f"{at}.outcome: must be approve, changes, notes-open or null")
     verdicts = entry["verdicts"]
     if not isinstance(verdicts, dict) or sorted(verdicts) != sorted(lenses):
         raise ConfigError(f"{at}.verdicts: must give exactly the review's lenses a verdict")

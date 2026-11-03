@@ -181,7 +181,10 @@ the review's ordered lens ids, 1 to 12, fixed for the review. `state` is
 every lens's verdict `approve` there, `open` at least one that isn't, and
 `ended` needs `endedReason`, at most 600 characters. `rounds` holds at most 32
 entries, each `{round, fromRound?, candidateRef, at, outcome, verdicts,
-findings, raised, settled, clipped?}`: the run summary's round shape. `verdicts`
+findings, raised, settled, clipped?}`: the run summary's round shape. `outcome`
+is `approve`, `changes`, `notes-open` when every lens approved and the round
+still has a note open and none of them blocks, or null when the round doesn't say.
+A round every lens approved with a P0 or P1 still open is `changes`. `verdicts`
 maps each lens to `approve`, `changes` or `unavailable`; `findings` counts
 `P0` to `P3`; `raised` lists at most 30 `{id, lens, severity, summary, state:
 unresolved | resolved}`, summaries at most 280 characters; `settled` lists at
@@ -210,8 +213,8 @@ fix commits are kept, and the changes fold says what was clipped.
 
 It sits between What's left and What happened. Open by default: the title
 ("N of M criteria proven", adding ", W by waiver" when a proof was waived), the
-outcome's summary, what needs the engineer, the units not yet proven with each
-one's next missing proof, and one meter per finish line. With a `planReview`,
+outcome's summary, what needs the engineer, and the units not yet proven with
+each one's next missing proof. With a `planReview`,
 one line beside the approval reads "Approved <date> after N review rounds",
 then "· every lens aligned", "· ended without alignment" or "· still open"; N
 is the last entry's `round`. Without one, the approval keeps its own `review`
@@ -225,10 +228,25 @@ approval (a scope-over-time chart and word redlines from `before` and
 the full outcome. Open folds are remembered per viewer under the page's theme
 key, and the page works without storage. Now gains the outcome's summary and
 "N of M criteria proven · plan changed K times"; each stop on The line opens its
-unit; and What's left shows the meters instead of its finish-line list. At
+unit; and What's left shows one meter per finish line instead of its
+finish-line list, so the meters appear there and not in this chapter. At
 phone width each unit becomes a card, with its proofs as labelled pills.
 
 A criterion is **proven**; a finish line is **met**, as the record says.
+
+A journal `delivery.closed` entry makes the page read the delivery as closed,
+until a lane is assigned, a candidate is handed or a check starts after it. Now
+says so and says when, with no warning about silence, though a lost connection
+still shows. It says "Delivered." only when every piece and every live plan unit
+landed; proofs and finish lines keep their own counts beside it. What's left stops
+counting down once nothing is left to land, and counts plan units that never reached
+the line. Lanes read as finished whatever the record last said they waited on, an
+unlanded stop reads "Not landed" and stops pulsing, and leftover holds, leases and
+stale sources no longer show. The progress bar and dots use the same count as the
+headline, and a piece the plan removed isn't counted. Now and the plan call what
+remains left open at close rather than asking for anything. The close is journaled
+before the supervisor stops, so its Needs you box still shows while a running,
+current list holds the close, and otherwise doesn't show.
 
 ### Proofs from the record
 
@@ -265,9 +283,14 @@ counts at face value, and the unit's open row says "before hand-off".
   have every `covers.proofs` kind done, and a second segment adds those with
   the kinds done or waived, so the meter and the title agree. A kind a unit
   doesn't owe is settled for it. `"all"` covers every criterion; `[]` covers
-  proofs only, over every unit. Whether the line is met comes only from the
-  record's finish line with the same id; a record finish line with no plan
-  entry still shows, with no fill.
+  proofs only, over every unit. Its count names the proofs it counts, or
+  "Proven" when it names none. A line with `[]` and no proofs has nothing to
+  count, so it shows no bar and says so. Whether the line is met comes only from
+  the record's finish line with the same id; when the record says met while
+  covered proofs are open, the meter says both, and a waived proof counts as
+  settled there. With every covered proof settled and the record not saying met, it
+  reads "Not marked met". A record finish line with no
+  plan entry still shows, with no fill.
 
 ### What needs the engineer
 

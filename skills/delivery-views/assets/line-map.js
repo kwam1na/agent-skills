@@ -212,9 +212,23 @@
   var STEP_WORDS = table({ pending: "waiting", running: "running", passed: "passed", failed: "failed", skipped: "skipped", timed_out: "timed out", reused: "reused" });
   var DONE = table({ passed: true, failed: true, skipped: true, timed_out: true, reused: true });
   var GLYPH = table({
-    "candidate.merged": ["merge", "●"], "candidate.handed": ["ready", "◐"], "decision.recorded": ["decide", "◆"],
-    "blocker.recorded": ["stop", "▲"], "candidate.stopped": ["stop", "▲"], "base.broken": ["stop", "▲"]
+    "candidate.merged": "merge", "candidate.handed": "ready", "decision.recorded": "decide",
+    "blocker.recorded": "stop", "candidate.stopped": "stop", "base.broken": "stop"
   });
+  // One drawn set, each mark centred in the same box, so none depends on how a font sizes a symbol.
+  var MARKS = table({
+    merge: '<circle cx="7" cy="7" r="4.5" fill="currentColor"/>',
+    ready: '<circle cx="7" cy="7" r="3.9" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M7 2.5a4.5 4.5 0 0 0 0 9z" fill="currentColor"/>',
+    decide: '<path d="M7 2.4 11.6 7 7 11.6 2.4 7z" fill="currentColor" stroke="currentColor" stroke-linejoin="round"/>',
+    stop: '<path d="M7 3 11.5 10.8H2.5z" fill="currentColor" stroke="currentColor" stroke-linejoin="round"/>',
+    wait: '<path d="M7 2.2 11.8 7 7 11.8 2.2 7z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>',
+    note: '<path d="M3 7h8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
+  });
+  function glyph(tone) {
+    var node = el("span", "g " + (tone === "note" ? "" : tone));
+    node.innerHTML = '<svg viewBox="0 0 14 14" aria-hidden="true">' + MARKS[tone] + "</svg>";
+    return node;
+  }
   var KIND_WORDS = table({
     "lane.assigned": "Assigned", "review.round": "Review round", "candidate.handed": "Handed over", "check.started": "Check started",
     "check.finished": "Check finished", "check.retried": "Check retried", "check.reused": "Check reused", "candidate.merged": "Landed",
@@ -382,6 +396,8 @@
   }
   function stageKey(item) { return item.pending === true && item.stage === "queued" ? "pending" : text(item.stage); }
   function stageWords(item) { return STAGE_WORDS[stageKey(item)] || "Stage not recognised"; }
+  /** A piece that hadn't landed when its delivery closed isn't in any stage any more. */
+  function unlandedAtClose(doc, piece) { return Boolean(closedEntry(doc)) && (piece.planned || piece.item.stage !== "merged"); }
   // Each stage's icon, drawn from SVG elements: a pair of meshed gears that turn while the piece is being built, and for
   // every other stage a still icon as Tabler's outline icons (MIT) draw it. A stage the page does not know gets none.
   var CIRCLE = "M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0";
@@ -480,6 +496,26 @@
     }).filter(Boolean);
     return batch.length > 1 ? batch : null;
   }
+  /** The entry that closed this delivery, or null while it is open: work resuming after a close reopens it. */
+  function closedEntry(doc) {
+    var closed = null;
+    list(doc.journal).filter(isObject).forEach(function (entry) {
+      if (entry.kind === "delivery.closed") { closed = entry; }
+      else if (entry.kind === "lane.assigned" || entry.kind === "candidate.handed" || entry.kind === "check.started") { closed = null; }
+    });
+    return closed;
+  }
+  /** Whether the plan took this piece out: it was no longer meant to land. */
+  function removedFromPlan(piece) {
+    return Boolean(plan) && planUnits(plan.units).some(function (unit) { return unit.removed === true && unit.subject === piece.item.subject; });
+  }
+  /** Landed pieces out of everything meant to land: a closed delivery counts plan units that never reached the line, and not ones the plan removed. */
+  function closedTally(all) {
+    var meant = all.filter(function (piece) { return !removedFromPlan(piece); });
+    var landed = meant.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
+    var missing = plan ? liveUnits().filter(function (unit) { return !all.some(function (piece) { return piece.item.subject === unit.subject; }); }).length : 0;
+    return { landed: landed, total: meant.length + missing, placed: meant.length };
+  }
   function journalFor(doc, subject, kinds) {
     return list(doc.journal).filter(function (entry) { return isObject(entry) && entry.subject === subject && (!kinds || kinds[entry.kind]); });
   }
@@ -490,7 +526,12 @@
     var meta = isObject(doc.state.meta) ? doc.state.meta : {};
     var landed = all.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
     var title = el("h1", "title");
-    if (!all.length) { add(title, "Nothing on the line yet."); }
+    var closed = closedEntry(doc);
+    var tally = closed ? closedTally(all) : null;
+    if (closed && !tally.total) { add(title, all.length ? "Closed with nothing left to land." : "Closed with nothing on the line."); }
+    else if (closed && tally.landed === tally.total) { add(title, "Delivered."); }
+    else if (closed) { add(title, "Closed with ", el("b", null, tally.landed + " of " + tally.total), " pieces landed."); }
+    else if (!all.length) { add(title, "Nothing on the line yet."); }
     else if (landed === all.length) { add(title, "Every piece has landed."); }
     else { add(title, el("b", null, landed + " of " + all.length), " pieces have landed."); }
     var kicker = add(el("div", "kicker"), el("span", "headline", text(meta.headline) || pageTitle()));
@@ -501,14 +542,14 @@
     if (status) { nodes.push(el("p", "say", status)); }
     var planLine = planNow(doc);
     if (planLine) { nodes.push(planLine); }
-    var panel = checkingPanel(doc, all);
+    var panel = closed ? null : checkingPanel(doc, all);
     if (panel) { nodes.push(panel); }
     var needs = attention(doc);
     if (needs) { nodes.push(needs); }
-    var supervisor = needsYou();
+    var supervisor = needsYou(Boolean(closed));
     if (supervisor) { nodes.push(supervisor); }
-    nodes.push(journey(doc, all, landed));
-    nodes.push(since(meta));
+    nodes.push(journey(doc, all, closed ? tally.landed : landed));
+    nodes.push(since(meta, closed));
     inner.replaceChildren.apply(inner, nodes);
   }
 
@@ -737,8 +778,7 @@
     }
     function note(entry) {
       used.push(entry);
-      var glyph = entry.kind === "blocker.recorded" ? ["stop", "▲"] : ["decide", "◆"];
-      return add(el("div", "ck-note"), el("span", "g " + glyph[0], glyph[1]), " " + text(entry.summary));
+      return add(el("div", "ck-note"), glyph(entry.kind === "blocker.recorded" ? "stop" : "decide"), text(entry.summary));
     }
     var ul = el("ul", "ck-fails");
     failedSteps.forEach(function (step) {
@@ -775,10 +815,10 @@
     var rows = [];
     function row(tone, title, why) {
       var li = el("li");
-      add(li, el("span", "g" + (tone === "wait" ? " wait" : ""), tone === "wait" ? "◇" : "▲"), add(el("div"), el("div", "a1", title), why ? el("div", "a2", why) : null));
+      add(li, glyph(tone), add(el("div"), el("div", "a1", title), why ? el("div", "a2", why) : null));
       rows.push(li);
     }
-    if (isObject(meta.hold)) { row("stop", "Serving is paused", text(meta.hold.reason)); }
+    if (isObject(meta.hold) && !closedEntry(doc)) { row("stop", "Serving is paused", text(meta.hold.reason)); }
     list(state.queue).filter(function (item) { return isObject(item) && item.stage === "stopped"; }).forEach(function (item) {
       var why = failures(item);
       var stopped = journalFor(doc, item.subject, { "candidate.stopped": true }).pop();
@@ -786,8 +826,8 @@
     });
     var baseEvents = list(doc.journal).filter(function (entry) { return isObject(entry) && (entry.kind === "base.broken" || entry.kind === "base.repaired"); });
     var lastBase = baseEvents[baseEvents.length - 1];
-    if (lastBase && lastBase.kind === "base.broken" && !isObject(meta.hold)) { row("stop", "The main line is broken", text(lastBase.summary) || "No reason recorded."); }
-    list(state.lanes).filter(function (lane) { return isObject(lane) && lane.state === "blocked"; }).forEach(function (lane) {
+    if (lastBase && lastBase.kind === "base.broken" && (!isObject(meta.hold) || closedEntry(doc))) { row("stop", "The main line is broken", text(lastBase.summary) || "No reason recorded."); }
+    list(state.lanes).filter(function (lane) { return isObject(lane) && lane.state === "blocked" && !closedEntry(doc); }).forEach(function (lane) {
       row("wait", (names[lane.id] || text(lane.id)) + " is blocked", lane.waitingOn ? "Waiting on " + text(lane.waitingOn) : "No reason recorded.");
     });
     list(meta.sourceReports).forEach(function (report) {
@@ -796,7 +836,8 @@
     var sources = isObject(meta.sources) ? meta.sources : {};
     Object.keys(sources).forEach(function (name) {
       var source = sources[name];
-      if (isObject(source) && source.status === "stale") {
+      // A source that stopped answering only matters while the page still has something to read from it.
+      if (isObject(source) && source.status === "stale" && !closedEntry(doc)) {
         row("wait", "The " + name + " is not answering", (text(source.reason) ? text(source.reason) + ". " : "") +
           (source.lastReadAt ? "Last read " + ago(source.lastReadAt) + "." : "Never read."));
       }
@@ -805,16 +846,24 @@
     var box = el("div", "attention");
     var ul = el("ul");
     rows.forEach(function (li) { ul.appendChild(li); });
-    return add(box, el("div", "ah", "Needs attention"), ul);
+    return add(box, el("div", "ah", closedEntry(doc) ? "Left open at close" : "Needs attention"), ul);
   }
 
   /**
    * The supervisor's "Needs you": what holds the close first, then what is only shown, each with where it comes from
    * and what clears it. A list from a supervisor that isn't running, one past its staleAfter (a pass is overdue), or
-   * one that can't be read is never shown: the box says which instead.
+   * one that can't be read is never shown: the box says which instead. The close is journaled before the supervisor
+   * stops, so a closed delivery shows the box only while a running, current list still holds it, and otherwise has none:
+   * a stopped supervisor is what a finished close looks like, and asking to resume it would be wrong.
    */
-  function needsYou() {
+  function needsYou(closed) {
     if (NEEDS === null) { return null; }
+    if (closed) {
+      var current = seconds(NEEDS.staleAfter);
+      var holding = NEEDS.running === true && current !== null && Date.now() / 1000 <= current
+        && list(NEEDS.items).filter(isObject).some(function (item) { return item.holding === true; });
+      if (!holding) { return null; }
+    }
     var box = add(el("div", "attention needs-you"), el("div", "ah", "Needs you"));
     function none(words) { return add(box, el("p", "needs-none", words)); }
     if (NEEDS.unreadable === true) { return none("Unavailable: the supervisor's list can't be read, so it isn't shown."); }
@@ -828,12 +877,12 @@
     }
     var items = list(NEEDS.items).filter(isObject);
     if (!items.length) { return none("Nothing needs you; the supervisor's last pass found nothing."); }
-    [[true, "Holds the close", "▲"], [false, "Shown only", "◇"]].forEach(function (kind) {
+    [[true, "Holds the close", "stop"], [false, "Shown only", "wait"]].forEach(function (kind) {
       var mine = items.filter(function (item) { return item.holding === kind[0]; });
       if (!mine.length) { return; }
       var ul = el("ul");
       mine.forEach(function (item) {
-        ul.appendChild(add(el("li"), el("span", kind[0] ? "g" : "g wait", kind[2]), add(el("div"), el("div", "a1", text(item.text)),
+        ul.appendChild(add(el("li"), glyph(kind[2]), add(el("div"), el("div", "a1", text(item.text)),
           el("div", "a2", "From " + text(item.source) + ". Clears with " + text(item.clears) + "."))));
       });
       box.appendChild(add(el("div", "needs-group"), el("div", "needs-kind", kind[1]), ul));
@@ -845,7 +894,8 @@
   function journey(doc, all, landed) {
     var finish = list(doc.state.finish).filter(isObject);
     var met = finish.filter(function (line) { return line.met === true; }).length;
-    var total = all.length + finish.length;
+    var meant = closedEntry(doc) ? closedTally(all).total : all.length;
+    var total = meant + finish.length;
     var progress = total ? (landed + met) / total : 0;
     var box = el("div", "journey");
     box.setAttribute("aria-hidden", "true");
@@ -863,7 +913,7 @@
     prev.progress = progress;
     // Without finish lines the pieces landing is the end of the journey, so it takes the end's place.
     var stops = finish.length
-      ? [["Start", 0, "start"], ["Pieces landed", total ? all.length / total : 1, "pieces"], ["Finish line met", 1, "end"]]
+      ? [["Start", 0, "start"], ["Pieces landed", total ? meant / total : 1, "pieces"], ["Finish line met", 1, "end"]]
       : [["Start", 0, "start"], ["Pieces landed", 1, "end"]];
     stops.forEach(function (stop) {
       var label = el("div", "stop " + stop[2], stop[0]);
@@ -875,7 +925,14 @@
     return box;
   }
 
-  function since(meta) {
+  function since(meta, closed) {
+    // A closed delivery isn't expected to update, so silence isn't a warning; losing the page's connection still is.
+    if (closed && (connection === "live" || connection === "connected" || connection === "saved")) {
+      var closedAt = seconds(eventTime(closed));
+      // An unreadable time, or one ahead of this clock, has no honest "ago".
+      var words = closedAt !== null && closedAt <= Date.now() / 1000 ? "Closed " + ago(eventTime(closed)) : "Closed";
+      return add(el("div", "since closed"), el("i"), [words].concat(meta.baseHead ? ["base " + short(meta.baseHead)] : []).join(" · "));
+    }
     var updated = seconds(meta.updatedAt);
     var stale = updated !== null && Date.now() / 1000 - updated > 90 * 60;
     var cls = connection === "live" || connection === "connected" ? "live" : connection === "saved" ? "" : "down";
@@ -898,7 +955,7 @@
     var nodes = [el("div", "kicker", "The line"), el("h2", "title", "Every piece of work merges into one main line."),
       el("p", "say", "Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.")];
     if (!all.length) {
-      nodes.push(el("p", "waiting", "No work on the line yet."));
+      nodes.push(el("p", "waiting", closedEntry(doc) ? "No work reached the line." : "No work on the line yet."));
       inner.replaceChildren.apply(inner, nodes);
       return;
     }
@@ -916,7 +973,7 @@
       var stops = el("div", "stops");
       var merged = function (k) { return k >= 0 && k < items.length && !items[k].planned && items[k].item.stage === "merged"; };
       items.forEach(function (piece, i) {
-        var kind = stopKind(piece, nowSubject);
+        var kind = unlandedAtClose(doc, piece) ? "unlanded" : stopKind(piece, nowSubject);
         var key = subjectOf(piece.item);
         stages[key] = kind;
         var linkLeft = i === 0 || (merged(i) && merged(i - 1));
@@ -927,7 +984,7 @@
         var button = el("button", "stop-btn " + kind + (landing ? " landing" : ""));
         button.type = "button";
         button.setAttribute("data-subject", key);
-        button.setAttribute("aria-label", titleOf(doc, piece.item) + ", " + stageWords(piece.item));
+        button.setAttribute("aria-label", titleOf(doc, piece.item) + ", " + (kind === "unlanded" ? "Not landed" : stageWords(piece.item)));
         button.setAttribute("aria-pressed", String(selected === key));
         var show = function () { selected = key; showDetail(doc, piece, colours, nowSubject); };
         button.addEventListener("click", show);
@@ -945,7 +1002,8 @@
     detail.id = "detail";
     detail.setAttribute("aria-live", "polite");
     var legend = el("div", "line-legend");
-    [["f", "Landed"], ["n", "Being checked"], ["r", "Ready to check"], ["a", "In progress"], ["d", "Not started"], ["p", "Waiting for the lead to accept"], ["h", "Stopped"], ["link", "Both landed"]].forEach(function (entry) {
+    (closedEntry(doc) ? [["f", "Landed"], ["u", "Not landed"], ["link", "Both landed"]]
+      : [["f", "Landed"], ["n", "Being checked"], ["r", "Ready to check"], ["a", "In progress"], ["d", "Not started"], ["p", "Waiting for the lead to accept"], ["h", "Stopped"], ["link", "Both landed"]]).forEach(function (entry) {
       legend.appendChild(add(el("span"), el("i", entry[0]), entry[1]));
     });
     nodes.push(box, detail, legend);
@@ -1015,11 +1073,13 @@
     var line = el("div", "d2 d-meta");
     add(line, issue(subject));
     if (item.changeRequest) { add(line, " · ", changeLink(item.changeRequest)); }
-    var timing = stageTime(doc, item);
+    // Nothing is still being checked or waiting once the delivery has closed; the piece simply didn't land.
+    var unlanded = unlandedAtClose(doc, piece);
+    var timing = unlanded ? null : stageTime(doc, item);
     var stage = el("span", "d-stage");
-    var icon = stageIcon(item);
+    var icon = unlanded ? null : stageIcon(item);
     if (icon) { stage.appendChild(icon); }
-    add(stage, stageWords(item));
+    add(stage, unlanded ? "Not landed" : stageWords(item));
     if (timing) {
       var relative = spoken(timing.at);
       var when = el("span", "d-stage-time", (item.stage === "merged" ? (relative ? " " + relative : " · time unknown")
@@ -1030,7 +1090,9 @@
     }
     add(line, " · ", stage);
     var nodes = [owner, el("div", "d1", titleOf(doc, item)), line];
-    var batch = item.stage !== "merged" && batchNow(doc, pieces(doc));
+    var inPlan = planStop(doc, subject);
+    if (inPlan) { nodes.push(inPlan); }
+    var batch = item.stage !== "merged" && !unlanded && batchNow(doc, pieces(doc));
     if (batch && batch.some(function (member) { return member.subject === item.subject; })) {
       nodes.push(el("div", "d-batch", "Checked together with " + batch.filter(function (member) { return member.subject !== item.subject; })
         .map(function (member) { return text(member.subject); }).join(", ") + "; lands in order once the shared test run passes."));
@@ -1039,9 +1101,9 @@
     if (isObject(tickets[item.subject]) && text(tickets[item.subject].summary)) { nodes.push(el("div", "d2", text(tickets[item.subject].summary))); }
     if (item.stage === "stopped") { failures(item).forEach(function (why) { nodes.push(el("div", "d3", why)); }); }
     var leadInputs = list(item.leadInputs).map(text).filter(Boolean);
-    if (leadInputs.length) { nodes.push(el("div", "d2", "Needs the lead first: " + leadInputs.join(", "))); }
+    if (leadInputs.length && !unlanded) { nodes.push(el("div", "d2", "Needs the lead first: " + leadInputs.join(", "))); }
     var estimate = isObject(doc.estimates) && isObject(doc.estimates[item.subject]) ? doc.estimates[item.subject] : null;
-    if (estimate && item.stage === "queued") {
+    if (estimate && item.stage === "queued" && !unlanded) {
       var expected = seconds(estimate.expectedStart);
       var ahead = expected === null ? null : expected - Date.now() / 1000;
       nodes.push(el("div", "d2", "Position " + estimate.position + " in line · " +
@@ -1053,8 +1115,6 @@
     if (timeline) { nodes.push(timeline); }
     var history = historyFor(doc, item);
     if (history) { nodes.push(history); }
-    var inPlan = planStop(doc, subject);
-    if (inPlan) { nodes.push(inPlan); }
     detail.replaceChildren.apply(detail, nodes);
     // A new piece's panel grows or shrinks to its height smoothly; a live redraw of the same piece does not move.
     if (switched && from) { runEaseHeight(detail, from); }
@@ -1086,7 +1146,7 @@
       var evidence = events.filter(function (event) { return event.kind === "review.evidence"; }).slice(-1)[0];
       var observation = isObject(doc.reviewEvidence) ? doc.reviewEvidence[item.subject] : undefined;
       if (!native && !events.length) {
-        return isPlanned(doc, item)
+        return isPlanned(doc, item) && !closedEntry(doc)
           ? el("div", "d-run-none", "No review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off.")
           : null;
       }
@@ -1095,7 +1155,7 @@
           || native.journalId !== boundary
           || (evidence && (!isObject(evidence.reviewArtifact) || evidence.reviewArtifact.digest !== native.digest))
           || (isObject(doc.reviewEvidence) && (!isObject(observation) || observation.unavailable === true || observation.digest !== native.digest))) {
-        return el("div", "d-run-none", "Review evidence unavailable or stale for this candidate." + (isPlanned(doc, item)
+        return el("div", "d-run-none", "Review evidence unavailable or stale for this candidate." + (isPlanned(doc, item) && !closedEntry(doc)
           ? " Its rounds show here again once the lane's review-reduce records its latest round." : ""));
       }
       var nativeBox = el("div", "d-run");
@@ -1221,13 +1281,15 @@
     var colours = laneColours(doc, all);
     var focus = isObject(doc.focus) ? doc.focus : {};
     var busy = lanes.filter(function (lane) { return lane.state !== "idle" && lane.state !== "done"; }).length;
-    var heading = !lanes.length ? "No one has reported in yet."
+    var closed = closedEntry(doc);
+    var heading = closed ? "This delivery is closed; no lane is working."
+      : !lanes.length ? "No one has reported in yet."
       : busy === lanes.length ? lanes.length + (lanes.length === 1 ? " lane is" : " lanes are") + " working on this."
       : busy + " of " + lanes.length + " lanes are working right now.";
     var nodes = [el("div", "kicker", "Who's doing what"), el("h2", "title", heading)];
     var seen = Object.create(null);
     if (lanes.length) {
-      nodes.push(el("p", "say", "Each lane is a separate session working in parallel on its own part of the work."));
+      nodes.push(el("p", "say", "Each lane " + (closed ? "was" : "is") + " a separate session working in parallel on its own part of the work."));
       var people = el("div", "people");
       lanes.forEach(function (lane) {
         var mark = text(lane.state) + "|" + text(lane.focus) + "|" + text(lane.waitingOn);
@@ -1238,9 +1300,10 @@
         var who = add(el("div"), el("h3", null, text(lane.title) || text(lane.id)));
         var doing = text(lane.focus) || text(focus[lane.id]);
         if (doing) { who.appendChild(el("p", "doing", doing)); }
-        if (text(lane.focus)) { who.appendChild(rowAge(lane)); }
-        var st = add(el("div", "st"), el("span", "chip" + (LANE_WORDS[lane.state] ? " " + lane.state : ""), LANE_WORDS[lane.state] || "Unknown"));
-        if (lane.waitingOn) { st.appendChild(el("span", "on blocked", "waiting on " + text(lane.waitingOn))); }
+        if (text(lane.focus) && !closed) { who.appendChild(rowAge(lane)); }
+        var st = add(el("div", "st"), closed ? el("span", "chip done", "Finished") : el("span", "chip" + (LANE_WORDS[lane.state] ? " " + lane.state : ""), LANE_WORDS[lane.state] || "Unknown"));
+        if (closed) { /* what a lane last waited on or how long it has held is over */ }
+        else if (lane.waitingOn) { st.appendChild(el("span", "on waiting", "waiting on " + text(lane.waitingOn))); }
         else if (heldFor(lane.since)) { st.appendChild(el("span", "on", heldFor(lane.since))); }
         add(row, el("span", "swatch"), who, st);
         people.appendChild(row);
@@ -1249,7 +1312,7 @@
       prev.lanes = seen;
     }
     var leases = list(doc.state.leases).filter(isObject);
-    if (leases.length) {
+    if (leases.length && !closed) {
       var held = el("div", "leases");
       leases.forEach(function (lease) {
         held.appendChild(add(el("span"), el("b", null, text(lease.id)), " held by " + text(lease.holder) + (heldFor(lease.since) ? " " + heldFor(lease.since) : "")));
@@ -1264,28 +1327,40 @@
     var inner = parts.left;
     var colours = laneColours(doc, all);
     var open = all.filter(function (piece) { return piece.planned || piece.item.stage !== "merged"; });
-    var number = el("div", "left-number", String(prev.open === null ? open.length : prev.open));
-    number.appendChild(el("small", null, open.length === 1 ? "piece to go" : "pieces to go"));
-    countTo(number, prev.open, open.length);
+    var closedOut = closedEntry(doc);
+    var tally = closedOut ? closedTally(all) : { landed: all.length - open.length, total: all.length, placed: all.length };
+    var left = tally.total - tally.landed;
+    var number = el("div", "left-number", String(prev.open === null ? left : prev.open));
+    number.appendChild(el("small", null, closedOut && left ? (left === 1 ? "piece not landed" : "pieces not landed") : left === 1 ? "piece to go" : "pieces to go"));
+    countTo(number, prev.open, left);
     var wasOpen = prev.dots || {};
     var nowOpen = Object.create(null);
-    var nodes = [el("div", "kicker", "What's left"), number,
-      el("p", "say", all.length ? (all.length - open.length) + " of " + all.length + " pieces have landed." : "Nothing is planned yet.")];
-    if (all.length) {
+    // Nothing counts down once a delivery closes with every piece landed.
+    var nodes = [el("div", "kicker", "What's left"), closedOut && !left ? el("h2", "title", tally.total || all.length ? "Nothing left to land." : "Nothing was on the line.") : number];
+    if (tally.total) { nodes.push(el("p", "say", tally.landed + " of " + tally.total + " pieces have landed.")); }
+    else if (!closedOut) { nodes.push(el("p", "say", "Nothing is planned yet.")); }
+    if (tally.total) {
       var dots = el("div", "dots");
       dots.setAttribute("aria-hidden", "true");
       var closing = 0;
       all.forEach(function (piece) {
+        if (closedOut && removedFromPlan(piece)) { return; }
         var key = text(piece.item.subject);
         var isOpen = piece.planned || piece.item.stage !== "merged";
         nowOpen[key] = isOpen;
-        // A dot that just closed lights up in its lane's colour, then settles to grey.
+        // A dot that just closed lights up in its lane's colour, then settles to the landed green.
         var closed = !isOpen && wasOpen[key] === true && !reduced();
         var dot = el("i", isOpen ? "open" : closed ? "closing" : "");
         dot.style.setProperty("--c", colours[piece.item.lane || ""] || "var(--soft)");
         if (closed) { dot.style.animationDelay = closing * 0.06 + "s"; closing += 1; }
         dots.appendChild(dot);
       });
+      // Plan units that never reached the line have no lane to colour them.
+      for (var never = tally.placed; never < tally.total; never += 1) {
+        var unplaced = el("i", "open");
+        unplaced.style.setProperty("--c", "var(--soft)");
+        dots.appendChild(unplaced);
+      }
       nodes.push(dots);
       var names = laneNames(doc);
       var byLane = Object.create(null);
@@ -1296,7 +1371,7 @@
         groups.appendChild(add(el("div"), el("b", changed ? "changed" : null, String(byLane[lane])), lane ? "with " + (names[lane] || lane) : "not yet assigned"));
       });
       prev.byLane = byLane;
-      nodes.push(groups);
+      if (!closedOut) { nodes.push(groups); }
     }
     var finish = list(doc.state.finish).filter(isObject);
     // With a plan, its meters take the list's place and show every line the record has.
@@ -1310,12 +1385,13 @@
         var met = line.met === true;
         var current = !met && first;
         if (!met) { first = false; }
-        after.appendChild(add(el("div", met ? "met" : current ? "on" : ""), el("span", null, met ? "Met" : current ? "Next" : "Then"), text(line.text)));
+        // After a close nothing comes next: a line either was met or wasn't.
+        after.appendChild(add(el("div", met ? "met" : current && !closedOut ? "on" : ""), el("span", null, met ? "Met" : closedOut ? "Not met" : current ? "Next" : "Then"), text(line.text)));
       });
       nodes.push(el("div", "kicker", "The finish line"), after);
     }
     inner.replaceChildren.apply(inner, nodes);
-    prev.open = open.length;
+    prev.open = left;
     prev.dots = nowOpen;
   }
 
@@ -1415,7 +1491,8 @@
     if (kind === "handed") {
       if (!item) { return { state: "open", words: "not handed off yet" }; }
       if (item.stage === "stopped") { return { state: "open", words: "stopped" }; }
-      if (item.pending === true) { return { state: "open", words: "waiting for the lead to accept" }; }
+      // A merge recorded outside the queue can leave the flag set; what merged is past waiting.
+      if (item.pending === true && item.stage !== "merged") { return { state: "open", words: "waiting for the lead to accept" }; }
       return { state: "done", words: "done" };
     }
     if (kind === "merged") {
@@ -1485,14 +1562,18 @@
     if (!named.length) { return null; }
     return criteria.filter(function (criterion) { return named.indexOf(criterion.id) >= 0; });
   }
-  /** A finish line's meter: the share whose covered proofs are done, then the share done or waived. */
+  /**
+   * A finish line's meter: the share whose covered proofs are done, then the share done or waived, named by what it
+   * counts. "Met" is the record's word; a line covering no criteria and no proofs has nothing to count, so no bar.
+   */
   function meter(counts, line, recordLine) {
-    var box = el("div", "plan-meter" + (recordLine && recordLine.met === true ? " met" : ""));
+    var met = Boolean(recordLine) && recordLine.met === true;
     var label = line ? text(line.label) || text(line.id) : text(recordLine.text) || text(recordLine.id);
-    var head = add(el("div", "pm-head"), el("span", "pm-label", label), el("span", "pm-state", recordLine && recordLine.met === true ? "Met" : "Not met"));
-    var done = 0, either = 0, total = 0, noun = "criteria";
+    var done = 0, either = 0, total = 0, noun = "criteria", measured = "Proven";
+    var kinds = [];
     if (line) {
-      var kinds = list(isObject(line.covers) ? line.covers.proofs : []).map(text);
+      kinds = list(isObject(line.covers) ? line.covers.proofs : []).map(text);
+      if (kinds.length) { measured = kinds.map(kindLabel).join(", "); }
       var settled = function (unit, waivedToo) {
         var proof = counts.proofs[text(unit.subject)];
         if (!kinds.length) { return proof.proven && (waivedToo || !proof.waived); }
@@ -1504,19 +1585,28 @@
         });
       };
       var covered = coveredCriteria(counts.units, line.covers);
+      if (covered === null && !kinds.length) {
+        return add(el("div", "plan-meter" + (met ? " met" : "")), add(el("div", "pm-head"), el("span", "pm-label", label), el("span", "pm-state", met ? "Met" : "Not met")),
+          el("div", "pm-count", "Recorded by the lead, not counted from proofs"));
+      }
       var rows = covered === null ? counts.units : covered.map(function (criterion) { return criterion.unit; });
       if (covered === null) { noun = "units"; }
       total = rows.length;
       done = rows.filter(function (unit) { return settled(unit, false); }).length;
       either = rows.filter(function (unit) { return settled(unit, true); }).length;
     }
+    // The record can say met while proofs it covers are still open: say both rather than let one hide the other.
+    var open = met && line && either < total;
+    var counted = !met && line && total > 0 && either === total;
+    var box = el("div", "plan-meter" + (open ? " open" : met ? " met" : ""));
+    var head = add(el("div", "pm-head"), el("span", "pm-label", label), el("span", "pm-state", open ? "Met, proofs open" : met ? "Met" : counted ? "Not marked met" : "Not met"));
     var bar = el("div", "pm-bar");
     var full = el("i", "pm-done");
     var waived = el("i", "pm-waived");
     full.style.width = (total ? done / total * 100 : 0) + "%";
     waived.style.width = (total ? (either - done) / total * 100 : 0) + "%";
     add(bar, full, waived);
-    var words = line ? done + " of " + total + " " + noun + (either > done ? ", " + (either - done) + " more by waiver" : "") : "Not in the plan";
+    var words = line ? measured + ": " + done + " of " + total + " " + noun + (either > done ? ", " + (either - done) + " more by waiver" : "") : "Not in the plan";
     return add(box, head, bar, el("div", "pm-count", words));
   }
   /** One meter per finish line: the plan's, in order, then any the record has that the plan does not. */
@@ -1598,35 +1688,47 @@
     if (waivedOpen.length) { flags.push({ title: "A waived proof on a unit not yet proven", why: waivedOpen.map(unitName).join(", ") }); }
     return flags;
   }
-  function flagList(flags) {
+  function flagList(flags, closed) {
     var box = el("div", "plan-needs");
-    if (!flags.length) { return add(box, el("p", "plan-calm", "Nothing in the plan needs you right now.")); }
+    if (!flags.length) { return closed ? null : add(box, el("p", "plan-calm", "Nothing in the plan needs you right now.")); }
     var ul = el("ul");
     flags.forEach(function (flag) {
-      ul.appendChild(add(el("li"), el("span", "g", "▲"), add(el("div"), el("div", "a1", flag.title), flag.why ? el("div", "a2", flag.why) : null)));
+      ul.appendChild(add(el("li"), glyph("stop"), add(el("div"), el("div", "a1", flag.title), flag.why ? el("div", "a2", flag.why) : null)));
     });
-    return add(box, el("div", "ah", "Needs you"), ul);
+    return add(box, el("div", "ah", closed ? "Left open at close" : "Needs you"), ul);
   }
 
-  /** A proof as a labelled pill: the label shows on a phone, where the grid's column heads do not. */
-  function pill(proof, kind) {
-    var node = el("span", "plan-pill " + proof.state);
+  /** A proof as its label and state; a finished one shows its label alone. */
+  function proofLine(proof, kind) {
+    var node = el("span", "plan-proof " + proof.state);
     add(node, el("span", "pp-kind", kindLabel(kind)), el("span", "pp-state", proof.words));
     return node;
+  }
+  /** Where a unit stands in one phrase: proven, or whether it merged and how many proofs are still open. */
+  function unitStanding(proof) {
+    if (proof.proven) { return proof.waived ? "Proven, with a waiver" : "Proven"; }
+    var open = proof.owed.filter(function (kind) { return proof.states[kind].state !== "done" && proof.states[kind].state !== "waived"; });
+    return (proof.owed.indexOf("merged") >= 0 && proof.states.merged.state === "done" ? "Merged, " : "") + open.length + " open";
   }
   function unitRow(proof, kinds, asApproved) {
     var unit = proof.unit;
     var row = el("div", "plan-unit" + (unit.removed === true ? " removed" : proof && proof.proven ? " proven" : ""));
     var name = add(el("div", "pu-name"), issue(text(unit.subject), unitName(unit)), el("span", "pu-title", text(unit.title)));
+    if (unitName(unit) !== text(unit.subject)) { name.appendChild(el("span", "pu-key", text(unit.subject))); }
     if (unit.removed === true) { name.appendChild(el("span", "pu-removed", "Removed")); }
     var criteria = el("ul", "pu-criteria");
-    list(unit.criteria).filter(isObject).forEach(function (criterion) { criteria.appendChild(add(el("li"), el("b", null, text(criterion.id)), " ", text(criterion.text))); });
-    var cells = el("div", "pu-proofs");
-    kinds.forEach(function (kind) {
-      if (list(unit.proofs).indexOf(kind.id) < 0) { cells.appendChild(el("span", "plan-pill none-owed")); return; }
-      cells.appendChild(asApproved && unit.removed === true ? el("span", "plan-pill none-owed") : pill(proof.states[kind.id], kind.id));
-    });
-    return add(row, name, criteria, cells);
+    list(unit.criteria).filter(isObject).forEach(function (criterion) { criteria.appendChild(add(el("li"), text(criterion.text), " ", el("span", "pu-id", text(criterion.id)))); });
+    var status = el("div", "pu-status");
+    if (unit.removed !== true) { status.appendChild(el("div", "pu-standing", unitStanding(proof))); }
+    if (unit.removed !== true) {
+      var owed = kinds.filter(function (kind) { return list(unit.proofs).indexOf(kind.id) >= 0; });
+      function finished(kind) { return proof.states[kind.id].state === "done"; }
+      var cells = el("div", "pu-proofs");
+      // What is still open comes first; what is finished reads as one quiet line after it.
+      owed.filter(function (kind) { return !finished(kind); }).concat(owed.filter(finished)).forEach(function (kind) { cells.appendChild(proofLine(proof.states[kind.id], kind.id)); });
+      status.appendChild(cells);
+    }
+    return add(row, name, criteria, status);
   }
   /** A fold the reader opens; open folds are remembered for this page. */
   function fold(name, label, count, body) {
@@ -1859,7 +1961,7 @@
       var reason = PLAN && text(PLAN.unreadable) ? PLAN.unreadable : "";
       nodes.push(flagList([PLAN && typeof PLAN.absent === "string"
         ? { title: "The plan chapter is missing", why: PLAN.absent + " is the plan on file, and nothing has written plan.json for this page." }
-        : { title: "The plan couldn't be read", why: reason }]));
+        : { title: "The plan couldn't be read", why: reason }], false));
       inner.replaceChildren.apply(inner, nodes);
       return;
     }
@@ -1873,7 +1975,8 @@
     var review = planReview();
     nodes.push(title, el("p", "say plan-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")));
     if (review) { nodes.push(approvalLine(review)); }
-    nodes.push(flagList(planFlags(doc, counts)));
+    var flagged = flagList(planFlags(doc, counts), Boolean(closedEntry(doc)));
+    if (flagged) { nodes.push(flagged); }
     var open = counts.units.filter(function (unit) { return !counts.proofs[text(unit.subject)].proven; });
     if (open.length) {
       var ul = el("ul", "plan-open");
@@ -1881,15 +1984,13 @@
         var proof = counts.proofs[text(unit.subject)];
         var next = proof.next ? kindLabel(proof.next) + ": " + proof.states[proof.next].words : "";
         var li = add(el("li"), issue(text(unit.subject), unitName(unit)), el("span", "po-title", text(unit.title)),
-          el("span", "po-next", "Next: " + next + (proof.handed ? "" : " · before hand-off")));
+          el("span", "po-next", next + (proof.handed ? "" : " · before hand-off")));
         li.setAttribute("tabindex", "-1");
         planRows[text(unit.subject)] = li;
         ul.appendChild(li);
       });
       nodes.push(ul);
     }
-    var meters = planMeters(doc);
-    if (meters) { nodes.push(meters); }
     var kinds = kindsOf();
     var amended = planUnits(plan.units);
     var approved = isObject(plan.approved) ? plan.approved : {};
@@ -1910,16 +2011,10 @@
       switcher.appendChild(button);
     });
     switcher.appendChild(el("span", "ps-when", "Approved " + (spoken(approved.at) || "at an unknown time") + (text(approved.review) ? " · " + text(approved.review) : "")));
-    var heads = add(el("div", "plan-grid-head"), el("div", "pu-name", "Unit"), el("div", "pu-criteria", "Criteria"));
-    var headCells = el("div", "pu-proofs");
-    kinds.forEach(function (kind) { headCells.appendChild(el("span", "plan-pill head", text(kind.label) || text(kind.id))); });
-    heads.appendChild(headCells);
-    heads.style.setProperty("--cols", String(Math.max(1, kinds.length)));
-    add(all, switcher, heads);
+    add(all, switcher, add(el("div", "plan-grid-head"), el("div", null, "Unit"), el("div", null, "Criteria"), el("div", null, "Status")));
     var allProofs = planProofs(doc, shownUnits);
     shownUnits.forEach(function (unit) {
       var row = unitRow(allProofs[text(unit.subject)], kinds, planAsApproved);
-      row.style.setProperty("--cols", String(Math.max(1, kinds.length)));
       row.setAttribute("tabindex", "-1");
       planRows["all:" + text(unit.subject)] = row;
       all.appendChild(row);
@@ -1956,10 +2051,10 @@
       var approvals = el("ul", "plan-approvals");
       var ahead = plan.approvals.filter(function (entry) { return isObject(entry) && entry.state === "waiting"; });
       plan.approvals.filter(isObject).forEach(function (entry) {
-        approvals.appendChild(add(el("li", entry.state === "done" ? "done" : "waiting"), el("span", null, entry.state === "done" ? "Done" : "Waiting"),
+        approvals.appendChild(add(el("li", entry.state === "done" ? "done" : closedEntry(doc) ? "lapsed" : "waiting"), el("span", null, entry.state === "done" ? "Done" : closedEntry(doc) ? "Not recorded" : "Waiting"),
           " ", text(entry.text), text(entry.who) ? " · " + text(entry.who) : ""));
       });
-      folds.appendChild(fold("approvals", "Approvals ahead", ahead.length, approvals));
+      folds.appendChild(closedEntry(doc) ? fold("approvals", "Approvals", plan.approvals.filter(isObject).length, approvals) : fold("approvals", "Approvals ahead", ahead.length, approvals));
     }
     if (Array.isArray(plan.outOfScope)) {
       var scope = el("ul", "plan-scope-out");
@@ -1971,14 +2066,17 @@
     inner.replaceChildren.apply(inner, nodes);
   }
 
-  /** In a stop's panel: where its unit stands in the plan, and a way to it. */
+  /** In a stop's panel: where its unit stands, in the plan's own words, and separately a way to it. */
   function planStop(doc, subject) {
     if (!plan) { return null; }
     var unit = planUnits(plan.units).filter(function (entry) { return entry.subject === subject; })[0];
     if (!unit) { return null; }
     var proof = planProofs(doc, [unit])[subject];
-    var words = unit.removed === true ? "removed from the plan" : proof.proven ? "proven" : "next: " + kindLabel(proof.next) + ", " + proof.states[proof.next].words;
-    var go = el("button", "d-plan", "In the plan: " + words);
+    var removed = unit.removed === true;
+    var box = add(el("div", "d-plan-row" + (!removed && proof.proven ? " proven" : removed ? " removed" : "")),
+      el("span", "pu-standing", removed ? "Removed from the plan" : unitStanding(proof)));
+    if (!removed && proof.next) { box.appendChild(el("span", "d-plan-next", kindLabel(proof.next) + ": " + proof.states[proof.next].words)); }
+    var go = el("button", "d-plan", "See in the plan");
     go.type = "button";
     go.setAttribute("data-plan-unit", subject);
     go.addEventListener("click", function (event) {
@@ -1996,7 +2094,7 @@
         row.focus({ preventScroll: true });
       }
     });
-    return go;
+    return add(box, go);
   }
 
   /* 5. What happened */
@@ -2005,8 +2103,8 @@
     var names = laneNames(doc);
     var entries = list(doc.journal).filter(isObject).slice().reverse();
     var legend = el("div", "feed-legend");
-    [["merge", "●", "Landed"], ["ready", "◐", "Ready to check"], ["decide", "◆", "Decision"], ["stop", "▲", "Problem"], ["", "·", "Other update"]].forEach(function (entry) {
-      legend.appendChild(add(el("span"), el("b", "g " + entry[0], entry[1]), entry[2]));
+    [["merge", "Landed"], ["ready", "Ready to check"], ["decide", "Decision"], ["stop", "Problem"], ["note", "Other update"]].forEach(function (entry) {
+      legend.appendChild(add(el("span"), glyph(entry[0]), entry[1]));
     });
     var tabs = el("div", "tabs");
     tabs.setAttribute("role", "group");
@@ -2028,12 +2126,9 @@
       var li = el("li", prev.feed && !prev.feed[key] && !reduced() ? "fresh" : "");
       var time = el("time", null, clock(entry.at));
       time.setAttribute("datetime", text(entry.at));
-      var glyph = GLYPH[entry.kind] || ["", "·"];
-      var mark = el("span", "g " + glyph[0], glyph[1]);
-      mark.setAttribute("aria-hidden", "true");
       var who = el("span", "who", [KIND_WORDS[entry.kind] || text(entry.kind), entry.lane ? names[entry.lane] || text(entry.lane) : ""].filter(Boolean).join(" · "));
       if (text(entry.subject)) { add(who, " · ", issue(text(entry.subject))); }
-      add(li, time, mark, add(el("p", null, text(entry.summary)), who));
+      add(li, time, glyph(GLYPH[entry.kind] || "note"), add(el("p", null, text(entry.summary)), who));
       ul.appendChild(li);
     });
     var seen = Object.create(null);

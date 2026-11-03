@@ -535,6 +535,7 @@
           "enum": [
             "approve",
             "changes",
+            "notes-open",
             null
           ]
         },
