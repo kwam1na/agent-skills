@@ -46,7 +46,8 @@ success, so read its exit code and its output directory.
 
 A green local run does not prove the declared minimum Python or another operating
 system. Reproducing a CI failure has to clear the local environment's variables
-first, then set only what the workflow's own `env` block sets, because a variable
+first, keeping the runner's baseline, such as `PATH`, `HOME` and the git identity CI
+configures, and setting what the workflow's own `env` block sets, because a variable
 left in the session's shell can hide the failure. Never point `TMPDIR` under a checkout: tests that copy the
 repository root then recurse into their own copy without bound. A local suite run
 can leave bytecode under `skills/`, and `scripts/cut-release.py` then fails with

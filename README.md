@@ -279,9 +279,9 @@ Releases before the first version tag carry no attestation, so that check finds
 nothing for them. Releases before the first version tag, which is what latest
 resolves to until then, carry a 0.7.7 runtime without the installed-data protocol,
 so an adopter whose installed runtime has `installed-data-proof/1` must not apply
-them. The version number cannot tell these apart, because a later runtime can
-declare 0.7.7 too. A candidate is never latest, so latest stays on those releases
-until the first final is published, even once a candidate exists. Look in the
+them. A candidate is never latest, so latest stays on those releases until the
+first final is published, even once a candidate exists. The version number cannot
+tell these apart, because a later runtime can declare 0.7.7 too. Look in the
 installed bytes instead, from the repository root:
 
 ```bash

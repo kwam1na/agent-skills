@@ -173,8 +173,8 @@ Setting `PYTHONDONTWRITEBYTECODE=1` for the suite stops it being written.
 
 `draft-building-v1` and earlier sets are the releases before the first version tag, and
 latest resolves to `draft-building-v1` until a final is published. They carry no
-attestation. `draft-building-v1` carries a 0.7.7 runtime and earlier sets older ones,
-none with the installed-data protocol, so an adopter whose installed runtime has
+attestation. `draft-building-v1` carries a 0.7.7 runtime and earlier sets that runtime or
+older ones, none with the installed-data protocol, so an adopter whose installed runtime has
 `installed-data-proof/1` must not apply them.
 
 The runtime in `product-runtime/` has that protocol and also declares 0.7.7, because
