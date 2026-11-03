@@ -268,7 +268,6 @@ def alive(pid: int) -> bool:
     return True
 
 
-@unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class ProofStateTests(unittest.TestCase):
     def test_a_merged_item_is_past_waiting_as_the_line_map_reads_it(self) -> None:
         path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
@@ -285,6 +284,7 @@ class ProofStateTests(unittest.TestCase):
         self.assertEqual(handed({"stage": "queued"}), "done")
 
 
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class SupervisorProcessTests(unittest.TestCase):
     """The real supervisor: detached, holding its lock, keeping serve and the live view running."""
 

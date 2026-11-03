@@ -528,7 +528,7 @@
     var title = el("h1", "title");
     var closed = closedEntry(doc);
     var tally = closed ? closedTally(all) : null;
-    if (closed && !tally.total) { add(title, "Closed with nothing on the line."); }
+    if (closed && !tally.total) { add(title, all.length ? "Closed with nothing left to land." : "Closed with nothing on the line."); }
     else if (closed && tally.landed === tally.total) { add(title, "Delivered."); }
     else if (closed) { add(title, "Closed with ", el("b", null, tally.landed + " of " + tally.total), " pieces landed."); }
     else if (!all.length) { add(title, "Nothing on the line yet."); }
@@ -548,7 +548,7 @@
     if (needs) { nodes.push(needs); }
     var supervisor = needsYou(Boolean(closed));
     if (supervisor) { nodes.push(supervisor); }
-    nodes.push(journey(doc, all, landed));
+    nodes.push(journey(doc, all, closed ? tally.landed : landed));
     nodes.push(since(meta, closed));
     inner.replaceChildren.apply(inner, nodes);
   }
@@ -1336,7 +1336,7 @@
     var wasOpen = prev.dots || {};
     var nowOpen = Object.create(null);
     // Nothing counts down once a delivery closes with every piece landed.
-    var nodes = [el("div", "kicker", "What's left"), closedOut && !left ? el("h2", "title", tally.total ? "Nothing left to land." : "Nothing was on the line.") : number];
+    var nodes = [el("div", "kicker", "What's left"), closedOut && !left ? el("h2", "title", tally.total || all.length ? "Nothing left to land." : "Nothing was on the line.") : number];
     if (tally.total) { nodes.push(el("p", "say", tally.landed + " of " + tally.total + " pieces have landed.")); }
     else if (!closedOut) { nodes.push(el("p", "say", "Nothing is planned yet.")); }
     if (tally.total) {

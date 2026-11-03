@@ -1098,6 +1098,14 @@ test("a closed delivery's bar, dots, stops, legend and attention all agree with 
   expect(trimmed.querySelectorAll("#left .dots i")).toHaveLength(1);
   expect(trimmed.querySelector("#left .title").textContent).toBe("Nothing left to land.");
 
+  // Its merge doesn't push the bar past the end, and a delivery of only removed pieces doesn't deny the stops it draws.
+  const overrun = await first(record({ queue: [item("A", "merged"), item("B", "merged")], journal: journal([...landed, close]) }),
+    planFor([unit("A"), unit("B", { removed: true })], { finish: [] }));
+  expect(overrun.querySelector("#now .journey .done").style.width).toBe("100%");
+  const onlyRemoved = await first(record({ queue: [item("B", "queued")], journal: journal([close]) }), planFor([unit("B", { removed: true })], { finish: [] }));
+  expect(onlyRemoved.querySelector("#now .title").textContent).toBe("Closed with nothing left to land.");
+  expect(onlyRemoved.querySelector("#left .title").textContent).toBe("Nothing left to land.");
+
   // A planned stop promises no review rounds to come.
   const planned = record({ queue: [], journal: journal([close]) });
   planned.state.planned = [{ subject: "E", stage: "building" }];
