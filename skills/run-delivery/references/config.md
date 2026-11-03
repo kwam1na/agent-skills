@@ -103,8 +103,11 @@ checks may need no file at all.
   // A gate whose argv equals inApp.build.argv also stamps the in-app build when every gate passes.
   "cleanup": {                                // optional
     "deleteRemoteBranches": false,            // lead-cleanup deletes a merged story's remote branch only if true
-    "archive": "~/.local/share/run-delivery/archive/{repo}/{delivery}"  // where lead-close archives the record
+    "archive": "~/.local/share/run-delivery/archive/{repo}/{delivery}"  // where the record is archived, and where
+                                              // the supervisor keeps its current copy, `latest`
   },
+  "forge": { "mergeNeedsReady": true },       // optional: the binding's merge step refuses a draft pull request
+  "supervisor": { "passSeconds": 60 },        // optional: how long the supervisor waits between passes
   "inApp": {                                  // optional; its "lease" must name one of the binding's leases
     "lease": "app-session",
     "lock": "~/.cache/my-app-session.lock",   // an OS lock, held for each check
@@ -162,6 +165,7 @@ checks may need no file at all.
   "authority": {                              // the operator's grant to lanes; absent: lanes don't push
     "push": true,                             // each lane's own story branch, never forced (run_delivery.py push)
     "draftPullRequests": true,                // its draft PR into the delivery base (run_delivery.py open-pr)
+    "readyPullRequests": true,                // the lead's, never a lane's: lead-accept marks each draft ready
     "grantedBy": "the operator", "grantedOn": "2026-01-01"
   },
   "ship": {                                   // optional
@@ -208,10 +212,51 @@ The command is called with one of:
 - `open --source B --destination D --title T --body-file F` opens a draft and prints `{"url"}`.
 - `reviews --url URL --head SHA` prints `{"checks": [{name, state: passed|failed|pending, at}], "reviews": [{author, at, body}]}`:
   the head commit's pipeline checks and the PR's top-level comments. Needed only with `review.pr`.
-- `get --url URL` prints `{"url", "state": "open"|"merged"|"closed", "head", "source", "destination"}`. It refuses
-  a URL that isn't one of the repository's PRs. `head` may be abbreviated, to 7 characters at least.
+- `get --url URL` prints `{"url", "state": "open"|"merged"|"closed", "draft", "head", "source", "destination"}`. It
+  refuses a URL that isn't one of the repository's PRs. `head` may be abbreviated, to 7 characters at least.
+- `ready --url URL` marks a draft ready and prints `{"url", "draft": false}`. `lead-accept` calls it, before the queue
+  may take the candidate, when the delivery's `authority` grants `readyPullRequests`. A refusal leaves the hand-off
+  pending.
+- `merge --url URL --strategy merge|squash [--head SHA]` merges the PR through the forge and prints `{"url", "state":
+  "merged"}`, refusing a PR whose head moved from `--head`. A binding's `merge` step may call it, so a repository that
+  merges through its forge needs no merge script of its own.
 
-`FLOW_FORGE_REPOSITORY` and `FLOW_FORGE_TOKEN_ENV` carry the `forge` settings.
+`FLOW_FORGE_REPOSITORY` and `FLOW_FORGE_TOKEN_ENV` carry the `forge` settings. Both shipped adapters answer every
+command. With `forge.mergeNeedsReady` set, `doctor` reports a delivery without the `readyPullRequests` grant, and
+`lead-init` refuses it.
+
+## The supervisor
+
+`lead-init` starts `lead-run`, the delivery's supervisor: one detached process per record, in a session of its own,
+started with SIGINT, SIGHUP and SIGQUIT at their defaults. It holds the flow log's `<delivery>.supervisor.lock`, which
+records its pid, its start time, its children and the live view's address. Its first line of output is that address,
+and every lead command repeats it. It keeps the merge queue's `serve` and the live view running, and every
+`supervisor.passSeconds` it runs one pass:
+
+1. the reconcile sweep, as `lead-reconcile` runs it;
+2. what `lead-cleanup` does, for each merged story whose lane has moved off it;
+3. `finish.met`, once for each finish line whose covered criteria have every covered proof done;
+4. a render with the binding's whole `state` member, publishers included;
+5. a copy of the record and the flow log into `latest` at the archive location, under the state lock;
+6. the close-out, when the close condition holds.
+
+The close condition: every planned and queued story merged or removed, every finish line met, every lane idle or
+done, and no "Needs you" item holding. "Needs you" is derived each pass, never stored: a failed `fullHealth` at the
+current base head, a broken base, a blocked lane or one waiting on the lead, an unresolved `blocker.recorded`, a
+child that won't stay up, and the tracker publisher's own items. `lead-resolve <journal id> --why TEXT` resolves a
+blocker; `lead-resolve full-health --why TEXT` asks the next pass to rerun a failed `fullHealth`. The runner's own
+blocker clears when its hold does, or with `base.repaired`.
+
+The close-out runs in order, each step succeeding before the next: `fullHealth`, once per base head, in a fresh
+checkout of the base; a follow-up for each deferred finding, keyed `<story>-<finding id>`; `delivery.closed`, then
+waiting for the tracker to have it; releasing the lead's leases, archiving the record and fast-forwarding the
+operator's checkout if it is clean and on the base; a friction note stub beside the archive; then the supervisor
+stops. Each pass writes what it did to the flow log's `<delivery>.supervisor.jsonl`.
+
+The lead's commands keep working while it is down, and the supervisor skips what is already done when it comes
+back. `lead-run --resume` stops what an earlier supervisor left running and starts it again; `lead-run --once` runs one
+pass in the foreground. `lead-close` asks a running supervisor to stop after its pass, and refuses while the lead's
+settings have uncommitted changes. `lead-init --no-supervisor`, or `RUN_DELIVERY_SUPERVISOR=off`, starts none.
 
 ## Tracker updates
 

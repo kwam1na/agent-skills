@@ -1018,15 +1018,15 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "9ef6a22fa3941b3f5b90e2a893e140ac8f55bf95a8f6d517652c6f99bb93e53c"
+          "sha256": "016fc5dcbec9046cbff4a6959a27b179a1d6e4fee03d59d53e0b7cd58680f57c"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
-          "sha256": "30c571321dac8051db21dce46dd9fc1696774e6e9d32a40b3a6c65e9bc46f89d"
+          "sha256": "7b6fafecb1c0228ea53495f28920f42736922c766214e18dc8c853851d897638"
         },
         {
           "path": "skills/run-delivery/adapters/forge_github.py",
-          "sha256": "fbd63b2d4814d8626e53f92728d6e0084f797e7caea5dde1d46ea4490605c4da"
+          "sha256": "3c86f0ccb4b972fd904ba87250ec08f2b17890268ab22914697ab49e43fd24a7"
         },
         {
           "path": "skills/run-delivery/adapters/tracker_jira.py",
@@ -1038,15 +1038,15 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "2ce4a466c5120aff34bf9ba8fc82acf7bd566a7e7e7c306038e9fe43a1f92ae7"
+          "sha256": "6b620fec3a5f568fe3323a74baa79f9f519af1f6df91ecba29632eb03e48f5c1"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "b99ab6d182d4fef0c0ce026287dc15ca8e030297af8ce6617c48958a6ea6d0fe"
+          "sha256": "89b2f043f3d6a6ed85fa5aa8209366627562e0f9a9bbea24df8858537600599e"
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "a377a08e0c66d0a2f5a3d70a33cc5ce8a43fd43c449cc9b147c7f0c595df16fe"
+          "sha256": "020c91245a03a918de8ed43202eacb13e34d4a506b45cc352802243d105f540a"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
