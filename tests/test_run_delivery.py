@@ -2844,7 +2844,7 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         (m / ".agents/deliveries/FX-8.json").write_text(json.dumps({**d, "baseBranch": "integration-old"}, indent=2))
         if self.node22:
             harness("origin/integration-old")
-        _, out = fx.flow("doctor", "--delivery", "FX-8", cwd=m)
+        _, out = fx.flow("doctor", cwd=m, env={**fx.env, "RUN_DELIVERY_DELIVERY": "FX-8"})  # the variable names it
         status, detail = doctor_lines(out)["release on the delivery base"]
         self.assertEqual(status, "wrong", out)
         self.assertIn("origin/integration-old's binding doesn't serve the base integration-old", detail)
