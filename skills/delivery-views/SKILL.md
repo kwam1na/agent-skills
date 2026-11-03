@@ -26,6 +26,12 @@ unknown; planned work has no start label, and a mutable lane focus time never
 supplies a work item's start. The journey's intermediate milestone label uses
 its own row so it cannot collide with the finish label.
 
+Each lane's row says how old its words are, from the `focusAt` the state tool
+keeps. An active row older than an hour also says it may be out of date; a row at
+rest isn't marked, since an old "merged" is still true. A row with no readable
+time, as in a record written before the tool kept one, says "No time recorded"
+rather than reading as fresh.
+
 ## Dependencies
 
 - `$orchestrate-work` owns the delivery state, its binding, the render wrapper
