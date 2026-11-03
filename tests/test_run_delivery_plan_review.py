@@ -421,6 +421,16 @@ class PlanWriteTests(PlanReviewCase):
         self.assertEqual(code, 2, out)
         self.assertIn("the plan review is still open after round 1", out)
         self.assertFalse((fx.tmp / "record/state.json").exists())
+        # --replace sets an earlier snapshot aside, so it can't stand in for the review's end.
+        log = fx.tmp / "flow-log/plan-changes.jsonl"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(json.dumps({"type": "snapshot", "at": "2026-01-01T00:00:00Z", "late": False, "units": [],
+                                   "finish": []}) + "\n")
+        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the plan review is still open after round 1", out)
+        self.assertTrue(log.exists(), "the refusal archived the flow log")
+        log.unlink()
         code, out = self.flow(fx, "end", "--reason", "The operator approved it as it stands.")
         self.assertEqual(code, 0, out)
         code, out = fx.flow("lead-init", cwd=fx.main)

@@ -2212,9 +2212,10 @@ def call_adapter(kind: str, prefix: list[str], args: tuple[str, ...], env: dict[
     failed, whatever its exit code: the refusal names the adapter it ran."""
     argv = [*map(os.path.expanduser, prefix), *args]
     done = subprocess.run(argv, text=True, capture_output=True, env=env, cwd=repo())
-    if done.returncode != 0:
-        raise Stop(f"{kind} {args[0]} failed: {(done.stderr or done.stdout).strip()[-400:]}")
     ran = shlex.join(prefix)
+    if done.returncode != 0:
+        said = (done.stderr or done.stdout).strip()[-400:] or "it printed nothing"
+        raise Stop(f"{kind} {args[0]} failed: {said}; the adapter it ran: {ran}")
     if not done.stdout.strip():
         raise Stop(f"{kind} {args[0]} printed nothing; the adapter it ran: {ran}")
     try:
@@ -3039,9 +3040,13 @@ def stale_record(c) -> str | None:
     """What an earlier lead-init left where this one would start: a record, a supervisor's lock, or a plan snapshot.
     A lead-plan change made before lead-init, and plan.lock, are this delivery's own and don't count."""
     fix = ("fix: run lead-init --replace, which stops its supervisor and archives the record and the flow log, "
-           "carrying nothing over; or give this delivery its own stateDirectory")
+           "carrying nothing over; or give this delivery its own stateDirectory, in a folder of its own, since the "
+           "flow log sits beside it")
     if (c.state / "state.json").exists():
-        doc = load_state()
+        try:
+            doc = load_state()
+        except Stop as unreadable:
+            return f"{c.state} already holds a record the state tool can't read ({unreadable}); {fix}"
         meta, journal = doc["state"]["meta"], doc["journal"]
         name = meta.get("trackerParent") or meta.get("headline") or "with no name"
         recorded = next((re.search(r"^Record starts at base \S+ on (\S+?)\.(?: |$)", e.get("summary", ""))
@@ -3361,8 +3366,8 @@ def lead_init(args) -> None:
         # Refused before the record starts, so a criterion the view can't read is corrected before anything is kept.
         check_plan(build_plan(c, [snapshot_entry(c, late=False)]), c)
     problems = setup_problems(c)
-    stale = stale_record(c)
-    if stale and not args.replace:
+    stale = None if args.replace else stale_record(c)
+    if stale:
         problems.insert(0, stale)
     if problems:
         raise Stop(f"lead-init refuses until each of these is fixed (doctor --delivery {c.delivery} reports them too):"

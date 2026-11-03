@@ -2670,12 +2670,15 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "configuration", "re
 
 
 SUPERVISOR_STAND_IN = r'''
-import datetime, fcntl, json, os, sys, time
+import datetime, fcntl, json, os, signal, sys, time
 lock = open(sys.argv[1], "a+")
 fcntl.flock(lock, fcntl.LOCK_EX)
 lock.truncate(0)
-lock.write(json.dumps({"pid": os.getpid(), "startedAt": "2026-01-02T03:04:05Z", "children": []}))
+pid = json.loads(sys.argv[3]) if len(sys.argv) > 3 else os.getpid()
+lock.write(json.dumps({"pid": pid, "startedAt": "2026-01-02T03:04:05Z", "children": []}))
 lock.flush()
+if sys.argv[2] == "ignore-term":
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
 print("holding", flush=True)
 time.sleep(120)
 '''
@@ -2705,18 +2708,28 @@ class RunDeliverySetupTests(unittest.TestCase):
         return json.loads(sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py",
                              "--dir", fx.tmp / "record", "show").stdout)
 
-    def supervisor(self, fx: Fixture) -> subprocess.Popen:
-        """A stand-in for the delivery's supervisor: it holds the flow log's supervisor lock, recording its pid."""
+    def started(self, argv: list[str]) -> subprocess.Popen:
+        """A process this test starts in its own session, and stops (by its pid) and reaps at cleanup."""
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, start_new_session=True)
+
+        def stop():
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+            proc.stdout.close()
+        self.addCleanup(stop)
+        return proc
+
+    def supervisor(self, fx: Fixture, mode: str = "default", pid: object = None) -> subprocess.Popen:
+        """A stand-in for the delivery's supervisor: it holds the flow log's supervisor lock, recording its pid (or
+        the one given), and in mode ignore-term ignores SIGTERM."""
         lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
         lock.parent.mkdir(parents=True, exist_ok=True)
-        proc = subprocess.Popen([sys.executable, "-B", "-c", SUPERVISOR_STAND_IN, str(lock)], stdout=subprocess.PIPE,
-                                text=True, start_new_session=True)
-        self.addCleanup(lambda: proc.poll() is None and os.killpg(proc.pid, signal.SIGKILL))
-        self.addCleanup(proc.wait)
+        proc = self.started([sys.executable, "-B", "-c", SUPERVISOR_STAND_IN, str(lock), mode,
+                             *([json.dumps(pid)] if pid is not None else [])])
         self.assertEqual(proc.stdout.readline().strip(), "holding")
         # Reaped as soon as it exits, as the supervisor's own parent would, so a stopped one leaves no zombie.
-        reaper = threading.Thread(target=proc.wait, daemon=True)
-        reaper.start()
+        threading.Thread(target=proc.wait, daemon=True).start()
         return proc
 
     def test_lead_init_over_a_record_refuses_and_names_it(self) -> None:
@@ -2732,6 +2745,22 @@ class RunDeliverySetupTests(unittest.TestCase):
         self.assertIn(f"started {started}", out)
         self.assertIn("fix: run lead-init --replace", out)
         self.assertEqual((fx.tmp / "record/state.json").read_bytes(), before, "the refusal changed the record")
+        # The base named is the one the record started on, from its own journal.
+        shutil.rmtree(fx.tmp / "record")
+        fx.call("state_tool", "init", "--headline", "earlier", cwd=fx.main)
+        fx.call("state_tool", "journal", "--kind", "decision.recorded", "--summary",
+                "Record starts at base 0123456 on origin/release-1. Lanes merge through the runner.", cwd=fx.main)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("already holds a record: delivery earlier on origin/release-1", out)
+        # A record the state tool can't read is still named, and --replace archives it without reading it.
+        (fx.tmp / "record/state.json").write_text("{truncated")
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("already holds a record the state tool can't read", out)
+        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.record(fx)["journal"][0]["id"], 1)
 
     def test_a_snapshot_or_a_supervisor_lock_in_the_flow_log_counts_and_a_pre_init_change_does_not(self) -> None:
         fx = self.fixture()
@@ -2765,9 +2794,11 @@ class RunDeliverySetupTests(unittest.TestCase):
         m = fx.main
         code, out = fx.flow("lead-init", cwd=m)
         self.assertEqual(code, 0, out)
-        fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane one", cwd=m)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane one", cwd=m)
+        self.assertEqual(code, 0, out)
         old_journal = (fx.tmp / "record/journal.jsonl").read_text()
-        proc = self.supervisor(fx)
+        # A supervisor that ignores SIGTERM is still stopped, and confirmed gone, before anything is archived.
+        proc = self.supervisor(fx, "ignore-term")
         # Edited between the two inits: not a change of the approved plan, which the new init approves as it stands.
         d = json.loads(path.read_text())
         d["stories"]["FX-2"]["criteria"][0]["text"] = "Thing one loads within a second"
@@ -2776,9 +2807,9 @@ class RunDeliverySetupTests(unittest.TestCase):
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
         code, out = fx.flow("lead-init", "--replace", cwd=m)
         self.assertEqual(code, 0, out)
-        self.assertIsNotNone(proc.poll(), "the supervisor was left running")
-        with self.assertRaises(ProcessLookupError):
-            os.kill(proc.pid, 0)
+        self.assertIn(f"stopped the supervisor (pid {proc.pid})", out)
+        self.assertLess(out.index("stopped the supervisor"), out.index("archived the record"))
+        self.assertEqual(proc.wait(timeout=5), -signal.SIGKILL, "it ignored SIGTERM, so only SIGKILL could stop it")
         archives = sorted((fx.tmp / "archive/FX-1").iterdir())
         self.assertEqual(len(archives), 1, archives)
         self.assertIn(f"archived the record and the flow log in {archives[0]}", out)
@@ -2801,6 +2832,31 @@ class RunDeliverySetupTests(unittest.TestCase):
         code, out = fx.flow("lead-init", "--replace", cwd=m)
         self.assertEqual(code, 0, out)
         self.assertNotIn("archived", out)
+
+    def test_replace_signals_only_a_held_locks_pid_and_never_a_group_it_cant_name(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        m = fx.main
+        # A lock nobody holds, naming a live process this test started: a stale pid, maybe reused. Left alone.
+        bystander = self.started(["sleep", "60"])
+        lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
+        lock.parent.mkdir(parents=True)
+        lock.write_text(json.dumps({"pid": bystander.pid, "startedAt": "2026-01-02T03:04:05Z", "children": []}))
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("holds the supervisor lock of delivery FX-1 on origin/feature/FX-1, which no process holds", out)
+        code, out = fx.flow("lead-init", "--replace", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("stopped the supervisor", out)
+        self.assertIsNone(bystander.poll(), "--replace signalled a pid no lock holder vouched for")
+        # A held lock that records pid 0 would signal lead-init's own group: refused, and nothing is archived.
+        shutil.rmtree(fx.tmp / "record")
+        holder = self.supervisor(fx, pid=0)
+        code, out = fx.flow("lead-init", "--replace", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("is held, but records no pid to stop", out)
+        self.assertTrue(lock.exists())
+        self.assertIsNone(holder.poll())
 
     def test_lead_assign_refuses_a_story_with_no_plan_section(self) -> None:
         fx = self.fixture()
@@ -2837,6 +2893,7 @@ class RunDeliverySetupTests(unittest.TestCase):
                                (["--authority", "draftPullRequests", "--granted-by", "the operator"],
                                 "draftPullRequests needs push"),
                                (["--authority", "push"], "--authority needs --granted-by"),
+                               (["--authority", "bogus", "--granted-by", "x"], "--authority takes push and draftPullRequests"),
                                (["--authority", "push", "--granted-by", "x", "--no-authority"], "not both")):
             with self.subTest(refused=refused):
                 code, out = fx.flow(*setup, *refused, cwd=m)
@@ -2868,6 +2925,11 @@ class RunDeliverySetupTests(unittest.TestCase):
         with self.assertRaises(Stopped) as refused:
             fx.call("forge", "find", "--source", "feature/FX-2", cwd=m, delivery="FX-1")
         self.assertIn("forge find printed nothing", str(refused.exception))
+        self.assertIn("tools/silent_forge.py", str(refused.exception))
+        (m / "tools/silent_forge.py").write_text("raise SystemExit(1)\n")
+        with self.assertRaises(Stopped) as refused:
+            fx.call("forge", "find", "--source", "feature/FX-2", cwd=m, delivery="FX-1")
+        self.assertIn("forge find failed: it printed nothing; the adapter it ran:", str(refused.exception))
         self.assertIn("tools/silent_forge.py", str(refused.exception))
         (m / "tools/silent_forge.py").write_text("print('{}')\n")
         self.assertEqual(fx.call("forge", "find", "--source", "feature/FX-2", cwd=m, delivery="FX-1"), {})
@@ -3210,6 +3272,10 @@ class RunDeliveryDoctorTests(unittest.TestCase):
              lambda: edit_json(binding_path, lambda b: b["state"].update(publishers=[])), None),
             ("snapshots and publishers", "the binding has no state.forgeSnapshot", "add state.forgeSnapshot",
              lambda: edit_json(binding_path, lambda b: b["state"].pop("forgeSnapshot")), None),
+            ("snapshots and publishers", "the binding has no state.forgeSnapshot", "add state.forgeSnapshot",
+             lambda: both(edit_json(binding_path, lambda b: b["state"].pop("forgeSnapshot")),
+                          edit_json(m / conf_rel, lambda c: c.update(forge={"adapter": "bitbucket", "repository": "ws/r",
+                                                                             "tokenEnv": "FX_FORGE_TOKEN"}))), None),
             ("Node", "Node 20.0.0 is below the runtime's nodeMinimum 22.6.0", "install Node 22.6.0 or newer",
              without_harness, {"PATH": old_node(), "HOME": str(fx.tmp)}),
             ("configuration on the remote base", "origin/feature/FX-1 has no configuration for lanes",
@@ -3232,6 +3298,25 @@ class RunDeliveryDoctorTests(unittest.TestCase):
                 self.assertIn(detail, refused)
                 self.assertIn(fix, refused)
                 self.assertFalse(record.exists(), f"lead-init kept a record while refusing: {refused}")
+        # Run-delivery's own tracker publisher counts as one, as a host publisher does.
+        undo = edit_json(binding_path, lambda b: b["state"].update(publishers=[
+            {"id": "tracker", "argv": ["python3", "-B", "tools/tracker_publisher.py", "{stateDirectory}"]}]))
+        try:
+            self.assertEqual(doctor_lines(self.doctor(fx, "--offline"))["snapshots and publishers"][0], "ok")
+        finally:
+            undo()
+        # Node exactly at the runtime's nodeMinimum is enough.
+        exact = fx.tmp / "exact-node-bin"
+        exact.mkdir()
+        (exact / "node").write_text("#!/bin/sh\necho v22.6.0\n")
+        (exact / "node").chmod(0o755)
+        undo = without_harness()
+        try:
+            out = self.doctor(fx, "--offline", env={**fx.env, "PATH": f"{exact}{os.pathsep}{self.without('node')}",
+                                                    "HOME": str(fx.tmp)})
+        finally:
+            undo()
+        self.assertEqual(doctor_lines(out)["Node"], ("ok", f"{exact / 'node'} meets the runtime's nodeMinimum 22.6.0"), out)
         # Each gap closed again, the clean fixture passes, and lead-init starts the record.
         self.assertEqual(failing(self.doctor(fx, "--offline", expect_code=0)), {})
         code, out = fx.flow("lead-init", cwd=m)
@@ -3240,13 +3325,34 @@ class RunDeliveryDoctorTests(unittest.TestCase):
     def test_a_local_setup_needs_no_configuration_on_the_remote_base(self) -> None:
         fx = self.fixture()
         m = fx.main
-        sh("git", "push", "-q", "origin", "--delete", "feature/FX-1", cwd=m)
+        # The remote base carries neither the configuration nor the delivery file; the lead's working tree has both.
+        kept = {rel: (m / rel).read_text() for rel in (".agents/run-delivery.json", ".agents/deliveries/FX-1.json")}
+        sh("git", "rm", "-q", *kept, cwd=m)
+        commit(m, "FX-1: the configuration leaves the base")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        for rel, text in kept.items():
+            (m / rel).parent.mkdir(parents=True, exist_ok=True)
+            (m / rel).write_text(text)
+        out = self.doctor(fx, "--offline", expect_code=1)
+        self.assertEqual(list(failing(out)), ["configuration on the remote base"], out)
+        self.assertIn("origin/feature/FX-1 has no configuration for lanes: it lacks .agents/run-delivery.json and "
+                      ".agents/deliveries/FX-1.json", doctor_lines(out)["configuration on the remote base"][1])
+        code, refused = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 2, refused)
+        self.assertIn("set RUN_DELIVERY_LOCAL=1", refused)
+        # A base that isn't on the remote at all.
         sh("git", "push", "-q", "origin", "HEAD:refs/heads/elsewhere", cwd=m)
-        out = self.doctor(fx, "--offline")
-        self.assertIn("has no configuration for lanes", doctor_lines(out)["configuration on the remote base"][1], out)
+        sh("git", "push", "-q", "origin", "--delete", "feature/FX-1", cwd=m)
+        self.assertIn("has no configuration for lanes: the branch isn't on the remote",
+                      doctor_lines(self.doctor(fx, "--offline"))["configuration on the remote base"][1])
+        sh("git", "push", "-q", "origin", "HEAD:refs/heads/feature/FX-1", cwd=m)
+        sh("git", "fetch", "-q", "origin", cwd=m)
+        # A local setup's lanes read their own working tree: doctor skips the check and lead-init starts.
         local = {**fx.env, "RUN_DELIVERY_LOCAL": "1"}
         self.assertEqual(doctor_lines(self.doctor(fx, "--offline", env=local))["configuration on the remote base"][0],
                          "skipped")
+        code, out = fx.flow("lead-init", cwd=m, env=local)
+        self.assertEqual(code, 0, out)
 
     def test_the_rows_with_two_good_answers_accept_both(self) -> None:
         fx = self.fixture()
