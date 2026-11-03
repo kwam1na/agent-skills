@@ -42,6 +42,9 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "skills/obtain-review/references/round-brief-template.md": (
         "It stops only processes it started, by the pid it recorded, never by pattern with `pkill` or `killall`",
     ),
+    "skills/run-delivery/templates/round-brief.md": (
+        "It stops only processes it started, by the pid it recorded, never by pattern with `pkill` or `killall`",
+    ),
     "skills/plan-work/SKILL.md": (
         "Where the repository tracks plans, commit the saved plan under its rules before plan review or removing the"
         " checkout",

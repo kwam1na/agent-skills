@@ -3389,6 +3389,8 @@ class ServeTests(MergeQueueTestCase):
             sys.path.insert(0, sys.argv[1])
             import merge_queue
             real, sent, stop = shutil.rmtree, [], getattr(signal, sys.argv[2])
+            # However the suite was started: serve keeps a SIGINT it inherits as ignored.
+            signal.signal(signal.SIGINT, signal.default_int_handler)
             def rmtree(path, *args, **kwargs):
                 # Only from the finalizer: the same folder also goes by a plain call, where a stop arrives as usual.
                 if "weakref" in sys._getframe(1).f_code.co_filename and not sent:

@@ -1058,7 +1058,7 @@
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",
-          "sha256": "d70ba0e50a781e2ee92c42e7a1a6a9d553960413e9dd83d0f8669b41261372ac"
+          "sha256": "8a94be718ccf986c3b4034b1cfc20109b90c76a06d41db4f3bb4c63ee56a55a1"
         }
       ],
       "owner": "delivery-agent/user-delegated",
