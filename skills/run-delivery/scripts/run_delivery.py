@@ -2637,6 +2637,7 @@ def review_move(c, key: str, when: str, last: bool = False) -> None:
         try:
             markers = publisher.adapter.markers(key)
             earlier = [m for m in markers if m.startswith(f"agent-delivery:{c.delivery}:")
+                       and not m.startswith(f"agent-delivery:{c.delivery}:{publisher.init}:")
                        and m.endswith(f":transition:{names[-1]}")]
             if earlier:
                 # Made under an earlier record of this delivery, before a --replace: not made again.

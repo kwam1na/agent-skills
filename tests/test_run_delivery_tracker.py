@@ -1716,6 +1716,18 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
         self.assertEqual(code, 0, out)
         self.assertEqual(backend.read()["issues"]["FX-3"]["status"], "In Review")
 
+    def test_a_review_move_owed_at_handoff_before_the_start_still_lets_the_start_be_made(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pr-open"})
+        wt = self.started(fx)
+        self.opened(fx, wt)
+        code, out = self.handed(fx, wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("waits for its start to be posted; the lead's Needs you shows it", out)
+        self.publish(fx)
+        issue = backend.read()["issues"]["FX-3"]
+        self.assertEqual(issue["status"], "In Progress", "the owed review move didn't hold back the start")
+        self.assertEqual(sum(c["text"].startswith("Started") for c in issue["comments"]), 1)
+
     def test_a_review_move_made_under_an_earlier_record_isnt_made_again(self) -> None:
         fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pr-open"})
         wt = self.started(fx)
@@ -1765,6 +1777,28 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
         code, out = fx2.flow("lane-start", "FX-3", "--base", "feature/FX-1", cwd=fx2.main)
         self.assertEqual(code, 2, out)
         self.assertIn("shares no history with origin/feature/FX-1", out)
+
+    def test_lane_start_refuses_a_checkout_started_on_another_base(self) -> None:
+        fx, _ = self.lane({"start": ["Start work"]})
+        wt = self.started(fx)
+        recorded = Path(self.harness.sh("git", "rev-parse", "--git-path", "run-delivery/lane.json", cwd=wt).stdout.strip())
+        recorded = recorded if recorded.is_absolute() else wt / recorded
+        recorded.write_text(json.dumps({"base": "integration-1"}))
+        code, out = fx.flow("lane-start", "FX-3", "--base", "feature/FX-1", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("was started on integration-1, not feature/FX-1", out)
+
+    def test_a_review_move_not_offered_is_handled_once(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"], "review": ["Complete"], "reviewWhen": "pr-open"})
+        wt = self.started(fx)
+        self.publish(fx)
+        out = self.opened(fx, wt)
+        self.assertIn("isn't offered from In Progress", out)
+        code, out = fx.flow("open-pr", "FX-3", "--title", "FX-3: two", "--body-file", fx.tmp / "body.md", cwd=wt)
+        self.assertIn("review move is already made", out)
+        lines = [l["outcome"] for l in tp.read_ledger(fx.tmp / "record") if l.get("move") == "review"]
+        self.assertEqual(lines, ["handled"])
+        self.assertEqual([c for c in self.calls(backend, "transition") if c[2] == "Complete"], [])
 
     def test_a_failed_prepare_runs_again_on_the_next_lane_start(self) -> None:
         fx, _ = self.lane({"start": ["Start work"]})

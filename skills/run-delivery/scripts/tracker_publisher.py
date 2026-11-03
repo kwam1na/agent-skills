@@ -496,7 +496,9 @@ class Publisher:
         if not subject:
             return "no story to start"
         for line in self.ledger:
-            if line.get("ticket") == subject and line.get("move") == "review":
+            if (line.get("ticket") == subject and line.get("move") == "review"
+                    and line["outcome"] in ("transition", "skip", "handled")):
+                # A review move owed (`failed`) isn't one made: the start still goes ahead.
                 return "the story is already in review"
             if line.get("ticket") == subject and line.get("move") == "start" and line["outcome"] == "transition":
                 return "the story already started"
