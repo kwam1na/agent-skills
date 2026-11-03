@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # A new push stops a change request's earlier run. Each run on main is its own group: a group keeps only
+  # one pending run even without cancelling, which would drop a merge's run, and publishing reads those.
+  group: ${{ github.event_name == 'pull_request' && format('ci-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Bytecode under skills/ fails corpus validation, and the suite imports skill scripts.
 env:
   PYTHONDONTWRITEBYTECODE: "1"
@@ -19,7 +25,9 @@ jobs:
       # Every operating system reports, so each failure is known and has an owner.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Every system where publishing or the default branch depends on it; otherwise Ubuntu, unless the
+        # full-matrix label asks for all three. The label is read from a push's event, so it applies from the next push.
+        os: ${{ fromJSON((github.event_name == 'push' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'full-matrix')) && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
         python-version: ["3.11"]
     runs-on: ${{ matrix.os }}
     steps:
@@ -56,11 +64,9 @@ jobs:
           python scripts/validate-registry.py | tee validation-result.json
       - run: python tests/test_registry.py
       # The parallel runner the merge checks use: discover's verdict, across worker processes.
-      - if: runner.os != 'macOS'
-        run: python scripts/run-tests.py
-      # The default, half the cores, runs one unit at a time on a macOS runner.
-      - if: runner.os == 'macOS'
-        run: python scripts/run-tests.py --workers "$(sysctl -n hw.ncpu)"
+      # The runner's real core count: the default, half of them, runs one unit at a time on a macOS runner.
+      - shell: bash
+        run: python scripts/run-tests.py --workers "$(python -c 'import os; print(os.cpu_count())')"
       # The suite would miss a writer that runs after its last corpus validation.
       - name: Check no bytecode was written under skills
         if: always()

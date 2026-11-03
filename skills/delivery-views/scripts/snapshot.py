@@ -19,6 +19,10 @@ origin; neither a token nor its encoded form is ever printed.
 
 from __future__ import annotations
 
+import sys
+
+sys.dont_write_bytecode = True
+
 import argparse
 import base64
 import datetime
@@ -26,7 +30,6 @@ import email.utils
 import json
 import os
 import re
-import sys
 import time
 import urllib.error
 import urllib.parse

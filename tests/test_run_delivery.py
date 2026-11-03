@@ -15,7 +15,9 @@ their own signal handlers, working directory and module state.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -280,7 +282,8 @@ EXAMPLE_BLOCK = re.compile(r"^```[^\n]*\bexample\b[^\n]*\n.*?^```[ \t]*$", re.MU
 
 
 def host_terms(text: str) -> list[str]:
-    outside = EXAMPLE_BLOCK.sub("", text)
+    # Where this checkout lives is the machine's, not the tool's: its path may hold a host's folder name.
+    outside = EXAMPLE_BLOCK.sub("", text).replace(str(ROOT), "")
     return [name for name, pattern in HOST_TERMS if pattern.search(outside)]
 
 
@@ -3356,6 +3359,98 @@ class RunDeliveryLeakageTests(unittest.TestCase):
         with mock.patch(f"{__name__}.FIRST_ADOPTER_TERM_DIGESTS",
                         frozenset({hashlib.sha256(planted.encode()).hexdigest()})):
             self.assertEqual(self.findings(f"a {planted.upper()}-thing"), ["first-adopter term"])
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class RunDeliveryArgumentTests(unittest.TestCase):
+    """Python 3.11's argparse refuses `--` after a positional that takes any number of values; 3.11 is a declared minimum."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location("run_delivery_for_arguments", ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        cls.tool = importlib.util.module_from_spec(spec)
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(cls.tool)
+        finally:
+            sys.dont_write_bytecode = previous
+
+    def parsed(self, *argv: str) -> list[list[str]]:
+        """What reaches argparse, and what the command then receives."""
+        seen, received = [], []
+        real = argparse.ArgumentParser.parse_args
+
+        def recording(parser, args=None, namespace=None):
+            if parser.prog == "run_delivery.py":
+                seen.append(list(args))
+            return real(parser, args, namespace)
+
+        with mock.patch.object(argparse.ArgumentParser, "parse_args", recording), \
+                mock.patch.object(self.tool, "app_check", lambda args: received.append(list(args.passthrough))), \
+                mock.patch.object(self.tool, "app_video", lambda args: received.append(list(args.passthrough))), \
+                mock.patch.object(self.tool.signal, "signal"):
+            self.tool.main(list(argv))
+        return [seen[0], received[0]]
+
+    def test_arguments_after_the_separator_go_to_the_adapter_and_never_reach_argparse(self) -> None:
+        for command in (["app-check", "FX-1", "page"], ["app-video", "FX-1", "clip"]):
+            for tail in (["--fixture-user", "reader"], ["--password=x"], ["plain", "--flag"], []):
+                with self.subTest(command=command[0], tail=tail):
+                    given = [*command, "--mode", "loaded", "--path", "/one"]
+                    reached, received = self.parsed(*given, "--", *tail)
+                    self.assertEqual(reached, given)
+                    self.assertEqual(received, tail)
+
+    def test_a_later_separator_belongs_to_the_adapter(self) -> None:
+        given = ["app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one"]
+        self.assertEqual(self.parsed(*given, "--", "a", "--", "b")[1], ["a", "--", "b"])
+
+    def test_a_command_without_pass_through_arguments_parses_as_it_always_did(self) -> None:
+        # A required positional may follow the separator, as argparse allows.
+        seen, received = [], []
+        real = argparse.ArgumentParser.parse_args
+
+        def recording(parser, args=None, namespace=None):
+            if parser.prog == "run_delivery.py":
+                seen.append(list(args))
+            return real(parser, args, namespace)
+
+        given = ["lead-assign", "--lane", "lane-1", "--title", "A title", "--", "FX-1"]
+        with mock.patch.object(argparse.ArgumentParser, "parse_args", recording), \
+                mock.patch.object(self.tool, "lead_assign", lambda args: received.append(list(args.keys))), \
+                mock.patch.object(self.tool.signal, "signal"):
+            self.tool.main(given)
+        self.assertEqual(seen, [given])
+        self.assertEqual(received, [["FX-1"]])
+
+    def test_only_the_command_decides_not_a_value_that_spells_one(self) -> None:
+        for given, keys in ((["lead-assign", "FX-1", "--lane", "app-check", "--title", "t"], ["FX-1"]),
+                            (["lead-assign", "FX-1", "--lane", "l", "--title", "app-video"], ["FX-1"]),
+                            (["--delivery", "app-check", "lead-assign", "FX-1", "--lane", "l", "--title", "t"], ["FX-1"]),
+                            (["lead-assign", "--lane", "app-check", "--title", "t", "--", "FX-1"], ["FX-1"])):
+            with self.subTest(given=given):
+                received = []
+                with mock.patch.object(self.tool, "lead_assign", lambda args: received.append(list(args.keys))), \
+                        mock.patch.object(self.tool.signal, "signal"):
+                    self.tool.main(given)
+                self.assertEqual(received, [keys])
+        received = []
+        with mock.patch.object(self.tool, "app_check", lambda args: received.append(list(args.passthrough))), \
+                mock.patch.object(self.tool.signal, "signal"):
+            self.tool.main(["--delivery", "lead-assign", "app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one", "--", "x"])
+            self.tool.main(["--delivery=lead-assign", "app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one", "--", "y"])
+        self.assertEqual(received, [["x"], ["y"]])
+
+    def test_no_separator_leaves_the_arguments_as_they_were(self) -> None:
+        given = ["app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one"]
+        self.assertEqual(self.parsed(*given), [given, []])
+
+    def test_a_flag_after_the_separator_is_not_read_as_the_tools_own(self) -> None:
+        given = ["app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one"]
+        reached, received = self.parsed(*given, "--", "--path", "/other")
+        self.assertEqual(reached, given)
+        self.assertEqual(received, ["--path", "/other"])
 
 
 class RunDeliveryContinuousIntegrationTests(unittest.TestCase):

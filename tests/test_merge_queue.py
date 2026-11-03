@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import errno
+import gc
 import io
 import importlib.util
 import io
@@ -324,7 +326,7 @@ class Adopter:
         self.log.write_text("")
         run("init", "--quiet", "--bare", "--initial-branch=main", str(self.remote), cwd=root)
         seed = root / "seed"
-        run("clone", "--quiet", str(self.remote), str(seed), cwd=root)
+        run("clone", "--quiet", "--config", "core.autocrlf=false", str(self.remote), str(seed), cwd=root)
         run("checkout", "--quiet", "-b", "main", cwd=seed)
         for name, text in TOOLS.items():
             self.write(seed, f"tools/{name}", text.lstrip())
@@ -341,7 +343,8 @@ class Adopter:
         run("commit", "--quiet", "-m", "base", cwd=seed)
         run("push", "--quiet", "origin", "main", cwd=seed)
         run("clone", "--quiet", str(self.remote), str(self.operator), cwd=root)
-        run("clone", "--quiet", str(self.remote), str(self.lane), cwd=root)
+        # The lane commits the bytes it means: Git for Windows' system setting would convert them, from the clone's own checkout on.
+        run("clone", "--quiet", "--config", "core.autocrlf=false", str(self.remote), str(self.lane), cwd=root)
         state_tool.init(self.state, "Fixture delivery")
 
     def default_binding(self) -> dict:
@@ -386,7 +389,8 @@ class Adopter:
     def write(checkout: Path, relative: str, text: str) -> None:
         path = checkout / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        # Bytes, not text: Windows would turn this fixture's own \r\n into \r\r\n.
+        path.write_bytes(text.encode("utf-8"))
 
     def tip(self, branch: str) -> str:
         return run("ls-remote", "--heads", str(self.remote), f"refs/heads/{branch}", cwd=self.root).split()[0]
@@ -1024,6 +1028,45 @@ class ReleaseTests(MergeQueueTestCase):
 
 
 class IsolationTests(MergeQueueTestCase):
+    def test_a_fetch_changes_only_the_runners_own_refs(self) -> None:
+        adopter = self.adopter()
+        tracking = run("rev-parse", "refs/remotes/origin/main", cwd=adopter.operator)
+        adopter.advance_base({"src/other.txt": "other\n"})
+        tip = adopter.runner().fetch("main", "base")
+        self.assertNotEqual(tip, tracking)
+        self.assertEqual(run("rev-parse", f"{queue.PRIVATE_REF}/base", cwd=adopter.operator), tip)
+        self.assertEqual(run("rev-parse", "refs/remotes/origin/main", cwd=adopter.operator), tracking,
+                         "git moves a tracking ref beside an explicit refspec unless told not to")
+
+    def test_a_fetch_is_not_stopped_by_another_process_holding_the_tracking_ref(self) -> None:
+        # Worktrees share remote-tracking refs, so another checkout's fetch can hold this lock at any moment.
+        adopter = self.adopter()
+        adopter.advance_base({"src/other.txt": "other\n"})
+        lock = Path(run("rev-parse", "--absolute-git-dir", cwd=adopter.operator)) / "refs/remotes/origin/main.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_bytes(b"")
+        self.addCleanup(lock.unlink, True)
+        tip = run("ls-remote", "origin", "refs/heads/main", cwd=adopter.operator).split()[0]
+        self.assertEqual(adopter.runner().fetch("main", "base"), tip)
+
+    def test_the_private_hooks_folder_goes_with_its_runner(self) -> None:
+        runner = self.adopter().runner()
+        folder = runner._bootstrap_hooks
+        self.assertTrue(folder.is_dir())
+        del runner
+        gc.collect()
+        self.assertFalse(folder.exists())
+
+    def test_the_private_hooks_folder_goes_when_a_command_never_runs_a_subcommand(self) -> None:
+        adopter = self.adopter()
+        temporary = self.directory / "temporary"
+        temporary.mkdir()
+        script = ("import sys; sys.path.insert(0, sys.argv[1]); import merge_queue; from pathlib import Path; "
+                  "runner = merge_queue.Runner(Path(sys.argv[2]), Path(sys.argv[3]), remote='origin', base='main')")
+        subprocess.run([PY, "-B", "-c", script, str(SCRIPTS), str(adopter.operator), str(adopter.state)], check=True,
+                       env={**os.environ, "TMPDIR": str(temporary), "TEMP": str(temporary), "TMP": str(temporary)})
+        self.assertEqual([path.name for path in temporary.iterdir()], [])
+
     def test_a_second_runner_is_refused_by_the_lock(self) -> None:
         adopter = self.adopter()
         self.candidate(adopter)
@@ -1052,10 +1095,10 @@ class IsolationTests(MergeQueueTestCase):
         run("worktree", "add", "--detach", "--quiet", str(stale), "origin/main", cwd=adopter.operator)
         # Marked as the runner marks its own checkouts; an unmarked worktree there is refused.
         (Path(run("rev-parse", "--absolute-git-dir", cwd=stale)) / queue.CHECKOUT_MARKER).write_bytes(b"")
-        self.assertIn(str(stale), run("worktree", "list", cwd=adopter.operator))
+        self.assertIn(stale.as_posix(), run("worktree", "list", cwd=adopter.operator))
         self.run_queue(adopter, "feature")
         self.assertFalse(stale.exists())
-        self.assertNotIn(str(stale), run("worktree", "list", cwd=adopter.operator))
+        self.assertNotIn(stale.as_posix(), run("worktree", "list", cwd=adopter.operator))
         self.assertEqual(list((adopter.work / "checkouts").iterdir()), [])
 
     def test_the_operators_checkout_and_the_base_branch_are_never_written(self) -> None:
@@ -1650,11 +1693,11 @@ class WorkRootSafetyTests(MergeQueueTestCase):
         leftover = runner.checkout(base_head, "base", prepare=False)
         # Someone removed the folder by hand; git still lists it, now prunable.
         shutil.rmtree(leftover)
-        self.assertTrue(any(str(leftover) in line for line in
+        self.assertTrue(any(leftover.as_posix() in line for line in
                             run("worktree", "list", "--porcelain", cwd=adopter.operator).splitlines()))
         results = self.run_queue(adopter, "feature")
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
-        self.assertFalse(any(str(leftover) in line for line in
+        self.assertFalse(any(leftover.as_posix() in line for line in
                              run("worktree", "list", "--porcelain", cwd=adopter.operator).splitlines()))
 
     def test_the_schema_states_every_work_root_rule(self) -> None:
@@ -1709,6 +1752,11 @@ class HostileConfigTests(MergeQueueTestCase):
         ).stdout
         # The windows line endings the lane committed reach the generated file untouched.
         self.assertEqual(generated, b"app two\r\nwith a windows line\r\nlib one\nother\n")
+
+    def test_the_excludes_file_is_pinned_to_a_value_git_accepts_on_every_system(self) -> None:
+        # Windows' null device makes `git status` die with "cannot use nul as an exclude file".
+        self.assertIn("core.excludesFile=", queue.PINNED_GIT_CONFIG)
+        self.assertNotIn(f"core.excludesFile={os.devnull}", queue.PINNED_GIT_CONFIG)
 
     def test_a_globally_ignored_file_is_still_an_undeclared_change(self) -> None:
         adopter = self.adopter({"postSync": [{"argv": [PY, "tools/fingerprint.py", "{baseHead}", "stray.txt"], "paths": ["notes/fingerprint.txt"]}]})
@@ -3205,6 +3253,17 @@ class ServeTests(MergeQueueTestCase):
         # The new head waits to be taken on its own merits; serve's stop was for the head it refused.
         self.assertEqual((item["head"], item["stage"]), (newer[0], "queued"))
 
+    def test_a_closed_output_on_any_system_leaves_serve_serving(self) -> None:
+        # POSIX says broken pipe; Windows reports the same closed pipe as a plain invalid argument.
+        for error in (BrokenPipeError(), OSError(errno.EINVAL, "Invalid argument")):
+            with self.subTest(error=type(error).__name__):
+                output = mock.Mock()
+                output.buffer.write.side_effect = error
+                with mock.patch.object(queue.sys, "stdout", output), mock.patch.object(queue.os, "open", return_value=99), \
+                        mock.patch.object(queue.os, "dup2") as replaced:
+                    queue.write_document_line({"outcome": "merged"})
+                replaced.assert_called_once_with(99, output.fileno.return_value)
+
     def test_a_reader_that_goes_away_leaves_serve_serving(self) -> None:
         adopter = self.adopter()
         self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
@@ -3226,7 +3285,9 @@ class ServeTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("second")["stage"], "merged")
         serving.terminate()
         _, errors = serving.communicate(timeout=60)
-        self.assertEqual(serving.returncode, 0, errors.decode("utf-8", "replace"))
+        # Windows' terminate gives the process no chance to exit cleanly, so its code says nothing there.
+        if os.name != "nt":
+            self.assertEqual(serving.returncode, 0, errors.decode("utf-8", "replace"))
 
     def test_serve_refuses_to_start_on_a_wrong_checkout_and_stops_nothing(self) -> None:
         adopter = self.adopter()
@@ -3312,7 +3373,9 @@ class ServeTests(MergeQueueTestCase):
                 break
         serving.terminate()
         _, errors = serving.communicate(timeout=60)
-        self.assertEqual(serving.returncode, 0, errors.decode("utf-8", "replace"))
+        # Windows' terminate gives the process no chance to exit cleanly, so its code says nothing there.
+        if os.name != "nt":
+            self.assertEqual(serving.returncode, 0, errors.decode("utf-8", "replace"))
         self.assertEqual(printed[-1]["candidate"], "feature")
         self.assertEqual(printed[-1]["outcome"], "merged")
 

@@ -938,6 +938,7 @@ test("follows the live server through the adapter it injects into the page", asy
   // The page exactly as the server serves it at /view/: the adapter goes in right after the opt-in marker.
   const served = spawnSync("python3", ["-B", "-c", [
     "import sys; sys.path.insert(0, sys.argv[1]); import render_state as r",
+    "sys.stdin.reconfigure(encoding='utf-8'); sys.stdout.reconfigure(encoding='utf-8', newline='\\n')",
     "page = sys.stdin.read()",
     "sys.stdout.write(page.replace(r.LIVE_OPT_IN, r.LIVE_OPT_IN + '\\n<script>\\n' + r._LIVE_ADAPTER + '\\n</script>', 1))",
   ].join("\n"), path.join(ROOT, "skills", "orchestrate-work", "scripts")], { input: render(fixtureDocument()), encoding: "utf8" });

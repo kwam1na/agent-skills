@@ -2809,6 +2809,17 @@ def _signal_selected(pids: list[int], group: int | None, marker: bytes, signum: 
     return signalled
 
 
+def _signal_frozen(pids: list[int], signum: signal.Signals) -> None:
+    """Signal what this run froze, without reading it again: a read that fails must not leave it stopped.
+
+    A stopped process cannot exec or exit by itself. ``_stop_leftovers`` drops a
+    pid a later table read no longer holds, since another actor may have killed it.
+    """
+    for pid in pids:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signum)
+
+
 def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
                     preview: Callable[[dict], None] | None, cleanup: list | None) -> None:
     """Stop what the exited command left: its group, while its unreaped pid holds the group id, and marked processes.
@@ -2820,9 +2831,12 @@ def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
     later pass may add processes spawned since, each under the same refusals.
     """
     group = process.pid if _unreaped(process.pid) else None
+    table: dict | None = None
 
     def select_now() -> dict:
-        return _cleanup_selection(group, marker, started, _process_table(), _process_environment)
+        nonlocal table
+        table = _process_table()
+        return _cleanup_selection(group, marker, started, table, _process_environment)
 
     selection = select_now()
     if cleanup is not None:
@@ -2840,24 +2854,27 @@ def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
             fresh = [pid for pid in latest["selected"] if pid not in frozen]
             if not fresh:
                 break
-            frozen += _signal_selected(fresh, group, marker, signal.SIGSTOP)
+            # One at a time, so an interrupt within the pass still kills what it had frozen.
+            for pid in fresh:
+                frozen += _signal_selected([pid], group, marker, signal.SIGSTOP)
             latest = select_now()
             if latest["unreadable"]:
                 break
+            frozen = [pid for pid in frozen if table is None or pid in table]
             whole_group = whole_group and latest["whole_group"]
             for refusal in latest["refused"]:
                 if refusal not in selection["refused"]:
                     selection["refused"].append(refusal)
             # A frozen process a later read refuses is let go again, never left stopped.
             refused_now = {pid for pid, _ in latest["refused"]}
-            _signal_selected([pid for pid in frozen if pid in refused_now], group, marker, signal.SIGCONT)
+            _signal_frozen([pid for pid in frozen if pid in refused_now], signal.SIGCONT)
             frozen = [pid for pid in frozen if pid not in refused_now]
     finally:
         # Never leave a frozen process behind: what was stopped is killed.
         if group is not None and whole_group:
             with contextlib.suppress(OSError):
                 os.killpg(group, signal.SIGKILL)
-        _signal_selected(frozen, group, marker, signal.SIGKILL)
+        _signal_frozen(frozen, signal.SIGKILL)
         selection["selected"] = sorted(frozen)
         selection["whole_group"] = whole_group
 

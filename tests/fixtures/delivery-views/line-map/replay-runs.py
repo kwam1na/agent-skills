@@ -14,4 +14,6 @@ recorded = json.loads(open(sys.argv[1], encoding="utf-8").read())
 answer = recorded.get(" ".join(sys.argv[2:]))
 if answer is None:
     raise SystemExit(1)
+# A runs command's output is read as UTF-8, whatever a Windows console's default is.
+sys.stdout.reconfigure(encoding="utf-8")
 sys.stdout.write(answer)

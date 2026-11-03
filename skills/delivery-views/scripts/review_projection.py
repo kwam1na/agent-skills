@@ -15,9 +15,12 @@ Standard library only.
 
 from __future__ import annotations
 
+import sys
+
+sys.dont_write_bytecode = True
+
 import copy
 import re
-import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))

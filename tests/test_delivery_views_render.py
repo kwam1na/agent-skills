@@ -276,6 +276,9 @@ class BriefTests(unittest.TestCase):
 
 
 class CollectRunsTests(unittest.TestCase):
+    # Its deadline cases time real reads, which a runner with every core busy can make miss.
+    run_serially = True
+
     LISTED = [{"runId": "run-7", "status": "incomplete", "open": True, "durationSeconds": 3000, "bytes": 4000},
               {"runId": "run-8", "status": "complete", "open": False, "durationSeconds": 900, "bytes": 1200}]
 

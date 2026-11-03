@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import select
 import shutil
 import signal
 import subprocess
@@ -2140,6 +2141,7 @@ class TrackerSnapshotTests(unittest.TestCase):
                                  "--output", str(self.root / "missing" / "out.json"))
         self.assertEqual((code, refused["code"]), (1, "output_invalid"), refused)
 
+    @unittest.skipIf(os.name == "nt", "what a command leaves running is looked for on POSIX only, as _run_bounded says")
     def test_a_child_that_holds_stdout_open_does_not_turn_valid_output_into_a_timeout(self) -> None:
         pid_file = self.root / "holder.pid"
 
@@ -3302,6 +3304,9 @@ class SnapshotCleanupTests(unittest.TestCase):
         self.assertTrue(self.gone(child))
         return selection
 
+    def state(self, pid: int) -> str:
+        return subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+
     def gone_now(self, pid: int) -> bool:
         # A process killed a moment ago answers until its new parent reaps it: give that time first.
         time.sleep(0.5)
@@ -3449,22 +3454,134 @@ class SnapshotCleanupTests(unittest.TestCase):
         self.assertEqual(selection["selected"], [502], "a group member counts only while the group id is held")
         self.assertIn("marked processes only", state_tool._describe_selection(selection))
 
+    @contextlib.contextmanager
+    def without_waitid(self, absent: bool):
+        """As Python below 3.13 on macOS runs: finding the command unreaped takes a process-table read of its own."""
+        waitid = getattr(os, "waitid", None)
+        if absent and waitid is not None:
+            del os.waitid
+        try:
+            yield
+        finally:
+            if absent and waitid is not None:
+                os.waitid = waitid
+
+    def after_the_first_freeze(self, *, interrupt: bool = False, blind: bool = False, without: Path | None = None):
+        """What happens at the first table read after a real freeze, however many reads came before it."""
+        real_table, real_environment, real_signal = state_tool._process_table, state_tool._process_environment, state_tool._signal_selected
+        froze, fired = [], []
+
+        def signalled(pids: list[int], group: int | None, marker: bytes, signum: signal.Signals) -> list[int]:
+            done = real_signal(pids, group, marker, signum)
+            if signum == signal.SIGSTOP and done:
+                froze.append(True)
+            return done
+
+        def table() -> dict | None:
+            read = real_table()
+            if froze and not fired:
+                fired.append(True)
+                if interrupt:
+                    raise KeyboardInterrupt
+                if without is not None and read is not None:
+                    read = {pid: row for pid, row in read.items() if pid != int(without.read_text())}
+            return read
+
+        def environment(pid: int) -> list[bytes] | None:
+            return None if blind and fired else real_environment(pid)
+
+        return mock.patch.multiple(state_tool, _process_table=table, _process_environment=environment, _signal_selected=signalled)
+
+    # Without waitid an exit is watched with kqueue, so that path exists only where kqueue does.
+    WAITID_PATHS = (False, True) if hasattr(select, "kqueue") else (False,)
+
     def test_an_interrupt_between_the_passes_never_leaves_a_process_frozen(self) -> None:
+        for absent in self.WAITID_PATHS:
+            with self.subTest(without_waitid=absent), self.without_waitid(absent):
+                argv, pid_file = self.command(detached=True)
+                self.previewed(argv, pid_file)
+                argv, pid_file = self.command(detached=True)
+                with self.after_the_first_freeze(interrupt=True), self.assertRaises(KeyboardInterrupt):
+                    state_tool._run_bounded(argv, 20, 4096)
+                child = int(pid_file.read_text())
+                self.assertTrue(self.gone(child), f"killed, not left stopped: the process's state is {self.state(child)!r}")
+
+    def test_a_frozen_process_is_killed_though_its_environment_can_no_longer_be_read(self) -> None:
+        for absent in self.WAITID_PATHS:
+            with self.subTest(without_waitid=absent), self.without_waitid(absent):
+                argv, pid_file = self.command(detached=True)
+                self.previewed(argv, pid_file)
+                argv, pid_file = self.command(detached=True)
+                with self.after_the_first_freeze(interrupt=True, blind=True), self.assertRaises(KeyboardInterrupt):
+                    state_tool._run_bounded(argv, 20, 4096)
+                child = int(pid_file.read_text())
+                self.assertTrue(self.gone(child), f"killed, not left stopped: the process's state is {self.state(child)!r}")
+
+    def test_a_frozen_process_a_later_read_refuses_is_let_go_though_its_environment_can_no_longer_be_read(self) -> None:
         argv, pid_file = self.command(detached=True)
         self.previewed(argv, pid_file)
         argv, pid_file = self.command(detached=True)
-        real, reads = state_tool._process_table, []
+        real_selection, blind, selections = state_tool._cleanup_selection, [], []
 
-        def interrupted() -> dict | None:
-            reads.append(1)
-            if len(reads) == 2:  # the read after the first freeze
+        def selection(*args: object, **kwargs: object) -> dict:
+            result = real_selection(*args, **kwargs)
+            selections.append(result)
+            if len(selections) == 2:
+                # The later read refuses what the first selected, and nothing can be read of it from here on.
+                blind.append(True)
+                return {**result, "selected": [], "refused": [(pid, "a later read refused it") for pid in selections[0]["selected"]]}
+            return result
+
+        real_environment = state_tool._process_environment
+        with mock.patch.multiple(state_tool, _cleanup_selection=selection,
+                                 _process_environment=lambda pid: None if blind else real_environment(pid)):
+            state_tool._run_bounded(argv, 20, 4096)
+        child = int(pid_file.read_text())
+        self.assertTrue(blind, "the scenario reached the later read")
+        status = self.state(child)
+        self.assertTrue(status, "let go, not killed: a refused process is not this run's to stop")
+        self.assertNotIn("T", status, "let go, not left stopped")
+
+    def test_an_interrupt_within_a_pass_still_kills_what_that_pass_had_frozen(self) -> None:
+        second = self.root / "second.pid"
+        then = (f"second = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], stdout=subprocess.DEVNULL, "
+                f"stderr=subprocess.DEVNULL, start_new_session=True); open({str(second)!r}, 'w').write(str(second.pid))")
+        argv, pid_file = self.command(detached=True, then=then)
+        real_signal, stopped = state_tool._signal_selected, []
+
+        def signalled(pids: list[int], group: int | None, marker: bytes, signum: signal.Signals) -> list[int]:
+            if signum == signal.SIGSTOP and stopped:
                 raise KeyboardInterrupt
-            return real()
+            done = real_signal(pids, group, marker, signum)
+            if signum == signal.SIGSTOP:
+                stopped.extend(done)
+            return done
 
-        with mock.patch.object(state_tool, "_process_table", side_effect=interrupted):
-            with self.assertRaises(KeyboardInterrupt):
+        try:
+            with mock.patch.object(state_tool, "_signal_selected", signalled), self.assertRaises(KeyboardInterrupt):
                 state_tool._run_bounded(argv, 20, 4096)
-        self.assertTrue(self.gone(int(pid_file.read_text())), "killed, not left stopped")
+            children = [int(pid_file.read_text()), int(second.read_text())]
+            self.assertEqual(len(stopped), 1, stopped)
+            self.assertTrue(self.gone(stopped[0]), f"killed, not left stopped: the state is {self.state(stopped[0])!r}")
+            self.assertTrue(all("T" not in self.state(child) for child in children))
+        finally:
+            with contextlib.suppress(OSError, ValueError):
+                os.kill(int(second.read_text()), signal.SIGKILL)
+
+    def test_a_frozen_pid_the_table_no_longer_holds_is_not_signalled_again(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=True)
+        real_frozen, signalled = state_tool._signal_frozen, []
+
+        def frozen(pids: list[int], signum: signal.Signals) -> None:
+            signalled.extend(pids)
+            real_frozen(pids, signum)
+
+        # The read after the freeze reports it gone, as if another actor killed it.
+        with self.after_the_first_freeze(without=pid_file), mock.patch.object(state_tool, "_signal_frozen", frozen):
+            state_tool._run_bounded(argv, 20, 4096)
+        self.assertNotIn(int(pid_file.read_text()), signalled, "its pid may be another process's by now")
 
     def test_a_command_reaped_elsewhere_is_previewed_without_its_group(self) -> None:
         argv, pid_file = self.command(detached=False)
