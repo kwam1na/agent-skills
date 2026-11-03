@@ -778,6 +778,8 @@ class SupervisorPassTests(unittest.TestCase):
         code, out = fx.flow("lead-brief", cwd=m)
         self.assertIn("The close waits on: not handed off: FX-2, FX-3", out)
         wt = self.merged(fx, "FX-2", "lane-1")
+        # The queue rests a lane with nothing else open once its story merges; this lane is still at work in its checkout.
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "checking FX-2 on the base", "--state", "working")
         held = self.holds(fx)
         self.assertIn("not handed off: FX-3", held)
         # Cleanup waits until the lane moves off its merged story.

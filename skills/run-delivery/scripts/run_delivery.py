@@ -4654,13 +4654,9 @@ def base_head(c) -> str:
 # One pass's steps. Each returns what it did, in a line or a few.
 
 def lane_moved_off(doc: dict, item: dict) -> bool:
-    """A merged story's lane has moved off it: it is idle or done, or was assigned other work after the merge. The queue's
-    own row saying the story merged is not the lane's word, so it doesn't count as the lane moving off."""
+    """A merged story's lane has moved off it: it is idle or done, or was assigned other work after the merge."""
     lane = next((entry for entry in doc["state"]["lanes"] if entry["id"] == item["lane"]), None)
-    if lane is None:
-        return True
-    queue_rested = lane.get("focusBy") == "runner" and lane.get("focus") == f"{item['subject']} merged"
-    if lane.get("state") in LANE_DONE and not queue_rested:
+    if lane is None or lane.get("state") in LANE_DONE:
         return True
     merged = max((e["id"] for e in doc["journal"] if e["kind"] == "candidate.merged" and e.get("subject") == item["subject"]),
                  default=None)
