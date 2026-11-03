@@ -38,6 +38,7 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import sys
 import tempfile
 import threading
@@ -201,6 +202,18 @@ def table(summary: dict, out) -> None:
           file=out)
 
 
+def caveats(summary: dict) -> list[str]:
+    """Why one run's counts cannot be taken at face value."""
+    found = []
+    if not summary.get("passed", True):
+        found.append("the suite did not pass, so it may have stopped writing early")
+    if summary.get("droppedBatches"):
+        found.append(f"{summary['droppedBatches']} event batches were dropped, so the counts are low")
+    if not summary.get("settled", True):
+        found.append("the last events never arrived, so the counts are low")
+    return found
+
+
 def compare(before: dict, after: dict, out=sys.stdout) -> None:
     """Per-module files written before and after, largest reduction first, then the totals."""
     names = {*before["modules"], *after["modules"]}
@@ -212,14 +225,29 @@ def compare(before: dict, after: dict, out=sys.stdout) -> None:
     for name in sorted(names, key=lambda item: (written(after, item) - written(before, item), item)):
         print(f"{written(before, name):>9} {written(after, name):>9} "
               f"{written(after, name) - written(before, name):>+9}  {name}", file=out)
+    for label, summary in (("before", before), ("after", after)):
+        for caveat in caveats(summary):
+            print(f"{label}: {caveat}", file=out)
     first, second = before["total"], after["total"]
     print(f"{first['filesWritten']:>9} {second['filesWritten']:>9} "
           f"{second['filesWritten'] - first['filesWritten']:>+9}  total files written", file=out)
     print(f"{first['events']:>9} {second['events']:>9} {second['events'] - first['events']:>+9}  total events",
           file=out)
+    if "testsRun" in before and "testsRun" in after:
+        print(f"{before['testsRun']:>9} {after['testsRun']:>9} {after['testsRun'] - before['testsRun']:>+9}  tests run",
+              file=out)
     print(f"{first['left']:>9} {second['left']:>9} {second['left'] - first['left']:>+9}  total left behind", file=out)
     if first["filesWritten"]:
         print(f"files written: {second['filesWritten'] / first['filesWritten']:.1%} of before", file=out)
+
+
+def _open_folders(top: Path) -> None:
+    """Make folders a test closed readable again, so what is in them is counted and can be removed."""
+    for folder, names, _files in os.walk(top):
+        for name in names:
+            path = Path(folder) / name
+            if not path.is_symlink():
+                os.chmod(path, 0o700)
 
 
 def measure(args: argparse.Namespace) -> int:
@@ -270,6 +298,7 @@ def measure(args: argparse.Namespace) -> int:
             return 130
         finally:
             watch.stop()
+        _open_folders(base)
         with lock:
             summary = summarize(units, tally.counts, combined["unitTemp"])
         summary |= {"seconds": round(seconds, 3), "workers": args.workers, "testsRun": combined["testsRun"],
@@ -281,6 +310,7 @@ def measure(args: argparse.Namespace) -> int:
         if args.output:
             args.output.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     finally:
+        _open_folders(base)
         shutil.rmtree(base, ignore_errors=True)
     if not combined["testsRun"] and not combined["crashed"] and not combined["timedOut"]:
         return 5
@@ -304,6 +334,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.workers < 1:
         parser.error("--workers must be at least 1")
+    if args.output and not args.output.resolve().parent.is_dir():
+        parser.error(f"--output's folder does not exist: {args.output.parent}")
     if sys.platform != "darwin":
         print("measure-test-writes: measuring needs FSEvents, so macOS; --compare runs anywhere", file=sys.stderr)
         return 2
@@ -312,4 +344,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # A terminate stops the workers and removes the temp root, the same way an interrupt does.
+    signal.signal(signal.SIGTERM, lambda signum, frame: (_ for _ in ()).throw(KeyboardInterrupt()))
     raise SystemExit(main())

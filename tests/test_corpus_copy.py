@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import socket
 import stat
 import tempfile
 import unittest
@@ -69,11 +70,34 @@ class CopyCorpusTests(unittest.TestCase):
         self.assertEqual((copied / "catalog.json").read_text(encoding="utf-8"), "{}\n")
         self.assertFalse((copied / "scratch").exists())
 
-    def test_a_folder_only_sharing_the_targets_name_prefix_is_kept(self) -> None:
+    def test_a_folder_whose_name_starts_the_targets_is_kept(self) -> None:
+        (self.source / "copy").mkdir()
+        (self.source / "copy/held").write_text("x\n", encoding="utf-8")
+        copied = copy_corpus(self.source / "copy-of-notes", source=self.source)
+        self.assertTrue((copied / "copy/held").exists())
+
+    def test_a_folder_starting_with_the_targets_name_is_kept(self) -> None:
         (self.source / "copy-of-notes").mkdir()
         (self.source / "copy-of-notes/held").write_text("x\n", encoding="utf-8")
         copied = copy_corpus(self.source / "copy", source=self.source)
         self.assertTrue((copied / "copy-of-notes/held").exists())
+
+    def test_a_target_spelled_another_way_does_not_copy_into_itself(self) -> None:
+        (self.source / "scratch").mkdir()
+        (self.base / "nfc-\u00e9").mkdir()
+        (self.base / "nfc-\u00e9/catalog.json").write_text("{}\n", encoding="utf-8")
+        for source, spelled in ((self.source, self.source / "SCRATCH"),
+                                (self.source, self.base / "CHECKOUT/scratch"),
+                                (self.base / "nfc-\u00e9", self.base / "nfc-e\u0301/inner")):
+            if not spelled.parent.exists():
+                self.skipTest("this filesystem tells these spellings apart")
+            with self.subTest(target=spelled):
+                if source == self.base / "nfc-\u00e9":
+                    (source / "inner").mkdir(exist_ok=True)
+                copied = copy_corpus(spelled / "copy", source=source)
+                self.assertEqual((copied / "catalog.json").read_text(encoding="utf-8"), "{}\n")
+                self.assertEqual([path for path in copied.rglob("copy")], [])
+                shutil.rmtree(spelled / "copy")
 
     def test_the_repository_root_copies_without_its_environments(self) -> None:
         copied = copy_corpus(self.base / "corpus", leaving_out=("qualifications", "tests", "docs"))
@@ -217,6 +241,71 @@ class SharedCorpusTests(unittest.TestCase):
         (corpus.root / "two/held").write_text("changed\n", encoding="utf-8")
         self.assertEqual((corpus.restored() / "two/held").read_text(encoding="utf-8"), "held\n")
         self.assertFalse((corpus.root / "two").is_symlink())
+
+    def test_a_second_name_for_a_held_file_takes_nothing_back(self) -> None:
+        kept = self.base / "kept-outside"
+        os.link(self.root / "tool.sh", kept)
+        (self.root / "tool.sh").write_text("changed\n", encoding="utf-8")
+        self.assertRestored()
+        self.assertEqual(kept.read_text(encoding="utf-8"), "changed\n")
+        self.assertEqual((self.root / "tool.sh").stat().st_nlink, 1)
+
+    def test_two_held_files_made_one_are_parted(self) -> None:
+        (self.root / "catalog.json").unlink()
+        os.link(self.root / "tool.sh", self.root / "catalog.json")
+        self.assertRestored()
+        self.assertEqual((self.root / "catalog.json").stat().st_nlink, 1)
+
+    def test_a_kept_handle_cannot_reach_the_next_test(self) -> None:
+        with (self.root / "catalog.json").open("a", encoding="utf-8") as kept:
+            kept.write("first\n")
+            kept.flush()
+            self.assertRestored()
+            kept.write("late\n")
+            kept.flush()
+            self.assertEqual(tree(self.root), self.first)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "needs named pipes")
+    def test_a_pipe_or_socket_at_a_held_path_is_replaced(self) -> None:
+        def pipe() -> None:
+            os.mkfifo(self.root / "catalog.json")
+
+        def bound_socket() -> None:
+            listener = socket.socket(socket.AF_UNIX)
+            self.addCleanup(listener.close)
+            # A socket's path has a short limit, so bind from inside the folder.
+            previous = os.getcwd()
+            os.chdir(self.root)
+            try:
+                listener.bind("catalog.json")
+            finally:
+                os.chdir(previous)
+
+        for make in (pipe, bound_socket):
+            with self.subTest(make=make.__name__):
+                (self.root / "catalog.json").unlink()
+                make()
+                self.assertRestored()
+
+    def test_the_copy_itself_replaced_is_put_back(self) -> None:
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "mine.txt").write_text("mine\n", encoding="utf-8")
+
+        def replaced_by_a_link() -> None:
+            shutil.rmtree(self.root)
+            self.root.symlink_to(elsewhere)
+
+        def replaced_by_a_file() -> None:
+            shutil.rmtree(self.root)
+            self.root.write_text("x\n", encoding="utf-8")
+
+        for change in (replaced_by_a_link, replaced_by_a_file):
+            with self.subTest(change=change.__name__):
+                change()
+                self.assertRestored()
+                self.assertFalse(self.root.is_symlink())
+        self.assertEqual([path.name for path in elsewhere.iterdir()], ["mine.txt"])
 
     def test_restoring_an_untouched_copy_writes_nothing(self) -> None:
         stamps = {path: path.lstat().st_mtime_ns for path in self.root.rglob("*")}

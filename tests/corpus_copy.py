@@ -18,20 +18,27 @@ def copy_corpus(target: Path, *, source: Path = ROOT, leaving_out: tuple[str, ..
     """Copy ``source`` to ``target``, which never reaches into its own copy.
 
     A target inside ``source``, as under a ``TMPDIR`` inside a checkout, is left
-    out along with every folder leading to it, so the copy ends.
+    out along with every folder leading to it, so the copy ends. Folders are told
+    apart by identity rather than by name, which a filesystem may spell several ways.
     """
-    destination = os.path.realpath(target)
+    target = Path(os.path.abspath(target))
     patterns = shutil.ignore_patterns(*NEVER_COPIED, *leaving_out)
 
     def ignored(folder: str, names: list[str]) -> set[str]:
-        real = os.path.realpath(folder)
-        return set(patterns(folder, names)) | {
-            name for name in names
-            if destination == (entry := os.path.join(real, name)) or destination.startswith(entry + os.sep)
-        }
+        leading = {_identity(path) for path in (target, *target.parents)} - {None}
+        return set(patterns(folder, names)) | {name for name in names if _identity(Path(folder) / name) in leading}
 
     shutil.copytree(source, target, ignore=ignored)
     return target
+
+
+def _identity(path: Path) -> tuple[int, int] | None:
+    """What names one folder however its path is spelled, or nothing if the path does not lead anywhere yet."""
+    try:
+        found = os.stat(path)
+    except OSError:
+        return None
+    return found.st_dev, found.st_ino
 
 
 class SharedCorpus:
@@ -63,6 +70,8 @@ class SharedCorpus:
                     self.files[relative] = (mode, path.read_bytes())
 
     def restored(self) -> Path:
+        if self.root.is_symlink() or (self.root.exists() and not self.root.is_dir()):
+            self.root.unlink()
         self.root.mkdir(parents=True, exist_ok=True)
         self._open_folders()
         for folder, names, files in os.walk(self.root):
@@ -74,15 +83,16 @@ class SharedCorpus:
             os.makedirs(self.root / relative, exist_ok=True)
         for relative, (mode, content) in self.files.items():
             path = self.root / relative
-            if not path.exists():
-                path.write_bytes(content)
-            else:
+            unchanged = False
+            if path.exists():
                 # A file a test closed, or made read-only, opens again before it is compared.
                 if stat.S_IMODE(path.stat().st_mode) != mode:
                     os.chmod(path, mode | 0o600)
-                if path.read_bytes() != content:
-                    os.chmod(path, mode | 0o600)
-                    path.write_bytes(content)
+                # A second name for the file would carry whatever is written back to wherever else it is.
+                unchanged = path.stat().st_nlink == 1 and path.read_bytes() == content
+            if not unchanged:
+                path.unlink(missing_ok=True)
+                path.write_bytes(content)
             if stat.S_IMODE(path.stat().st_mode) != mode:
                 os.chmod(path, mode)
         for relative, mode in {**self.folders, ".": self.mode}.items():
@@ -113,5 +123,5 @@ class SharedCorpus:
         elif path.is_dir():
             if relative not in self.folders:
                 shutil.rmtree(path)
-        elif relative not in self.files:
+        elif relative not in self.files or not path.is_file():
             path.unlink()

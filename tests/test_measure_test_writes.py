@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -105,6 +106,29 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(lines[3].split(), ["0", "5", "+5", "test_new"])
         self.assertIn("150        30      -120  total files written", out.getvalue())
         self.assertIn("files written: 20.0% of before", out.getvalue())
+
+    def test_a_run_that_cannot_be_taken_at_face_value_says_so(self) -> None:
+        clean = {**self.document(test_a=100), "passed": True, "droppedBatches": 0, "settled": True, "testsRun": 10}
+        out = io.StringIO()
+        measure.compare(clean, clean, out=out)
+        self.assertNotIn("before:", out.getvalue())
+        self.assertNotIn("after:", out.getvalue())
+        for field, word in ({"passed": False}, "did not pass"), ({"droppedBatches": 40}, "40 event batches"), \
+                ({"settled": False}, "never arrived"):
+            with self.subTest(field=field):
+                out = io.StringIO()
+                measure.compare(clean, {**self.document(test_a=1), "testsRun": 3, **field}, out=out)
+                self.assertRegex(out.getvalue(), rf"after: .*{word}")
+                self.assertRegex(out.getvalue(), r"10 +3 +-7  tests run")
+                out = io.StringIO()
+                measure.compare({**clean, **field}, clean, out=out)
+                self.assertRegex(out.getvalue(), rf"before: .*{word}")
+
+    def test_an_output_nowhere_is_refused_before_the_run(self) -> None:
+        with mock.patch("sys.stderr", io.StringIO()) as err, self.assertRaises(SystemExit) as refused:
+            measure.main(["--output", "/nonexistent-folder/counts.json"])
+        self.assertEqual(refused.exception.code, 2)
+        self.assertIn("--output", err.getvalue())
 
     def test_a_compare_of_files_runs_on_any_system(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -254,6 +278,49 @@ class MeasuringTests(unittest.TestCase):
 
     def test_no_test_found_is_the_runners_exit_five(self) -> None:
         self.assertEqual(self.measure().returncode, 5)
+
+    def test_a_terminate_stops_the_workers_and_removes_the_root(self) -> None:
+        temps = self.root / "temps"
+        temps.mkdir()
+        pid_file = self.root / "worker.pid"
+        self.module("test_hanging", f"""
+            import os, pathlib, time, unittest
+            class Hanging(unittest.TestCase):
+                def test_hangs(self):
+                    pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))
+                    time.sleep(120)
+        """)
+        process = subprocess.Popen([sys.executable, "-B", str(SCRIPT), "-s", "suite", "-t", "."], cwd=self.root,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   env={**os.environ, "PYTHONPATH": str(ROOT), "TMPDIR": str(temps)})
+        self.addCleanup(lambda: process.poll() is None and process.kill())
+        deadline = time.monotonic() + 60
+        while not (pid_file.exists() and pid_file.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        worker = int(pid_file.read_text())
+        process.terminate()
+        self.assertEqual(process.wait(timeout=30), 130)
+        self.assertEqual(list(temps.iterdir()), [])
+        with self.assertRaises(ProcessLookupError):
+            os.kill(worker, 0)
+
+    def test_a_folder_a_test_closed_is_counted_and_removed(self) -> None:
+        temps = self.root / "temps"
+        temps.mkdir()
+        self.module("test_closer", """
+            import os, pathlib, tempfile, unittest
+            class Closer(unittest.TestCase):
+                def test_closes(self):
+                    folder = tempfile.mkdtemp(prefix="closed-")
+                    (pathlib.Path(folder) / "file").write_text("x")
+                    os.chmod(folder, 0)
+        """)
+        result = subprocess.run([sys.executable, "-B", str(SCRIPT), "-s", "suite", "-t", ".", "--output", str(self.output)],
+                                cwd=self.root, capture_output=True, text=True, timeout=120,
+                                env={**os.environ, "PYTHONPATH": str(ROOT), "TMPDIR": str(temps)})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(self.output.read_text(encoding="utf-8"))["total"]["left"], 2)
+        self.assertEqual(list(temps.iterdir()), [])
 
     def test_its_own_temp_root_is_removed(self) -> None:
         temps = self.root / "temps"
