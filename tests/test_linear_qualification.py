@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_skills.release import RUNTIME_FILES, _path_digest, _release_view, build_release, verify_release
+from corpus_copy import SharedCorpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -756,8 +757,8 @@ class LinearQualificationTests(unittest.TestCase):
             )
             self.assertIn("host-native MCP capability set remains complete", evidence)
 
-            harmless = directory / "harmless-prose"
-            shutil.copytree(linear_candidate, harmless)
+            copies = SharedCorpus(directory / "changed-candidate", source=linear_candidate)
+            harmless = copies.restored()
             skill = harmless / "skills/linear-tracker-adapter/SKILL.md"
             skill.write_text(
                 skill.read_text(encoding="utf-8")
@@ -787,16 +788,14 @@ class LinearQualificationTests(unittest.TestCase):
 
             # The delivery views are outside the boundary: their pages and snapshot commands reach the providers
             # they are configured for. The same actions anywhere else in the linear profile still fail.
-            views = directory / "delivery-views-transport"
-            shutil.copytree(linear_candidate, views)
+            views = copies.restored()
             for name, source in (("extra.js", 'fetch("/view/line-map.html");\n'),
                                  ("extra.py", 'urllib.request.urlopen("https://api.linear.app/graphql")\n')):
                 (views / "skills/delivery-views/scripts" / name).write_text(source, encoding="utf-8")
             runner.inspect_candidate_transport_boundary(views, core_candidate, contract)
             for relative in ("skills/orchestrate-work/scripts/extra.js", "skills/linear-tracker-adapter/extra.py"):
                 with self.subTest(outside=relative):
-                    mutated = directory / f"outside-{Path(relative).name}"
-                    shutil.copytree(linear_candidate, mutated)
+                    mutated = copies.restored()
                     (mutated / relative).write_text(
                         'fetch("/view/line-map.html");\n' if relative.endswith(".js") else 'urllib.request.urlopen("https://example.invalid")\n',
                         encoding="utf-8")
@@ -869,8 +868,7 @@ class LinearQualificationTests(unittest.TestCase):
             )
             for case_name, category, relative, source in hostile:
                 with self.subTest(case=case_name):
-                    mutated = directory / f"mutated-{case_name}"
-                    shutil.copytree(linear_candidate, mutated)
+                    mutated = copies.restored()
                     target = mutated / relative
                     target.write_text(source, encoding="utf-8")
                     with self.assertRaisesRegex(

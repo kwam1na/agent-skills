@@ -223,12 +223,41 @@ class BuildTests(unittest.TestCase):
 class SetTests(unittest.TestCase):
     """The set's outputs and its failure path, around a stand-in for the qualifier subprocesses."""
 
+    @classmethod
+    def setUpClass(cls) -> None:
+        holder = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(holder.cleanup)
+        cls.built = Path(holder.name)
+        (cls.built / "runtime").mkdir()
+
     def setUp(self) -> None:
         self.command = _load_command()
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name)
         self.out = self.directory / "out"
+        self._build_each_product_once()
+
+    def _build_each_product_once(self) -> None:
+        """The class's runs share each real build: these tests are about the set around them, and BuildTests and the real run about the builds."""
+        real_runtime, real_build = self.command.rebound_runtime, self.command.build_release
+
+        def runtime(profile: str, _target: Path) -> Path:
+            stored = self.built / "runtime" / profile
+            return stored if stored.exists() else real_runtime(profile, stored)
+
+        def build(root: Path, archive: Path, metadata: Path, *, release_id: str, **options: object) -> None:
+            stored = self.built / release_id
+            if not stored.exists():
+                stored.mkdir()
+                real_build(root, stored / archive.name, stored / metadata.name, release_id=release_id, **options)
+            shutil.copyfile(stored / archive.name, archive)
+            shutil.copyfile(stored / metadata.name, metadata)
+
+        for name, stand_in in (("rebound_runtime", runtime), ("build_release", build)):
+            patcher = mock.patch.object(self.command, name, stand_in)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def _cut(self, *, version: str = VERSION, fail: str | None = None, how: str = "exit") -> tuple[int, list]:
         run, calls = _qualifier_double(fail, how)

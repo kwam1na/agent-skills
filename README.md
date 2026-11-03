@@ -43,6 +43,15 @@ timed out, while the rest of the run carries on:
 .venv/bin/python scripts/run-tests.py --timings .test-timings.json
 ```
 
+`scripts/measure-test-writes.py` runs the same suite and reports, per test module,
+the files it wrote to temp folders and what it left there. It counts file events,
+so it measures on macOS; `--compare` shows two runs side by side anywhere:
+
+```bash
+.venv/bin/python scripts/measure-test-writes.py --workers 4 --output after.json
+.venv/bin/python scripts/measure-test-writes.py --compare before.json after.json
+```
+
 On Windows, which is not validated (see below), use `.venv\Scripts\python.exe` for
 the sensor commands.
 

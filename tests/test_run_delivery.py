@@ -40,6 +40,7 @@ from agent_skills import release
 from agent_skills.lifecycle import Lifecycle
 from agent_skills.release import build_release, verify_release
 from agent_skills.validate import LEAKAGE_PATTERNS
+from quiet_git import quieten
 
 
 # The cases share one fixture repository's in-app lease lock and the
@@ -299,7 +300,9 @@ class Fixture:
         self.tool = generation / TOOL_RELATIVE
         self.env = {**clean_environment(), "FAKE_FORGE_STATE": str(self.tmp / "forge.json")}
         sh("git", "init", "-q", "--bare", "-b", "main", self.origin)
+        quieten(self.origin)
         sh("git", "clone", "-q", self.origin, self.main)
+        quieten(self.main)
         m = self.main
         (m / "src").mkdir()
         (m / "src/app.txt").write_text("app\n")

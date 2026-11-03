@@ -68,8 +68,8 @@ A green local run does not prove the declared minimum Python or another operatin
 system. Reproducing a CI failure has to clear the local environment's variables
 first, keeping the runner's baseline, such as `PATH`, `HOME` and the git identity CI
 configures, and setting what the workflow's own `env` block sets, because a variable
-left in the session's shell can hide the failure. Never point `TMPDIR` under a checkout: tests that copy the
-repository root then recurse into their own copy without bound. A local suite run
+left in the session's shell can hide the failure. Never point `TMPDIR` under a checkout: every test's folders
+would then sit inside the tree the tests read. A local suite run
 can leave bytecode under `skills/`, and `scripts/cut-release.py` then fails with
 `release.source_validation`. Clear it, then cut again:
 
@@ -115,6 +115,13 @@ started. A unit that hangs is stopped after `--unit-timeout` seconds and named.
 Without the option the limit is five times the slowest unit an earlier
 `--timings-from` file records, at least 300 seconds, or 1800 seconds with no
 usable file; `0` sets no limit.
+
+A test that needs the repository root copies it through `tests/corpus_copy.py`,
+which leaves out environments and cannot copy into itself. Several tests that each
+change a copy share one `SharedCorpus`, taking it through `restored()`, so each
+costs only the files it changes and none sees another's writes. A fixture's own git
+repositories use `tests/quiet_git.py`. `scripts/measure-test-writes.py` shows what
+each test module writes.
 
 Mark a test class `run_serially = True`, or a module `RUN_SERIALLY = True`,
 when it cannot share the machine: a fixed port, a fixed path outside its own

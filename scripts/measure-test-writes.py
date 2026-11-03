@@ -10,11 +10,14 @@ system's file events, and reports per module and in total:
 - ``foldersCreated``: events that created a folder;
 - ``left``: files and folders still in the unit's temp folder once it ended.
 
-A write inside one event batch to a path already written counts once, as a
-watcher would see it, so the counts are comparable between runs and are not an
-exact tally of system calls. A test that clears ``TMPDIR`` for a child writes
-outside the root, and that child's writes are not counted. Events the system
-dropped are reported as ``droppedBatches``; a run that has any undercounts.
+These are what a watcher receives, not a tally of system calls: writes to one
+path inside one event batch count once, and a file created, written and removed
+across batches counts up to once for each. Runs compare with one another, and
+a count is not the number of distinct files. A child that ignores ``TMPDIR``,
+because a test cleared it or as macOS's ``mktemp -d`` does, writes outside the
+root and is not counted. Events the system
+dropped are reported as ``droppedBatches``; a run that has any undercounts, as
+does one with ``settled`` false, whose last events never arrived.
 
     .venv/bin/python scripts/measure-test-writes.py --output before.json --workers 4
     .venv/bin/python scripts/measure-test-writes.py --output after.json --workers 4
@@ -54,6 +57,9 @@ ITEM_MODIFIED = 0x00001000
 ITEM_IS_FILE = 0x00010000
 ITEM_IS_DIR = 0x00020000
 LATENCY_SECONDS = 0.1
+# How long to wait for a marker file's event, and how many times to write it.
+SETTLE_SECONDS = 5
+SETTLE_ATTEMPTS = 6
 COUNTS = ("events", "filesWritten", "foldersCreated", "left")
 
 
@@ -229,18 +235,36 @@ def measure(args: argparse.Namespace) -> int:
         tally = Tally(base / "units")
         lock = threading.Lock()
 
+        # The system delivers events late, and may start a stream late: a marker seen means all before it arrived.
+        marker = base / "runner" / "marker"
+        seen = threading.Event()
+
         def add(path: bytes, flags: int) -> None:
             with lock:
                 tally.add(path, flags)
+            if path == os.fsencode(marker):
+                seen.set()
+
+        def settle() -> bool:
+            seen.clear()
+            for _ in range(SETTLE_ATTEMPTS):
+                marker.write_text("", encoding="utf-8")
+                if seen.wait(SETTLE_SECONDS):
+                    return True
+            return False
 
         watch = Watch(base, add)
         try:
+            if not settle():
+                print("measure-test-writes: file events never arrived", file=sys.stderr)
+                return 2
             units = runner.discover_units(os.path.abspath(args.start_directory), args.top_level_dir, args.pattern)
             started = time.perf_counter()
             combined = runner.run_suite(units, workers=args.workers, top=args.top_level_dir,
                                         unit_timeout=args.unit_timeout or None, unit_temp=base / "units")
             seconds = time.perf_counter() - started
             passed = runner.report(combined, seconds)
+            settled = settle()
         except KeyboardInterrupt:
             print("interrupted: every worker was stopped", file=sys.stderr)
             return 130
@@ -249,9 +273,11 @@ def measure(args: argparse.Namespace) -> int:
         with lock:
             summary = summarize(units, tally.counts, combined["unitTemp"])
         summary |= {"seconds": round(seconds, 3), "workers": args.workers, "testsRun": combined["testsRun"],
-                    "passed": passed, "droppedBatches": tally.dropped_batches}
+                    "passed": passed, "droppedBatches": tally.dropped_batches, "settled": settled}
         table(summary, sys.stdout)
         print(f"dropped event batches: {tally.dropped_batches}")
+        if not settled:
+            print("the last events never arrived, so these counts are low")
         if args.output:
             args.output.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     finally:
@@ -274,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.compare:
         before, after = (json.loads(path.read_text(encoding="utf-8")) for path in args.compare)
-        compare(before, after)
+        compare(before, after, out=sys.stdout)
         return 0
     if args.workers < 1:
         parser.error("--workers must be at least 1")

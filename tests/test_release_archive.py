@@ -4,7 +4,6 @@ import hashlib
 import io
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,6 +22,7 @@ from agent_skills.release import (
     verify_release,
 )
 from agent_skills.validate import canonical_json
+from corpus_copy import copy_corpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -211,7 +211,7 @@ class ReleaseArchiveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             corpus = directory / "corpus"
-            shutil.copytree(ROOT, corpus, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+            copy_corpus(corpus)
             external = directory / "external-validate.py"
             external.write_text("raise RuntimeError('must not package')\n", encoding="utf-8")
             runtime = corpus / "agent_skills" / "validate.py"

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import re
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
 from agent_skills.release import ReleaseError, build_release
+from corpus_copy import copy_corpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -265,11 +265,7 @@ class DeclaredMechanicsCorpusTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             copied = Path(temporary) / "corpus"
-            shutil.copytree(
-                ROOT,
-                copied,
-                ignore=shutil.ignore_patterns(".git", "__pycache__"),
-            )
+            copy_corpus(copied)
             skill = copied / "skills/execute-work/SKILL.md"
             skill.write_text(
                 skill.read_text(encoding="utf-8") + "\nInvalidates provenance.\n",
