@@ -490,7 +490,8 @@ doing>" --state working --waiting-on ""` before going on.
 
 **Local load**
 
-Run at most `<worker cap, default 4>` local test workers.
+Run at most `<worker cap, default 4>` local test workers. Stop only processes you
+started, by the pid you recorded, never by pattern.
 
 **Run events**
 

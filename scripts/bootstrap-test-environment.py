@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -11,6 +13,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_ENVIRONMENT = ".venv"
 NODE_MINIMUM = 20
 NODE_MISSING = (
     "Node.js 20 or newer, with npm, is required for the page-test lane; "
@@ -24,9 +27,9 @@ def environment_python(environment: Path) -> Path:
     return environment / "bin" / "python"
 
 
-def create_environment(root: Path) -> Path:
+def create_environment(root: Path, name: str = DEFAULT_ENVIRONMENT) -> Path:
     root = root.resolve(strict=True)
-    environment = root / ".venv"
+    environment = root / name
     subprocess.run(
         [sys.executable, "-m", "venv", str(environment)],
         cwd=root,
@@ -48,13 +51,13 @@ def node_tools() -> tuple[str, str]:
     raise SystemExit(NODE_MISSING)
 
 
-def bootstrap(root: Path = ROOT) -> Path:
+def bootstrap(root: Path = ROOT, environment: str = DEFAULT_ENVIRONMENT) -> Path:
     root = root.resolve(strict=True)
     # The page-test lane is development-only: a checkout that declares it
     # installs its locked packages into the checkout, never into a release.
     page_lane = (root / "package-lock.json").is_file()
     npm = node_tools()[1] if page_lane else None
-    interpreter = create_environment(root)
+    interpreter = create_environment(root, environment)
     subprocess.run(
         [str(interpreter), "-m", "pip", "install", "-e", ".[test]"],
         cwd=root,
@@ -69,5 +72,23 @@ def bootstrap(root: Path = ROOT) -> Path:
     return interpreter
 
 
+def environment_name(name: str) -> str:
+    # Only these are ignored by git, and a folder elsewhere would land outside the checkout or in the corpus.
+    if not re.fullmatch(r"\.venv(-[A-Za-z0-9._]+)?", name):
+        raise argparse.ArgumentTypeError(f"{name!r} is not .venv or a .venv-<name> folder in the checkout")
+    return name
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--environment",
+        type=environment_name,
+        default=DEFAULT_ENVIRONMENT,
+        help="the environment's folder in the checkout, so a second Python leaves .venv alone",
+    )
+    print(bootstrap(environment=parser.parse_args(argv).environment))
+
+
 if __name__ == "__main__":
-    print(bootstrap())
+    main()

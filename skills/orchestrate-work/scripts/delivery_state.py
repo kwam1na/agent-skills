@@ -2813,11 +2813,21 @@ def _signal_frozen(pids: list[int], signum: signal.Signals) -> None:
     """Signal what this run froze, without reading it again: a read that fails must not leave it stopped.
 
     A stopped process cannot exec or exit by itself. ``_stop_leftovers`` drops a
-    pid a later table read no longer holds, since another actor may have killed it.
+    pid since reused, by ``_still_frozen``, before it signals here.
     """
     for pid in pids:
         with contextlib.suppress(OSError):
             os.kill(pid, signum)
+
+
+def _still_frozen(frozen: dict[int, float], table: dict | None) -> dict[int, float]:
+    """What was frozen, by the pid's start when frozen, less a pid this read shows started since: it is another process's.
+
+    A pid the read lacks stays: a read can miss a live process, and a stopped one is
+    left stopped by nothing else, while the signal does no harm to a pid no process holds.
+    """
+    return {pid: start for pid, start in frozen.items()
+            if table is None or pid not in table or abs(table[pid][3] - start) <= START_SLACK_SECONDS}
 
 
 def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
@@ -2829,6 +2839,11 @@ def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
     children the first read missed; then everything frozen is killed, even
     when the passes are interrupted. A preview shows the first read only; a
     later pass may add processes spawned since, each under the same refusals.
+
+    One last read, before anything is killed, drops a pid it shows started
+    since: that pid was reused. Everything else frozen is killed and reported,
+    even when that read fails or is interrupted, because a stopped process must
+    not stay stopped, and the interrupt then carries on to the caller.
     """
     group = process.pid if _unreaped(process.pid) else None
     table: dict | None = None
@@ -2846,7 +2861,7 @@ def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
         return
     if selection["unreadable"]:
         return
-    frozen: list[int] = []
+    frozen: dict[int, float] = {}
     whole_group = selection["whole_group"]
     latest = selection
     try:
@@ -2856,11 +2871,12 @@ def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
                 break
             # One at a time, so an interrupt within the pass still kills what it had frozen.
             for pid in fresh:
-                frozen += _signal_selected([pid], group, marker, signal.SIGSTOP)
+                start = table[pid][3]
+                frozen.update((stopped, start) for stopped in _signal_selected([pid], group, marker, signal.SIGSTOP))
             latest = select_now()
             if latest["unreadable"]:
                 break
-            frozen = [pid for pid in frozen if table is None or pid in table]
+            frozen = _still_frozen(frozen, table)
             whole_group = whole_group and latest["whole_group"]
             for refusal in latest["refused"]:
                 if refusal not in selection["refused"]:
@@ -2868,15 +2884,23 @@ def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
             # A frozen process a later read refuses is let go again, never left stopped.
             refused_now = {pid for pid, _ in latest["refused"]}
             _signal_frozen([pid for pid in frozen if pid in refused_now], signal.SIGCONT)
-            frozen = [pid for pid in frozen if pid not in refused_now]
+            frozen = {pid: start for pid, start in frozen.items() if pid not in refused_now}
     finally:
         # Never leave a frozen process behind: what was stopped is killed.
+        last, interrupted = None, None
+        try:
+            last = _process_table()
+        except KeyboardInterrupt as interrupt:
+            interrupted = interrupt
+        frozen = _still_frozen(frozen, last)
         if group is not None and whole_group:
             with contextlib.suppress(OSError):
                 os.killpg(group, signal.SIGKILL)
-        _signal_frozen(frozen, signal.SIGKILL)
+        _signal_frozen(list(frozen), signal.SIGKILL)
         selection["selected"] = sorted(frozen)
         selection["whole_group"] = whole_group
+        if interrupted is not None:
+            raise interrupted
 
 
 def _stop_group(process: subprocess.Popen) -> None:
@@ -2946,7 +2970,9 @@ def _run_bounded(argv: list[str], timeout: int, limit: int, cwd: Path | None = N
 
     However the run ends, interrupted included, what the command left running
     is then stopped (``_cleanup_selection``) before the command is reaped, and
-    the selection is appended to ``cleanup``. With ``preview`` the selection is
+    the selection is appended to ``cleanup``. An interrupt during its first read
+    of the process table leaves them running, not stopped: nothing has been
+    selected yet. With ``preview`` the selection is
     passed to it and nothing it names is signalled. A command still running
     because it overran or the run was interrupted is stopped first with its
     whole group, preview or not: the group is the new session the command was

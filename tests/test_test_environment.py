@@ -21,6 +21,32 @@ def _load_bootstrap():
     return module
 
 
+class NamedEnvironmentTests(unittest.TestCase):
+    def test_the_command_line_names_the_environment_and_only_a_venv_in_the_checkout(self) -> None:
+        bootstrap = _load_bootstrap()
+        with mock.patch.object(bootstrap, "bootstrap", return_value=Path("python")) as run, mock.patch("builtins.print"):
+            bootstrap.main([])
+            bootstrap.main(["--environment", ".venv-3.11"])
+        self.assertEqual([call.kwargs["environment"] for call in run.call_args_list], [".venv", ".venv-3.11"])
+        for refused in ("../outside", "/tmp/absolute", "skills", ".", "", "venv311", ".venv-a/b", ".venv-"):
+            with self.subTest(refused=refused), mock.patch.object(bootstrap, "bootstrap") as run, \
+                    mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+                bootstrap.main(["--environment", refused])
+            run.assert_not_called()
+
+    def test_an_environment_can_be_named_and_the_default_stays_the_checkouts_venv(self) -> None:
+        bootstrap = _load_bootstrap()
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(bootstrap.subprocess, "run") as run:
+            root = Path(temporary)
+            named = bootstrap.bootstrap(root, environment=".venv-3.11")
+            default = bootstrap.bootstrap(root)
+        root = root.resolve()
+        self.assertEqual(named, bootstrap.environment_python(root / ".venv-3.11"))
+        self.assertEqual(default, bootstrap.environment_python(root / ".venv"))
+        created = [call.args[0][-1] for call in run.call_args_list if "venv" in call.args[0]]
+        self.assertEqual(created, [str(root / ".venv-3.11"), str(root / ".venv")])
+
+
 def _write_dependency_wheel(path: Path, identity: str) -> None:
     dist_info = "fixture_dependency-1.0.dist-info"
     files = {

@@ -34,22 +34,28 @@ def find_node() -> str | None:
     return node if major.isdigit() and int(major) >= NODE_MINIMUM else None
 
 
-def run_lane(node: str, files: list[Path]) -> str | None:
+def run_lane(node: str, files: list[Path], timeout: float = 600) -> str | None:
     """Run the page tests and return why the lane failed, or None."""
-    result = subprocess.run(
-        [
-            node,
-            "--test",
-            f"--test-reporter={REPORTER.as_uri()}",
-            "--test-reporter-destination=stdout",
-            *(str(path) for path in files),
-        ],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=600,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                node,
+                "--test",
+                f"--test-reporter={REPORTER.as_uri()}",
+                "--test-reporter-destination=stdout",
+                *(str(path) for path in files),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as expired:
+        # What had finished narrows a hang down to the tests that had not.
+        output = expired.stdout or b""
+        output = output.decode("utf-8", "replace") if isinstance(output, bytes) else output
+        return f"The page tests did not finish in {timeout:g}s. Reported so far:\n{output.strip()}"
     events = []
     for line in result.stdout.splitlines():
         try:
@@ -115,6 +121,17 @@ class PageLaneTests(unittest.TestCase):
 
 @unittest.skipIf(find_node() is None, "the lane's own failure modes need Node")
 class PageLaneFailureTests(unittest.TestCase):
+    def test_a_lane_that_hangs_is_reported_as_a_failure_rather_than_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            hanging = Path(temporary) / "hangs.test.mjs"
+            hanging.write_text(
+                'import { test } from "node:test";\n'
+                'test("hangs", () => new Promise((resolve) => setTimeout(resolve, 15000)));\n',
+                encoding="utf-8",
+            )
+            failure = run_lane(find_node(), [hanging], timeout=2)
+        self.assertIn("did not finish in 2s", failure or "")
+
     def write(self, directory: Path, name: str, body: str) -> Path:
         path = directory / name
         path.write_text(body, encoding="utf-8")

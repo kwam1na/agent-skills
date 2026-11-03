@@ -1760,7 +1760,7 @@ def app_check(args) -> None:
         raise Stop("--baseline and --probe don't combine")
     if args.probe and (args.mode != "loaded" or args.hold or args.fail):
         raise Stop("a probe is a plain load (--mode loaded, no --hold or --fail): it looks things up, it isn't a check")
-    passthrough = args.passthrough[1:] if args.passthrough[:1] == ["--"] else list(args.passthrough)
+    passthrough = list(args.passthrough)
     smuggled = [a for a in passthrough if a.split("=")[0] in SPEC_FLAGS]
     if smuggled:
         raise Stop(f"{smuggled} belong to the check spec: pass them to app-check itself, not after --")
@@ -1904,7 +1904,7 @@ def app_video(args) -> None:
         raise Stop(f"{c.path} declares no inApp.baseline build to record the 'before' on")
     if args.mode == "hold" and not args.hold or args.mode == "fail" and not args.fail:
         raise Stop(f"a {args.mode} video needs at least one --{args.mode} pattern")
-    passthrough = args.passthrough[1:] if args.passthrough[:1] == ["--"] else list(args.passthrough)
+    passthrough = list(args.passthrough)
     smuggled = [a for a in passthrough if a.split("=")[0] in SPEC_FLAGS]
     if smuggled:
         raise Stop(f"{smuggled} belong to the spec: pass them to app-video itself, not after --")
@@ -4252,7 +4252,7 @@ def doctor(args) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     global DELIVERY_ARG
-    parser = argparse.ArgumentParser(prog="run_delivery.py", description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(prog="run_delivery.py", description=__doc__.split("\n\n")[0], allow_abbrev=False)
     parser.add_argument("--delivery", help="the delivery key, when the repository has several")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("review-prepare"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)

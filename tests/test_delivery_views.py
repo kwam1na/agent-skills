@@ -623,7 +623,7 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             copy_root = directory / "corpus"
-            shutil.copytree(ROOT, copy_root, ignore=shutil.ignore_patterns(".venv", ".git", ".worktrees", "__pycache__",
+            shutil.copytree(ROOT, copy_root, ignore=shutil.ignore_patterns(".venv", ".venv-*", ".git", ".worktrees", "__pycache__",
                                                                            "*.egg-info", "qualifications"))
             (copy_root / "profiles/delivery-views.json").unlink()
             from agent_skills import release

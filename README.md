@@ -296,6 +296,19 @@ release that already exists. If anything fails, nothing is published. A candidat
 never latest, so download one by naming its tag. See
 [product generations](docs/product-generation.md#releases).
 
+The gate is the Ubuntu job and `cut-release` on the push to `main`. CI's macOS job
+runs there too, to inform, and neither allows nor blocks a release. Before tagging,
+whoever tags runs the full suite locally on macOS with Python 3.11, which the release
+job cannot verify:
+
+```bash
+uv python install 3.11
+uv run --no-project --python 3.11 python scripts/bootstrap-test-environment.py --environment .venv-3.11
+.venv-3.11/bin/python scripts/run-tests.py
+```
+
+Windows is not validated: CI does not run it, and the fixes made for it are unproven.
+
 ## Repository lifecycle
 
 Run the lifecycle from an extracted release archive. Read-only commands emit
