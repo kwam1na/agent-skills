@@ -87,6 +87,13 @@ class CopyCorpusTests(unittest.TestCase):
         self.assertEqual((copied / "catalog.json").read_text(encoding="utf-8"), "{}\n")
         self.assertFalse((self.source / "copy").exists())
 
+    def test_a_path_back_out_of_a_link_into_the_source_does_not_copy_into_itself(self) -> None:
+        (self.source / "scratch/held").mkdir(parents=True)
+        (self.source / "hop").symlink_to(self.source / "scratch/held", target_is_directory=True)
+        copied = copy_corpus(self.source / "hop" / ".." / "copy", source=self.source)
+        self.assertEqual((self.source / "scratch/copy/catalog.json").read_text(encoding="utf-8"), "{}\n")
+        self.assertEqual([path for path in copied.rglob("copy")], [])
+
     def test_a_folder_whose_name_starts_the_targets_is_kept(self) -> None:
         (self.source / "copy").mkdir()
         (self.source / "copy/held").write_text("x\n", encoding="utf-8")

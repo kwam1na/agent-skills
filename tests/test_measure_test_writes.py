@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import errno
 import importlib.util
 import io
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -130,7 +132,10 @@ class CompareTests(unittest.TestCase):
             closed = Path(temporary) / "closed"
             closed.mkdir()
             os.chmod(closed, 0o500)
-            for output in ("/nonexistent-folder/counts.json", temporary, str(closed / "counts.json")):
+            read_only = Path(temporary) / "read-only.json"
+            read_only.write_text("{}\n", encoding="utf-8")
+            os.chmod(read_only, 0o400)
+            for output in ("/nonexistent-folder/counts.json", temporary, str(closed / "counts.json"), str(read_only)):
                 with self.subTest(output=output), mock.patch("sys.stderr", io.StringIO()) as err, \
                         mock.patch.object(measure, "measure", return_value=0) as measured, \
                         self.assertRaises(SystemExit) as refused:
@@ -321,6 +326,12 @@ class MeasuringTests(unittest.TestCase):
             os.kill(worker, 0)
 
     def test_a_terminate_during_discovery_stops_the_run(self) -> None:
+        self._signal_during_discovery(signal.SIGTERM)
+
+    def test_an_interrupt_during_discovery_stops_the_run(self) -> None:
+        self._signal_during_discovery(signal.SIGINT)
+
+    def _signal_during_discovery(self, signum: int) -> None:
         started, ran = self.root / "importing", self.root / "ran"
         self.module("test_slow_import", f"""
             import pathlib, time, unittest
@@ -337,9 +348,16 @@ class MeasuringTests(unittest.TestCase):
         deadline = time.monotonic() + 60
         while not started.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
-        process.terminate()
+        process.send_signal(signum)
         self.assertEqual(process.wait(timeout=60), 130)
         self.assertFalse(ran.exists())
+
+    def test_a_path_too_long_to_reach_costs_nothing(self) -> None:
+        (self.root / "held").mkdir()
+        too_long = OSError(errno.ENAMETOOLONG, "File name too long")
+        with mock.patch.object(measure.Path, "is_symlink", side_effect=too_long) as checked:
+            measure._open_folders(self.root)
+        checked.assert_called()
 
     def test_a_folder_that_cannot_be_opened_or_is_gone_costs_nothing(self) -> None:
         (self.root / "held").mkdir()

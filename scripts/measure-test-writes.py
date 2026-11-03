@@ -248,12 +248,12 @@ def _open_folders(top: Path) -> None:
     for folder, names, _files in os.walk(top):
         for name in names:
             path = Path(folder) / name
-            if not path.is_symlink():
-                # One a test's leftover child just removed, or that cannot change, must not cost the run's verdict.
-                try:
+            # One a test's leftover child just removed, or that cannot change, must not cost the run's verdict.
+            try:
+                if not path.is_symlink():
                     os.chmod(path, 0o700)
-                except OSError:
-                    pass
+            except OSError:
+                pass
 
 
 def measure(args: argparse.Namespace) -> int:
@@ -345,7 +345,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--workers must be at least 1")
     if args.output:
         folder = args.output.resolve().parent
-        if args.output.is_dir() or not folder.is_dir() or not os.access(folder, os.W_OK):
+        if (args.output.is_dir() or not folder.is_dir() or not os.access(folder, os.W_OK)
+                or (args.output.exists() and not os.access(args.output, os.W_OK))):
             parser.error(f"--output cannot be written: {args.output}")
     if sys.platform != "darwin":
         print("measure-test-writes: measuring needs FSEvents, so macOS; --compare runs anywhere", file=sys.stderr)
@@ -360,6 +361,7 @@ def _terminate(_signum: int, _frame: object) -> None:
 
 
 if __name__ == "__main__":
-    # A terminate stops the workers and removes the temp root, the same way an interrupt does.
+    # Either stops the workers and removes the temp root, including while the test loader is importing.
     signal.signal(signal.SIGTERM, _terminate)
+    signal.signal(signal.SIGINT, _terminate)
     raise SystemExit(main())
