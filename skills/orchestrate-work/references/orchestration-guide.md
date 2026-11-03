@@ -463,7 +463,9 @@ Ask each lens for its result in review-lens-result/1, on top of the shape
 `changes-requested`, `evidence`, and `findings`, each with `id`, `severity` and
 `summary`. From round 2 on add `resolvedFindings`, each finding of that lens still
 open going into the round, with its `id`, `state` and `resolution`; a finding closed
-in evidence alone stays open.
+in evidence alone stays open. `state` is one of `closed`, `fixed`, `withdrawn`,
+`dropped`, `deferred` or `open`, and a `deferred` one also carries `deferredIssue`,
+naming its follow-up item. Only a P2 or P3 can be deferred.
 
 Save every lens's result for every round, one outcome file per round, as the lens
 returned it, outside your checkout, and keep the files until close-out:

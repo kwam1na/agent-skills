@@ -81,6 +81,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " checkout, and keep the files until close-out",
         "Right after your hand-off, which gives the record your reviewed head, capture every round in order",
         "A round's outcome is `aligned` only when every lens aligned and no finding is open",
+        "`state` is one of `closed`, `fixed`, `withdrawn`, `dropped`, `deferred` or `open`, and a `deferred` one also"
+        " carries `deferredIssue`, naming its follow-up item.",
         "capture-review --subject <subject> --candidate <reviewed head> --outcome <round-1.json> --outcome <round-2.json>",
         # The hand-off check.
         "review evidence was captured for the reviewed head, or the lane said why not.",

@@ -341,7 +341,7 @@ class ReviewEvidenceCheckTests(unittest.TestCase):
         section = guide.split("**Review evidence**", 1)[1]
         wrapper = re.search(r"```json\n(.*?)\n```", section, re.S).group(1)
         for name in ("schemaVersion", "lensId", "subjectRef", "candidateRef", "round", "outcome", "evidence", "findings",
-                     "resolvedFindings", "id", "severity", "summary", "state", "resolution"):
+                     "resolvedFindings", "id", "severity", "summary", "state", "resolution", "deferred", "deferredIssue"):
             self.assertIn(f"`{name}`", section.split("```json", 1)[0], name)
         def entry(lens, result):
             text = wrapper.split('"entries": [', 1)[1].rsplit("]}", 1)[0]
@@ -363,11 +363,13 @@ class ReviewEvidenceCheckTests(unittest.TestCase):
         first = self.template_round(1, fixtures.HEAD_A, {
             correctness: {**identity(correctness, 1, fixtures.HEAD_A), "outcome": "changes-requested", "evidence": "read it",
                           "findings": [{"id": "F1", "severity": "P1", "summary": "wrong"}]},
-            testing: {**identity(testing, 1, fixtures.HEAD_A), "outcome": "aligned", "evidence": "ran it", "findings": []}})
+            testing: {**identity(testing, 1, fixtures.HEAD_A), "outcome": "changes-requested", "evidence": "ran it",
+                      "findings": [{"id": "T1", "severity": "P3", "summary": "thin"}]}})
         second = self.template_round(2, fixtures.HEAD_B, {
             correctness: {**identity(correctness, 2, fixtures.HEAD_B), "outcome": "aligned", "evidence": "read it", "findings": [],
                           "resolvedFindings": [{"id": "F1", "state": "fixed", "resolution": "now right"}]},
-            testing: {**identity(testing, 2, fixtures.HEAD_B), "outcome": "aligned", "evidence": "ran it", "findings": []}})
+            testing: {**identity(testing, 2, fixtures.HEAD_B), "outcome": "aligned", "evidence": "ran it", "findings": [],
+                      "resolvedFindings": [{"id": "T1", "state": "deferred", "resolution": "later", "deferredIssue": "V26-1"}]}})
         self.journal_rounds(2)
         state_tool.capture_review(self.directory, subject="work-a", candidate=fixtures.HEAD_B, outcomes=[first, second])
         self.assertEqual(state_tool.review_evidence(self.directory, "work-a")["evidence"], "captured")
