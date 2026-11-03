@@ -41,7 +41,7 @@
       "outputs": [
         {
           "path": "skills/compound-delivery-kernel/SKILL.md",
-          "sha256": "857c8dc6d1af9aa0a447acdf1d9fdb98dc3ee21e15ee9054c5c3e005850d3899"
+          "sha256": "e4d38cb0286f9b43dc41c168f395da42f24891b9fd3f96ef5a017c33e9d4f3bb"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -66,7 +66,7 @@
       "outputs": [
         {
           "path": "skills/compound-learning/SKILL.md",
-          "sha256": "c68a571f226060f64dc089da293e1918358b1d9e768446fb202537680f0278fe"
+          "sha256": "7d28e8ec315ff3cb75565d4fc225cca0923e22e5d76d620236dcffb67084afb7"
         }
       ],
       "owner": "agent-skills-corpus",

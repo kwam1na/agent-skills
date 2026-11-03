@@ -45,8 +45,8 @@ Plan -> Work -> Review -> Compound.
 ## Compound
 
 Choose the smallest durable response to a reusable learning: update existing
-guidance, add a focused sensor, record a follow-up, or explicitly record that no
-durable learning emerged. Do not create documentation for obvious one-off work.
+guidance, add a focused sensor, save a solution note, record a follow-up, or
+explicitly record that no durable learning emerged. Do not create documentation for obvious one-off work.
 Name the tracked follow-up item recorded for every deferral any lens filed as
 part of the delivery's record. One tracked item may carry several deferrals,
 one item per shippable outcome. Where no tracker is configured, those follow-up
