@@ -802,6 +802,11 @@ class SupervisorPassTests(unittest.TestCase):
         blocker = kinds(fx, "blocker.recorded")[-1]["id"]
         held = self.holds(fx)
         self.assertTrue(any(h.startswith(f"Blocker {blocker}") for h in held), held)
+        # Only the runner's own blocker clears with its hold or base.repaired; this one clears with lead-resolve alone.
+        mine = [item for item in passes(fx)[-1]["needsYou"] if item["text"].startswith(f"Blocker {blocker}")]
+        self.assertEqual(len(mine), 1, passes(fx)[-1]["needsYou"])
+        self.assertTrue(mine[0]["clears"].endswith(f"lead-resolve {blocker} --why TEXT"), mine)
+        self.assertNotIn("runner's hold", mine[0]["clears"])
         self.assertFalse(any(h.startswith("not handed off") for h in held), held)
         # A broken base holds it until it's repaired; the runner's own blocker clears with base.repaired.
         state_tool(fx, "journal", "--kind", "base.broken", "--summary", "the base fails its check")
