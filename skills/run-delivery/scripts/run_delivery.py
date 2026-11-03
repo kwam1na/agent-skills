@@ -19,6 +19,8 @@ Lane:
 Lead:
   lead-setup <key> --plan P --base B --pattern RE ... | lead-init | lead-brief | lead-assign <key...> --lane L --title T
   lead-accept <key> [--accept-blocked LABEL ...] [--accept-restarts] | ship | adapter-test
+Anyone:
+  view [--archive PATH] [--port N]
 
 Run with python3 -B from anywhere inside a checkout of the delivery base or a lane branch. With several deliveries
 in the repository, name one with --delivery KEY (or RUN_DELIVERY_DELIVERY); otherwise the current branch picks it.
@@ -1061,9 +1063,24 @@ def round_counts(outcome: dict) -> tuple[dict, dict]:
     return verdicts, counts
 
 
-def ensure_journaled(key: str, outcome: dict, lane: str) -> None:
+def ensure_recorded(key: str, outcome: dict, lane: str, folder: Path) -> None:
+    """The round in the record as the lane's own: its review.round, then the rounds so far captured at the round's
+    candidate, so the live view shows the round's card and notes before hand-off. Each write is skipped once made,
+    so a re-run finishes what a failure left; a story with a product run is reviewed through its run instead."""
+    doc = load_state()
+    ensure_journaled(key, outcome, lane, doc)
+    item = next((i for i in [*doc["state"]["queue"], *doc["state"].get("planned", [])] if i["subject"] == key), None)
+    if item is None or item.get("runId"):
+        return
+    rounds = [folder / f"round-{k}.json" for k in range(1, outcome["round"] + 1)]
+    state_tool("capture-review", "--subject", key, "--candidate", outcome["entries"][0]["binding"]["candidateRef"],
+               *[x for p in rounds for x in ("--outcome", str(p))])
+
+
+def ensure_journaled(key: str, outcome: dict, lane: str, doc: dict) -> None:
     n = outcome["round"]
-    if any(e["review"]["round"] == n for e in journal_entries("review.round", key)):
+    if any(e.get("kind") == "review.round" and e.get("subject") == key and e["review"]["round"] == n
+           for e in doc["journal"]):
         return
     verdicts, counts = round_counts(outcome)
     review = {"round": n, "startedAt": outcome["startedAt"], "finishedAt": outcome["finishedAt"],
@@ -1112,7 +1129,7 @@ def review_reduce(args) -> None:
     done_path = folder / f"round-{n}.json"
     if done_path.exists():  # reduced already: never rewrite it, only finish the journaling if that failed
         outcome = json.loads(done_path.read_text())
-        ensure_journaled(key, outcome, lane)
+        ensure_recorded(key, outcome, lane, folder)
         summarize(key, outcome)
         return
     meta_path = folder / f"round-{n}.meta.json"
@@ -1222,7 +1239,7 @@ def review_reduce(args) -> None:
     done_path.write_text(json.dumps(outcome, indent=1) + "\n")
     for lens, (short, _) in c.lenses.items():
         remove_checkout(lens_checkout(key, n, short))
-    ensure_journaled(key, outcome, lane)
+    ensure_recorded(key, outcome, lane, folder)
     summarize(key, outcome)
 
 
@@ -3542,6 +3559,64 @@ def delivery_processes(lead: Path, state: Path, delivery: str, main: Path) -> li
     return found
 
 
+def archived_record(path: Path) -> Path:
+    """The record in an archived copy: the folder itself when it holds state.json, else its one subfolder that does
+    (the supervisor's `latest` holds the record beside the flow log)."""
+    path = Path(os.path.abspath(os.path.expanduser(str(path))))
+    if (path / "state.json").is_file():
+        return path
+    found = sorted(child for child in path.iterdir() if (child / "state.json").is_file()) if path.is_dir() else []
+    if len(found) != 1:
+        held = "no record" if not found else "several records (" + ", ".join(child.name for child in found) + ")"
+        raise Stop(f"{path} holds {held}: name the folder that holds the record's state.json")
+    return found[0]
+
+
+def view(args) -> None:
+    """Serve the live view of the delivery's record, or of an archived copy of it, and print its address. Needs no
+    checkout of the delivery: the live record is found from the delivery file at the base, and an archive needs
+    nothing but itself. Views only: publishers never run from here."""
+    if args.archive:
+        # A copy outlives every checkout, so it is shown with the built-in page, which needs none and is drawn from
+        # the record in memory: no view is rendered into the copy.
+        record, release, root = archived_record(args.archive), GENERATION, None
+        config = {"renderers": [], "publishers": []}
+    else:
+        c = cfg()
+        record, release, root = c.state, c.release, c.root
+        if not (record / "state.json").is_file():
+            raise Stop(f"no record at {record}: it starts at lead-init. With the lead's checkout gone, serve the "
+                       "supervisor's copy: view --archive PATH")
+        binding = c.root / ".agents/orchestration.json"
+        config = json.loads(binding.read_text()).get("state") if binding.exists() else None
+    scripts = str(release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    sys.dont_write_bytecode = True  # the release's modules leave no bytecode in the installed generation
+    import render_state  # noqa: E402  (the installed release's own live view)
+    if config is None:
+        config = {"renderers": [dict(entry) for entry in render_state.DEFAULT_RENDERERS], "publishers": []}
+    try:
+        render_state.parse_config(config)
+        render_state.show(record)
+    except (render_state.ConfigError, render_state.StateError) as error:
+        raise Stop(f"can't serve {record}: {error}")
+    if root is not None:
+        os.chdir(root)  # the binding's renderers run from the checkout, as the lead's renders do
+
+    def announce(address: str) -> None:
+        print(f"http://{address}/", flush=True)
+        print(f"serving {record}" + (", an archived copy: it changes only when its writer copies the record again"
+                                     if args.archive else "") + "; stop with Ctrl-C", flush=True)
+
+    try:
+        render_state.serve_live(record, config, host="127.0.0.1", port=args.port, announce=announce)
+    except OSError as error:
+        raise Stop(f"can't serve the live view on port {args.port}: {error}")
+    except KeyboardInterrupt:
+        return
+
+
 def reconcile_once() -> list[str]:
     """Take the binding's forge and tracker snapshots and reconcile the record with each: an open PR moves a planned
     story to review, a started ticket to building. Returns one line per snapshot."""
@@ -4443,6 +4518,10 @@ def main(argv: list[str] | None = None) -> None:
     q = plan_commands.add_parser("why", help="give a recorded change its reason")
     q.add_argument("change"); q.add_argument("--why", required=True); q.set_defaults(fn=lead_plan)
     p = sub.add_parser("lead-close"); p.set_defaults(fn=lead_close)
+    p = sub.add_parser("view", help="serve the record's live view, or an archived copy's, without a checkout")
+    p.add_argument("--archive", type=Path, help="a copy of the record, such as the supervisor's latest")
+    p.add_argument("--port", type=int, default=0, help="the port; 0 picks a free one")
+    p.set_defaults(fn=view)
     p = sub.add_parser("ship"); p.add_argument("--no-gates", action="store_true", help="stage only; run the gates yourself")
     p.set_defaults(fn=ship)
     p = sub.add_parser("adapter-test"); p.set_defaults(fn=adapter_test)

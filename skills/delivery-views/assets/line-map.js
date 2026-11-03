@@ -1018,6 +1018,19 @@
     });
   }
 
+  // The candidate a stop's review evidence must name. A handed stop's is its head. A planned stop has no head before
+  // hand-off, so it is the candidate its latest capture names; the record keeps a capture only when it is of the
+  // lane's latest journaled round, and the stop's review.round and review.evidence boundary must still end on it.
+  function reviewedCandidate(doc, item, evidence) {
+    var queued = list(doc.state.queue).some(function (entry) { return isObject(entry) && entry.subject === item.subject; });
+    if (queued) { return item.head; }
+    return evidence && isObject(evidence.reviewArtifact) ? evidence.reviewArtifact.candidateRef : undefined;
+  }
+  function isPlanned(doc, item) {
+    return list(doc.state.planned).some(function (entry) { return isObject(entry) && entry.subject === item.subject; })
+      && !list(doc.state.queue).some(function (entry) { return isObject(entry) && entry.subject === item.subject; });
+  }
+
   // The run that built the stop, as the product's run view summarized it when the page was rendered.
   // A round the view gives no lens verdicts for takes them from the record's own review.round entry.
   function runFor(doc, item) {
@@ -1027,12 +1040,18 @@
       var boundary = events.reduce(function (last, event) { return Math.max(last, event.id || 0); }, 0);
       var evidence = events.filter(function (event) { return event.kind === "review.evidence"; }).slice(-1)[0];
       var observation = isObject(doc.reviewEvidence) ? doc.reviewEvidence[item.subject] : undefined;
-      if (!native && !events.length) { return null; }
-      if (!isObject(native) || native.unavailable === true || native.candidateRef !== item.head
+      if (!native && !events.length) {
+        return isPlanned(doc, item)
+          ? el("div", "d-run-none", "No review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off.")
+          : null;
+      }
+      var candidate = reviewedCandidate(doc, item, evidence);
+      if (!isObject(native) || native.unavailable === true || typeof candidate !== "string" || native.candidateRef !== candidate
           || native.journalId !== boundary
           || (evidence && (!isObject(evidence.reviewArtifact) || evidence.reviewArtifact.digest !== native.digest))
           || (isObject(doc.reviewEvidence) && (!isObject(observation) || observation.unavailable === true || observation.digest !== native.digest))) {
-        return el("div", "d-run-none", "Review evidence unavailable or stale for this candidate.");
+        return el("div", "d-run-none", "Review evidence unavailable or stale for this candidate." + (isPlanned(doc, item)
+          ? " Its rounds show here again once the lane's review-reduce records its latest round." : ""));
       }
       var nativeBox = el("div", "d-run");
       nativeBox.appendChild(runSummaryNode(native, { lenses: VIEW.lenses }));
