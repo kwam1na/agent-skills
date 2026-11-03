@@ -837,7 +837,7 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual(state["followups"][-1], {"id": "gamma-notes", "title": "Notes for gamma",
                                                   "reference": "gamma-notes"})
         self.assertEqual(state["planned"], [{"subject": "epsilon-copy", "title": "Copy for epsilon", "lane": None,
-                                             "stage": "review", "changeRequest": "change 5"}])
+                                             "stage": "review", "trackerStarted": True, "changeRequest": "change 5"}])
         recovered = adopter.item("delta-copy")
         self.assertEqual((recovered["stage"], recovered["syncedHead"], recovered["changeRequest"]),
                          ("merged", hand_merged, "change 4"))
@@ -963,6 +963,30 @@ ADOPTER_DEFAULTS = (
     ("hook skip", re.compile(r"--no-verify\b")),
     ("forge command line", re.compile(r"""(["'])(?:gh|glab|hub)\1|["'](?:gh|glab|hub)\s""")),
 )
+
+
+class BindingBasesSchemaTests(unittest.TestCase):
+    """The binding's optional bases: the schema declares it, and the fixture adopter's binding stays valid without it."""
+
+    def setUp(self) -> None:
+        self.schema = json.loads((ROOT / "skills/orchestrate-work/references/schemas.json").read_text(encoding="utf-8"))
+        self.binding = json.loads((FIXTURE / "binding.json").read_text(encoding="utf-8"))
+
+    def errors(self, binding: dict) -> list[str]:
+        # The skill's own validator, which loading the wrapper imported.
+        return sys.modules["delivery_state"].validate(binding, self.schema["orchestration-binding/1"])
+
+    def test_bases_is_an_optional_list_of_branch_names(self) -> None:
+        declared = self.schema["orchestration-binding/1"]
+        self.assertNotIn("bases", declared["required"])
+        self.assertEqual({key: value for key, value in declared["properties"]["bases"].items() if key != "description"},
+                         {"type": "array", "items": {"$ref": "#/$defs/name"}})
+        self.assertIn("* matches any run of characters within one segment", declared["properties"]["bases"]["description"])
+        self.assertEqual(self.errors({key: value for key, value in self.binding.items() if key != "bases"}), [])
+        self.assertEqual(self.errors({**self.binding, "bases": [BASE, "integration-*"]}), [])
+        for bad in ("integration-*", [""], [3], [None]):
+            with self.subTest(bases=bad):
+                self.assertTrue(self.errors({**self.binding, "bases": bad}))
 
 
 class AdopterNeutralityTests(unittest.TestCase):

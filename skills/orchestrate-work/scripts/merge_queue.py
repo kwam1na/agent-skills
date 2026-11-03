@@ -226,6 +226,25 @@ def inside(root: Path, relative: str) -> Path | None:
 # Binding
 
 
+# Where a refusal of a base the binding doesn't serve sends the reader.
+BASE_MISMATCH_GUIDE = "the orchestration guide's base mismatch section, references/orchestration-guide.md#base-mismatch"
+
+
+def serves(binding: dict, base: str) -> bool:
+    """Whether the binding serves ``base``: its base.ref, or a name or ``*`` pattern in its bases.
+
+    ``*`` matches any run of characters within one segment of the branch name, never a ``/``; every other
+    character matches only itself.
+    """
+    names = [binding["base"]["ref"], *binding.get("bases", [])]
+    return any(re.fullmatch("[^/]*".join(map(re.escape, name.split("*"))), base) for name in names)
+
+
+def served_bases(binding: dict) -> str:
+    """The bases a binding serves, as a refusal names them."""
+    return ", ".join([binding["base"]["ref"], *binding.get("bases", [])])
+
+
 def binding_errors(binding: object) -> list[str]:
     errors = validate(binding, load_schema("orchestration-binding/1"))
     if errors or not isinstance(binding, dict):
@@ -1058,8 +1077,13 @@ class Runner:
         errors = binding_errors(binding)
         if errors:
             raise Stop("binding_invalid", "; ".join(errors))
-        if binding["base"] != {"remote": self.remote, "ref": self.base}:
-            raise Stop("binding_invalid", "the binding names a different base than the one it was read from")
+        if binding["base"]["remote"] != self.remote:
+            raise Stop("binding_invalid", f"the binding names the remote {binding['base']['remote']}, not {self.remote}, "
+                                          "which it was read from")
+        if not serves(binding, self.base):
+            raise Stop("binding_invalid", f"the binding doesn't serve the base {self.base}: it serves "
+                                          f"{served_bases(binding)}; add {self.base} to the binding's bases on "
+                                          f"{self.base}, or deliver to a base it serves (see {BASE_MISMATCH_GUIDE})")
         return binding
 
     def evidence(self, check_id: str, head: str, result: str = "passed") -> dict:

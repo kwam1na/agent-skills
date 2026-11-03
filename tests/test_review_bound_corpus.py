@@ -216,6 +216,16 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " must be removed before the ending identity and clean-status checks",
         "The lens names the reviewed tree SHA and both successful identity checks"
         " in its evidence",
+
+        "In that checkout the lens runs the adopting repository's scoped check"
+        " set, never its full suite; the full suite runs once, outside the"
+        " round, at the delivery's tail",
+        "A lens needing evidence beyond that set names each additional test"
+        " file, one path at a time, with what it is evidence for, and never"
+        " widens a run to a directory",
+        "A lens that mutates or injects faults limits both to the candidate's"
+        " changed lines and the code that calls them, and says so in its"
+        " evidence",
     ),
     "skills/obtain-review/references/round-brief-template.md": (
         "a new finding outside the delta is filed only at P0",
@@ -236,6 +246,30 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " adopted as written, resolves it",
         "Approval conditions are report text inside `evidence`; the result shape"
         " does not change, and nothing enforces them",
+
+        "The lens runs the adopting repository's scoped check set in its own"
+        " checkout, never the repository's full suite: the full suite runs once,"
+        " outside the round, at the delivery's tail",
+        "names each additional test file, one path at a time, with what it is"
+        " evidence for, and never widens a run to a directory",
+        "A lens that mutates or injects faults limits both to the candidate's"
+        " changed lines and the code that calls them, and says so in its"
+        " evidence",
+    ),
+    "skills/run-delivery/templates/round-brief.md": (
+        "Run the scoped check set below in your checkout, never the"
+        " repository's full suite",
+        "Mutation and fault injection stay on the candidate's changed lines and"
+        " the code that calls them, and your `evidence` says so",
+        "names each additional test file, one path at a time, with what it is"
+        " evidence for; never widen a run to a directory",
+        "the full suite runs once, outside the round, at the delivery's tail",
+    ),
+    "personas/testing-policy.md": (
+        "Limit mutation and fault injection to the candidate's changed lines and"
+        " the code that calls them",
+        "say in your evidence that your mutants kept to that scope",
+        "Run the scoped check set your brief names, never the full suite",
     ),
     "skills/execute-work/SKILL.md": (
         "state the bound in effect for the delivery",
@@ -308,6 +342,13 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "A plan review that is not converging may end by operator decision rather"
         " than by count; termination is not guaranteed",
         "Each plan-review lens carries this mandate in its own round brief",
+        "its `plan-review` command runs these rounds for any plan, before the plan"
+        " is a delivery and with no delivery file, binding or record:"
+        " `plan-review prepare --plan <path> --lenses <ids>`",
+        "The plan names its review with `reviewSlug: <slug>` in its front matter,"
+        " committed before round 1, so renaming the plan file keeps its review",
+        "when the plan becomes a delivery, its `lead-setup` or `lead-init` adopts"
+        " that store, so the delivery's plan chapter shows every round",
         "Leaving plan review unbounded is a recorded decision rather than an"
         " omission, so a later plan review does not re-derive the question",
         "every lens reviewing a plan optimizes for the lowest number of rounds",

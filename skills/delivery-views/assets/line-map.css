@@ -74,6 +74,9 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .attention .g.wait { color: var(--wait); }
 .attention .a1 { font-weight: 600; overflow-wrap: anywhere; }
 .attention .a2 { color: var(--soft); font-size: 14px; overflow-wrap: anywhere; }
+.needs-you .needs-group { display: grid; gap: 8px; }
+.needs-you .needs-kind { font-size: 13px; color: var(--soft); }
+.needs-you .needs-none, .needs-you .needs-more { margin: 0; color: var(--soft); font-size: 14px; }
 
 /* Journey and freshness */
 .journey { position: relative; height: 74px; max-width: 980px; }

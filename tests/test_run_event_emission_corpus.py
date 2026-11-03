@@ -51,6 +51,9 @@ REFERENCED_KINDS: dict[str, tuple[str, ...]] = {
         "`decision.recorded`",
         "`blocker.recorded`",
     ),
+    # The tracker publisher's configuration names the journal's decision kind, which it posts when marked; the
+    # supervisor's names the blocker kind, which lead-resolve resolves.
+    "skills/run-delivery/references/config.md": ("`decision.recorded`", "`blocker.recorded`"),
     "skills/execute-work/SKILL.md": (
         "`lens.selected`",
         "`review.round.opened`",

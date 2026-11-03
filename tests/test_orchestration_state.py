@@ -738,7 +738,7 @@ class ReconcileTests(unittest.TestCase):
         state = state_tool.show(self.directory)["state"]
         self.assertEqual(state["followups"], [{"id": "work-later", "title": "Later work", "reference": "work-later"}])
         self.assertEqual(state["planned"], [{"subject": "work-now", "title": "Work in progress", "lane": None,
-                                              "stage": "building"}])
+                                              "stage": "building", "trackerStarted": True}])
         self.assertEqual(len(result["changes"]), 2)
         again = self.snapshot("tracker", json.loads(Path(tracker).read_text())["items"])
         version = state["version"]
@@ -787,7 +787,7 @@ class ReconcileTests(unittest.TestCase):
     def test_planned_work_the_tracker_shows_started_moves_to_building_once(self) -> None:
         self.lead({"planned": [
             {"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "planned"},
-            {"subject": "work-open", "title": "In review", "lane": "lane-2", "stage": "review"},
+            {"subject": "work-open", "title": "In review", "lane": "lane-2", "stage": "review", "trackerStarted": True},
         ]})
         started = [{"subject": "work-now", "title": "Work", "state": "started"},
                    {"subject": "work-open", "title": "In review", "state": "started"}]
@@ -812,21 +812,30 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual([change["change"] for change in result["changes"]],
                          ["started in the tracker but not in the record: added as planned work, building"])
         self.assertEqual(state_tool.show(self.directory)["state"]["planned"],
-                         [{"subject": "work-new", "title": "New", "lane": None, "stage": "building"}])
+                         [{"subject": "work-new", "title": "New", "lane": None, "stage": "building", "trackerStarted": True}])
         before = self.bytes()
         code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", tracker))
         self.assertEqual((code, result["drift"]), (0, False))
         self.assertEqual(self.bytes(), before)
 
     def test_work_under_way_the_tracker_shows_back_in_backlog_is_reported_not_reverted(self) -> None:
-        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "building"},
-                               {"subject": "work-open", "title": "Open", "lane": "lane-2", "stage": "review"},
-                               {"subject": "work-later", "title": "Later", "lane": None, "stage": "planned"}]})
+        self.lead({"planned": [
+            {"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "building", "trackerStarted": True},
+            {"subject": "work-open", "title": "Open", "lane": "lane-2", "stage": "review", "trackerStarted": True},
+            {"subject": "work-later", "title": "Later", "lane": None, "stage": "planned"},
+            # Under way by its draft change request, but its ticket was never started: not back in backlog.
+            {"subject": "work-drafted", "title": "Drafted", "lane": "lane-3", "stage": "building"},
+            {"subject": "work-reviewed", "title": "Reviewed", "lane": "lane-4", "stage": "review"},
+            {"subject": "work-unset", "title": "Unset", "lane": "lane-5", "stage": "building", "trackerStarted": False},
+        ]})
         before = self.bytes()
         code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", [
             {"subject": "work-now", "title": "Work", "state": "backlog"},
             {"subject": "work-open", "title": "Open", "state": "backlog"},
             {"subject": "work-later", "title": "Later", "state": "backlog"},
+            {"subject": "work-drafted", "title": "Drafted", "state": "backlog"},
+            {"subject": "work-reviewed", "title": "Reviewed", "state": "backlog"},
+            {"subject": "work-unset", "title": "Unset", "state": "backlog"},
         ]))
         self.assertEqual((code, result["drift"], result["changes"]), (0, False, []))
         self.assertEqual(result["reports"], [
@@ -835,31 +844,76 @@ class ReconcileTests(unittest.TestCase):
         ])
         self.assertEqual(self.bytes(), before)
 
+    def test_a_ticket_never_started_is_not_reported_back_in_backlog_until_it_was_started(self) -> None:
+        """Never started: a draft moves work to building while its ticket is still in backlog, and no report follows;
+        once the ticket was started, its return to backlog is reported."""
+        self.lead({"planned": [{"subject": "work-x", "title": "X", "lane": "lane-1", "stage": "planned"}]})
+        backlog = self.snapshot("tracker", [{"subject": "work-x", "title": "X", "state": "backlog"}])
+        draft = self.snapshot("forge", [{"subject": "work-x", "state": "draft", "changeRequest": "cr-1"}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", backlog, "--snapshot", draft)
+        self.assertEqual(code, 0, result)
+        self.assertIn("its change request is a draft: now building", [entry["change"] for entry in result["changes"]])
+        self.assertEqual(result["reports"], [])
+        entry = state_tool.show(self.directory)["state"]["planned"][0]
+        self.assertEqual(entry["stage"], "building")
+        self.assertNotIn("trackerStarted", entry)
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", backlog, "--snapshot", draft)
+        self.assertEqual((code, result["drift"], result["changes"], result["reports"]), (0, False, [], []))
+        self.assertEqual(self.bytes(), before)
+        # The lane starts its ticket: the record notes it once.
+        started = self.snapshot("tracker", [{"subject": "work-x", "title": "X", "state": "started"}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", started, "--snapshot", draft)
+        self.assertEqual([entry["change"] for entry in result["changes"]], ["started in the tracker: recorded as started"])
+        self.assertTrue(state_tool.show(self.directory)["state"]["planned"][0]["trackerStarted"])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", started, "--snapshot", draft)
+        self.assertEqual((result["drift"], result["changes"]), (False, []))
+        # Back in backlog after it was started: reported, every pass, and the record is left as it is.
+        for _ in range(2):
+            before = self.bytes()
+            code, result = run_tool(self.directory, "reconcile", "--snapshot", backlog, "--snapshot", draft)
+            self.assertEqual((code, result["drift"], result["changes"]), (0, False, []))
+            self.assertEqual(result["reports"], [
+                {"subject": "work-x", "note": "building in the record but back in the tracker's backlog: check it"}])
+            self.assertEqual(self.bytes(), before)
+
     def test_each_stage_against_each_tracker_state_settles_in_one_pass(self) -> None:
-        # (stage, tracker state) -> (stage after, change, report); a second pass writes nothing.
+        # (stage, ticket seen started before, tracker state) -> (stage after, change, report); a second pass writes
+        # nothing. A ticket counts as started once reconcile has seen it started, and stays so.
+        noted = "started in the tracker: recorded as started"
+        back = "in the record but back in the tracker's backlog: check it"
         expected = {
-            ("planned", "backlog"): ("planned", None, None),
-            ("planned", "started"): ("building", "started in the tracker: now building", None),
-            ("planned", "completed"): ("planned", None, "completed in the tracker but still planned in the record: check the forge"),
-            ("planned", "canceled"): ("planned", None, "canceled in the tracker but still planned in the record"),
-            ("building", "backlog"): ("building", None, "building in the record but back in the tracker's backlog: check it"),
-            ("building", "started"): ("building", None, None),
-            ("building", "completed"): ("building", None, "completed in the tracker but still building in the record: check the forge"),
-            ("building", "canceled"): ("building", None, "canceled in the tracker but still building in the record"),
-            ("review", "backlog"): ("review", None, "in review in the record but back in the tracker's backlog: check it"),
-            ("review", "started"): ("review", None, None),
-            ("review", "completed"): ("review", None, "completed in the tracker but still in review in the record: check the forge"),
-            ("review", "canceled"): ("review", None, "canceled in the tracker but still in review in the record"),
+            ("planned", False, "backlog"): ("planned", None, None),
+            ("planned", False, "started"): ("building", "started in the tracker: now building", None),
+            ("planned", False, "completed"): ("planned", None, "completed in the tracker but still planned in the record: check the forge"),
+            ("planned", False, "canceled"): ("planned", None, "canceled in the tracker but still planned in the record"),
+            ("planned", True, "backlog"): ("planned", None, None),
+            ("planned", True, "started"): ("building", "started in the tracker: now building", None),
+            ("building", False, "backlog"): ("building", None, None),
+            ("building", False, "started"): ("building", noted, None),
+            ("building", False, "completed"): ("building", None, "completed in the tracker but still building in the record: check the forge"),
+            ("building", False, "canceled"): ("building", None, "canceled in the tracker but still building in the record"),
+            ("building", True, "backlog"): ("building", None, "building " + back),
+            ("building", True, "started"): ("building", None, None),
+            ("review", False, "backlog"): ("review", None, None),
+            ("review", False, "started"): ("review", noted, None),
+            ("review", False, "completed"): ("review", None, "completed in the tracker but still in review in the record: check the forge"),
+            ("review", False, "canceled"): ("review", None, "canceled in the tracker but still in review in the record"),
+            ("review", True, "backlog"): ("review", None, "in review " + back),
+            ("review", True, "started"): ("review", None, None),
         }
-        for (stage, word), (after, change, note) in expected.items():
-            with self.subTest(stage=stage, tracker=word):
-                self.lead({"planned": [{"subject": "work-x", "title": "X", "lane": "lane-1", "stage": stage}]})
+        for (stage, started, word), (after, change, note) in expected.items():
+            with self.subTest(stage=stage, started=started, tracker=word):
+                self.lead({"planned": [{"subject": "work-x", "title": "X", "lane": "lane-1", "stage": stage,
+                                        **({"trackerStarted": True} if started else {})}]})
                 tracker = [{"subject": "work-x", "title": "X", "state": word}]
                 code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", tracker))
                 self.assertEqual(code, 0, result)
                 self.assertEqual([entry["change"] for entry in result["changes"]], [change] if change else [])
                 self.assertEqual([entry["note"] for entry in result["reports"]], [note] if note else [])
-                self.assertEqual(state_tool.show(self.directory)["state"]["planned"][0]["stage"], after)
+                entry = state_tool.show(self.directory)["state"]["planned"][0]
+                self.assertEqual(entry["stage"], after)
+                self.assertEqual(entry.get("trackerStarted", False), started or word == "started")
                 before = self.bytes()
                 code, again = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", tracker))
                 self.assertEqual((code, again["drift"], again["changes"]), (0, False, []))
@@ -869,8 +923,9 @@ class ReconcileTests(unittest.TestCase):
         # One item really moves, so the pass writes; the others must add nothing to its changes.
         self.lead({"planned": [
             {"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "planned"},
-            {"subject": "work-b", "title": "B", "lane": "lane-2", "stage": "building"},
-            {"subject": "work-c", "title": "C", "lane": "lane-3", "stage": "review", "changeRequest": "cr 3"},
+            {"subject": "work-b", "title": "B", "lane": "lane-2", "stage": "building", "trackerStarted": True},
+            {"subject": "work-c", "title": "C", "lane": "lane-3", "stage": "review", "changeRequest": "cr 3",
+             "trackerStarted": True},
         ]})
         code, result = run_tool(self.directory, "reconcile",
                                 "--snapshot", self.snapshot("tracker", [
@@ -903,7 +958,8 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(self.bytes(), before)
 
     def test_building_work_the_tracker_still_shows_started_is_left_as_it_is(self) -> None:
-        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "building"}]})
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": "lane-1", "stage": "building",
+                                "trackerStarted": True}]})
         before = self.bytes()
         code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot(
             "tracker", [{"subject": "work-now", "title": "Work", "state": "started"}]))
@@ -989,7 +1045,8 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual((code, result["drift"]), (0, False), result)
 
     def test_a_ticket_listed_without_a_title_keeps_the_record_s_own(self) -> None:
-        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "building"}]})
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "building",
+                                "trackerStarted": True}]})
         before = self.bytes()
         code, result = run_tool(self.directory, "reconcile", "--snapshot",
                                 self.snapshot("tracker", [{"subject": "work-now", "state": "started"}]))
@@ -1033,7 +1090,8 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(run_tool(self.directory, "reconcile", "--snapshot", wider)[1]["code"], "snapshot_invalid")
 
     def test_a_blank_summary_is_none_and_text_that_cannot_be_stored_is_refused_up_front(self) -> None:
-        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "building"}]})
+        self.lead({"planned": [{"subject": "work-now", "title": "Work", "lane": None, "stage": "building",
+                                "trackerStarted": True}]})
         before = self.bytes()
         code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot(
             "tracker", [{"subject": "work-now", "title": "Work", "state": "started", "summary": "  \n "}]))
@@ -1201,7 +1259,7 @@ class ReconcileTests(unittest.TestCase):
                 self.assertEqual((code, result["reports"]), (0, []), result)
                 self.assertEqual(state_tool.show(directory)["state"]["planned"], [
                     {"subject": "work-new", "title": "New", "lane": None, "stage": "review",
-                     "changeRequest": "change 31"}])
+                     "trackerStarted": True, "changeRequest": "change 31"}])
                 code, result = run_tool(directory, "reconcile", *arguments)
                 self.assertEqual((code, result["drift"]), (0, False))
 
@@ -4627,7 +4685,7 @@ SNAPSHOT = {"takenAt": "2026-10-20T10:00:00Z", "source": "tracker",
             "items": [{"subject": "pr-1", "title": "Candidate", "state": "started"}]}
 VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
-    "with tickets", "snapshot with a summary", "planned with a run",
+    "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
@@ -4676,6 +4734,10 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("ticket summary over long", with_change(state, ("tickets",), {"pr-1": {"title": "T", "summary": "s" * 1001}})),
                 ("planned with a run", with_change(state, ("planned",), [
                     {"subject": "pr-3", "title": "Planned", "lane": "lane-1", "stage": "planned", "runId": "run-3"}])),
+                ("planned with its ticket started", with_change(state, ("planned",), [
+                    {"subject": "pr-3", "title": "Planned", "lane": "lane-1", "stage": "building", "trackerStarted": True}])),
+                ("planned with trackerStarted as text", with_change(state, ("planned",), [
+                    {"subject": "pr-3", "title": "Planned", "lane": "lane-1", "stage": "building", "trackerStarted": "yes"}])),
                 ("planned with an empty run", with_change(state, ("planned",), [
                     {"subject": "pr-3", "title": "Planned", "lane": "lane-1", "stage": "planned", "runId": ""}])),
                 ("empty run", with_change(state, ("queue", 0, "runId"), "")),

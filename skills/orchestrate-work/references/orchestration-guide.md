@@ -32,7 +32,7 @@ it through the state tool, then render the views.
   `leadSelection`.
 - **Planned work and change requests are the lead's.** The optional
   `planned[]` list holds work under way but not yet handed to the queue,
-  `{subject, title, lane, stage: planned|building|review, changeRequest?, runId?}`, selected
+  `{subject, title, lane, stage: planned|building|review, changeRequest?, runId?, trackerStarted?}`, selected
   as `planned[subject=<subject>]`; a queue or planned element's optional
   `changeRequest` names its change request. `reconcile` maintains both from
   snapshots. A record that kept these under `extensions` moves them onto
@@ -104,6 +104,13 @@ host's own tracker tools, mirroring the journal entry it accompanies. Each
 journal kind maps to exactly one instruction below. An update is best-effort,
 like telemetry: one attempt, never a gate. With no tracker tools, delivery
 proceeds and the lead notes the gap in its close-out.
+
+Where the repository runs run-delivery with its tracker publisher in the
+binding, run-delivery's tracker publisher posts every update in this table,
+once each, from its own ledger, and makes the moves its configuration names:
+the lead posts none of them by hand. A tracker reachable only through the
+host gets them through a host publisher's outbox instead, which the lead
+posts as the publishing step says.
 
 | Journal kind | Tracker update |
 | --- | --- |
@@ -183,6 +190,11 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   lead, and record it as a decision.
 
 ### 4. Run the queue
+
+With run-delivery's supervisor running, it keeps the queue's `serve` running,
+reconciles the record each pass, and cleans up each merged story once its lane
+has moved off it. The lead accepts each hand-off; the rest of this step is the
+supervisor's.
 
 - Lanes write their own hand-off, review rounds and focus through the state
   tool (the lane brief says how). Its `handoff` command moves a lane's planned
@@ -296,6 +308,9 @@ decision. Lanes post on their own tickets at the points the lane brief names.
 
 ### 5. Publish
 
+With run-delivery's supervisor running, it keeps the live view running and
+renders, publishers included, after each of its own writes.
+
 - Start the live view at the beginning of the delivery and point the
   operator at its address; it re-renders on every record write, so it is
   never stale.
@@ -308,6 +323,13 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   tool, follow the publishing step.
 
 ### 6. Check the finish lines live
+
+With run-delivery's supervisor running, the supervisor judges `finish.met` by
+the record's covers and proofs: a line whose covered criteria have every proof
+it names done is marked met and journalled once, and an entry the lead
+journalled by hand is skipped. Only a finish line the record can't prove is
+the lead's: a finish line the record can't prove holds the close until the
+lead checks it as below, marks it met and journals it.
 
 - For each finish line, run the observable check the plan names, against the
   merged base, not against a lane's checkout.
@@ -336,6 +358,15 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   rather than journalling the release again.
 
 ### 8. Close out
+
+With run-delivery's supervisor running, the lead does none of these by hand.
+Once nothing holds the close, the supervisor runs `fullHealth` once per base
+head, files a follow-up for each deferred finding, journals `delivery.closed`
+and waits until the tracker has every update, archives the record, aligns the operator's
+checkout when it is clean, and writes a friction note stub for
+`$compound-learning`, in that order. The lead's part is what holds the close,
+which every lead command names from the supervisor's last pass, and the
+friction note. The steps below are for a delivery without it.
 
 - Run the binding's `fullHealth` once, on the final base: in a fresh detached
   checkout of the final base tip, after the binding's `prepare` steps, with
@@ -794,8 +825,19 @@ by the `orchestration-binding/1` schema in the skill's `schemas.json`, beside
 this guide. The runner reads it from the tip of the remote base branch named
 on its command line, never from a
 candidate or the operator's checkout, so a candidate can never change how it
-is itself checked or merged. A binding whose `base` names a different branch
-is refused with `binding_invalid`.
+is itself checked or merged. A binding that serves a different branch, by
+neither its `base` nor its `bases`, is refused with `binding_invalid`.
+
+### Base mismatch
+
+The runner refuses `--base` with `binding_invalid` unless the binding on that
+base serves it, as its `base.ref` or a match in its `bases`. In a pattern, `*`
+matches within one segment of the branch name, so `integration-*` serves
+`integration-2` but not `integration-2/fix`. To merge into that base, add it,
+or a pattern that matches it, to `bases`. The runner reads the binding from the
+base it merges into, so a base cut before the binding gained `bases` still
+holds the old binding: commit the binding with `bases` on that base and push
+it.
 
 ### Commands and placeholders
 
@@ -818,7 +860,8 @@ it is not a freshness proof or permission to skip any admission check.
 | Field | Contents |
 | --- | --- |
 | `schemaVersion` | `orchestration-binding/1`. |
-| `base` | `{remote, ref}`: the branch every candidate merges into. It must match the runner's `--remote` and `--base`. |
+| `base` | `{remote, ref}`: the default branch candidates merge into. `remote` must match the runner's `--remote`, and `--base` must be `ref` or match `bases`. |
+| `bases` | Optional: the other long-lived branches this binding serves, such as `["main", "integration-*"]`. Each entry is an exact branch name, or a pattern whose `*` matches any run of characters within one segment of the name, never a `/`. The runner reads the binding from the base it merges into, so each base it serves carries a binding that lists it. Without `bases`, the binding serves `ref` alone. |
 | `workRoot` | The directory for the runner's temporary checkouts, relative to the checkout's top level unless absolute. The runner deletes what it finds there, so it checks the path against git's own view, never the current directory: `--repo` must be a checkout's top level; `workRoot` must not contain any checkout git lists, the git directory or the common git directory; inside a git directory it sits beside git's own folders there (`objects`, `refs`, `reftable`, `worktrees`, `hooks`, `info`, `logs`, `modules`, `lfs`, `rr-cache`, `branches`, `remotes`, `rebase-merge`, `rebase-apply`, `sequencer`), never in one; inside any checkout it holds no tracked file, sits in no submodule, and is ignored there; `checkouts` and `empty-hooks` under it are never symlinks or junctions. Paths are compared without case or Unicode normal form. The runner marks each checkout it adds, so a killed run's leftovers under `workRoot/checkouts` are pruned at the next start; an unmarked worktree there is refused until its owner removes it with `git worktree remove`. Each refusal is `binding_invalid`, naming the rule. |
 | `candidate` | An argv that resolves a candidate reference to `{branch, head}` as JSON. |
 | `prepare` | An argv list run in every fresh checkout, such as installing dependencies or creating a ref the checks need from `{baseHead}`. |
@@ -844,7 +887,7 @@ it is not a freshness proof or permission to skip any admission check.
 | `release` | Ordered targets, each with an `id`, `argv`, `stopsOnFailure` and `requiresApproval`, and an optional `timeoutSeconds`. |
 | `fullHealth` | The argv for the close-out run. |
 | `leases` | Each lease's `id`, `description` and `defaultHolder`, plus optional `materialize` and `withdraw` argv. |
-| `state` | `{directory, renderers, publishers, snapshotMaxAgeSeconds?, trackerSnapshot?, forgeSnapshot?, refreshSeconds?, workHints?, liveHome?}`. `liveHome` is the id of a declared argv renderer whose HTML view the live server serves at its front page, with the live store injected as at `/view/<output>`; the view must carry `<meta name="delivery-state-live">`. Without it the front page is the built-in static page. A `liveHome` that names a built-in renderer, an unknown id, or a view whose output is not an HTML file is refused. `trackerSnapshot`, `{argv, timeoutSeconds?}`, is the repository's command that prints the delivery's `work-snapshot/1` tracker snapshot; `{parent}` in its argv is the record's `meta.trackerParent`, and `{stateDirectory}` in it, or in a renderer's or `workHints` argv, is the resolved state directory the command runs for, so a repository that keeps several records reads the one being served rather than the one its binding names; the command owns whatever access it needs. `forgeSnapshot`, the same shape, prints the forge snapshot of the delivery's change requests; this workflow ships no forge or tracker client, so both are the repository's own, or the ready-made commands described below. `serve` runs them from the repository's checkout every `refreshSeconds`, 180 when absent and at most 86400, and 0 turns that off; it does not start on a block or interval it cannot use. Each command's stdout is read until it exits, plus a two-second drain: output that a process it leaves behind writes later is not read, and output written during the drain can spoil the snapshot. Each runs in its own process group with a per-run marker in its environment; afterwards, interrupted or not, the state tool stops what is left in that group or carries the marker, never the caller or its parents, pid 1, another user's process or one that started before the run, and stops nothing when it cannot read the process table. A child that clears its environment, or whose environment the system hides, such as some system binaries on macOS, survives. On Windows only the command itself is stopped, and only when it overran or was interrupted. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`, or `{id, kind: "host"}`, which writes an outbox for the lead to publish; at most one publisher is a host publisher. `workHints`, `{argv, timeoutSeconds?}`, is the repository's command that prints a `work-hints/1` document of each item's files and priority for `next`, run the same way. `snapshotMaxAgeSeconds`, a whole number of seconds, is how old a forge or tracker snapshot may be before `reconcile` refuses it, 900 when absent. After each of its state writes the runner passes this member to the render wrapper; when it is valid and declares no renderer and no publisher, the runner starts no wrapper, and reads the record itself instead, noting a failure as the wrapper would. |
+| `state` | `{directory, renderers, publishers, snapshotMaxAgeSeconds?, trackerSnapshot?, forgeSnapshot?, refreshSeconds?, workHints?, liveHome?}`. `liveHome` is the id of a declared argv renderer whose HTML view the live server serves at its front page, with the live store injected as at `/view/<output>`; the view must carry `<meta name="delivery-state-live">`. Without it the front page is the built-in static page. A `liveHome` that names a built-in renderer, an unknown id, or a view whose output is not an HTML file is refused. `trackerSnapshot`, `{argv, timeoutSeconds?}`, is the repository's command that prints the delivery's `work-snapshot/1` tracker snapshot; `{parent}` in its argv is the record's `meta.trackerParent`, and `{stateDirectory}` in it, or in a renderer's, a publisher's or `workHints` argv, is the resolved state directory the command runs for, so a repository that keeps several records reads the one being served rather than the one its binding names; the command owns whatever access it needs. `forgeSnapshot`, the same shape, prints the forge snapshot of the delivery's change requests; this workflow ships no forge or tracker client, so both are the repository's own, or the ready-made commands described below. `serve` runs them from the repository's checkout every `refreshSeconds`, 180 when absent and at most 86400, and 0 turns that off; it does not start on a block or interval it cannot use. Each command's stdout is read until it exits, plus a two-second drain: output that a process it leaves behind writes later is not read, and output written during the drain can spoil the snapshot. Each runs in its own process group with a per-run marker in its environment; afterwards, interrupted or not, the state tool stops what is left in that group or carries the marker, never the caller or its parents, pid 1, another user's process or one that started before the run, and stops nothing when it cannot read the process table. A child that clears its environment, or whose environment the system hides, such as some system binaries on macOS, survives. On Windows only the command itself is stopped, and only when it overran or was interrupted. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`, or `{id, kind: "host"}`, which writes an outbox for the lead to publish; at most one publisher is a host publisher. `workHints`, `{argv, timeoutSeconds?}`, is the repository's command that prints a `work-hints/1` document of each item's files and priority for `next`, run the same way. `snapshotMaxAgeSeconds`, a whole number of seconds, is how old a forge or tracker snapshot may be before `reconcile` refuses it, 900 when absent. After each of its state writes the runner passes this member to the render wrapper; when it is valid and declares no renderer and no publisher, the runner starts no wrapper, and reads the record itself instead, noting a failure as the wrapper would. |
 
 Ready-made views and snapshot commands ship in the separate `delivery-views`
 skill, for a profile that includes it: a live line map and a delivery history
@@ -1148,7 +1191,11 @@ them after every state write, recording any failure without stopping.
 Some hosts store a live document only through their own tool, not through a
 command the binding can name. Then publishing is a lead step. With a `host`
 publisher in the binding, publish the outbox it writes and acknowledge it, as
-the skill's sync loop says. Without one:
+the skill's sync loop says. When the outbox carries tracker updates for a
+repository that runs run-delivery, the lead's drain skips every
+`lane.assigned` start move and update: run-delivery's `lane-start` prints them
+for the lane to make when the story starts, so the start is posted once, at
+the start, never at the assignment. Without a host publisher:
 
 1. After each runner result (a sync, a check, a merge, a release or a stop),
    and after each lead write to the state, read the validated document with

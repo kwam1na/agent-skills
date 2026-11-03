@@ -103,3 +103,45 @@ test('a runner sync onto a moved base keeps the reviewed head approval and its n
   expect(shown.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
   expect(shown.app.querySelector('.run-closure').textContent).toContain('Original reviewer confirmed');
 });
+function plannedDocument() {
+  const doc = document();
+  doc.state.queue = [];
+  doc.state.planned = [{subject:'WORK-1',title:'Work',lane:'lane-1',stage:'review'}];
+  const round = (id, number, verdict) => ({id, at:'2026-01-01T00:0'+id+':00Z', kind:'review.round', subject:'WORK-1', lane:'lane-1',
+    summary:'WORK-1: review round '+number, review:{round:number, startedAt:'2026-01-01T00:00:00Z', finishedAt:'2026-01-01T00:0'+id+':00Z',
+      verdicts:{'lens.outcome-correctness':verdict}, findings:{P0:0,P1:verdict==='approve'?0:1,P2:0,P3:0}}});
+  doc.journal = [round(1, 1, 'changes'), round(2, 2, 'approve'),
+    {id:3, at:'2026-01-01T00:03:00Z', kind:'review.evidence', subject:'WORK-1', lane:'lane-1', summary:'captured',
+      reviewArtifact:{candidateRef:B, digest:'d'.repeat(64)}}];
+  return doc;
+}
+test('before hand-off, a planned story shows its round cards and notes from its latest reviewed round', async()=>{
+  const [shown,first]=await openPage(renderPage(plannedDocument(),{config}),{steps:[{click:'.run-pick',index:0}]});
+  expect(shown.app.querySelector('.d-run-none')).toBeNull();
+  expect(shown.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
+  expect(shown.app.querySelector('.run-card .run-quiet').getAttribute('aria-label')).toBe('Reviewed candidate '+B);
+  expect(shown.app.querySelector('.run-closure').textContent).toContain('Original reviewer confirmed');
+  expect(first.app.querySelector('.run-card-outcome').textContent).toBe('Changes requested');
+  expect(first.app.querySelector('.run-finding-text').textContent).toContain('<img');
+});
+test('a planned story whose latest round was not captured stays visibly stale', async()=>{
+  const doc=plannedDocument();
+  doc.journal.push({id:4, at:'2026-01-01T00:04:00Z', kind:'review.round', subject:'WORK-1', lane:'lane-1', summary:'WORK-1: review round 3',
+    review:{round:3, startedAt:'2026-01-01T00:03:00Z', finishedAt:'2026-01-01T00:04:00Z', verdicts:{'lens.outcome-correctness':'changes'},
+      findings:{P0:0,P1:1,P2:0,P3:0}}});
+  const [shown]=await openPage(renderPage(doc,{config}));
+  expect(shown.app.querySelector('.d-run-none').textContent).toBe('Review evidence unavailable or stale for this candidate.'
+    +" Its rounds show here again once the lane's review-reduce records its latest round.");
+  expect(shown.app.querySelector('.run-card')).toBeNull();
+  const fresh=plannedDocument(),pushed=structuredClone(fresh);pushed.journal.push(doc.journal[3]);
+  const [before,after]=await openPage(pageWithRuns(fresh,{}, {config}),{steps:[{push:pushed}]});
+  expect(before.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
+  expect(after.app.querySelector('.d-run-none').textContent).toContain('unavailable or stale');
+});
+test('a planned story with no round yet says when its rounds will appear', async()=>{
+  const doc=plannedDocument();doc.journal=[];delete doc.reviewEvidence;
+  const [shown]=await openPage(renderPage(doc,{config}));
+  expect(shown.app.querySelector('.d-run-none').textContent)
+    .toBe('No review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off.');
+  expect(shown.app.querySelector('.run-card')).toBeNull();
+});

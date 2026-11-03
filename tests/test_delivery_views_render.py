@@ -913,5 +913,59 @@ class PlanRenderTests(unittest.TestCase):
         self.assertTrue(embedded["clipped"]["overShare"])
 
 
+
+class NeedsBlockTests(unittest.TestCase):
+    """The renderer's read of the supervisor's needs-you.json: bounded, refused whole when it can't be trusted."""
+
+    def setUp(self) -> None:
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        self.state = Path(holder.name)
+
+    def write(self, written: object) -> None:
+        (self.state / render.NEEDS_FILE).write_text(json.dumps(written))
+
+    def listed(self, items: list, running: bool = True) -> dict:
+        return {"spec": render.NEEDS_SPEC, "running": running, "pass": 1, "at": "2026-01-01T00:00:00Z",
+                "staleAfter": "2026-01-01T00:02:00Z", "items": items}
+
+    def test_no_file_is_no_block(self) -> None:
+        self.assertIsNone(render.read_needs_block(self.state))
+
+    def test_texts_are_cut_and_items_capped_with_the_rest_counted(self) -> None:
+        item = lambda n: {"holding": n % 2 == 0, "source": "s" * 700, "text": f"item {n}", "clears": "c"}
+        self.write(self.listed([item(n) for n in range(render.NEEDS_ITEMS + 3)]))
+        block = render.read_needs_block(self.state)
+        self.assertEqual(len(block["items"]), render.NEEDS_ITEMS)
+        self.assertEqual(block["more"], 3)
+        self.assertEqual(len(block["items"][0]["source"]), render.NEEDS_TEXT)
+        self.assertTrue(block["items"][0]["source"].endswith("…"))
+        self.assertEqual(block["items"][0]["text"], "item 0")
+
+    def test_a_stopped_list_needs_no_stale_after(self) -> None:
+        written = self.listed([], running=False)
+        del written["staleAfter"]
+        self.write(written)
+        self.assertEqual(render.read_needs_block(self.state), {"running": False, "at": "2026-01-01T00:00:00Z", "items": []})
+
+    def test_a_symlink_an_oversized_file_or_one_bad_item_is_unreadable(self) -> None:
+        elsewhere = self.state / "elsewhere.json"
+        elsewhere.write_text(json.dumps(self.listed([])))
+        (self.state / render.NEEDS_FILE).symlink_to(elsewhere)
+        self.assertEqual(render.read_needs_block(self.state), {"unreadable": True})
+        (self.state / render.NEEDS_FILE).unlink()
+        # A list that is valid in every way but its size.
+        padded = self.listed([{"holding": True, "source": "s", "text": "t" * render.NEEDS_LIMIT_BYTES, "clears": "c"}])
+        self.write(padded)
+        self.assertGreater((self.state / render.NEEDS_FILE).stat().st_size, render.NEEDS_LIMIT_BYTES)
+        self.assertEqual(render.read_needs_block(self.state), {"unreadable": True})
+        padded["items"][0]["text"] = "t"
+        self.write(padded)
+        self.assertEqual(render.read_needs_block(self.state)["items"][0]["text"], "t")
+        for bad in ({"holding": True, "source": "s", "text": "t"}, {"holding": 1, "source": "s", "text": "t", "clears": "c"}):
+            with self.subTest(bad=bad):
+                self.write(self.listed([bad]))
+                self.assertEqual(render.read_needs_block(self.state), {"unreadable": True})
+
 if __name__ == "__main__":
     unittest.main()

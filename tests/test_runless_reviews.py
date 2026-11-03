@@ -231,6 +231,72 @@ class RunlessReviewTests(unittest.TestCase):
         result = state_tool.review_observations(self.directory, state_tool.read_state(self.directory), journal)
         self.assertTrue(result["work-a"]["unavailable"])
 
+    def planned_round(self, number, verdict="approve"):
+        review = {"round": number, "startedAt": "2026-01-01T00:00:00Z", "finishedAt": "2026-01-01T00:01:00Z",
+                  "verdicts": {"lens.outcome-correctness": verdict, "lens.adversarial-testing": verdict},
+                  "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}
+        state_tool.append_journal(self.directory, kind="review.round", subject="work-a", lane="lane-1", writer="lane",
+                                  summary=f"work-a: review round {number}", review=review)
+
+    def plan_work_a(self):
+        self.lead({"planned": [{"subject": "work-a", "title": "Work A", "lane": "lane-1", "stage": "review"}]})
+
+    def test_a_planned_story_binds_its_evidence_to_its_latest_reviewed_round(self):
+        # Before hand-off a story has no head: its evidence is bound to the candidate its latest round reviewed.
+        self.plan_work_a()
+        self.planned_round(1, "changes")
+        self.planned_round(2)
+        self.capture()
+        observation = state_tool.show(self.directory)["reviewEvidence"]["work-a"]
+        self.assertNotIn("unavailable", observation)
+        self.assertEqual(observation["candidateRef"], fixtures.HEAD_B)
+        self.assertEqual([r["round"] for r in observation["outcomes"]], [1, 2])
+        summary = render.native_review_summaries(state_tool.show(self.directory))["work-a"]
+        self.assertEqual(summary["candidateRef"], fixtures.HEAD_B)
+        self.assertEqual(summary["roundDetail"][-1]["outcome"], "approve")
+        self.assertIn("Original reviewer", summary["roundDetail"][-1]["settled"][0]["resolution"])
+
+    def test_a_planned_story_whose_latest_round_was_not_captured_is_unavailable(self):
+        self.plan_work_a()
+        self.planned_round(1, "changes")
+        self.planned_round(2)
+        self.capture()
+        self.planned_round(3)
+        self.assertTrue(state_tool.show(self.directory)["reviewEvidence"]["work-a"]["unavailable"])
+
+    def test_a_planned_story_needs_a_journaled_round_matching_its_captured_rounds(self):
+        # Captured by hand with no round on record, or for fewer rounds than the latest one journaled.
+        self.plan_work_a()
+        self.capture()
+        self.assertTrue(state_tool.show(self.directory)["reviewEvidence"]["work-a"]["unavailable"])
+        self.planned_round(1, "changes")
+        self.planned_round(2)
+        self.planned_round(3)
+        journal = state_tool.read_journal(self.directory)
+        evidence = next(entry for entry in journal if entry["kind"] == "review.evidence")
+        moved = [entry for entry in journal if entry is not evidence] + [{**evidence, "id": journal[-1]["id"] + 1}]
+        observed = state_tool.review_observations(self.directory, state_tool.read_state(self.directory), moved)
+        self.assertTrue(observed["work-a"]["unavailable"])
+
+    def test_a_planned_story_captured_past_its_latest_journaled_round_is_unavailable(self):
+        self.plan_work_a()
+        self.planned_round(1, "changes")
+        self.planned_round(2)
+        third = self.root / "round3.json"
+        third.write_text(json.dumps(outcome(3, fixtures.HEAD_B), indent=2) + "\n")
+        self.capture([*self.files(), third])
+        self.assertTrue(state_tool.show(self.directory)["reviewEvidence"]["work-a"]["unavailable"])
+
+    def test_a_handed_story_stays_bound_to_its_head(self):
+        self.plan_work_a()
+        self.planned_round(1, "changes")
+        self.planned_round(2)
+        self.capture()
+        self.lead({"planned": [], "queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_A)]})
+        self.assertTrue(state_tool.show(self.directory)["reviewEvidence"]["work-a"]["unavailable"])
+        self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})
+        self.assertNotIn("unavailable", state_tool.show(self.directory)["reviewEvidence"]["work-a"])
+
     def test_malformed_renderer_observation_is_contained_per_subject(self):
         self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})
         self.capture()
