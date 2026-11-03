@@ -126,7 +126,7 @@ proceeds and the lead notes the gap in its close-out.
 | `release.finished` | On the epic: the release shipped, its commit and targets, and who approved it. |
 | `finish.met` | On the epic: the finish line and the evidence that met it. |
 | `decision.recorded` | On the ticket the decision concerns, or the epic: what, why, and who decided, the operator or the lead. A deferred finding links its follow-up item. |
-| `blocker.recorded` | On the blocked ticket: the blocker, and whose answer or work unblocks it. |
+| `blocker.recorded` | On the blocked ticket, or the epic when every ticket is blocked: the blocker, and whose answer or work unblocks it. |
 | `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. |
 
 The lead posts the updates in this table, including every cross-lane
@@ -516,6 +516,7 @@ The operator is brought in only for:
 - a change to the approved scope or finish line;
 - an irreversible or outward-facing action not already authorized;
 - a permission or access grant the lead does not hold;
+- a host that cannot start or message sessions, so no lane can start;
 - owner intent that is genuinely ambiguous, where neither the plan nor
   standing direction settles it.
 
@@ -557,7 +558,9 @@ operator.
 
 ## Coordination protocol
 
-These rules hold whatever the host offers for sessions and messages.
+These rules hold on any host that can start and message sessions. On a host
+that cannot, no lane starts, under
+[Without a session capability](#without-a-session-capability).
 
 ### Messages
 
@@ -571,7 +574,9 @@ These rules hold whatever the host offers for sessions and messages.
 - When the host holds or refuses a message, keep the undelivered text in the
   lead's notes, inform the operator once (a notice, not a question), and send
   it when delivery resumes.
-  Never repeat a message to force it through.
+  Never repeat a message to force it through. A refusal that persists means the
+  host cannot message sessions: follow
+  [Without a session capability](#without-a-session-capability).
 - A lane that is blocked on a decision it cannot make sends the lead one
   short question and stops. Lanes never go to the operator directly; the lead
   answers, or escalates under the lead authority rules. Progress and results
@@ -591,9 +596,21 @@ When a claim does not hold, return the hand-off to the lane with what failed.
 
 ### Without a session capability
 
-When the host cannot start or message other sessions, the lead runs each
-lane as a subagent, or runs the lanes in sequence itself. The lane profile,
-the hand-off and the queue are unchanged; only the transport differs.
+When the host cannot start or message other sessions, no lane starts. A lane
+is always a session of its own: never a subagent, and never the lead working in
+its own session. The lead journals `blocker.recorded` and brings it to the
+operator, who may choose to deliver the tickets one at a time through
+`$execute-work`. Subagents remain how a lane realizes its review lenses.
+
+A host that loses the ability to start or message sessions during a delivery is
+this blocker and not a held message. So is one that still refuses a message one
+retry later, at the next milestone or, with nothing else pending, at the lead's
+next event. No further lane starts. A candidate a lane hands off is still checked
+as a claim: it enters the queue if the report holds, and otherwise waits for the
+operator's answer, since the lane cannot always be told. On a host that can still message its running lanes, they keep
+working and the lead keeps assigning them as usual. On one that cannot, each
+running lane reaches its hand-off and takes no new assignment, which is not an
+idle-lane defect.
 
 ### Leases
 

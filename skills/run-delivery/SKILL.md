@@ -117,12 +117,13 @@ operator can then open, watch and steer each lane, and stop it on its own.
 
 ## Host behaviour
 
-No command calls a host's own interface. Where a host offers less, the workflow takes the path on the right:
+No command calls a host's own interface. A lane is always a session of its own, never a subagent and never the lead
+working in its own session. When the host cannot start or message sessions, no lane starts: the lead records the blocker
+and brings it to the operator, who may choose to deliver the stories one at a time through `$execute-work`. Where a host
+offers less otherwise, the workflow takes the path on the right:
 
 | Host behaviour | Without it |
 | --- | --- |
-| Lanes as separate sessions the operator can open and steer | Background agents, with each lane's report relayed by the lead |
-| Messaging between sessions | The operator carries the lead's message to the lane |
 | Publishing the evidence page | A local page the operator shares |
 | Tracker moves | The lane reports the move in its hand-off, and the lead makes it |
 
