@@ -1,0 +1,4 @@
+interface:
+  display_name: "Execute Tracked Work"
+  short_description: "Execute a tracked item end-to-end with test-first delivery, sensor validation, review, and compounding"
+  default_prompt: "Use $execute-linear-ticket to establish tracker context through the adapter and deliver an existing tracked item end-to-end through $execute-work, repository sensor validation, review convergence, a compounding decision, and tracker closure."

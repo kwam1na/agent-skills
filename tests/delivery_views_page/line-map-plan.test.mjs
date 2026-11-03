@@ -62,6 +62,15 @@ test("without a plan the page has no plan chapter, rail entry or Now line, and W
   expect(detail.app.querySelector("#detail .d-plan")).toBeNull();
 });
 
+test("a record naming a plan with no plan.json flags the chapter as missing, and names the plan", async () => {
+  const { document } = recordOnlyDelivery();
+  const [shown] = await open(render(document, undefined, { planBlock: { absent: "docs/plans/pay.md" } }));
+  expect(rail(shown.app)).toEqual(CHAPTER_ORDER);
+  expect(flags(shown.app)).toEqual(["The plan chapter is missing"]);
+  expect(flagWhy(shown.app)).toEqual(["docs/plans/pay.md is the plan on file, and nothing has written plan.json for this page."]);
+  expect(shown.app.querySelector(".plan-now")).toBeNull();
+});
+
 test("an unreadable plan adds only the chapter and its rail entry, with one flag naming the key path", async () => {
   const { document } = recordOnlyDelivery();
   const [absent] = await open(render(document));

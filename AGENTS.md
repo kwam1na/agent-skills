@@ -88,6 +88,13 @@ profile, and the corresponding provenance output digest in the same change.
 `scripts/cut-release.py` earns a release's qualification records against that
 release's exact archives, so no record is restamped or checked in. Retained
 historical qualification records keep their original bytes.
+This repository runs its own deliveries through the `linear` generation it has
+installed at `.agent-skills/current`, with a standing `.agents/orchestration.json`.
+`docs/own-deliveries.md` says how to set a machine up, supply credentials and update
+the generation. That generation is what this repository delivers with, not its
+source: an edit goes in `skills/`, never under `.agent-skills/`, and reaches a
+delivery only once a release holding it is applied.
+
 Keep JSON serialized as two-space-indented UTF-8 with a final newline. Bootstrap
 the worktree-private test environment before running the sensors; a shared
 editable install stores one checkout path in site-packages, so concurrent

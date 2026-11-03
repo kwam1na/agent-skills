@@ -141,6 +141,19 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   evidence beside it.
 - Initialise the state with the epic's headline, and record each finish line
   in `finish[]` with `met: false`.
+- Give the delivery what its views need, before the first lane starts:
+  - `meta.planFile` names the approved plan, so a line map with no plan chapter
+    says so rather than rendering as if nothing were missing.
+  - `plan.json` in the state directory is the plan chapter's one input, a
+    delivery-plan/1 document. `run-delivery`'s `lead-init` writes it. Without
+    `run-delivery`, write it from the approved plan and check it with the
+    delivery-views `check-plan` command.
+  - The binding's `state` member declares the line map as a renderer and names it
+    in `liveHome`, and the live view starts with `--binding`, or the built-in page
+    shows instead and says so.
+  - Each lane keeps its review evidence. A brief written from the template below
+    keeps its review step; a delivery run through `run-delivery` gets the same
+    from `review-reduce` instead.
 
 ### 2. Decompose
 
@@ -441,6 +454,25 @@ in the delivery record:
 python3 -B <skill>/scripts/delivery_state.py --dir <state> journal --writer lane --kind review.round --subject <subject> --lane <lane> --review '{"round": <n>, "startedAt": "<dispatched>", "finishedAt": "<last verdict>", "verdicts": {"<lens>": "approve"}, "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}'
 ```
 
+**Review evidence**
+
+Ask each lens for its result in review-lens-result/1, the shape
+`$obtain-review`'s round brief gives. Save every lens's result for every round,
+one outcome file per round, as the lens returned it, outside your checkout, and
+keep the files until close-out. After your hand-off, capture every round in order
+against the reviewed candidate, and name the result in your hand-off:
+
+```bash
+python3 -B <skill>/scripts/delivery_state.py --dir <state> capture-review --subject <subject> --candidate <reviewed head> --outcome <round-1.json> --outcome <round-2.json>
+```
+
+An outcome file reads `{"round": <n>, "outcome": "aligned", "entries": [{"lens":
+"<lens>", "state": "obtained", "binding": {"subjectRef": "<subject>",
+"candidateRef": "<commit reviewed>", "round": <n>}, "result": <the lens's
+result>}]}`. A missing earlier round is refused, and journal counts alone show
+no review on the line map, so a round's file can't be written afterwards from
+memory. If you can't capture, say why in your hand-off.
+
 **Focus and hand-off**
 
 Say what you are doing as it changes, and hand your work off yourself, through
@@ -598,7 +630,10 @@ Treat every lane report as a claim to check before acting on it:
 - the reported validation names commands and results, not adjectives;
 - the review rounds name each lens's verdict, and every blocking finding is
   closed by the lens that raised it;
-- every declared lead input exists in the binding.
+- every declared lead input exists in the binding;
+- review evidence was captured for the reviewed head, or the lane said why not.
+  `delivery_state.py review-evidence --subject <subject>` says which, and exits 1
+  unless every journaled round is captured at that head.
 
 When a claim does not hold, return the hand-off to the lane with what failed.
 

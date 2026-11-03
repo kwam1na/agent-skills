@@ -1,0 +1,4 @@
+interface:
+  display_name: "Decompose Into Tracked Items"
+  short_description: "Decompose approved work into atomic tracked items with test posture, expected sensors, and compounding hooks"
+  default_prompt: "Use $create-linear-ticket to establish tracker context through the adapter and record atomic, parallelizable work items with execution posture, test scenarios, expected sensors, and compounding opportunities."

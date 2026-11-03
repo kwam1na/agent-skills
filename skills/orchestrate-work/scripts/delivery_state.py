@@ -1392,6 +1392,27 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
     return observed
 
 
+def review_evidence(directory: Path, subject: str) -> dict:
+    """Whether a subject's review evidence is captured for its reviewed head, for the lead's hand-off check."""
+    document = show(directory)
+    item = next((item for item in [*document["state"]["queue"], *document["state"].get("planned", [])]
+                 if item["subject"] == subject), None)
+    if item is None:
+        raise StateError("subject_unknown", f"the record holds no work named {subject}")
+    if item.get("runId"):
+        return {"subject": subject, "evidence": "product-run", "head": item.get("head")}
+    observed = document.get("reviewEvidence", {}).get(subject)
+    rounds = sum(1 for entry in document["journal"] if entry["subject"] == subject and entry["kind"] == "review.round")
+    found = {"subject": subject, "head": item.get("head"), "roundsJournaled": rounds}
+    if observed is None:
+        return {**found, "evidence": "not-captured"}
+    if observed.get("unavailable"):
+        return {**found, "evidence": "unavailable"}
+    if len(observed["outcomes"]) < rounds:
+        return {**found, "evidence": "incomplete", "roundsCaptured": len(observed["outcomes"])}
+    return {**found, "evidence": "captured", "roundsCaptured": len(observed["outcomes"])}
+
+
 def show(directory: Path, *, between_reads: Callable[[], None] | None = None) -> dict:
     """The validated ``{state, journal, stats}`` document a renderer reads.
 
@@ -3794,6 +3815,9 @@ def main(argv: list[str] | None = None) -> int:
     entry.add_argument("--writer", choices=("lead", "lane"), default="lead",
                        help="lane: a lane journals a review round of its own work")
     _add_wait_arguments(commands.add_parser("wait", help="read the record and the machine until something needs the lead"))
+    evidence = commands.add_parser("review-evidence",
+                                   help="say whether a subject's review evidence is captured for its reviewed head")
+    evidence.add_argument("--subject", required=True)
     capture = commands.add_parser("capture-review", help="retain native review outcomes for display without a run")
     capture.add_argument("--subject", required=True)
     capture.add_argument("--candidate", required=True)
@@ -3905,6 +3929,11 @@ def main(argv: list[str] | None = None) -> int:
             code, result = _wait_command(args)
             emit(result)
             return code
+        elif args.command == "review-evidence":
+            result = {"ok": True, **review_evidence(args.dir, args.subject)}
+            if result["evidence"] not in ("captured", "product-run"):
+                emit(result)
+                return 1
         elif args.command == "capture-review":
             result = {"ok": True, "entry": capture_review(args.dir, subject=args.subject, candidate=args.candidate, outcomes=args.outcome)}
         elif args.command == "handoff":

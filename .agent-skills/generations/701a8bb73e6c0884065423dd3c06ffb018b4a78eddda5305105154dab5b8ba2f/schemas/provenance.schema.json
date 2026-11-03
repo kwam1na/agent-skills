@@ -1,0 +1,327 @@
+{
+  "$defs": {
+    "entry": {
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "distribution": {
+          "enum": [
+            "releasable",
+            "source-only"
+          ]
+        },
+        "id": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "license": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "modification": {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "source-derived",
+                "modified-derivative",
+                "independently-authored"
+              ]
+            }
+          },
+          "required": [
+            "reason",
+            "status"
+          ],
+          "type": "object"
+        },
+        "outputs": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?![A-Za-z]:).+$",
+                "type": "string"
+              },
+              "sha256": {
+                "maxLength": 64,
+                "minLength": 64,
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "owner": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "source": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "classification",
+        "distribution",
+        "id",
+        "license",
+        "modification",
+        "outputs",
+        "owner",
+        "source"
+      ],
+      "type": "object"
+    },
+    "independent": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "independent-origin"
+        },
+        "ownerApproval": {
+          "additionalProperties": false,
+          "properties": {
+            "owner": {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            "reference": {
+              "pattern": "\\S",
+              "type": "string"
+            }
+          },
+          "required": [
+            "owner",
+            "reference"
+          ],
+          "type": "object"
+        },
+        "rationale": {
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "ownerApproval",
+        "rationale"
+      ],
+      "type": "object"
+    },
+    "legacy": {
+      "additionalProperties": false,
+      "properties": {
+        "baselineSourceId": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "path": {
+          "pattern": "^(?!\\.$)(?=.*\\S)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?![A-Za-z]:).+$",
+          "type": "string"
+        },
+        "revision": {
+          "const": "342850073464a2c9b6198d32d11475f5fa5cbe53"
+        },
+        "sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "baselineSourceId",
+        "path",
+        "revision",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "repository": {
+      "additionalProperties": false,
+      "properties": {
+        "baselineSourceId": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "kind": {
+          "const": "repository-source"
+        },
+        "path": {
+          "pattern": "^(?!\\.$)(?=.*\\S)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?![A-Za-z]:).+$",
+          "type": "string"
+        },
+        "repository": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "revision": {
+          "maxLength": 40,
+          "minLength": 40,
+          "pattern": "^[0-9a-f]{40}$",
+          "type": "string"
+        },
+        "sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "path",
+        "repository",
+        "revision",
+        "sha256"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://agent-skills.dev/schemas/provenance/2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": {
+        "entries": {
+          "items": {
+            "properties": {
+              "source": {
+                "$ref": "#/$defs/legacy"
+              }
+            }
+          }
+        },
+        "schemaVersion": {
+          "const": "agent-skills-provenance/1"
+        }
+      }
+    },
+    {
+      "properties": {
+        "entries": {
+          "items": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "source": {
+                      "properties": {
+                        "kind": {
+                          "const": "independent-origin"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "modification": {
+                      "properties": {
+                        "status": {
+                          "const": "independently-authored"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "source": {
+                      "properties": {
+                        "kind": {
+                          "const": "repository-source"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "modification": {
+                      "properties": {
+                        "status": {
+                          "enum": [
+                            "source-derived",
+                            "modified-derivative"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "properties": {
+              "source": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/repository"
+                  },
+                  {
+                    "$ref": "#/$defs/independent"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "schemaVersion": {
+          "const": "agent-skills-provenance/2"
+        }
+      }
+    }
+  ],
+  "properties": {
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/entry"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "schemaVersion": {
+      "enum": [
+        "agent-skills-provenance/1",
+        "agent-skills-provenance/2"
+      ]
+    },
+    "sourceBaseline": {
+      "const": {
+        "baselineId": "athena-portable-workflows-v1-2026-08-27",
+        "baselinePath": ".agents/portable-overlay-map.json",
+        "repository": "kwamina/athena",
+        "revision": "342850073464a2c9b6198d32d11475f5fa5cbe53"
+      }
+    }
+  },
+  "required": [
+    "entries",
+    "schemaVersion",
+    "sourceBaseline"
+  ],
+  "type": "object"
+}

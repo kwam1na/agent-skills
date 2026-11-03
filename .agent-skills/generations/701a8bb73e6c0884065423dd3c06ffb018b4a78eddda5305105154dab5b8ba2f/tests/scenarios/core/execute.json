@@ -1,0 +1,60 @@
+{
+  "blocked": {
+    "approvedHandoffs": [],
+    "completedFinishLine": [],
+    "completedWork": [],
+    "evidence": [],
+    "expectedBlockers": [
+      "dependency incomplete: parser characterization"
+    ],
+    "expectedStatus": "blocked",
+    "sensors": {}
+  },
+  "complete": {
+    "approvedHandoffs": [
+      "maintainer approval"
+    ],
+    "completedDependencies": [
+      "parser characterization"
+    ],
+    "completedFinishLine": [
+      "parser accepts the bounded format",
+      "required sensors pass"
+    ],
+    "completedWork": [
+      "bounded parser behavior"
+    ],
+    "evidence": [
+      "focused parser test passed",
+      "repository validation passed"
+    ],
+    "expectedStatus": "complete",
+    "sensors": {
+      "focused parser test": true,
+      "repository validation": true
+    }
+  },
+  "partial": {
+    "approvedHandoffs": [],
+    "completedDependencies": [
+      "parser characterization"
+    ],
+    "completedFinishLine": [
+      "parser accepts the bounded format"
+    ],
+    "completedWork": [
+      "bounded parser behavior"
+    ],
+    "evidence": [
+      "focused parser test passed"
+    ],
+    "expectedHandoffs": [
+      "approval required: maintainer approval"
+    ],
+    "expectedStatus": "partial",
+    "sensors": {
+      "focused parser test": true
+    }
+  },
+  "schemaVersion": "agent-skills-execute-scenarios/1"
+}

@@ -342,6 +342,10 @@ the operator the address it prints:
 python3 -B scripts/render_state.py live --dir <state directory> --binding .agents/orchestration.json
 ```
 
+Started without the binding that names its `liveHome`, or from a binding that
+declares a page view and names no home, the live view shows the built-in page and
+says so: in the line it prints and at the top of that page.
+
 - Every successful write through the state tool, by the lead, the runner or a
   lane, appends one line to `changes.jsonl` in the state directory; a write
   never fails because of it. The log keeps only its latest lines once it
@@ -630,6 +634,10 @@ python3 -B scripts/delivery_state.py --dir <state directory> capture-review \
   --subject <subject> --candidate <reviewed candidate> \
   --outcome <round-1.json> --outcome <round-2.json>
 ```
+
+`review-evidence --subject <subject>` reports `captured`, `not-captured`,
+`incomplete`, `unavailable` or `product-run`, and exits 1 for anything short of
+the first or last. The lead reads it when checking a hand-off.
 
 The command stores original outcome bytes in a digest-addressed
 `review-artifacts/` file and appends a `review.evidence` observation. Repeating

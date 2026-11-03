@@ -27,7 +27,9 @@ def copy_corpus(target: Path, *, source: Path = ROOT, leaving_out: tuple[str, ..
     def ignored(folder: str, names: list[str]) -> set[str]:
         # Each time, because the target and the folders leading to it exist only once the copy has begun.
         leading = {_identity(path) for path in (destination, *destination.parents)} - {None}
-        return set(patterns(folder, names)) | {name for name in names if _identity(Path(folder) / name) in leading}
+        # .agents/skills is an installed generation's links, and only under .agents is that name not the corpus's own.
+        exposed = {"skills"} if Path(folder).name == ".agents" else set()
+        return set(patterns(folder, names)) | exposed | {name for name in names if _identity(Path(folder) / name) in leading}
 
     shutil.copytree(source, target, ignore=ignored)
     return target

@@ -6,3 +6,6 @@ __pycache__/
 .venv-*/
 .test-timings.json
 node_modules/
+.orchestration/
+.worktrees/
+.claude/worktrees/

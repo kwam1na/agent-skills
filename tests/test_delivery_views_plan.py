@@ -749,5 +749,112 @@ class LivePlanTests(unittest.TestCase):
         self.assertEqual(json.loads((self.state / "plan.json").read_text())["units"], SECRET)
 
 
+
+class MissingViewInputTests(unittest.TestCase):
+    """A delivery missing its plan input or its view configuration says so."""
+
+    SKILLS = Path(__file__).resolve().parents[1] / "skills"
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.folder = Path(os.path.realpath(temporary.name))
+        subprocess.run(["git", "init", "-q"], check=True, cwd=self.folder)
+        self.state = self.folder / "state"
+        self.state.mkdir()
+        (self.folder / "views.json").write_text(json.dumps({"spec": "delivery-views-config/1"}))
+        self.tool = [sys.executable, "-B", str(self.SKILLS / "orchestrate-work/scripts/delivery_state.py"), "--dir", str(self.state)]
+        subprocess.run([*self.tool, "init", "--headline", "Gaps"], check=True, capture_output=True, cwd=self.folder)
+        self.binding = self.write_binding(self.folder / "orchestration.json", home=False)
+
+    def write_binding(self, path: Path, *, home: bool) -> Path:
+        argv = [sys.executable, "-B", str(self.SKILLS / "delivery-views/scripts/render.py"), "line-map",
+                "--config", str(self.folder / "views.json"), "--binding", str(path)]
+        member = {"directory": str(self.state), "renderers": [
+            {"id": "line-map", "argv": argv, "output": "line-map.html", "timeoutSeconds": 30}],
+            **({"liveHome": "line-map"} if home else {})}
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps({"state": member}))
+        return path
+
+    def name_plan(self) -> None:
+        shown = subprocess.run([*self.tool, "show"], check=True, capture_output=True, text=True, cwd=self.folder)
+        version = json.loads(shown.stdout)["state"]["version"]
+        subprocess.run([*self.tool, "patch", "--writer", "lead", "--version", str(version), "--patch",
+                        json.dumps({"meta": {"planFile": "docs/plans/gaps.md"}})], check=True, capture_output=True, cwd=self.folder)
+
+    def plan_block(self) -> dict | None:
+        document = subprocess.run([*self.tool, "show"], check=True, capture_output=True, cwd=self.folder).stdout
+        page = subprocess.run([sys.executable, "-B", str(self.SKILLS / "delivery-views/scripts/render.py"), "line-map",
+                               "--config", str(self.folder / "views.json"), "--binding", str(self.binding),
+                               "--state-dir", str(self.state)], input=document, check=True, capture_output=True, cwd=self.folder).stdout.decode("utf-8")
+        found = re.search(r'<script type="application/json" id="delivery-plan">([^<]*)</script>', page)
+        return json.loads(found.group(1)) if found else None
+
+    def test_a_plan_on_file_with_no_plan_json_is_flagged_and_one_with_it_is_not(self) -> None:
+        self.assertIsNone(self.plan_block(), "a record naming no plan keeps today's page")
+        self.name_plan()
+        self.assertEqual(self.plan_block(), {"absent": "docs/plans/gaps.md"})
+        (self.state / "plan.json").write_text(json.dumps(plan()))
+        block = self.plan_block()
+        self.assertNotIn("absent", block)
+        self.assertEqual(block["plan"]["updated"], plan()["updated"])
+
+    def live(self, *source: str) -> tuple[dict, str]:
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(self.SKILLS / "orchestrate-work/scripts/render_state.py"), "live", "--dir", str(self.state), *source],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=self.folder)
+
+        def stop() -> None:
+            if process.poll() is None and os.name != "nt":  # Windows has no SIGINT to send.
+                process.send_signal(signal.SIGINT)
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.wait(10)
+            if process.poll() is None:
+                process.kill()
+                process.wait(10)
+            process.stdout.close()
+
+        self.addCleanup(stop)
+        said = json.loads(process.stdout.readline())
+        connection = http.client.HTTPConnection(said["live"], timeout=10)
+        self.addCleanup(connection.close)
+        page = ""
+        for _ in range(100):  # The home may be still rendering when the address is announced.
+            connection.request("GET", "/")
+            answer = connection.getresponse()
+            page = answer.read().decode("utf-8")
+            if answer.status == 200:
+                break
+            time.sleep(0.1)
+        return said, page
+
+    def test_a_live_view_started_without_its_binding_says_so(self) -> None:
+        self.write_binding(self.folder / ".agents/orchestration.json", home=True)
+        said, page = self.live()
+        self.assertEqual(len(said["flags"]), 1, said)
+        self.assertIn("started without its binding", said["flags"][0])
+        self.assertIn("instead of line-map", said["flags"][0])
+        self.assertIn('role="alert"', page)
+        self.assertIn("started without its binding", page)
+
+    def test_a_binding_with_a_page_view_and_no_home_says_so(self) -> None:
+        said, page = self.live("--binding", str(self.binding))
+        self.assertEqual(len(said["flags"]), 1, said)
+        self.assertIn("names no liveHome", said["flags"][0])
+        self.assertIn("names no liveHome", page)
+
+    def test_a_live_view_on_its_home_says_nothing(self) -> None:
+        home = self.write_binding(self.folder / ".agents/orchestration.json", home=True)
+        said, page = self.live("--binding", str(home))
+        self.assertNotIn("flags", said)
+        self.assertNotIn('role="alert"', page)
+
+    def test_a_repository_configuring_no_home_says_nothing(self) -> None:
+        said, page = self.live()
+        self.assertNotIn("flags", said)
+        self.assertNotIn('role="alert"', page)
+
+
 if __name__ == "__main__":
     unittest.main()

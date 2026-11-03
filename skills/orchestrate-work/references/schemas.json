@@ -125,6 +125,10 @@
               }
             }
           },
+          "planFile": {
+            "description": "Optional, the lead's: where the delivery's approved plan is kept. It is only shown: a record naming one with no plan.json beside it says the plan chapter is missing.",
+            "$ref": "#/$defs/name"
+          },
           "trackerParent": {
             "description": "Optional, the lead's: the tracker reference of the item the delivery's work is listed under, for a bound tracker snapshot command.",
             "$ref": "#/$defs/name"
