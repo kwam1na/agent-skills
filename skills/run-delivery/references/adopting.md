@@ -430,8 +430,9 @@ offers less otherwise, the workflow takes the path on the right:
   round. The merge queue syncs each branch with the base when it merges.
 - **Review evidence is captured at hand-off.** `handoff` captures each round's review evidence; without it the line map
   shows no rounds for the story.
-- **Restart long-running commands after an update.** A running `lead-reconcile --every` sweep, the merge queue's
-  `serve` and the renderer keep the code they started with; restart them after the release is updated.
+- **Restart long-running commands after an update.** A running supervisor (`lead-run`), with the merge queue's
+  `serve` and the live view it keeps, runs the code it started with; after the release is updated, `lead-close` it or
+  stop it, then `lead-run --resume`.
 - **Start the merge queue with default signals.** Start `serve` with SIGINT, SIGHUP and SIGQUIT at their defaults, in
   its own terminal or under a process manager, never with `nohup` or a background `&`: its checks inherit those
   signals ignored, and signal-handling tests fail as a broken base.
@@ -520,6 +521,14 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
 - **`has no configuration for lanes`**: lanes read `.agents/run-delivery.json` and the delivery file from the remote
   base. Commit them on the base and push it. A local setup, whose lanes read their own working tree, sets
   `RUN_DELIVERY_LOCAL=1` instead.
+
+- **`forge.mergeNeedsReady says the merge step refuses a draft`**: the repository's merge step refuses a draft pull
+  request, and the delivery doesn't let the lead mark one ready. Add `"readyPullRequests": true` to the delivery file's
+  `authority`, so `lead-accept` marks each draft ready before the queue takes it.
+- **`the supervisor is down`**: the delivery's supervisor stopped, or was never started. `lead-run --resume` stops what
+  it left running and starts it again; the lead's commands work by hand meanwhile.
+- **`don't have the default signal dispositions`**: a child of the supervisor ignores SIGINT, SIGHUP or SIGQUIT, so its
+  checks would fail as a broken base. Stop it, then start the supervisor again with `lead-run --resume`.
 
 ### Refusals before a delivery starts
 

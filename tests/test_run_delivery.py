@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fcntl
 import hashlib
 import io
 import importlib.util
@@ -299,7 +300,8 @@ class Fixture:
         self.port = free_port()
         self.release = generation
         self.tool = generation / TOOL_RELATIVE
-        self.env = {**clean_environment(), "FAKE_FORGE_STATE": str(self.tmp / "forge.json")}
+        # The supervisor's own cases start it; every other case runs the lead's commands by hand.
+        self.env = {**clean_environment(), "FAKE_FORGE_STATE": str(self.tmp / "forge.json"), "RUN_DELIVERY_SUPERVISOR": "off"}
         sh("git", "init", "-q", "--bare", "-b", "main", self.origin)
         sh("git", "clone", "-q", self.origin, self.main)
         m = self.main
@@ -366,7 +368,24 @@ class Fixture:
         return path
 
     def close(self):
+        stop_supervisors(self.tmp)
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+
+def stop_supervisors(root: Path) -> None:
+    """Stop any supervisor a case started under this folder: a held lock's recorded pid leads its group."""
+    for lock in root.rglob("*.supervisor.lock"):
+        with open(lock, "a+") as probe:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(probe, fcntl.LOCK_UN)
+                continue
+            except BlockingIOError:
+                pass
+        pid = json.loads(lock.read_text() or "{}").get("pid")
+        if isinstance(pid, int) and pid > 1:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(pid, signal.SIGKILL)
 
 
 def report(**over):
@@ -954,6 +973,11 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         conf = json.loads(flow_json.read_text())
         conf["cleanup"] = {"deleteRemoteBranches": True, "archive": str(fx.tmp / "archive/{delivery}")}
         flow_json.write_text(json.dumps(conf))
+        # lead-close refuses while the lead's settings have uncommitted changes.
+        code, out = flow_run("lead-close", cwd=m)
+        expect(code == 2 and "the lead's settings have uncommitted changes" in out and ".agents/run-delivery.json" in out,
+               f"closed over uncommitted settings: {out}")
+        commit(m, "FX-1: clean up remote branches, archive in the fixture")
         code, out = flow_run("lead-cleanup", "FX-2", cwd=m)
         expect(code == 0 and "still open" in out and remote_has(m, "feature/FX-2"), f"deleted a branch whose PR is open: {out}")
         prs = json.loads((fx.tmp / "forge.json").read_text())
@@ -971,8 +995,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         (fx.tmp / "bin").mkdir()
         (fx.tmp / "bin/flow.py").write_text("import time\ntime.sleep(600)\n")
         sweep = [sys.executable, "-B", str(fx.tmp / "bin/flow.py")]
-        ours = subprocess.Popen(sweep + ["lead-reconcile", "--every", "600"], cwd=m)
-        theirs = subprocess.Popen(sweep + ["--delivery", "OTHER-9", "lead-reconcile", "--every", "600"], cwd=m)
+        ours = subprocess.Popen(sweep + ["lead-run"], cwd=m)
+        theirs = subprocess.Popen(sweep + ["--delivery", "OTHER-9", "lead-run"], cwd=m)
         try:
             time.sleep(0.5)
             code, out = flow_run("lead-close", cwd=m)
@@ -1680,8 +1704,14 @@ if command == ["pr", "list"]:
 elif command == ["pr", "create"]:
     print("https://github.com/o/n/pull/4")
 elif command == ["pr", "view"]:
-    print(json.dumps({"url": "https://github.com/o/n/pull/3", "state": "OPEN", "headRefOid": "abc",
-                      "headRefName": "feature/X-1", "baseRefName": "main"}))
+    print(json.dumps({"url": "https://github.com/o/n/pull/3", "state": "OPEN", "isDraft": True, "headRefOid": "abc",
+                      "headRefName": "feature/X-1", "baseRefName": "main",
+                      "statusCheckRollup": [{"name": "build", "conclusion": "SUCCESS", "completedAt": "2026-01-01T00:00:01Z"},
+                                            {"context": "lint", "state": "PENDING"}],
+                      "reviews": [{"author": {"login": "pipeline-bot"}, "submittedAt": "2026-01-01T00:00:02Z",
+                                   "body": "Looks fine"}]}))
+elif command in (["pr", "ready"], ["pr", "merge"]):
+    print("done")
 '''
 
 
@@ -1986,13 +2016,13 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
         for name in ("flow.py", "run_delivery.py", "merge_queue.py", "render_state.py", "notflow.py"):
             (bin_dir / name).write_text("import time\ntime.sleep(600)\n")
         start = lambda name, *args: subprocess.Popen([sys.executable, "-B", str(bin_dir / name), *args], cwd=m)
-        ours = {"the earlier tool's sweep": start("flow.py", "lead-reconcile", "--every", "600"),
-                "the tool's sweep": start("run_delivery.py", "lead-reconcile", "--every", "600"),
+        ours = {"the earlier tool's sweep": start("flow.py", "lead-reconcile"),
+                "the tool's supervisor": start("run_delivery.py", "lead-run"),
                 "the merge queue": start("merge_queue.py", "--dir", str(state)),
                 "the renderer": start("render_state.py", "--dir", str(state))}
-        theirs = start("run_delivery.py", "--delivery", "OTHER-9", "lead-reconcile", "--every", "600")
+        theirs = start("run_delivery.py", "--delivery", "OTHER-9", "lead-run")
         # Not this tool, though its name ends like the earlier one's.
-        stranger = start("notflow.py", "lead-reconcile", "--every", "600")
+        stranger = start("notflow.py", "lead-run")
         try:
             time.sleep(0.5)
             code, out = fx.flow("lead-close", cwd=m, env={**fx.env, "HOME": str(home)})
@@ -2089,7 +2119,7 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
             self.assertNotEqual(done.returncode, 0)
             self.assertIn("FLOW_FORGE_TOKEN_ENV", done.stderr)
 
-    def test_the_github_adapter_writes_only_a_draft_and_has_no_reviews(self) -> None:
+    def test_the_github_adapter_opens_drafts_marks_ready_merges_and_reads_reviews(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir, log = Path(tmp) / "bin", Path(tmp) / "gh.jsonl"
             bin_dir.mkdir()
@@ -2102,16 +2132,34 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
                    "FAKE_GH_LOG": str(log), "FLOW_FORGE_REPOSITORY": "o/n", "GH_TOKEN": token}
             run = lambda *args, **extra: subprocess.run([sys.executable, "-B", str(self.adapter("github")), *args],
                                                         env={**env, **extra}, text=True, capture_output=True)
-            commands = [("find", "--source", "feature/X-1"), ("get", "--url", "https://github.com/o/n/pull/3"),
-                        ("open", "--source", "feature/X-1", "--destination", "main", "--title", "X-1", "--body-file", str(body))]
+            url = "https://github.com/o/n/pull/3"
+            commands = [("find", "--source", "feature/X-1"), ("get", "--url", url),
+                        ("open", "--source", "feature/X-1", "--destination", "main", "--title", "X-1", "--body-file", str(body)),
+                        ("reviews", "--url", url, "--head", "abc"), ("ready", "--url", url),
+                        ("merge", "--url", url, "--strategy", "squash", "--head", "abc")]
+            said = {}
             for args in commands:
                 with self.subTest(command=args[0]):
                     done = run(*args)
                     self.assertEqual(done.returncode, 0, done.stderr)
-                    json.loads(done.stdout)
+                    said[args[0]] = json.loads(done.stdout)
             calls = [json.loads(line) for line in log.read_text().splitlines()]
-            self.assertEqual([c[:2] for c in calls], [["pr", "list"], ["pr", "view"], ["pr", "create"]])
+            self.assertEqual([c[:2] for c in calls], [["pr", "list"], ["pr", "view"], ["pr", "create"], ["pr", "view"],
+                                                      ["pr", "ready"], ["pr", "merge"]])
             self.assertIn("--draft", calls[2])
+            self.assertEqual(calls[5][2:], [url, "--squash", "--match-head-commit", "abc", "--repo", "o/n"])
+            self.assertTrue(said["get"]["draft"])
+            self.assertEqual(said["reviews"], {"checks": [{"name": "build", "state": "passed", "at": "2026-01-01T00:00:01Z"},
+                                                          {"name": "lint", "state": "pending", "at": ""}],
+                                               "reviews": [{"author": "pipeline-bot", "at": "2026-01-01T00:00:02Z",
+                                                            "body": "Looks fine"}]})
+            self.assertEqual((said["ready"], said["merge"]), ({"url": url, "draft": False}, {"url": url, "state": "merged"}))
+            # The rollup is the pull request's current head's: at another head nothing has run yet.
+            self.assertEqual(json.loads(run("reviews", "--url", url, "--head", "def").stdout)["checks"], [])
+            for refused in (("ready", "--url", "https://github.com/x/y/pull/3"),
+                            ("merge", "--url", url, "--strategy", "rebase")):
+                with self.subTest(refused=refused):
+                    self.assertNotEqual(run(*refused).returncode, 0)
             for mode in ("fail", "fail-long"):
                 for args in commands:
                     with self.subTest(mode=mode, failing=args[0]):
@@ -2120,29 +2168,57 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
                         self.assertEqual(token_fragments(token, done.stdout + done.stderr), [])
                         if mode == "fail":  # in fail-long the cut falls inside the marker
                             self.assertIn("[redacted]", done.stderr)
-            done = run("reviews", "--url", "https://github.com/o/n/pull/3", "--head", "abc")
-            self.assertNotEqual(done.returncode, 0, "the GitHub adapter answered reviews")
 
-    def test_pr_review_through_an_adapter_without_reviews_reports_it_unsupported(self) -> None:
+    def test_the_bitbucket_adapter_marks_ready_and_merges_only_the_head_it_was_given(self) -> None:
+        spec = importlib.util.spec_from_file_location("forge_bitbucket_for_tests", self.adapter("bitbucket"))
+        calls = []
+
+        def answer(request, timeout=None):
+            calls.append((request.get_method(), request.full_url, json.loads(request.data) if request.data else None))
+            body = {"source": {"commit": {"hash": "abc123def456"}}} if request.get_method() == "GET" else {}
+            return contextlib.closing(io.BytesIO(json.dumps(body).encode()))
+
+        def adapter(*argv):
+            module = importlib.util.module_from_spec(spec)
+            with mock.patch.dict(os.environ, {"FLOW_FORGE_REPOSITORY": "ws/repo", "FLOW_FORGE_TOKEN_ENV": "FX_TOKEN",
+                                              "FX_TOKEN": "bb-secret"}), \
+                    mock.patch.object(sys, "argv", ["forge_bitbucket.py", *argv]), \
+                    mock.patch("urllib.request.urlopen", answer), \
+                    contextlib.redirect_stdout(io.StringIO()) as out:
+                previous = sys.dont_write_bytecode
+                sys.dont_write_bytecode = True
+                try:
+                    spec.loader.exec_module(module)
+                    module.main()
+                finally:
+                    sys.dont_write_bytecode = previous
+            return json.loads(out.getvalue())
+
+        url = "https://bitbucket.org/ws/repo/pull-requests/7"
+        api = "https://api.bitbucket.org/2.0/repositories/ws/repo/pullrequests/7"
+        self.assertEqual(adapter("ready", "--url", url), {"url": url, "draft": False})
+        self.assertEqual(calls[-1], ("PUT", api, {"draft": False}))
+        self.assertEqual(adapter("merge", "--url", url, "--strategy", "merge", "--head", "abc123def456"),
+                         {"url": url, "state": "merged"})
+        self.assertEqual(calls[-2:], [("GET", api, None), ("POST", api + "/merge", {"merge_strategy": "merge_commit",
+                                                                                     "close_source_branch": False})])
+        calls.clear()
+        with self.assertRaises(SystemExit) as refused:
+            adapter("merge", "--url", url, "--strategy", "squash", "--head", "fff000")
+        self.assertIn("not merged", str(refused.exception.code))
+        self.assertEqual([method for method, *_ in calls], ["GET"], "a moved head was merged")
+
+    def test_every_shipped_forge_adapter_answers_reviews(self) -> None:
         fx = self.fixture()
         m = fx.main
         setup_delivery(fx)
         conf = json.loads((m / ".agents/run-delivery.json").read_text())
-        conf["forge"] = {"adapter": "github", "repository": "o/n"}
-        conf["review"]["pr"] = {"author": "Pipeline Bot"}
-        (m / ".agents/run-delivery.json").write_text(json.dumps(conf))
-        commit(m, "FX-1: GitHub with a pipeline review")
-        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
-        wt = fx.lane("FX-2")
-        code, out = fx.flow("pr-review", "FX-2", cwd=wt)
-        expect(code == 2 and "unsupported by this forge adapter" in out and "github has no `reviews`" in out, out)
-        # The reference Bitbucket adapter, and an adopter's own argv adapter, answer reviews.
-        for forge, answers in (({"adapter": "github", "repository": "o/n"}, False),
-                               ({"adapter": "bitbucket", "repository": "ws/repo"}, True),
-                               ({"argv": ["true"]}, True)):
+        for forge in ({"adapter": "github", "repository": "o/n"}, {"adapter": "bitbucket", "repository": "ws/repo"},
+                      {"argv": ["true"]}):
             with self.subTest(forge=forge):
                 (m / ".agents/run-delivery.json").write_text(json.dumps({**conf, "forge": forge}))
-                self.assertEqual(call(self.tool, "forge_answers", "reviews", cwd=m, env=fx.env, delivery="FX-1"), answers)
+                for command in ("reviews", "ready", "merge"):
+                    self.assertTrue(call(self.tool, "forge_answers", command, cwd=m, env=fx.env, delivery="FX-1"))
 
     # -- shipped text ---------------------------------------------------------------------------------------
 
@@ -2525,46 +2601,64 @@ class RunDeliveryPlanTests(unittest.TestCase):
         self.assertEqual({k: v["state"] for k, v in self.plan(fx)["evidence"]["FX-2"].items()},
                          {"in-app-hold": "todo", "in-app-fail": "todo", "in-app-any": "todo"})
 
-    def test_a_running_sweep_builds_from_the_delivery_file_as_it_stands(self) -> None:
+    def supervise(self, fx: Fixture) -> subprocess.Popen:
+        """The supervisor in the foreground, a pass a second, stopped and reaped at cleanup."""
+        conf_path = fx.main / ".agents/run-delivery.json"
+        conf_path.write_text(json.dumps({**json.loads(conf_path.read_text()), "supervisor": {"passSeconds": 1}}))
+        commit(fx.main, "FX-1: a pass a second")
+        proc = subprocess.Popen([sys.executable, "-B", fx.tool, "lead-run"], cwd=fx.main, env=fx.env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+
+        def stop():
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGTERM)
+            proc.wait(timeout=60)
+            proc.stdout.close()
+        self.addCleanup(stop)
+        self.assertTrue(proc.stdout.readline().startswith("http://127.0.0.1:"))
+        return proc
+
+    def next_pass(self, fx: Fixture, after: int) -> dict:
+        """The supervisor's first pass after the first `after`, as its pass log records it."""
+        log = fx.tmp / "flow-log/FX-1.supervisor.jsonl"
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            passes = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+            if len(passes) > after:
+                return passes[after]
+            time.sleep(0.1)
+        raise AssertionError(f"no pass {after + 1} within 60s")
+
+    def test_a_running_supervisor_builds_from_the_delivery_file_as_it_stands(self) -> None:
         fx = self.fixture()
         plan_delivery(fx)
         m = fx.main
         fx.flow("lead-init", cwd=m)
-        sweep = subprocess.Popen([sys.executable, "-B", fx.tool, "lead-reconcile", "--every", "1"], cwd=m, env=fx.env,
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        self.addCleanup(lambda: sweep.poll() is None and sweep.kill())
-        self.assertIn("plan: unchanged", sweep.stdout.readline())
+        self.supervise(fx)
+        self.assertIn("plan: unchanged", self.next_pass(fx, 0)["reconcile"])
         code, out = fx.flow("lead-plan", "change", "--kind", "relaxed", "--subjects", "FX-2", "--criterion", "one-fails",
                             "--text", "Eased", "--why", "Eased.", cwd=m)
         self.assertEqual(code, 0, out)
-        # Two passes of the sweep that started before the change, then a stop.
-        seen = [sweep.stdout.readline() for _ in range(2)]
-        sweep.terminate()
-        sweep.wait(timeout=60)
+        seen = [self.next_pass(fx, n) for n in range(1, 3)]
         plan = self.plan(fx)
         self.assertEqual([(c["id"], c["by"]) for c in plan["changes"]], [("c1", "lead")], seen)
         self.assertEqual(plan["units"][0]["criteria"][1]["text"], "Eased")
 
-    def test_a_running_sweep_outlives_a_delivery_file_saved_mid_edit(self) -> None:
+    def test_a_running_supervisor_outlives_a_delivery_file_saved_mid_edit(self) -> None:
         fx = self.fixture()
         path = plan_delivery(fx)
         m = fx.main
         fx.flow("lead-init", cwd=m)
-        sweep = subprocess.Popen([sys.executable, "-B", fx.tool, "lead-reconcile", "--every", "1"], cwd=m, env=fx.env,
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        self.addCleanup(lambda: sweep.poll() is None and sweep.kill())
-        self.assertIn("plan: unchanged", sweep.stdout.readline())
+        proc = self.supervise(fx)
+        self.assertIn("plan: unchanged", self.next_pass(fx, 0)["reconcile"])
         whole = path.read_text()
         path.write_text(whole[: len(whole) // 2])
-        broken = sweep.stdout.readline()
+        broken = self.next_pass(fx, 1)
         path.write_text(whole)
-        recovered = sweep.stdout.readline()
-        running = sweep.poll() is None
-        sweep.terminate()
-        sweep.wait(timeout=60)
-        self.assertIn("plan: not rebuilt:", broken)
-        self.assertIn("plan: unchanged", recovered)
-        self.assertTrue(running, "the sweep ended on a delivery file that isn't JSON")
+        recovered = self.next_pass(fx, 3)
+        self.assertIn("not reread", broken.get("delivery", "") + " ".join(broken["reconcile"]))
+        self.assertIn("plan: unchanged", recovered["reconcile"])
+        self.assertIsNone(proc.poll(), "the supervisor ended on a delivery file that isn't JSON")
 
     def test_a_plan_the_view_cant_read_is_refused_before_anything_is_kept(self) -> None:
         fx = self.fixture()
@@ -2834,7 +2928,8 @@ TROUBLESHOOTING_KEYS = [
     "stories without a lane", "lanes own the same files", "fails on", "isn't a valid delivery-plan/1",
     "the binding has no state.forgeSnapshot", "the binding has no tracker publisher", "and the runtime needs Node",
     "is below the runtime's nodeMinimum", "stories with no plan section", "context.sections the plan lacks",
-    "no plan at", "has no configuration for lanes",
+    "no plan at", "has no configuration for lanes", "forge.mergeNeedsReady says the merge step refuses a draft",
+    "the supervisor is down", "don't have the default signal dispositions",
     "binding doesn't serve the base",
 ]
 
@@ -2849,7 +2944,8 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "configuration", "re
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
                  "snapshots and publishers", "in-app adapters", "in-app adapter contract", "video evidence tools",
                  "Node", "harness configuration", "delivery file", "plan chapter", "plan sections", "context sections",
-                 "configuration on the remote base", "gates on the base"]
+                 "configuration on the remote base", "pull requests marked ready", "delivery supervisor",
+                 "gates on the base"]
 
 
 SUPERVISOR_STAND_IN = r'''
@@ -3332,7 +3428,8 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         out = self.doctor(fx, "--run-adapters", "--run-gates", expect_code=0)
         lines = doctor_lines(out)
         self.assertEqual(list(lines), DOCTOR_LABELS, out)
-        expected_skips = {"pipeline PR review", "gh", "forge write access", "plan chapter"}
+        expected_skips = {"pipeline PR review", "gh", "forge write access", "plan chapter", "pull requests marked ready",
+                          "delivery supervisor"}
         expected_skips |= set() if self.ffmpeg else {"video evidence tools"}
         expected_skips |= set() if self.node22 else {"harness configuration"}
         self.assertEqual({label for label, (status, _) in lines.items() if status == "skipped"}, expected_skips, out)
@@ -3426,11 +3523,6 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         (m / "tools/broken_contract_check.py").write_text(FAKE_CONTRACT_CHECK.replace(
             "print(json.dumps(report))", "report.pop('alertsSeen')\nprint(json.dumps(report))"))
         github = lambda c: c.update(forge={"adapter": "github", "repository": "o/n"})
-        fake_gh = fx.tmp / "gh-bin"
-        fake_gh.mkdir()
-        (fake_gh / "gh").write_text(FAKE_GH_SIGNED_IN.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1))
-        (fake_gh / "gh").chmod(0o755)
-        with_gh = f"{fake_gh}{os.pathsep}{os.environ.get('PATH', '')}"
         cases = [
             # (label that fails, its status, a phrase its fix names, how to remove the prerequisite)
             ("host and tools", "missing", "install ps", lambda: env(PATH=self.without("ps"))),
@@ -3475,8 +3567,6 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             ("lane checkouts ignored", "wrong", "to .gitignore", lambda: (edit_json(conf_path, lambda c: c.update(
                 laneCheckout="unignored/{key}")), None)),
             ("tracker issue URL", "missing", "tracker.issueUrl", lambda: (edit_json(conf_path, lambda c: c.pop("tracker")), None)),
-            ("pipeline PR review", "wrong", "remove review.pr", lambda: (edit_json(conf_path, lambda c: (
-                github(c), c["review"].update(pr={"author": "Pipeline Bot"}))), {**fx.env, "PATH": with_gh})),
             ("gh", "missing", "install gh", lambda: (edit_json(conf_path, github), {**fx.env, "PATH": self.without("gh")})),
             ("forge find", "wrong", "", lambda: (edit_json(conf_path, lambda c: c.update(forge={"argv": [
                 sys.executable, "-c", "import sys; sys.exit('the forge is unreachable')"]})), None)),
@@ -4239,7 +4329,7 @@ class RunDeliveryArgumentTests(unittest.TestCase):
             self.tool.main(["lead-setup", "K", "--plan", "p.md", "--pattern", "x", "--no-authority"])
             self.tool.main(["lead-setup", "K", "--plan", "p.md", "--pattern", "x", "--authority", "push",
                             "--granted-by", "op", "--granted-on", "2026-11-03"])
-        self.assertEqual(received, [False, True, (12, "the operator ruled"), (None, None, None, True),
+        self.assertEqual(received, [False, True, ("12", "the operator ruled"), (None, None, None, True),
                                     ("push", "op", "2026-11-03", False)])
 
     def test_a_flag_after_the_separator_is_not_read_as_the_tools_own(self) -> None:
