@@ -208,7 +208,7 @@ else:
     pr = prs.get(args.url)
     if not pr:
         sys.exit("no such PR " + args.url)
-    print(json.dumps({**pr, "url": args.url, "head": head(pr["source"])}))
+    print(json.dumps({**pr, "url": args.url, "head": pr.get("head") or head(pr["source"])}))
 '''
 
 FAKE_CHECK = r'''
@@ -1398,6 +1398,51 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         shutil.rmtree(fx.tmp / "record")
         fx.call("state_tool", "init", "--headline", "half", cwd=m)
         code, out = flow_run("lead-init", cwd=m); expect(code == 0, f"lead-init didn't resume: {out}")
+
+    def test_a_merge_outside_the_queue_can_still_take_the_leads_decisions_once(self) -> None:
+        fx = self.fixture()
+        flow_run = fx.flow
+        m = fx.main
+        plan_delivery(fx)
+        flow_run("lead-init", cwd=m)
+        flow_run("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        wt = fx.lane("FX-3")
+        (wt / "src/two.txt").write_text("two\n")
+        commit(wt, "FX-3: two")
+        (wt / ".orchestration/review/FX-3").mkdir(parents=True)
+        (wt / ".orchestration/review/FX-3/context.md").write_text("- evidence")
+        flow_run("gate", "FX-3", cwd=wt)
+        flow_run("review-prepare", "FX-3", "--round", 1, cwd=wt)
+        write_results(wt / ".orchestration/review/FX-3", 1, "FX-3", fx.lenses(wt))
+        code, out = flow_run("review-reduce", "FX-3", "--round", 1, cwd=wt); expect(code == 0, out)
+        sh("git", "push", "-q", "-u", "origin", "HEAD:feature/FX-3", cwd=wt)
+        body = fx.tmp / "body.md"
+        body.write_text("x\n")
+        flow_run("open-pr", "FX-3", "--title", "FX-3: two", "--body-file", body, cwd=wt)
+        code, out = flow_run("handoff", "FX-3", "--pr", "https://forge.test/pr/1", "--blocked",
+                             "needs-loaded=no data in the fixture", cwd=wt)
+        expect(code == 0, out)
+        # Merged by hand: the branch goes, and the record learns of it from the forge.
+        handed = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        sh("git", "push", "-q", "origin", "--delete", "feature/FX-3", cwd=wt)
+        forge = json.loads((fx.tmp / "forge.json").read_text())
+        forge["https://forge.test/pr/1"].update(state="merged", head=handed)
+        (fx.tmp / "forge.json").write_text(json.dumps(forge))
+        snapshot = fx.tmp / "forge-snapshot.json"
+        snapshot.write_text(json.dumps({"takenAt": sh("date", "-u", "+%Y-%m-%dT%H:%M:%SZ").stdout.strip(), "source": "forge",
+                                        "items": [{"subject": "FX-3", "state": "merged", "head": handed,
+                                                   "changeRequest": "https://forge.test/pr/1"}]}))
+        fx.call("state_tool", "reconcile", "--snapshot", str(snapshot), cwd=m)
+        code, out = flow_run("lead-accept", "FX-3", cwd=m)
+        expect(code == 1 and "accept with --accept-blocked 'needs-loaded'" in out, f"a blocked check was accepted: {out}")
+        code, out = flow_run("lead-accept", "FX-3", "--accept-blocked", "needs-loaded", cwd=m)
+        expect(code == 0 and "after its merge" in out, out)
+        waived = json.loads((fx.tmp / "record/plan.json").read_text())["evidence"]["FX-3"]["in-app-loaded"]
+        expect(waived.get("state") == "waived", f"the lead's waiver didn't reach the plan: {waived}")
+        journal = (fx.tmp / "record/journal.jsonl").read_text()
+        expect("could not be checked" in journal, "the journal claims an owned-files check that never ran")
+        code, out = flow_run("lead-accept", "FX-3", "--accept-blocked", "needs-loaded", cwd=m)
+        expect(code == 1 and "already accepted" in out, f"accepted twice: {out}")
 
     def test_timeouts_and_interruptions_stop_their_processes(self) -> None:
         started = time.time()

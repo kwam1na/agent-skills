@@ -3225,11 +3225,16 @@ def lead_accept(args) -> None:
     if not item:
         raise Stop(f"{key} is not in the queue; the lane has not handed it off")
     problems, decisions = [], []
-    if not item.get("pending"):
+    # Work merged outside the queue skipped the lead's acceptance; its decisions can still be recorded, once.
+    merged = item["stage"] == "merged"
+    if merged:
+        if read_log("acceptance", key):
+            problems.append("the hand-off was already accepted")
+    elif not item.get("pending"):
         problems.append("the hand-off is not waiting for acceptance")
     head = item["head"]
     branch = c.branch(key)
-    if remote_head(branch) != head:
+    if not merged and remote_head(branch) != head:
         problems.append(f"{c.remote}/{branch} is not at the handed head {head[:10]}")
     rounds = [e for e in doc["journal"] if e.get("kind") == "review.round" and e.get("subject") == key]
     numbers = [e["review"]["round"] for e in rounds]
@@ -3244,7 +3249,7 @@ def lead_accept(args) -> None:
     if not evidence or evidence[-1]["reviewArtifact"]["candidateRef"] != head:
         problems.append("the latest captured review evidence is not for the handed head")
     pr = forge("get", "--url", item.get("changeRequest") or "")
-    if pr.get("state") != "open":
+    if pr.get("state") != ("merged" if merged else "open"):
         problems.append(f"the PR is {pr.get('state')}")
     if not same_commit(pr.get("head"), head):
         problems.append(f"the PR is at {str(pr.get('head'))[:10]}, not the handed head")
@@ -3267,7 +3272,8 @@ def lead_accept(args) -> None:
             decisions.append(f"PR review by {review['author']} at {review['at'][:16]} triaged: {recorded['triage']}")
     git("fetch", "-q", c.remote, c.base_branch)
     base = git("merge-base", c.base_ref, head)
-    changed = git("diff", "--name-only", f"{base}..{head}").splitlines()
+    # Once merged, the head is on the base, so there is no diff left to read.
+    changed = [] if merged else git("diff", "--name-only", f"{base}..{head}").splitlines()
     owns = c.lanes[c.lane_of(key)]["owns"]
     outside = [f for f in changed if not any(fnmatch.fnmatch(f, g) for g in owns)]
     if outside:
@@ -3316,17 +3322,22 @@ def lead_accept(args) -> None:
         for p in problems:
             print(f"  - {p}")
         sys.exit(1)
-    state_tool("handoff", "--accept", key)
+    if not merged:
+        state_tool("handoff", "--accept", key)
     # What the plan's producer proofs are judged by: the accepted head and the in-app items accepted as blocked.
     append_log("acceptance", key, {"head": head, "blocked": {label: reason for label, reason in blocked.items()
                                                              if label in accepted_blocked}})
     state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
-               f"Hand-off checked as a claim: {c.remote}/{branch} at {head[:10]}, its PR open at that head into "
-               f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, review evidence "
-               f"captured at that head, files within {c.lane_of(key)}'s, gates and in-app evidence current."
+               (f"Hand-off checked as a claim after its merge: its PR merged at {head[:10]} into {c.base_branch}, "
+                f"{len(set(numbers))} round(s) journaled, last approved by every lens, review evidence captured at "
+                f"that head, gates and in-app evidence current; its files could not be checked against "
+                f"{c.lane_of(key)}'s." if merged else
+                f"Hand-off checked as a claim: {c.remote}/{branch} at {head[:10]}, its PR open at that head into "
+                f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, review evidence "
+                f"captured at that head, files within {c.lane_of(key)}'s, gates and in-app evidence current.")
                + (" " + "; ".join(decisions) + "." if decisions else ""))
     rebuild_plan(c)
-    print(f"accepted {key}; the runner may take it")
+    print(f"accepted {key} after its merge" if merged else f"accepted {key}; the runner may take it")
     if needs_video(key):
         print("  once it merges: lead-evidence page, republish the page (same address), lead-evidence published --url, "
               "and link its section from the story in the tracker")

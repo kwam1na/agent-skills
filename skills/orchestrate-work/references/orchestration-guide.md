@@ -197,7 +197,10 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   the record's `meta.handoffsNeedAcceptance` to true, every hand-off waits as
   `pending` until you run `handoff --accept <subject>`, or
   `handoff --reject <subject> --reason <why>` to send it back to the lane's
-  plan. Never hold approved work: an approved candidate enters the queue at
+  plan. Recording a merge also ends the wait, so both commands then refuse. A
+  merge made outside the queue before you accepted says so in its journal entry
+  and its reconcile report; `lead-accept` can still record your decisions on
+  it, once. Never hold approved work: an approved candidate enters the queue at
   once, not batched behind unrelated work or held for a convenient moment.
 - When the binding sets `selection.lead`, you may choose a candidate's checks
   from its diff instead of the provider: run `select --subject <s> --binding

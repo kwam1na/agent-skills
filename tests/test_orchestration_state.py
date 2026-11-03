@@ -1255,20 +1255,54 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual([entry["subject"] for entry in state_tool.read_journal(self.directory)
                           if entry["kind"] == "candidate.merged"], ["work-m"])
 
-    def test_a_merged_item_that_already_carries_the_wait_keeps_it_and_nothing_acts_on_it(self) -> None:
-        self.lead({"queue": [queue_item("work-m", changeRequest="change 41")]})
+    def test_a_merge_that_skipped_the_lead_says_so_and_one_that_did_not_stays_silent(self) -> None:
+        self.lead({"queue": [queue_item("work-m", changeRequest="change 41", pending=True),
+                             queue_item("work-n", order=2, changeRequest="change 42")]})
+        forge = self.snapshot("forge", [{"subject": subject, "state": "merged", "changeRequest": change, "head": HEAD_B}
+                                        for subject, change in (("work-m", "change 41"), ("work-n", "change 42"))])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual(code, 0, result)
+        self.assertEqual([report["subject"] for report in result["reports"]], ["work-m"])
+        self.assertIn("before the lead accepted", result["reports"][0]["note"])
+        summaries = {entry["subject"]: entry["summary"] for entry in state_tool.read_journal(self.directory)
+                     if entry["kind"] == "candidate.merged"}
+        self.assertIn("before the lead accepted", summaries["work-m"])
+        self.assertNotIn("before the lead accepted", summaries["work-n"])
+
+    def leftover(self) -> str:
+        """A merged, journaled item carrying the flag, as an earlier version left it; returns its forge snapshot."""
+        self.lead({"queue": [queue_item("work-m", changeRequest="change 41"), queue_item("work-w", order=2, pending=True),
+                             queue_item("work-q", order=3)]})
         forge = self.snapshot("forge", [{"subject": "work-m", "state": "merged", "changeRequest": "change 41",
                                          "head": HEAD_B}])
         self.assertEqual(run_tool(self.directory, "reconcile", "--snapshot", forge)[0], 0)
-        # The record as an earlier version of the tool left it.
         version = state_tool.show(self.directory)["state"]["version"]
         state_tool.patch(self.directory, writer="lead", version=version, selector="queue[subject=work-m]",
                          changes={"pending": True})
+        return forge
+
+    def test_a_merged_item_that_already_carries_the_wait_is_cleared_by_the_next_forge_reconcile(self) -> None:
+        forge = self.leftover()
+        entries = len(state_tool.read_journal(self.directory))
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["drift"], [change["recovery"] for change in result["changes"]]),
+                         (0, True, [False]), result)
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state["queue"][0]["stage"], "merged")
+        self.assertNotIn("pending", state["queue"][0])
+        self.assertTrue(state["queue"][1]["pending"], "a wait on unmerged work stays")
+        self.assertEqual([entry for entry in state_tool.read_journal(self.directory)[entries:]
+                          if entry["kind"] == "candidate.merged"], [], "the merge was already recorded")
         before = self.bytes()
         code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
         self.assertEqual((code, result["drift"]), (0, False), result)
         self.assertEqual(self.bytes(), before)
-        self.assertEqual(state_tool.show(self.directory)["state"]["queue"][0]["stage"], "merged")
+
+    def test_until_then_the_leftover_validates_and_nothing_reads_it_as_waiting(self) -> None:
+        self.leftover()
+        before = self.bytes()
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state_tool.state_errors(state), [])
         # Its hand-off is over: rejecting it would send merged work back to the lane's plan.
         for call in (lambda: state_tool.accept_handoff(self.directory, "work-m"),
                      lambda: state_tool.reject_handoff(self.directory, "work-m", "no")):
@@ -1276,6 +1310,13 @@ class ReconcileTests(unittest.TestCase):
                 call()
             self.assertEqual(caught.exception.code, "handoff_invalid")
         self.assertEqual(self.bytes(), before)
+        self.assertEqual(set(state_tool.queue_estimates(state)), {"work-q"})
+        journal = state_tool.read_journal(self.directory)
+        twin = {**state, "queue": [item for item in state["queue"] if item["subject"] != "work-m"]}
+        self.assertEqual(state_tool.delivery_status(state, journal, "2026-11-03T00:00:00Z"),
+                         state_tool.delivery_status({**twin, "queue": [
+                             {key: value for key, value in state["queue"][0].items() if key != "pending"},
+                             *twin["queue"]]}, journal, "2026-11-03T00:00:00Z"))
 
     def test_the_runner_clears_the_wait_only_by_recording_the_merge(self) -> None:
         self.lead({"queue": [queue_item("work-m", pending=True)]})
@@ -1799,6 +1840,23 @@ class RecoveryIntentTests(unittest.TestCase):
         self.assertIn(HEAD_B, self.recovered()[0]["summary"])
         self.assertFalse(self.intent().exists())
         self.assertFalse(state_tool.reconcile(self.directory, [self.forge])["drift"])
+
+    def test_a_crash_before_clearing_an_already_merged_items_wait_is_finished_next_time(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, selector="queue[subject=work-q]",
+                         changes={"pending": True})
+        version += 1
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-q]",
+                         changes={"stage": "merged", "syncedHead": HEAD_B})
+        with mock.patch.object(state_tool, "patch", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        self.assertTrue(self.intent().exists())
+        state_tool.reconcile(self.directory, [self.forge])
+        self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
+        self.assertEqual(len(self.recovered()), 1)
+        self.assertIn("before the lead accepted", self.recovered()[0]["summary"])
+        self.assertFalse(self.intent().exists())
 
     def test_a_crash_after_the_entry_and_before_the_intent_is_cleared_writes_no_second_entry(self) -> None:
         journal = state_tool._journal_recovery
