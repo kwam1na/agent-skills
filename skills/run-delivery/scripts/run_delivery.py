@@ -4715,7 +4715,8 @@ def proof_state(c, plan: dict, doc: dict, unit: dict, kind: str) -> str:
             return "todo"
         return "stale" if item and entry.get("head") != item.get("head") else entry["state"]
     if kind == "handed":
-        return "done" if item and item["stage"] != "stopped" and not item.get("pending") else "open"
+        # What merged is past waiting, whatever the flag says, as the line map reads it.
+        return "done" if item and item["stage"] != "stopped" and (item["stage"] == "merged" or not item.get("pending")) else "open"
     if kind == "merged":
         return "done" if item and item["stage"] == "merged" else "open"
     if kind == "review":

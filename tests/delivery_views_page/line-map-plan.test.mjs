@@ -1082,9 +1082,27 @@ test("a closed delivery's bar, dots, stops, legend and attention all agree with 
   const again = await open(render(document, plan), { store: { read: "pending" }, steps: [{ push: document }, { push: document }] });
   expect(again[2].app.querySelector("#left .left-number").textContent).toBe("5pieces not landed");
 
-  // A plan that can't be drawn on a closed delivery doesn't ask for anything either.
+  // A plan the page can't read is about the page today, not what the close left.
   const [missing] = await open(render(record({ queue: [item("A", "merged")], journal: journal([...landed, close]) }), undefined, { planBlock: { absent: "docs/plans/pay.md" } }));
-  expect(missing.app.querySelector("#plan .plan-needs .ah").textContent).toBe("Left open at close");
+  expect(missing.app.querySelector("#plan .plan-needs .ah").textContent).toBe("Needs you");
+
+  // Plan units with nothing on the line still show as dots, and The line doesn't promise any.
+  const nothing = await first(record({ queue: [], journal: journal([close]) }), planFor([unit("A"), unit("B")], { finish: [] }));
+  expect(nothing.querySelectorAll("#left .dots i.open")).toHaveLength(2);
+  expect(nothing.querySelector("#line .waiting").textContent).toBe("No work reached the line.");
+
+  // A piece the plan removed was no longer meant to land.
+  const trimmed = await first(record({ queue: [item("A", "merged"), item("B", "queued")], journal: journal([...landed, close]) }),
+    planFor([unit("A"), unit("B", { removed: true })], { finish: [] }));
+  expect(trimmed.querySelector("#now .title").textContent).toBe("Delivered.");
+  expect(trimmed.querySelectorAll("#left .dots i")).toHaveLength(1);
+  expect(trimmed.querySelector("#left .title").textContent).toBe("Nothing left to land.");
+
+  // A planned stop promises no review rounds to come.
+  const planned = record({ queue: [], journal: journal([close]) });
+  planned.state.planned = [{ subject: "E", stage: "building" }];
+  const [, plannedStop] = await open(render(planned), { steps: [{ click: '.stop-btn[data-subject="E"]' }] });
+  expect(plannedStop.app.querySelector("#detail").textContent).not.toContain("No review rounds yet");
 });
 
 test("standing and stop wording hold without a merged proof, with a waiver beside an open proof, and for a removed unit", async () => {

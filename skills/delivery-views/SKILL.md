@@ -243,8 +243,10 @@ counting down once nothing is left to land, and counts plan units that never rea
 the line. Lanes read as finished whatever the record last said they waited on, an
 unlanded stop reads "Not landed" and stops pulsing, and leftover holds, leases and
 stale sources no longer show. The progress bar and dots use the same count as the
-headline. Now and the plan call what remains left open at close rather than asking
-for anything, and the supervisor's Needs you box doesn't show.
+headline, and a piece the plan removed isn't counted. Now and the plan call what
+remains left open at close rather than asking for anything. The close is journaled
+before the supervisor stops, so its Needs you box still shows while a running,
+current list holds the close, and otherwise doesn't show.
 
 ### Proofs from the record
 

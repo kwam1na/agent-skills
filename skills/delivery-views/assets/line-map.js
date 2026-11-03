@@ -505,11 +505,16 @@
     });
     return closed;
   }
-  /** Landed pieces out of everything meant to land: a closed delivery counts plan units that never reached the line. */
+  /** Whether the plan took this piece out: it was no longer meant to land. */
+  function removedFromPlan(piece) {
+    return Boolean(plan) && planUnits(plan.units).some(function (unit) { return unit.removed === true && unit.subject === piece.item.subject; });
+  }
+  /** Landed pieces out of everything meant to land: a closed delivery counts plan units that never reached the line, and not ones the plan removed. */
   function closedTally(all) {
-    var landed = all.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
+    var meant = all.filter(function (piece) { return !removedFromPlan(piece); });
+    var landed = meant.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
     var missing = plan ? liveUnits().filter(function (unit) { return !all.some(function (piece) { return piece.item.subject === unit.subject; }); }).length : 0;
-    return { landed: landed, total: all.length + missing };
+    return { landed: landed, total: meant.length + missing, placed: meant.length };
   }
   function journalFor(doc, subject, kinds) {
     return list(doc.journal).filter(function (entry) { return isObject(entry) && entry.subject === subject && (!kinds || kinds[entry.kind]); });
@@ -541,7 +546,7 @@
     if (panel) { nodes.push(panel); }
     var needs = attention(doc);
     if (needs) { nodes.push(needs); }
-    var supervisor = closed ? null : needsYou();
+    var supervisor = needsYou(Boolean(closed));
     if (supervisor) { nodes.push(supervisor); }
     nodes.push(journey(doc, all, landed));
     nodes.push(since(meta, closed));
@@ -847,11 +852,18 @@
   /**
    * The supervisor's "Needs you": what holds the close first, then what is only shown, each with where it comes from
    * and what clears it. A list from a supervisor that isn't running, one past its staleAfter (a pass is overdue), or
-   * one that can't be read is never shown: the box says which instead. A closed delivery has no box: nothing is left
-   * for a supervisor to hold, and asking to resume one would reopen nothing.
+   * one that can't be read is never shown: the box says which instead. The close is journaled before the supervisor
+   * stops, so a closed delivery shows the box only while a running, current list still holds it, and otherwise has none:
+   * a stopped supervisor is what a finished close looks like, and asking to resume it would be wrong.
    */
-  function needsYou() {
+  function needsYou(closed) {
     if (NEEDS === null) { return null; }
+    if (closed) {
+      var current = seconds(NEEDS.staleAfter);
+      var holding = NEEDS.running === true && current !== null && Date.now() / 1000 <= current
+        && list(NEEDS.items).filter(isObject).some(function (item) { return item.holding === true; });
+      if (!holding) { return null; }
+    }
     var box = add(el("div", "attention needs-you"), el("div", "ah", "Needs you"));
     function none(words) { return add(box, el("p", "needs-none", words)); }
     if (NEEDS.unreadable === true) { return none("Unavailable: the supervisor's list can't be read, so it isn't shown."); }
@@ -943,7 +955,7 @@
     var nodes = [el("div", "kicker", "The line"), el("h2", "title", "Every piece of work merges into one main line."),
       el("p", "say", "Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.")];
     if (!all.length) {
-      nodes.push(el("p", "waiting", "No work on the line yet."));
+      nodes.push(el("p", "waiting", closedEntry(doc) ? "No work reached the line." : "No work on the line yet."));
       inner.replaceChildren.apply(inner, nodes);
       return;
     }
@@ -1134,7 +1146,7 @@
       var evidence = events.filter(function (event) { return event.kind === "review.evidence"; }).slice(-1)[0];
       var observation = isObject(doc.reviewEvidence) ? doc.reviewEvidence[item.subject] : undefined;
       if (!native && !events.length) {
-        return isPlanned(doc, item)
+        return isPlanned(doc, item) && !closedEntry(doc)
           ? el("div", "d-run-none", "No review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off.")
           : null;
       }
@@ -1143,7 +1155,7 @@
           || native.journalId !== boundary
           || (evidence && (!isObject(evidence.reviewArtifact) || evidence.reviewArtifact.digest !== native.digest))
           || (isObject(doc.reviewEvidence) && (!isObject(observation) || observation.unavailable === true || observation.digest !== native.digest))) {
-        return el("div", "d-run-none", "Review evidence unavailable or stale for this candidate." + (isPlanned(doc, item)
+        return el("div", "d-run-none", "Review evidence unavailable or stale for this candidate." + (isPlanned(doc, item) && !closedEntry(doc)
           ? " Its rounds show here again once the lane's review-reduce records its latest round." : ""));
       }
       var nativeBox = el("div", "d-run");
@@ -1316,7 +1328,7 @@
     var colours = laneColours(doc, all);
     var open = all.filter(function (piece) { return piece.planned || piece.item.stage !== "merged"; });
     var closedOut = closedEntry(doc);
-    var tally = closedOut ? closedTally(all) : { landed: all.length - open.length, total: all.length };
+    var tally = closedOut ? closedTally(all) : { landed: all.length - open.length, total: all.length, placed: all.length };
     var left = tally.total - tally.landed;
     var number = el("div", "left-number", String(prev.open === null ? left : prev.open));
     number.appendChild(el("small", null, closedOut && left ? (left === 1 ? "piece not landed" : "pieces not landed") : left === 1 ? "piece to go" : "pieces to go"));
@@ -1327,11 +1339,12 @@
     var nodes = [el("div", "kicker", "What's left"), closedOut && !left ? el("h2", "title", tally.total ? "Nothing left to land." : "Nothing was on the line.") : number];
     if (tally.total) { nodes.push(el("p", "say", tally.landed + " of " + tally.total + " pieces have landed.")); }
     else if (!closedOut) { nodes.push(el("p", "say", "Nothing is planned yet.")); }
-    if (all.length) {
+    if (tally.total) {
       var dots = el("div", "dots");
       dots.setAttribute("aria-hidden", "true");
       var closing = 0;
       all.forEach(function (piece) {
+        if (closedOut && removedFromPlan(piece)) { return; }
         var key = text(piece.item.subject);
         var isOpen = piece.planned || piece.item.stage !== "merged";
         nowOpen[key] = isOpen;
@@ -1343,7 +1356,7 @@
         dots.appendChild(dot);
       });
       // Plan units that never reached the line have no lane to colour them.
-      for (var never = all.length; never < tally.total; never += 1) {
+      for (var never = tally.placed; never < tally.total; never += 1) {
         var unplaced = el("i", "open");
         unplaced.style.setProperty("--c", "var(--soft)");
         dots.appendChild(unplaced);
@@ -1948,7 +1961,7 @@
       var reason = PLAN && text(PLAN.unreadable) ? PLAN.unreadable : "";
       nodes.push(flagList([PLAN && typeof PLAN.absent === "string"
         ? { title: "The plan chapter is missing", why: PLAN.absent + " is the plan on file, and nothing has written plan.json for this page." }
-        : { title: "The plan couldn't be read", why: reason }], Boolean(closedEntry(doc))));
+        : { title: "The plan couldn't be read", why: reason }], false));
       inner.replaceChildren.apply(inner, nodes);
       return;
     }
