@@ -422,6 +422,19 @@ class PlanWriteTests(PlanReviewCase):
         self.assertEqual(code, 2, out)
         self.assertIn("the plan review is still open after round 1", out)
         self.assertFalse((fx.tmp / "record/state.json").exists())
+        # --replace sets an earlier snapshot aside, so it can't stand in for the review's end.
+        conf_path = fx.main / ".agents/run-delivery.json"
+        conf_path.write_text(json.dumps({**json.loads(conf_path.read_text()),
+                                         "cleanup": {"archive": str(fx.tmp / "archive/{delivery}")}}, indent=2))
+        log = fx.tmp / "flow-log/plan-changes.jsonl"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(json.dumps({"type": "snapshot", "at": "2026-01-01T00:00:00Z", "late": False, "units": [],
+                                   "finish": []}) + "\n")
+        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the plan review is still open after round 1", out)
+        self.assertTrue(log.exists(), "the refusal archived the flow log")
+        log.unlink()
         code, out = self.flow(fx, "end", "--reason", "The operator approved it as it stands.")
         self.assertEqual(code, 0, out)
         code, out = fx.flow("lead-init", cwd=fx.main)
@@ -515,7 +528,7 @@ class PlanWriteTests(PlanReviewCase):
         (fx.main / "docs/plan.md").write_text(PILOT_PLAN)
         commit(fx.main, "FX-1: a plan shaped like the pilot's")
         setup = ("lead-setup", "FX-1", "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern", PATTERN,
-                 "--approvals-section", "Approval Handoffs", "--out-of-scope-section", "Out of scope")
+                 "--approvals-section", "Approval Handoffs", "--out-of-scope-section", "Out of scope", "--no-authority")
         code, out = fx.flow(*setup, cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertIn("drafted 3 approvals from 'Approval Handoffs'", out)
@@ -538,11 +551,13 @@ class PlanWriteTests(PlanReviewCase):
                          (d["approvals"], d["outOfScope"], d["planReview"]))
         # A named section that is missing, or holds no list, drafts nothing and says so; an unnamed one is silent.
         code, out = fx.flow("lead-setup", "FX-1", "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern", PATTERN,
-                            "--approvals-section", "Sign-offs", "--out-of-scope-section", "Risks", cwd=fx.main)
+                            "--approvals-section", "Sign-offs", "--out-of-scope-section", "Risks", "--no-authority",
+                            cwd=fx.main)
         self.assertEqual(code, 2, out)  # the file exists and --force wasn't given
         path.unlink()
         code, out = fx.flow("lead-setup", "FX-1", "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern", PATTERN,
-                            "--approvals-section", "Sign-offs", "--out-of-scope-section", "Risks", cwd=fx.main)
+                            "--approvals-section", "Sign-offs", "--out-of-scope-section", "Risks", "--no-authority",
+                            cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertIn("note: the plan has no 'Sign-offs' section: drafted no approvals", out)
         self.assertIn("note: the plan's 'Risks' section holds no list: drafted no out-of-scope items", out)
@@ -551,7 +566,7 @@ class PlanWriteTests(PlanReviewCase):
         self.assertNotIn("outOfScope", d)
         path.unlink()
         code, out = fx.flow("lead-setup", "FX-1", "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern", PATTERN,
-                            cwd=fx.main)
+                            "--no-authority", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertNotIn("approvals", out)
         self.assertNotIn("approvals", json.loads(path.read_text()))
@@ -563,7 +578,7 @@ class PlanWriteTests(PlanReviewCase):
         commit(fx.main, "FX-1: the plan")
         code, out = fx.flow("lead-setup", "FX-1", "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern", PATTERN,
                             "--approvals-section", "Approval Handoffs", "--out-of-scope-section", "Out of scope",
-                            cwd=fx.main)
+                            "--no-authority", cwd=fx.main)
         self.assertEqual(code, 0, out)
         path = fx.main / ".agents/deliveries/FX-1.json"
         d = json.loads(path.read_text())
