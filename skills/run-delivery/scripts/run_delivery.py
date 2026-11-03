@@ -1306,33 +1306,140 @@ def review_reduce(args) -> None:
 # -- the plan's review -------------------------------------------------------------------------
 # A plan review runs like a story's review, with no bound: one clean checkout and one brief per lens, carried findings,
 # and a reduction per round. Its store, .orchestration/review/<delivery>/plan/ without checkouts/, keeps every round in
-# full; build_plan reads it, and fits what the plan file holds of it to the plan contract's caps.
+# full; build_plan reads it, and fits what the plan file holds of it to the plan contract's caps. A plan that isn't a
+# delivery yet is reviewed with --plan: its store is .orchestration/plan-review/<reviewSlug>/, keyed by the slug in the
+# plan's front matter so a renamed plan keeps its review, and lead-setup or lead-init moves it into the delivery's.
 
 PLAN_REVIEW_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 PLAN_REVIEW_REASON = 600
 PLAN_REVIEW_CLOSED = ("closed", "fixed", "withdrawn", "dropped")
+REVIEW_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 
 def plan_review_dir(c) -> Path:
-    return c.main / c.work / "review" / c.delivery / "plan"
+    return getattr(c, "plan_store", None) or c.main / c.work / "review" / c.delivery / "plan"
 
 
 def plan_review_subject(c) -> str:
-    return f"{c.delivery}.plan"
+    """The store's own subject, kept when a delivery adopts it; a delivery's own review is `<delivery>.plan`."""
+    own = load_json(plan_review_dir(c) / "store.json")
+    return own["subject"] if own else f"{c.delivery}.plan"
+
+
+def plan_review_name(c) -> str:
+    """Who the review belongs to, as its messages name it."""
+    return f"plan {c.plan}" if getattr(c, "plan_store", None) else c.delivery
+
+
+def plan_review_command(c, action: str) -> str:
+    return f"{flow_command()} plan-review {action}" + (f" --plan {shlex.quote(str(c.plan))}"
+                                                       if getattr(c, "plan_store", None) else "")
 
 
 def plan_review_lenses(c) -> list[str]:
-    """The lenses the delivery file names for its plan review: declared lenses, each with a charter."""
-    lenses = (c.raw.get("planReview") or {}).get("lenses")
-    if not isinstance(lenses, list) or not lenses:
-        raise Stop(f"{c.delivery_where} names no plan review lenses: set planReview.lenses, such as {list(c.lenses)}")
-    if len(lenses) > 12 or len(set(lenses)) != len(lenses):
-        raise Stop(f"{c.delivery_where}: planReview.lenses must be 1 to 12 different lenses")
+    """The lenses the delivery file names for its plan review, or --lenses (round 1's when omitted) for a plan's own
+    review: declared lenses, each with a charter."""
+    if getattr(c, "plan_store", None):
+        where = "--lenses"
+        lenses = c.plan_lenses
+        if lenses is None:
+            rounds = plan_review_rounds(c)
+            if rounds:
+                return rounds[0]["lenses"]
+            raise Stop(f"name the plan review's lenses with --lenses, such as --lenses {','.join(c.lenses)}")
+    else:
+        where = f"{c.delivery_where} planReview.lenses"
+        lenses = (c.raw.get("planReview") or {}).get("lenses")
+        if not isinstance(lenses, list) or not lenses:
+            raise Stop(f"{c.delivery_where} names no plan review lenses: set planReview.lenses, such as {list(c.lenses)}")
+    if not lenses or len(lenses) > 12 or len(set(lenses)) != len(lenses):
+        raise Stop(f"{where} must be 1 to 12 different lenses")
     unknown = [lens for lens in lenses if lens not in c.lenses or not PLAN_REVIEW_ID.fullmatch(lens)]
     if unknown:
-        raise Stop(f"{c.delivery_where}: planReview.lenses names {', '.join(map(str, unknown))}, which this repository "
-                   f"doesn't declare; its lenses are {', '.join(c.lenses)}")
+        raise Stop(f"{where} names {', '.join(map(str, unknown))}, which this repository doesn't declare; its lenses "
+                   f"are {', '.join(c.lenses)}")
     return lenses
+
+
+def front_matter(text: str) -> dict[str, str]:
+    """A plan's leading `---` block, as its `key: value` lines."""
+    block = re.match(r"---\n(.*?)\n---(?:\n|$)", text, re.S)
+    if not block:
+        return {}
+    pairs = (line.partition(":") for line in block.group(1).splitlines())
+    return {key.strip(): value.strip().strip("'\"") for key, colon, value in pairs if colon}
+
+
+def review_slug(plan: Path, text: str) -> str | None:
+    """The plan's `reviewSlug`, or None when its front matter has none."""
+    slug = front_matter(text).get("reviewSlug")
+    if slug is not None and not REVIEW_SLUG.fullmatch(slug):
+        raise Stop(f"{plan}: reviewSlug {slug!r} must be 1 to 64 lowercase letters, digits and hyphens, starting with a "
+                   "letter or digit")
+    return slug
+
+
+def plan_review_config(args):
+    """The config a plan-review command runs under: the delivery's, or with --plan the plan's own store, which needs no
+    delivery file, binding or record."""
+    if not getattr(args, "plan", None):
+        return cfg()
+    global CFG
+    c = CFG = Config(repo(), need_delivery=False, pick=False)
+    plan = Path(args.plan)
+    path = c.root / plan
+    if not path.is_file():
+        raise Stop(f"no plan at {path}")
+    slug = review_slug(plan, path.read_text())
+    if slug is None:
+        suggested = re.sub(r"[^a-z0-9]+", "-", plan.stem.lower()).strip("-")[:64] or "plan"
+        raise Stop(f"{plan} has no review slug, which keeps its review when the plan is renamed. Add this front matter "
+                   f"at its top and commit it before round 1:\n---\nreviewSlug: {suggested}\n---")
+    c.plan, c.plan_store = plan, c.main / c.work / "plan-review" / slug
+    adopted = load_json(c.plan_store / "adopted.json")
+    if adopted:
+        raise Stop(f"the review of {plan} was adopted by delivery {adopted['delivery']} ({adopted['store']}); run "
+                   f"{flow_command()} plan-review {args.action} without --plan")
+    given = getattr(args, "lenses", None)
+    c.plan_lenses = [lens.strip() for lens in given.split(",") if lens.strip()] if given is not None else None
+    return c
+
+
+def adoptable_plan_review(c, plan: Path) -> Path | None:
+    """The plan's own review store, when it holds rounds no delivery has adopted; refused while a round is prepared,
+    since its checkouts live in the store."""
+    path = c.root / plan
+    slug = review_slug(plan, path.read_text()) if path.is_file() else None
+    source = c.main / c.work / "plan-review" / slug if slug else None
+    if not source or not source.is_dir() or (source / "adopted.json").exists():
+        return None
+    n = len(round_files(source)) + 1
+    if (source / f"round-{n}.meta.json").exists():
+        raise Stop(f"the plan's review round {n} is prepared in {source}; reduce it ({flow_command()} plan-review reduce "
+                   f"--plan {shlex.quote(str(plan))}) before a delivery adopts the review")
+    return source if n > 1 else None
+
+
+def adopt_plan_review(c, source: Path, delivery: str) -> str:
+    """Move the plan's own review store into the delivery's, leaving a pointer behind, so the plan chapter shows it."""
+    target = c.main / c.work / "review" / delivery / "plan"
+    if target.exists() and any(target.iterdir()):
+        raise Stop(f"delivery {delivery} already has a plan review in {target}, so it can't adopt the one in {source}; "
+                   "keep one of them and remove the other")
+    checkouts = source / "checkouts"
+    if checkouts.exists():
+        if any(checkouts.iterdir()):
+            raise Stop(f"{checkouts} still holds lens checkouts; reduce the round, or remove them, before adopting")
+        checkouts.rmdir()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        target.rmdir()
+    rounds = len(round_files(source))
+    shutil.move(str(source), str(target))
+    source.mkdir()
+    (source / "adopted.json").write_text(json.dumps({"delivery": delivery, "store": str(target), "at": now()},
+                                                    indent=2) + "\n")
+    return f"adopted the plan review ({rounds} round{'' if rounds == 1 else 's'}) from {source} into {target}"
 
 
 def plan_review_rounds(c) -> list[dict]:
@@ -1428,8 +1535,8 @@ def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, 
                  "- `resolvedFindings`: required. One entry for every finding this lens raised in an earlier round and "
                  'has not closed, `{"id", "state": "closed|fixed|withdrawn|open", "resolution": "..."}`. Every carried '
                  "finding must appear; a plan review defers none.")
-    context = (f"The plan under review is `{c.plan}` in your checkout, the plan of delivery {c.delivery}. Judge whether it "
-               "is ready to approve: its outcome, scope, contract decisions, units, sensors and finish line. The plan "
+    whose = "" if getattr(c, "plan_store", None) else f", the plan of delivery {c.delivery}"
+    context = (f"The plan under review is `{c.plan}` in your checkout{whose}. Judge whether it is ready to approve: its outcome, scope, contract decisions, units, sensors and finish line. The plan "
                "is the whole subject; there is no ticket or code diff to review beyond it.")
     values = {
         "lens": lens, "short": short, "key": subject, "round": str(n), "candidate": candidate, "tree": tree,
@@ -1447,7 +1554,7 @@ def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, 
 
 
 def plan_review_prepare(args) -> None:
-    c = cfg()
+    c = plan_review_config(args)
     release_tuple()  # refuse an unidentified generation before anything is checked out or written
     folder = plan_review_dir(c)
     lenses = plan_review_lenses(c)
@@ -1455,7 +1562,8 @@ def plan_review_prepare(args) -> None:
         raise Stop(f"the plan review was ended ({folder / 'ended.json'}); a new review needs a new store")
     rounds = plan_review_rounds(c)
     if rounds and rounds[0]["lenses"] != lenses:
-        raise Stop(f"the plan review's lenses were fixed at round 1 as {rounds[0]['lenses']}; {c.delivery_where} now "
+        where = "--lenses" if getattr(c, "plan_store", None) else c.delivery_where
+        raise Stop(f"the plan review's lenses were fixed at round 1 as {rounds[0]['lenses']}; {where} now "
                    f"names {lenses}. An amendment is judged by the lenses that reviewed the plan")
     n = len(rounds) + 1
     meta_path = folder / f"round-{n}.meta.json"
@@ -1472,6 +1580,10 @@ def plan_review_prepare(args) -> None:
     if prior_candidate == candidate:
         raise Stop(f"HEAD {candidate[:10]} is the candidate of round {n - 1}; commit the plan's revision first")
     folder.mkdir(parents=True, exist_ok=True)
+    if getattr(c, "plan_store", None) and not (folder / "store.json").exists():
+        slug = folder.name
+        (folder / "store.json").write_text(json.dumps({"slug": slug, "plan": c.plan.as_posix(),
+                                                       "subject": f"{slug}.plan"}, indent=2) + "\n")
     if previous:
         for lens in lenses:
             path = result_path(folder, n, c.lenses[lens][0])
@@ -1496,7 +1608,7 @@ def plan_review_prepare(args) -> None:
         briefs.append((lens, path, result_path(folder, n, short)))
     meta_path.write_text(json.dumps({"round": n, "candidate": candidate, "tree": tree, "startedAt": now(),
                                      "lenses": lenses, "startChecks": checks}, indent=2) + "\n")
-    print(f"{c.delivery} plan review round {n}: candidate {candidate[:10]}, tree {tree[:10]}; no round bound")
+    print(f"{plan_review_name(c)} plan review round {n}: candidate {candidate[:10]}, tree {tree[:10]}; no round bound")
     print()
     print("Start one reviewer per lens, in parallel, each with exactly this prompt" if n == 1 and not previous else
           "Resume the same reviewer for each lens, in parallel, with exactly this message; only if one can't be resumed, "
@@ -1505,7 +1617,7 @@ def plan_review_prepare(args) -> None:
     for lens, path, result in briefs:
         print(f"- {lens}\n  prompt: Read {path} and follow it exactly. Your final message is only the JSON it asks for.\n"
               f"  save to: {result}")
-    print(f"\nThen: {flow_command()} plan-review reduce")
+    print(f"\nThen: {plan_review_command(c, 'reduce')}")
 
 
 def plan_check_result(result: object, *, subject: str, lens: str, short: str, n: int, meta: dict, carried: set[str],
@@ -1570,7 +1682,7 @@ def plan_check_result(result: object, *, subject: str, lens: str, short: str, n:
 
 
 def plan_review_reduce(args) -> None:
-    c = cfg()
+    c = plan_review_config(args)
     folder = plan_review_dir(c)
     rounds = plan_review_rounds(c)
     n = len(rounds) + 1
@@ -1579,7 +1691,7 @@ def plan_review_reduce(args) -> None:
         if rounds:
             plan_review_summary(c, rounds)
             return
-        raise Stop(f"no plan review round is prepared: run {flow_command()} plan-review prepare first")
+        raise Stop(f"no plan review round is prepared: run {plan_review_command(c, 'prepare')} first")
     subject = plan_review_subject(c)
     opened = plan_review_open(rounds)
     known = {f["id"]: e["lens"] for r in rounds for e in r["entries"] for f in e["result"].get("findings", [])}
@@ -1615,7 +1727,7 @@ def plan_review_reduce(args) -> None:
             failed.append(f"{lens}: its checkout {checkout} failed the end identity check: it {problem}")
     if failed:
         raise Stop("the round fails; its checkouts are kept for inspection:\n  " + "\n  ".join(failed)
-                   + f"\nPrepare it again with {flow_command()} plan-review prepare --restart")
+                   + f"\nPrepare it again with {plan_review_command(c, 'prepare')} --restart")
     after = plan_review_open([*rounds, {"entries": entries}])
     aligned = all(e["result"]["outcome"] == "aligned" for e in entries) and not after
     outcome = {"round": n, "outcome": "aligned" if aligned else "unresolved", "candidate": meta["candidate"],
@@ -1626,7 +1738,7 @@ def plan_review_reduce(args) -> None:
     for lens in meta["lenses"]:
         remove_checkout(folder / "checkouts" / lens)
     plan_review_summary(c, [*rounds, outcome])
-    if (c.state / "state.json").exists():
+    if not getattr(c, "plan_store", None) and (c.state / "state.json").exists():
         print(f"  {rebuild_plan_quietly(c)}")
 
 
@@ -1634,10 +1746,12 @@ def plan_review_summary(c, rounds: list[dict]) -> None:
     outcome = rounds[-1]
     n = outcome["round"]
     if outcome["outcome"] == "aligned":
-        print(f"{c.delivery} plan review round {n}: every lens aligned; the plan is ready for the operator's approval")
+        print(f"{plan_review_name(c)} plan review round {n}: every lens aligned; the plan is ready for the operator's "
+              "approval")
         return
     count = len(outcome["open"])
-    print(f"{c.delivery} plan review round {n}: changes requested; {count} open finding{'' if count == 1 else 's'}")
+    print(f"{plan_review_name(c)} plan review round {n}: changes requested; {count} open finding"
+          f"{'' if count == 1 else 's'}")
     for f in outcome["open"]:
         print(f"  open {f['severity']} {f['id']} ({f['lens']}): {f['summary']}")
     if n > 1:
@@ -1645,13 +1759,13 @@ def plan_review_summary(c, rounds: list[dict]) -> None:
         raised = any(e["result"].get("findings") for e in outcome["entries"])
         if raised and count >= before:
             print(f"The plan review isn't converging: round {n} raised a new finding and leaves {count} open, no fewer "
-                  f"than round {n - 1}'s {before}. The operator may end it: {flow_command()} plan-review end --reason "
+                  f"than round {n - 1}'s {before}. The operator may end it: {plan_review_command(c, 'end')} --reason "
                   "TEXT. Nothing ends it on its own.")
-    print(f"  Revise the plan for the open findings, commit, then: {flow_command()} plan-review prepare")
+    print(f"  Revise the plan for the open findings, commit, then: {plan_review_command(c, 'prepare')}")
 
 
 def plan_review_end(args) -> None:
-    c = cfg()
+    c = plan_review_config(args)
     reason = args.reason.strip()
     if not reason or len(reason) > PLAN_REVIEW_REASON or re.search(r"[\x00-\x1f\x7f-\x9f  ]", reason):
         raise Stop(f"--reason must be one line of 1 to {PLAN_REVIEW_REASON} characters")
@@ -1667,8 +1781,8 @@ def plan_review_end(args) -> None:
         raise Stop(f"round {len(rounds) + 1} is prepared; reduce it first, then end the review")
     (folder / "ended.json").write_text(json.dumps({"at": now(), "round": rounds[-1]["round"], "reason": reason},
                                                   indent=2) + "\n")
-    print(f"{c.delivery} plan review ended after round {rounds[-1]['round']}: {reason}")
-    if (c.state / "state.json").exists():
+    print(f"{plan_review_name(c)} plan review ended after round {rounds[-1]['round']}: {reason}")
+    if not getattr(c, "plan_store", None) and (c.state / "state.json").exists():
         print(f"  {rebuild_plan_quietly(c)}")
 
 
@@ -3426,6 +3540,13 @@ def lead_setup(args) -> None:
             print(f"drafted {len(items)} {noun} from '{name}'")
     if existing:
         drafted.update({name: existing[name] for name in ("approvals", "outOfScope", "planReview") if name in existing})
+    adoptable = adoptable_plan_review(c, Path(args.plan))
+    if adoptable:
+        drafted.setdefault("planReview", {"lenses": json.loads(round_files(adoptable)[0].read_text())["lenses"]})
+        target = c.main / c.work / "review" / key / "plan"
+        if target.exists() and any(target.iterdir()):
+            raise Stop(f"delivery {key} already has a plan review in {target}, so it can't adopt the one in {adoptable}; "
+                       "keep one of them and remove the other")
     git("fetch", "-q", c.remote)
     base = args.base or c.binding_base
     if not base:
@@ -3466,6 +3587,8 @@ def lead_setup(args) -> None:
     if loose:
         notes.append(f"name the status each of these moves leads to in tracker.transitions.targets, so one a person "
                      f"already made reads as made: {', '.join(loose)}")
+    if adoptable:
+        print(adopt_plan_review(c, adoptable, key))
     print("next: give each story its lane, list the lanes and the files each owns, set inApp requirements, the finish "
           "lines and the brief notes (all from the approved plan), then lead-init and lead-brief")
     for n in notes:
@@ -3510,6 +3633,9 @@ def lead_init(args) -> None:
     c.check_lanes()
     if c.ship and not c.ship.get("toolingCommit"):
         raise Stop(f"{c.delivery_where}: ship.toolingCommit isn't set")
+    adoptable = adoptable_plan_review(c, c.plan)
+    if adoptable:
+        print(adopt_plan_review(c, adoptable, c.delivery))
     if plan_declared(c):
         rounds = plan_review_rounds(c)
         if rounds and plan_review_state(c, rounds) == "open" and (args.replace or not any(
@@ -4843,12 +4969,16 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=review_reduce)
     p = command(sub, "plan-review", help="review the plan before it is approved: prepare, reduce or end a round")
     review_commands = p.add_subparsers(dest="action", required=True)
+    plan_help = "review this plan in its own store, keyed by its reviewSlug, with no delivery"
     q = command(review_commands, "prepare", help="the next round's checkouts and briefs, one per lens")
     q.add_argument("--restart", action="store_true", help="discard the prepared round's results and prepare it again")
+    q.add_argument("--plan", help=plan_help)
+    q.add_argument("--lenses", help="with --plan: the comma-separated lenses, fixed at round 1 (later rounds keep them)")
     q.set_defaults(fn=plan_review_prepare)
     q = command(review_commands, "reduce", help="check the lenses' results and record the round")
-    q.set_defaults(fn=plan_review_reduce)
+    q.add_argument("--plan", help=plan_help); q.set_defaults(fn=plan_review_reduce)
     q = command(review_commands, "end", help="end a review that isn't converging, with the operator's reason")
+    q.add_argument("--plan", help=plan_help)
     q.add_argument("--reason", required=True); q.set_defaults(fn=plan_review_end)
     p = command(sub, "gate"); p.add_argument("key"); p.set_defaults(fn=gate)
     p = command(sub, "build"); p.add_argument("key"); p.set_defaults(fn=build)

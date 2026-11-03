@@ -968,7 +968,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "6a5eb0b4fb3c9ab161c31f27aa4b33038113681ba9e76419adabc4e29952bcc0"
+          "sha256": "e1fac2aca5ba58fb02b11be4c3893a9c06b5ec3cb2d7ba460674009a45e52ff5"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -1046,7 +1046,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "22f62dcb753ab19c9d7f3b415d7c0246eb899606a6bca5863bc975cda6d3aa2b"
+          "sha256": "a377a08e0c66d0a2f5a3d70a33cc5ce8a43fd43c449cc9b147c7f0c595df16fe"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
