@@ -119,6 +119,9 @@ git tag -a v1.2.3 -m "What an adopter needs to know" <merged-commit>
 git push origin v1.2.3
 ```
 
+Tag a commit CI ran on as the tip of a push to `main`, such as a merge commit. Any
+other commit has no CI run to read, so it publishes nothing.
+
 The annotation opens the release notes, ahead of the digest table and the generated
 list of merged change requests. The release workflow:
 
@@ -170,8 +173,9 @@ Setting `PYTHONDONTWRITEBYTECODE=1` for the suite stops it being written.
 
 `draft-building-v1` and earlier sets are the releases before the first version tag, and
 latest resolves to `draft-building-v1` until a final is published. They carry no
-attestation. They also carry a 0.7.7 runtime without the installed-data protocol, so an
-adopter whose installed runtime has `installed-data-proof/1` must not apply them.
+attestation. `draft-building-v1` carries a 0.7.7 runtime and earlier sets older ones,
+none with the installed-data protocol, so an adopter whose installed runtime has
+`installed-data-proof/1` must not apply them.
 
 The runtime in `product-runtime/` has that protocol and also declares 0.7.7, because
 `runtimeVersion` does not identify runtime bytes. Compare digests, or look for the

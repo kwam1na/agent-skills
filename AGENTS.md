@@ -17,8 +17,8 @@ matches the pair by exact text rather than by parsing the reference.
 Cut releases at batch boundaries, not per ruling. Operator rulings
 accumulate as merged text on the default branch, and one release carries
 them. Tag each release with an annotated version tag, `vMAJOR.MINOR.PATCH` with
-an optional `-rc.N` and no leading zeros, on a commit merged to the default
-branch. Major means an adopter must act, minor is additive, and patch changes no
+an optional `-rc.N` and no leading zeros, on a commit CI ran on as the tip of a
+push to the default branch, such as a merge commit. Major means an adopter must act, minor is additive, and patch changes no
 contract. Release ids are `<profile>-<version>`. A tag's version must be strictly
 greater than every existing version tag, with a candidate below its final, and its
 commit must equal or descend from the highest one's; a backport to an older line is
@@ -46,8 +46,8 @@ success, so read its exit code and its output directory.
 
 A green local run does not prove the declared minimum Python or another operating
 system. Reproducing a CI failure has to clear the local environment's variables
-first, because one set in the session's shell, such as `PYTHONDONTWRITEBYTECODE`,
-can hide the failure. Never point `TMPDIR` under a checkout: tests that copy the
+first, then set only what the workflow's own `env` block sets, because a variable
+left in the session's shell can hide the failure. Never point `TMPDIR` under a checkout: tests that copy the
 repository root then recurse into their own copy without bound. A local suite run
 can leave bytecode under `skills/`, and `scripts/cut-release.py` then fails with
 `release.source_validation`. Clear it, then cut again:

@@ -254,7 +254,7 @@ calls.
 
 Each release is a GitHub release named by its version tag. It carries five product
 archives with their `.release.json` files and four qualification records, and its
-notes list each file's sha256. With no tag named, `gh release download` takes the
+notes list each archive's sha256. With no tag named, `gh release download` takes the
 latest release. Download one profile's pair into an empty directory:
 
 ```bash
@@ -280,7 +280,9 @@ nothing for them. Releases before the first version tag, which is what latest
 resolves to until then, carry a 0.7.7 runtime without the installed-data protocol,
 so an adopter whose installed runtime has `installed-data-proof/1` must not apply
 them. The version number cannot tell these apart, because a later runtime can
-declare 0.7.7 too. Look in the installed bytes instead, from the repository root:
+declare 0.7.7 too. A candidate is never latest, so latest stays on those releases
+until the first final is published, even once a candidate exists. Look in the
+installed bytes instead, from the repository root:
 
 ```bash
 grep -c 'installed-data-proof/1' .agent-skills/current/runtime/cli.mjs
