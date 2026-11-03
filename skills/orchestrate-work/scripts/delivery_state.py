@@ -2183,7 +2183,7 @@ WAIT_BYPASSED = " before the lead accepted it"
 
 def _bypass_report(subject: str) -> dict:
     return {"subject": subject, "note": f"merged{WAIT_BYPASSED}: check it with lead-accept, "
-                                        "or journal your decision if it never had a hand-off"}
+                                        "or journal your decision if lead-accept can't take it"}
 
 
 def _recover(directory: Path, recoveries: list[dict], changes: list[dict], reports: list[dict]) -> None:

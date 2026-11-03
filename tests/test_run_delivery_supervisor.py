@@ -579,6 +579,7 @@ class SupervisorPassTests(unittest.TestCase):
         wt = self.merged_by_hand(fx, "FX-2", "lane-1")
         last = self.once(fx)
         self.assertTrue(wt.exists(), "the pass removed the checkout lead-accept reads")
+        self.assertIn("FX-2: waits for the lead's decision on its merge", last["cleanup"])
         self.assertTrue(any("before the lead accepted it" in line for line in last["reconcile"]), last["reconcile"])
         waiting = [item for item in last["needsYou"] if "merged before you accepted" in item["text"]]
         self.assertEqual([item["holding"] for item in waiting], [True], last["needsYou"])
@@ -602,6 +603,63 @@ class SupervisorPassTests(unittest.TestCase):
         last = self.once(fx)
         self.assertEqual([item for item in last["needsYou"] if "merged before you accepted" in item["text"]], [])
         self.assertFalse(wt.exists())
+
+    def test_lead_cleanup_leaves_the_checkout_a_decision_still_needs(self) -> None:
+        fx = self.fixture()
+        wt = self.merged_by_hand(fx, "FX-2", "lane-1")
+        self.once(fx)
+        code, out = fx.flow("lead-cleanup", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn("waits for the lead's decision", out)
+        code, out = fx.flow("lead-cleanup", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("FX-2: waits for the lead's decision", out)
+        self.assertTrue(wt.exists(), "lead-cleanup removed the checkout lead-accept reads")
+        self.assertTrue([item for item in self.once(fx)["needsYou"] if "merged before you accepted" in item["text"]],
+                        "cleaning up released the hold with no decision")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-cleanup", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertFalse(wt.exists())
+
+    def test_what_counts_as_a_merge_still_awaiting_the_lead(self) -> None:
+        fx = self.fixture()
+        skipped = "Recorded from a forge snapshot: merged at x, not recorded by the runner before the lead accepted it"
+        merge = lambda id, summary=skipped, subject="S": {"id": id, "kind": "candidate.merged", "subject": subject, "summary": summary}
+        decision = lambda id, subject="S": {"id": id, "kind": "decision.recorded", "subject": subject, "summary": "d"}
+        item = {"subject": "S", "stage": "merged", "head": "h1"}
+        log = fx.tmp / "flow-log/S.acceptance.jsonl"
+        for name, journal, accepted, queued, awaits in (
+                ("a merge that skipped the lead", [merge(5)], None, item, 5),
+                ("a merge through the queue, unaccepted", [merge(5, "Merged at x")], None, item, None),
+                ("no merge entry yet", [], None, item, None),
+                ("another story's skipped merge", [merge(5, subject="T")], None, item, None),
+                ("a decision follows it", [merge(5), decision(6)], None, item, None),
+                ("a decision before it", [decision(4), merge(5)], None, item, 5),
+                ("a decision on another story", [merge(5), decision(6, "T")], None, item, 5),
+                ("a later entry of another kind", [merge(5), {"id": 6, "kind": "review.round", "subject": "S", "summary": "r"}],
+                 None, item, 5),
+                ("the latest merge is what counts, skipped", [merge(4, "Merged at x"), merge(5)], None, item, 5),
+                ("the latest merge is what counts, not skipped", [merge(4), merge(5, "Merged at x")], None, item, None),
+                ("an acceptance at its head", [merge(5)], "h1", item, None),
+                ("an acceptance at another head", [merge(5)], "h0", item, 5),
+                ("put back in the queue since", [merge(5)], None, {**item, "stage": "queued"}, None)):
+            with self.subTest(name):
+                log.unlink(missing_ok=True)
+                if accepted:
+                    log.write_text(json.dumps({"head": accepted}) + "\n")
+                found = fx.call("unaccepted_merge", {"state": {"queue": []}, "journal": journal}, queued, cwd=fx.main,
+                                delivery="FX-1")
+                self.assertEqual(found and found["id"], awaits)
+
+    def test_a_reconciles_reports_are_read_from_its_output_and_anything_else_reports_nothing(self) -> None:
+        fx = self.fixture()
+        for output, lines in ((json.dumps({"reports": [{"subject": "S", "note": "n"}, {"subject": None, "note": "m"}]}),
+                               ["S: n", "the record: m"]),
+                              (json.dumps({"ok": False, "code": "x"}), []), ("", []), (None, []), ("not json", []), ("[1]", [])):
+            with self.subTest(output=output):
+                self.assertEqual(fx.call("reconcile_report_lines", output, cwd=fx.main), lines)
 
     def test_a_merge_through_the_queue_needs_no_decision_and_cleans_up(self) -> None:
         fx = self.fixture()

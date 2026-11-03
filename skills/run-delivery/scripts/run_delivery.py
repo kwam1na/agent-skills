@@ -4289,7 +4289,14 @@ def lead_cleanup(args) -> None:
     c = cfg()
     keys = [c.require(k) for k in args.keys] if args.keys else list(c.stories)
     failed = False
+    doc = load_state()
     for key in keys:
+        # As the supervisor's cleanup does: lead-accept reads the checkout, and cleaning up journals a decision of its own.
+        item = next((entry for entry in doc["state"]["queue"] if entry["subject"] == key), None)
+        if item and unaccepted_merge(doc, item):
+            print(f"{key}: waits for the lead's decision on its merge")
+            failed |= bool(args.keys)
+            continue
         status, done, left = clean_story(key)
         if status == "nothing":
             print(f"{key}: nothing to clean")
@@ -4415,11 +4422,19 @@ def reconcile_once() -> list[str]:
         done = state_tool("reconcile", "--snapshot", str(snapshot), "--binding", str(binding), check=False)
         summary = re.search(r'"summary":\s*"([^"]*)"', done.stdout or "")
         lines.append(f"{name}: " + (summary.group(1) if summary else (done.stderr or done.stdout).strip()[-200:]))
-        with contextlib.suppress(ValueError):
-            lines += [f"{name}: {report['subject']}: {report['note']}" for report in json.loads(done.stdout).get("reports", [])]
+        lines += [f"{name}: {line}" for line in reconcile_report_lines(done.stdout)]
     if plan_declared(c) or plan_log_path(c).exists():
         lines.append(rebuild_plan_quietly(c))
     return lines
+
+
+def reconcile_report_lines(output: str | None) -> list[str]:
+    """What a reconcile reported, from its output; output that isn't its answer reports nothing."""
+    try:
+        reports = json.loads(output or "").get("reports", [])
+    except (ValueError, AttributeError):
+        return []
+    return [f"{report.get('subject') or 'the record'}: {report['note']}" for report in reports]
 
 
 def lead_reconcile(args) -> None:
@@ -4707,6 +4722,8 @@ def lane_moved_off(doc: dict, item: dict, words: dict | None = None) -> bool:
 def unaccepted_merge(doc: dict, item: dict) -> dict | None:
     """The merge entry of a story recovered from the forge before the lead accepted it, while no decision follows it."""
     subject = item["subject"]
+    if item["stage"] != "merged":
+        return None
     merges = [e for e in doc["journal"] if e["kind"] == "candidate.merged" and e.get("subject") == subject]
     if not merges or not merges[-1].get("summary", "").endswith(MERGE_SKIPPED_ACCEPTANCE):
         return None
@@ -4903,12 +4920,12 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
             items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane no longer waiting on you",
                           "text": f"{lane['id']} waits on you: {lane.get('focus', '')}"})
     for item in doc["state"]["queue"]:
-        merge = unaccepted_merge(doc, item) if item["stage"] == "merged" else None
+        merge = unaccepted_merge(doc, item)
         if merge:
             items.append({"holding": True, "source": f"journal entry {merge['id']} (candidate.merged)",
                           "text": f"{item['subject']} merged before you accepted it, and its checkout is kept until you decide",
                           "clears": f"{flow_command()} lead-accept {item['subject']}, or journalling decision.recorded "
-                          "for it if it never had a hand-off"})
+                          "for it if lead-accept can't take it"})
     resolutions = {entry.get("journal") for entry in read_log("resolutions", c.delivery)}
     for entry in doc["journal"]:
         if entry["kind"] == "blocker.recorded" and not blocker_resolved(c, doc, entry, resolutions):
