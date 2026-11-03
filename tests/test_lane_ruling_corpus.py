@@ -124,12 +124,15 @@ class LaneRulingTests(unittest.TestCase):
 
     def test_a_host_that_loses_the_ability_midway_is_the_blocker(self) -> None:
         self.assertIn(
-            "A host that loses the ability during a delivery, or that still refuses a message one retry later at the "
-            "next milestone, is this blocker and not a held message.",
+            "A host that loses the ability to start or message sessions during a delivery is this blocker and not a "
+            "held message.",
             _document(GUIDE),
         )
+        self.assertIn("every candidate a lane hands off still enters the queue", _document(GUIDE))
+        self.assertIn("On a host that can still message its running lanes, they keep working", _document(GUIDE))
+        self.assertIn("each running lane reaches its hand-off and takes no new assignment", _document(GUIDE))
         self.assertIn("A refusal that persists means the host cannot message sessions", _document(GUIDE))
-        self.assertIn("A host that loses the ability during a delivery is the same blocker", _document(SKILL))
+        self.assertIn("A host that loses the ability to start or message sessions during a delivery is the same blocker", _document(SKILL))
 
     def test_a_lane_still_realizes_its_lenses_as_subagents(self) -> None:
         self.assertIn("Review with two lenses as subagents", _document(GUIDE))

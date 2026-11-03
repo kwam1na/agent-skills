@@ -121,8 +121,9 @@ as its assignment, undelivered messages kept in the lead's notes, and every
 lane report treated as a claim to check. Without a session capability, no lane
 starts: the lead records the blocker and brings it to the operator, who may
 choose to deliver the tickets one at a time through `$execute-work`. Subagents
-remain how a lane realizes its review lenses. A host that loses the ability
-during a delivery is the same blocker. Leases, including those held
+remain how a lane realizes its review lenses. A host that loses the ability to
+start or message sessions during a delivery is the same blocker. Leases,
+including those held
 outside the epic, follow the same protocol.
 
 When a lane hands off, the state tool can suggest its next work. It ranks the

@@ -602,10 +602,14 @@ its own session. The lead journals `blocker.recorded` and brings it to the
 operator, who may choose to deliver the tickets one at a time through
 `$execute-work`. Subagents remain how a lane realizes its review lenses.
 
-A host that loses the ability during a delivery, or that still refuses a message
-one retry later at the next milestone, is this blocker and not a held message.
-No further lane starts, each running lane finishes its current step and stops
-there, and the queue keeps landing the candidates already handed off.
+A host that loses the ability to start or message sessions during a delivery is
+this blocker and not a held message. So is one that still refuses a message one
+retry later, at the next milestone or, with nothing else pending, at the lead's
+next event. No further lane starts, and every candidate a lane hands off still
+enters the queue. On a host that can still message its running lanes, they keep
+working and the lead keeps assigning them as usual. On one that cannot, each
+running lane reaches its hand-off and takes no new assignment, which is not an
+idle-lane defect.
 
 ### Leases
 
