@@ -577,6 +577,13 @@ class CheckModeTests(MergeQueueTestCase):
         self.assertTrue(Draft202012Validator(schema("orchestration-binding")).is_valid(adopter.binding))
 
 
+# The rule for which bases a binding serves; run-delivery's copy of it is pinned to the same table.
+SERVING_BINDING = {"base": {"remote": "origin", "ref": "main"}, "bases": ["integration-*", "hotfix", "release-1.2", "rel?ase"]}
+SERVING_RULE = {"main": True, "hotfix": True, "integration-2": True, "integration-": True, "integration-[2]": True,
+                "integration-2/x": False, "release/1": False, "hotfix-1": False, "xintegration-2": False,
+                "release-1.2": True, "release-1x2": False, "rel?ase": True, "release": False, "relase": False}
+
+
 class BasesTests(MergeQueueTestCase):
     """A binding that names its bases serves a delivery to any of them; one without serves only base.ref."""
 
@@ -613,7 +620,7 @@ class BasesTests(MergeQueueTestCase):
                 document = self.assertStopped(results, "binding_invalid")
                 self.assertIn(f"the binding doesn't serve the base {branch}", document["stop"]["detail"])
                 self.assertIn("bases", document["stop"]["detail"])
-                self.assertIn("adopting.md#base-mismatch", document["stop"]["detail"])
+                self.assertIn("orchestration-guide.md#base-mismatch", document["stop"]["detail"])
 
     def test_a_binding_without_bases_refuses_another_base_as_before(self) -> None:
         adopter = self.bases_adopter(None)
@@ -635,15 +642,10 @@ class BasesTests(MergeQueueTestCase):
         self.assertIn("remote", document["stop"]["detail"])
 
     def test_the_serving_rule(self) -> None:
-        binding = {"base": {"remote": "origin", "ref": "main"}, "bases": ["integration-*", "hotfix"]}
-        served = {name: queue.serves(binding, name) for name in
-                  ("main", "hotfix", "integration-2", "integration-", "integration-2/x", "release/1", "hotfix-1",
-                   "xintegration-2", "integration-[2]")}
-        self.assertEqual(served, {"main": True, "hotfix": True, "integration-2": True, "integration-": True,
-                                  "integration-2/x": False, "release/1": False, "hotfix-1": False,
-                                  "xintegration-2": False, "integration-[2]": True})
+        for name, expected in SERVING_RULE.items():
+            with self.subTest(base=name):
+                self.assertEqual(queue.serves(SERVING_BINDING, name), expected)
         self.assertFalse(queue.serves({"base": {"remote": "origin", "ref": "main"}}, "integration-2"))
-        self.assertFalse(queue.serves({"base": {"remote": "origin", "ref": "main"}, "bases": ["rel?ase"]}, "release"))
 
 
 class CandidatePinningTests(MergeQueueTestCase):

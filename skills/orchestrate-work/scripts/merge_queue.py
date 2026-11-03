@@ -227,7 +227,7 @@ def inside(root: Path, relative: str) -> Path | None:
 
 
 # Where a refusal of a base the binding doesn't serve sends the reader.
-BASE_MISMATCH_GUIDE = "skills/run-delivery/references/adopting.md#base-mismatch"
+BASE_MISMATCH_GUIDE = "the orchestration guide's base mismatch section, references/orchestration-guide.md#base-mismatch"
 
 
 def serves(binding: dict, base: str) -> bool:

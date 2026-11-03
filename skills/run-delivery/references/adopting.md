@@ -503,7 +503,7 @@ the bases the binding serves:
   matches within one segment of the branch name, so `integration-*` serves `integration-2` but not
   `integration-2/fix`, and `release/1` needs its own entry or `release/*`.
 - **A base cut before its binding gained `bases`** still holds the old binding, and lanes and the merge queue read the
-  binding from the base itself. `doctor` says so on its release line. Commit the binding with `bases` on that base and
+  binding from the base itself. `doctor --delivery <key>` says so on its release line. Commit the binding with `bases` on that base and
   push it.
 - **A lane** reads the delivery's settings from `<remote>/<base>`. The base comes from the base the lane was started
   on, which its checkout records, or from `RUN_DELIVERY_BASE`. Without either, it reads the binding's `base.ref`, and a

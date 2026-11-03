@@ -473,7 +473,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "76d3b02c5b9701a8cb15ddc7321d490c77a1be0a67891e36e2ad966a0f126823"
+          "sha256": "e62f5b22da69d4ffd40d4e87b2819f8b4d80c4d90ee856ca1dd6835cc057d746"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -485,7 +485,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "ce9c21fe32158ca4a7491f452ee7434df28d88f6f2084120b1199c6029efe06d"
+          "sha256": "385a293a94a8a2c6a34fbb44aff4587d8b3d95e4efee12c3721d7ad69614f931"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
@@ -1034,7 +1034,7 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "229aa752f874df706f99779b0d01aaeb52ae9657760b4bb2573276c83e250a58"
+          "sha256": "d0ccc01ff0ef09a3aad774d388fa6194550ba178268713debd2ab0efe8959b15"
         },
         {
           "path": "skills/run-delivery/references/config.md",
@@ -1042,7 +1042,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "50748ef6ed0111d5939110b8822e8b3faaa0e4f75826e5561564dd1501619140"
+          "sha256": "c4cf318a9ef1f553a177e9a493a5463a147e174a986df646853bbb0e943508df"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",

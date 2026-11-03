@@ -40,6 +40,7 @@ from agent_skills import release
 from agent_skills.lifecycle import Lifecycle
 from agent_skills.release import build_release, verify_release
 from agent_skills.validate import LEAKAGE_PATTERNS
+from tests.test_merge_queue import SERVING_BINDING, SERVING_RULE  # the rule both tools apply
 
 
 # The cases share one fixture repository's in-app lease lock and the
@@ -2806,6 +2807,15 @@ class RunDeliveryDoctorTests(unittest.TestCase):
 
         # A base outside the bases is refused, naming the guide's anchor.
         sh("git", "push", "-q", "origin", "origin/integration-2:refs/heads/release/1", cwd=m)
+        code, out = fx.flow("gate", "FX-2", cwd=wt, env={**fx.env, "RUN_DELIVERY_BASE": "integration-9/sub"})
+        self.assertEqual(code, 2, out)
+        self.assertIn("doesn't serve the base integration-9/sub", out)
+        sh("git", "push", "-q", "origin", "origin/integration-2:refs/heads/integration-3", cwd=m)
+        code, out = fx.flow("gate", "FX-2", cwd=wt, env={**fx.env, "RUN_DELIVERY_BASE": "integration-3"})
+        self.assertEqual(code, 2, out)
+        self.assertIn("names base integration-2, but this checkout read it from origin/integration-3", out)
+        served = {name: fx.call("serves", SERVING_BINDING, name, cwd=wt) for name in SERVING_RULE}
+        self.assertEqual(served, SERVING_RULE, "run-delivery and the merge queue disagree on which bases are served")
         for code, out in (fx.flow("config", cwd=wt, env={**fx.env, "RUN_DELIVERY_BASE": "release/1"}),
                           fx.flow("lead-setup", "FX-9", "--plan", "docs/plan.md", "--base", "release/1",
                                   "--pattern", PATTERN, cwd=m)):
@@ -2816,6 +2826,11 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("pass --base", out)
         self.assertFalse((m / ".agents/deliveries/FX-9.json").exists())
+        code, out = fx.flow("lead-setup", "FX-9", "--plan", "docs/plan.md", "--base", "integration-2",
+                            "--pattern", PATTERN, cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads((m / ".agents/deliveries/FX-9.json").read_text())["baseBranch"], "integration-2")
+        (m / ".agents/deliveries/FX-9.json").unlink()
         if self.node22:
             harness("origin/feature/FX-1")
             code, out = fx.flow("config", cwd=m)
@@ -2825,6 +2840,7 @@ class RunDeliveryDoctorTests(unittest.TestCase):
 
         # A base cut before its binding gained bases still needs that setting on it, and doctor says so.
         sh("git", "push", "-q", "origin", f"{before_bases}:refs/heads/integration-old", cwd=m)
+        sh("git", "update-ref", "-d", "refs/remotes/origin/integration-old", cwd=m)
         (m / ".agents/deliveries/FX-8.json").write_text(json.dumps({**d, "baseBranch": "integration-old"}, indent=2))
         if self.node22:
             harness("origin/integration-old")

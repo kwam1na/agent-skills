@@ -4075,10 +4075,14 @@ class Doctor:
         return "ok", f"{path.name} validates against orchestration-binding/1"
 
     def base(self) -> str | None:
-        """The delivery base: the --delivery file's baseBranch, or the binding's base.ref."""
-        key = self.args.doctor_delivery or self.args.delivery
-        d = self.c.shelf.json(f"{self.c.deliveries_rel}/{key}.json") if key else None
-        return (d or {}).get("baseBranch") or self.c.binding_base
+        """The delivery base: the named delivery file's baseBranch, or the binding's base.ref (also when the file
+        can't be read, which the delivery row reports)."""
+        key = self.args.doctor_delivery or self.args.delivery or setting("RUN_DELIVERY_DELIVERY")
+        try:
+            d = self.c.shelf.json(f"{self.c.deliveries_rel}/{key}.json") if key else None
+        except ValueError:
+            d = None
+        return (d if isinstance(d, dict) else {}).get("baseBranch") or self.c.binding_base
 
     def base_ref(self) -> str | None:
         base = self.base()

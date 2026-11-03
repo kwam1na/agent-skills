@@ -742,6 +742,17 @@ candidate or the operator's checkout, so a candidate can never change how it
 is itself checked or merged. A binding that serves a different branch, by
 neither its `base` nor its `bases`, is refused with `binding_invalid`.
 
+### Base mismatch
+
+The runner refuses `--base` with `binding_invalid` unless the binding on that
+base serves it, as its `base.ref` or a match in its `bases`. In a pattern, `*`
+matches within one segment of the branch name, so `integration-*` serves
+`integration-2` but not `integration-2/fix`. To merge into that base, add it,
+or a pattern that matches it, to `bases`. The runner reads the binding from the
+base it merges into, so a base cut before the binding gained `bases` still
+holds the old binding: commit the binding with `bases` on that base and push
+it.
+
 ### Commands and placeholders
 
 Every command is an argv array; there are no shell strings. A placeholder
