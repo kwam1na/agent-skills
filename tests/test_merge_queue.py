@@ -251,7 +251,7 @@ if sys.argv[1] == "ready":
 branch, expected = sys.argv[2], sys.argv[3]
 if os.environ.get("MQ_MERGE") == "refuse" or tip(branch) != expected:
     sys.exit(1)
-onto = sys.argv[4] if len(sys.argv) > 4 else "main"
+onto = sys.argv[sys.argv.index("--onto") + 1] if "--onto" in sys.argv else "main"
 base = tip(onto)
 git("fetch", "--quiet", remote, "+refs/heads/" + onto + ":refs/forge/main", "+refs/heads/" + branch + ":refs/forge/candidate")
 tree = git("rev-parse", expected + "^{tree}")
@@ -594,7 +594,7 @@ class BasesTests(MergeQueueTestCase):
         return queue.Runner(adopter.operator, adopter.state, remote="origin", base=base)
 
     def bases_adopter(self, bases: list[str] | None) -> Adopter:
-        merge = [PY, "tools/forge.py", "merge", "{branch}", "{expectedHead}", "{base}"]
+        merge = [PY, "tools/forge.py", "merge", "{branch}", "{expectedHead}", "--onto", "{base}"]
         return self.adopter({"merge": merge, **({"bases": bases} if bases is not None else {})})
 
     def test_a_queue_merge_lands_on_a_base_the_binding_serves(self) -> None:
