@@ -187,7 +187,7 @@
         "--state-dir",
         "{stateDirectory}",
         "--subject-pattern",
-        "V26-30(4[2-8]|52)",
+        "V26-30(4[2-8]|52|75)",
         "--token-env",
         "GITHUB_TOKEN",
         "--timeout-seconds",

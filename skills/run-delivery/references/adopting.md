@@ -388,20 +388,21 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lea
 
 ## 7. Host notes
 
-No command calls a host's own interface. Where a host offers less, the workflow takes the path on the right:
+No command calls a host's own interface. A lane is always a session of its own, never a subagent and never the lead
+working in its own session. When the host cannot start or message sessions, no lane starts: the lead records the blocker
+and brings it to the operator, who may choose to deliver the stories one at a time through `$execute-work`. Where a host
+offers less otherwise, the workflow takes the path on the right:
 
 | Host behaviour | Without it |
 | --- | --- |
-| Lanes as separate sessions the operator can open and steer | Background agents, with each lane's report relayed by the lead |
-| Messaging between sessions | The operator carries the lead's message to the lane |
 | Publishing the evidence page | A local page the operator shares |
 | Tracker moves | The lane reports the move in its hand-off, and the lead makes it |
 
 ## 8. Operating rules
 
 - **Lanes are sessions of their own.** Each lane runs as its own session the operator can open, watch and steer, never
-  as a hidden background agent of the lead; only a host that can't start sessions runs lanes as background agents, and
-  the lead says so.
+  as a subagent and never as the lead working in its own session. A host that can't start or message sessions stops, as
+  the host notes say. Lens reviewers stay subagents of the lane.
 - **Lanes never merge the base.** A lane reads the delivery's settings, plan and brief from the base on the remote, so
   the lead's pushed changes reach it without a merge; merging the base would move its reviewed head and cost a review
   round. The merge queue syncs each branch with the base when it merges.

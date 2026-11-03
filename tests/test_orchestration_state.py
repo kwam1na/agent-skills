@@ -4356,6 +4356,7 @@ OPERATOR_ESCALATIONS = [
     "a change to the approved scope or finish line;",
     "an irreversible or outward-facing action not already authorized;",
     "a permission or access grant the lead does not hold;",
+    "a host that cannot start or message sessions, so no lane can start;",
     "owner intent that is genuinely ambiguous, where neither the plan nor standing direction settles it.",
 ]
 
