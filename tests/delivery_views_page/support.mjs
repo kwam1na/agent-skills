@@ -107,12 +107,16 @@ const VIEW_ADDRESS = "http://localhost/view/line-map.html";
  * { now, store?, server?, rendered?, steps }: `store` puts a fake live store in place ({ read: "pending" |
  * "reject" | "manual" | <document>, subscribeThrows?, onStatusThrows? }); `server: { document }` stands in for
  * the live server's adapter; `rendered: <page>` serves the page at its /view/ address as the server's next
- * render. Steps: { push }, { status }, { resolve }, { event }, { dropped }, { hover }, { leave },
- * { click, index? } (focus, then click), { toggle } or { wait }. Each snapshot is { app, text, focused, source,
+ * render, and a function gives each answer in turn: a page, a status it refuses with, or an Error it fails with. Steps: { push }, { status }, { resolve }, { event }, { dropped }, { hover }, { leave },
+ * { click, index? } (focus, then click), { toggle }, { asked: <n> } (until the page has fetched its address n times and
+ * taken in the answer) or { wait }. Each snapshot is { app, text, focused, source,
  * titled }, titled counting the elements anywhere in the document that carry a title attribute.
  *
  * `stored: { key: value }` puts values in the page's storage before it loads; storage needs an address, so it goes with
  * `rendered`.
+ *
+ * `quicker: <n>` runs the page's timers n times faster. `scroll: { y, bottom }` places the reader and the plan chapter,
+ * and the result's `scrollY` says where the window ended. The result's `fetched` lists fetches of the page's address.
  *
  * `motion: { reduced? }` stands in for what jsdom lacks to move things: elements get a height that grows with what
  * they hold, `matchMedia` answers the reduced-motion query as `reduced` says, and each `animate` call is recorded, as
@@ -123,12 +127,30 @@ export async function openPage(page, scenario = {}) {
   const stream = { document: [], error: [] };
   let answerRead = null;
   const animations = [];
+  const fetched = [];
   const dom = new JSDOM(page, {
     ...(scenario.rendered ? { url: VIEW_ADDRESS } : {}),
     runScripts: "dangerously",
     beforeParse(window) {
       if (scenario.now) window.Date.now = () => Date.parse(scenario.now);
       window.setInterval = () => 0;
+      if (scenario.quicker) {
+        // The runs refresh keeps its own three seconds, so every fetch a quickened test sees is the plan's.
+        const wait = window.setTimeout.bind(window);
+        window.setTimeout = (run, delay, ...rest) => wait(run, delay === 3000 ? delay : (delay || 0) / scenario.quicker, ...rest);
+      }
+      if (scenario.scroll) {
+        // What jsdom lacks to place a page: where the reader is, and a plan chapter sized by what it holds, ending
+        // `bottom` pixels from the top of the window. Any redraw that moves the window goes through `scrollTo`.
+        let at = scenario.scroll.y;
+        Object.defineProperty(window, "scrollY", { configurable: true, get() { return at; } });
+        window.scrollTo = ({ top, behavior }) => { if (behavior !== "instant") throw new Error("the reader's place moved smoothly"); at = top; };
+        const sized = window.Element.prototype.getBoundingClientRect;
+        window.Element.prototype.getBoundingClientRect = function () {
+          if (!this.closest("#plan")) return sized.call(this);
+          return { height: this.querySelectorAll("*").length * 10, bottom: scenario.scroll.bottom, top: 0, left: 0, right: 0, width: 0 };
+        };
+      }
       if (scenario.motion) {
         const reduced = Boolean(scenario.motion.reduced);
         window.matchMedia = (query) => ({ media: query, matches: query.includes("prefers-reduced-motion: reduce") && reduced,
@@ -163,9 +185,14 @@ export async function openPage(page, scenario = {}) {
           : Promise.reject(new Error("unexpected fetch " + url));
       }
       if (scenario.rendered) {
-        window.fetch = (url) => url === VIEW_ADDRESS
-          ? Promise.resolve({ text: () => Promise.resolve(scenario.rendered) })
-          : Promise.reject(new Error("unexpected fetch " + url));
+        window.fetch = (url) => {
+          if (url !== VIEW_ADDRESS) return Promise.reject(new Error("unexpected fetch " + url));
+          fetched.push(url);
+          const answer = typeof scenario.rendered === "function" ? scenario.rendered() : scenario.rendered;
+          if (answer instanceof Error) return Promise.reject(answer);
+          if (typeof answer === "number") return Promise.resolve({ ok: false, status: answer, text: () => Promise.resolve("not the page") });
+          return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(answer) });
+        };
       }
       const store = scenario.store ?? { read: "pending" };
       if (store) {
@@ -205,12 +232,20 @@ export async function openPage(page, scenario = {}) {
     if ("leave" in step) document.querySelector(step.leave).dispatchEvent(new dom.window.Event("mouseleave"));
     if ("click" in step) { const node = document.querySelectorAll(step.click)[step.index || 0]; node.focus(); node.click(); }
     if ("toggle" in step) { const node = document.querySelector(step.toggle); node.open = !node.open; }
+    if ("asked" in step) {
+      const deadline = Date.now() + 20000;
+      while (fetched.length < step.asked) {
+        if (Date.now() > deadline) throw new Error(`the page fetched ${fetched.length} times, not ${step.asked}`);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
+    }
     await new Promise((resolve) => setTimeout(resolve, step.wait || 5));
     snapshots.push(snapshot());
   }
+  const scrollY = dom.window.scrollY;
   const storedTheme = (() => { try { return { ...dom.window.localStorage }; } catch { return null; } })();
   dom.window.close();
-  return Object.assign(snapshots, { storage: storedTheme, animations });
+  return Object.assign(snapshots, { storage: storedTheme, animations, fetched, scrollY });
 }
 
 const TOOLS = path.join(ROOT, "tests", "delivery_views_page", "page_tools.py");

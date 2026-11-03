@@ -1243,8 +1243,8 @@
   }
 
   /* The plan: is the work still what was agreed, and what proves it? */
-  // Proofs are derived from each record the page draws, by the same lookups The line uses; the plan itself is fixed at
-  // render. Every unit, row and fold is found through these maps, never through a selector built from plan text.
+  // Proofs are derived from each record the page draws, by the same lookups The line uses; the plan itself comes from the
+  // renderer, at load and from each page it renders after. Every unit, row and fold is found through these maps, never through a selector built from plan text.
   var planFolds = Object.create(null);
   var planAsApproved = false;
   var planRows = Object.create(null);
@@ -1666,8 +1666,91 @@
     return fold("review", "Plan review (" + count + (count === 1 ? " round)" : " rounds)"), null, box);
   }
 
+  // The plan a live page holds follows the record. The server renders the page again when the record moves, so the plan
+  // comes from that page's block: what the renderer's validator accepted, or { unreadable }. It renders after it pushes,
+  // so an answer holding an older plan means not yet; asking stops being quiet after PLAN_PATIENCE of those.
+  var PLAN_FIRST = 1000, PLAN_AGAIN = 2000, PLAN_BEHIND = 30000, PLAN_PATIENCE = 15;
+  var planNamed = null, planTries = 0, planBehind = false, planAsked = null, planAsking = false;
+  function servedLive() {
+    return isObject(globalThis.deliveryStateStore) && typeof fetch === "function" && typeof location === "object" && /^https?:$/.test(location.protocol);
+  }
+  /** The `updated` value of the latest "Plan updated:" decision in a record, or null. */
+  function planNamedBy(doc) {
+    var updates = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "decision.recorded" && /^Plan updated:/.test(text(entry.summary)); });
+    var latest = updates.length ? /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/.exec(text(updates[updates.length - 1].summary)) : null;
+    return latest ? latest[0] : null;
+  }
+  // Whether this plan is the one named, or one the record has yet to name: the file is written before its entry.
+  function planMeets(held, named) { return isObject(held) && typeof held.updated === "string" && (held.updated === named || laterThan(held.updated, named)); }
+  function followPlan(named) {
+    if (named === null || planMeets(plan, named)) {
+      clearTimeout(planAsked);
+      planAsked = null;
+      planNamed = null;
+      planBehind = false;
+      return;
+    }
+    if (named !== planNamed) { planNamed = named; planTries = 0; planBehind = false; }
+    if (planAsked !== null || planAsking) { return; }
+    planAsked = setTimeout(askPlan, planBehind ? PLAN_BEHIND : planTries ? PLAN_AGAIN : PLAN_FIRST);
+  }
+  function askPlan() {
+    planAsked = null;
+    planAsking = true;
+    fetch(location.href, { cache: "no-store" }).then(function (answer) {
+      if (!answer.ok) { throw new Error("no page"); }
+      return answer.text();
+    }).then(function (page) {
+      return JSON.parse(new DOMParser().parseFromString(page, "text/html").getElementById("delivery-plan").textContent);
+    }).then(answeredPlan).catch(function () { answeredPlan(null); });
+  }
+  function answeredPlan(block) {
+    planAsking = false;
+    // The record stopped naming another plan while the page asked, so there is nothing to take.
+    if (planNamed === null) { return; }
+    if (isObject(block) && planMeets(block.plan, planNamed)) { takePlan(block); return; }
+    var older = isObject(block) && isObject(block.plan) && typeof block.plan.updated === "string" && seconds(block.plan.updated) !== null;
+    planTries += 1;
+    var behind = !older || planTries >= PLAN_PATIENCE;
+    if (behind !== planBehind) { planBehind = behind; safely(lastGood || shown); }
+    // Only a change of note drew, so ask again from here too; a second ask is refused while one is waiting.
+    followPlan(planNamed);
+  }
+  // The new plan is only kept if the page can draw it: the plan in use goes back otherwise.
+  function takePlan(block) {
+    var was = { PLAN: PLAN, plan: plan };
+    PLAN = block;
+    plan = block.plan;
+    var place = planPlace();
+    try {
+      draw(lastGood || shown);
+    } catch (error) {
+      PLAN = was.PLAN;
+      plan = was.plan;
+      planBehind = true;
+      safely(lastGood || shown);
+    }
+    keepPlace(place);
+  }
+  // Where the reader is. Past the chapter, a plan of another height would move what they are reading, so the window
+  // moves with it; anywhere else it stays.
+  function planPlace() {
+    if (typeof scrollY !== "number") { return null; }
+    var box = parts.plan.getBoundingClientRect();
+    return { y: scrollY, past: box.bottom <= 0, height: box.height };
+  }
+  function keepPlace(place) {
+    if (!place) { return; }
+    var y = place.y + (place.past ? parts.plan.getBoundingClientRect().height - place.height : 0);
+    // The page scrolls smoothly for its links; this is no movement the reader asked for.
+    if (scrollY !== y && typeof scrollTo === "function") { scrollTo({ top: y, behavior: "instant" }); }
+  }
+
   function drawPlan(doc) {
     var inner = parts.plan;
+    var live = servedLive();
+    var named = planNamedBy(doc);
+    if (live) { followPlan(named); }
     planRows = Object.create(null);
     var nodes = [el("div", "kicker", "The plan")];
     if (!plan) {
@@ -1678,10 +1761,11 @@
     }
     var counts = planCounts(doc);
     var title = add(el("h2", "title plan-title"), planTitle(doc, counts));
-    // A pushed record says when the producer rewrote the plan; this page holds the plan it was rendered with.
-    var updates = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "decision.recorded" && /^Plan updated:/.test(text(entry.summary)); });
-    var latest = updates.length ? /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/.exec(text(updates[updates.length - 1].summary)) : null;
-    if (latest && latest[0] !== plan.updated) { title.appendChild(el("span", "plan-reload", "The plan changed. Reload to see it.")); }
+    // A record says when the producer rewrote the plan. A live page fetches it and speaks only if that fails; a static
+    // page holds the plan it was rendered with.
+    if (live ? planBehind : named && named !== plan.updated) {
+      title.appendChild(el("span", "plan-reload", live ? "The plan shown is out of date." : "The plan changed. Reload to see it."));
+    }
     var review = planReview();
     nodes.push(title, el("p", "say plan-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")));
     if (review) { nodes.push(approvalLine(review)); }
