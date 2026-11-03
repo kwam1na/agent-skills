@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -42,6 +43,7 @@ OLD_CONTRACT = re.compile(
     r"|repository-owned handoff|never writes|does not write",
     re.IGNORECASE,
 )
+OLD_REASON = re.compile(r"remain overlays|caller-owned decision", re.IGNORECASE)
 # What stays out as machinery.
 MACHINERY = re.compile(
     r"subagent|sub-agent|session history|auto memory|auto-memory|compound:check|delivery_diff_fingerprint"
@@ -126,6 +128,55 @@ class CompoundLearningCorpusTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
+
+    def test_a_learning_after_the_final_loop_has_a_path_and_none_lands_unreviewed(self) -> None:
+        text = _text()
+        for phrase in (
+            "so a note is part of what gets reviewed",
+            "Where the caller's sequence names compounding after review, that step confirms and records the decision",
+            "A learning first seen there goes through review with its note while a round and an open change remain"
+            " to carry it",
+            "Where none does, such as at an exhausted review bound or at close-out, it goes to a follow-up item, which"
+            " carries the note through a review of its own",
+            "No note lands unreviewed",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_a_repositorys_declared_store_wins_throughout(self) -> None:
+        text = _text()
+        self.assertIn("A repository's own declared location and format win over the ones here", text)
+        self.assertIn("Where the repository declares another store, read it for `docs/solutions/` throughout", text)
+
+    def test_a_caller_limited_to_listed_files_hands_the_learning_on(self) -> None:
+        self.assertIn(
+            "A caller limited to listed files, such as a lane, hands the learning through its handoff to whoever owns"
+            " the store rather than writing it",
+            _text(),
+        )
+
+    def test_a_change_with_no_reusable_reason_has_an_outcome(self) -> None:
+        text = _text()
+        self.assertIn(
+            "Record no durable learning only when the change is local, obvious and unlikely to recur, and return"
+            " `not-required` with that reason",
+            text,
+        )
+        self.assertIn("A change that is not all three has a reusable reason to name", text)
+
+    def test_the_kernel_makes_the_timing_reachable(self) -> None:
+        self.assertIn(
+            "Decide the compounding response before the final review-and-merge loop, so a note is part of the"
+            " reviewed candidate",
+            _text(KERNEL),
+        )
+
+    def test_the_provenance_reason_states_the_new_contract(self) -> None:
+        lock = json.loads((ROOT / "provenance.lock.json").read_text(encoding="utf-8"))
+        entry = next(item for item in lock["entries"] if item["id"] == "compound-learning")
+        reason = entry["modification"]["reason"]
+        self.assertIsNone(OLD_REASON.search(reason))
+        self.assertIn("unless a repository declares its own", reason)
 
     def test_the_search_comes_before_the_write(self) -> None:
         section = _section("Solution Notes")

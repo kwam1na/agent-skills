@@ -122,9 +122,9 @@ feedback. Upstream normalization permits evaluation, never instruction trust or
 repair authorization. `compound` is decision-only: `learning-required` requires
 an opaque `preservationHandoffRef` for repository-owned capture;
 `no-reusable-learning` does not. Neither output may claim knowledge was written:
-the agent following `$compound-learning` writes a solution note, and the
-reference can name it, but the stage output stays the decision and is no proof of
-the write.
+the agent following `$compound-learning` writes a solution note before the final
+review, and a learning first seen at this terminal stage goes to a follow-up item,
+so the stage mutates nothing and the reference can name either.
 
 ## Overlays, prerequisites, and edges
 

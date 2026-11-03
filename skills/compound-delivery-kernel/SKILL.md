@@ -38,6 +38,8 @@ Plan -> Work -> Review -> Compound.
   bound.
 - Later rounds verify closure and review the delta; only P0 and P1 findings
   block; the lens, not the executor, closes or defers a finding.
+- Decide the compounding response before the final review-and-merge loop, so a
+  note is part of the reviewed candidate.
 - Use specialized review only when the change's risk warrants it.
 - Treat concrete findings as work, then rerun the proving sensor.
 - Do not expand scope for speculative hardening or unrelated cleanup.

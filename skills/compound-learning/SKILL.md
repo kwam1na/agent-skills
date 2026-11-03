@@ -20,15 +20,18 @@ A reusable learning is `required` only when the caller provides:
 - the learning to preserve; and
 - evidence from the delivery.
 
-When no reusable reason exists, return `not-required` with the caller's reason.
 Record no durable learning only when the change is local, obvious and unlikely to
-recur. Missing or conflicting inputs return `blocked` rather than inventing
-knowledge.
+recur, and return `not-required` with that reason. A change that is not all three
+has a reusable reason to name. Missing or conflicting inputs return `blocked`
+rather than inventing knowledge.
 
 Decide before the final review-and-merge loop, while the context is fresh, so a
 note is part of what gets reviewed. Where the caller's sequence names compounding
 after review, that step confirms and records the decision. A learning first seen
-there is a change like any other, and goes through review with its note.
+there goes through review with its note while a round and an open change remain to
+carry it. Where none does, such as at an exhausted review bound or at close-out, it
+goes to a follow-up item, which carries the note through a review of its own. No
+note lands unreviewed.
 
 ## Preserve
 
@@ -40,7 +43,13 @@ Put a required learning in the one place that fits:
   it, is updated there.
 - Anything else becomes a solution note.
 
+A caller limited to listed files, such as a lane, hands the learning through its
+handoff to whoever owns the store rather than writing it.
+
 ## Solution Notes
+
+Where the repository declares another store, read it for `docs/solutions/`
+throughout.
 
 Search `docs/solutions/` first. If an existing note covers the same problem, root
 cause and solution, update it in place and add `last_updated`, because two notes
