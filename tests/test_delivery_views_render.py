@@ -954,8 +954,14 @@ class NeedsBlockTests(unittest.TestCase):
         (self.state / render.NEEDS_FILE).symlink_to(elsewhere)
         self.assertEqual(render.read_needs_block(self.state), {"unreadable": True})
         (self.state / render.NEEDS_FILE).unlink()
-        (self.state / render.NEEDS_FILE).write_text(" " * (render.NEEDS_LIMIT_BYTES + 1))
+        # A list that is valid in every way but its size.
+        padded = self.listed([{"holding": True, "source": "s", "text": "t" * render.NEEDS_LIMIT_BYTES, "clears": "c"}])
+        self.write(padded)
+        self.assertGreater((self.state / render.NEEDS_FILE).stat().st_size, render.NEEDS_LIMIT_BYTES)
         self.assertEqual(render.read_needs_block(self.state), {"unreadable": True})
+        padded["items"][0]["text"] = "t"
+        self.write(padded)
+        self.assertEqual(render.read_needs_block(self.state)["items"][0]["text"], "t")
         for bad in ({"holding": True, "source": "s", "text": "t"}, {"holding": 1, "source": "s", "text": "t", "clears": "c"}):
             with self.subTest(bad=bad):
                 self.write(self.listed([bad]))

@@ -651,6 +651,9 @@ class SupervisorPassTests(unittest.TestCase):
         held("the setup broke")
         state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "Serving is held: the setup broke.")
         self.holds_alone(fx, "Serving is held: the setup broke")
+        runner = [item for item in passes(fx)[-1]["needsYou"] if "Serving is held" in item["text"]]
+        self.assertEqual(len(runner), 1, passes(fx)[-1]["needsYou"])
+        self.assertTrue(runner[0]["clears"].startswith("the runner's hold clearing, journalling base.repaired, or "), runner)
         state_tool(fx, "patch", "--writer", "lead", "--version", str(record(fx)["state"]["version"]), "--set",
                    json.dumps({"/meta/hold": None}))
         self.assertFalse(any("Serving is held" in h for h in self.once(fx)["closeHeldBy"]))
