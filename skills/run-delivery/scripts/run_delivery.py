@@ -9,6 +9,7 @@ and lens charters), found in the installed generation it runs from. It reads the
 `.agents/deliveries/<key>.json` (references/config.md). Forges and in-app checks are reached through argv adapters.
 
 Lane:
+  lane-start     <key> [--base B]
   review-prepare <key> --round N [--grace] [--restart]
   review-reduce  <key> --round N
   gate           <key>
@@ -2520,21 +2521,242 @@ def authority_text() -> str:
 
 
 def transitions_text() -> str:
-    """The lane's status moves, from the own config's `tracker.transitions`; without it, lanes move nothing."""
-    moves = (cfg().flow_raw.get("tracker") or {}).get("transitions")
-    if not moves:
+    """The lane's status moves, from the own config's `tracker.transitions`, and which command makes each."""
+    conf = tracker_conf(cfg())
+    if conf["problems"]:
+        raise Stop(f"{cfg().name}: {'; '.join(conf['problems'])}")
+    moves = conf["transitions"]
+    if not moves.get("start") and not moves.get("review"):
         return "Don't move your story's status: this repository gives lanes no status moves."
-    if not isinstance(moves, dict) or not all(isinstance(moves.get(k, []), list) for k in ("start", "review")):
-        raise Stop(f"{cfg().name} tracker.transitions must be {{start: [...], review: [...], source?}}")
     said = lambda names: ", then ".join(f'"{n}"' for n in names)
-    lines = ["Move your story's status with your tracker tools, by these transitions, in order:"]
+    publishes = conf["mode"] == "publisher"
+    lines = []
     if moves.get("start"):
-        lines.append(f"- When you start the story: {said(moves['start'])}.")
+        lines.append(f"- The start move, {said(moves['start'])}: "
+                     + ("the tracker publisher makes it once `lane-start` records your start." if publishes else
+                        "`lane-start` prints it; make it with your tracker tools."))
     if moves.get("review"):
-        lines.append(f"- Once its draft PR is open and the gates pass at its head: {said(moves['review'])}.")
-    lines.append("Nothing else: later moves (after merge, after a deploy) aren't yours. If a transition fails, retry it "
-                 "once, then say so in your report." + (f" The workflow: {moves['source']}" if moves.get("source") else ""))
+        when = moves.get("reviewWhen")
+        made = {"gates-passed": "`open-pr` makes it once the PR is open and the gates pass at its head",
+                "pr-open": "`open-pr` makes it as the PR opens",
+                "pipeline-green": "`pr-review` makes it once the pipeline's review is current and its checks green"}
+        lines.append(f"- The review move, {said(moves['review'])}: "
+                     + (made[when] + ("" if publishes else ", by printing it for you to make with your tracker tools")
+                        if when else "`open-pr` prints it once the PR is open; make it then with your tracker tools")
+                     + ".")
+    lines.append("Nothing else: later moves (after merge, after a deploy) aren't yours. A move the commands couldn't make "
+                 "is retried by running the command again; `handoff` retries a review move that is still owed."
+                 + (f" The workflow: {moves['source']}" if moves.get("source") else ""))
     return "\n".join(lines)
+
+
+def said_moves(names: list[str]) -> str:
+    return ", then ".join(f'"{n}"' for n in names)
+
+
+def lane_print(c, key: str, what: dict) -> None:
+    """Record what a command printed for the lane to make with its own tracker tools (a host-only tracker)."""
+    tracker_publisher.append_flow(c.flow_log, c.delivery, "lane-prints", {"subject": key, **what})
+
+
+def review_move_made(c, key: str, names: list[str]) -> bool:
+    """Whether this record's ledger holds the story's whole review move: every step made or made by someone else, or
+    the move found made or not offered. A move a refusal stopped partway isn't made: the next run resumes it."""
+    init = tracker_publisher.init_id(sorted(load_state()["journal"], key=lambda e: e["id"]))
+    lines = [line for line in tracker_publisher.read_ledger(c.state) if line.get("init") == init
+             and line.get("ticket") == key and line.get("move") == "review"]
+    if any(line["outcome"] == "handled" or str(line.get("action", "")).endswith(":made") for line in lines):
+        return True
+    done = {line.get("transition") for line in lines if line["outcome"] in ("transition", "skip")}
+    return all(name in done for name in names)
+
+
+def start_owed(c, doc: dict, key: str) -> bool:
+    """Whether the story's latest assignment has no ledger line yet under this record: its start isn't posted."""
+    journal = sorted(doc["journal"], key=lambda e: e["id"])
+    assigned = [e for e in journal if e["kind"] == "lane.assigned" and e.get("subject") == key]
+    if not assigned:
+        return False
+    init = tracker_publisher.init_id(journal)
+    return not any(line["journal"] == assigned[-1]["id"] and line.get("init") == init
+                   for line in tracker_publisher.read_ledger(c.state))
+
+
+def append_owed(c, doc: dict, key: str, names: list[str], why: str, locked: bool = False) -> None:
+    """A review move the hand-off couldn't make, left in the ledger as `failed`, where Needs you shows it. `locked`:
+    the caller already holds the ledger's lock (a second lock from this process would wait on itself)."""
+    init = tracker_publisher.init_id(sorted(doc["journal"], key=lambda e: e["id"]))
+    with tracker_publisher.ledger_lock(c.state, wait=True) if not locked else contextlib.nullcontext():
+        tracker_publisher.append_ledger(c.state, {
+            "journal": tracker_publisher.LANE_MOVE, "init": init, "outcome": "failed", "writer": "lane",
+            "kind": "lane.review", "ticket": key, "move": "review", "transitions": names, "error": why[:500]})
+
+
+def review_move(c, key: str, when: str, last: bool = False) -> None:
+    """The story's review move, at the moment `when` names. With the tracker publisher and that reviewWhen, the
+    command makes it through the ledger; otherwise it prints it for the lane, as the brief did. A move the tracker
+    refuses writes no line and doesn't fail the command: running the command again, or `handoff`, retries it."""
+    conf = tracker_conf(c)
+    names = conf["transitions"].get("review") or []
+    configured = conf["transitions"].get("reviewWhen")
+    if not names or conf["problems"]:
+        return
+    if configured is None:
+        # Opt-in: with no reviewWhen nothing moves by itself, and open-pr prints the move as the brief did.
+        if when == "pr-open":
+            print(f"Tracker move (your story {key}): {said_moves(names)}, with your tracker tools.")
+        return
+    if configured != when:
+        return
+    if conf["mode"] != "publisher":
+        if conf["mode"] == "host" and any(p.get("subject") == key and p.get("move") == "review" for p in
+                                          tracker_publisher.read_flow(c.flow_log, c.delivery, "lane-prints")):
+            return  # Printed once already; handoff's retry doesn't print it again.
+        print(f"Tracker move (your story {key}): {said_moves(names)}, with your tracker tools.")
+        if conf["mode"] == "host":
+            lane_print(c, key, {"move": "review", "transitions": names})
+        return
+    if review_move_made(c, key, names):
+        print(f"{key}'s review move is already made.")
+        return
+    doc = load_state()
+    if start_owed(c, doc, key):
+        # A review move before the start is posted would leave the start skipped and the ticket behind.
+        if last:
+            append_owed(c, doc, key, names, "the story's start hadn't been posted yet")
+            print(f"{key}'s review move waits for its start to be posted; the lead's Needs you shows it, to make by hand")
+        else:
+            print(f"{key}'s review move waits for its start to be posted; run this command again, or hand off, later")
+        return
+    with tracker_publisher.ledger_lock(c.state, wait=True):
+        publisher = tracker_publisher.Publisher(doc, c.state, conf, tracker_publisher.Adapter(conf, c.root),
+                                                c.delivery, c.flow_log, writer="lane")
+        publisher.ticket = key
+        entry = {"id": tracker_publisher.LANE_MOVE, "kind": "lane.review", "subject": key}
+        notes: list[str] = []
+        try:
+            markers = publisher.adapter.markers(key)
+            earlier = [m for m in markers if m.startswith(f"agent-delivery:{c.delivery}:")
+                       and not m.startswith(f"agent-delivery:{c.delivery}:{publisher.init}:")
+                       and m.endswith(f":transition:{names[-1]}")]
+            if earlier:
+                # Made under an earlier record of this delivery, before a --replace: not made again.
+                publisher.write(entry, "skip", move="review", ticket=key, action=f"transition:{names[-1]}:made",
+                                reason="made under an earlier record")
+                print(f"{key}'s review move was made under an earlier record of this delivery.")
+                return
+            publisher.move(entry, key, "review", names, markers, notes)
+        except (tracker_publisher.AdapterFailure, tracker_publisher.Transient, tracker_publisher.Stop) as failure:
+            if not last:
+                print(f"{key}'s review move wasn't made ({failure}); run this command again, or hand off, to retry it")
+                return
+            # The hand-off is the lane's last chance: the owed move is left in the ledger, where Needs you shows it.
+            append_owed(c, doc, key, names, str(failure), locked=True)
+            print(f"{key}'s review move wasn't made ({failure}); the lead's Needs you shows it, to make by hand")
+            return
+    print(f"Tracker move (your story {key}): " + (" ".join(notes) or "made."))
+
+
+def handoff_and_post(c, key: str, lane: str, head: str, pr: str, rounds: int, post: str) -> str | None:
+    """Hand off to the record and, with the tracker publisher, post the hand-off update under the entry it journals,
+    holding the ledger's lock across the journal write, the post and its line. Returns what was posted, or None when the
+    lane posts it (no publisher) or the publisher will (the call failed, so no line was written)."""
+    conf = tracker_conf(c)
+    lead_moves = ((conf["transitions"].get("lead") or {}).get("candidate.handed")) if not conf["problems"] else None
+    if conf["mode"] != "publisher" or conf["problems"] or lead_moves:
+        # With lead moves for a hand-off, the publisher makes them and posts the update with what they did.
+        state_tool("handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", pr,
+                   "--rounds", str(rounds))
+        return ("Tracker post: the tracker publisher posts the hand-off update, with its moves." if lead_moves
+                and conf["mode"] == "publisher" else None)
+    with tracker_publisher.ledger_lock(c.state, wait=True):
+        state_tool("handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", pr,
+                   "--rounds", str(rounds))
+        doc = load_state()
+        journal = sorted(doc["journal"], key=lambda e: e["id"])
+        entry = [e for e in journal if e["kind"] == "candidate.handed" and e.get("subject") == key][-1]
+        init = tracker_publisher.init_id(journal)
+        stamp = tracker_publisher.marker(c.delivery, init, entry["id"], "comment")
+        adapter = tracker_publisher.Adapter(conf, c.root)
+        try:
+            found = stamp in adapter.markers(key)
+            if not found:
+                limit = adapter.status(key).get("commentLimit")
+                text = tracker_publisher.body_of(entry, "Handed off and queued", [post[0].upper() + post[1:]], c.delivery,
+                                                 limit if isinstance(limit, int) else None)
+                with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as body:
+                    body.write(text)
+                try:
+                    adapter.call("comment", "--ticket", key, "--marker", stamp, "--body-file", body.name)
+                finally:
+                    os.unlink(body.name)
+        except (tracker_publisher.AdapterFailure, tracker_publisher.Transient) as failure:
+            return (f"Tracker post: not posted ({failure}); the tracker publisher posts it on its next run. "
+                    "The hand-off stands.")
+        tracker_publisher.append_ledger(c.state, {"journal": entry["id"], "init": init, "outcome": "comment",
+                                                  "writer": "lane", "kind": entry["kind"], "ticket": key,
+                                                  "action": "comment", **({"found": True} if found else {})})
+    return f"Tracker post: posted the hand-off update on {key}."
+
+
+def lane_start(args) -> None:
+    """Begin a story: its checkout from the base, the prepare step, the lane's focus, and the story's start in the flow
+    log, which the tracker publisher's start move and update wait for. Run again, it changes nothing."""
+    c = cfg()
+    key = c.require(args.key)
+    lane = c.lane_of(key)
+    base = args.base or c.base_branch
+    # Without a binding base, the delivery's own base is the one it serves.
+    served = c.binding if c.binding_base else {"base": {"ref": c.base_branch}}
+    if not serves(served, base):
+        raise unserved(served, base)
+    path, branch = c.lane_checkout(key), c.branch(key)
+    did = []
+    if path.exists():
+        current = git("rev-parse", "--abbrev-ref", "HEAD", cwd=path, check=False)
+        if current != branch:
+            raise Stop(f"{path} exists on {current or 'no branch'}, not {branch}: move it aside, or start from it by hand")
+        recorded = (load_json(lane_base_file(path)) or {}).get("base")
+        if recorded and recorded != base:
+            raise Stop(f"{path} was started on {recorded}, not {base}: finish it on {recorded}, or move it aside")
+    else:
+        git("fetch", "-q", c.remote, base, cwd=c.main)
+        if run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=c.main, check=False).returncode == 0:
+            if run(["git", "merge-base", branch, f"{c.remote}/{base}"], cwd=c.main, check=False).returncode != 0:
+                raise Stop(f"the branch {branch} shares no history with {c.remote}/{base}: delete it, or start it by hand")
+            git("worktree", "add", "-q", str(path), branch, cwd=c.main)
+            did.append(f"made {path} on the existing branch {branch}")
+        else:
+            git("worktree", "add", "-q", "--no-track", "-b", branch, str(path), f"{c.remote}/{base}", cwd=c.main)
+            did.append(f"made {path} on {branch} from {c.remote}/{base}")
+        record_lane_base(path, base)
+    prepared = lane_base_file(path).with_name("prepared")
+    if not prepared.exists():
+        # Marked only once every prepare step passed, so a failed one runs again on the next lane-start.
+        for argv in prepare_commands():
+            run(argv, cwd=path)
+        prepared.write_text(now() + "\n")
+        did.append("prepared it")
+    journal = load_state()["journal"]
+    assigned = [e for e in journal if e["kind"] == "lane.assigned" and e.get("subject") == key]
+    since = assigned[-1]["at"] if assigned else None
+    starts = [s for s in tracker_publisher.read_flow(c.flow_log, c.delivery, tracker_publisher.LANE_STARTS)
+              if s.get("subject") == key and (since is None or s.get("at", "") >= since)]
+    if not starts:
+        # The focus is set only with the start, so running it again never resets what the lane has said since.
+        state_tool("focus", "--lane", lane, "--text", f"{key}: started", "--state", "working", "--waiting-on", "")
+        did.append(f"set {lane}'s focus")
+        tracker_publisher.record_lane_start(c.flow_log, c.delivery, key, lane)
+        did.append("recorded the start")
+        conf = tracker_conf(c)
+        if conf["mode"] == "host":
+            moves = conf["transitions"].get("start") or []
+            update = f"Started ({lane}): {c.label(key)}: {c.stories[key]['title']}"
+            if moves:
+                print(f"Tracker move (your story {key}): {said_moves(moves)}, with your tracker tools.")
+            print(f"Tracker post (your story {key}): {update}")
+            lane_print(c, key, {"move": "start", "transitions": moves, "post": update})
+    print(f"{key}: " + ("; ".join(did) if did else "already started; nothing to do") + f". Work in {path}.")
 
 
 def push(args) -> None:
@@ -2567,14 +2789,21 @@ def open_pr(args) -> None:
     found = forge("find", "--source", c.branch(key))
     if found.get("url"):
         print(found["url"])
-        return
-    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as handle:
-        handle.write(body)
-    try:
-        print(forge("open", "--source", c.branch(key), "--destination", c.base_branch, "--title", args.title,
-                    "--body-file", handle.name)["url"])
-    finally:
-        os.unlink(handle.name)
+    else:
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as handle:
+            handle.write(body)
+        try:
+            print(forge("open", "--source", c.branch(key), "--destination", c.base_branch, "--title", args.title,
+                        "--body-file", handle.name)["url"])
+        finally:
+            os.unlink(handle.name)
+    review_move(c, key, "pr-open")
+    if tracker_conf(c)["transitions"].get("reviewWhen") == "gates-passed":
+        _, problems = gates_summary(key, repo(), head)
+        if problems:
+            print(f"{key}'s review move waits for the gates to pass at {head[:10]}: run the gates, then open-pr again")
+        else:
+            review_move(c, key, "gates-passed")
 
 
 def parse_blocked(items: list[str]) -> dict[str, str]:
@@ -2649,6 +2878,7 @@ def pr_review(args) -> None:
                    + ("" if args.wait else "; run with --wait") + ": " + (", ".join(f"{ch['name']} {ch['state']}" for ch in checks) or "no checks"))
     record = {"head": head, "url": url, "author": review["author"], "at": review["at"], "body": review["body"]}
     (review_dir(key) / "pr-review.json").write_text(json.dumps(record, indent=2))
+    review_move(c, key, "pipeline-green")
     print(f"{conf['author']} review of {head[:10]} ({review['at']}), saved for the hand-off:\n")
     print(review["body"])
     print("\nTriage every finding like a lens finding: fix what blocks in the lane (then gates, a lens round and this "
@@ -2699,8 +2929,13 @@ def handoff(args) -> None:
     if problems:
         raise Stop("the hand-off isn't complete:\n  " + "\n  ".join(problems))
     state_tool("capture-review", "--subject", key, "--candidate", head, *[x for p in rounds for x in ("--outcome", str(p))])
-    state_tool("handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", args.pr,
-               "--rounds", str(len(rounds)))
+    conf = tracker_conf(c)
+    when = conf["transitions"].get("reviewWhen")
+    if when and when != "pipeline-green" or when == "pipeline-green" and pr_line:
+        # A review move a refused call left owed is retried here, at the latest.
+        review_move(c, key, when, last=True)
+    post = f"hand-off: {args.pr}, head {head[:10]}, {len(rounds)} review round(s); {validation}."
+    posted = handoff_and_post(c, key, lane, head, args.pr, len(rounds), post)
     histories = [f"r{o['round']}: {round_history_text(o)}" for o in outcomes if round_history_text(o)]
     print("\n".join([
         f"**Hand-off: {key}** ({c.label(key)}, {lane})",
@@ -2715,7 +2950,12 @@ def handoff(args) -> None:
         "- lead inputs: none",
         f"- expensive non-blocking findings: {args.findings or 'none'}",
     ]))
-    print(f"\nTracker post (your story): hand-off: {args.pr}, head {head[:10]}, {len(rounds)} review round(s); {validation}.")
+    if posted:
+        print(f"\n{posted}")
+    else:
+        print(f"\nTracker post (your story): {post}")
+        if conf["mode"] == "host":
+            lane_print(c, key, {"post": post, "kind": "candidate.handed"})
 
 
 # -- the plan chapter's producer -------------------------------------------------------------------
@@ -3595,6 +3835,7 @@ def lead_setup(args) -> None:
     if added:
         print(f"added the tracker publisher ({added}) to {c.binding_path.name}'s state.publishers: commit it with the "
               "delivery file")
+    review_when_note(c, args.review_when, notes)
     loose = tracker_publisher.untargeted(tracker_conf(c)) if tracker_conf(c)["mode"] == "publisher" else []
     if loose:
         notes.append(f"name the status each of these moves leads to in tracker.transitions.targets, so one a person "
@@ -3605,6 +3846,21 @@ def lead_setup(args) -> None:
           "lines and the brief notes (all from the approved plan), then lead-init and lead-brief")
     for n in notes:
         print(f"  note: {n}")
+
+
+def review_when_note(c, answer: str | None, notes: list[str]) -> None:
+    """Record lead-setup's answer for when the review move is made, or ask for it: never inferred from review.pr."""
+    tracker = c.flow_raw.get("tracker") or {}
+    if answer:
+        raw = json.loads(Path(c.path).read_text()) if Path(c.path).exists() else {"schemaVersion": "delivery-flow/1"}
+        raw.setdefault("tracker", {}).setdefault("transitions", {})["reviewWhen"] = answer
+        Path(c.path).write_text(json.dumps(raw, indent=2) + "\n")
+        c.flow_raw = raw
+        print(f"recorded tracker.transitions.reviewWhen: {answer} in {c.name}: commit it with the delivery file")
+    elif (tracker.get("transitions") or {}).get("review") and not tracker["transitions"].get("reviewWhen"):
+        notes.append("tracker.transitions.reviewWhen is unset, so lanes make the review move by hand when open-pr prints "
+                     "it; to have the commands make it, run lead-setup again with --force and --review-when "
+                     f"{'|'.join(tracker_publisher.REVIEW_WHEN)}")
 
 
 def add_tracker_publisher(c) -> str | None:
@@ -3793,6 +4049,9 @@ def lead_assign(args) -> None:
     print("Your stories, in order (one branch, one review and one hand-off each):")
     for key in keys:
         print(f"- {key} {c.issue_url.format(key=key)} ({c.label(key)}: {c.stories[key]['title']})")
+    print("\nBegin each story, when you start it, with:")
+    for key in keys:
+        print(f"  {flow_command()} lane-start {key} --base {c.base_branch}")
     if args.note:
         print(f"\nNote from the lead: {args.note}")
     print(f"\nRecord: {c.state}")
@@ -5587,6 +5846,10 @@ class Doctor:
         said = [*(["a forge snapshot"] if state.get("forgeSnapshot") else []),
                 *([updates[conf["mode"]]] if conf["mode"] in updates else [])]
         loose = tracker_publisher.untargeted(conf) if conf["mode"] == "publisher" else []
+        if conf["transitions"].get("review"):
+            when = conf["transitions"].get("reviewWhen")
+            said.append(f"tracker.transitions.reviewWhen is {when}" if when else
+                        "tracker.transitions.reviewWhen is unset, so lanes make the review move by hand")
         return "ok", ("; ".join(said) or "the binding has neither a forge snapshot nor a tracker publisher, and needs "
                       "neither") + (f"; these moves name no status in tracker.transitions.targets, so one a person "
                                     f"already made shows as not offered: {', '.join(loose)}" if loose else "")
@@ -5831,6 +6094,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--lock-wait", type=int)
     p.add_argument("passthrough", nargs="*", help="after --: extra arguments for the check adapter")
     p.set_defaults(fn=app_check)
+    p = command(sub, "lane-start", help="begin a story: its checkout from the base, prepared, the focus and its start")
+    p.add_argument("key"); p.add_argument("--base", help="the base to start from (default: the delivery's base)")
+    p.set_defaults(fn=lane_start)
     p = command(sub, "push"); p.add_argument("key"); p.set_defaults(fn=push)
     p = command(sub, "app-video"); p.add_argument("key"); p.add_argument("name")
     p.add_argument("--mode", choices=["hold", "fail", "loaded"], required=True); p.add_argument("--path", required=True)
@@ -5857,6 +6123,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--authority", help="the operator's grant to lanes: push,draftPullRequests (either or both)")
     p.add_argument("--granted-by", help="who granted --authority"); p.add_argument("--granted-on", help="default: today")
     p.add_argument("--no-authority", action="store_true", help="lanes get no grant, and hand their branches to the lead")
+    p.add_argument("--review-when", choices=tracker_publisher.REVIEW_WHEN,
+                   help="when lane commands make the review move: recorded as tracker.transitions.reviewWhen")
     p.set_defaults(fn=lead_setup)
     p = command(sub, "lead-init")
     p.add_argument("--replace", action="store_true",

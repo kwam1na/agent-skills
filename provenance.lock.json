@@ -1042,15 +1042,15 @@
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "89b2f043f3d6a6ed85fa5aa8209366627562e0f9a9bbea24df8858537600599e"
+          "sha256": "34e6a5187109785a90c2032179cb120376fecf7efd35c17b39682f9e438d435a"
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "020c91245a03a918de8ed43202eacb13e34d4a506b45cc352802243d105f540a"
+          "sha256": "69918cf1d3fe5ad12509262eafb1233cda23f79fdede10a92ebcd2e422cda728"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
-          "sha256": "8baa9e933b3a8e09220a35850959a88fac844098f1c4f8a0a1a8aa36e2f51f39"
+          "sha256": "8432d95eaf8b688ea0f16b68fc1781428efe83ceb4fa59b12bae1c7194d62fb2"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",
@@ -1062,7 +1062,7 @@
         },
         {
           "path": "skills/run-delivery/templates/lane-brief.md",
-          "sha256": "48636915c2e24a44cf62b8452690556cb237e49c754ebc1d62a13d4d402d69e7"
+          "sha256": "ce8698ebfb97011776715e2d2a0c712b3d7aa9a3004132f16df7257553672cbc"
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",

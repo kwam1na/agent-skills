@@ -16,10 +16,11 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 ## Repository
 
 - Read the repository's root instruction file first. Its rules apply.
-- Each story gets its own checkout from the delivery base. From the main checkout:
-  `git fetch {{remote}} && git worktree add --no-track -b {{branch}} {{lane_checkout}} {{base_ref}}`, then run the
-  repository's prepare step there. Use exactly that path: the lead reads your gate and in-app evidence from it.
-  Never edit the lead's checkout or another lane's.
+- Begin each story with `{{flow}} lane-start <key> --base {{base_branch}}`, run from the main checkout. It makes the
+  story's own checkout, `{{lane_checkout}}`, on `{{branch}}` from `{{base_ref}}`, runs the repository's prepare step
+  there, sets your focus, and records the story's start, which its tracker start waits for. Run again, it changes
+  nothing. Work only in that checkout: the lead reads your gate and in-app evidence from it. Never edit the lead's
+  checkout or another lane's.
 - Never merge or rebase `{{base_ref}}` into your branch once it exists. A new head means another gate run, review
   round and PR review. You don't need the base: `{{flow}}` reads the delivery's plan, brief and settings from
   `{{base_ref}}` itself, so the lead's changes reach you without a merge, and the merge queue syncs your branch with
@@ -99,9 +100,12 @@ or release. The lead verifies the claims and accepts; the merge queue merges aft
 
 ## Tracker updates
 
-Post on your own story with your tracker tools: at start, at each decision you make (what and why), at each review
-round (`review-reduce` prints the text), at each finding you pass to the lead, and at hand-off (`handoff` prints the
-text). One attempt each, never a gate.
+The commands make the start, review and hand-off posts and moves, or print them when the tracker is yours to update
+by hand: make exactly what a command prints as a "Tracker move" or "Tracker post", with your tracker tools, and never
+repeat by hand what a command says it made. `handoff` posts the hand-off update itself when the tracker has a
+publisher; if the tracker refuses it, the hand-off still stands and the publisher posts it later. Post on your own
+story with your tracker tools at each decision you make (what and why), at each review round (`review-reduce`
+prints the text), and at each finding you pass to the lead. One attempt each, never a gate.
 
 {{transitions}}
 
@@ -110,6 +114,12 @@ text). One attempt each, never a gate.
 Say what you're doing as it changes, with the installed release's state tool:
 `python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir {{state}} focus --lane <lane> --text "<what you are doing>" [--state working|reviewing|blocked] [--waiting-on <who>]`.
 `review-prepare` sets `reviewing` for you.
+
+## Your turn
+
+End your turn only to hand off, to report yourself blocked, or to ask the lead. Never end it just to wait for a
+reviewer, the gates, an in-app check or the pipeline: wait inside the turn. Run long commands in the background and
+wait for them, resume your reviewers and wait for their results, and use `pr-review <key> --wait`.
 
 ## Questions
 

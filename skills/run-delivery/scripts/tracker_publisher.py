@@ -39,6 +39,11 @@ MARKS = "tracker-marks"
 LANE_STARTS = "lane-starts"
 OUTCOMES = ("comment", "transition", "create", "skip", "handled", "failed")
 ACTIONS = ("comment", "transition", "create")
+# When the lane's review move is made (C5): once the gates pass at the PR's head, as the PR opens, or once the
+# pipeline's review is current and its checks green. Absent, the lane commands print the move for the lane to make.
+REVIEW_WHEN = ("gates-passed", "pr-open", "pipeline-green")
+# A lane command's review move journals nothing: its ledger lines carry this journal id, which covers no entry.
+LANE_MOVE = 0
 ADAPTER_TIMEOUT_SECONDS = 60
 # Statuses retried by a later run; any other 4xx is permanent. A 403 is transient only when the site refuses it too.
 TRANSIENT = (401, 409, 423, 429)
@@ -296,6 +301,12 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
         value = transitions.get(part, [])
         if not isinstance(value, list) or not all(isinstance(name, str) and name for name in value):
             problems.append(f"tracker.transitions.{part} must be a list of transition names")
+    when = transitions.get("reviewWhen")
+    if when is not None and when not in REVIEW_WHEN:
+        problems.append(f"tracker.transitions.reviewWhen must be one of {', '.join(REVIEW_WHEN)}, not {when!r}")
+    elif when == "pipeline-green" and not (own.get("review") or {}).get("pr"):
+        problems.append("tracker.transitions.reviewWhen is pipeline-green, which waits for the pipeline's review, but "
+                        "review.pr declares none")
     targets = transitions.get("targets", {})
     if not isinstance(targets, dict) or not all(isinstance(v, str) and v for v in targets.values()):
         problems.append("tracker.transitions.targets must map transition names to the status each moves to")
@@ -445,7 +456,12 @@ def body_of(entry: dict, heading: str, notes: list[str], delivery: str, limit: i
 
 
 class Publisher:
-    def __init__(self, doc: dict, state_dir: Path, conf: dict, adapter, delivery: str, flow_log: Path):
+    def __init__(self, doc: dict, state_dir: Path, conf: dict, adapter, delivery: str, flow_log: Path,
+                 writer: str = "publisher"):
+        # writer: "publisher", or "lane" when a lane command makes a move with these rules. A lane's moves share the
+        # journal id LANE_MOVE, so their lines are told apart by ticket.
+        self.writer = writer
+        self.ticket: str | None = None
         self.state, self.journal = doc["state"], sorted(doc["journal"], key=lambda e: e["id"])
         self.state_dir, self.conf, self.adapter, self.delivery, self.flow_log = state_dir, conf, adapter, delivery, flow_log
         self.epic = self.state.get("meta", {}).get("trackerParent") or None
@@ -461,7 +477,7 @@ class Publisher:
 
     def write(self, entry: dict, outcome: str, final: bool = False, **detail) -> dict:
         line = append_ledger(self.state_dir, {"journal": entry["id"], "init": self.init, "outcome": outcome,
-                                              "writer": "publisher", "kind": entry["kind"],
+                                              "writer": self.writer, "kind": entry["kind"],
                                               **({"final": True} if final else {}), **detail})
         self.ledger.append(line)
         return line
@@ -469,7 +485,8 @@ class Publisher:
     def done(self, entry: dict, action: str) -> dict | None:
         """This entry's line for the action, from a run that stopped before the entry ended, or None."""
         return next((line for line in self.ledger if line["journal"] == entry["id"] and line.get("init") == self.init
-                     and line.get("action") == action), None)
+                     and line.get("action") == action and (self.ticket is None or line.get("ticket") == self.ticket)),
+                    None)
 
     # The start wait (C3).
 
@@ -479,7 +496,9 @@ class Publisher:
         if not subject:
             return "no story to start"
         for line in self.ledger:
-            if line.get("ticket") == subject and line.get("move") == "review":
+            if (line.get("ticket") == subject and line.get("move") == "review"
+                    and line["outcome"] in ("transition", "skip", "handled")):
+                # A review move owed (`failed`) isn't one made: the start still goes ahead.
                 return "the story is already in review"
             if line.get("ticket") == subject and line.get("move") == "start" and line["outcome"] == "transition":
                 return "the story already started"
@@ -759,7 +778,11 @@ def needs_you(doc: dict, state_dir: Path, flow_log: Path, delivery: str, conf: d
         for line in read_ledger(state_dir):
             if line.get("init") != init:
                 continue
-            if line["outcome"] == "failed":
+            if line["outcome"] == "failed" and line.get("move") == "review":
+                items.append({"holding": False, "text": f"{line.get('ticket')}: its review move "
+                              f"({', '.join(line.get('transitions') or [])}) couldn't be made at hand-off: "
+                              f"{line.get('error')}; make it by hand"})
+            elif line["outcome"] == "failed":
                 items.append({"holding": False, "text": f"Tracker update for journal entry {line['journal']} was "
                               f"refused: {line.get('error')}"})
             elif line["outcome"] == "handled":
