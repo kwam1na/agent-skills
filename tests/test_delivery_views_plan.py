@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -690,6 +691,7 @@ class LivePlanTests(unittest.TestCase):
                     process.wait(10)
             if process.poll() is None:
                 process.kill()
+                process.wait(10)
             process.stdout.close()
 
         self.addCleanup(stop)
@@ -725,24 +727,26 @@ class LivePlanTests(unittest.TestCase):
             time.sleep(0.1)
 
     def test_an_open_page_finds_a_changed_plan_at_its_own_address_as_the_renderer_judged_it(self) -> None:
-        with tempfile.TemporaryDirectory() as folder:
-            address = self.start(Path(folder).resolve())
-            before = self.until(address, lambda block: "plan" in block)
-            self.assertEqual(before["plan"]["updated"], plan()["updated"])
-            changed = {**plan(), "updated": "2031-01-01T00:00:00Z"}
-            self.replan(changed, changed["updated"])
-            self.assertEqual(self.until(address, lambda block: block.get("plan", {}).get("updated") == changed["updated"])["plan"]["updated"],
-                             changed["updated"])
-            # The renderer's validator speaks for an invalid file: the page is told, and never given the file.
-            refused = {**plan(), "updated": "2031-01-02T00:00:00Z", "units": SECRET}
-            self.replan(refused, refused["updated"])
-            block = self.until(address, lambda block: "unreadable" in block)
-            self.assertTrue(block["unreadable"].startswith("units"), block)
-            self.assertNotIn(SECRET, json.dumps(block))
-            # What it is served from stays read-only, and for its own host and port only.
-            self.assertEqual(self.ask(address, "POST")[0], 501)
-            self.assertEqual(self.ask(address, host="elsewhere.example")[0], 403)
-            self.assertEqual(json.loads((self.state / "plan.json").read_text())["units"], SECRET)
+        # Cleanups run last first, so the folder outlasts the server started in it.
+        folder = tempfile.mkdtemp(prefix="live plan ")
+        self.addCleanup(shutil.rmtree, folder, True)
+        address = self.start(Path(folder).resolve())
+        before = self.until(address, lambda block: "plan" in block)
+        self.assertEqual(before["plan"]["updated"], plan()["updated"])
+        changed = {**plan(), "updated": "2031-01-01T00:00:00Z"}
+        self.replan(changed, changed["updated"])
+        self.assertEqual(self.until(address, lambda block: block.get("plan", {}).get("updated") == changed["updated"])["plan"]["updated"],
+                         changed["updated"])
+        # The renderer's validator speaks for an invalid file: the page is told, and never given the file.
+        refused = {**plan(), "updated": "2031-01-02T00:00:00Z", "units": SECRET}
+        self.replan(refused, refused["updated"])
+        block = self.until(address, lambda block: "unreadable" in block)
+        self.assertTrue(block["unreadable"].startswith("units"), block)
+        self.assertNotIn(SECRET, json.dumps(block))
+        # What it is served from stays read-only, and for its own host and port only.
+        self.assertEqual(self.ask(address, "POST")[0], 501)
+        self.assertEqual(self.ask(address, host="elsewhere.example")[0], 403)
+        self.assertEqual(json.loads((self.state / "plan.json").read_text())["units"], SECRET)
 
 
 if __name__ == "__main__":

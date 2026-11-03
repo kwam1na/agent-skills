@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { CORPUS, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderPage } from "./support.mjs";
+import { CORPUS, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, planEnd, readJson, renderPage } from "./support.mjs";
 import { APP_KIND, LENSES, RECORD_KINDS, finishLine, headOf, inAppDelivery, item, journal, minute, planFor, record, recordOnlyDelivery, unit } from "./plan-fixtures.mjs";
 
 const NOW = "2026-10-30T12:00:00Z";
@@ -491,6 +491,7 @@ test("a live page shows a changed plan with no reload, and no note on the way", 
   expect(outcome(snaps[2].app)).toBe("The outcome the changed plan states.");
   expect(planNote(snaps[2].app)).toBeNull();
   expect(snaps[2].text).not.toContain("Reload to see it");
+  expect(snaps.fetchOptions[0].cache).toBe("no-store");
   // Holding the plan the record names, it asks no more, however often the record moves.
   const settled = await live(page, after, [{ push: replanned }, SETTLE, { push: replanned }, QUIET]);
   expect(settled.fetched).toHaveLength(1);
@@ -520,10 +521,12 @@ test("a render that never holds the named plan ends in the out-of-date note, unt
   expect(planNote(snaps[4].app)).toBeNull();
 });
 
-for (const [name, answer] of [["can't be fetched", new Error("connection refused")], ["is refused", 503]]) {
+for (const [name, answered] of [["can't be fetched", () => new Error("connection refused")],
+  // Refused, even with a plan in the body: only a page the server stands behind counts.
+  ["is refused", (after) => ({ refuse: 503, body: after })]]) {
   test(`a plan that ${name} leaves the current plan on screen, saying it is out of date`, async () => {
-    const { page, plan, replanned } = replanning();
-    const snaps = await live(page, () => answer, [{ push: replanned }, SETTLE]);
+    const { page, plan, replanned, after } = replanning();
+    const snaps = await live(page, () => answered(after), [{ push: replanned }, SETTLE]);
     expect(outcome(snaps[2].app)).toBe(plan.outcome.summary);
     expect(planNote(snaps[2].app)).toBe(OUT_OF_DATE);
     expect(snaps[2].text).not.toContain("Reload to see it");
@@ -568,14 +571,102 @@ test("a failed refresh lands on a later try, and the note goes", async () => {
   expect(outcome(snaps[3].app)).toBe("The outcome the changed plan states.");
 });
 
-test("a live page holding a later plan than the record names asks for nothing", async () => {
+test("a live page holding a later plan than the record names asks once, and rests when the answer holds it too", async () => {
   const { document, plan } = recordOnlyDelivery();
   // The plan file is written before its journal entry, so a render can hold a plan the record doesn't name yet.
   const lagging = structuredClone(document);
   lagging.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:00:00Z; a unit changed" });
-  const snaps = await live(render(document, { ...plan, updated: "2026-10-30T14:00:00Z" }), () => new Error("no ask expected"), [{ push: lagging }, QUIET]);
-  expect(snaps.fetched).toHaveLength(0);
+  const held = render(document, { ...plan, updated: "2026-10-30T14:00:00Z" });
+  const snaps = await live(held, held, [{ push: lagging }, SETTLE, { push: lagging }, QUIET]);
+  expect(snaps.fetched).toHaveLength(1);
   expect(planNote(snaps[2].app)).toBeNull();
+  expect(planNote(snaps[4].app)).toBeNull();
+});
+
+test("a live page takes an earlier plan when the server holds the one the record names", async () => {
+  const { document, plan } = recordOnlyDelivery();
+  // A restored file keeps its old stamp, or a producer's clock is behind: the record still names what is current.
+  const restored = structuredClone(document);
+  restored.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null, summary: `Plan updated: ${plan.updated}; restored` });
+  const later = { ...plan, updated: "2026-10-30T14:00:00Z", outcome: { ...plan.outcome, summary: "The later plan's outcome." } };
+  const snaps = await live(render(document, later), render(restored, plan), [{ push: restored }, SETTLE]);
+  expect(outcome(snaps[0].app)).toBe("The later plan's outcome.");
+  expect(outcome(snaps[2].app)).toBe(plan.outcome.summary);
+  expect(planNote(snaps[2].app)).toBeNull();
+});
+
+test("a newly named plan clears the note and asks again at once, not after the long wait", async () => {
+  const { page, plan, changed, replanned } = replanning();
+  const again = structuredClone(replanned);
+  again.journal.push({ id: 15, at: minute(41), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:30:00Z; another change" });
+  const second = render(again, { ...changed, updated: "2026-10-30T13:30:00Z", outcome: { ...plan.outcome, summary: "The second change's outcome." } });
+  let asked = 0;
+  // At this speed a new ask comes in 50ms and the long wait takes 1500ms, so the last step ends inside the long wait.
+  const snaps = await live(page, () => (asked++ === 0 ? new Error("down") : second), [{ push: replanned }, SETTLE, { push: again, wait: 1 }, { wait: 500 }], { quicker: 20 });
+  expect(planNote(snaps[2].app)).toBe(OUT_OF_DATE);
+  expect(planNote(snaps[3].app)).toBeNull();
+  expect(outcome(snaps[4].app)).toBe("The second change's outcome.");
+  expect(snaps.fetched).toHaveLength(2);
+});
+
+test("a push during an ask starts no second ask, and the answer still lands", async () => {
+  const { page, replanned, after } = replanning();
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const snaps = await live(page, () => held, [{ push: replanned }, SETTLE, { push: replanned }, QUIET, { run: () => release(after) }]);
+  expect(snaps.fetched).toHaveLength(1);
+  expect(planNote(snaps[4].app)).toBeNull();
+  expect(outcome(snaps[5].app)).toBe("The outcome the changed plan states.");
+});
+
+test("an answer arriving after the record stopped naming another plan is dropped", async () => {
+  const { page, plan, replanned, after } = replanning();
+  const settled = structuredClone(replanned);
+  settled.journal.push({ id: 15, at: minute(41), kind: "decision.recorded", lane: null, subject: null, summary: `Plan updated: ${plan.updated}; reverted` });
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const snaps = await live(page, () => held, [{ push: replanned }, SETTLE, { push: settled }, { run: () => release(after) }, QUIET]);
+  expect(outcome(snaps[4].app)).toBe(plan.outcome.summary);
+  expect(planNote(snaps[5].app)).toBeNull();
+  expect(snaps.fetched).toHaveLength(1);
+});
+
+test("once out of date, an answer that is merely older keeps the note", async () => {
+  const { page, plan, replanned } = replanning();
+  let asked = 0;
+  const snaps = await live(page, () => (asked++ === 0 ? new Error("down") : page), [{ push: replanned }, { asked: 1 }, { asked: 2 }], { quicker: 500 });
+  expect(planNote(snaps[2].app)).toBe(OUT_OF_DATE);
+  expect(planNote(snaps[3].app)).toBe(OUT_OF_DATE);
+  expect(outcome(snaps[3].app)).toBe(plan.outcome.summary);
+});
+
+const CLIPPED_CHANGE = { id: "c1", at: minute(30), kind: "changed", subjects: ["PAY-1"], by: "lead", why: "", title: "", clipped: true };
+const CLIPPED_WORDS = "The plan was too large to show whole: the text of the 1 oldest change left out.";
+const changes = '.plan-fold[data-fold="changes"]';
+
+test("what the renderer says about the plan it clipped comes and goes with that plan", async () => {
+  const { document, plan, changed, replanned } = replanning();
+  const clipped = render(replanned, undefined, { planBlock: { plan: { ...changed, changes: [CLIPPED_CHANGE] }, clipped: { changes: 1, texts: 0 } } });
+  const taken = await live(render(document, plan), clipped, [{ push: replanned }, SETTLE]);
+  expect(taken[0].app.querySelector("#plan .plan-clipped")).toBeNull();
+  expect(taken[2].app.querySelector("#plan .plan-clipped").textContent).toBe(CLIPPED_WORDS);
+  // A plan the page can't draw goes back with what was said about the plan it replaced.
+  const held = render(document, undefined, { planBlock: { plan: { ...plan, changes: [CLIPPED_CHANGE] }, clipped: { changes: 1, texts: 0 } } });
+  const broken = render(replanned, undefined, { planBlock: { plan: { ...changed, units: [{ ...changed.units[0], proofs: [null] }] } } });
+  const kept = await live(held, broken, [{ push: replanned }, SETTLE]);
+  expect(kept[2].app.querySelector("#plan .plan-clipped").textContent).toBe(CLIPPED_WORDS);
+  expect(planNote(kept[2].app)).toBe(OUT_OF_DATE);
+});
+
+test("a plan that fails partway through its own chapter goes back too, with the note, and asks at the slow pace", async () => {
+  const { page, plan, changed, replanned } = replanning();
+  // It gets past the chapters above and through the page's asking; only the plan chapter's rows fail.
+  const broken = render(replanned, undefined, { planBlock: { plan: { ...changed, units: [{ ...changed.units[0], removed: true, proofs: [null] }, ...changed.units.slice(1)] } } });
+  const snaps = await live(page, broken, [{ push: replanned }, SETTLE, QUIET]);
+  expect(outcome(snaps[2].app)).toBe(plan.outcome.summary);
+  expect(planNote(snaps[2].app)).toBe(OUT_OF_DATE);
+  expect(planNote(snaps[3].app)).toBe(OUT_OF_DATE);
+  expect(snaps.fetched).toHaveLength(1);
 });
 
 test("a live page takes a later plan than the record names, and rests on it", async () => {
@@ -596,8 +687,9 @@ test("a live page whose plan couldn't be read when it opened takes the repaired 
 
 test("a static page has no server to ask, and keeps the note", async () => {
   const { plan, page, replanned } = replanning();
-  // A store but no address: nothing to fetch from.
-  const pushed = await open(page, { store: { read: "pending" }, quicker: 100, steps: [{ push: replanned }, QUIET] });
+  // A store and a fetch but no http address: nothing to fetch from.
+  const pushed = await open(page, { store: { read: "pending" }, quicker: 100, strayFetch: true, steps: [{ push: replanned }, QUIET] });
+  expect(pushed.fetched).toHaveLength(0);
   expect(planNote(pushed[2].app)).toBe(RELOAD);
   expect(outcome(pushed[2].app)).toBe(plan.outcome.summary);
   // No store at all: a render from a record that already names another plan.
@@ -619,15 +711,19 @@ test("open folds survive the refresh", async () => {
   expect(snaps[3].app.querySelector('#plan .plan-fold[data-fold="changes"]')?.hasAttribute("open") ?? false).toBe(false);
 });
 
-test("a reader within the plan stays where they are, and one past it keeps their place as it grows", async () => {
+test("a reader within the plan stays where they are, and one past it moves with its end, counting what changed above it", async () => {
   const { document, plan, replanned } = replanning();
-  const after = render(replanned, { ...plan, updated: "2026-10-30T13:00:00Z", units: [...plan.units, { ...unit("GROWN"), proofs: plan.units[0].proofs }] });
-  const within = await live(render(document, plan), after, [{ push: replanned }, SETTLE], { scroll: { y: 700, bottom: 50 } });
+  const line = finishLine("grown", { criteria: [], proofs: ["merged"] }, { label: "A finish line added above the chapter" });
+  const after = render(replanned, { ...plan, updated: "2026-10-30T13:00:00Z", units: [...plan.units, { ...unit("GROWN"), proofs: plan.units[0].proofs }], finish: [...plan.finish, line] });
+  const scenario = (y) => ({ scroll: { y }, quicker: 10 });
+  const within = await live(render(document, plan), after, [{ push: replanned }, SETTLE], scenario(10));
   expect(within[2].text).toContain("GROWN");
-  expect(within.scrollY).toBe(700);
-  const past = await live(render(document, plan), after, [{ push: replanned }, SETTLE], { scroll: { y: 3000, bottom: -40 } });
+  expect(within.scrollY).toBe(10);
+  const past = await live(render(document, plan), after, [{ push: replanned }, SETTLE], scenario(100000));
   expect(past[2].text).toContain("GROWN");
-  expect(past.scrollY).toBeGreaterThan(3000);
+  const moved = planEnd(past[2].app) - planEnd(past[1].app);
+  expect(moved).toBeGreaterThan(0);
+  expect(past.scrollY).toBe(100000 + moved);
 });
 
 // A record the page cannot draw clears the chapter with every other, rather than leave a stale plan beside it.

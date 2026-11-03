@@ -1668,9 +1668,10 @@
 
   // The plan a live page holds follows the record. The server renders the page again when the record moves, so the plan
   // comes from that page's block: what the renderer's validator accepted, or { unreadable }. It renders after it pushes,
-  // so an answer holding an older plan means not yet; asking stops being quiet after PLAN_PATIENCE of those.
+  // so an answer holding an older plan means not yet; asking stops being quiet after PLAN_PATIENCE of those. Once it has
+  // said the plan is out of date it goes on saying so until the plan is current.
   var PLAN_FIRST = 1000, PLAN_AGAIN = 2000, PLAN_BEHIND = 30000, PLAN_PATIENCE = 15;
-  var planNamed = null, planTries = 0, planBehind = false, planAsked = null, planAsking = false;
+  var planNamed = null, planRested = null, planTries = 0, planBehind = false, planAsked = null, planAsking = false;
   function servedLive() {
     return isObject(globalThis.deliveryStateStore) && typeof fetch === "function" && typeof location === "object" && /^https?:$/.test(location.protocol);
   }
@@ -1680,17 +1681,25 @@
     var latest = updates.length ? /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/.exec(text(updates[updates.length - 1].summary)) : null;
     return latest ? latest[0] : null;
   }
-  // Whether this plan is the one named, or one the record has yet to name: the file is written before its entry.
+  // Whether an answer holds the plan named, or one the record has yet to name: the file is written before its entry.
   function planMeets(held, named) { return isObject(held) && typeof held.updated === "string" && (held.updated === named || laterThan(held.updated, named)); }
   function followPlan(named) {
-    if (named === null || planMeets(plan, named)) {
+    // An entry naming an earlier plan than the one in use is asked about once: the answer is the plan named, or a later one
+    // that the page rests on.
+    if (named === null || named === planRested || (isObject(plan) && plan.updated === named)) {
       clearTimeout(planAsked);
       planAsked = null;
       planNamed = null;
       planBehind = false;
       return;
     }
-    if (named !== planNamed) { planNamed = named; planTries = 0; planBehind = false; }
+    if (named !== planNamed) {
+      clearTimeout(planAsked);
+      planAsked = null;
+      planNamed = named;
+      planTries = 0;
+      planBehind = false;
+    }
     if (planAsked !== null || planAsking) { return; }
     planAsked = setTimeout(askPlan, planBehind ? PLAN_BEHIND : planTries ? PLAN_AGAIN : PLAN_FIRST);
   }
@@ -1708,40 +1717,51 @@
     planAsking = false;
     // The record stopped naming another plan while the page asked, so there is nothing to take.
     if (planNamed === null) { return; }
-    if (isObject(block) && planMeets(block.plan, planNamed)) { takePlan(block); return; }
+    if (isObject(block) && planMeets(block.plan, planNamed)) {
+      if (isObject(plan) && plan.updated === block.plan.updated) {
+        planRested = planNamed;
+        safely(lastGood || shown);
+      } else {
+        takePlan(block);
+      }
+      return;
+    }
     var older = isObject(block) && isObject(block.plan) && typeof block.plan.updated === "string" && seconds(block.plan.updated) !== null;
     planTries += 1;
-    var behind = !older || planTries >= PLAN_PATIENCE;
+    var behind = planBehind || !older || planTries >= PLAN_PATIENCE;
     if (behind !== planBehind) { planBehind = behind; safely(lastGood || shown); }
     // Only a change of note drew, so ask again from here too; a second ask is refused while one is waiting.
     followPlan(planNamed);
   }
   // The new plan is only kept if the page can draw it: the plan in use goes back otherwise.
   function takePlan(block) {
-    var was = { PLAN: PLAN, plan: plan };
+    var was = { PLAN: PLAN, plan: plan, named: planNamed, rested: planRested };
     PLAN = block;
     plan = block.plan;
+    if (plan.updated !== planNamed) { planRested = planNamed; }
     var place = planPlace();
     try {
       draw(lastGood || shown);
     } catch (error) {
       PLAN = was.PLAN;
       plan = was.plan;
+      planNamed = was.named;
+      planRested = was.rested;
       planBehind = true;
       safely(lastGood || shown);
     }
     keepPlace(place);
   }
-  // Where the reader is. Past the chapter, a plan of another height would move what they are reading, so the window
-  // moves with it; anywhere else it stays.
+  // Where the reader is. Past the chapter, a plan of another height moves what they are reading, along with anything the
+  // new plan changed above it, so the window moves with the chapter's end; anywhere else it stays.
   function planPlace() {
     if (typeof scrollY !== "number") { return null; }
-    var box = parts.plan.getBoundingClientRect();
-    return { y: scrollY, past: box.bottom <= 0, height: box.height };
+    var bottom = parts.plan.getBoundingClientRect().bottom;
+    return { y: scrollY, past: bottom <= 0, end: bottom + scrollY };
   }
   function keepPlace(place) {
     if (!place) { return; }
-    var y = place.y + (place.past ? parts.plan.getBoundingClientRect().height - place.height : 0);
+    var y = place.y + (place.past ? parts.plan.getBoundingClientRect().bottom + scrollY - place.end : 0);
     // The page scrolls smoothly for its links; this is no movement the reader asked for.
     if (scrollY !== y && typeof scrollTo === "function") { scrollTo({ top: y, behavior: "instant" }); }
   }

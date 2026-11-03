@@ -296,15 +296,18 @@ names the new `updated` value and says what changed. That moves the record, so
 the live server renders the page again from the new file.
 
 A page the live server serves follows that entry with no reload. When the latest
-"Plan updated:" entry names an `updated` value other than the plan in use, and
-that plan isn't later than it, the page fetches its own address and takes the
-plan from the block the renderer embedded there, so the renderer's validation is
-the only validation. It redraws with the reader's open folds and scroll position
-kept, and adds nothing to what the server serves. While the server has not yet
+"Plan updated:" entry names an `updated` value other than the plan in use, the
+page fetches its own address and takes the plan from the block the renderer
+embedded there, so the renderer's validation is the only validation. It redraws
+with the reader's open folds and scroll position kept, and adds nothing to what
+the server serves. An answer holding a later plan than the one named is taken or
+kept, since the file is written before its entry. While the server has not yet
 rendered the named plan the page keeps asking and says nothing. An answer that
 fails, a plan the renderer refused, one the page can't draw, or a render still
 behind after about half a minute leaves the current plan on screen with "The plan
-shown is out of date." beside the title, and the page keeps asking.
+shown is out of date." beside the title, and the page keeps asking until the plan
+is current. A page opened with no plan has no plan chapter, and gains one only on
+a reload.
 
 A static page, one with no address to fetch from or no stream behind it, shows
 "The plan changed. Reload to see it." beside the title when the latest "Plan
