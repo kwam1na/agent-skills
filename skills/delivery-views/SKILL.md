@@ -244,7 +244,7 @@ the line. Lanes read as finished whatever the record last said they waited on, a
 unlanded stop reads "Not landed" and stops pulsing, and leftover holds, leases and
 stale sources no longer show. The progress bar and dots use the same count as the
 headline. Now and the plan call what remains left open at close rather than asking
-for anything.
+for anything, and the supervisor's Needs you box doesn't show.
 
 ### Proofs from the record
 

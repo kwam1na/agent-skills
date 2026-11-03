@@ -541,7 +541,7 @@
     if (panel) { nodes.push(panel); }
     var needs = attention(doc);
     if (needs) { nodes.push(needs); }
-    var supervisor = needsYou();
+    var supervisor = closed ? null : needsYou();
     if (supervisor) { nodes.push(supervisor); }
     nodes.push(journey(doc, all, landed));
     nodes.push(since(meta, closed));
@@ -847,7 +847,8 @@
   /**
    * The supervisor's "Needs you": what holds the close first, then what is only shown, each with where it comes from
    * and what clears it. A list from a supervisor that isn't running, one past its staleAfter (a pass is overdue), or
-   * one that can't be read is never shown: the box says which instead.
+   * one that can't be read is never shown: the box says which instead. A closed delivery has no box: nothing is left
+   * for a supervisor to hold, and asking to resume one would reopen nothing.
    */
   function needsYou() {
     if (NEEDS === null) { return null; }
@@ -864,12 +865,12 @@
     }
     var items = list(NEEDS.items).filter(isObject);
     if (!items.length) { return none("Nothing needs you; the supervisor's last pass found nothing."); }
-    [[true, "Holds the close", "▲"], [false, "Shown only", "◇"]].forEach(function (kind) {
+    [[true, "Holds the close", "stop"], [false, "Shown only", "wait"]].forEach(function (kind) {
       var mine = items.filter(function (item) { return item.holding === kind[0]; });
       if (!mine.length) { return; }
       var ul = el("ul");
       mine.forEach(function (item) {
-        ul.appendChild(add(el("li"), el("span", kind[0] ? "g" : "g wait", kind[2]), add(el("div"), el("div", "a1", text(item.text)),
+        ul.appendChild(add(el("li"), glyph(kind[2]), add(el("div"), el("div", "a1", text(item.text)),
           el("div", "a2", "From " + text(item.source) + ". Clears with " + text(item.clears) + "."))));
       });
       box.appendChild(add(el("div", "needs-group"), el("div", "needs-kind", kind[1]), ul));

@@ -121,3 +121,15 @@ test("a refresh whose page has no list drops the one shown", async () => {
   expect(snapshots[0].app.querySelectorAll(".needs-you li").length).toBe(3);
   expect(snapshots[2].app.querySelector(".needs-you")).toBeNull();
 });
+
+test("a closed delivery has no Needs you box, and each item carries the page's own drawn mark", async () => {
+  const closed = document();
+  closed.journal = [{ id: 1, at: "2026-01-01T11:00:00Z", kind: "delivery.closed", lane: null, subject: null, summary: "closed" }];
+  for (const list of [needs(), { ...needs(), running: false }, { unreadable: true }]) {
+    const [page] = await openPage(renderPage(closed, { config, needs: list }), { now: NOW });
+    expect(page.app.querySelector(".needs-you")).toBeNull();
+  }
+  const box = await shown(needs());
+  expect([...box.querySelectorAll("li .g")].map((mark) => mark.className)).toEqual(["g stop", "g stop", "g wait"]);
+  expect([...box.querySelectorAll("li .g")].every((mark) => mark.querySelector("svg") !== null && mark.textContent === "")).toBe(true);
+});
