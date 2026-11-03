@@ -115,10 +115,10 @@ class StandingBinding(unittest.TestCase):
                 return subprocess.run([sys.executable, "-B", str(ROOT / ".agents/delivery/candidate.py"), key], capture_output=True, text=True,
                                       env={**os.environ, "PATH": os.pathsep.join([folder, os.environ["PATH"]])})
 
-        for title in ("V26-1: the opened form", "[V26-1]: the bracketed form"):
-            done = candidate("V26-1", title, "V26-2: Follow up on V26-1", "V26-12: a longer key")
+        for title in ("WORK-1: the opened form", "[WORK-1]: the bracketed form"):
+            done = candidate("WORK-1", title, "WORK-2: Follow up on WORK-1", "WORK-12: a longer key")
             self.assertEqual(json.loads(done.stdout)["branch"], "branch-0", done.stderr)
-        self.assertEqual(candidate("V26-1", "V26-2: Follow up on V26-1").returncode, 1)
+        self.assertEqual(candidate("WORK-1", "WORK-2: Follow up on WORK-1").returncode, 1)
 
     def test_the_delivery_folders_are_ignored(self) -> None:
         for path in (".orchestration/lanes/x", ".orchestration/state/state.json", ".worktrees/x", ".claude/worktrees/x"):

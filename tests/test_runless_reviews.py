@@ -369,7 +369,7 @@ class ReviewEvidenceCheckTests(unittest.TestCase):
             correctness: {**identity(correctness, 2, fixtures.HEAD_B), "outcome": "aligned", "evidence": "read it", "findings": [],
                           "resolvedFindings": [{"id": "F1", "state": "fixed", "resolution": "now right"}]},
             testing: {**identity(testing, 2, fixtures.HEAD_B), "outcome": "aligned", "evidence": "ran it", "findings": [],
-                      "resolvedFindings": [{"id": "T1", "state": "deferred", "resolution": "later", "deferredIssue": "V26-1"}]}})
+                      "resolvedFindings": [{"id": "T1", "state": "deferred", "resolution": "later", "deferredIssue": "WORK-1"}]}})
         self.journal_rounds(2)
         state_tool.capture_review(self.directory, subject="work-a", candidate=fixtures.HEAD_B, outcomes=[first, second])
         self.assertEqual(state_tool.review_evidence(self.directory, "work-a")["evidence"], "captured")
