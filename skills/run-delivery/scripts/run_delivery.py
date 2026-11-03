@@ -4350,10 +4350,10 @@ def main(argv: list[str] | None = None) -> None:
     # What follows `--` is the adapter's. Python 3.11's argparse refuses it after a positional taking any number of values.
     argv = list(sys.argv[1:] if argv is None else argv)
     separator = argv.index("--") if "--" in argv else len(argv)
-    args = parser.parse_args(argv[:separator])
-    if hasattr(args, "passthrough"):
+    if {"app-check", "app-video"} & set(argv[:separator]):
+        args = parser.parse_args(argv[:separator])
         args.passthrough = [*args.passthrough, *argv[separator + 1:]]
-    elif separator < len(argv):
+    else:
         args = parser.parse_args(argv)
     DELIVERY_ARG = args.delivery
     for _signal in (signal.SIGTERM, signal.SIGHUP):

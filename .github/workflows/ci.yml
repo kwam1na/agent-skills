@@ -25,7 +25,8 @@ jobs:
       # Every operating system reports, so each failure is known and has an owner.
       fail-fast: false
       matrix:
-        # Every system where publishing or the default branch depends on it, or on request; otherwise Ubuntu.
+        # Every system where publishing or the default branch depends on it; otherwise Ubuntu, unless the
+        # full-matrix label asks for all three. The label is read from a push's event, so it applies from the next push.
         os: ${{ fromJSON((github.event_name == 'push' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'full-matrix')) && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
         python-version: ["3.11"]
     runs-on: ${{ matrix.os }}

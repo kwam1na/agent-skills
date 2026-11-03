@@ -2661,6 +2661,16 @@ def evidence(repository: Path, *, remote: str, base: str, check: str, head: str,
         shutil.rmtree(runner._bootstrap_hooks, ignore_errors=True)
 
 
+def write_document_line(document: dict) -> None:
+    try:
+        sys.stdout.buffer.write(json.dumps(document, ensure_ascii=True, sort_keys=True).encode("ascii") + b"\n")
+        sys.stdout.buffer.flush()
+    except OSError:
+        # Nobody reads any more, which Windows may report as an invalid argument rather than a
+        # broken pipe: serving goes on, and state/results keeps every document.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="the repository the queue serves")
@@ -2702,12 +2712,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve" and not args.until_idle:
         # Serving until stopped: one document a line as each is written; state/results keeps them all.
         def report(result: Result) -> None:
-            try:
-                sys.stdout.buffer.write(json.dumps(result.document(), ensure_ascii=True, sort_keys=True).encode("ascii") + b"\n")
-                sys.stdout.buffer.flush()
-            except BrokenPipeError:
-                # Nobody reads any more: serving goes on, and state/results keeps every document.
-                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            write_document_line(result.document())
 
         def interrupt(signum: int, frame: object) -> None:
             raise KeyboardInterrupt

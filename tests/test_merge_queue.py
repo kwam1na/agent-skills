@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import errno
 import gc
 import io
 import importlib.util
@@ -325,7 +326,7 @@ class Adopter:
         self.log.write_text("")
         run("init", "--quiet", "--bare", "--initial-branch=main", str(self.remote), cwd=root)
         seed = root / "seed"
-        run("clone", "--quiet", str(self.remote), str(seed), cwd=root)
+        run("clone", "--quiet", "--config", "core.autocrlf=false", str(self.remote), str(seed), cwd=root)
         run("checkout", "--quiet", "-b", "main", cwd=seed)
         for name, text in TOOLS.items():
             self.write(seed, f"tools/{name}", text.lstrip())
@@ -342,7 +343,8 @@ class Adopter:
         run("commit", "--quiet", "-m", "base", cwd=seed)
         run("push", "--quiet", "origin", "main", cwd=seed)
         run("clone", "--quiet", str(self.remote), str(self.operator), cwd=root)
-        run("clone", "--quiet", str(self.remote), str(self.lane), cwd=root)
+        # The lane commits the bytes it means: Git for Windows' system setting would convert them, from the clone's own checkout on.
+        run("clone", "--quiet", "--config", "core.autocrlf=false", str(self.remote), str(self.lane), cwd=root)
         state_tool.init(self.state, "Fixture delivery")
 
     def default_binding(self) -> dict:
@@ -3251,6 +3253,17 @@ class ServeTests(MergeQueueTestCase):
         # The new head waits to be taken on its own merits; serve's stop was for the head it refused.
         self.assertEqual((item["head"], item["stage"]), (newer[0], "queued"))
 
+    def test_a_closed_output_on_any_system_leaves_serve_serving(self) -> None:
+        # POSIX says broken pipe; Windows reports the same closed pipe as a plain invalid argument.
+        for error in (BrokenPipeError(), OSError(errno.EINVAL, "Invalid argument")):
+            with self.subTest(error=type(error).__name__):
+                output = mock.Mock()
+                output.buffer.write.side_effect = error
+                with mock.patch.object(queue.sys, "stdout", output), mock.patch.object(queue.os, "open", return_value=99), \
+                        mock.patch.object(queue.os, "dup2") as replaced:
+                    queue.write_document_line({"outcome": "merged"})
+                replaced.assert_called_once_with(99, output.fileno.return_value)
+
     def test_a_reader_that_goes_away_leaves_serve_serving(self) -> None:
         adopter = self.adopter()
         self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
@@ -3272,7 +3285,9 @@ class ServeTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("second")["stage"], "merged")
         serving.terminate()
         _, errors = serving.communicate(timeout=60)
-        self.assertEqual(serving.returncode, 0, errors.decode("utf-8", "replace"))
+        # Windows' terminate gives the process no chance to exit cleanly, so its code says nothing there.
+        if os.name != "nt":
+            self.assertEqual(serving.returncode, 0, errors.decode("utf-8", "replace"))
 
     def test_serve_refuses_to_start_on_a_wrong_checkout_and_stops_nothing(self) -> None:
         adopter = self.adopter()

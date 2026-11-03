@@ -3361,6 +3361,7 @@ class RunDeliveryLeakageTests(unittest.TestCase):
             self.assertEqual(self.findings(f"a {planted.upper()}-thing"), ["first-adopter term"])
 
 
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class RunDeliveryArgumentTests(unittest.TestCase):
     """Python 3.11's argparse refuses `--` after a positional that takes any number of values; 3.11 is a declared minimum."""
 
@@ -3401,9 +3402,27 @@ class RunDeliveryArgumentTests(unittest.TestCase):
                     self.assertEqual(reached, given)
                     self.assertEqual(received, tail)
 
-    def test_a_second_separator_belongs_to_the_adapter(self) -> None:
+    def test_a_later_separator_belongs_to_the_adapter(self) -> None:
         given = ["app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one"]
         self.assertEqual(self.parsed(*given, "--", "a", "--", "b")[1], ["a", "--", "b"])
+
+    def test_a_command_without_pass_through_arguments_parses_as_it_always_did(self) -> None:
+        # A required positional may follow the separator, as argparse allows.
+        seen, received = [], []
+        real = argparse.ArgumentParser.parse_args
+
+        def recording(parser, args=None, namespace=None):
+            if parser.prog == "run_delivery.py":
+                seen.append(list(args))
+            return real(parser, args, namespace)
+
+        given = ["lead-assign", "--lane", "lane-1", "--title", "A title", "--", "FX-1"]
+        with mock.patch.object(argparse.ArgumentParser, "parse_args", recording), \
+                mock.patch.object(self.tool, "lead_assign", lambda args: received.append(list(args.keys))), \
+                mock.patch.object(self.tool.signal, "signal"):
+            self.tool.main(given)
+        self.assertEqual(seen, [given])
+        self.assertEqual(received, [["FX-1"]])
 
     def test_no_separator_leaves_the_arguments_as_they_were(self) -> None:
         given = ["app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one"]

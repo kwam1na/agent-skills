@@ -1415,8 +1415,8 @@ class LiveTests(DeliveryStateFixture):
             code, result = render_state._live_from_args(["--dir", str(self.state_dir), "--host", "::ffff:0.0.0.0"])
         self.assertEqual((code, result["ok"], result["code"]), (2, False, "live_refused"))
 
-    @unittest.skipUnless(sys.platform == "linux", "only Linux takes this bind: macOS refuses it, and a refusal there is not the risk")
-    def test_on_linux_the_mapped_any_address_really_listens_on_every_ipv4_address(self) -> None:
+    @unittest.skipIf(os.name == "nt", "Windows has not been seen to take this bind")
+    def test_the_mapped_any_address_really_listens_on_every_ipv4_address(self) -> None:
         # Why the refusal must come first: this bind succeeds, so nothing later would stop it serving.
         server = render_state._LiveServer6(("::ffff:0.0.0.0", 0), http.server.BaseHTTPRequestHandler)
         self.addCleanup(server.server_close)
@@ -1432,6 +1432,10 @@ class LiveTests(DeliveryStateFixture):
                               "--host", host])
                 self.assertEqual(result.returncode, 2)
                 refused = json.loads(result.stdout)
+                if os.name == "nt" and host == "0":
+                    # Windows doesn't resolve this name, so the bind itself fails and nothing listens.
+                    self.assertEqual((refused["ok"], refused["code"]), (False, "live_unavailable"))
+                    continue
                 self.assertEqual((refused["ok"], refused["code"]), (False, "live_refused"))
                 self.assertEqual(refused["error"], "the live view serves this machine only; bind a loopback address")
 

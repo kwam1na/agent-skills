@@ -10,10 +10,6 @@ validates a ``delivery-plan/1`` file, the plan chapter's one input.
 
 from __future__ import annotations
 
-import sys
-
-sys.dont_write_bytecode = True
-
 import argparse
 import contextlib
 import hashlib
@@ -22,6 +18,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import urllib.parse

@@ -355,7 +355,7 @@ class HistoryCommandTests(unittest.TestCase):
         for name in ("delivery-views", "orchestrate-work"):
             shutil.copytree(skills / name, self.root / "skills" / name, ignore=shutil.ignore_patterns("__pycache__"))
         environment = {key: value for key, value in os.environ.items() if key != "PYTHONDONTWRITEBYTECODE"}
-        for script in ("render.py", "snapshot.py", "views_common.py"):
+        for script in ("render.py", "snapshot.py", "review_projection.py"):
             with self.subTest(script=script):
                 subprocess.run([sys.executable, str(self.root / "skills/delivery-views/scripts" / script), "--help"],
                                capture_output=True, timeout=60, env=environment, cwd=self.root)

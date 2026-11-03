@@ -895,7 +895,7 @@ class FixtureAdopterLiveViewTests(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=adopter.environment, cwd=adopter.root)
 
         def stop() -> None:
-            if process.poll() is None:
+            if process.poll() is None and os.name != "nt":  # Windows has no SIGINT to send.
                 process.send_signal(signal.SIGINT)
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     process.wait(10)
