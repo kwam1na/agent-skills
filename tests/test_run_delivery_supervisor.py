@@ -402,7 +402,9 @@ class SupervisorProcessTests(unittest.TestCase):
         d = json.loads(path.read_text())
         d["finish"] = []
         path.write_text(json.dumps(d, indent=2))
-        commit(m, "FX-1: no finish lines")
+        conf_path = m / ".agents/run-delivery.json"
+        conf_path.write_text(json.dumps({**json.loads(conf_path.read_text()), "supervisor": {"passSeconds": 4}}))
+        commit(m, "FX-1: no finish lines, a pass every four seconds")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
         code, out = fx.flow("lead-init", cwd=m, env=running(fx))
         self.assertEqual(code, 0, out)
@@ -412,12 +414,30 @@ class SupervisorProcessTests(unittest.TestCase):
             before = serve()
             os.kill(before, signal.SIGKILL)
             wait_for(lambda: serve() != before and alive(serve()), "serve to be restarted", 30)
+        # Three exits in the window: a fourth rests until a pass's interval has gone by since the last restart.
+        before = serve()
+        os.kill(before, signal.SIGKILL)
+        time.sleep(1.5)
+        self.assertEqual(serve(), before, "a child that won't stay up was restarted at once")
+        wait_for(lambda: serve() != before and alive(serve()), "serve to be restarted after its rest", 30)
         seen = len(passes(fx))
         flapping = wait_for(lambda: [p for p in passes(fx)[seen:] if any("serve won't stay up" in item["text"]
                                                                          for item in p.get("needsYou", []))],
                             "a pass reporting serve won't stay up", 60)
         self.assertTrue(flapping)
         self.assertTrue(alive(lock_of(fx)["pid"]), "a child that won't stay up ended the supervisor")
+        # A restart that fails is logged, and the supervisor carries on.
+        binding_path = m / ".agents/orchestration.json"
+        good = binding_path.read_text()
+        binding = json.loads(good)
+        binding["state"]["renderers"] = "not a list"
+        binding_path.write_text(json.dumps(binding))
+        live = next(child["pid"] for child in lock_of(fx)["children"] if child["name"] == "live")
+        os.kill(live, signal.SIGKILL)
+        log = fx.tmp / "flow-log/FX-1.supervisor.live.log"
+        wait_for(lambda: "restart failed" in log.read_text(), "the failed restart to be logged", 60)
+        self.assertTrue(alive(lock_of(fx)["pid"]), "a failed restart ended the supervisor")
+        binding_path.write_text(good)
 
     def test_lead_close_stops_a_running_supervisor_after_its_pass(self) -> None:
         fx = self.fixture()
@@ -768,6 +788,10 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(runs(), 1, "fullHealth ran again at the same head")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=m)
         self.assertEqual(code, 0, out)
+        rerun = kinds(fx, "decision.recorded")[-1]
+        self.assertIn("runs again on the supervisor's next pass: flaky", rerun["summary"])
+        marks = [json.loads(line) for line in (fx.tmp / "flow-log/FX-1.tracker-marks.jsonl").read_text().splitlines()]
+        self.assertIn(rerun["id"], [mark["journal"] for mark in marks], "the rerun's decision isn't marked for the tracker")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "again", cwd=m)
         self.assertEqual(code, 2, out)
         self.assertIn("already asked for", out)
