@@ -107,6 +107,18 @@ with open(str(verdict) + ".runs", "a") as runs:
 sys.exit(1 if verdict.exists() and verdict.read_text().strip() == "fail" else 0)
 '''
 
+# Holds a lock as a supervisor would, recording what it is given.
+HOLDER = r'''
+import fcntl, sys, time
+lock = open(sys.argv[1], "a+")
+fcntl.flock(lock, fcntl.LOCK_EX)
+lock.truncate(0)
+lock.write(sys.argv[2])
+lock.flush()
+print("holding", flush=True)
+time.sleep(120)
+'''
+
 SNAPSHOT = r'''
 import datetime, json
 print(json.dumps({"takenAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -282,6 +294,10 @@ class SupervisorProcessTests(unittest.TestCase):
         self.assertTrue((latest / "record/state.json").exists() and (latest / "flow-log").is_dir(), done)
         code, out = fx.flow("lead-brief", cwd=m)
         self.assertIn(f"supervisor: running (pid {first['pid']}); live view {first['address']}", out)
+        code, out = fx.flow("lead-close", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("journal delivery.closed first", out)
+        self.assertTrue(alive(first["pid"]) and lock_of(fx)["pid"] == first["pid"], "a refused lead-close stopped it")
         # A second supervisor and a second lead-init are refused; --replace swaps the first for one other.
         code, out = fx.flow("lead-run", cwd=m, env=running(fx))
         self.assertEqual(code, 2, out)
@@ -300,8 +316,9 @@ class SupervisorProcessTests(unittest.TestCase):
         fx = self.fixture()
         supervised(fx)
         m = fx.main
-        # Started from a parent that ignores SIGINT and SIGHUP, as nohup and a background `&` leave them.
-        ignoring = lambda: [signal.signal(number, signal.SIG_IGN) for number in (signal.SIGINT, signal.SIGHUP)]
+        # Started from a parent that ignores SIGINT, SIGHUP and SIGQUIT, as nohup and a background `&` leave them.
+        ignoring = lambda: [signal.signal(number, signal.SIG_IGN)
+                            for number in (signal.SIGINT, signal.SIGHUP, signal.SIGQUIT)]
         done = subprocess.run([sys.executable, "-B", str(fx.tool), "lead-init"], cwd=m, env=running(fx), text=True,
                               capture_output=True, preexec_fn=ignoring, timeout=300)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -316,6 +333,34 @@ class SupervisorProcessTests(unittest.TestCase):
         under_serve = [r for r in runs if "/.orchestration/work" in r["cwd"]]
         self.assertTrue(under_serve, runs)
         self.assertEqual([r["ignored"] for r in under_serve], [[]] * len(under_serve))
+
+    def test_doctor_names_a_child_that_ignores_a_signal_where_the_host_shows_it(self) -> None:
+        fx = self.fixture()
+        supervised(fx)
+        m = fx.main
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        ignorer = subprocess.Popen(["sleep", "60"], start_new_session=True,
+                                   preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+        self.addCleanup(ignorer.wait)
+        self.addCleanup(ignorer.kill)
+        lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        holder = subprocess.Popen([sys.executable, "-B", "-c", HOLDER, str(lock), json.dumps(
+            {"pid": os.getpid(), "startedAt": "2026-01-01T00:00:00Z", "address": "http://127.0.0.1:1/",
+             "children": [{"name": "serve", "pid": ignorer.pid}]})], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.kill)
+        self.assertEqual(holder.stdout.readline().strip(), "holding")
+        holder.stdout.close()
+        code, out = fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=m)
+        line = next(l for l in out.splitlines() if "delivery supervisor:" in l)
+        if Path("/proc/self/status").exists():
+            self.assertIn(f"serve (pid {ignorer.pid}) ignores SIGINT", line)
+            self.assertTrue(line.startswith("wrong"), line)
+        else:
+            self.assertIn("can't be read on this host", line)
+            self.assertTrue(line.startswith("ok"), line)
 
     def test_a_killed_supervisor_is_reported_and_resume_stops_its_orphans_and_repeats_nothing(self) -> None:
         fx = self.fixture()
@@ -348,6 +393,76 @@ class SupervisorProcessTests(unittest.TestCase):
         count = len(passes(fx))
         wait_for(lambda: len(passes(fx)) > count + 1, "two more passes")
         self.assertEqual(len(kinds(fx, "decision.recorded")), decisions, "a resumed supervisor journalled again")
+
+    def test_a_running_supervisor_restarts_its_children_and_reports_one_that_wont_stay_up(self) -> None:
+        fx = self.fixture()
+        supervised(fx)
+        m = fx.main
+        path = m / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        d["finish"] = []
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: no finish lines")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m, env=running(fx))
+        self.assertEqual(code, 0, out)
+        wait_for(lambda: passes(fx), "a first pass")
+        serve = lambda: next(child["pid"] for child in lock_of(fx)["children"] if child["name"] == "serve")
+        for _ in range(3):
+            before = serve()
+            os.kill(before, signal.SIGKILL)
+            wait_for(lambda: serve() != before and alive(serve()), "serve to be restarted", 30)
+        seen = len(passes(fx))
+        flapping = wait_for(lambda: [p for p in passes(fx)[seen:] if any("serve won't stay up" in item["text"]
+                                                                         for item in p.get("needsYou", []))],
+                            "a pass reporting serve won't stay up", 60)
+        self.assertTrue(flapping)
+        self.assertTrue(alive(lock_of(fx)["pid"]), "a child that won't stay up ended the supervisor")
+
+    def test_lead_close_stops_a_running_supervisor_after_its_pass(self) -> None:
+        fx = self.fixture()
+        supervised(fx)
+        m = fx.main
+        code, out = fx.flow("lead-init", cwd=m, env=running(fx))
+        self.assertEqual(code, 0, out)
+        wait_for(lambda: passes(fx), "a first pass")
+        first = lock_of(fx)
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed early")
+        code, out = fx.flow("lead-close", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"stopped the supervisor (pid {first['pid']}) after its pass", out)
+        for pid in [first["pid"], *(child["pid"] for child in first["children"])]:
+            wait_for(lambda: not alive(pid), f"process {pid} to stop", 30)
+        self.assertIn("supervisor: stopped; the delivery is closed. Archive", out)
+        code, out = fx.flow("lead-run", "--resume", cwd=m, env=running(fx))
+        self.assertEqual(code, 2, out)
+        self.assertIn("the delivery is closed: lead-close closed it", out)
+
+    def test_a_supervisor_that_closes_the_delivery_stops(self) -> None:
+        fx = self.fixture()
+        supervised(fx)
+        m = fx.main
+        path = m / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        d["finish"] = []
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: no finish lines")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m, env=running(fx))
+        self.assertEqual(code, 0, out)
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        wait_for(lambda: kinds(fx, "candidate.merged"), "serve merging FX-2")
+        first = lock_of(fx)
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
+            changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"], "by": "lead",
+                                      "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
+        wait_for(lambda: (fx.tmp / "flow-log/FX-1.closed.json").exists(), "the supervisor to close the delivery")
+        for pid in [first["pid"], *(child["pid"] for child in first["children"])]:
+            wait_for(lambda: not alive(pid), f"process {pid} to stop once the delivery closed", 30)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1)
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
@@ -392,6 +507,102 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertIn("tools/fake_forge.py", out)
         item = next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-2")
         self.assertTrue(item.get("pending"), item)
+        # An acceptance refused for another reason never marks the draft ready.
+        wt = fx.main / "lanes/FX-2"
+        (wt / "src/one.txt").write_text("one, moved on\n")
+        commit(wt, "FX-2: moved after its hand-off")
+        sh("git", "push", "-q", "origin", "HEAD:feature/FX-2", cwd=wt)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn("is not at the handed head", out)
+        self.assertTrue(json.loads((fx.tmp / "forge.json").read_text())["https://forge.test/pr/1"]["draft"],
+                        "a refused acceptance marked the draft ready")
+
+    def closable(self, fx: Fixture) -> None:
+        """No finish lines, FX-2 merged, its lane done, FX-3 removed: nothing holds the close."""
+        path = fx.main / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        d["finish"] = []
+        path.write_text(json.dumps(d, indent=2))
+        commit(fx.main, "FX-1: no finish lines")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.merged(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
+            changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"], "by": "lead",
+                                      "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
+
+    def holds_alone(self, fx: Fixture, words: str) -> None:
+        """One pass, held by exactly what the case opened, and the delivery isn't closed."""
+        held = self.once(fx)["closeHeldBy"]
+        self.assertTrue(any(words in h for h in held), held)
+        self.assertEqual(kinds(fx, "delivery.closed"), [], "the delivery closed while something held it")
+
+    def test_each_condition_holds_the_close_on_its_own(self) -> None:
+        fx = self.fixture()
+        self.closable(fx)
+        lane = lambda *argv: state_tool(fx, "focus", "--lane", "lane-1", "--text", "x", *argv)
+        lane("--state", "working")
+        self.holds_alone(fx, "lanes not idle or done: lane-1")
+        lane("--state", "blocked")
+        self.holds_alone(fx, "lane-1 is blocked")
+        lane("--state", "done", "--waiting-on", "lead")
+        self.holds_alone(fx, "lane-1 waits on you")
+        lane("--state", "done", "--waiting-on", "")
+        doc = record(fx)
+        state_tool(fx, "patch", "--writer", "lead", "--version", str(doc["state"]["version"]), "--patch",
+                   json.dumps({"finish": [{"id": "late", "text": "A late line", "met": False}]}))
+        self.holds_alone(fx, "finish lines not met: late")
+        doc = record(fx)
+        state_tool(fx, "patch", "--writer", "lead", "--version", str(doc["state"]["version"]), "--patch",
+                   json.dumps({"finish": []}))
+        # A handed-off story that isn't merged: FX-3 back in the plan, handed off and accepted.
+        log = fx.tmp / "flow-log/plan-changes.jsonl"
+        log.write_text("".join(line + "\n" for line in log.read_text().splitlines() if '"removed"' not in line))
+        hand_off(fx, "FX-3", "lane-2")
+        code, out = fx.flow("lead-accept", "FX-3", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        state_tool(fx, "focus", "--lane", "lane-2", "--text", "done", "--state", "done")
+        self.holds_alone(fx, "not merged: FX-3")
+        queue_run(fx, "FX-3")
+        self.once(fx)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, passes(fx)[-1])
+
+    def test_accepted_drafts_hold_the_close_when_the_merge_step_refuses_them(self) -> None:
+        fx = self.fixture(grant_ready=False, merge_needs_ready=False)
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        conf_path = fx.main / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+        conf["forge"]["mergeNeedsReady"] = True
+        conf_path.write_text(json.dumps(conf, indent=2))
+        commit(fx.main, "FX-1: the merge step refuses drafts now")
+        self.holds_alone(fx, "Accepted as drafts while the merge step refuses drafts: FX-2")
+
+    def test_the_runner_s_blocker_clears_with_its_hold_or_with_base_repaired(self) -> None:
+        fx = self.fixture()
+        self.closable(fx)
+        # A lane still working keeps the delivery open throughout, so each pass shows what else holds.
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "working", "--state", "working")
+        held = lambda reason: state_tool(fx, "patch", "--writer", "runner", "--version",
+                                         str(record(fx)["state"]["version"]), "--set",
+                                         json.dumps({"/meta/hold": {"reason": reason, "since": "2026-01-01T00:00:00Z"}}))
+        # Cleared by the hold clearing, with no base.repaired.
+        held("the setup broke")
+        state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "Serving is held: the setup broke.")
+        self.holds_alone(fx, "Serving is held: the setup broke")
+        state_tool(fx, "patch", "--writer", "lead", "--version", str(record(fx)["state"]["version"]), "--set",
+                   json.dumps({"/meta/hold": None}))
+        self.assertFalse(any("Serving is held" in h for h in self.once(fx)["closeHeldBy"]))
+        # Cleared by base.repaired, with the hold still set.
+        held("the base broke")
+        state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "Serving is held: the base broke.")
+        self.holds_alone(fx, "Serving is held: the base broke")
+        state_tool(fx, "journal", "--kind", "base.repaired", "--summary", "repaired")
+        self.assertFalse(any("Serving is held" in h for h in self.once(fx)["closeHeldBy"]))
 
     def test_a_merge_step_that_refuses_drafts_needs_the_grant(self) -> None:
         fx = Fixture(self.generation, self.receipt)
@@ -406,16 +617,37 @@ class SupervisorPassTests(unittest.TestCase):
 
     def test_a_stopped_candidate_merges_after_requeue_without_a_new_hand_off(self) -> None:
         fx = self.fixture(grant_ready=False, merge_needs_ready=False)
-        hand_off(fx, "FX-2", "lane-1")
+        wt = hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("isn't stopped (queued)", out)
         code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
         self.assertEqual(code, 0, out)
+        # The base moves first, so the queue syncs the candidate and pushes it before its merge step refuses it.
+        (fx.main / "docs/elsewhere.md").write_text("moved\n")
+        commit(fx.main, "FX-1: the base moves on")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
         queue_run(fx, "FX-2")
+        item = next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-2")
+        self.assertTrue(item.get("syncedHead") and item["syncedHead"] != item["head"], item)
         stopped = kinds(fx, "candidate.stopped")
         self.assertTrue(stopped and "merge_refused" in stopped[-1]["summary"], stopped)
         handed = len(kinds(fx, "candidate.handed"))
         forge = json.loads((fx.tmp / "forge.json").read_text())
         forge["https://forge.test/pr/1"]["draft"] = False  # the lead marks it ready by hand
         (fx.tmp / "forge.json").write_text(json.dumps(forge))
+        # A branch that moved on from both the handed and the synced head is the lane's to hand off again.
+        synced = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        sh("git", "fetch", "-q", "origin", "feature/FX-2", cwd=wt)
+        sh("git", "reset", "-q", "--hard", "origin/feature/FX-2", cwd=wt)
+        (wt / "src/one.txt").write_text("one, again\n")
+        commit(wt, "FX-2: moved on")
+        sh("git", "push", "-q", "origin", "HEAD:feature/FX-2", cwd=wt)
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the lane hands it off again", out)
+        sh("git", "push", "-q", "-f", "origin", f"{item['syncedHead']}:refs/heads/feature/FX-2", cwd=wt)
+        self.assertNotEqual(synced, "")
         code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
         self.assertEqual(code, 0, out)
         queue_run(fx, "FX-2")
@@ -424,6 +656,16 @@ class SupervisorPassTests(unittest.TestCase):
         code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
         self.assertEqual(code, 2, out)
         self.assertIn("isn't stopped (merged)", out)
+        # A stopped candidate whose new hand-off waits for acceptance is accepted, never requeued.
+        record_now = record(fx)
+        state_tool(fx, "patch", "--writer", "runner", "--version", str(record_now["state"]["version"]), "--element",
+                   "queue[subject=FX-2]", "--set", json.dumps({"/stage": "stopped"}))
+        record_now = record(fx)
+        state_tool(fx, "patch", "--writer", "lead", "--version", str(record_now["state"]["version"]), "--element",
+                   "queue[subject=FX-2]", "--patch", json.dumps({"pending": True}))
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("still waits for acceptance", out)
 
     def test_each_finish_line_is_journalled_once_when_its_proofs_are_done(self) -> None:
         fx = self.fixture()
@@ -432,7 +674,8 @@ class SupervisorPassTests(unittest.TestCase):
         d["stories"]["FX-2"]["criteria"] = [{"id": "one-works", "text": "One works"}]
         d["stories"]["FX-3"]["criteria"] = [{"id": "two-works", "text": "Two works"}]
         d["finish"] = [{"id": "one", "text": "One is done", "covers": {"criteria": ["one-works"], "proofs": ["merged"]}},
-                       {"id": "two", "text": "Two is done", "covers": {"criteria": ["two-works"], "proofs": ["merged"]}}]
+                       {"id": "two", "text": "Two is done", "covers": {"criteria": ["two-works"], "proofs": ["merged"]}},
+                       {"id": "three", "text": "Two ships", "covers": {"criteria": ["two-works"], "proofs": ["merged"]}}]
         path.write_text(json.dumps(d, indent=2))
         commit(fx.main, "FX-1: two finish lines")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
@@ -441,16 +684,19 @@ class SupervisorPassTests(unittest.TestCase):
         self.once(fx)
         self.assertEqual(kinds(fx, "finish.met"), [])
         self.merged(fx, "FX-2", "lane-1")
-        # The lead journals line two by hand, ahead of its proofs: the supervisor never journals it again.
-        state_tool(fx, "journal", "--kind", "finish.met", "--subject", "two", "--summary", "two: by hand")
+        # The lead journals lines two and three by hand, ahead of their proofs, one by its subject and one by its
+        # summary: the supervisor journals neither again.
+        state_tool(fx, "journal", "--kind", "finish.met", "--subject", "two", "--summary", "By hand, ahead of time.")
+        state_tool(fx, "journal", "--kind", "finish.met", "--summary", "Finish line three met by hand.")
         for _ in range(2):
             self.once(fx)
         met = kinds(fx, "finish.met")
-        self.assertEqual([e["subject"] for e in met], ["two", "one"], met)
-        self.assertEqual({line["id"]: line["met"] for line in record(fx)["state"]["finish"]}, {"one": True, "two": False})
+        self.assertEqual([e.get("subject") for e in met], ["two", None, "one"], met)
+        self.assertEqual({line["id"]: line["met"] for line in record(fx)["state"]["finish"]},
+                         {"one": True, "two": False, "three": False})
         self.merged(fx, "FX-3", "lane-2")
         self.once(fx)
-        self.assertEqual([e["subject"] for e in kinds(fx, "finish.met")], ["two", "one"])
+        self.assertEqual([e.get("subject") for e in kinds(fx, "finish.met")], ["two", None, "one"])
         self.assertTrue(all(line["met"] for line in record(fx)["state"]["finish"]))
 
     def holds(self, fx: Fixture) -> list[str]:
@@ -505,6 +751,11 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertFalse(any("broken" in h or "Serving is held" in h for h in held), held)
         code, out = fx.flow("lead-resolve", str(blocker), "--why", "the API is back", cwd=m)
         self.assertEqual(code, 0, out)
+        # Marked, so the tracker publisher posts the resolution rather than skipping it.
+        resolution = kinds(fx, "decision.recorded")[-1]
+        self.assertTrue(resolution["summary"].startswith(f"Blocker {blocker} resolved"), resolution)
+        marks = [json.loads(line) for line in (fx.tmp / "flow-log/FX-1.tracker-marks.jsonl").read_text().splitlines()]
+        self.assertIn(resolution["id"], [mark["journal"] for mark in marks])
         code, out = fx.flow("lead-resolve", str(blocker), "--why", "again", cwd=m)
         self.assertEqual(code, 2, out)
         # A failing fullHealth holds it, and isn't run again at the same head until lead-resolve asks.
@@ -517,9 +768,18 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(runs(), 1, "fullHealth ran again at the same head")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=m)
         self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-resolve", "full-health", "--why", "again", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("already asked for", out)
+        self.holds(fx)
+        self.assertEqual(runs(), 2)
+        self.holds(fx)
+        self.assertEqual(runs(), 2, "a rerun that failed again ran a third time")
+        code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky twice", cwd=m)
+        self.assertEqual(code, 0, out)
         (fx.tmp / "health").write_text("pass")
         last = self.once(fx)
-        self.assertEqual(runs(), 2)
+        self.assertEqual(runs(), 3)
         # Then it closes: delivery.closed, the archive, the friction note, and the supervisor's stop.
         self.assertEqual(last["closeHeldBy"], [], last)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
@@ -528,7 +788,8 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertTrue((archive / "record/journal.jsonl").exists())
         self.assertTrue(Path(str(archive) + ".friction.md").exists(), last)
         code, out = fx.flow("lead-brief", cwd=m)
-        self.assertIn(f"supervisor: stopped after closing the delivery; archive {archive}", out)
+        self.assertIn(f"supervisor: stopped; the delivery is closed. Archive {archive}; write up the friction note "
+                      f"{archive}.friction.md", out)
         # A further pass closes nothing twice.
         self.once(fx)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1)
@@ -665,6 +926,23 @@ class SupervisorTrackerTests(unittest.TestCase):
         archive = Path(json.loads((fx.tmp / "flow-log/FX-1.closed.json").read_text())["archive"])
         friction = Path(str(archive) + ".friction.md").read_text()
         self.assertIn("was refused", friction)
+
+    def test_the_close_waits_until_the_publisher_has_posted_delivery_closed(self) -> None:
+        fx, backend = self.fixture()
+        self.closable(fx)
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "still here", "--state", "working")
+        self.once(fx)  # every entry so far is posted, while the lane keeps the close open
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        with backend.edit() as store:
+            store["failures"].append({"op": "comment", "ticket": "FX-1", "status": 409, "times": 1})
+        last = self.once(fx)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+        self.assertTrue(any(line.startswith("waiting for the tracker publisher to cover journal entries")
+                            for line in last.get("closeOut", [])), last)
+        self.assertFalse((fx.tmp / "flow-log/FX-1.closed.json").exists(), "archived before the tracker had it")
+        last = self.once(fx)
+        self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
+        self.assertEqual(len([text for text in epic_comments(backend) if "Delivery closed" in text]), 1)
 
     def test_with_a_host_publisher_the_close_waits_for_the_outbox_ack_and_by_hand_it_doesnt(self) -> None:
         for updates in ("host", "manual"):

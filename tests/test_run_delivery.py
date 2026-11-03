@@ -373,17 +373,27 @@ class Fixture:
 
 
 def stop_supervisors(root: Path) -> None:
-    """Stop any supervisor a case started under this folder: a held lock's recorded pid leads its group."""
+    """Stop any supervisor a case started under this folder, and what a killed one left: a held lock's recorded pid
+    leads its group, and a lock nobody holds still names the group its children run in. Only a child still in that
+    group is the case's own."""
     for lock in root.rglob("*.supervisor.lock"):
         with open(lock, "a+") as probe:
             try:
                 fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 fcntl.flock(probe, fcntl.LOCK_UN)
-                continue
+                held = False
             except BlockingIOError:
-                pass
-        pid = json.loads(lock.read_text() or "{}").get("pid")
-        if isinstance(pid, int) and pid > 1:
+                held = True
+        recorded = json.loads(lock.read_text() or "{}")
+        pid = recorded.get("pid")
+        if not isinstance(pid, int) or pid <= 1:
+            continue
+        def in_group(child: dict) -> bool:
+            try:
+                return os.getpgid(child.get("pid")) == pid
+            except (ProcessLookupError, PermissionError, TypeError):
+                return False
+        if held or any(in_group(child) for child in recorded.get("children") or []):
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)
 
@@ -1707,7 +1717,8 @@ elif command == ["pr", "view"]:
     print(json.dumps({"url": "https://github.com/o/n/pull/3", "state": "OPEN", "isDraft": True, "headRefOid": "abc",
                       "headRefName": "feature/X-1", "baseRefName": "main",
                       "statusCheckRollup": [{"name": "build", "conclusion": "SUCCESS", "completedAt": "2026-01-01T00:00:01Z"},
-                                            {"context": "lint", "state": "PENDING"}],
+                                            {"context": "lint", "state": "PENDING"},
+                                            {"name": "test", "conclusion": "FAILURE", "completedAt": "2026-01-01T00:00:03Z"}],
                       "reviews": [{"author": {"login": "pipeline-bot"}, "submittedAt": "2026-01-01T00:00:02Z",
                                    "body": "Looks fine"}]}))
 elif command in (["pr", "ready"], ["pr", "merge"]):
@@ -2150,7 +2161,8 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
             self.assertEqual(calls[5][2:], [url, "--squash", "--match-head-commit", "abc", "--repo", "o/n"])
             self.assertTrue(said["get"]["draft"])
             self.assertEqual(said["reviews"], {"checks": [{"name": "build", "state": "passed", "at": "2026-01-01T00:00:01Z"},
-                                                          {"name": "lint", "state": "pending", "at": ""}],
+                                                          {"name": "lint", "state": "pending", "at": ""},
+                                                          {"name": "test", "state": "failed", "at": "2026-01-01T00:00:03Z"}],
                                                "reviews": [{"author": "pipeline-bot", "at": "2026-01-01T00:00:02Z",
                                                             "body": "Looks fine"}]})
             self.assertEqual((said["ready"], said["merge"]), ({"url": url, "draft": False}, {"url": url, "state": "merged"}))

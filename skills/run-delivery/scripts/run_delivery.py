@@ -4159,9 +4159,7 @@ def lead_close(args) -> None:
     dirty = git("status", "--porcelain", "--", *settings, cwd=c.root, check=False)
     if dirty:
         raise Stop(f"the lead's settings have uncommitted changes; commit or drop them first:\n{dirty[:600]}")
-    stopped = ask_supervisor_to_stop(c)
-    if stopped:
-        print(stopped)
+    # Everything that can refuse is checked before the supervisor, and the serve it keeps, is stopped.
     doc = load_state()
     if not any(e.get("kind") == "delivery.closed" for e in doc["journal"]):
         raise Stop("journal delivery.closed first (orchestrate-work's close-out): lead-close runs after it")
@@ -4169,6 +4167,9 @@ def lead_close(args) -> None:
     busy = [q["subject"] for q in state["queue"] if q.get("stage") not in ("merged", "stopped")]
     if busy or (state["meta"].get("checking") or {}).get("now"):
         raise Stop(f"the queue still holds work ({busy or 'a check is running'}); let it finish or stop it first")
+    stopped = ask_supervisor_to_stop(c)
+    if stopped:
+        print(stopped)
     lead = c.lane_checkout(c.delivery)
     done, left = [], []
     for key in c.stories:
@@ -4183,8 +4184,11 @@ def lead_close(args) -> None:
             done.append("rendered the views one last time")
         else:
             left.append(f"the final render failed: {(rendered.stderr or rendered.stdout).strip()[-300:]}")
-    _, archived = archive_delivery(c)
+    archive, archived = archive_delivery(c)
     done += archived
+    c.flow_log.mkdir(parents=True, exist_ok=True)
+    lead_file(c, "closed.json").write_text(json.dumps({"archive": str(archive), "said": archived, "by": "lead-close",
+                                                       "at": now()}, indent=2) + "\n")
     for pid, command in delivery_processes(lead, c.state, c.delivery, c.main):
         try:
             os.kill(pid, signal.SIGTERM)
@@ -4272,8 +4276,15 @@ def supervisor_line(c) -> str | None:
         return f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
     closed = load_json(lead_file(c, "closed.json"))
     if closed:
-        return f"supervisor: stopped after closing the delivery; archive {closed.get('archive')}"
+        return "supervisor: stopped; the delivery is closed. " + closed_words(closed)
     return f"supervisor: down; restart it with {flow_command()} lead-run --resume"
+
+
+def closed_words(closed: dict) -> str:
+    """Where a closed delivery went, and what is left: the friction note to write up, and the host's steps."""
+    note = closed.get("friction")
+    return f"Archive {closed.get('archive')}" + (f"; write up the friction note {note}, then archive the lane "
+                                                  "sessions" if note else "")
 
 
 def supervisor_off() -> bool:
@@ -4754,6 +4765,8 @@ def close_out(c, flapping: tuple[str, ...] = ()) -> tuple[list[str], bool]:
     # Read once the steps above ran, so a filing the publisher refused for good during them is listed.
     shown = [item["text"] for item in needs_you(c, load_state(), flapping, closing=True) if not item["holding"]]
     note = friction_step(c, archive, archived, shown)
+    marker = lead_file(c, "closed.json")
+    marker.write_text(json.dumps({**load_json(marker), "friction": str(note)}, indent=2) + "\n")
     said.append(f"wrote the friction note stub {note}: write it up, and archive the lane sessions")
     return said, True
 
@@ -4826,14 +4839,20 @@ class Supervisor:
                      if len([t for t in times if t > horizon]) >= CHILD_FLAPS)
 
     def keep_alive(self) -> None:
+        """Restart a child that exited, at most once a pass once it has exited CHILD_FLAPS times in the window: a
+        child that won't stay up is shown in "Needs you", and a restart that fails never ends the supervisor."""
         for name, proc in list(self.children.items()):
             if proc.poll() is None:
                 continue
-            self.restarts.setdefault(name, []).append(time.monotonic())
-            if name == "live":
-                self.start_live()
-            else:
-                self.start(name)
+            times = self.restarts.setdefault(name, [])
+            if name in self.flapping() and times and time.monotonic() - times[-1] < supervisor_pass_seconds(self.c):
+                continue
+            times.append(time.monotonic())
+            try:
+                self.start_live() if name == "live" else self.start(name)
+            except (Stop, OSError) as error:
+                with open(lead_file(self.c, f"supervisor.{name}.log"), "a") as log:
+                    log.write(f"{now()} restart failed: {error}\n")
 
     def stop_asked(self) -> bool:
         return lead_file(self.c, "supervisor.stop").exists()
@@ -4931,6 +4950,9 @@ def lead_run(args) -> None:
     c = cfg()
     if not (c.state / "state.json").exists():
         raise Stop(f"no record at {c.state}: lead-init starts it, and its supervisor")
+    closed = load_json(lead_file(c, "closed.json"))
+    if closed and closed.get("by") == "lead-close":
+        raise Stop("the delivery is closed: lead-close closed it. " + closed_words(closed))
     if args.resume:
         for line in stop_orphans(c):
             print(line)
@@ -4953,8 +4975,10 @@ def lead_resolve(args) -> None:
         if rerun:
             raise Stop(f"a rerun of fullHealth at {head[:10]} is already asked for; the supervisor's next pass runs it")
         append_log("full-health", c.delivery, {"rerun": True, "head": head, "why": args.why})
-        state_tool("journal", "--kind", "decision.recorded", "--summary",
-                   f"fullHealth at {head[:10]} runs again on the supervisor's next pass: {args.why}")
+        with marked_decision(c) as written:
+            written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary",
+                                                 f"fullHealth at {head[:10]} runs again on the supervisor's next pass: "
+                                                 f"{args.why}")))
         print(f"asked the supervisor's next pass to rerun fullHealth at {head[:10]}")
         return
     try:
@@ -4968,8 +4992,10 @@ def lead_resolve(args) -> None:
     if blocker_resolved(c, doc, entry, resolutions):
         raise Stop(f"blocker {number} is already resolved")
     append_log("resolutions", c.delivery, {"journal": number, "why": args.why})
-    state_tool("journal", "--kind", "decision.recorded", "--summary", f"Blocker {number} resolved: {args.why}",
-               *(["--subject", entry["subject"]] if entry.get("subject") else []))
+    with marked_decision(c) as written:
+        written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary",
+                                             f"Blocker {number} resolved: {args.why}",
+                                             *(["--subject", entry["subject"]] if entry.get("subject") else []))))
     print(f"resolved blocker {number}")
 
 
@@ -4983,8 +5009,10 @@ def requeue(c, key: str) -> None:
                    "stopped candidate")
     if item.get("pending"):
         raise Stop(f"{key}'s hand-off still waits for acceptance; accept it instead")
-    if remote_head(c.branch(key)) != item["head"]:
-        raise Stop(f"{c.remote}/{c.branch(key)} moved from the handed head {item['head'][:10]}: the lane hands it off again")
+    if remote_head(c.branch(key)) not in (item["head"], item.get("syncedHead")):
+        raise Stop(f"{c.remote}/{c.branch(key)} moved from the handed head {item['head'][:10]}"
+                   + (f" and the queue's synced head {item['syncedHead'][:10]}" if item.get("syncedHead") else "")
+                   + ": the lane hands it off again")
     state_tool("patch", "--writer", "runner", "--version", str(doc["state"]["version"]), "--element",
                f"queue[subject={key}]", "--set", json.dumps({"/stage": "queued", "/checks": []}))
     state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
@@ -5714,8 +5742,11 @@ class Doctor:
         if not held:
             closed = load_json(lead_file(d, "closed.json"))
             if closed:
-                return "ok", f"stopped after closing the delivery; archive {closed.get('archive')}"
+                return "ok", "stopped; the delivery is closed. " + closed_words(closed)
             return "wrong", f"the supervisor is down; fix: {flow_command()} lead-run --resume"
+        if not Path("/proc/self/status").exists():
+            return "ok", (f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}. Its children's "
+                          "signal dispositions can't be read on this host (no /proc); it starts them with the defaults")
         ignored = []
         for child in recorded.get("children") or []:
             status = Path(f"/proc/{child.get('pid')}/status")
