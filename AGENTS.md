@@ -117,6 +117,11 @@ Mark a test class `run_serially = True`, or a module `RUN_SERIALLY = True`,
 when it cannot share the machine: a fixed port, a fixed path outside its own
 temporary folder, or process-wide state.
 
+Stop only processes you started, by the pid you recorded, and never by pattern with
+`pkill` or `killall`. BSD `pkill` stops reading options at the first pattern, so one
+such command, meant for a test's children, signalled other applications across the
+machine.
+
 Refresh output digests with the provenance writer rather than by hand. It
 recomputes the sha256 of every output `provenance.lock.json` lists, changes
 nothing else, leaves a current lock byte for byte, and restores a lock in any

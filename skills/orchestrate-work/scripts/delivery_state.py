@@ -2813,7 +2813,7 @@ def _signal_frozen(pids: list[int], signum: signal.Signals) -> None:
     """Signal what this run froze, without reading it again: a read that fails must not leave it stopped.
 
     A stopped process cannot exec or exit by itself. ``_stop_leftovers`` drops a
-    pid another actor killed first, by ``_still_frozen``, before it signals here.
+    pid since reused, by ``_still_frozen``, before it signals here.
     """
     for pid in pids:
         with contextlib.suppress(OSError):

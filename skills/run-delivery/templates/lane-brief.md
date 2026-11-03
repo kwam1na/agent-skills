@@ -120,7 +120,8 @@ going on.
 
 ## Local load
 
-Run at most 4 local test workers.
+Run at most 4 local test workers. Stop only processes you started, by the pid you
+recorded, never by pattern.
 
 ## Delivery notes
 

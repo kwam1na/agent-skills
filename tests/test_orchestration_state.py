@@ -3620,6 +3620,22 @@ class SnapshotCleanupTests(unittest.TestCase):
         self.signalled_after_the_freeze(argv, restarted=pid_file, later=state_tool.START_SLACK_SECONDS)
         self.assertTrue(self.gone(int(pid_file.read_text())), "killed, not left stopped")
 
+    def test_a_start_within_the_slack_the_other_way_is_the_same_process(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=True)
+        self.signalled_after_the_freeze(argv, restarted=pid_file, later=-state_tool.START_SLACK_SECONDS)
+        self.assertTrue(self.gone(int(pid_file.read_text())), "killed, not left stopped")
+
+    def test_a_start_past_the_slack_the_other_way_is_another_process(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=True)
+        signalled = self.signalled_after_the_freeze(argv, restarted=pid_file, later=-60)
+        child = int(pid_file.read_text())
+        self.addCleanup(self.kill_quietly, child)
+        self.assertNotIn(child, signalled, "that pid is another process's by now")
+
     def test_a_last_read_that_fails_still_kills_what_was_frozen(self) -> None:
         argv, pid_file = self.command(detached=True)
         self.previewed(argv, pid_file)
