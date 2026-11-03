@@ -422,6 +422,9 @@ class PlanWriteTests(PlanReviewCase):
         self.assertIn("the plan review is still open after round 1", out)
         self.assertFalse((fx.tmp / "record/state.json").exists())
         # --replace sets an earlier snapshot aside, so it can't stand in for the review's end.
+        conf_path = fx.main / ".agents/run-delivery.json"
+        conf_path.write_text(json.dumps({**json.loads(conf_path.read_text()),
+                                         "cleanup": {"archive": str(fx.tmp / "archive/{delivery}")}}, indent=2))
         log = fx.tmp / "flow-log/plan-changes.jsonl"
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text(json.dumps({"type": "snapshot", "at": "2026-01-01T00:00:00Z", "late": False, "units": [],

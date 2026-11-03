@@ -1395,7 +1395,11 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         code, out = flow_run("handoff", "FX-3", "--pr", "https://forge.test/pr/1", cwd=wt); expect(code == 0, out)
         code, out = flow_run("lead-accept", "FX-3", cwd=m)
         expect(code == 1 and "outside lane-2" in out, f"a trespassing branch was accepted: {out}")
-        # A half-done init is still a record: lead-init names it, and --replace starts again.
+        # A half-done init is still a record: lead-init names it, and --replace starts again, archiving inside the
+        # fixture.
+        conf_path = m / ".agents/run-delivery.json"
+        conf_path.write_text(json.dumps({**json.loads(conf_path.read_text()),
+                                         "cleanup": {"archive": str(fx.tmp / "archive/{delivery}")}}, indent=2))
         shutil.rmtree(fx.tmp / "record")
         fx.call("state_tool", "init", "--headline", "half", cwd=m)
         code, out = flow_run("lead-init", cwd=m)
@@ -2852,7 +2856,11 @@ class RunDeliverySetupTests(unittest.TestCase):
         # A held lock that records pid 0 would signal lead-init's own group: refused, and nothing is archived.
         shutil.rmtree(fx.tmp / "record")
         holder = self.supervisor(fx, pid=0)
-        code, out = fx.flow("lead-init", "--replace", cwd=m)
+        # In a session of its own, so a regression that signals group 0 stops only lead-init, never this test run.
+        done = subprocess.run([sys.executable, "-B", str(fx.tool), "lead-init", "--replace"], cwd=m, env=fx.env,
+                              text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300,
+                              start_new_session=True)
+        code, out = done.returncode, done.stdout
         self.assertEqual(code, 2, out)
         self.assertIn("is held, but records no pid to stop", out)
         self.assertTrue(lock.exists())
