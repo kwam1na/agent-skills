@@ -313,14 +313,41 @@ def shelf_for(root: Path) -> Shelf:
     return Shelf(root, ref, base, bool(named))
 
 
-def find_node22() -> str | None:
-    candidates = [shutil.which("node")] + sorted(str(p) for p in Path.home().glob(".nvm/versions/node/v2*/bin/node"))[::-1]
+def node_versions() -> list[tuple[str, tuple[int, ...]]]:
+    """Each Node the tool may run, with its version: the one on PATH, then nvm's, newest first."""
+    candidates = [shutil.which("node")] + sorted(str(p) for p in Path.home().glob(".nvm/versions/node/v*/bin/node"))[::-1]
+    found = []
     for node in filter(None, candidates):
         done = subprocess.run([node, "--version"], text=True, capture_output=True)
-        m = re.match(r"v(\d+)\.(\d+)", done.stdout.strip())
-        if m and (int(m.group(1)), int(m.group(2))) >= (22, 6):
-            return node
-    return None
+        m = re.match(r"v(\d+)\.(\d+)\.(\d+)", done.stdout.strip())
+        if m:
+            found.append((node, tuple(int(n) for n in m.groups())))
+    return found
+
+
+def find_node(minimum: tuple[int, ...]) -> str | None:
+    return next((node for node, version in node_versions() if version >= minimum), None)
+
+
+def find_node22() -> str | None:
+    return find_node((22, 6))
+
+
+def node_problem(release: Path) -> tuple[str, str] | None:
+    """Why no Node here meets the runtime's nodeMinimum, as (status, detail), or None. A generation without a runtime
+    asks for none."""
+    wanted = (load_json(release / "runtime/runtime.json") or {}).get("nodeMinimum")
+    if not wanted:
+        return None
+    minimum = tuple(int(n) for n in wanted.split("."))
+    versions = node_versions()
+    if any(version >= minimum for _, version in versions):
+        return None
+    fix = f"fix: install Node {wanted} or newer, on PATH or under nvm"
+    if not versions:
+        return "missing", f"no Node on PATH or under nvm, and the runtime needs Node {wanted}; {fix}"
+    seen = ", ".join(sorted({".".join(map(str, version)) for _, version in versions}))
+    return "wrong", f"Node {seen} is below the runtime's nodeMinimum {wanted}; {fix}"
 
 
 def load_harness(root: Path, release: Path) -> tuple[dict | None, str]:
@@ -730,13 +757,22 @@ def plan_sections(text: str) -> list[tuple[int, str, str]]:
     return sections
 
 
+def story_section(sections: list[tuple[int, str, str]], key: str) -> str | None:
+    """The first section whose heading names the story's key."""
+    return next((body for _, title, body in sections if re.search(rf"(?<![\w-]){re.escape(key)}(?![\w-])", title)), None)
+
+
+def context_section(sections: list[tuple[int, str, str]], name: str) -> str | None:
+    return next((body for _, title, body in sections if title == name or title.startswith(name)), None)
+
+
 def plan_context(key: str) -> str:
     c = cfg()
     text = c.shelf.text(c.plan)
     if text is None:
         raise Stop(f"the plan {c.shelf.where(c.plan)} is missing")
     sections = plan_sections(text)
-    own = next((body for _, title, body in sections if re.search(rf"(?<![\w-]){re.escape(key)}(?![\w-])", title)), None)
+    own = story_section(sections, key)
     if own is None:
         raise Stop(f"no heading in {c.plan} names {key}")
     names = {key, c.label(key)}
@@ -746,7 +782,7 @@ def plan_context(key: str) -> str:
     if rows:
         parts += ["", "Table rows naming this story:", *rows]
     for name in c.context_sections:
-        body = next((b for _, title, b in sections if title == name or title.startswith(name)), None)
+        body = context_section(sections, name)
         parts += ["", body if body else f"(no '{name}' section in the plan)"]
     return "\n".join(parts)
 
@@ -2269,18 +2305,28 @@ def in_app_evidence(key: str, root: Path, head: str, blocked: dict[str, str]) ->
 
 # -- forge -----------------------------------------------------------------------------------
 
+def call_adapter(kind: str, prefix: list[str], args: tuple[str, ...], env: dict[str, str]) -> dict:
+    """Run a forge or tracker adapter and read the one JSON object it prints. An adapter that prints nothing has
+    failed, whatever its exit code: the refusal names the adapter it ran."""
+    argv = [*map(os.path.expanduser, prefix), *args]
+    done = subprocess.run(argv, text=True, capture_output=True, env=env, cwd=repo())
+    ran = shlex.join(prefix)
+    if done.returncode != 0:
+        said = (done.stderr or done.stdout).strip()[-400:] or "it printed nothing"
+        raise Stop(f"{kind} {args[0]} failed: {said}; the adapter it ran: {ran}")
+    if not done.stdout.strip():
+        raise Stop(f"{kind} {args[0]} printed nothing; the adapter it ran: {ran}")
+    try:
+        return json.loads(done.stdout)
+    except json.JSONDecodeError:
+        raise Stop(f"{kind} {args[0]} printed no JSON: {done.stdout.strip()[-200:]}; the adapter it ran: {ran}")
+
+
 def forge(*args: str) -> dict:
-    c = cfg()
-    f = c.forge
+    f = cfg().forge
     prefix = f.get("argv") or [sys.executable, "-B", str(TOOL / "adapters" / f"forge_{f['adapter']}.py")]
     env = {**os.environ, "FLOW_FORGE_REPOSITORY": f.get("repository", ""), "FLOW_FORGE_TOKEN_ENV": f.get("tokenEnv", "")}
-    done = subprocess.run([*map(os.path.expanduser, prefix), *args], text=True, capture_output=True, env=env, cwd=repo())
-    if done.returncode != 0:
-        raise Stop(f"forge {args[0]} failed: {(done.stderr or done.stdout).strip()[-400:]}")
-    try:
-        return json.loads(done.stdout or "{}")
-    except json.JSONDecodeError:
-        raise Stop(f"forge {args[0]} printed no JSON: {done.stdout.strip()[-200:]}")
+    return call_adapter("forge", prefix, args, env)
 
 
 def forge_answers(command: str) -> bool:
@@ -3056,10 +3102,241 @@ def archive_plan_review(archive: Path) -> Path | None:
     return target
 
 
+# -- setup refusals ------------------------------------------------------------------------
+
+def supervisor_lock_path(c) -> Path:
+    """The lock the delivery's supervisor holds while it runs. It records {pid, startedAt, children}."""
+    return c.flow_log / f"{c.delivery}.supervisor.lock"
+
+
+def read_lock(path: Path) -> tuple[bool, dict]:
+    """(whether a process holds the lock, what the lock file records)."""
+    if not path.exists():
+        return False, {}
+    with open(path, "a+") as probe:
+        try:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(probe, fcntl.LOCK_UN)
+            held = False
+        except BlockingIOError:
+            held = True
+    try:
+        recorded = json.loads(path.read_text() or "{}")
+    except ValueError:
+        recorded = {}
+    return held, recorded if isinstance(recorded, dict) else {}
+
+
+def record_started(c, journal: list[dict]) -> str:
+    if journal:
+        return journal[0]["at"]
+    stamp = (c.state / "state.json").stat().st_mtime
+    return datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def stale_record(c) -> str | None:
+    """What an earlier lead-init left where this one would start: a record, a supervisor's lock, or a plan snapshot.
+    A lead-plan change made before lead-init, and plan.lock, are this delivery's own and don't count."""
+    fix = ("fix: run lead-init --replace, which stops its supervisor and archives the record and the flow log, "
+           "carrying nothing over; or give this delivery its own stateDirectory, in a folder of its own, since the "
+           "flow log sits beside it")
+    if (c.state / "state.json").exists():
+        try:
+            doc = load_state()
+        except Stop as unreadable:
+            return f"{c.state} already holds a record the state tool can't read ({unreadable}); {fix}"
+        meta, journal = doc["state"]["meta"], doc["journal"]
+        name = meta.get("trackerParent") or meta.get("headline") or "with no name"
+        recorded = next((re.search(r"^Record starts at base \S+ on (\S+?)\.(?: |$)", e.get("summary", ""))
+                         for e in journal if e.get("kind") == "decision.recorded"), None)
+        base = recorded.group(1) if recorded else c.base_ref if name == c.delivery else "an unrecorded base"
+        return f"{c.state} already holds a record: delivery {name} on {base}, started {record_started(c, journal)}; {fix}"
+    lock = supervisor_lock_path(c)
+    if lock.exists():
+        held, recorded = read_lock(lock)
+        who = f"held by pid {recorded.get('pid')}" if held else "which no process holds"
+        return (f"{lock} holds the supervisor lock of delivery {c.delivery} on {c.base_ref}, {who}, started "
+                f"{recorded.get('startedAt', 'at an unrecorded time')}; {fix}")
+    snapshot = next((entry for entry in read_plan_log(c) if entry["type"] == "snapshot"), None)
+    if snapshot:
+        return (f"{c.flow_log} already holds the plan snapshot of delivery {c.delivery} on {c.base_ref}, taken "
+                f"{snapshot['at']}; {fix}")
+    return None
+
+
+def process_gone(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    return False
+
+
+def stop_supervisor(c) -> str | None:
+    """Stop the process holding the supervisor lock, by the pid it recorded, and confirm it is gone."""
+    lock = supervisor_lock_path(c)
+    held, recorded = read_lock(lock)
+    if not held:
+        return None
+    pid = recorded.get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        raise Stop(f"{lock} is held, but records no pid to stop; fix: stop the delivery's supervisor yourself, then "
+                   "run lead-init --replace again")
+    for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
+        try:
+            os.killpg(pid, sig)  # the supervisor leads its own session, so its children go with it
+        except ProcessLookupError:
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+        except PermissionError:
+            raise Stop(f"the supervisor in {lock} (pid {pid}) can't be stopped from here; fix: stop it as its own user, "
+                       "then run lead-init --replace again")
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            if process_gone(pid) and not read_lock(lock)[0]:
+                return f"stopped the supervisor (pid {pid})"
+            time.sleep(0.1)
+    raise Stop(f"the supervisor in {lock} (pid {pid}) is still running after SIGKILL; fix: stop it, then run lead-init "
+               "--replace again")
+
+
+def archive_root(c) -> Path:
+    return Path(expand((c.flow_raw.get("cleanup") or {}).get("archive", DEFAULT_ARCHIVE), repo=c.main.name,
+                       delivery=c.delivery))
+
+
+def replace_record(c) -> list[str]:
+    """lead-init --replace: stop any supervisor, then move the record and the flow log into the archive. Nothing
+    carries over: every flow-log file names entries of the archived journal, whose ids the fresh one reuses."""
+    said = [line for line in [stop_supervisor(c)] if line]
+    present = [path for path in (c.state, c.flow_log) if path.exists()]
+    if present:
+        archive = archive_root(c) / (datetime.datetime.now().strftime("%Y%m%dT%H%M%S.%f") + "-replaced")
+        archive.mkdir(parents=True)
+        for source in present:
+            shutil.move(str(source), str(archive / source.name))
+        said.append(f"archived the record and the flow log in {archive}")
+    return said
+
+
+def plan_problems(c, keys: list[str]) -> list[str]:
+    """Each story with no section in the plan, which its lane's review context is drawn from."""
+    text = c.shelf.text(c.plan)
+    if text is None:
+        return [f"no plan at {c.shelf.where(c.plan)}; fix: commit the plan there, or correct `plan` in {c.delivery_where}"]
+    sections = plan_sections(text)
+    missing = [key for key in keys if story_section(sections, key) is None]
+    if not missing:
+        return []
+    return [f"stories with no plan section: {', '.join(missing)}; fix: add a heading naming each to {c.plan}, or "
+            f"correct its key in {c.delivery_where}"]
+
+
+def context_problems(c) -> list[str]:
+    """Each context.sections heading the plan lacks, which every lane's review context would go without."""
+    text = c.shelf.text(c.plan)
+    if text is None:
+        return plan_problems(c, [])
+    sections = plan_sections(text)
+    lacking = [name for name in c.context_sections if context_section(sections, name) is None]
+    if not lacking:
+        return []
+    return [f"context.sections the plan lacks: {', '.join(map(repr, lacking))}; fix: add the heading to {c.plan}, or "
+            f"remove it from context.sections in {c.delivery_where}"]
+
+
+def tracker_publisher(publisher: dict) -> bool:
+    return publisher.get("kind") == "host" or any("tracker_publisher" in part for part in publisher.get("argv") or [])
+
+
+def publishing_problems(c, binding: dict) -> list[str]:
+    """A forge or tracker the repository configures, with nothing in the binding that reads or posts to it."""
+    state = binding.get("state") or {}
+    problems = []
+    if (c.forge.get("adapter") or c.forge.get("argv")) and not state.get("forgeSnapshot"):
+        problems.append("the forge is configured, but the binding has no state.forgeSnapshot, so the record never sees "
+                        "the delivery's pull requests; fix: add state.forgeSnapshot to the binding (delivery-views' "
+                        "snapshot.py prints one for GitHub and Bitbucket)")
+    if state.get("trackerSnapshot") and not any(map(tracker_publisher, state.get("publishers") or [])):
+        problems.append("the tracker is configured, but the binding has no tracker publisher, so nothing posts the "
+                        "delivery's moves to it; fix: add one to state.publishers: run-delivery's tracker publisher, or "
+                        "a host publisher whose outbox the lead publishes")
+    return problems
+
+
+def remote_base_problem(c) -> str | None:
+    """Lanes read the configuration and the delivery file from the remote base. A local setup, whose lanes read
+    their own working tree, says so with RUN_DELIVERY_LOCAL=1."""
+    if setting("RUN_DELIVERY_LOCAL") == "1" or setting("RUN_DELIVERY_CONFIG"):
+        return None
+    fix = (f"fix: commit them on {c.base_branch} and push it, or set RUN_DELIVERY_LOCAL=1 for a local setup, whose "
+           "lanes read their own working tree")
+    if not OFFLINE:
+        run(["git", "fetch", "-q", c.remote, c.base_branch], cwd=c.root, check=False)
+    if run(["git", "rev-parse", "--verify", "--quiet", c.base_ref], cwd=c.root, check=False).returncode != 0:
+        return f"{c.base_ref} has no configuration for lanes: the branch isn't on the remote; {fix}"
+    shelf = Shelf(c.root, c.base_ref)
+    lacking = [CONFIG] if shelf.text(CONFIG) is None and shelf.text(LEGACY_NAMES[0][0]) is None else []
+    lacking += [rel for rel in [f"{c.deliveries_rel}/{c.delivery}.json"] if shelf.text(rel) is None]
+    if lacking:
+        return f"{c.base_ref} has no configuration for lanes: it lacks {' and '.join(lacking)}; {fix}"
+    return None
+
+
+def setup_problems(c) -> list[str]:
+    """Every duty the workflow can't do for this delivery here, each with its fix: what doctor --delivery reports and
+    lead-init refuses on."""
+    problems = plan_problems(c, list(c.stories)) + context_problems(c)
+    binding = c.shelf.json(".agents/orchestration.json")
+    if binding is not None:
+        problems += publishing_problems(c, binding)
+    node = node_problem(c.release)
+    if node:
+        problems.append(node[1])
+    remote = remote_base_problem(c)
+    if remote:
+        problems.append(remote)
+    return list(dict.fromkeys(problems))
+
+
 # -- lead ----------------------------------------------------------------------------------
 
 def patch(body: dict, version: int) -> None:
     state_tool("patch", "--writer", "lead", "--version", str(version), "--patch", json.dumps(body))
+
+
+LANE_GRANTS = ("push", "draftPullRequests")
+
+
+def lanes_grant(args, existing: dict | None) -> dict | None:
+    """The operator's grant to lanes, as lead-setup is told it; None when lanes get none. A file drafted again keeps
+    the grant it holds unless told otherwise."""
+    if args.authority and args.no_authority:
+        raise Stop("pass --authority or --no-authority, not both")
+    if args.no_authority:
+        return None
+    if not args.authority:
+        if (existing or {}).get("authority"):
+            return existing["authority"]
+        raise Stop("lead-setup needs the lanes' authority grant: ask the operator what lanes may do on the forge, then "
+                   "pass --authority push,draftPullRequests --granted-by WHO (either or both grants), or --no-authority "
+                   "when lanes get none and hand their branches to the lead")
+    names = [name.strip() for name in args.authority.split(",") if name.strip()]
+    if "readyPullRequests" in names:
+        raise Stop("lanes are never granted readyPullRequests: marking a pull request ready is the lead's, at acceptance")
+    unknown = [name for name in names if name not in LANE_GRANTS]
+    if unknown or not names:
+        raise Stop(f"--authority takes {' and '.join(LANE_GRANTS)}, comma-separated, not {', '.join(unknown) or 'nothing'}")
+    if "draftPullRequests" in names and "push" not in names:
+        raise Stop("draftPullRequests needs push: a lane opens its draft pull request from the branch it pushed")
+    if not args.granted_by:
+        raise Stop("--authority needs --granted-by: who granted it")
+    return {**{name: True for name in LANE_GRANTS if name in names}, "grantedBy": args.granted_by,
+            "grantedOn": args.granted_on or datetime.date.today().isoformat()}
 
 
 def lead_setup(args) -> None:
@@ -3074,6 +3351,8 @@ def lead_setup(args) -> None:
     path = c.deliveries / f"{key}.json"
     if path.exists() and not args.force:
         raise Stop(f"{path} exists; edit it, or pass --force to draft it again")
+    existing = json.loads(path.read_text()) if path.exists() else None
+    grant = lanes_grant(args, existing)
     plan = c.root / args.plan
     pattern = re.compile(args.pattern, re.M)
     if "key" not in pattern.groupindex or "title" not in pattern.groupindex:
@@ -3119,8 +3398,7 @@ def lead_setup(args) -> None:
             drafted[field] = ([{"id": f"approval-{i + 1}", "text": text, "state": "waiting"} for i, text in enumerate(items)]
                             if field == "approvals" else items)
             print(f"drafted {len(items)} {noun} from '{name}'")
-    if args.force and path.exists():
-        existing = json.loads(path.read_text())
+    if existing:
         drafted.update({name: existing[name] for name in ("approvals", "outOfScope", "planReview") if name in existing})
     git("fetch", "-q", c.remote)
     base = args.base or c.binding_base
@@ -3145,6 +3423,7 @@ def lead_setup(args) -> None:
         "lanes": {},
         "stories": stories,
         "finish": [EVIDENCE_FINISH] if any(st.get("evidence") == "video" for st in stories.values()) else [],
+        **({"authority": grant} if grant else {}),
         **drafted,
     }
     if args.ship_from:
@@ -3182,31 +3461,36 @@ def lead_init(args) -> None:
         raise Stop(f"{c.delivery_where}: ship.toolingCommit isn't set")
     if plan_declared(c):
         rounds = plan_review_rounds(c)
-        if rounds and plan_review_state(c, rounds) == "open" and not any(
-                entry["type"] == "snapshot" for entry in read_plan_log(c)):
+        if rounds and plan_review_state(c, rounds) == "open" and (args.replace or not any(
+                entry["type"] == "snapshot" for entry in read_plan_log(c))):
             raise Stop(f"the plan review is still open after round {rounds[-1]['round']}: align it with another round, "
                        f"or have the operator end it ({flow_command()} plan-review end --reason TEXT), before freezing "
                        "the plan")
         # Refused before the record starts, so a criterion the view can't read is corrected before anything is kept.
         check_plan(build_plan(c, [snapshot_entry(c, late=False)]), c)
-    if not (c.state / "state.json").exists():
-        state_tool("init", "--headline", c.raw.get("headline", c.delivery))
+    problems = setup_problems(c)
+    stale = None if args.replace else stale_record(c)
+    if stale:
+        problems.insert(0, stale)
+    if problems:
+        raise Stop(f"lead-init refuses until each of these is fixed (doctor --delivery {c.delivery} reports them too):"
+                   + "".join(f"\n  - {problem}" for problem in problems))
+    for line in replace_record(c) if args.replace else []:
+        print(line)
+    state_tool("init", "--headline", c.raw.get("headline", c.delivery))
     doc = load_state()
-    if doc["state"].get("planned"):
-        raise Stop(f"{c.state} already has planned work")
     planned = [planned_entry(c, key) for key in c.stories]
     # The record's finish items take no other keys: covers, label and at are the plan's.
     finish = [{"id": f["id"], "text": f["text"], "met": False} for f in c.finish]
     patch({"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True}, "planned": planned, "finish": finish},
           doc["state"]["version"])
-    if not any(e.get("kind") == "decision.recorded" for e in doc["journal"]):
-        lease = (f" The {c.in_app.get('lease', 'in-app')} lease is granted on demand through run-delivery app-check's OS lock,"
-                 " held only for a lane's own in-app checks.") if c.in_app else ""
-        shipping = (f" The tooling never ships: the product branch is built from {', '.join(c.ship['paths'])} of the "
-                    "delivery base.") if c.ship else ""
-        state_tool("journal", "--kind", "decision.recorded", "--summary",
-                   f"Record starts at base {git('rev-parse', '--short', c.base_ref)} on {c.base_ref}. Lanes merge "
-                   f"through the runner; hand-offs wait for the lead's acceptance.{shipping}{lease}")
+    lease = (f" The {c.in_app.get('lease', 'in-app')} lease is granted on demand through run-delivery app-check's OS lock,"
+             " held only for a lane's own in-app checks.") if c.in_app else ""
+    shipping = (f" The tooling never ships: the product branch is built from {', '.join(c.ship['paths'])} of the "
+                "delivery base.") if c.ship else ""
+    state_tool("journal", "--kind", "decision.recorded", "--summary",
+               f"Record starts at base {git('rev-parse', '--short', c.base_ref)} on {c.base_ref}. Lanes merge "
+               f"through the runner; hand-offs wait for the lead's acceptance.{shipping}{lease}")
     if plan_declared(c):
         with plan_lock(c):
             if not any(entry["type"] == "snapshot" for entry in read_plan_log(c)):
@@ -3297,6 +3581,9 @@ def lead_assign(args) -> None:
     for key in keys:
         if c.lane_of(key) != args.lane:
             raise Stop(f"{key} is planned for {c.lane_of(key)}, not {args.lane}")
+    problems = plan_problems(c, keys)
+    if problems:
+        raise Stop("; ".join(problems))
     register_stories(c)
     rebuild_plan(c)
     doc = load_state()
@@ -3318,6 +3605,11 @@ def lead_assign(args) -> None:
           "key and the outcome (handed off, or blocked and on what): the lead sees its first lines. Then the branch, "
           "PR, reviewed head, review rounds and verdicts, gates, in-app checks, and any decision you need from the "
           "lead. The lead checks the hand-off and tells you when to start your next story.")
+
+
+def lead_resolve(args) -> None:
+    """Resolve the blocker a journal entry records, or rerun a failed fullHealth, with the lead's reason."""
+    raise Stop("lead-resolve resolves through the delivery's supervisor, which this release doesn't run yet")
 
 
 def lead_accept(args) -> None:
@@ -4052,12 +4344,17 @@ class Doctor:
             ("forge", "forge find", ("config", "gh"), self.forge),
             ("forge-write", "forge write access", ("config",), self.forge_write),
             ("tracker-token", "tracker snapshot token", ("binding",), self.tracker_token),
+            ("publishing", "snapshots and publishers", ("config", "binding"), self.publishing),
             ("in-app", "in-app adapters", ("config",), self.in_app),
             ("adapters", "in-app adapter contract", ("in-app",), self.adapters),
             ("video", "video evidence tools", ("config",), self.video),
-            ("harness", "harness configuration", ("config", "generation"), self.harness),
+            ("node", "Node", ("platform",), self.node),
+            ("harness", "harness configuration", ("config", "generation", "node"), self.harness),
             ("delivery", "delivery file", ("config", "binding"), self.check_delivery),
             ("plan", "plan chapter", ("delivery",), self.check_plan),
+            ("plan-sections", "plan sections", ("delivery",), self.stories_planned),
+            ("context-sections", "context sections", ("delivery",), self.context_planned),
+            ("remote-base", "configuration on the remote base", ("delivery",), self.remote_base),
             ("base-gates", "gates on the base", ("gates", "committed"), self.base_gates),
         ]
 
@@ -4296,6 +4593,25 @@ class Doctor:
                                f"snapshot reads {'it' if len(unset) == 1 else 'them'}; fix: export {', '.join(unset)}")
         return "ok", f"{', '.join(names) or 'no variables'} set"
 
+    def publishing(self):
+        problems = publishing_problems(self.c, self.binding)
+        if problems:
+            return "wrong", "; ".join(problems)
+        state = self.binding.get("state") or {}
+        read = [name for name, there in (("forge snapshot", state.get("forgeSnapshot")),
+                                         ("tracker publisher", any(map(tracker_publisher, state.get("publishers") or []))))
+                if there]
+        return "ok", f"the binding has {' and '.join(read) or 'neither, and needs neither'}"
+
+    def node(self):
+        problem = node_problem(self.release())
+        if problem:
+            return problem
+        wanted = (load_json(self.release() / "runtime/runtime.json") or {}).get("nodeMinimum")
+        if not wanted:
+            return self.not_applicable("the generation carries no runtime")
+        return "ok", f"{find_node(tuple(int(n) for n in wanted.split('.')))} meets the runtime's nodeMinimum {wanted}"
+
     def in_app(self):
         ia = self.c.in_app
         if not ia:
@@ -4387,6 +4703,7 @@ class Doctor:
                     overlaps.append(f"{a} and {b} both own {', '.join(sorted(shared)[:3])}")
         if overlaps:
             return "wrong", f"lanes own the same files: {'; '.join(overlaps)}; fix: make each lane's `owns` disjoint"
+        self.delivery = d
         return "ok", f"{key}: {len(d.stories)} stories across {len(d.lanes)} lanes, each owning its own files"
 
     def check_plan(self):
@@ -4401,6 +4718,25 @@ class Doctor:
         criteria = sum(len(unit["criteria"]) for unit in plan["units"] if not unit.get("removed"))
         return "ok", (f"{criteria} criteria across {len(d.stories)} stories; the plan they make passes "
                       "delivery-views check-plan")
+
+    def stories_planned(self):
+        d = self.delivery
+        problems = plan_problems(d, list(d.stories))
+        return ("wrong", problems[0]) if problems else ("ok", f"each of the {len(d.stories)} stories has a section in {d.plan}")
+
+    def context_planned(self):
+        d = self.delivery
+        if not d.context_sections:
+            return self.not_applicable("no context.sections declared")
+        problems = context_problems(d)
+        return ("wrong", problems[0]) if problems else ("ok", f"{d.plan} has each of {', '.join(map(repr, d.context_sections))}")
+
+    def remote_base(self):
+        d = self.delivery
+        if setting("RUN_DELIVERY_LOCAL") == "1" or setting("RUN_DELIVERY_CONFIG"):
+            return self.not_applicable("a local setup: lanes read their own working tree")
+        problem = remote_base_problem(d)
+        return ("wrong", problem) if problem else ("ok", f"{d.base_ref} carries the configuration and the delivery file")
 
     def base_gates(self):
         if not self.args.run_gates:
@@ -4436,23 +4772,28 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="run_delivery.py", description=__doc__.split("\n\n")[0], allow_abbrev=False)
     parser.add_argument("--delivery", help="the delivery key, when the repository has several")
     sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("review-prepare"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
+    # Every command but doctor, whose own --delivery adds the delivery's checks, takes --delivery after its name too.
+    after = argparse.ArgumentParser(add_help=False)
+    after.add_argument("--delivery", dest="delivery_after", default=argparse.SUPPRESS,
+                       help="the delivery key, when the repository has several")
+    command = lambda group, name, **kw: group.add_parser(name, parents=[after], **kw)
+    p = command(sub, "review-prepare"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.add_argument("--grace", action="store_true"); p.add_argument("--restart", action="store_true")
     p.set_defaults(fn=review_prepare)
-    p = sub.add_parser("review-reduce"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
+    p = command(sub, "review-reduce"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.set_defaults(fn=review_reduce)
-    p = sub.add_parser("plan-review", help="review the plan before it is approved: prepare, reduce or end a round")
+    p = command(sub, "plan-review", help="review the plan before it is approved: prepare, reduce or end a round")
     review_commands = p.add_subparsers(dest="action", required=True)
-    q = review_commands.add_parser("prepare", help="the next round's checkouts and briefs, one per lens")
+    q = command(review_commands, "prepare", help="the next round's checkouts and briefs, one per lens")
     q.add_argument("--restart", action="store_true", help="discard the prepared round's results and prepare it again")
     q.set_defaults(fn=plan_review_prepare)
-    q = review_commands.add_parser("reduce", help="check the lenses' results and record the round")
+    q = command(review_commands, "reduce", help="check the lenses' results and record the round")
     q.set_defaults(fn=plan_review_reduce)
-    q = review_commands.add_parser("end", help="end a review that isn't converging, with the operator's reason")
+    q = command(review_commands, "end", help="end a review that isn't converging, with the operator's reason")
     q.add_argument("--reason", required=True); q.set_defaults(fn=plan_review_end)
-    p = sub.add_parser("gate"); p.add_argument("key"); p.set_defaults(fn=gate)
-    p = sub.add_parser("build"); p.add_argument("key"); p.set_defaults(fn=build)
-    p = sub.add_parser("app-check"); p.add_argument("key"); p.add_argument("name")
+    p = command(sub, "gate"); p.add_argument("key"); p.set_defaults(fn=gate)
+    p = command(sub, "build"); p.add_argument("key"); p.set_defaults(fn=build)
+    p = command(sub, "app-check"); p.add_argument("key"); p.add_argument("name")
     p.add_argument("--mode", choices=("hold", "fail", "loaded"), required=True)
     p.add_argument("--path", required=True)
     p.add_argument("--hold", action="append", default=[]); p.add_argument("--fail", action="append", default=[])
@@ -4463,8 +4804,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--lock-wait", type=int)
     p.add_argument("passthrough", nargs="*", help="after --: extra arguments for the check adapter")
     p.set_defaults(fn=app_check)
-    p = sub.add_parser("push"); p.add_argument("key"); p.set_defaults(fn=push)
-    p = sub.add_parser("app-video"); p.add_argument("key"); p.add_argument("name")
+    p = command(sub, "push"); p.add_argument("key"); p.set_defaults(fn=push)
+    p = command(sub, "app-video"); p.add_argument("key"); p.add_argument("name")
     p.add_argument("--mode", choices=["hold", "fail", "loaded"], required=True); p.add_argument("--path", required=True)
     p.add_argument("--hold", action="append", default=[]); p.add_argument("--fail", action="append", default=[])
     p.add_argument("--click", action="append", default=[]); p.add_argument("--for", dest="for_")
@@ -4473,59 +4814,68 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--lock-wait", type=int)
     p.add_argument("passthrough", nargs="*", help="after --: extra arguments for the check adapter")
     p.set_defaults(fn=app_video)
-    p = sub.add_parser("open-pr"); p.add_argument("key"); p.add_argument("--title", required=True)
+    p = command(sub, "open-pr"); p.add_argument("key"); p.add_argument("--title", required=True)
     p.add_argument("--body-file", required=True); p.set_defaults(fn=open_pr)
-    p = sub.add_parser("pr-review"); p.add_argument("key"); p.add_argument("--wait", action="store_true")
+    p = command(sub, "pr-review"); p.add_argument("key"); p.add_argument("--wait", action="store_true")
     p.set_defaults(fn=pr_review)
-    p = sub.add_parser("handoff"); p.add_argument("key"); p.add_argument("--pr", required=True)
+    p = command(sub, "handoff"); p.add_argument("key"); p.add_argument("--pr", required=True)
     p.add_argument("--pr-review-triage")
     p.add_argument("--findings"); p.add_argument("--blocked", action="append", default=[]); p.set_defaults(fn=handoff)
-    p = sub.add_parser("lead-setup"); p.add_argument("key"); p.add_argument("--plan", required=True)
+    p = command(sub, "lead-setup"); p.add_argument("key"); p.add_argument("--plan", required=True)
     p.add_argument("--base", help="default: the binding's base.ref"); p.add_argument("--pattern", required=True); p.add_argument("--headline")
     p.add_argument("--tracker-snapshot"); p.add_argument("--ship-from"); p.add_argument("--ship-path", action="append")
     p.add_argument("--context-section", action="append"); p.add_argument("--force", action="store_true")
     p.add_argument("--approvals-section", help="draft approvals from this plan section's list")
     p.add_argument("--out-of-scope-section", help="draft outOfScope from this plan section's list")
+    p.add_argument("--authority", help="the operator's grant to lanes: push,draftPullRequests (either or both)")
+    p.add_argument("--granted-by", help="who granted --authority"); p.add_argument("--granted-on", help="default: today")
+    p.add_argument("--no-authority", action="store_true", help="lanes get no grant, and hand their branches to the lead")
     p.set_defaults(fn=lead_setup)
-    p = sub.add_parser("lead-init"); p.set_defaults(fn=lead_init)
-    p = sub.add_parser("lead-brief"); p.set_defaults(fn=lead_brief)
-    p = sub.add_parser("lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
+    p = command(sub, "lead-init")
+    p.add_argument("--replace", action="store_true",
+                   help="stop the earlier record's supervisor and archive its record and flow log, then start afresh")
+    p.set_defaults(fn=lead_init)
+    p = command(sub, "lead-brief"); p.set_defaults(fn=lead_brief)
+    p = command(sub, "lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
     p.add_argument("--title", required=True); p.add_argument("--note"); p.set_defaults(fn=lead_assign)
-    p = sub.add_parser("lead-accept"); p.add_argument("key"); p.add_argument("--accept-blocked", action="append")
+    p = command(sub, "lead-accept"); p.add_argument("key"); p.add_argument("--accept-blocked", action="append")
     p.add_argument("--accept-restarts", action="store_true")
     p.add_argument("--accept-discarded", action="append", type=int, metavar="ROUND"); p.set_defaults(fn=lead_accept)
-    p = sub.add_parser("lead-cleanup"); p.add_argument("keys", nargs="*"); p.set_defaults(fn=lead_cleanup)
-    p = sub.add_parser("lead-reconcile"); p.add_argument("--every", type=int, default=0)
+    p = command(sub, "lead-resolve", help="resolve a recorded blocker, or rerun a failed fullHealth")
+    p.add_argument("id", type=int, help="the journal id"); p.add_argument("--why", required=True)
+    p.set_defaults(fn=lead_resolve)
+    p = command(sub, "lead-cleanup"); p.add_argument("keys", nargs="*"); p.set_defaults(fn=lead_cleanup)
+    p = command(sub, "lead-reconcile"); p.add_argument("--every", type=int, default=0)
     p.set_defaults(fn=lead_reconcile)
-    p = sub.add_parser("lead-evidence"); p.add_argument("action", choices=["record", "page", "published", "status"])
+    p = command(sub, "lead-evidence"); p.add_argument("action", choices=["record", "page", "published", "status"])
     p.add_argument("--url", help="published: the page's address")
     p.add_argument("keys", nargs="*"); p.add_argument("--after-build"); p.add_argument("--out", default="evidence-page")
     p.add_argument("--title"); p.add_argument("--intro")
     p.add_argument("--note", action="append", help="KEY=TEXT: what to say for a story without clips")
     p.set_defaults(fn=lead_evidence)
-    p = sub.add_parser("lead-plan", help="record a change to the approved plan, or a reason for one")
+    p = command(sub, "lead-plan", help="record a change to the approved plan, or a reason for one")
     plan_commands = p.add_subparsers(dest="action", required=True)
-    q = plan_commands.add_parser("change", help="edit and commit the delivery file, recording before and after")
+    q = command(plan_commands, "change", help="edit and commit the delivery file, recording before and after")
     q.add_argument("--kind", required=True, choices=["added", "removed", "relaxed", "changed", "finish"])
     q.add_argument("--subjects", nargs="*", default=[]); q.add_argument("--criterion"); q.add_argument("--text")
     q.add_argument("--finish", help="finish: the line's id"); q.add_argument("--covers", help="finish: its covers, as JSON")
     q.add_argument("--label", help="finish: a new line's label"); q.add_argument("--why", required=True)
     q.add_argument("--by", default="lead"); q.add_argument("--ref"); q.add_argument("--title")
     q.set_defaults(fn=lead_plan)
-    q = plan_commands.add_parser("approval", help="mark one approval done or waiting, and commit the delivery file")
+    q = command(plan_commands, "approval", help="mark one approval done or waiting, and commit the delivery file")
     q.add_argument("id"); q.add_argument("--state", required=True, choices=["done", "waiting"]); q.add_argument("--who")
     q.set_defaults(fn=lead_plan)
-    q = plan_commands.add_parser("why", help="give a recorded change its reason")
+    q = command(plan_commands, "why", help="give a recorded change its reason")
     q.add_argument("change"); q.add_argument("--why", required=True); q.set_defaults(fn=lead_plan)
-    p = sub.add_parser("lead-close"); p.set_defaults(fn=lead_close)
-    p = sub.add_parser("view", help="serve the record's live view, or an archived copy's, without a checkout")
+    p = command(sub, "lead-close"); p.set_defaults(fn=lead_close)
+    p = command(sub, "view", help="serve the record's live view, or an archived copy's, without a checkout")
     p.add_argument("--archive", type=Path, help="a copy of the record, such as the supervisor's latest")
     p.add_argument("--port", type=int, default=0, help="the port; 0 picks a free one")
     p.set_defaults(fn=view)
-    p = sub.add_parser("ship"); p.add_argument("--no-gates", action="store_true", help="stage only; run the gates yourself")
+    p = command(sub, "ship"); p.add_argument("--no-gates", action="store_true", help="stage only; run the gates yourself")
     p.set_defaults(fn=ship)
-    p = sub.add_parser("adapter-test"); p.set_defaults(fn=adapter_test)
-    p = sub.add_parser("config"); p.set_defaults(fn=show_config)
+    p = command(sub, "adapter-test"); p.set_defaults(fn=adapter_test)
+    p = command(sub, "config"); p.set_defaults(fn=show_config)
     p = sub.add_parser("doctor", help="check this repository's setup: every missing prerequisite and its fix")
     p.add_argument("--delivery", dest="doctor_delivery", help="also check this delivery's file")
     p.add_argument("--offline", action="store_true", help="don't fetch the base or ask the forge; read local refs")
@@ -4542,7 +4892,10 @@ def main(argv: list[str] | None = None) -> None:
         args.passthrough = [*args.passthrough, *argv[separator + 1:]]
     else:
         args = parser.parse_args(argv)
-    DELIVERY_ARG = args.delivery
+    later = getattr(args, "delivery_after", None)
+    if later and args.delivery and later != args.delivery:
+        parser.error(f"--delivery {args.delivery} and --delivery {later} name two deliveries; name one")
+    DELIVERY_ARG = args.delivery or later
     for _signal in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(_signal, _terminate)
     try:

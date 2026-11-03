@@ -31,7 +31,8 @@ delivery is `orchestrate-work`'s.
 - A POSIX host (Linux or macOS). The tool doesn't run on Windows.
 - git 2.31 or newer, Python 3.11 or newer, `ps` and `lsof`.
 - ffmpeg and ffprobe, only for stories that need before/after video evidence.
-- Node 22.6 or newer, only when the repository has a `harness.config.ts`.
+- Node at the installed runtime's `nodeMinimum` (22.6 or newer), on `PATH` or under nvm. `doctor` checks it and
+  `lead-init` refuses without it.
 - `gh`, signed in, only for the GitHub forge adapter.
 - The repository's own in-app build, serve and check programs, only when the delivery declares in-app checks.
 - A remote the lanes push to, and a forge that takes draft change requests.
@@ -98,9 +99,18 @@ a repository that merges through its forge points them at that instead.
   "release": [],
   "fullHealth": ["git", "fsck", "--connectivity-only"],
   "leases": [],
-  "state": {"directory": ".orchestration/state", "publishers": [], "renderers": []}
+  "state": {"directory": ".orchestration/state", "publishers": [], "renderers": [],
+            "forgeSnapshot": {"argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
+                                       "--kind", "github", "--owner", "<forge-owner>", "--repo", "<forge-name>",
+                                       "--binding", ".agents/orchestration.json",
+                                       "--subject-pattern", "^feature/(?P<subject>[A-Z]+-[0-9]+)$",
+                                       "--token-env", "GITHUB_TOKEN"]}}
 }
 ```
+
+`forgeSnapshot` reads the delivery's pull requests into the record; a repository that configures a forge declares
+one, and `lead-init` refuses without it. A binding that reads a tracker with `trackerSnapshot` also declares a
+tracker publisher in `publishers`.
 
 A repository that delivers to more than one long-lived base, such as `main` and a run of integration branches, lists
 them in the binding's optional `bases`, beside `base.ref`, which stays the default:
@@ -237,12 +247,16 @@ Draft the delivery file from the plan's headings:
 
 ```sh example repo
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-setup <delivery-key> \
-  --plan docs/plans/<delivery-key>.md --pattern '^### (?P<key>[A-Z]+-[0-9]+)\. (?P<title>.+)$'
+  --plan docs/plans/<delivery-key>.md --pattern '^### (?P<key>[A-Z]+-[0-9]+)\. (?P<title>.+)$' \
+  --authority push,draftPullRequests --granted-by 'the operator'
 ```
 
+`lead-setup` asks for the operator's grant to lanes before it writes anything: `--authority` names what lanes may do
+(`push`, `draftPullRequests`, or both) and `--granted-by` who allowed it. `--no-authority` says lanes get none and hand
+their branches to the lead.
+
 Complete it from the plan: the lanes and the files each owns, each story's lane and the in-app checks its hand-off
-needs (`"loaded"` here: one passing check of the running app), the finish lines, where the record lives, and the
-operator's authority for lanes to push and open draft change requests.
+needs (`"loaded"` here: one passing check of the running app), the finish lines, and where the record lives.
 
 Criteria turn on the live view's plan chapter, which shows whether the work is still what was agreed and what proves
 it; the finish line's `label` and `covers` and the `outcome` shape it. Every key is optional; a delivery file with no
@@ -492,6 +506,29 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
 - **`fails on`**: a gate fails on the delivery base itself. Repair the base before any lane starts.
 - **`isn't a valid delivery-plan/1`**: the stories' criteria and the finish lines' covers make a plan the view can't
   read. Correct the delivery file at the key path the line names.
+- **`the binding has no state.forgeSnapshot`**: the repository configures a forge, but nothing reads its pull requests
+  into the record. Add `state.forgeSnapshot` to the binding; delivery-views' `snapshot.py` prints one for GitHub and
+  Bitbucket.
+- **`the binding has no tracker publisher`**: the binding reads the tracker, but nothing posts the delivery's moves to
+  it. Add a tracker publisher to `state.publishers`, or a host publisher whose outbox the lead publishes.
+- **`and the runtime needs Node`** or **`is below the runtime's nodeMinimum`**: install Node at the version the line
+  names or newer, on `PATH` or under nvm.
+- **`stories with no plan section`**: each story needs a plan heading that names its key; its lane's review context is
+  that section. Add the heading, or correct the story's key. `lead-assign` refuses the story until then.
+- **`context.sections the plan lacks`**: add the heading to the plan, or remove it from `context.sections`.
+- **`no plan at`**: commit the plan where the delivery file's `plan` says, or correct `plan`.
+- **`has no configuration for lanes`**: lanes read `.agents/run-delivery.json` and the delivery file from the remote
+  base. Commit them on the base and push it. A local setup, whose lanes read their own working tree, sets
+  `RUN_DELIVERY_LOCAL=1` instead.
+
+### Refusals before a delivery starts
+
+`lead-init` refuses on every failing line above that concerns the delivery, and lists each with its fix; `doctor
+--delivery` reports the same. It also refuses when the state directory already holds a record, or the flow log holds
+a plan snapshot or a supervisor's lock: the line names the delivery, its base and when it started. A `lead-plan change`
+made before `lead-init` doesn't count. `lead-init --replace` stops that supervisor, confirms its process is gone, moves
+the record and the flow log into the archive (`cleanup.archive`), and starts afresh, carrying nothing over: the plan
+it approves is the delivery file as it stands.
 
 ### Base mismatch
 
