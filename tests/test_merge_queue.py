@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 import unittest
@@ -3378,6 +3379,34 @@ class ServeTests(MergeQueueTestCase):
             self.assertEqual(serving.returncode, 0, errors.decode("utf-8", "replace"))
         self.assertEqual(printed[-1]["candidate"], "feature")
         self.assertEqual(printed[-1]["outcome"], "merged")
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_a_stop_that_lands_in_a_finalizer_still_stops_serve(self) -> None:
+        # Python only prints what a finalizer raises, and serve builds a runner each turn, whose hooks folder goes in one.
+        code = textwrap.dedent("""
+            import os, shutil, signal, sys
+            sys.path.insert(0, sys.argv[1])
+            import merge_queue
+            real, sent, stop = shutil.rmtree, [], getattr(signal, sys.argv[2])
+            def rmtree(path, *args, **kwargs):
+                # Only from the finalizer: the same folder also goes by a plain call, where a stop arrives as usual.
+                if "weakref" in sys._getframe(1).f_code.co_filename and not sent:
+                    sent.append(True)
+                    os.kill(os.getpid(), stop)
+                return real(path, *args, **kwargs)
+            shutil.rmtree = rmtree
+            sys.argv = ["merge_queue.py", *sys.argv[3:]]
+            sys.exit(merge_queue.main())
+        """)
+        adopter = self.adopter()
+        for name in ("SIGTERM", "SIGINT"):
+            with self.subTest(signal=name):
+                done = subprocess.run(
+                    [PY, "-B", "-c", code, str(SCRIPTS), name, "--repo", str(adopter.operator), "--state", str(adopter.state),
+                     "--remote", "origin", "--base", "main", "serve", "--poll", "0.2"],
+                    capture_output=True, timeout=60,
+                )
+                self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
 
     def test_every_queue_stopping_stop_is_journaled_as_a_broken_base(self) -> None:
         adopter = self.adopter()

@@ -2714,14 +2714,24 @@ def main(argv: list[str] | None = None) -> int:
         def report(result: Result) -> None:
             write_document_line(result.document())
 
+        stopped: list[int] = []
+
         def interrupt(signum: int, frame: object) -> None:
+            stopped.append(signum)
             raise KeyboardInterrupt
 
+        def wait(seconds: float) -> None:
+            # Python only prints what a finalizer raises, so a stop landing in one is honoured at the next wait.
+            if stopped:
+                raise KeyboardInterrupt
+            time.sleep(seconds)
+
         signal.signal(signal.SIGTERM, interrupt)
+        signal.signal(signal.SIGINT, interrupt)
         try:
             # Serving until stopped returns only when it cannot start.
             refused = serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
-                            poll=args.poll, on_result=report)
+                            poll=args.poll, on_result=report, sleep=wait)
         except KeyboardInterrupt:
             # A stop mid-turn leaves live state the next serve or run clears first.
             return 0
