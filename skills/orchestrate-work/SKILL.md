@@ -42,7 +42,12 @@ tracker, host or forge.
   runner-owned and lane-owned ones. The runner writes only its result
   documents, journal entries, and its own fields: `queue[i].stage`,
   `queue[i].checks`, `queue[i].syncedHead`, `meta.checking`, `meta.baseHead`,
-  `meta.releasedHead` and `meta.checkHistory`. A lane writes only its own
+  `meta.releasedHead` and `meta.checkHistory`, and one lane row when it merges
+  or stops that lane's candidate, in the same write: `focus`, `state`,
+  `waitingOn` and `since`. A lane with nothing else open rests. A row that doesn't
+  name the candidate stays if its lane has another assignment open, or is
+  active and has spoken since its hand-off, and any later `focus` wins. The tool
+  alone keeps a row's `focusAt`. A lane writes only its own
   lane's `focus`, `state` and `waitingOn`, its own review rounds, and its own
   hand-off, which the tool turns into a queue element, with any suite evidence
   it gives in `queue[i].evidence`, which only a hand-off writes. Every write goes
@@ -166,6 +171,9 @@ python3 -B scripts/delivery_state.py --dir <state directory> wait [--after <jour
 
 The wait reads the record and the machine only, and returns on a hand-off, a
 merge, a stop, a broken base, a blocker, a blocked lane, or machine pressure.
+A lane whose row has stood still past `--quiet-seconds`, an hour by default, is
+information, not a reason to return: `quietLanes` names it when the wait next ends,
+once a quiet stretch, and it may be waiting on a long review for good reason.
 Whenever a wait names pressure, whatever else woke it, the lead finds what is
 loading the machine before taking more work, and reduces this delivery's own
 load first, such as by capping test workers. It reports what it can't reduce to

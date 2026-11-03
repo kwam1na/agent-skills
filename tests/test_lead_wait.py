@@ -345,6 +345,98 @@ class BlockedLaneTests(RecordCase):
         self.assertEqual(result["code"], "wait_invalid")
 
 
+class QuietLaneTests(RecordCase):
+    """A lane quiet past the threshold is reported as information, once a stretch, and ends no wait."""
+
+    def quiet(self, *arguments: str, timeout: str = "0.3") -> tuple[int, dict]:
+        return self.record.wait("--quiet-seconds", "1", *arguments, timeout=timeout)
+
+    def lane_saying(self, state: str = "working") -> None:
+        self.record.add_lanes("lane-1")
+        self.record.tool("focus", "--lane=lane-1", "--text", "working on it", "--state", state, "--waiting-on=")
+
+    def age(self) -> None:
+        # The threshold is a second, so a lane has been quiet past it after this one.
+        time.sleep(1.1)
+
+    def test_a_quiet_lane_is_reported_when_the_wait_ends_and_doesnt_end_it(self) -> None:
+        self.lane_saying()
+        self.age()
+        code, result = self.quiet()
+        self.assertEqual((code, result["woke"]), (state_tool.WAIT_EXPIRED_EXIT, "expired"))
+        self.assertEqual([lane["id"] for lane in result["quietLanes"]], ["lane-1"])
+        self.assertEqual(result["quietLanes"][0]["focus"], "working on it")
+        self.assertGreaterEqual(result["quietLanes"][0]["quietSeconds"], 1)
+        self.assertEqual((result["pressure"], result["blockedLanes"]), ([], []))
+
+    def test_an_event_carries_the_report_with_it(self) -> None:
+        self.lane_saying()
+        self.age()
+        process = self.record.start_wait("--quiet-seconds", "1")
+        time.sleep(0.3)
+        self.record.journal("candidate.merged")
+        code, result = _finish(process)
+        self.assertEqual((code, result["woke"]), (0, "event"))
+        self.assertEqual([lane["id"] for lane in result["quietLanes"]], ["lane-1"])
+
+    def test_a_restart_doesnt_report_the_same_stretch_again(self) -> None:
+        self.lane_saying()
+        self.age()
+        _, first = self.quiet()
+        self.assertTrue(first["quietLanes"])
+        done = subprocess.run([sys.executable, "-B", str(TOOL), "--dir", str(self.record.directory), "wait", *first["restart"]],
+                              capture_output=True, text=True, check=False, timeout=30)
+        again = json.loads(done.stdout)
+        self.assertEqual((done.returncode, again["quietLanes"]), (state_tool.WAIT_EXPIRED_EXIT, []))
+        # It stays marked as seen across as many restarts as the stretch lasts.
+        self.assertEqual(again["restart"], first["restart"])
+
+    def test_the_lane_speaking_ends_the_stretch_and_a_later_one_is_reported(self) -> None:
+        self.lane_saying()
+        self.age()
+        _, first = self.quiet()
+        self.record.tool("focus", "--lane=lane-1", "--text", "working on it", "--state", "working", "--waiting-on=")
+        done = subprocess.run([sys.executable, "-B", str(TOOL), "--dir", str(self.record.directory), "wait", *first["restart"]],
+                              capture_output=True, text=True, check=False, timeout=30)
+        self.assertEqual(json.loads(done.stdout)["quietLanes"], [])
+        self.age()
+        done = subprocess.run([sys.executable, "-B", str(TOOL), "--dir", str(self.record.directory), "wait", *first["restart"]],
+                              capture_output=True, text=True, check=False, timeout=30)
+        self.assertEqual([lane["id"] for lane in json.loads(done.stdout)["quietLanes"]], ["lane-1"])
+
+    def test_a_lane_resting_blocked_or_handed_is_not_quiet(self) -> None:
+        for state in ("idle", "done", "handed"):
+            with self.subTest(state):
+                self.lane_saying(state)
+                self.age()
+                self.assertEqual(self.quiet()[1]["quietLanes"], [])
+        self.record.lane_state("lane-1", "blocked")
+        self.age()
+        self.assertEqual(self.quiet()[1]["quietLanes"], [])
+
+    def test_a_lane_under_the_threshold_is_not_quiet(self) -> None:
+        self.lane_saying()
+        self.assertEqual(self.record.wait("--quiet-seconds", "3600")[1]["quietLanes"], [])
+
+    def test_a_record_with_no_time_counts_from_when_the_lane_last_changed_state(self) -> None:
+        self.record.add_lanes("lane-1")
+        path = self.record.directory / "state.json"
+        state = state_tool.read_state(self.record.directory)
+        del state["lanes"][0]["focusAt"]
+        path.write_text(state_tool.dumps(state), encoding="utf-8")
+        code, result = self.quiet()
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT)
+        self.assertEqual([lane["id"] for lane in result["quietLanes"]], ["lane-1"])
+
+    def test_the_threshold_must_be_finite_and_not_negative(self) -> None:
+        for value in ("-1", "nan", "inf"):
+            with self.subTest(value):
+                done = subprocess.run([sys.executable, "-B", str(TOOL), "--dir", str(self.record.directory), "wait", f"--quiet-seconds={value}", "--timeout", "0"],
+                                      capture_output=True, text=True, check=False, timeout=30)
+                self.assertNotEqual(done.returncode, 0)
+                self.assertNotEqual(done.returncode, state_tool.WAIT_EXPIRED_EXIT)
+
+
 class RestartTests(RecordCase):
     def test_a_printed_restart_alone_keeps_the_leads_limits(self) -> None:
         done = subprocess.run(
