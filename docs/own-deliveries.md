@@ -47,11 +47,6 @@ The setup check names `LINEAR_API_KEY` when it's unset. It doesn't check
 `GITHUB_TOKEN`, and a missing one shows up when the forge snapshot runs. The views
 scrub both from what they show.
 
-The forge snapshot of the generation at `v1.1.0-rc.1` reads only titles opening
-`[<key>]:`, so it sees no change request `run-delivery`'s `open-pr` titled `<key>: `
-until a release that reads both is applied. Until then that source succeeds with an
-empty answer, so a change request merged or closed outside the queue goes unseen.
-
 ## Checks
 
 The binding declares no affected-checks provider, on purpose. Nearly every test here
