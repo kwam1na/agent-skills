@@ -94,7 +94,7 @@ class OrderingGuardTests(unittest.TestCase):
 
     def test_a_first_version_passes_with_no_earlier_version_tag_and_old_set_tags_present(self) -> None:
         self.tag("run-delivery-v1", self.first)
-        self.tag("draft-building-v1")
+        self.tag("a-later-set-v1")
         self.tag("v1.2.3")
         channel.check_order("v1.2.3", self.root)
 

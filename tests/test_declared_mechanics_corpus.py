@@ -46,9 +46,23 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Cut releases at batch boundaries, not per ruling. Operator rulings"
         " accumulate as merged text on the default branch, and one release"
         " carries them",
-        "Tag each release with an annotated tag named exactly its set name",
+        "Tag each release with an annotated version tag",
+        "strictly greater than every existing version tag",
         "Never move or reuse a release tag",
+        "A version tag that never published may be deleted to clear that guard",
         "that release is the channel adopters download from",
+        "promoted by tagging the final version on the same commit",
+        "its digests differ from the candidate's because its release id does",
+        "The default branch is unprotected, and CI on it informs rather than blocks",
+        "the release workflow publishes only on CI's success for the exact tagged commit",
+        "`runtimeVersion` does not identify runtime bytes",
+        "A green local run does not prove the declared minimum Python or another operating system",
+        "clear the local environment's variables first",
+        "Never point `TMPDIR` under a checkout",
+        "`scripts/cut-release.py` prints nothing on success",
+        "An instruction that allows a fallback gets read as permission to use it",
+        "A lens's follow-up does not outrank a binding ruling",
+        "must include the case where nothing observes the clear",
         "by mutating a file `provenance.lock.json` covers takes the digests"
         " with it",
         "mutating the pinned text alone raises"
@@ -66,18 +80,14 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " neighbouring text carried with it as one phrase or both the expected"
         " heading and the forbidden deeper heading, rather than anchoring every"
         " pin in the corpus to a heading",
-        "qualification records re-earned against the candidate's release, not"
-        " restamped",
+        "`scripts/cut-release.py` earns a release's qualification records"
+        " against that release's exact archives",
         "Refresh output digests with the provenance writer rather than by hand",
         "When a rebase or merge conflicts only in `provenance.lock.json`, take"
         " either side of the lock, run the writer, then validate the registry"
         " before continuing",
         "The writer never adds or removes an output, so when one side added or"
         " removed a listed output, take that side",
-    ),
-    "README.md": (
-        "`auditReferences` uses the same order as `entities`: primary first,"
-        " then dependency",
     ),
     "docs/host-adapters.md": (
         "An adopting repository's overlay names what that repository adds: its"
