@@ -1286,6 +1286,30 @@ class ReconcileTests(unittest.TestCase):
                                if entry["kind"] == "candidate.merged")
                 self.assertEqual("before the lead accepted" in summary, policy)
 
+    def test_an_accepted_merge_under_the_policy_stays_silent(self) -> None:
+        self.lead({"meta": {"handoffsNeedAcceptance": True}, "queue": [queue_item("work-a", changeRequest="change 43")]})
+        forge = self.snapshot("forge", [{"subject": "work-a", "state": "merged", "changeRequest": "change 43", "head": HEAD_B}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["reports"]), (0, []), result)
+        summary = next(entry["summary"] for entry in state_tool.read_journal(self.directory)
+                       if entry["kind"] == "candidate.merged")
+        self.assertNotIn("before the lead accepted", summary)
+
+    def test_planned_work_keeps_its_skipped_acceptance_across_a_recovery_put_off_by_the_runner(self) -> None:
+        self.lead({"meta": {"handoffsNeedAcceptance": True},
+                   "planned": [{"subject": "work-p", "title": "P", "lane": "lane-1", "stage": "review"}]})
+        forge = self.snapshot("forge", [{"subject": "work-p", "state": "merged", "head": HEAD_B}])
+        with state_tool.file_lock(self.directory / state_tool.QUEUE_LOCK):
+            code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual(code, 0, result)
+        item = state_tool.show(self.directory)["state"]["queue"][0]
+        self.assertEqual((item["stage"], item["pending"]), ("queued", True), "the queue must not take it meanwhile")
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, [report["subject"] for report in result["reports"]]), (0, ["work-p"]), result)
+        self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
+        self.assertIn("before the lead accepted", next(entry["summary"] for entry in state_tool.read_journal(self.directory)
+                                                       if entry["kind"] == "candidate.merged"))
+
     def leftover(self) -> str:
         """A merged, journaled item carrying the flag, as an earlier version left it; returns its forge snapshot."""
         self.lead({"queue": [queue_item("work-m", changeRequest="change 41"), queue_item("work-w", order=2, pending=True),
@@ -1853,6 +1877,7 @@ class RecoveryIntentTests(unittest.TestCase):
         result = state_tool.reconcile(self.directory, [self.forge])
         self.assertTrue(result["drift"])
         self.assertEqual([(change["subject"], change["recovery"]) for change in result["changes"]], [("work-q", True)])
+        self.assertEqual(result["reports"], [], "nothing was skipped")
         self.assertEqual(len(self.recovered()), 1)
         self.assertIn(HEAD_B, self.recovered()[0]["summary"])
         self.assertFalse(self.intent().exists())
@@ -1890,6 +1915,27 @@ class RecoveryIntentTests(unittest.TestCase):
         result = state_tool.reconcile(self.directory, [self.forge])
         self.assertEqual([report["subject"] for report in result["reports"]], ["work-q"])
         self.assertIn("lead-accept", result["reports"][0]["note"])
+
+    def test_a_crash_after_the_entry_still_reports_the_skipped_acceptance_and_clears_the_wait(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, selector="queue[subject=work-q]",
+                         changes={"pending": True})
+        version += 1
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-q]",
+                         changes={"stage": "merged", "syncedHead": HEAD_B})
+        with mock.patch.object(state_tool, "patch", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        with mock.patch.object(state_tool, "_tool_write", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        self.assertEqual(len(self.recovered()), 1)
+        self.assertTrue(self.intent().exists())
+        result = state_tool.reconcile(self.directory, [self.forge])
+        self.assertEqual([report["subject"] for report in result["reports"]], ["work-q"])
+        self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
+        self.assertEqual(len(self.recovered()), 1)
+        self.assertFalse(self.intent().exists())
 
     def test_a_crash_after_the_entry_and_before_the_intent_is_cleared_writes_no_second_entry(self) -> None:
         journal = state_tool._journal_recovery

@@ -1430,7 +1430,16 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             forge["https://forge.test/pr/1"].update(fields)
             (fx.tmp / "forge.json").write_text(json.dumps(forge))
 
+        def reports_rounds(rounds) -> None:
+            version = json.loads((fx.tmp / "record/state.json").read_text())["version"]
+            fx.call("state_tool", "patch", "--writer", "lead", "--version", str(version), "--element", "queue[subject=FX-3]",
+                    "--set", json.dumps({"/reportedRounds": rounds}), cwd=m)
+
         # Still unmerged in the record: the branch and an open PR are still what it checks.
+        reports_rounds(None)
+        code, out = flow_run("lead-accept", "FX-3", "--accept-blocked", "needs-loaded", cwd=m)
+        expect(code == 1 and "the hand-off reports None" in out, f"unmerged work skipped its rounds: {out}")
+        reports_rounds(1)
         sh("git", "push", "-q", "-f", "origin", "HEAD~1:refs/heads/feature/FX-3", cwd=wt)
         code, out = flow_run("lead-accept", "FX-3", "--accept-blocked", "needs-loaded", cwd=m)
         expect(code == 1 and "not at the handed head" in out, f"accepted a branch that moved: {out}")
@@ -1451,6 +1460,10 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             code, out = flow_run("lead-accept", "FX-3", "--accept-blocked", "needs-loaded", cwd=m)
             expect(code == 1 and refusal in out, f"merged work was accepted against the forge ({refusal}): {out}")
         forge_says(state="merged", head=handed)
+        reports_rounds(9)
+        code, out = flow_run("lead-accept", "FX-3", "--accept-blocked", "needs-loaded", cwd=m)
+        expect(code == 1 and "the hand-off reports 9" in out, f"merged work skipped its rounds: {out}")
+        reports_rounds(1)
         # An acceptance of an earlier head doesn't stand for the one that merged.
         with open(fx.tmp / "flow-log/FX-3.acceptance.jsonl", "a") as log:
             log.write(json.dumps({"head": "1" * 40, "blocked": {}, "at": "2026-01-01T00:00:00Z"}) + "\n")
@@ -1467,7 +1480,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         code, out = flow_run("lead-accept", "FX-3", "--accept-blocked", "needs-loaded", cwd=m)
         expect(code == 1 and "already accepted" in out, f"accepted twice: {out}")
 
-    def test_work_merged_with_no_hand_off_is_refused_for_what_it_lacks_not_for_rounds_it_never_reported(self) -> None:
+    def test_work_merged_with_no_hand_off_has_no_claims_for_the_lead_to_check(self) -> None:
         fx = self.fixture()
         flow_run = fx.flow
         m = fx.main
@@ -1491,8 +1504,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                                                    "changeRequest": "https://forge.test/pr/1"}]}))
         fx.call("state_tool", "reconcile", "--snapshot", str(snapshot), cwd=m)
         code, out = flow_run("lead-accept", "FX-3", cwd=m)
-        expect(code == 1 and "not approved by every lens" in out, f"accepted with no review: {out}")
-        expect("the hand-off reports" not in out, f"refused for rounds no hand-off reported: {out}")
+        expect(code == 2 and "no hand-off" in out and "journal your decision" in out, f"no claims, yet checked: {out}")
 
     def test_timeouts_and_interruptions_stop_their_processes(self) -> None:
         started = time.time()
