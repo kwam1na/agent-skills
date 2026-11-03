@@ -208,6 +208,19 @@ class ContinuousIntegrationDecisionTests(unittest.TestCase):
                 self.assertEqual(decision.state, channel.REFUSE)
                 self.assertIn(name, decision.reason)
 
+    def test_a_push_run_holding_fewer_systems_cannot_publish(self) -> None:
+        # A change request's narrow matrix must never become a release's proof, even through a push run that reports it.
+        ubuntu, macos, windows, cut = JOBS
+        job = lambda name: {"name": name, "status": "completed", "conclusion": "success"}
+        for present, absent in (((ubuntu, cut), (macos, windows)), ((ubuntu, macos, cut), (windows,)), ((ubuntu, windows, cut), (macos,)),
+                                ((ubuntu,), (macos, windows, cut)), ((cut,), (ubuntu, macos, windows))):
+            with self.subTest(present=present):
+                jobs = [job(name) for name in present]
+                decision = channel.decide([self.run_record()], lambda run_id: jobs, COMMIT, "main")
+                self.assertEqual(decision.state, channel.REFUSE)
+                for name in absent:
+                    self.assertIn(name, decision.reason)
+
     def test_an_extra_job_must_also_succeed(self) -> None:
         extra = {"name": "something new", "status": "completed", "conclusion": "failure"}
         self.assertEqual(self.decide([self.run_record()], [*self.jobs(), extra]), channel.REFUSE)
@@ -215,7 +228,9 @@ class ContinuousIntegrationDecisionTests(unittest.TestCase):
     def test_the_required_jobs_are_exactly_the_ones_ci_defines(self) -> None:
         self.assertEqual(set(channel.REQUIRED_JOBS), set(JOBS))
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertIn('os: [ubuntu-latest, macos-latest, windows-latest]', workflow)
+        systems = json.loads(re.search(r"\) && '(\[[^']*\])' \|\| '", workflow).group(1))
+        self.assertEqual({f"validate ({system}, 3.11)" for system in systems} | {"cut-release"}, set(channel.REQUIRED_JOBS),
+                         "the full matrix is every job publishing requires")
         self.assertIn('python-version: ["3.11"]', workflow)
         self.assertRegex(workflow, r"(?m)^  validate:$")
         self.assertRegex(workflow, r"(?m)^  cut-release:$")
@@ -657,11 +672,31 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn('scripts/cut-release.py --version v0.0.0-rc.0 --out "$RUNNER_TEMP/release"', job)
         self.assertIn('git status --porcelain', job)
 
-    def test_ci_jobs_are_bounded_and_macos_sizes_its_workers_from_the_runner(self) -> None:
+    def test_every_ci_system_sizes_its_workers_from_the_runner(self) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertEqual(re.findall(r"(?m)^    timeout-minutes: (\d+)$", ci), ["120", "120"])
-        self.assertRegex(ci, r"(?m)^      - if: runner\.os == 'macOS'\n        run: python scripts/run-tests\.py --workers \"\$\(sysctl -n hw\.ncpu\)\"$")
-        self.assertRegex(ci, r"(?m)^      - if: runner\.os != 'macOS'\n        run: python scripts/run-tests\.py$")
+        self.assertEqual(re.findall(r"(?m)^.*scripts/run-tests\.py.*$", ci),
+                         ["""        run: python scripts/run-tests.py --workers "$(python -c 'import os; print(os.cpu_count())')\""""])
+        self.assertRegex(ci, r"(?m)^      - shell: bash\n        run: python scripts/run-tests\.py ")
+
+    def test_ci_runs_the_full_matrix_wherever_publishing_or_main_depends_on_it(self) -> None:
+        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("""        os: ${{ fromJSON((github.event_name == 'push' || github.base_ref == 'main' """
+                      """|| contains(github.event.pull_request.labels.*.name, 'full-matrix')) """
+                      """&& '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}\n""", ci)
+        self.assertRegex(ci, r"(?m)^  push:\n    branches: \[main\]$")
+        self.assertRegex(ci, r"(?m)^on:\n  pull_request:\n  push:$")
+        self.assertNotIn("labeled", ci)
+        self.assertNotIn(" if:", ci.split("\n  cut-release:\n", 1)[1].split("steps:", 1)[0], "it runs on every change request")
+
+    def test_a_superseded_change_request_run_stops_and_a_run_on_main_is_never_cancelled(self) -> None:
+        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        head = ci.split("\njobs:\n", 1)[0]
+        # A group keeps one pending run even without cancel-in-progress, so a group shared on main would drop a merge's run.
+        self.assertRegex(head, r"(?m)^concurrency:\n"
+                               r"(?:  #.*\n)*"
+                               r"  group: \$\{\{ github\.event_name == 'pull_request' && format\('ci-\{0\}', github\.event\.pull_request\.number\) \|\| github\.run_id \}\}\n"
+                               r"  cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$")
 
     def test_the_release_flags_and_notes_come_from_the_channel(self) -> None:
         self.assertIn('scripts/release_channel.py flags --tag "$TAG"', self.publish)
