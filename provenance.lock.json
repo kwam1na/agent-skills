@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "eedd49e9e3798ae34d933bb993cd08e4fc94777a57a51249a3e7c9375f891337"
+          "sha256": "4304e76d3633a8677db34951d10d11a64e7f7eab567efa4439ed72683de88e04"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -210,23 +210,23 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
-          "sha256": "a127a7d7214db1aed35b9390377443ea3f00e9e839b6c7422ce8f84f4ab70803"
+          "sha256": "e13e9993d1aca491a9f7848ab2f56e00e2f37f6d7174d5169386481d56446ae2"
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "def11871282a15ba2eb35d7fa2b2964e2fe7bccada24ddd49dcf9e79011452a7"
+          "sha256": "84bd30992ea2d959f762145e6db5af01c1ef1d663cd53d0f6d90909afcdcd872"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
-          "sha256": "9fcee247dba92f5020a372b102b425c85b0c89a4d01480ff74b5501481a9e54a"
+          "sha256": "b776d86777a440f9ee307c45c49c04e439aa8d10ef2a214b3ab65a1b007e64ab"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.js",
-          "sha256": "bc8d75e147b54c9e6a34594d97e3bafbb322f2c5c1ba80ed8613f1237720556f"
+          "sha256": "08f713e7e3c28aa0fe0823922bf598cbccdeb7c939aa99e026a92f53144e0f15"
         },
         {
           "path": "skills/delivery-views/references/delivery-plan.schema.json",
-          "sha256": "5e05872cef679fde648678c3cdfaa8c70c7b40f712433ff9a26f4647b385f832"
+          "sha256": "f0112e3d5af332bd2a3b2cc45b1783e1680baaf64d6d4560bc0af49a287128f1"
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
@@ -234,7 +234,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
-          "sha256": "b1b12bf78d58faf5fef47e241b19560002d885cc1c110800b390d7b42ace1777"
+          "sha256": "4f5a7ffe717fc5db4fa4a414e748cfc1df86fdfb852d036ce8f089becf934983"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
@@ -242,7 +242,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
-          "sha256": "6babd507a762128174e1903c92e94a70e3b93b43d0a351c02aabf9b4ecd8cb63"
+          "sha256": "a3f7bc1960fb0f2ea7e17159f256f23cd0a909ce3d3c1f39e16f807f047bb225"
         }
       ],
       "owner": "delivery-agent/user-delegated",

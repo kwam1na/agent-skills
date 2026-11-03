@@ -388,6 +388,8 @@
   }
   function stageKey(item) { return item.pending === true && item.stage === "queued" ? "pending" : text(item.stage); }
   function stageWords(item) { return STAGE_WORDS[stageKey(item)] || "Stage not recognised"; }
+  /** A piece that hadn't landed when its delivery closed isn't in any stage any more. */
+  function unlandedAtClose(doc, piece) { return Boolean(closedEntry(doc)) && (piece.planned || piece.item.stage !== "merged"); }
   // Each stage's icon, drawn from SVG elements: a pair of meshed gears that turn while the piece is being built, and for
   // every other stage a still icon as Tabler's outline icons (MIT) draw it. A stage the page does not know gets none.
   var CIRCLE = "M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0";
@@ -495,6 +497,12 @@
     });
     return closed;
   }
+  /** Landed pieces out of everything meant to land: a closed delivery counts plan units that never reached the line. */
+  function closedTally(all) {
+    var landed = all.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
+    var missing = plan ? liveUnits().filter(function (unit) { return !all.some(function (piece) { return piece.item.subject === unit.subject; }); }).length : 0;
+    return { landed: landed, total: all.length + missing };
+  }
   function journalFor(doc, subject, kinds) {
     return list(doc.journal).filter(function (entry) { return isObject(entry) && entry.subject === subject && (!kinds || kinds[entry.kind]); });
   }
@@ -506,8 +514,10 @@
     var landed = all.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
     var title = el("h1", "title");
     var closed = closedEntry(doc);
-    if (closed && landed === all.length) { add(title, "Delivered."); }
-    else if (closed) { add(title, "Closed with ", el("b", null, landed + " of " + all.length), " pieces landed."); }
+    var tally = closed ? closedTally(all) : null;
+    if (closed && !tally.total) { add(title, "Closed with nothing on the line."); }
+    else if (closed && tally.landed === tally.total) { add(title, "Delivered."); }
+    else if (closed) { add(title, "Closed with ", el("b", null, tally.landed + " of " + tally.total), " pieces landed."); }
     else if (!all.length) { add(title, "Nothing on the line yet."); }
     else if (landed === all.length) { add(title, "Every piece has landed."); }
     else { add(title, el("b", null, landed + " of " + all.length), " pieces have landed."); }
@@ -793,7 +803,7 @@
       add(li, glyph(tone), add(el("div"), el("div", "a1", title), why ? el("div", "a2", why) : null));
       rows.push(li);
     }
-    if (isObject(meta.hold)) { row("stop", "Serving is paused", text(meta.hold.reason)); }
+    if (isObject(meta.hold) && !closedEntry(doc)) { row("stop", "Serving is paused", text(meta.hold.reason)); }
     list(state.queue).filter(function (item) { return isObject(item) && item.stage === "stopped"; }).forEach(function (item) {
       var why = failures(item);
       var stopped = journalFor(doc, item.subject, { "candidate.stopped": true }).pop();
@@ -801,7 +811,7 @@
     });
     var baseEvents = list(doc.journal).filter(function (entry) { return isObject(entry) && (entry.kind === "base.broken" || entry.kind === "base.repaired"); });
     var lastBase = baseEvents[baseEvents.length - 1];
-    if (lastBase && lastBase.kind === "base.broken" && !isObject(meta.hold)) { row("stop", "The main line is broken", text(lastBase.summary) || "No reason recorded."); }
+    if (lastBase && lastBase.kind === "base.broken" && (!isObject(meta.hold) || closedEntry(doc))) { row("stop", "The main line is broken", text(lastBase.summary) || "No reason recorded."); }
     list(state.lanes).filter(function (lane) { return isObject(lane) && lane.state === "blocked" && !closedEntry(doc); }).forEach(function (lane) {
       row("wait", (names[lane.id] || text(lane.id)) + " is blocked", lane.waitingOn ? "Waiting on " + text(lane.waitingOn) : "No reason recorded.");
     });
@@ -811,7 +821,8 @@
     var sources = isObject(meta.sources) ? meta.sources : {};
     Object.keys(sources).forEach(function (name) {
       var source = sources[name];
-      if (isObject(source) && source.status === "stale") {
+      // A source that stopped answering only matters while the page still has something to read from it.
+      if (isObject(source) && source.status === "stale" && !closedEntry(doc)) {
         row("wait", "The " + name + " is not answering", (text(source.reason) ? text(source.reason) + ". " : "") +
           (source.lastReadAt ? "Last read " + ago(source.lastReadAt) + "." : "Never read."));
       }
@@ -820,13 +831,14 @@
     var box = el("div", "attention");
     var ul = el("ul");
     rows.forEach(function (li) { ul.appendChild(li); });
-    return add(box, el("div", "ah", "Needs attention"), ul);
+    return add(box, el("div", "ah", closedEntry(doc) ? "Left open at close" : "Needs attention"), ul);
   }
 
   function journey(doc, all, landed) {
     var finish = list(doc.state.finish).filter(isObject);
     var met = finish.filter(function (line) { return line.met === true; }).length;
-    var total = all.length + finish.length;
+    var meant = closedEntry(doc) ? closedTally(all).total : all.length;
+    var total = meant + finish.length;
     var progress = total ? (landed + met) / total : 0;
     var box = el("div", "journey");
     box.setAttribute("aria-hidden", "true");
@@ -844,7 +856,7 @@
     prev.progress = progress;
     // Without finish lines the pieces landing is the end of the journey, so it takes the end's place.
     var stops = finish.length
-      ? [["Start", 0, "start"], ["Pieces landed", total ? all.length / total : 1, "pieces"], ["Finish line met", 1, "end"]]
+      ? [["Start", 0, "start"], ["Pieces landed", total ? meant / total : 1, "pieces"], ["Finish line met", 1, "end"]]
       : [["Start", 0, "start"], ["Pieces landed", 1, "end"]];
     stops.forEach(function (stop) {
       var label = el("div", "stop " + stop[2], stop[0]);
@@ -859,7 +871,10 @@
   function since(meta, closed) {
     // A closed delivery isn't expected to update, so silence isn't a warning; losing the page's connection still is.
     if (closed && (connection === "live" || connection === "connected" || connection === "saved")) {
-      return add(el("div", "since closed"), el("i"), ["Closed " + ago(eventTime(closed))].concat(meta.baseHead ? ["base " + short(meta.baseHead)] : []).join(" · "));
+      var closedAt = seconds(eventTime(closed));
+      // An unreadable time, or one ahead of this clock, has no honest "ago".
+      var words = closedAt !== null && closedAt <= Date.now() / 1000 ? "Closed " + ago(eventTime(closed)) : "Closed";
+      return add(el("div", "since closed"), el("i"), [words].concat(meta.baseHead ? ["base " + short(meta.baseHead)] : []).join(" · "));
     }
     var updated = seconds(meta.updatedAt);
     var stale = updated !== null && Date.now() / 1000 - updated > 90 * 60;
@@ -901,7 +916,7 @@
       var stops = el("div", "stops");
       var merged = function (k) { return k >= 0 && k < items.length && !items[k].planned && items[k].item.stage === "merged"; };
       items.forEach(function (piece, i) {
-        var kind = stopKind(piece, nowSubject);
+        var kind = unlandedAtClose(doc, piece) ? "unlanded" : stopKind(piece, nowSubject);
         var key = subjectOf(piece.item);
         stages[key] = kind;
         var linkLeft = i === 0 || (merged(i) && merged(i - 1));
@@ -912,7 +927,7 @@
         var button = el("button", "stop-btn " + kind + (landing ? " landing" : ""));
         button.type = "button";
         button.setAttribute("data-subject", key);
-        button.setAttribute("aria-label", titleOf(doc, piece.item) + ", " + stageWords(piece.item));
+        button.setAttribute("aria-label", titleOf(doc, piece.item) + ", " + (kind === "unlanded" ? "Not landed" : stageWords(piece.item)));
         button.setAttribute("aria-pressed", String(selected === key));
         var show = function () { selected = key; showDetail(doc, piece, colours, nowSubject); };
         button.addEventListener("click", show);
@@ -930,7 +945,8 @@
     detail.id = "detail";
     detail.setAttribute("aria-live", "polite");
     var legend = el("div", "line-legend");
-    [["f", "Landed"], ["n", "Being checked"], ["r", "Ready to check"], ["a", "In progress"], ["d", "Not started"], ["p", "Waiting for the lead to accept"], ["h", "Stopped"], ["link", "Both landed"]].forEach(function (entry) {
+    (closedEntry(doc) ? [["f", "Landed"], ["u", "Not landed"], ["link", "Both landed"]]
+      : [["f", "Landed"], ["n", "Being checked"], ["r", "Ready to check"], ["a", "In progress"], ["d", "Not started"], ["p", "Waiting for the lead to accept"], ["h", "Stopped"], ["link", "Both landed"]]).forEach(function (entry) {
       legend.appendChild(add(el("span"), el("i", entry[0]), entry[1]));
     });
     nodes.push(box, detail, legend);
@@ -1000,11 +1016,13 @@
     var line = el("div", "d2 d-meta");
     add(line, issue(subject));
     if (item.changeRequest) { add(line, " · ", changeLink(item.changeRequest)); }
-    var timing = stageTime(doc, item);
+    // Nothing is still being checked or waiting once the delivery has closed; the piece simply didn't land.
+    var unlanded = unlandedAtClose(doc, piece);
+    var timing = unlanded ? null : stageTime(doc, item);
     var stage = el("span", "d-stage");
-    var icon = stageIcon(item);
+    var icon = unlanded ? null : stageIcon(item);
     if (icon) { stage.appendChild(icon); }
-    add(stage, stageWords(item));
+    add(stage, unlanded ? "Not landed" : stageWords(item));
     if (timing) {
       var relative = spoken(timing.at);
       var when = el("span", "d-stage-time", (item.stage === "merged" ? (relative ? " " + relative : " · time unknown")
@@ -1015,7 +1033,9 @@
     }
     add(line, " · ", stage);
     var nodes = [owner, el("div", "d1", titleOf(doc, item)), line];
-    var batch = item.stage !== "merged" && batchNow(doc, pieces(doc));
+    var inPlan = planStop(doc, subject);
+    if (inPlan) { nodes.push(inPlan); }
+    var batch = item.stage !== "merged" && !unlanded && batchNow(doc, pieces(doc));
     if (batch && batch.some(function (member) { return member.subject === item.subject; })) {
       nodes.push(el("div", "d-batch", "Checked together with " + batch.filter(function (member) { return member.subject !== item.subject; })
         .map(function (member) { return text(member.subject); }).join(", ") + "; lands in order once the shared test run passes."));
@@ -1024,9 +1044,9 @@
     if (isObject(tickets[item.subject]) && text(tickets[item.subject].summary)) { nodes.push(el("div", "d2", text(tickets[item.subject].summary))); }
     if (item.stage === "stopped") { failures(item).forEach(function (why) { nodes.push(el("div", "d3", why)); }); }
     var leadInputs = list(item.leadInputs).map(text).filter(Boolean);
-    if (leadInputs.length) { nodes.push(el("div", "d2", "Needs the lead first: " + leadInputs.join(", "))); }
+    if (leadInputs.length && !unlanded) { nodes.push(el("div", "d2", "Needs the lead first: " + leadInputs.join(", "))); }
     var estimate = isObject(doc.estimates) && isObject(doc.estimates[item.subject]) ? doc.estimates[item.subject] : null;
-    if (estimate && item.stage === "queued") {
+    if (estimate && item.stage === "queued" && !unlanded) {
       var expected = seconds(estimate.expectedStart);
       var ahead = expected === null ? null : expected - Date.now() / 1000;
       nodes.push(el("div", "d2", "Position " + estimate.position + " in line · " +
@@ -1038,8 +1058,6 @@
     if (timeline) { nodes.push(timeline); }
     var history = historyFor(doc, item);
     if (history) { nodes.push(history); }
-    var inPlan = planStop(doc, subject);
-    if (inPlan) { nodes.push(inPlan); }
     detail.replaceChildren.apply(detail, nodes);
     // A new piece's panel grows or shrinks to its height smoothly; a live redraw of the same piece does not move.
     if (switched && from) { runEaseHeight(detail, from); }
@@ -1216,7 +1234,7 @@
       prev.lanes = seen;
     }
     var leases = list(doc.state.leases).filter(isObject);
-    if (leases.length) {
+    if (leases.length && !closed) {
       var held = el("div", "leases");
       leases.forEach(function (lease) {
         held.appendChild(add(el("span"), el("b", null, text(lease.id)), " held by " + text(lease.holder) + (heldFor(lease.since) ? " " + heldFor(lease.since) : "")));
@@ -1231,15 +1249,18 @@
     var inner = parts.left;
     var colours = laneColours(doc, all);
     var open = all.filter(function (piece) { return piece.planned || piece.item.stage !== "merged"; });
-    var number = el("div", "left-number", String(prev.open === null ? open.length : prev.open));
     var closedOut = closedEntry(doc);
-    number.appendChild(el("small", null, closedOut && open.length ? (open.length === 1 ? "piece not landed" : "pieces not landed") : open.length === 1 ? "piece to go" : "pieces to go"));
-    countTo(number, prev.open, open.length);
+    var tally = closedOut ? closedTally(all) : { landed: all.length - open.length, total: all.length };
+    var left = tally.total - tally.landed;
+    var number = el("div", "left-number", String(prev.open === null ? left : prev.open));
+    number.appendChild(el("small", null, closedOut && left ? (left === 1 ? "piece not landed" : "pieces not landed") : left === 1 ? "piece to go" : "pieces to go"));
+    countTo(number, prev.open, left);
     var wasOpen = prev.dots || {};
     var nowOpen = Object.create(null);
     // Nothing counts down once a delivery closes with every piece landed.
-    var nodes = [el("div", "kicker", "What's left"), closedOut && all.length && !open.length ? el("h2", "title", "Nothing left to land.") : number,
-      el("p", "say", all.length ? (all.length - open.length) + " of " + all.length + " pieces have landed." : "Nothing is planned yet.")];
+    var nodes = [el("div", "kicker", "What's left"), closedOut && !left ? el("h2", "title", tally.total ? "Nothing left to land." : "Nothing was on the line.") : number];
+    if (tally.total) { nodes.push(el("p", "say", tally.landed + " of " + tally.total + " pieces have landed.")); }
+    else if (!closedOut) { nodes.push(el("p", "say", "Nothing is planned yet.")); }
     if (all.length) {
       var dots = el("div", "dots");
       dots.setAttribute("aria-hidden", "true");
@@ -1255,6 +1276,12 @@
         if (closed) { dot.style.animationDelay = closing * 0.06 + "s"; closing += 1; }
         dots.appendChild(dot);
       });
+      // Plan units that never reached the line have no lane to colour them.
+      for (var never = all.length; never < tally.total; never += 1) {
+        var unplaced = el("i", "open");
+        unplaced.style.setProperty("--c", "var(--soft)");
+        dots.appendChild(unplaced);
+      }
       nodes.push(dots);
       var names = laneNames(doc);
       var byLane = Object.create(null);
@@ -1265,7 +1292,7 @@
         groups.appendChild(add(el("div"), el("b", changed ? "changed" : null, String(byLane[lane])), lane ? "with " + (names[lane] || lane) : "not yet assigned"));
       });
       prev.byLane = byLane;
-      nodes.push(groups);
+      if (!closedOut) { nodes.push(groups); }
     }
     var finish = list(doc.state.finish).filter(isObject);
     // With a plan, its meters take the list's place and show every line the record has.
@@ -1279,12 +1306,13 @@
         var met = line.met === true;
         var current = !met && first;
         if (!met) { first = false; }
-        after.appendChild(add(el("div", met ? "met" : current ? "on" : ""), el("span", null, met ? "Met" : current ? "Next" : "Then"), text(line.text)));
+        // After a close nothing comes next: a line either was met or wasn't.
+        after.appendChild(add(el("div", met ? "met" : current && !closedOut ? "on" : ""), el("span", null, met ? "Met" : closedOut ? "Not met" : current ? "Next" : "Then"), text(line.text)));
       });
       nodes.push(el("div", "kicker", "The finish line"), after);
     }
     inner.replaceChildren.apply(inner, nodes);
-    prev.open = open.length;
+    prev.open = left;
     prev.dots = nowOpen;
   }
 
@@ -1489,9 +1517,10 @@
       either = rows.filter(function (unit) { return settled(unit, true); }).length;
     }
     // The record can say met while proofs it covers are still open: say both rather than let one hide the other.
-    var open = met && line && done < total;
+    var open = met && line && either < total;
+    var counted = !met && line && total > 0 && either === total;
     var box = el("div", "plan-meter" + (open ? " open" : met ? " met" : ""));
-    var head = add(el("div", "pm-head"), el("span", "pm-label", label), el("span", "pm-state", open ? "Met, proofs open" : met ? "Met" : "Not met"));
+    var head = add(el("div", "pm-head"), el("span", "pm-label", label), el("span", "pm-state", open ? "Met, proofs open" : met ? "Met" : counted ? "Not marked met" : "Not met"));
     var bar = el("div", "pm-bar");
     var full = el("i", "pm-done");
     var waived = el("i", "pm-waived");
@@ -1612,7 +1641,7 @@
     list(unit.criteria).filter(isObject).forEach(function (criterion) { criteria.appendChild(add(el("li"), text(criterion.text), " ", el("span", "pu-id", text(criterion.id)))); });
     var status = el("div", "pu-status");
     if (unit.removed !== true) { status.appendChild(el("div", "pu-standing", unitStanding(proof))); }
-    if (!(asApproved && unit.removed === true)) {
+    if (unit.removed !== true) {
       var owed = kinds.filter(function (kind) { return list(unit.proofs).indexOf(kind.id) >= 0; });
       function finished(kind) { return proof.states[kind.id].state === "done"; }
       var cells = el("div", "pu-proofs");
@@ -1853,7 +1882,7 @@
       var reason = PLAN && text(PLAN.unreadable) ? PLAN.unreadable : "";
       nodes.push(flagList([PLAN && typeof PLAN.absent === "string"
         ? { title: "The plan chapter is missing", why: PLAN.absent + " is the plan on file, and nothing has written plan.json for this page." }
-        : { title: "The plan couldn't be read", why: reason }]));
+        : { title: "The plan couldn't be read", why: reason }], Boolean(closedEntry(doc))));
       inner.replaceChildren.apply(inner, nodes);
       return;
     }
@@ -1958,14 +1987,17 @@
     inner.replaceChildren.apply(inner, nodes);
   }
 
-  /** In a stop's panel: where its unit stands in the plan, and a way to it. */
+  /** In a stop's panel: where its unit stands, in the plan's own words, and separately a way to it. */
   function planStop(doc, subject) {
     if (!plan) { return null; }
     var unit = planUnits(plan.units).filter(function (entry) { return entry.subject === subject; })[0];
     if (!unit) { return null; }
     var proof = planProofs(doc, [unit])[subject];
-    var words = unit.removed === true ? "removed from the plan" : proof.proven ? "proven" : "next: " + kindLabel(proof.next) + ", " + proof.states[proof.next].words;
-    var go = el("button", "d-plan", "In the plan: " + words);
+    var removed = unit.removed === true;
+    var box = add(el("div", "d-plan-row" + (!removed && proof.proven ? " proven" : removed ? " removed" : "")),
+      el("span", "pu-standing", removed ? "Removed from the plan" : unitStanding(proof)));
+    if (!removed && proof.next) { box.appendChild(el("span", "d-plan-next", kindLabel(proof.next) + ": " + proof.states[proof.next].words)); }
+    var go = el("button", "d-plan", "See in the plan");
     go.type = "button";
     go.setAttribute("data-plan-unit", subject);
     go.addEventListener("click", function (event) {
@@ -1983,7 +2015,7 @@
         row.focus({ preventScroll: true });
       }
     });
-    return go;
+    return add(box, go);
   }
 
   /* 5. What happened */

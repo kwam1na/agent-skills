@@ -7,7 +7,9 @@ and whatever the review's length, the fitted `planReview` passes the plan valida
 
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
 
 from tests.delivery_views_fixtures import views_common
 import review_projection  # noqa: E402  (beside views_common, on the path the fixtures put first)
@@ -84,6 +86,38 @@ class PlanReviewProjectionTests(unittest.TestCase):
         review = review_projection.fit_plan_review(rounds, [A, B], "aligned")
         self.assertEqual(review, {"lenses": [A, B], "state": "aligned", "rounds": rounds})
         views_common.validate_plan(plan(review))
+
+    def test_a_round_every_lens_approved_with_notes_still_open_says_so(self) -> None:
+        notes = [finding("oc-r1-1", "P3")]
+        rounds = review_projection.round_detail([
+            outcome(1, {A: ("aligned", notes, []), B: ("aligned", [], [])}),
+            outcome(2, {A: ("aligned", [], []), B: ("changes-requested", [], [])}),
+            outcome(3, {A: ("aligned", [], []), B: ("aligned", [], [])}, aligned=True),
+        ], COMMITS)
+        self.assertEqual([entry["outcome"] for entry in rounds], ["notes-open", "changes", "approve"])
+        views_common.validate_plan(plan(review_projection.fit_plan_review(rounds[:2], [A, B], "open")))
+        # An open note that blocks is never an approval with notes, whichever round carried it, and a blocked round reads the same.
+        carried = outcome(1, {A: ("changes-requested", [finding("oc-r1-1", "P1")], []), B: ("aligned", [], [])})
+        kept = outcome(2, {A: ("aligned", [], [closure("oc-r1-1", "open", "Still open.")]), B: ("aligned", [], [])})
+        closed = outcome(2, {A: ("aligned", [], [closure("oc-r1-1")]), B: ("aligned", [], [])})
+        self.assertEqual([entry["outcome"] for entry in review_projection.round_detail([carried, kept], COMMITS)], ["changes", "changes"])
+        # Nothing open leaves nothing to call a note, and an outcome the projection doesn't know stays unsaid.
+        self.assertEqual([entry["outcome"] for entry in review_projection.round_detail([carried, closed], COMMITS)], ["changes", None])
+        other = outcome(1, {A: ("aligned", [finding("oc-r1-1", "P3")], []), B: ("aligned", [], [])})
+        other["outcome"] = "paused"
+        self.assertIsNone(review_projection.round_detail([other], COMMITS)[0]["outcome"])
+        # A severity filed lower later doesn't undo the strongest filing.
+        lowered = outcome(2, {A: ("aligned", [finding("oc-r1-1", "P3")], []), B: ("aligned", [], [])})
+        self.assertEqual([entry["outcome"] for entry in review_projection.round_detail([carried, lowered], COMMITS)], ["changes", "changes"])
+        stopped = outcome(1, {A: ("aligned", [finding("oc-r1-1", "P3")], []), B: ("aligned", [], [])})
+        stopped["outcome"] = "blocked"
+        self.assertEqual(review_projection.round_detail([stopped], COMMITS)[0]["outcome"], "notes-open")
+        schema = json.loads((Path(views_common.__file__).parents[1] / "references" / "delivery-plan.schema.json").read_text(encoding="utf-8"))
+        self.assertEqual(schema["$defs"]["reviewRound"]["properties"]["outcome"]["enum"], ["approve", "changes", "notes-open", None])
+        # A lens that could not be obtained leaves the round without a stated result.
+        missing = outcome(1, {A: ("aligned", [], []), B: ("aligned", [], [])})
+        missing["entries"][1]["state"] = "unavailable"
+        self.assertIsNone(review_projection.round_detail([missing], COMMITS)[0]["outcome"])
 
     def test_a_round_over_thirty_findings_lists_the_worst_thirty_and_counts_the_rest(self) -> None:
         findings = [finding(f"oc-r1-{i}", "P3" if i < 10 else "P1") for i in range(35)]

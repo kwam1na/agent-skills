@@ -597,6 +597,17 @@ test("tells each round's time from the round before it, and colours each badge b
   // A round that closed before the one before it shows its own time instead of a gap.
   expect(times[4]).not.toMatch(/later$/);
   expect(times[4]).toMatch(/[0-9]+:[0-9]{2} [ap]m$/);
+  // A round every lens approved with notes still open says that, and only a missing outcome reads as not reported.
+  const told = await open(fixtureDocument(), {}, render(fixtureDocument(), { "run-7": { ...summary, rounds: 2, roundDetail: [
+    { round: 1, at: at(0), outcome: null, findings: { P0: 0, P1: 0, P2: 0, P3: 0 } },
+    { round: 2, at: at(5), outcome: "notes-open", findings: { P0: 0, P1: 0, P2: 0, P3: 5 }, verdicts: { "lens.outcome-correctness": "approve", "lens.adversarial-testing": "approve" } }] } }));
+  const toldRun = told[0].app.querySelector("#detail .d-run");
+  expect(toldRun.querySelector(".run-story")?.textContent).toBe("Round 2 approved, notes open · 5 minor notes raised");
+  expect([...toldRun.querySelectorAll(".run-bead")].map((bead) => bead.className)).toEqual(["run-bead is-unknown", "run-bead is-notes-open"]);
+  expect([...toldRun.querySelectorAll(".run-pick")].map((pick) => pick.getAttribute("aria-label"))).toEqual(
+    ["Round 1, outcome not reported, nothing raised", "Round 2, approved, notes open, 5 minor notes"]);
+  expect(toldRun.querySelector(".run-card").className).toBe("run-card is-notes-open");
+  expect(toldRun.querySelector(".run-card-outcome")?.textContent).toBe("Approved, notes open");
   // A lens verdict that is neither approval nor changes is shown as said.
   expect([...run.querySelectorAll(".run-card .run-lens")].map((lens) => lens.className)).toEqual(
     ["run-lens is-changes", "run-lens is-approve", "run-lens is-unknown"]);

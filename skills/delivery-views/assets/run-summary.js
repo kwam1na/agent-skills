@@ -145,17 +145,19 @@ function runSummaryNode(summary, options) {
     var number = numberOf(last, rounds.length - 1);
     if (last.outcome === "approve") { head = number === 1 ? "Approved on the first round" : "Approved on round " + number; }
     else if (last.outcome === "changes") { head = "Round " + number + " asked for changes"; }
+    else if (last.outcome === "notes-open") { head = "Round " + number + " approved, notes open"; }
     else { head = rounds.length + (rounds.length === 1 ? " review round" : " review rounds"); }
     var raised = noteWords(total);
     var tail = !reported ? "findings not reported" : raised ? raised + " raised" : "nothing raised";
     return head + " · " + tail;
   }
-  function outcomeOf(round) { return round.outcome === "approve" || round.outcome === "changes" ? round.outcome : "unknown"; }
-  // "approved", "asked for changes", "reported as <outcome>" for any other outcome, or "outcome not reported".
+  function outcomeOf(round) { return round.outcome === "approve" || round.outcome === "changes" || round.outcome === "notes-open" ? round.outcome : "unknown"; }
+  // "approved", "asked for changes", "approved, notes open", "reported as <outcome>" for any other outcome, or "outcome not reported".
   function outcomeWords(round) {
     var outcome = outcomeOf(round);
     if (outcome === "approve") { return "approved"; }
     if (outcome === "changes") { return "asked for changes"; }
+    if (outcome === "notes-open") { return "approved, notes open"; }
     return typeof round.outcome === "string" && round.outcome !== "" ? "reported as " + round.outcome : "outcome not reported";
   }
   function numberOf(round, index) { return round.round === null || round.round === undefined ? index + 1 : round.round; }
@@ -346,7 +348,7 @@ function runSummaryNode(summary, options) {
       box.appendChild(candidate);
     }
     head.appendChild(node("b", null, nameOf(round, index)));
-    var pill = outcome === "approve" ? "Approved" : outcome === "changes" ? "Changes requested" : outcomeWords(round);
+    var pill = outcome === "approve" ? "Approved" : outcome === "changes" ? "Changes requested" : outcome === "notes-open" ? "Approved, notes open" : outcomeWords(round);
     head.appendChild(node("span", "run-card-outcome", pill.charAt(0).toUpperCase() + pill.slice(1)));
     box.appendChild(head);
     var verdicts = round.verdicts && typeof round.verdicts === "object" ? round.verdicts : {};

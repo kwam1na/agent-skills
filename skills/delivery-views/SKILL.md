@@ -181,7 +181,10 @@ the review's ordered lens ids, 1 to 12, fixed for the review. `state` is
 every lens's verdict `approve` there, `open` at least one that isn't, and
 `ended` needs `endedReason`, at most 600 characters. `rounds` holds at most 32
 entries, each `{round, fromRound?, candidateRef, at, outcome, verdicts,
-findings, raised, settled, clipped?}`: the run summary's round shape. `verdicts`
+findings, raised, settled, clipped?}`: the run summary's round shape. `outcome`
+is `approve`, `changes`, `notes-open` when every lens approved and the round
+still has a note open and none of them blocks, or null when the round doesn't say.
+A round every lens approved with a P0 or P1 still open is `changes`. `verdicts`
 maps each lens to `approve`, `changes` or `unavailable`; `findings` counts
 `P0` to `P3`; `raised` lists at most 30 `{id, lens, severity, summary, state:
 unresolved | resolved}`, summaries at most 280 characters; `settled` lists at
@@ -234,9 +237,14 @@ A criterion is **proven**; a finish line is **met**, as the record says.
 A journal `delivery.closed` entry makes the page read the delivery as closed,
 until a lane is assigned, a candidate is handed or a check starts after it. Now
 says so and says when, with no warning about silence, though a lost connection
-still shows. What's left stops counting down once every piece has landed. Lanes read as finished, whatever the record last said they waited
-on, and the plan calls what remains left open at close rather than asking for
-anything.
+still shows. It says "Delivered." only when every piece and every live plan unit
+landed; proofs and finish lines keep their own counts beside it. What's left stops
+counting down once nothing is left to land, and counts plan units that never reached
+the line. Lanes read as finished whatever the record last said they waited on, an
+unlanded stop reads "Not landed" and stops pulsing, and leftover holds, leases and
+stale sources no longer show. The progress bar and dots use the same count as the
+headline. Now and the plan call what remains left open at close rather than asking
+for anything.
 
 ### Proofs from the record
 
@@ -277,7 +285,9 @@ counts at face value, and the unit's open row says "before hand-off".
   "Proven" when it names none. A line with `[]` and no proofs has nothing to
   count, so it shows no bar and says so. Whether the line is met comes only from
   the record's finish line with the same id; when the record says met while
-  covered proofs are open, the meter says both. A record finish line with no
+  covered proofs are open, the meter says both, and a waived proof counts as
+  settled there. With every covered proof settled and the record not saying met, it
+  reads "Not marked met". A record finish line with no
   plan entry still shows, with no fill.
 
 ### What needs the engineer
