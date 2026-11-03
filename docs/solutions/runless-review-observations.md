@@ -18,5 +18,12 @@ Charge failed reads to the read budget and share one page budget across both
 native and product-backed reviews. Treat unavailable artifacts and
 unknown candidate identity as unavailable, not zero findings.
 
+Work still under review has no head to bind to. Capture each round as it is
+reduced, at that round's own candidate, after journaling it. Bind work that
+isn't queued to its latest capture only when that capture follows the latest
+journaled round and holds exactly that round's number of outcomes. A round
+journaled after the capture, or a capture made by hand, leaves the evidence
+unavailable. Once the work is handed off, the head binds it again.
+
 The observation preserves review provenance for readers. Product admission,
 release qualification and the authority of a workflow remain separate.
