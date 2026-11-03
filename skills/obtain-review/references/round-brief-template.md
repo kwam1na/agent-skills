@@ -158,3 +158,18 @@ Capture actual review, dissent, clarification and available partial-output bytes
 before cleanup. Return stable artifact/report references or an explicit unavailable
 reason. Permission observations never grant authority; reviewer verdict and
 acquisition completion remain distinct.
+
+## Checks this lens runs
+
+The lens runs the adopting repository's scoped check set in its own checkout,
+never the repository's full suite: the full suite runs once, outside the round,
+at the delivery's tail. A lens needing evidence beyond that set names each
+additional test file, one path at a time, with what it is evidence for, and
+never widens a run to a directory. A lens that mutates or injects faults limits
+both to the candidate's changed lines and the code that calls them, and says so
+in its evidence.
+
+The executor fills both, per round:
+
+- scoped sensor commands: `<commands>`
+- test files in scope for this round: `<paths>`

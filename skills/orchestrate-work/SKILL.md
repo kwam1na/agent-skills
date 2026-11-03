@@ -215,7 +215,8 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
 
 - The runner reads the repository's binding, `.agents/orchestration.json`,
   from the tip of `<remote>/<base>`, never from a candidate or the operator's
-  checkout. A binding that names a different base is refused with
+  checkout. A binding that doesn't serve `--base`, as its `base.ref` or one of
+  its `bases`, or that names a different remote, is refused with
   `binding_invalid`. Write and check the binding with
   [the binding guide](references/orchestration-guide.md#binding-guide).
 - `--lead` is the holder name the lead uses in `leases[]`; it defaults to
@@ -391,7 +392,7 @@ run the sync loop in this order:
      `state.trackerSnapshot`, `{argv, timeoutSeconds?}`, run it through the
      state tool. The repository's command prints the snapshot for the record's
      `meta.trackerParent`, which `{parent}` in its argv names; `{stateDirectory}`
-     names the resolved state directory, in a renderer's or `workHints` argv too. A command that
+     names the resolved state directory, in a renderer's, a publisher's or `workHints` argv too. A command that
      fails, or prints anything but a fresh tracker snapshot, keeps the last
      snapshot and journals why once, and reconcile then refuses that snapshot
      once it is too old. The command runs in its own process group with a
@@ -448,8 +449,11 @@ run the sync loop in this order:
      follow-up.
    - Planned work at `planned` whose ticket the tracker shows `started` moves
      to `building`, so a lane starting its ticket moves its stop with no lead
-     step. Work at `building` or in review that the tracker shows back in
-     `backlog` is reported for the lead, never moved back.
+     step. The first time reconcile sees a planned item's ticket `started`, it
+     sets the item's `trackerStarted`. Work at `building` or in review whose
+     ticket was started and that the tracker shows back in `backlog` is
+     reported for the lead, never moved back. Work a draft change request
+     moved while its ticket was never started is not reported.
    - A change request is linked to its queue or planned item. A draft one
      moves planned work at `planned` to `building`, so a delivery with no
      tracker snapshot sees the stop move once the lane's draft opens; an open
@@ -532,6 +536,11 @@ Work through [the lead checklist](references/orchestration-guide.md#lead-checkli
 decompose, assign, run the queue, publish, check the finish lines live,
 release with the operator's approval, and close out.
 
+With run-delivery's supervisor running, the lead assigns, accepts and answers:
+the supervisor runs the queue, publishes, meets each finish line the record
+proves, and closes out, as each checklist step says. A lead reading the
+checklist does none of those twice.
+
 ## Telemetry and tracker updates
 
 Telemetry is best-effort. Each existing run emission is attempted at most
@@ -541,7 +550,8 @@ Tracker updates follow the same rule: one attempt, never a gate. The lead
 posts one at each journal milestone, as
 [the tracker updates table](references/orchestration-guide.md#tracker-updates)
 maps them, and each lane posts on its own ticket at the points its brief
-names. With no tracker tools, delivery proceeds and the gap is noted.
+names. With no tracker tools, delivery proceeds and the gap is noted. Where
+run-delivery's tracker publisher is in the binding, it posts them instead.
 
 ## Delivery state
 

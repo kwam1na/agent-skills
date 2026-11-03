@@ -434,16 +434,16 @@
       "detail": "Storefront laneKeep the order number on the receipt pageV26-2362 · #1107 · Being checked before merge · Time unknownNeeds the lead first: convex codegen"
     },
     "V26-2364": {
-      "detail": "Storefront laneCheckout copy for every payment stateV26-2364 · #1109 · In review · In review since · time unknown"
+      "detail": "Storefront laneCheckout copy for every payment stateV26-2364 · #1109 · In review · In review since · time unknownNo review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off."
     },
     "V26-2363": {
       "detail": "Backend laneRecord the payment provider's referenceV26-2363 · #1108 · Ready, waiting to be checked · Handed over · time unknownPosition 1 in line · starts around 5:19 am (estimate)"
     },
     "V26-2365": {
-      "detail": "Backend laneReplay a missed payment webhookV26-2365 · Being built · Started · time unknown"
+      "detail": "Backend laneReplay a missed payment webhookV26-2365 · Being built · Started · time unknownNo review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off."
     },
     "V26-2366": {
-      "detail": "Not yet assignedRefund a partial paymentV26-2366 · Not started"
+      "detail": "Not yet assignedRefund a partial paymentV26-2366 · Not startedNo review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off."
     }
   }
 }

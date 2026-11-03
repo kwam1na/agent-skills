@@ -4,7 +4,10 @@ Most of what run-delivery needs, the repository already declares for agent-skill
 in this order of precedence:
 
 1. **The orchestrate-work binding** (`.agents/orchestration.json`), because it is what the merge queue actually runs:
-   - remote and delivery base: `base.remote`, `base.ref`
+   - remote and delivery base: `base.remote`, `base.ref`, and the other bases the binding serves, `bases`: exact
+     branch names or patterns whose `*` matches within one segment of the name, such as `["main", "integration-*"]`.
+     A delivery file's `baseBranch` must be `base.ref` or match `bases`, and `lead-setup` requires `--base` once
+     `bases` is declared
    - lane gates: the `fallback` checks, with `{baseHead}` meaning the base, each run in its `cwd` with its timeout
      (default: the binding's `checkTimeoutSeconds`). If the binding also selects checks with a `provider`,
      `alwaysRun` or `profiles`, the lane gates must be listed in `run-delivery.json` `gates`.
@@ -19,8 +22,9 @@ in this order of precedence:
    - extra review lenses: `additionalReviewLenses`, whose `charterPath` is a file in the repository
    - if the file exists but can't be read, every command except `config` stops, unless `run-delivery.json` says
      `"harness": "ignore"`
-   - a cross-check: its `baseRef` and `preparationCommands` must agree with the binding's base and fallback checks,
-     or `run_delivery.py` refuses and shows both
+   - a cross-check: its `baseRef` and `preparationCommands` must agree with the delivery's base and the fallback
+     checks, or `run_delivery.py` refuses and shows both. The delivery's base is the binding's `base.ref` unless the
+     binding declares `bases`, when it is the delivery file's
 4. **`.agents/run-delivery.json`** (`delivery-flow/1`), for what none of them declares, written once per repository.
    A `run-delivery.json` value that a higher source also declares, with a different value, is refused as a conflict: one
    side never wins silently.
@@ -28,12 +32,13 @@ in this order of precedence:
 
 `run_delivery.py config` prints every resolved setting and the file it came from.
 
-**Where a lane reads them.** In the lead's checkout (on the delivery base), these files are read from the working
+**Where a lane reads them.** In the lead's checkout (on a base the binding serves), these files are read from the working
 tree. In a lane's checkout they are read from the delivery base on the remote (`<remote>/<base>:<path>`): `run-delivery.json`,
 the binding, `delivery-views.json`, the delivery file, the plan and the brief notes. So the lead's pushed changes
 reach every lane at once, and a lane never merges the base, which would move its reviewed head, just to pick up a
-tooling change. `RUN_DELIVERY_LOCAL=1` reads the lane's working tree instead (for working on the tooling itself);
-`RUN_DELIVERY_CONFIG` names an explicit configuration file.
+tooling change. The lane's base is `RUN_DELIVERY_BASE`, or the base its checkout recorded when it was started, or else
+the binding's `base.ref`; a base the binding doesn't serve is refused. `RUN_DELIVERY_LOCAL=1` reads the lane's working
+tree instead (for working on the tooling itself); `RUN_DELIVERY_CONFIG` names an explicit configuration file.
 
 **Earlier names.** A repository set up under the tool's earlier name keeps working: `.agents/flow.json` is read when
 `.agents/run-delivery.json` is absent, and `DELIVERY_FLOW_CONFIG`, `DELIVERY_FLOW_DELIVERY` and `DELIVERY_FLOW_LOCAL`
@@ -70,10 +75,27 @@ checks may need no file at all.
     "lenses": { "lens.x": { "short": "x", "charter": "docs/review/x.md" } }  // added; the charter is a repository file
   },
   "tracker": {                                // optional
-    "transitions": {                          // the lanes' status moves, stated in the lane brief; absent: none
+    "updates": "publisher",                   // publisher | host | manual (below); default: publisher with an
+                                              // adapter, host for a Linear tracker snapshot, otherwise none
+    "adapter": "jira",                        // the shipped Jira adapter; or "argv": [...], an adopter's own adapter
+    "site": "https://example.atlassian.net", "userEnv": "JIRA_USER", "tokenEnv": "JIRA_TOKEN",
+                                              // Jira's: default, the binding's jira trackerSnapshot's flags
+    "project": "APP",                         // where follow-ups are filed; default: the delivery key's prefix
+    "followupType": "Task",                   // the issue type a follow-up is filed as
+    "transitions": {                          // every status move; absent: none
       "source": "https://wiki/workflow",      // the team's workflow page
-      "start": ["Refined", "Start work"],     // when a lane starts a story, in order
-      "review": ["Submit for review"]         // once its draft PR is open and the gates pass
+      "start": ["Refined", "Start work"],     // a story's start, in order: the publisher makes it on lane.assigned
+      "review": ["Submit for review"],        // the lane's review move; when, by reviewWhen
+      "reviewWhen": "gates-passed",           // gates-passed: open-pr makes it once the gates pass at the PR's
+                                              // head; pr-open: as the PR opens; pipeline-green: pr-review makes it
+                                              // once the pipeline's review is current and its checks green (needs
+                                              // review.pr). Absent: nothing moves by itself, and open-pr prints it
+      "lead": {                               // later journal kinds to the moves the publisher makes for them
+        "candidate.merged": ["Complete"],     // absent, or an empty list: no move, and the update says the move
+        "delivery.closed": ["Close epic"]     // belongs to people (the default)
+      },
+      "targets": { "Complete": "Done" }       // the status a move leads to, for a move the tracker doesn't list
+                                              // from the ticket's status, so one already made reads as made
     }
   },
   "harness": "ignore",                        // only to skip an unreadable harness.config.ts on purpose
@@ -85,8 +107,11 @@ checks may need no file at all.
   // A gate whose argv equals inApp.build.argv also stamps the in-app build when every gate passes.
   "cleanup": {                                // optional
     "deleteRemoteBranches": false,            // lead-cleanup deletes a merged story's remote branch only if true
-    "archive": "~/.local/share/run-delivery/archive/{repo}/{delivery}"  // where lead-close archives the record
+    "archive": "~/.local/share/run-delivery/archive/{repo}/{delivery}"  // where the record is archived, and where
+                                              // the supervisor keeps its current copy, `latest`
   },
+  "forge": { "mergeNeedsReady": true },       // optional: the binding's merge step refuses a draft pull request
+  "supervisor": { "passSeconds": 60 },        // optional: how long the supervisor waits between passes
   "inApp": {                                  // optional; its "lease" must name one of the binding's leases
     "lease": "app-session",
     "lock": "~/.cache/my-app-session.lock",   // an OS lock, held for each check
@@ -110,8 +135,9 @@ checks may need no file at all.
   "schemaVersion": "delivery-flow-delivery/1",
   "delivery": "EPIC-1",                       // the parent tracker item: the record's tracker parent
   "headline": "EPIC-1: what the delivery does",
-  // "baseBranch" and "stateDirectory" are optional overrides: the binding names the base, and the record lives in
-  // the lead's checkout (laneCheckout with the delivery key) under the binding's state.directory.
+  // "baseBranch" and "stateDirectory" are optional overrides: the binding names the base (baseBranch must be its
+  // base.ref or match its bases), and the record lives in the lead's checkout (laneCheckout with the delivery key)
+  // under the binding's state.directory.
   "plan": "docs/plans/epic-1.md",
   "laneBrief": "docs/plans/epic-1.lane-brief.md",          // written by lead-brief
   "brief": { "notes": "docs/plans/epic-1.lane-notes.md" }, // this delivery's own rules, appended to the brief
@@ -143,6 +169,7 @@ checks may need no file at all.
   "authority": {                              // the operator's grant to lanes; absent: lanes don't push
     "push": true,                             // each lane's own story branch, never forced (run_delivery.py push)
     "draftPullRequests": true,                // its draft PR into the delivery base (run_delivery.py open-pr)
+    "readyPullRequests": true,                // the lead's, never a lane's: lead-accept marks each draft ready
     "grantedBy": "the operator", "grantedOn": "2026-01-01"
   },
   "ship": {                                   // optional
@@ -189,10 +216,142 @@ The command is called with one of:
 - `open --source B --destination D --title T --body-file F` opens a draft and prints `{"url"}`.
 - `reviews --url URL --head SHA` prints `{"checks": [{name, state: passed|failed|pending, at}], "reviews": [{author, at, body}]}`:
   the head commit's pipeline checks and the PR's top-level comments. Needed only with `review.pr`.
-- `get --url URL` prints `{"url", "state": "open"|"merged"|"closed", "head", "source", "destination"}`. It refuses
-  a URL that isn't one of the repository's PRs. `head` may be abbreviated, to 7 characters at least.
+- `get --url URL` prints `{"url", "state": "open"|"merged"|"closed", "draft", "head", "source", "destination"}`. It
+  refuses a URL that isn't one of the repository's PRs. `head` may be abbreviated, to 7 characters at least.
+- `ready --url URL` marks a draft ready and prints `{"url", "draft": false}`. `lead-accept` calls it, before the queue
+  may take the candidate, when the delivery's `authority` grants `readyPullRequests`. A refusal leaves the hand-off
+  pending.
+- `merge --url URL --strategy merge|squash [--head SHA]` merges the PR through the forge and prints `{"url", "state":
+  "merged"}`, refusing a PR whose head moved from `--head`.
+- `merge --source BRANCH --head SHA --strategy merge|squash` merges the branch's one open PR, at exactly `--head`. It
+  refuses a branch with no open PR or with more than one, and a PR whose head isn't `--head`. A binding's `merge` step,
+  which knows the branch and the checked head but not the PR, calls it directly:
+  `["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge", "--source",
+  "{branch}", "--head", "{expectedHead}", "--strategy", "merge"]`, with `FLOW_FORGE_REPOSITORY` and
+  `FLOW_FORGE_TOKEN_ENV` in the binding's `environment`. A repository that merges through its forge needs no merge
+  script of its own.
 
-`FLOW_FORGE_REPOSITORY` and `FLOW_FORGE_TOKEN_ENV` carry the `forge` settings.
+`FLOW_FORGE_REPOSITORY` and `FLOW_FORGE_TOKEN_ENV` carry the `forge` settings. Both shipped adapters answer every
+command. With `forge.mergeNeedsReady` set, `doctor` reports a delivery without the `readyPullRequests` grant, and
+`lead-init` refuses it.
+
+## The supervisor
+
+`lead-init` starts `lead-run`, the delivery's supervisor: one detached process per record, in a session of its own,
+started with SIGINT, SIGHUP and SIGQUIT at their defaults. It holds the flow log's `<delivery>.supervisor.lock`, which
+records its pid, its start time, its children and the live view's address. Its first line of output is that address,
+and every lead command repeats it. It keeps the merge queue's `serve` and the live view running, and every
+`supervisor.passSeconds` it runs one pass:
+
+1. the reconcile sweep, as `lead-reconcile` runs it;
+2. what `lead-cleanup` does, for each merged story whose lane has moved off it;
+3. `finish.met`, once for each finish line whose covered criteria have every covered proof done;
+4. the binding's `state` publishers; then "Needs you", written over the last pass's list in the record's
+   `needs-you.json`; then the binding's renderers, so the line map shows this pass's list;
+5. a copy of the record and the flow log into `latest` at the archive location, under the state lock;
+6. the close-out, when the close condition holds.
+
+The close condition: every planned and queued story merged or removed, every finish line met, every lane idle or
+done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,
+never read back: a failed `fullHealth` at the
+current base head, a broken base, a blocked lane or one waiting on the lead, an unresolved `blocker.recorded`, a
+child that won't stay up, and the tracker publisher's own items. `lead-resolve <journal id> --why TEXT` resolves a
+blocker; `lead-resolve full-health --why TEXT` asks the next pass to rerun a failed `fullHealth`. The runner's own
+blocker clears when its hold does, or with `base.repaired`. Each item says whether it holds the close or is only
+shown, where it comes from and what clears it. The line map's Now chapter lists the holding items first. A list
+from a supervisor that has stopped, or one more than a pass overdue, is shown as unavailable rather than stale.
+
+The close-out runs in order, each step succeeding before the next: `fullHealth`, once per base head, in a fresh
+checkout of the base; a follow-up for each deferred finding, keyed `<story>-<finding id>`; `delivery.closed`, then
+waiting for the tracker to have it; releasing the lead's leases, archiving the record and fast-forwarding the
+operator's checkout if it is clean and on the base; a friction note stub beside the archive; then the supervisor
+stops. Each pass writes what it did to the flow log's `<delivery>.supervisor.jsonl`.
+
+The lead's commands keep working while it is down, and the supervisor skips what is already done when it comes
+back. `lead-run --resume` stops what an earlier supervisor left running and starts it again; `lead-run --once` runs one
+pass in the foreground. `lead-close` asks a running supervisor to stop after its pass, and refuses while the lead's
+settings have uncommitted changes. `lead-init --no-supervisor`, or `RUN_DELIVERY_SUPERVISOR=off`, starts none.
+
+## Tracker updates
+
+How a delivery's tracker updates (the orchestration guide's tracker-update table) and moves get made, by
+`tracker.updates`:
+
+- **`publisher`**: the tracker publisher, `tracker_publisher.py` beside `run_delivery.py`, posts them through a tracker adapter. The
+  binding names it in `state.publishers`, so it runs whenever the render wrapper runs; `lead-setup` adds it when the
+  configuration names an adapter: `{"id": "tracker", "argv": ["python3", "-B",
+  ".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py", "--state-dir", "{stateDirectory}"]}`.
+- **`host`**: a tracker reachable only through the host's connector (Linear, by this corpus's rule) uses a host
+  publisher, `{"id": "tracker", "kind": "host"}`, whose outbox the lead posts with the host's tracker tools.
+- **`manual`**: the lead posts them by hand. Without it, `doctor` fails and `lead-init` refuses a tracker with an
+  adapter but no tracker publisher, or a host-only tracker without a host publisher.
+
+**The ledger.** The publisher keeps `tracker-published.jsonl` beside the record, one JSON line per journal id and
+outcome: `{"journal", "init", "outcome", "writer", "at", "ticket"?, "action"?, "move"?, "transition"?, "reason"?, "error"?,
+"final"?}`. The outcomes are `comment`, `transition` and `create` for an action taken, `skip` for an entry with nothing
+to post, `handled` for a move not offered from the ticket's status, and `failed` for a permanent rejection. Every entry
+gets at least one line; the ledger covers an entry once a command's line names it or the publisher's line for it is
+`final`. `init` is the record's init id (below): a ledger left beside a replaced record covers none of the new
+record's entries. A lane or lead command that posts or moves for an entry it journals takes the ledger's lock
+(`tracker-published.lock`, waiting for it) across its journal write, its tracker call and its line, writes the line
+with its own `writer` and the `ticket`, and `"move": "review"` for a review move; when the call fails it writes no line
+and the publisher posts it later. A run that finds the lock held exits 0 at once.
+
+**What is posted.** Entries are taken in id order. A transient failure stops the run, and the next retries from there:
+a network error, a timeout, a 5xx, 409, 423, 429 or 401, or a 403 that the status read of the epic (or, with no epic or
+an unreadable one, of the project) also gets. Any other 4xx writes `failed` and the run goes on; nothing is journalled,
+and the failure shows in "Needs you". Each comment is cut to the adapter's `commentLimit`, with a pointer to the record.
+A `decision.recorded` entry is posted only when its journal id is in the flow log's `<delivery>.tracker-marks.jsonl`
+(`{"journal", "followup"?: {"story", "finding", "title"}}`), which the command that journals it writes while holding
+the ledger's lock: `lead-plan change` does. A mark with a `followup` files one follow-up item, labelled
+`agent-followup-<story>-<finding id>`, before posting. Every other unmarked decision gets a `skip` line.
+
+**Moves.** A story's `lane.assigned` waits for its start, a line `{"subject", "lane"?, "at"}` in the flow log's
+`<delivery>.lane-starts.jsonl`, at or after the entry. It then gets the start update and the `start` moves, once per
+story: never after the ledger holds the story's start or review move, and never when the ticket carries a start
+marker from the same delivery under an earlier record. An entry whose story is handed off, merged, reassigned or
+removed before it starts gets a `skip` line. The `lead` moves are made for their kinds. Each move reads the ticket's
+status first: a move whose target status the ticket already has is skipped and reported as made by someone else, and
+one the tracker doesn't offer from the current status is `handled`: shown, never retried or journalled. A move's
+target is what the tracker lists for it, or else its `targets` entry; with neither, a move not listed is `handled`.
+
+**Markers.** Each comment and move carries a marker the adapter stores on the ticket:
+`agent-delivery:<delivery>:<init id>:<journal id>:<action>`, where the init id is the time of the record's first
+journal entry, digits and letters only, and the action is `comment` or `transition:<name>`. Before writing, the
+publisher reads the ticket's markers, so a run that died between a write and its line never posts it twice.
+
+**Lane commands.** `lane-start <key> --base <base>` begins a story: it checks the base against the binding's, makes
+the story's checkout from it, runs the prepare step, sets the lane's focus, and records the story's start in the
+`lane-starts` file. It makes no tracker call: the publisher's start move and update follow the record. Run again, it
+changes nothing. `open-pr` and `pr-review` make the review move at the moment `reviewWhen` names, through the
+publisher's move rules, with ledger lines of journal id 0 (`move: "review"`, the story as `ticket`), since that move
+journals nothing; a refused move writes no line, and running the command again, or `handoff`, retries it. `handoff`
+posts the hand-off update on the story, under its `candidate.handed` entry, holding the ledger's lock across the
+journal write, the post and the line; when the tracker refuses it, the hand-off stands and the publisher posts it
+later. With a tracker reachable only through the host, the commands print each move and post for the lane to make,
+and record them in the flow log's `<delivery>.lane-prints.jsonl`. `lead-setup --review-when` records `reviewWhen`;
+it is never inferred from `review.pr`.
+
+## The tracker adapter contract (`tracker-adapter/1`)
+
+The command is called with one of these, and prints one JSON object on stdout:
+
+- `status --ticket KEY` prints `{"status", "transitions": [{"name", "to", "offered"}], "commentLimit"}`: the ticket's
+  status, and the transitions the tracker lists for it, each with its target status (or null) and whether it is
+  offered now. A tracker may list only the moves out of the current status, as Jira does; `commentLimit` counts
+  UTF-16 code units.
+  `status --project P` prints `{}` when the project can be read.
+- `markers --ticket KEY` prints `{"markers": [...]}`, every marker stored on the ticket, its comments' included.
+  `markers --project P --marker LABEL` prints `{"items": [{"key"}]}`, the project's items carrying that label.
+- `comment --ticket KEY --marker M --body-file F` posts the file as a comment, storing the marker with it.
+- `transition --ticket KEY --name NAME --marker M` makes the move, storing the marker with it.
+- `create --project P --title T --body-file F --marker LABEL [--parent KEY] [--type TYPE]` files an item carrying the
+  label, and prints `{"key"}`.
+
+A failure exits non-zero and prints `{"error", "httpStatus"}`, `httpStatus` null when the tracker wasn't reached. The
+shipped Jira adapter, `tracker_jira.py` in the skill's adapters folder, takes `--site`, `--user-env` and `--token-env` before the operation,
+as the delivery-views Jira snapshot does; it stores markers as issue properties and on the comment or move itself,
+and labels follow-ups, which it finds by JQL within the project.
 
 ## The in-app check contract
 
