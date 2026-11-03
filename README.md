@@ -70,6 +70,9 @@ python3 scripts/build-release.py verify \
   --extract-to /tmp/linear-standalone
 ```
 
+Both tracker profiles build on `run-delivery`, so an adopter on one gets the delivery
+commands too. Those run on POSIX hosts only, which doesn't stop a tracker profile
+installing on Windows, though Windows is not validated (see below).
 The optional Jira profile builds the same way with `--profile jira`. It reaches
 Jira only through the host's Atlassian MCP connector, configured by the adopting
 repository's `.agents/tracker-properties.json`, whose `jira` block names the

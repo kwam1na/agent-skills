@@ -294,7 +294,7 @@ class LinearQualificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             record_path = directory / "record.json"
-            arguments = [value for name in ("core-archive", "core-metadata", "core-record", "linear-archive", "linear-metadata") for value in (f"--{name}", str(directory / name))]
+            arguments = [value for name in ("core-archive", "core-metadata", "core-record", "linear-archive", "linear-metadata", "run-delivery-archive", "run-delivery-metadata") for value in (f"--{name}", str(directory / name))]
             arguments.extend(("--record", str(record_path)))
             for error in (ValueError("candidate unavailable"), OSError("record unavailable")):
                 record_path.write_text(_canonical_json({"summary": {"result": "passed"}}), encoding="utf-8")
@@ -316,6 +316,7 @@ class LinearQualificationTests(unittest.TestCase):
             paths = (
                 directory / "core.zip", directory / "core.release.json", directory / "core-record.json",
                 directory / "linear.zip", directory / "linear.release.json",
+                directory / "run-delivery.zip", directory / "run-delivery.release.json",
             )
             runner.validate_checked_record(record, *paths)
             changes = [
@@ -379,6 +380,7 @@ class LinearQualificationTests(unittest.TestCase):
             record = runner.qualify(
                 directory / "core.zip", directory / "core.release.json", core_record_path,
                 directory / "linear.zip", directory / "linear.release.json",
+                directory / "run-delivery.zip", directory / "run-delivery.release.json",
             )
             self.assertEqual(record["summary"]["result"], "failed")
             failed = [scenario["id"] for scenario in record["scenarios"] if scenario["result"] != "passed"]
@@ -388,7 +390,7 @@ class LinearQualificationTests(unittest.TestCase):
         runner = _load_runner()
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            arguments = [value for name in ("core-archive", "core-metadata", "core-record", "linear-archive", "linear-metadata", "record") for value in (f"--{name}", str(directory / name))]
+            arguments = [value for name in ("core-archive", "core-metadata", "core-record", "linear-archive", "linear-metadata", "run-delivery-archive", "run-delivery-metadata", "record") for value in (f"--{name}", str(directory / name))]
             for removed in ("--attestation", "--collector-binding"):
                 with self.subTest(removed=removed), mock.patch("sys.stderr"), self.assertRaises(SystemExit) as refused:
                     runner.main([*arguments, removed, str(directory / "input.json")])
@@ -454,10 +456,13 @@ class LinearQualificationTests(unittest.TestCase):
             paths = {
                 "core-archive": directory / "core.zip", "core-metadata": directory / "core.release.json",
                 "core-record": directory / "core-record.json", "linear-archive": directory / "linear.zip",
-                "linear-metadata": directory / "linear.release.json", "record": record_path,
+                "linear-metadata": directory / "linear.release.json",
+                "run-delivery-archive": directory / "run-delivery.zip",
+                "run-delivery-metadata": directory / "run-delivery.release.json", "record": record_path,
             }
             arguments = [value for name, path in paths.items() for value in (f"--{name}", str(path))]
-            for input_name in ("core-archive", "core-metadata", "core-record", "linear-archive", "linear-metadata"):
+            for input_name in ("core-archive", "core-metadata", "core-record", "linear-archive", "linear-metadata",
+                               "run-delivery-archive", "run-delivery-metadata"):
                 input_bytes = paths[input_name].read_bytes()
                 aliased = arguments[:-2] + ["--record", str(paths[input_name])]
                 with self.subTest(aliased=input_name):
@@ -476,6 +481,12 @@ class LinearQualificationTests(unittest.TestCase):
             record_path.write_text(_canonical_json({"summary": {"result": "passed"}}), encoding="utf-8")
             self.assertEqual(runner.main(arguments), 1)
             self.assertFalse(record_path.exists())
+
+    def _run_delivery_for(self, directory: Path) -> tuple[Path, Path]:
+        archive, metadata = directory / "run-delivery.zip", directory / "run-delivery.release.json"
+        if not archive.exists():
+            build_release(ROOT, archive, metadata, release_id="run-delivery-v1", profile_id="run-delivery")
+        return archive, metadata
 
     def _build_candidates(self, directory: Path) -> tuple[Path, Path, Path, Path]:
         core_archive = directory / "core.zip"
@@ -563,6 +574,10 @@ class LinearQualificationTests(unittest.TestCase):
                 str(linear_archive),
                 "--linear-metadata",
                 str(linear_metadata),
+                "--run-delivery-archive",
+                str(self._run_delivery_for(directory)[0]),
+                "--run-delivery-metadata",
+                str(self._run_delivery_for(directory)[1]),
                 "--record",
                 str(record_path),
             ],
@@ -596,19 +611,49 @@ class LinearQualificationTests(unittest.TestCase):
 
             core = build("core")
             linear = build("linear")
-            with mock.patch.object(self, "_build_candidates", return_value=(*core, *linear)):
+            base = build("run-delivery")
+            with mock.patch.object(self, "_build_candidates", return_value=(*core, *linear)), \
+                    mock.patch.object(self, "_run_delivery_for", return_value=base):
                 result, record = self._run_qualification(directory)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue(record.exists())
 
             (runtime / "kernel.mjs").write_text("// different but honestly hashed implementation\n")
             linear = build("linear")
-            with mock.patch.object(self, "_build_candidates", return_value=(*core, *linear)):
+            with mock.patch.object(self, "_build_candidates", return_value=(*core, *linear)), \
+                    mock.patch.object(self, "_run_delivery_for", return_value=base):
                 result, record = self._run_qualification(directory)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertFalse(record.exists())
             with self.assertRaisesRegex(ValueError, "different core bytes"):
-                _load_runner().qualify(*core, directory / "core-record.json", *linear)
+                _load_runner().qualify(*core, directory / "core-record.json", *linear, *base)
+
+    def test_a_base_other_than_what_linear_builds_on_is_refused(self) -> None:
+        # Anything the base holds leaves the sensor's delta, so a base holding a planted file would hide it.
+        runner = _load_runner()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            result, _ = self._run_qualification(directory)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            tree = directory / "other-tree"
+            verify_release(directory / "linear.zip", directory / "linear.release.json", extract_to=tree)
+            adapter = tree / "skills/run-delivery/adapters/forge_github.py"
+            adapter.write_text(adapter.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8")
+            lock = json.loads((tree / "provenance.lock.json").read_text(encoding="utf-8"))
+            for entry in lock["entries"]:
+                for output in entry["outputs"]:
+                    if output["path"] == "skills/run-delivery/adapters/forge_github.py":
+                        output["sha256"] = hashlib.sha256(adapter.read_bytes()).hexdigest()
+            (tree / "provenance.lock.json").write_text(_canonical_json(lock), encoding="utf-8")
+            other = directory / "other.zip", directory / "other.release.json"
+            build_release(tree, *other, release_id="run-delivery-v1", profile_id="run-delivery")
+            with self.assertRaisesRegex(ValueError, "different run-delivery bytes"):
+                runner.qualify(directory / "core.zip", directory / "core.release.json", directory / "core-record.json",
+                               directory / "linear.zip", directory / "linear.release.json", *other)
+            with self.assertRaisesRegex(ValueError, "exact core, linear and run-delivery"):
+                runner.qualify(directory / "core.zip", directory / "core.release.json", directory / "core-record.json",
+                               directory / "linear.zip", directory / "linear.release.json",
+                               directory / "core.zip", directory / "core.release.json")
 
     def test_exact_linear_qualification_is_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -620,7 +665,8 @@ class LinearQualificationTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             record = json.loads(record_path.read_text(encoding="utf-8"))
-            self.assertEqual(set(record["candidate"]), {"core", "linear"})
+            self.assertEqual(set(record["candidate"]), {"core", "linear", "runDelivery"})
+            self.assertEqual(record["candidate"]["runDelivery"]["profile"], "run-delivery")
             self.assertEqual(record["candidate"]["core"]["profile"], "core")
             self.assertEqual(record["candidate"]["linear"]["profile"], "linear")
             self.assertRegex(
@@ -736,12 +782,10 @@ class LinearQualificationTests(unittest.TestCase):
         runner = _load_runner()
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            core_archive, core_metadata, linear_archive, linear_metadata = (
-                self._build_candidates(directory)
-            )
-            core_candidate = directory / "core-candidate"
+            _, _, linear_archive, linear_metadata = self._build_candidates(directory)
+            base_candidate = directory / "base-candidate"
             linear_candidate = directory / "linear-candidate"
-            verify_release(core_archive, core_metadata, extract_to=core_candidate)
+            verify_release(*self._run_delivery_for(directory), extract_to=base_candidate)
             verify_release(linear_archive, linear_metadata, extract_to=linear_candidate)
             contract = json.loads(
                 (
@@ -751,7 +795,7 @@ class LinearQualificationTests(unittest.TestCase):
             )
             evidence = runner.inspect_candidate_transport_boundary(
                 linear_candidate,
-                core_candidate,
+                base_candidate,
                 contract,
             )
             self.assertIn("host-native MCP capability set remains complete", evidence)
@@ -783,25 +827,21 @@ class LinearQualificationTests(unittest.TestCase):
                 "export { documented, transport };\n",
                 encoding="utf-8",
             )
-            runner.inspect_candidate_transport_boundary(harmless, core_candidate, contract)
+            runner.inspect_candidate_transport_boundary(harmless, base_candidate, contract)
 
-            # The delivery views are outside the boundary: their pages and snapshot commands reach the providers
-            # they are configured for. The same actions anywhere else in the linear profile still fail.
-            views = directory / "delivery-views-transport"
-            shutil.copytree(linear_candidate, views)
-            for name, source in (("extra.js", 'fetch("/view/line-map.html");\n'),
-                                 ("extra.py", 'urllib.request.urlopen("https://api.linear.app/graphql")\n')):
-                (views / "skills/delivery-views/scripts" / name).write_text(source, encoding="utf-8")
-            runner.inspect_candidate_transport_boundary(views, core_candidate, contract)
-            for relative in ("skills/orchestrate-work/scripts/extra.js", "skills/linear-tracker-adapter/extra.py"):
+            # Everything run-delivery ships is the base, forge adapters included, and passes as it stands. The same
+            # actions added anywhere in the linear product fail, with no folder set aside.
+            self.assertTrue((linear_candidate / "skills/run-delivery/adapters/forge_github.py").is_file())
+            for relative in ("skills/orchestrate-work/scripts/extra.js", "skills/linear-tracker-adapter/extra.py",
+                             "skills/delivery-views/scripts/extra.js", "skills/run-delivery/adapters/extra.py"):
                 with self.subTest(outside=relative):
-                    mutated = directory / f"outside-{Path(relative).name}"
+                    mutated = directory / ("outside-" + relative.replace("/", "-"))
                     shutil.copytree(linear_candidate, mutated)
                     (mutated / relative).write_text(
                         'fetch("/view/line-map.html");\n' if relative.endswith(".js") else 'urllib.request.urlopen("https://example.invalid")\n',
                         encoding="utf-8")
                     with self.assertRaisesRegex(runner.QualificationFailure, "http-client-action"):
-                        runner.inspect_candidate_transport_boundary(mutated, core_candidate, contract)
+                        runner.inspect_candidate_transport_boundary(mutated, base_candidate, contract)
 
             hostile = (
                 (
@@ -879,7 +919,7 @@ class LinearQualificationTests(unittest.TestCase):
                     ):
                         runner.inspect_candidate_transport_boundary(
                             mutated,
-                            core_candidate,
+                            base_candidate,
                             contract,
                         )
 
@@ -905,6 +945,7 @@ class LinearQualificationTests(unittest.TestCase):
                 record,
                 directory / "core.zip", directory / "core.release.json", directory / "core-record.json",
                 directory / "linear.zip", directory / "linear.release.json",
+                directory / "run-delivery.zip", directory / "run-delivery.release.json",
             )
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:

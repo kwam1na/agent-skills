@@ -52,6 +52,7 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "README.md": (
         "On Windows, which is not validated (see below), use `.venv\\Scripts\\python.exe`",
+        "Both tracker profiles build on `run-delivery`, so an adopter on one gets the delivery commands too",
         "Windows, which is not validated (see above), keeps its native `taskkill /T /F` tree cleanup",
     ),
     "docs/host-adapters.md": (

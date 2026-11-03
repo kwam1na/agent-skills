@@ -194,12 +194,12 @@ def source_tree_sha256(root: Path) -> str:
     return _digest(records)
 
 
-def _candidate_delta(linear_candidate: Path, core_candidate: Path) -> list[Path]:
+def _candidate_delta(linear_candidate: Path, base_candidate: Path) -> list[Path]:
     changed = []
     for path in sorted(item for item in linear_candidate.rglob("*") if item.is_file()):
         relative = path.relative_to(linear_candidate)
-        core_path = core_candidate / relative
-        if not core_path.is_file() or path.read_bytes() != core_path.read_bytes():
+        base_path = base_candidate / relative
+        if not base_path.is_file() or path.read_bytes() != base_path.read_bytes():
             changed.append(path)
     return changed
 
@@ -291,9 +291,14 @@ def _node_http_action(contents: str) -> bool:
 
 def inspect_candidate_transport_boundary(
     linear_candidate: Path,
-    core_candidate: Path,
+    base_candidate: Path,
     contract: dict,
 ) -> list[str]:
+    """That what the Linear profile adds to its base reaches Linear only through the host's connector.
+
+    The base is the run-delivery product, which holds the delivery views and forge adapters that reach their own
+    providers. A file differing from it is in the delta, wherever it sits, so no folder is set aside.
+    """
     contract_path = linear_candidate / CONTRACT_PATH
     contract_bytes = contract_path.read_bytes()
     if digest_bytes(contract_bytes) != TRUSTED_CONTRACT_SHA256:
@@ -306,13 +311,9 @@ def inspect_candidate_transport_boundary(
     if set(contract.get("allowedHostOperations", ())) != DECLARED_HOST_OPERATIONS:
         raise QualificationFailure("host-native MCP capability set is incomplete")
 
-    for path in _candidate_delta(linear_candidate, core_candidate):
+    for path in _candidate_delta(linear_candidate, base_candidate):
         relative = path.relative_to(linear_candidate).as_posix()
         if relative == CONTRACT_PATH:
-            continue
-        # The boundary guards how the workflow's tracker operations reach Linear; the delivery views are a
-        # separate configured skill whose pages and snapshot commands talk to the providers they are set up for.
-        if relative.startswith("skills/delivery-views/"):
             continue
         executable = path.suffix in EXECUTABLE_SUFFIXES
         actionable_document = relative == f"{ADAPTER_ROOT}/SKILL.md"
@@ -568,18 +569,23 @@ def qualify(
     core_record_path: Path,
     linear_archive: Path,
     linear_metadata: Path,
+    run_delivery_archive: Path,
+    run_delivery_metadata: Path,
 ) -> dict:
     core = verify_release(core_archive, core_metadata)
     linear = verify_release(linear_archive, linear_metadata)
-    if core.profile_id != "core" or linear.profile_id != "linear":
-        raise ValueError("linear_qualification.profile: exact core and linear profiles are required")
+    run_delivery = verify_release(run_delivery_archive, run_delivery_metadata)
+    if core.profile_id != "core" or linear.profile_id != "linear" or run_delivery.profile_id != "run-delivery":
+        raise ValueError("linear_qualification.profile: exact core, linear and run-delivery profiles are required")
     core_record = _load_document(core_record_path, "core_record")
     with tempfile.TemporaryDirectory(prefix="agent-skills-linear-candidates-") as temporary:
         candidate_root = Path(temporary)
         core_candidate = candidate_root / "core"
         linear_candidate = candidate_root / "linear"
+        run_delivery_candidate = candidate_root / "run-delivery"
         verify_release(core_archive, core_metadata, extract_to=core_candidate)
         verify_release(linear_archive, linear_metadata, extract_to=linear_candidate)
+        verify_release(run_delivery_archive, run_delivery_metadata, extract_to=run_delivery_candidate)
         graph_sha256 = _candidate_graph_sha256(core_candidate, linear_candidate)
         # Product profiles share runtime bytes, while each verified descriptor
         # binds its own workflow projection. Compare the full component closure
@@ -607,6 +613,20 @@ def qualify(
         )
         if projected_core != core:
             raise ValueError("linear_qualification.core_binding: Linear contains different core bytes")
+        # The transport sensor's base: anything it holds leaves the delta, so it must be exactly what Linear builds on.
+        base_runtime = run_delivery_candidate / "runtime"
+        if base_runtime.exists() != linear_runtime.exists():
+            raise ValueError("linear_qualification.run_delivery_binding: Linear contains different run-delivery bytes")
+        projected_run_delivery = build_release(
+            linear_candidate,
+            candidate_root / "projected-run-delivery.zip",
+            candidate_root / "projected-run-delivery.release.json",
+            release_id=run_delivery.release_id,
+            profile_id="run-delivery",
+            runtime_directory=base_runtime if base_runtime.exists() else None,
+        )
+        if projected_run_delivery != run_delivery:
+            raise ValueError("linear_qualification.run_delivery_binding: Linear contains different run-delivery bytes")
         contract = _load_document(linear_candidate / CONTRACT_PATH, "contract")
         scenarios = [
             _run(
@@ -638,7 +658,7 @@ def qualify(
                 lambda checkpoint: checkpoint.retain(
                     inspect_candidate_transport_boundary(
                         linear_candidate,
-                        core_candidate,
+                        run_delivery_candidate,
                         contract,
                     )
                 ),
@@ -647,6 +667,7 @@ def qualify(
         candidate = {
             "core": _release_view(core, source_tree_sha256(core_candidate)),
             "linear": _release_view(linear, source_tree_sha256(linear_candidate)),
+            "runDelivery": _release_view(run_delivery, source_tree_sha256(run_delivery_candidate)),
         }
     return _finalize_record(
         candidate,
@@ -662,6 +683,8 @@ def validate_checked_record(
     core_record_path: Path,
     linear_archive: Path,
     linear_metadata: Path,
+    run_delivery_archive: Path,
+    run_delivery_metadata: Path,
 ) -> None:
     expected = qualify(
         core_archive,
@@ -669,6 +692,8 @@ def validate_checked_record(
         core_record_path,
         linear_archive,
         linear_metadata,
+        run_delivery_archive,
+        run_delivery_metadata,
     )
     if record != expected or expected["summary"]["result"] != "passed":
         raise ValueError("linear_qualification.record: exact record mismatch")
@@ -699,6 +724,8 @@ def main(arguments: list[str] | None = None) -> int:
     parser.add_argument("--core-record", type=Path, required=True)
     parser.add_argument("--linear-archive", type=Path, required=True)
     parser.add_argument("--linear-metadata", type=Path, required=True)
+    parser.add_argument("--run-delivery-archive", type=Path, required=True)
+    parser.add_argument("--run-delivery-metadata", type=Path, required=True)
     parser.add_argument("--record", type=Path, required=True)
     args = parser.parse_args(arguments)
     inputs = (
@@ -707,6 +734,8 @@ def main(arguments: list[str] | None = None) -> int:
         args.core_record,
         args.linear_archive,
         args.linear_metadata,
+        args.run_delivery_archive,
+        args.run_delivery_metadata,
     )
     if any(args.record.resolve() == path.resolve() for path in inputs):
         print("qualification failed: record must not overwrite an input", file=sys.stderr)
@@ -719,6 +748,8 @@ def main(arguments: list[str] | None = None) -> int:
             args.core_record,
             args.linear_archive,
             args.linear_metadata,
+            args.run_delivery_archive,
+            args.run_delivery_metadata,
         )
         _atomic_write(args.record, canonical_json(record))
     except Exception as error:
