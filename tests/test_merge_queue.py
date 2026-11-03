@@ -2859,6 +2859,22 @@ class ServeTests(MergeQueueTestCase):
                          changes={"pending": True})
         self.assertEqual(self.serve(adopter), [])
 
+    def test_a_merge_the_queue_records_ends_a_wait_set_while_it_ran(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+
+        def lead_sets_the_wait(runner, subject) -> None:
+            current = state_tool.read_state(adopter.state)
+            state_tool.patch(adopter.state, writer="lead", version=current["version"],
+                             selector=f"queue[subject={subject}]", changes={"pending": True})
+
+        results = self.serve(adopter, seams={"before_merge": lead_sets_the_wait})
+        self.assertEqual([entry for entry in self.outcomes(results) if entry[2] == "merged"],
+                         [("merge", "feature", "merged")])
+        item = adopter.item("feature")
+        self.assertEqual(item["stage"], "merged")
+        self.assertNotIn("pending", item)
+
     def test_serve_takes_work_queued_while_it_runs(self) -> None:
         adopter = self.adopter()
         self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")

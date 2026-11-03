@@ -665,7 +665,7 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
             for item_before, item_after in zip(old, new):
                 for field in set(item_before) | set(item_after):
                     if field not in RUNNER_QUEUE and item_before.get(field) != item_after.get(field):
-                        # Recording a merge ends any wait for the lead; the runner clears it then and at no other time.
+                        # Recording a merge ends any wait for the lead; the runner clears it only in a write that leaves the item merged.
                         if field == "pending" and item_after.get("stage") == "merged" and "pending" not in item_after:
                             continue
                         violations.append(f"/queue[subject={item_before.get('subject')}]/{field} belongs to the lead")
@@ -726,6 +726,13 @@ def _stamp_focus(before: dict, after: dict, writer: str, spoke: str | None) -> N
                     entry["focusBy"] = "runner"
         else:
             entry.update({key: previous[key] for key in ("focusAt", "focusBy") if key in previous})
+
+
+def merged_item(item: dict, **fields: object) -> dict:
+    """A queue item as recording its merge leaves it: the merge ends any wait for the lead."""
+    merged = {**item, "stage": "merged", **fields}
+    merged.pop("pending", None)
+    return merged
 
 
 def lane_rows_after(directory: Path, state: dict, subject: str, *, stopped: str | None = None) -> list[dict]:
@@ -2214,12 +2221,12 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                 # the journal entry is then finished by the next reconcile.
                 _write_atomically(directory / RECOVERY_FILE, dumps(intent))
                 try:
-                    if item["stage"] != "merged":
-                        merged = {**item, "stage": "merged", "syncedHead": recovery["head"]}
-                        merged.pop("pending", None)
-                        queue = [merged if entry is item else entry for entry in state["queue"]]
-                        patch(directory, writer="runner", version=state["version"],
-                              changes={"queue": queue, "lanes": lane_rows_after(directory, state, recovery["subject"])})
+                    if item["stage"] != "merged" or "pending" in item:
+                        merged = merged_item(item, syncedHead=recovery["head"])
+                        written = {"queue": [merged if entry is item else entry for entry in state["queue"]]}
+                        if item["stage"] != "merged":
+                            written["lanes"] = lane_rows_after(directory, state, recovery["subject"])
+                        patch(directory, writer="runner", version=state["version"], changes=written)
                 except StateError as error:
                     (directory / RECOVERY_FILE).unlink(missing_ok=True)
                     if error.code != "version_stale":

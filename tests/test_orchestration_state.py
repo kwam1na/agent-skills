@@ -1237,6 +1237,24 @@ class ReconcileTests(unittest.TestCase):
         code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
         self.assertEqual((code, result["drift"]), (0, False), result)
 
+    def test_a_merge_recovered_for_an_item_already_at_merged_ends_the_wait_too(self) -> None:
+        self.lead({"lanes": [lane("lane-1")], "queue": [queue_item("work-m", changeRequest="change 41", pending=True)]})
+        version = state_tool.show(self.directory)["state"]["version"]
+        # The runner wrote the stage and went before it journaled the merge.
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-m]",
+                         changes={"stage": "merged"})
+        rows = state_tool.show(self.directory)["state"]["lanes"]
+        forge = self.snapshot("forge", [{"subject": "work-m", "state": "merged", "changeRequest": "change 41",
+                                         "head": HEAD_A}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, [change["recovery"] for change in result["changes"]]), (0, [True]), result)
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state["queue"][0]["stage"], "merged")
+        self.assertNotIn("pending", state["queue"][0])
+        self.assertEqual(state["lanes"], rows, "the stage did not move, so the row keeps its word")
+        self.assertEqual([entry["subject"] for entry in state_tool.read_journal(self.directory)
+                          if entry["kind"] == "candidate.merged"], ["work-m"])
+
     def test_a_merged_item_that_already_carries_the_wait_keeps_it_and_nothing_acts_on_it(self) -> None:
         self.lead({"queue": [queue_item("work-m", changeRequest="change 41")]})
         forge = self.snapshot("forge", [{"subject": "work-m", "state": "merged", "changeRequest": "change 41",
