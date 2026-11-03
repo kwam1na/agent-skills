@@ -2352,8 +2352,9 @@ def _finish_intent(directory: Path, intent: dict, finished: list[dict], reports:
     journal = read_journal(directory)
     # Any merge entry for the subject since the intent, whoever wrote it: the
     # runner may have recorded the merge itself before this reconcile.
-    journaled = any(entry["id"] > intent["journalAfter"] and entry["kind"] == "candidate.merged"
-                    and entry["subject"] == intent["subject"] for entry in journal)
+    entries = [entry for entry in journal if entry["id"] > intent["journalAfter"] and entry["kind"] == "candidate.merged"
+               and entry["subject"] == intent["subject"]]
+    journaled = bool(entries)
     item = next((item for item in read_state(directory)["queue"] if item["subject"] == intent["subject"]), None)
     if item is not None and item["stage"] == "merged" and (item.get("syncedHead") or item["head"]) == intent["head"]:
         if not journaled:
@@ -2369,7 +2370,8 @@ def _finish_intent(directory: Path, intent: dict, finished: list[dict], reports:
         if "pending" in item:
             _tool_write(directory, lambda state: next(entry for entry in state["queue"]
                                                       if entry["subject"] == intent["subject"]).pop("pending", None))
-        if intent["summary"].endswith(WAIT_BYPASSED):
+        # A merge the runner journaled went through the queue, so its acceptance was not skipped.
+        if intent["summary"].endswith(WAIT_BYPASSED) and (not journaled or any(entry["summary"] == intent["summary"] for entry in entries)):
             reports.append(_bypass_report(intent["subject"]))
     (directory / RECOVERY_FILE).unlink(missing_ok=True)
 

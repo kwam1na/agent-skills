@@ -477,11 +477,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "91d2b251be71fafd149ebaa2c95146ad5aa218e8f9cad71209430fd1649f54e2"
+          "sha256": "f0d4a49adbb3777ebbb64a8253a597be5c515915df5a6777be97634caa550b63"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "e31c5bbfa0a79005d487016c81a89619c1c12b31f0e72d94dea45eb093b3659d"
+          "sha256": "456089b53686e9135c23ee820bd14205fe517e120085539709f0acf19ccf4284"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",

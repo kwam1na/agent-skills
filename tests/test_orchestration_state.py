@@ -1931,10 +1931,50 @@ class RecoveryIntentTests(unittest.TestCase):
                 state_tool.reconcile(self.directory, [self.forge])
         self.assertEqual(len(self.recovered()), 1)
         self.assertTrue(self.intent().exists())
-        result = state_tool.reconcile(self.directory, [self.forge])
+        # A snapshot that does not name the item: only finishing the intent can clear the wait.
+        elsewhere = self.root / "tracker.json"
+        elsewhere.write_text(json.dumps({"takenAt": taken(), "source": "tracker", "items": []}), encoding="utf-8")
+        result = state_tool.reconcile(self.directory, [elsewhere])
         self.assertEqual([report["subject"] for report in result["reports"]], ["work-q"])
         self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
         self.assertEqual(len(self.recovered()), 1)
+        self.assertFalse(self.intent().exists())
+
+    def put_off_recovery_of_a_waiting_item(self) -> Path:
+        """The item waits, a recovery crashes before its state write, and a snapshot naming nothing is returned."""
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, selector="queue[subject=work-q]",
+                         changes={"pending": True})
+        with mock.patch.object(state_tool, "patch", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        self.assertTrue(self.intent().exists())
+        elsewhere = self.root / "tracker.json"
+        elsewhere.write_text(json.dumps({"takenAt": taken(), "source": "tracker", "items": []}), encoding="utf-8")
+        return elsewhere
+
+    def test_a_merge_the_runner_journaled_after_the_lead_accepted_reports_no_skipped_acceptance(self) -> None:
+        elsewhere = self.put_off_recovery_of_a_waiting_item()
+        state_tool.accept_handoff(self.directory, "work-q")
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-q]",
+                         changes={"stage": "merged", "syncedHead": HEAD_B})
+        state_tool.append_journal(self.directory, kind="candidate.merged", summary="Merged by the runner", lane="lane-1",
+                                  subject="work-q", writer="runner")
+        result = state_tool.reconcile(self.directory, [elsewhere])
+        self.assertEqual(result["reports"], [])
+        self.assertEqual([entry["summary"] for entry in self.recovered()], ["Merged by the runner"])
+        self.assertFalse(self.intent().exists())
+
+    def test_an_intent_for_another_head_records_clears_and_reports_nothing(self) -> None:
+        elsewhere = self.put_off_recovery_of_a_waiting_item()
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-q]",
+                         changes={"stage": "merged", "syncedHead": HEAD_A})
+        result = state_tool.reconcile(self.directory, [elsewhere])
+        self.assertEqual(result["reports"], [])
+        self.assertEqual(self.recovered(), [])
+        self.assertTrue(state_tool.show(self.directory)["state"]["queue"][0]["pending"])
         self.assertFalse(self.intent().exists())
 
     def test_a_crash_after_the_entry_and_before_the_intent_is_cleared_writes_no_second_entry(self) -> None:
