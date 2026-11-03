@@ -1283,6 +1283,161 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual((code, [change["recovery"] for change in result["changes"]]), (0, [True]), result)
         self.assertEqual(state_tool.show(self.directory)["state"]["queue"][0]["stage"], "merged")
 
+    def test_a_merge_recovered_from_the_forge_ends_the_wait_for_the_lead(self) -> None:
+        self.lead({"queue": [queue_item("work-m", changeRequest="change 41", pending=True)]})
+        forge = self.snapshot("forge", [{"subject": "work-m", "state": "merged", "changeRequest": "change 41",
+                                         "head": HEAD_B}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, [change["recovery"] for change in result["changes"]]), (0, [True]), result)
+        item = state_tool.show(self.directory)["state"]["queue"][0]
+        self.assertEqual((item["stage"], item["syncedHead"]), ("merged", HEAD_B))
+        self.assertNotIn("pending", item)
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["drift"]), (0, False), result)
+
+    def test_a_merge_recovered_for_an_item_already_at_merged_ends_the_wait_too(self) -> None:
+        self.lead({"lanes": [lane("lane-1")], "queue": [queue_item("work-m", changeRequest="change 41", pending=True)]})
+        version = state_tool.show(self.directory)["state"]["version"]
+        # The runner wrote the stage and went before it journaled the merge.
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-m]",
+                         changes={"stage": "merged"})
+        rows = state_tool.show(self.directory)["state"]["lanes"]
+        forge = self.snapshot("forge", [{"subject": "work-m", "state": "merged", "changeRequest": "change 41",
+                                         "head": HEAD_A}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, [change["recovery"] for change in result["changes"]]), (0, [True]), result)
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state["queue"][0]["stage"], "merged")
+        self.assertNotIn("pending", state["queue"][0])
+        self.assertEqual(state["lanes"], rows, "the stage did not move, so the row keeps its word")
+        self.assertEqual([report["subject"] for report in result["reports"]], ["work-m"])
+        self.assertEqual([entry["subject"] for entry in state_tool.read_journal(self.directory)
+                          if entry["kind"] == "candidate.merged"], ["work-m"])
+
+    def test_a_merge_that_skipped_the_lead_says_so_and_one_that_did_not_stays_silent(self) -> None:
+        self.lead({"queue": [queue_item("work-m", changeRequest="change 41", pending=True),
+                             queue_item("work-n", order=2, changeRequest="change 42")]})
+        forge = self.snapshot("forge", [{"subject": subject, "state": "merged", "changeRequest": change, "head": HEAD_B}
+                                        for subject, change in (("work-m", "change 41"), ("work-n", "change 42"))])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual(code, 0, result)
+        self.assertEqual([report["subject"] for report in result["reports"]], ["work-m"])
+        self.assertIn("before the lead accepted", result["reports"][0]["note"])
+        summaries = {entry["subject"]: entry["summary"] for entry in state_tool.read_journal(self.directory)
+                     if entry["kind"] == "candidate.merged"}
+        self.assertIn("before the lead accepted", summaries["work-m"])
+        self.assertNotIn("before the lead accepted", summaries["work-n"])
+
+    def test_planned_work_merged_with_no_hand_off_skipped_the_lead_only_under_its_policy(self) -> None:
+        for policy, reported in ((True, ["work-p"]), (False, [])):
+            with self.subTest(policy=policy):
+                directory = self.root / f"policy {policy}"
+                state_tool.init(directory, "Epic underway")
+                state_tool.patch(directory, writer="lead", version=state_tool.show(directory)["state"]["version"],
+                                 changes={"meta": {"handoffsNeedAcceptance": policy},
+                                          "planned": [{"subject": "work-p", "title": "P", "lane": "lane-1", "stage": "review"}]})
+                forge = self.snapshot("forge", [{"subject": "work-p", "state": "merged", "head": HEAD_B}])
+                code, result = run_tool(directory, "reconcile", "--snapshot", forge)
+                self.assertEqual(code, 0, result)
+                self.assertEqual([report["subject"] for report in result["reports"]], reported)
+                summary = next(entry["summary"] for entry in state_tool.read_journal(directory)
+                               if entry["kind"] == "candidate.merged")
+                self.assertEqual("before the lead accepted" in summary, policy)
+
+    def test_an_accepted_merge_under_the_policy_stays_silent(self) -> None:
+        self.lead({"meta": {"handoffsNeedAcceptance": True}, "queue": [queue_item("work-a", changeRequest="change 43")]})
+        forge = self.snapshot("forge", [{"subject": "work-a", "state": "merged", "changeRequest": "change 43", "head": HEAD_B}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["reports"]), (0, []), result)
+        summary = next(entry["summary"] for entry in state_tool.read_journal(self.directory)
+                       if entry["kind"] == "candidate.merged")
+        self.assertNotIn("before the lead accepted", summary)
+
+    def test_planned_work_keeps_its_skipped_acceptance_across_a_recovery_put_off_by_the_runner(self) -> None:
+        self.lead({"meta": {"handoffsNeedAcceptance": True},
+                   "planned": [{"subject": "work-p", "title": "P", "lane": "lane-1", "stage": "review"}]})
+        forge = self.snapshot("forge", [{"subject": "work-p", "state": "merged", "head": HEAD_B}])
+        with state_tool.file_lock(self.directory / state_tool.QUEUE_LOCK):
+            code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual(code, 0, result)
+        item = state_tool.show(self.directory)["state"]["queue"][0]
+        self.assertEqual((item["stage"], item["pending"]), ("queued", True), "the queue must not take it meanwhile")
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, [report["subject"] for report in result["reports"]]), (0, ["work-p"]), result)
+        self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
+        self.assertIn("before the lead accepted", next(entry["summary"] for entry in state_tool.read_journal(self.directory)
+                                                       if entry["kind"] == "candidate.merged"))
+
+    def leftover(self) -> str:
+        """A merged, journaled item carrying the flag, as an earlier version left it; returns its forge snapshot."""
+        self.lead({"queue": [queue_item("work-m", changeRequest="change 41"), queue_item("work-w", order=2, pending=True),
+                             queue_item("work-q", order=3)]})
+        forge = self.snapshot("forge", [{"subject": "work-m", "state": "merged", "changeRequest": "change 41",
+                                         "head": HEAD_B}])
+        self.assertEqual(run_tool(self.directory, "reconcile", "--snapshot", forge)[0], 0)
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, selector="queue[subject=work-m]",
+                         changes={"pending": True})
+        return forge
+
+    def test_a_merged_item_that_already_carries_the_wait_is_cleared_by_the_next_forge_reconcile(self) -> None:
+        forge = self.leftover()
+        entries = len(state_tool.read_journal(self.directory))
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["drift"], [change["recovery"] for change in result["changes"]]),
+                         (0, True, [False]), result)
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state["queue"][0]["stage"], "merged")
+        self.assertNotIn("pending", state["queue"][0])
+        self.assertTrue(state["queue"][1]["pending"], "a wait on unmerged work stays")
+        self.assertEqual([entry for entry in state_tool.read_journal(self.directory)[entries:]
+                          if entry["kind"] == "candidate.merged"], [], "the merge was already recorded")
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual((code, result["drift"]), (0, False), result)
+        self.assertEqual(self.bytes(), before)
+
+    def test_until_then_the_leftover_validates_and_nothing_reads_it_as_waiting(self) -> None:
+        self.leftover()
+        before = self.bytes()
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state_tool.state_errors(state), [])
+        # Its hand-off is over: rejecting it would send merged work back to the lane's plan.
+        for call in (lambda: state_tool.accept_handoff(self.directory, "work-m"),
+                     lambda: state_tool.reject_handoff(self.directory, "work-m", "no")):
+            with self.assertRaises(state_tool.StateError) as caught:
+                call()
+            self.assertEqual(caught.exception.code, "handoff_invalid")
+        self.assertEqual(self.bytes(), before)
+        self.assertEqual(set(state_tool.queue_estimates(state)), {"work-q"})
+        journal = state_tool.read_journal(self.directory)
+        twin = {**state, "queue": [item for item in state["queue"] if item["subject"] != "work-m"]}
+        self.assertEqual(state_tool.delivery_status(state, journal, "2026-11-03T00:00:00Z"),
+                         state_tool.delivery_status({**twin, "queue": [
+                             {key: value for key, value in state["queue"][0].items() if key != "pending"},
+                             *twin["queue"]]}, journal, "2026-11-03T00:00:00Z"))
+
+    def test_the_runner_clears_the_wait_only_by_recording_the_merge(self) -> None:
+        self.lead({"queue": [queue_item("work-m", pending=True)]})
+
+        def as_runner(item: dict) -> dict:
+            version = state_tool.show(self.directory)["state"]["version"]
+            return state_tool.patch(self.directory, writer="runner", version=version, changes={"queue": [item]})
+
+        item = state_tool.show(self.directory)["state"]["queue"][0]
+        without = {key: value for key, value in item.items() if key != "pending"}
+        with self.assertRaises(state_tool.StateError) as caught:
+            as_runner(without)
+        self.assertIn("pending belongs to the lead", str(caught.exception))
+        with self.assertRaises(state_tool.StateError) as caught:
+            as_runner({**without, "stage": "merged", "title": "Renamed"})
+        self.assertIn("title belongs to the lead", str(caught.exception))
+        as_runner({**without, "stage": "merged"})
+        self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
+        with self.assertRaises(state_tool.StateError) as caught:
+            as_runner({**without, "stage": "merged", "pending": True})
+        self.assertIn("pending belongs to the lead", str(caught.exception))
+
     def test_a_merge_the_runner_records_after_the_plan_is_left_as_the_runner_wrote_it(self) -> None:
         self.lead({"queue": [queue_item("work-r", changeRequest="change 51")]})
         forge = self.snapshot("forge", [{"subject": "work-r", "state": "merged", "changeRequest": "change 51",
@@ -1780,10 +1935,105 @@ class RecoveryIntentTests(unittest.TestCase):
         result = state_tool.reconcile(self.directory, [self.forge])
         self.assertTrue(result["drift"])
         self.assertEqual([(change["subject"], change["recovery"]) for change in result["changes"]], [("work-q", True)])
+        self.assertEqual(result["reports"], [], "nothing was skipped")
         self.assertEqual(len(self.recovered()), 1)
         self.assertIn(HEAD_B, self.recovered()[0]["summary"])
         self.assertFalse(self.intent().exists())
         self.assertFalse(state_tool.reconcile(self.directory, [self.forge])["drift"])
+
+    def test_a_crash_before_clearing_an_already_merged_items_wait_is_finished_next_time(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, selector="queue[subject=work-q]",
+                         changes={"pending": True})
+        version += 1
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-q]",
+                         changes={"stage": "merged", "syncedHead": HEAD_B})
+        with mock.patch.object(state_tool, "patch", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        self.assertTrue(self.intent().exists())
+        # A snapshot that does not name the item: only finishing the intent can clear the wait.
+        elsewhere = self.root / "tracker.json"
+        elsewhere.write_text(json.dumps({"takenAt": taken(), "source": "tracker", "items": []}), encoding="utf-8")
+        result = state_tool.reconcile(self.directory, [elsewhere])
+        self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
+        self.assertEqual(len(self.recovered()), 1)
+        self.assertIn("before the lead accepted", self.recovered()[0]["summary"])
+        self.assertEqual([report["subject"] for report in result["reports"]], ["work-q"])
+        self.assertFalse(self.intent().exists())
+
+    def test_a_crash_after_the_state_write_still_reports_the_skipped_acceptance(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, selector="queue[subject=work-q]",
+                         changes={"pending": True})
+        with mock.patch.object(state_tool, "_journal_recovery", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
+        result = state_tool.reconcile(self.directory, [self.forge])
+        self.assertEqual([report["subject"] for report in result["reports"]], ["work-q"])
+        self.assertIn("lead-accept", result["reports"][0]["note"])
+
+    def test_a_crash_after_the_entry_still_reports_the_skipped_acceptance_and_clears_the_wait(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, selector="queue[subject=work-q]",
+                         changes={"pending": True})
+        version += 1
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-q]",
+                         changes={"stage": "merged", "syncedHead": HEAD_B})
+        with mock.patch.object(state_tool, "patch", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        with mock.patch.object(state_tool, "_tool_write", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        self.assertEqual(len(self.recovered()), 1)
+        self.assertTrue(self.intent().exists())
+        # A snapshot that does not name the item: only finishing the intent can clear the wait.
+        elsewhere = self.root / "tracker.json"
+        elsewhere.write_text(json.dumps({"takenAt": taken(), "source": "tracker", "items": []}), encoding="utf-8")
+        result = state_tool.reconcile(self.directory, [elsewhere])
+        self.assertEqual([report["subject"] for report in result["reports"]], ["work-q"])
+        self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
+        self.assertEqual(len(self.recovered()), 1)
+        self.assertFalse(self.intent().exists())
+
+    def put_off_recovery_of_a_waiting_item(self) -> Path:
+        """The item waits, a recovery crashes before its state write, and a snapshot naming nothing is returned."""
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, selector="queue[subject=work-q]",
+                         changes={"pending": True})
+        with mock.patch.object(state_tool, "patch", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        self.assertTrue(self.intent().exists())
+        elsewhere = self.root / "tracker.json"
+        elsewhere.write_text(json.dumps({"takenAt": taken(), "source": "tracker", "items": []}), encoding="utf-8")
+        return elsewhere
+
+    def test_a_merge_the_runner_journaled_after_the_lead_accepted_reports_no_skipped_acceptance(self) -> None:
+        elsewhere = self.put_off_recovery_of_a_waiting_item()
+        state_tool.accept_handoff(self.directory, "work-q")
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-q]",
+                         changes={"stage": "merged", "syncedHead": HEAD_B})
+        state_tool.append_journal(self.directory, kind="candidate.merged", summary="Merged by the runner", lane="lane-1",
+                                  subject="work-q", writer="runner")
+        result = state_tool.reconcile(self.directory, [elsewhere])
+        self.assertEqual(result["reports"], [])
+        self.assertEqual([entry["summary"] for entry in self.recovered()], ["Merged by the runner"])
+        self.assertFalse(self.intent().exists())
+
+    def test_an_intent_for_another_head_records_clears_and_reports_nothing(self) -> None:
+        elsewhere = self.put_off_recovery_of_a_waiting_item()
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-q]",
+                         changes={"stage": "merged", "syncedHead": HEAD_A})
+        result = state_tool.reconcile(self.directory, [elsewhere])
+        self.assertEqual(result["reports"], [])
+        self.assertEqual(self.recovered(), [])
+        self.assertTrue(state_tool.show(self.directory)["state"]["queue"][0]["pending"])
+        self.assertFalse(self.intent().exists())
 
     def test_a_crash_after_the_entry_and_before_the_intent_is_cleared_writes_no_second_entry(self) -> None:
         journal = state_tool._journal_recovery

@@ -2433,7 +2433,8 @@ def ascii_json(value: object) -> bytes:
 
 def _finish_build(directory: Path, subject: str, stage: str, stopped: str | None) -> Callable[[dict], tuple[dict, dict]]:
     def build(current: dict) -> tuple[dict, dict]:
-        queue = [{**item, "stage": stage} if item["subject"] == subject else item for item in current["queue"]]
+        finished = delivery_state.merged_item if stage == "merged" else lambda item: {**item, "stage": stage}
+        queue = [finished(item) if item["subject"] == subject else item for item in current["queue"]]
         return {"queue": queue, "lanes": delivery_state.lane_rows_after(directory, current, subject, stopped=stopped)}, {}
 
     return build
