@@ -1320,5 +1320,242 @@ class MarkedDecisionTests(unittest.TestCase):
             self.assertTrue(taken, "released once marked")
 
 
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class LaneCommandTests(RunDeliveryTrackerCommandTests):
+    """The lane's tracker steps as commands (C5): lane-start records the start the publisher's start move waits for,
+    the review move follows reviewWhen, and handoff posts its own update through the ledger, or leaves it to the
+    publisher when the tracker refuses it."""
+
+    def test_lead_assign_journals_each_story_and_lead_plan_change_marks_its_decision(self) -> None:
+        pass  # The parent's case; not repeated here.
+
+    def test_lead_setup_binds_the_tracker_publisher_and_lead_init_refuses_without_it(self) -> None:
+        pass  # The parent's case; not repeated here.
+
+    def lane(self, transitions: dict, review_pr: bool = False, **tracker):
+        """FX-3 (lane-2) assigned, with a contract-only tracker; in-app checks off, so a hand-off needs only rounds."""
+        h = self.harness
+        fx = self.fixture()
+        m = fx.main
+        path = h.setup_delivery(fx)
+        d = json.loads(path.read_text())
+        d["stories"]["FX-3"]["inApp"] = "none"
+        path.write_text(json.dumps(d, indent=2))
+        h.commit(m, "FX-1: FX-3 needs no in-app checks")
+        h.sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        backend = FileBackend(fx.tmp)
+        with backend.edit() as store:
+            for key, status in (("FX-1", "In Progress"), ("FX-2", "Backlog"), ("FX-3", "Backlog")):
+                store["issues"][key] = {"status": status, "comments": [], "markers": [], "labels": [], "parent": None,
+                                        "summary": key}
+        conf = json.loads((m / ".agents/run-delivery.json").read_text())
+        conf["tracker"] = {**conf["tracker"], **backend.adapter(), **tracker, "transitions": transitions}
+        if review_pr:
+            conf["review"]["pr"] = {"author": "Pipeline Bot", "waitSeconds": 1}
+        own = fx.tmp / "run-delivery.json"
+        own.write_text(json.dumps(conf, indent=2))
+        fx.env.update({"RUN_DELIVERY_CONFIG": str(own), **backend.env()})
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("lane-start FX-3 --base feature/FX-1", out)
+        return fx, backend
+
+    def publish(self, fx) -> None:
+        doc = self.harness.sh(sys.executable, "-B", STATE_TOOL, "--dir", fx.tmp / "record", "show").stdout
+        done = subprocess.run([sys.executable, "-B", str(PUBLISHER), "--state-dir", str(fx.tmp / "record"),
+                               "--repo", str(fx.main), "--delivery", "FX-1"], input=doc, text=True,
+                              capture_output=True, env=fx.env, cwd=fx.main)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def started(self, fx) -> Path:
+        code, out = fx.flow("lane-start", "FX-3", "--base", "feature/FX-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        return fx.main / "lanes/FX-3"
+
+    def opened(self, fx, wt: Path) -> str:
+        (wt / "src/two.txt").write_text("two\n")
+        self.harness.commit(wt, "FX-3: two")
+        code, out = fx.flow("push", "FX-3", cwd=wt)
+        self.assertEqual(code, 0, out)
+        body = fx.tmp / "body.md"
+        body.write_text("Summary\n")
+        code, out = fx.flow("open-pr", "FX-3", "--title", "FX-3: two", "--body-file", body, cwd=wt)
+        self.assertEqual(code, 0, out)
+        return out
+
+    def calls(self, backend, kind: str) -> list:
+        return [call for call in backend.read()["calls"] if call[0] == kind]
+
+    # Lane start.
+
+    def test_lane_start_makes_the_checkout_and_records_the_start_the_publisher_moves_once(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"]})
+        self.publish(fx)
+        self.assertEqual(backend.read()["issues"]["FX-3"]["status"], "Backlog", "nothing moves before lane-start")
+        wt = self.started(fx)
+        self.assertEqual(self.harness.sh("git", "rev-parse", "--abbrev-ref", "HEAD", cwd=wt).stdout.strip(), "feature/FX-3")
+        self.assertEqual(backend.read()["calls"], [], "lane-start makes no tracker call of its own")
+        record = json.loads(self.harness.sh(sys.executable, "-B", STATE_TOOL, "--dir", fx.tmp / "record", "show").stdout)
+        self.assertEqual({l["id"]: l["focus"] for l in record["state"]["lanes"]}["lane-2"], "FX-3: started")
+        self.publish(fx)
+        self.publish(fx)
+        issue = backend.read()["issues"]["FX-3"]
+        self.assertEqual(issue["status"], "In Progress")
+        self.assertEqual(len([c for c in issue["comments"] if c["text"].startswith("Started")]), 1)
+        starts = fx.tmp / "flow-log/FX-1.lane-starts.jsonl"
+        before = (starts.read_text(), (fx.tmp / "record/state.json").read_text())
+        code, out = fx.flow("lane-start", "FX-3", "--base", "feature/FX-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("already started; nothing to do", out)
+        self.assertEqual((starts.read_text(), (fx.tmp / "record/state.json").read_text()), before)
+
+    def test_lane_start_refuses_a_base_the_binding_doesnt_serve(self) -> None:
+        fx, _ = self.lane({"start": ["Start work"]})
+        code, out = fx.flow("lane-start", "FX-3", "--base", "release/1", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("doesn't serve the base release/1", out)
+        self.assertFalse((fx.main / "lanes/FX-3").exists())
+
+    def test_with_a_host_only_tracker_lane_start_prints_the_move_and_post_and_records_them(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"]}, updates="host")
+        code, out = fx.flow("lane-start", "FX-3", "--base", "feature/FX-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn('Tracker move (your story FX-3): "Start work", with your tracker tools.', out)
+        self.assertIn("Tracker post (your story FX-3): Started (lane-2)", out)
+        printed = tp.read_flow(fx.tmp / "flow-log", "FX-1", "lane-prints")
+        self.assertEqual([(p["subject"], p["move"], p["transitions"]) for p in printed], [("FX-3", "start", ["Start work"])])
+        self.assertEqual(backend.read()["calls"], [])
+
+    # Review move.
+
+    def test_with_no_review_when_open_pr_prints_the_move_and_nothing_moves(self) -> None:
+        for review_pr in (False, True):
+            with self.subTest(review_pr=review_pr):
+                fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"]}, review_pr=review_pr)
+                wt = self.started(fx)
+                out = self.opened(fx, wt)
+                self.assertIn('Tracker move (your story FX-3): "Submit for review", with your tracker tools.', out)
+                self.assertEqual(self.calls(backend, "transition"), [])
+
+    def test_with_pr_open_open_pr_makes_the_review_move_once(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pr-open"})
+        wt = self.started(fx)
+        self.publish(fx)
+        out = self.opened(fx, wt)
+        self.assertIn('Moved with "Submit for review".', out)
+        self.assertEqual(backend.read()["issues"]["FX-3"]["status"], "In Review")
+        body = fx.tmp / "body.md"
+        code, out = fx.flow("open-pr", "FX-3", "--title", "FX-3: two", "--body-file", body, cwd=wt)
+        self.assertIn("review move is already made", out)
+        self.assertEqual([c[2] for c in self.calls(backend, "transition")], ["Start work", "Submit for review"])
+        [line] = [l for l in tp.read_ledger(fx.tmp / "record") if l.get("move") == "review"]
+        self.assertEqual((line["journal"], line["writer"], line["ticket"]), (tp.LANE_MOVE, "lane", "FX-3"))
+
+    def test_with_gates_passed_open_pr_makes_the_move_once_the_gates_pass(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "gates-passed"})
+        wt = self.started(fx)
+        self.publish(fx)
+        out = self.opened(fx, wt)
+        self.assertIn("review move waits for the gates to pass", out)
+        self.assertEqual(backend.read()["issues"]["FX-3"]["status"], "In Progress")
+        code, out = fx.flow("gate", "FX-3", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("open-pr", "FX-3", "--title", "FX-3: two", "--body-file", fx.tmp / "body.md", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(backend.read()["issues"]["FX-3"]["status"], "In Review")
+
+    def test_with_pipeline_green_only_pr_review_makes_the_move(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pipeline-green"},
+                                review_pr=True)
+        wt = self.started(fx)
+        self.publish(fx)
+        out = self.opened(fx, wt)
+        self.assertNotIn("Tracker move", out)
+        self.assertEqual(self.calls(backend, "transition"), [["transition", "FX-3", "Start work"]])
+        reviews = fx.tmp / "reviews.json"
+        fx.env["FAKE_FORGE_REVIEWS"] = str(reviews)
+        reviews.write_text(json.dumps({"checks": [{"name": "pipe", "state": "pending", "at": "2026-01-01T00:00:10"}],
+                                       "reviews": []}))
+        code, out = fx.flow("pr-review", "FX-3", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertEqual(backend.read()["issues"]["FX-3"]["status"], "In Progress")
+        reviews.write_text(json.dumps({"checks": [{"name": "pipe", "state": "passed", "at": "2026-01-01T00:00:10"}],
+                                       "reviews": [{"author": "Pipeline Bot", "at": "2026-01-01T00:00:30", "body": "ok"}]}))
+        code, out = fx.flow("pr-review", "FX-3", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(backend.read()["issues"]["FX-3"]["status"], "In Review")
+
+    def test_pipeline_green_without_a_pr_review_is_refused(self) -> None:
+        own = {"review": {}, "tracker": {"argv": ["adapter"], "transitions": {"review": ["R"], "reviewWhen": "pipeline-green"}}}
+        self.assertIn("review.pr declares none", tp.refusal(tp.settings(Path(tempfile.gettempdir()), own, {})))
+        own["review"]["pr"] = {"author": "Pipeline Bot"}
+        self.assertEqual(tp.settings(Path(tempfile.gettempdir()), own, {})["problems"], [])
+        own["tracker"]["transitions"]["reviewWhen"] = "soon"
+        self.assertIn("must be one of gates-passed, pr-open, pipeline-green", tp.refusal(tp.settings(Path("."), own, {})))
+
+    # Hand-off.
+
+    def handed(self, fx, wt: Path) -> tuple[int, str]:
+        h = self.harness
+        (wt / ".orchestration/review/FX-3").mkdir(parents=True, exist_ok=True)
+        (wt / ".orchestration/review/FX-3/context.md").write_text("- evidence")
+        code, out = fx.flow("gate", "FX-3", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("review-prepare", "FX-3", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        h.write_results(wt / ".orchestration/review/FX-3", 1, "FX-3", fx.lenses(wt))
+        code, out = fx.flow("review-reduce", "FX-3", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        return fx.flow("handoff", "FX-3", "--pr", "https://forge.test/pr/1", cwd=wt)
+
+    def test_handoff_posts_its_own_update_once_under_its_journal_entry(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"]})
+        wt = self.started(fx)
+        self.opened(fx, wt)
+        code, out = self.handed(fx, wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("Tracker post: posted the hand-off update on FX-3.", out)
+        handed = [l for l in tp.read_ledger(fx.tmp / "record") if l.get("kind") == "candidate.handed"]
+        self.assertEqual([(l["outcome"], l["writer"]) for l in handed], [("comment", "lane")])
+        self.publish(fx)
+        self.publish(fx)
+        texts = [c["text"] for c in backend.read()["issues"]["FX-3"]["comments"]]
+        self.assertEqual(sum(t.startswith("Handed off and queued") for t in texts), 1)
+        self.assertIn("https://forge.test/pr/1", [t for t in texts if t.startswith("Handed off")][0])
+
+    def test_a_handoff_whose_post_is_refused_still_hands_off_and_the_publisher_posts_it_once(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"]})
+        wt = self.started(fx)
+        self.opened(fx, wt)
+        with backend.edit() as store:
+            store["failures"].append({"op": "comment", "ticket": "FX-3", "status": 401, "times": 1})
+        code, out = self.handed(fx, wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("not posted", out)
+        self.assertIn("**Hand-off: FX-3**", out)
+        record = json.loads(self.harness.sh(sys.executable, "-B", STATE_TOOL, "--dir", fx.tmp / "record", "show").stdout)
+        [entry] = [e for e in record["journal"] if e["kind"] == "candidate.handed"]
+        self.assertEqual([l for l in tp.read_ledger(fx.tmp / "record") if l["journal"] == entry["id"]], [])
+        self.publish(fx)
+        self.publish(fx)
+        texts = [c["text"] for c in backend.read()["issues"]["FX-3"]["comments"]]
+        self.assertEqual(sum(t.startswith("Handed off and queued") for t in texts), 1)
+
+    # Brief.
+
+    def test_the_brief_names_the_lane_commands_and_the_turn_rule(self) -> None:
+        fx, _ = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "gates-passed"})
+        code, out = fx.flow("lead-brief", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        text = (fx.main / "docs/lane-brief.md").read_text()
+        self.assertIn("lane-start <key> --base feature/FX-1", text)
+        self.assertNotIn("git worktree add", text)
+        self.assertIn("End your turn only to hand off, to report yourself blocked, or to ask the lead.", text)
+        self.assertIn("the tracker publisher makes it once `lane-start` records your start", text)
+        self.assertIn("`open-pr` makes it once the PR is open and the gates pass at its head", text)
+        self.assertNotIn("Post on your own story with your tracker tools: at start", text)
+
 if __name__ == "__main__":
     unittest.main()

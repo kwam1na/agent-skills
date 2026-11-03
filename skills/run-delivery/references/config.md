@@ -85,7 +85,11 @@ checks may need no file at all.
     "transitions": {                          // every status move; absent: none
       "source": "https://wiki/workflow",      // the team's workflow page
       "start": ["Refined", "Start work"],     // a story's start, in order: the publisher makes it on lane.assigned
-      "review": ["Submit for review"],        // once its draft PR is open and the gates pass
+      "review": ["Submit for review"],        // the lane's review move; when, by reviewWhen
+      "reviewWhen": "gates-passed",           // gates-passed: open-pr makes it once the gates pass at the PR's
+                                              // head; pr-open: as the PR opens; pipeline-green: pr-review makes it
+                                              // once the pipeline's review is current and its checks green (needs
+                                              // review.pr). Absent: nothing moves by itself, and open-pr prints it
       "lead": {                               // later journal kinds to the moves the publisher makes for them
         "candidate.merged": ["Complete"],     // absent, or an empty list: no move, and the update says the move
         "delivery.closed": ["Close epic"]     // belongs to people (the default)
@@ -260,6 +264,18 @@ target is what the tracker lists for it, or else its `targets` entry; with neith
 `agent-delivery:<delivery>:<init id>:<journal id>:<action>`, where the init id is the time of the record's first
 journal entry, digits and letters only, and the action is `comment` or `transition:<name>`. Before writing, the
 publisher reads the ticket's markers, so a run that died between a write and its line never posts it twice.
+
+**Lane commands.** `lane-start <key> --base <base>` begins a story: it checks the base against the binding's, makes
+the story's checkout from it, runs the prepare step, sets the lane's focus, and records the story's start in the
+`lane-starts` file. It makes no tracker call: the publisher's start move and update follow the record. Run again, it
+changes nothing. `open-pr` and `pr-review` make the review move at the moment `reviewWhen` names, through the
+publisher's move rules, with ledger lines of journal id 0 (`move: "review"`, the story as `ticket`), since that move
+journals nothing; a refused move writes no line, and running the command again, or `handoff`, retries it. `handoff`
+posts the hand-off update on the story, under its `candidate.handed` entry, holding the ledger's lock across the
+journal write, the post and the line; when the tracker refuses it, the hand-off stands and the publisher posts it
+later. With a tracker reachable only through the host, the commands print each move and post for the lane to make,
+and record them in the flow log's `<delivery>.lane-prints.jsonl`. `lead-setup --review-when` records `reviewWhen`;
+it is never inferred from `review.pr`.
 
 ## The tracker adapter contract (`tracker-adapter/1`)
 

@@ -3578,6 +3578,9 @@ class RunDeliveryDoctorTests(unittest.TestCase):
              lambda: edit_json(binding_path, lambda b: b["state"].update(publishers=[])), None),
             ("snapshots and publishers", "the binding has no state.forgeSnapshot", "add state.forgeSnapshot",
              lambda: edit_json(binding_path, lambda b: b["state"].pop("forgeSnapshot")), None),
+            ("snapshots and publishers", "reviewWhen is pipeline-green, which waits for the pipeline's review",
+             "correct `tracker`", lambda: edit_json(m / conf_rel, lambda c: c["tracker"].update(
+                 transitions={"review": ["Submit for review"], "reviewWhen": "pipeline-green"})), None),
             ("snapshots and publishers", "the binding has no state.forgeSnapshot", "add state.forgeSnapshot",
              lambda: both(edit_json(binding_path, lambda b: b["state"].pop("forgeSnapshot")),
                           edit_json(m / conf_rel, lambda c: c.update(forge={"adapter": "bitbucket", "repository": "ws/r",
@@ -3619,6 +3622,18 @@ class RunDeliveryDoctorTests(unittest.TestCase):
                 manual()
         finally:
             undo()
+        # doctor names when the lanes' review move is made, and that it is opt-in.
+        for transitions, said in (({"review": ["Submit for review"]},
+                                   "tracker.transitions.reviewWhen is unset, so lanes make the review move by hand"),
+                                  ({"review": ["Submit for review"], "reviewWhen": "gates-passed"},
+                                   "tracker.transitions.reviewWhen is gates-passed")):
+            undo = edit_json(m / conf_rel, lambda c: c["tracker"].update(transitions=transitions))
+            try:
+                line = doctor_lines(self.doctor(fx, "--offline"))["snapshots and publishers"]
+                self.assertEqual(line[0], "ok", line)
+                self.assertIn(said, line[1])
+            finally:
+                undo()
         # Node exactly at the runtime's nodeMinimum is enough.
         exact = fx.tmp / "exact-node-bin"
         exact.mkdir()
