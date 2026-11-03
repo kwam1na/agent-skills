@@ -66,7 +66,7 @@
       "outputs": [
         {
           "path": "skills/compound-learning/SKILL.md",
-          "sha256": "16a53ddf49d2f366e606dd49026635fa8d231b3dc52c30c2c5d1c165a9b05506"
+          "sha256": "c68a571f226060f64dc089da293e1918358b1d9e768446fb202537680f0278fe"
         }
       ],
       "owner": "agent-skills-corpus",

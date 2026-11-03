@@ -29,6 +29,14 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " declare, otherwise at `docs/plans/<key>.md`, where `<key>` names the"
         " work, and report the path",
     ),
+    "skills/compound-learning/SKILL.md": (
+        "Otherwise the caller saves a solution note in the folder the"
+        " repository's instructions declare, or at `docs/solutions/<slug>.md`,"
+        " and reports the path in the caller-owned delivery handoff",
+        "The workflow itself writes nothing, and `compounding.recorded` records"
+        " the decision only",
+        "This workflow does not choose a document schema, tracker, or transport",
+    ),
     "skills/linear-tracker-adapter/SKILL.md": (
         "Apart from `schemaVersion`, which identifies the document format, it"
         " declares only properties an operation consumes",

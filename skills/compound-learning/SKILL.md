@@ -33,6 +33,10 @@ blocker. The emission records the decision; it is not the durable state, and
 this workflow still writes none.
 
 For a required learning, hand the decision to the adopting repository's
-existing guidance, sensor, skill, or follow-up workflow. For a not-required
-decision, record that outcome in the caller-owned delivery handoff. This
-workflow does not choose a document schema, storage path, tracker, or transport.
+existing guidance, sensor, skill, or follow-up workflow when one fits. Otherwise
+the caller saves a solution note in the folder the repository's instructions
+declare, or at `docs/solutions/<slug>.md`, and reports the path in the
+caller-owned delivery handoff. For a not-required decision, record that outcome
+in the same handoff. The workflow itself writes nothing, and
+`compounding.recorded` records the decision only. This workflow does not choose
+a document schema, tracker, or transport.
