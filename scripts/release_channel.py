@@ -35,9 +35,11 @@ DEFAULT_BRANCH = "main"
 CI_WORKFLOW = "CI"
 REQUIRED_JOBS = (
     "validate (ubuntu-latest, 3.11)",
-    "validate (macos-latest, 3.11)",
-    "validate (windows-latest, 3.11)",
     "cut-release",
+)
+# Informs whoever tags. Its result, or its absence, neither allows nor blocks a release, and nothing waits for it.
+INFORMING_JOBS = (
+    "validate (macos-latest, 3.11)",
 )
 PASS, WAIT, REFUSE, MISSING = "pass", "wait", "refuse", "missing"
 WAIT_LIMIT_SECONDS = 150 * 60
@@ -144,25 +146,28 @@ def render_notes(message: str, output: Path, generated: str) -> str:
 
 
 def decide(runs: list[dict], jobs_for: Callable[[int], list[dict]], commit: str, branch: str = DEFAULT_BRANCH) -> Decision:
-    """CI's verdict on exactly this commit, on a push to the default branch."""
+    """CI's verdict on exactly this commit, on a push to the default branch, from its gating jobs alone.
+
+    The run's own status and conclusion carry the informing jobs too, so they say only whether a job yet to appear may still come.
+    """
     matching = [run for run in runs if run.get("head_sha") == commit and run.get("event") == "push"
                 and run.get("head_branch") == branch and run.get("name") == CI_WORKFLOW]
     if not matching:
         return Decision(MISSING, f"no {CI_WORKFLOW} run for {commit} on a push to {branch}")
     run = max(matching, key=lambda item: item.get("run_number", 0))
-    if run.get("status") != "completed":
-        return Decision(WAIT, f"{CI_WORKFLOW} run {run.get('id')} is {run.get('status')}")
-    if run.get("conclusion") != "success":
-        return Decision(REFUSE, f"{CI_WORKFLOW} run {run.get('id')} concluded {run.get('conclusion')}")
-    jobs = jobs_for(run["id"])
-    named = {job.get("name") for job in jobs}
-    missing = [name for name in REQUIRED_JOBS if name not in named]
-    if missing:
-        return Decision(REFUSE, f"{CI_WORKFLOW} run {run['id']} has no job named {', '.join(missing)}")
-    failed = [f"{job.get('name')}: {job.get('conclusion')}" for job in jobs if job.get("conclusion") != "success"]
+    jobs = [job for job in jobs_for(run["id"]) if job.get("name") not in INFORMING_JOBS]
+    finished = [job for job in jobs if job.get("status") == "completed"]
+    failed = [f"{job.get('name')}: {job.get('conclusion')}" for job in finished if job.get("conclusion") != "success"]
     if failed:
         return Decision(REFUSE, f"{CI_WORKFLOW} run {run['id']} has jobs that did not succeed: {'; '.join(failed)}")
-    return Decision(PASS, f"{CI_WORKFLOW} run {run['id']} succeeded with every job")
+    named = {job.get("name") for job in finished}
+    unfinished = [job.get("name") for job in jobs if job not in finished] + [name for name in REQUIRED_JOBS if name not in {job.get("name") for job in jobs}]
+    if unfinished and run.get("status") != "completed":
+        return Decision(WAIT, f"{CI_WORKFLOW} run {run['id']} is {run.get('status')}, without {', '.join(unfinished)}")
+    missing = [name for name in REQUIRED_JOBS if name not in named]
+    if missing or unfinished:
+        return Decision(REFUSE, f"{CI_WORKFLOW} run {run['id']} has no finished job named {', '.join(missing or unfinished)}")
+    return Decision(PASS, f"{CI_WORKFLOW} run {run['id']} succeeded with every job publishing requires")
 
 
 def _say(line: str) -> None:

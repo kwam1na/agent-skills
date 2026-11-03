@@ -34,7 +34,8 @@ def load_channel():
 
 channel = load_channel()
 COMMIT = "a" * 40
-JOBS = ("validate (ubuntu-latest, 3.11)", "validate (macos-latest, 3.11)", "validate (windows-latest, 3.11)", "cut-release")
+JOBS = ("validate (ubuntu-latest, 3.11)", "cut-release")
+MACOS = "validate (macos-latest, 3.11)"
 
 
 def git(root: Path, *arguments: str) -> str:
@@ -164,10 +165,45 @@ class ContinuousIntegrationDecisionTests(unittest.TestCase):
     def test_success_on_the_exact_commit_passes(self) -> None:
         self.assertEqual(self.decide([self.run_record()]), channel.PASS)
 
-    def test_a_failed_or_cancelled_or_otherwise_concluded_run_is_refused(self) -> None:
+    def test_a_required_job_that_did_not_succeed_is_refused_however_the_run_concluded(self) -> None:
         for conclusion in ("failure", "cancelled", "timed_out", "skipped", "neutral", "action_required", "stale", None):
-            with self.subTest(conclusion=conclusion):
-                self.assertEqual(self.decide([self.run_record(conclusion=conclusion)]), channel.REFUSE)
+            for name in JOBS:
+                with self.subTest(conclusion=conclusion, name=name):
+                    self.assertEqual(self.decide([self.run_record(conclusion=conclusion)], self.jobs(**{name: conclusion})), channel.REFUSE)
+
+    def test_macos_cannot_change_the_decision(self) -> None:
+        # It informs whoever tags. The run's own conclusion carries it, so that conclusion cannot decide either.
+        record = {"name": MACOS, "status": "completed"}
+        for conclusion in ("success", "failure", "cancelled", "timed_out", "skipped", None):
+            for run_conclusion in ("success", "failure", "cancelled"):
+                with self.subTest(conclusion=conclusion, run=run_conclusion):
+                    jobs = [*self.jobs(), {**record, "conclusion": conclusion}]
+                    self.assertEqual(self.decide([self.run_record(conclusion=run_conclusion)], jobs), channel.PASS)
+        self.assertEqual(self.decide([self.run_record(conclusion="cancelled")], self.jobs()), channel.PASS, "macOS never ran")
+        for name in JOBS:
+            with self.subTest(failed=name):
+                jobs = [*self.jobs(**{name: "failure"}), {**record, "conclusion": "success"}]
+                self.assertEqual(self.decide([self.run_record()], jobs), channel.REFUSE, "macOS cannot rescue it")
+
+    def test_nothing_waits_for_macos_to_finish(self) -> None:
+        going = self.run_record(status="in_progress", conclusion=None)
+        jobs = [*self.jobs(), {"name": MACOS, "status": "in_progress", "conclusion": None}]
+        self.assertEqual(self.decide([going], jobs), channel.PASS)
+
+    def test_a_required_job_still_going_waits_and_one_already_failed_refuses_at_once(self) -> None:
+        going = self.run_record(status="in_progress", conclusion=None)
+        ubuntu, cut = JOBS
+        unfinished = {"name": cut, "status": "in_progress", "conclusion": None}
+        self.assertEqual(self.decide([going], [self.jobs()[0], unfinished]), channel.WAIT)
+        self.assertEqual(self.decide([going], [self.jobs()[0]]), channel.WAIT, "its job has not appeared yet")
+        self.assertEqual(self.decide([going], [{"name": ubuntu, "status": "completed", "conclusion": "failure"}, unfinished]), channel.REFUSE)
+
+    def test_a_finished_run_with_any_gating_job_unfinished_is_refused(self) -> None:
+        extra = {"name": "something new", "status": "in_progress", "conclusion": None}
+        self.assertEqual(self.decide([self.run_record()], [*self.jobs(), extra]), channel.REFUSE)
+
+    def test_a_finished_run_missing_a_required_job_is_refused_not_waited_for(self) -> None:
+        self.assertEqual(self.decide([self.run_record(conclusion="cancelled")], [self.jobs()[0]]), channel.REFUSE)
 
     def test_no_run_is_missing(self) -> None:
         self.assertEqual(self.decide([]), channel.MISSING)
@@ -175,7 +211,7 @@ class ContinuousIntegrationDecisionTests(unittest.TestCase):
     def test_a_run_still_going_waits(self) -> None:
         for status in ("queued", "in_progress", "waiting", "requested", "pending"):
             with self.subTest(status=status):
-                self.assertEqual(self.decide([self.run_record(status=status, conclusion=None)]), channel.WAIT)
+                self.assertEqual(self.decide([self.run_record(status=status, conclusion=None)], []), channel.WAIT)
 
     def test_a_run_on_the_wrong_commit_or_event_or_branch_or_workflow_does_not_count(self) -> None:
         for wrong in ({"head_sha": "b" * 40}, {"event": "pull_request"}, {"event": "workflow_dispatch"}, {"head_branch": "feature"},
@@ -183,16 +219,20 @@ class ContinuousIntegrationDecisionTests(unittest.TestCase):
             with self.subTest(wrong=wrong):
                 self.assertEqual(self.decide([self.run_record(**wrong)]), channel.MISSING)
 
+    def by_run(self, runs: list[dict], failing: set[int]) -> str:
+        jobs = lambda run_id: self.jobs(**{JOBS[0]: "failure"}) if run_id in failing else self.jobs()
+        return channel.decide(runs, jobs, COMMIT, "main").state
+
     def test_a_green_run_elsewhere_does_not_rescue_a_failed_one_here(self) -> None:
-        runs = [self.run_record(conclusion="failure"), self.run_record(id=8, run_number=4, event="pull_request")]
-        self.assertEqual(self.decide(runs), channel.REFUSE)
+        runs = [self.run_record(), self.run_record(id=8, run_number=4, event="pull_request")]
+        self.assertEqual(self.by_run(runs, {7}), channel.REFUSE)
 
     def test_the_newest_run_for_the_commit_decides(self) -> None:
-        older, newer = self.run_record(id=1, run_number=1, conclusion="failure"), self.run_record(id=2, run_number=2)
-        self.assertEqual(self.decide([older, newer]), channel.PASS)
-        self.assertEqual(self.decide([newer, older]), channel.PASS)
-        self.assertEqual(self.decide([newer, self.run_record(id=3, run_number=3, conclusion="failure")]), channel.REFUSE)
-        self.assertEqual(self.decide([self.run_record(id=3, run_number=3, conclusion="failure"), newer]), channel.REFUSE)
+        older, newer, newest = self.run_record(id=1, run_number=1), self.run_record(id=2, run_number=2), self.run_record(id=3, run_number=3)
+        self.assertEqual(self.by_run([older, newer], {1}), channel.PASS)
+        self.assertEqual(self.by_run([newer, older], {1}), channel.PASS)
+        self.assertEqual(self.by_run([newer, newest], {3}), channel.REFUSE)
+        self.assertEqual(self.by_run([newest, newer], {3}), channel.REFUSE)
 
     def test_a_successful_run_with_a_failed_or_skipped_job_is_refused(self) -> None:
         for name in JOBS:
@@ -208,12 +248,12 @@ class ContinuousIntegrationDecisionTests(unittest.TestCase):
                 self.assertEqual(decision.state, channel.REFUSE)
                 self.assertIn(name, decision.reason)
 
-    def test_a_push_run_holding_fewer_systems_cannot_publish(self) -> None:
-        # A change request's narrow matrix must never become a release's proof, even through a push run that reports it.
-        ubuntu, macos, windows, cut = JOBS
+    def test_a_push_run_missing_ubuntu_or_cut_release_cannot_publish(self) -> None:
+        # macOS is no substitute for either.
+        ubuntu, cut = JOBS
         job = lambda name: {"name": name, "status": "completed", "conclusion": "success"}
-        for present, absent in (((ubuntu, cut), (macos, windows)), ((ubuntu, macos, cut), (windows,)), ((ubuntu, windows, cut), (macos,)),
-                                ((ubuntu,), (macos, windows, cut)), ((cut,), (ubuntu, macos, windows))):
+        for present, absent in (((ubuntu,), (cut,)), ((cut,), (ubuntu,)), ((MACOS,), (ubuntu, cut)), ((MACOS, cut), (ubuntu,)),
+                                ((MACOS, ubuntu), (cut,))):
             with self.subTest(present=present):
                 jobs = [job(name) for name in present]
                 decision = channel.decide([self.run_record()], lambda run_id: jobs, COMMIT, "main")
@@ -229,8 +269,9 @@ class ContinuousIntegrationDecisionTests(unittest.TestCase):
         self.assertEqual(set(channel.REQUIRED_JOBS), set(JOBS))
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         systems = json.loads(re.search(r"\) && '(\[[^']*\])' \|\| '", workflow).group(1))
-        self.assertEqual({f"validate ({system}, 3.11)" for system in systems} | {"cut-release"}, set(channel.REQUIRED_JOBS),
-                         "the full matrix is every job publishing requires")
+        self.assertEqual({f"validate ({system}, 3.11)" for system in systems} | {"cut-release"},
+                         set(channel.REQUIRED_JOBS) | set(channel.INFORMING_JOBS), "every job CI defines either gates or informs")
+        self.assertEqual(channel.INFORMING_JOBS, (MACOS,))
         self.assertIn('python-version: ["3.11"]', workflow)
         self.assertRegex(workflow, r"(?m)^  validate:$")
         self.assertRegex(workflow, r"(?m)^  cut-release:$")
@@ -497,7 +538,8 @@ class CommandLineTests(unittest.TestCase):
     def test_ci_refuses_a_failed_or_cancelled_run_with_exit_one(self) -> None:
         for conclusion in ("failure", "cancelled"):
             with self.subTest(conclusion=conclusion):
-                done = self.ci(self.fake_gh(**self.ci_replies([self.ci_run(conclusion=conclusion)])))
+                jobs = [{"name": JOBS[0], "status": "completed", "conclusion": conclusion}]
+                done = self.ci(self.fake_gh(**self.ci_replies([self.ci_run(conclusion=conclusion)], jobs)))
                 self.assertEqual(done.returncode, 1)
                 self.assertIn("publishes nothing", done.stderr)
         failed = [{"name": name, "status": "completed", "conclusion": "failure"} for name in JOBS]
@@ -526,7 +568,8 @@ class CommandLineTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
     def test_ci_waits_for_a_running_build_only_up_to_the_real_bound(self) -> None:
-        code, waited, said = self.waited(self.fake_gh(**self.ci_replies([self.ci_run(status="in_progress", conclusion=None)])))
+        going = self.fake_gh(**self.ci_replies([self.ci_run(status="in_progress", conclusion=None)], []))
+        code, waited, said = self.waited(going)
         self.assertEqual(code, 1)
         self.assertGreater(waited, 140 * 60)
         self.assertLessEqual(waited, 150 * 60)
@@ -679,11 +722,12 @@ class WorkflowWiringTests(unittest.TestCase):
                          ["""        run: python scripts/run-tests.py --workers "$(python -c 'import os; print(os.cpu_count())')\""""])
         self.assertRegex(ci, r"(?m)^      - shell: bash\n        run: python scripts/run-tests\.py ")
 
-    def test_ci_runs_the_full_matrix_wherever_publishing_or_main_depends_on_it(self) -> None:
+    def test_ci_runs_ubuntu_and_adds_macos_on_a_push_to_main_or_with_the_label(self) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertIn("""        os: ${{ fromJSON((github.event_name == 'push' || github.base_ref == 'main' """
+        self.assertIn("""        os: ${{ fromJSON((github.event_name == 'push' """
                       """|| contains(github.event.pull_request.labels.*.name, 'full-matrix')) """
-                      """&& '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}\n""", ci)
+                      """&& '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}\n""", ci)
+        self.assertNotIn("windows-latest", ci)
         self.assertRegex(ci, r"(?m)^  push:\n    branches: \[main\]$")
         self.assertRegex(ci, r"(?m)^on:\n  pull_request:\n  push:$")
         self.assertNotIn("labeled", ci)

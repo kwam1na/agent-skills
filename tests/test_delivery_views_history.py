@@ -72,6 +72,9 @@ class ExportSummaryTests(unittest.TestCase):
 
 
 class CollectHistoryTests(unittest.TestCase):
+    # Its deadline cases time real reads, which a runner with every core busy can make miss.
+    run_serially = True
+
     def setUp(self) -> None:
         self.folder = tempfile.TemporaryDirectory()
         self.root = Path(self.folder.name)

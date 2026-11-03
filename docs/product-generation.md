@@ -129,8 +129,11 @@ list of merged change requests. The release workflow:
   than every existing version tag, or whose commit does not equal or descend from the
   highest one's. Backports to an older line are unsupported;
 - stops if the release already exists, because a release is never replaced;
-- requires CI's success on the exact tagged commit, waiting a bounded time for a run
-  still in progress. A failed, cancelled or missing run publishes nothing;
+- requires the Ubuntu job and `cut-release` to have succeeded in CI's run on the exact
+  tagged commit, waiting a bounded time for either still in progress. A missing run, or
+  a run where either failed or is missing, publishes nothing. CI's macOS job only
+  informs: a run red, cancelled or still going because of it neither allows, blocks nor
+  delays a release;
 - runs `scripts/cut-release.py` on the tagged tree, attests every output file, and
   publishes them all.
 
@@ -138,7 +141,11 @@ A final becomes latest. A candidate is a prerelease and never does.
 
 CI on `main` informs and does not block a merge, because `main` is unprotected. A merge
 can land on red, and it falls to whoever merges to read the result, because a red
-`main` blocks the next release.
+Ubuntu job or `cut-release` on `main` blocks the next release.
+
+Before tagging, whoever tags runs the full suite locally on macOS with Python 3.11, as
+[`AGENTS.md`](../AGENTS.md) describes. The release job cannot verify it. Windows is not
+validated.
 
 Never move or reuse a release tag. A version tag that never published may be deleted to
 clear the ordering guard, which is neither, and the refusal says so.

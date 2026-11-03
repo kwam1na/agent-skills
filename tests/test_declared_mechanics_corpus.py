@@ -36,7 +36,15 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     "skills/review-work/SKILL.md": (
         "When the host reports no cost, record `coverage: unreported`; do not invent zero",
     ),
+    "skills/run-delivery/templates/lane-brief.md": (
+        "Stop only processes you started, by the pid you recorded, never by pattern",
+    ),
+    "skills/orchestrate-work/references/orchestration-guide.md": (
+        "Stop only processes you started, by the pid you recorded, never by pattern",
+    ),
     "AGENTS.md": (
+        "Stop only processes you started, by the pid you recorded, and never by"
+        " pattern with `pkill` or `killall`",
         "resolves, in this repository, to the commit whose tree carries the"
         " reviewed text",
         "For a verification round the executor supplies that resolution beside"

@@ -37,8 +37,25 @@ id does; an adopter verifies the final's own. See `docs/product-generation.md`.
 
 The default branch is unprotected, and CI on it informs rather than blocks. A merge
 can land on red, and it falls to whoever merges to read the result, because a red
-default branch blocks the next release: the release workflow publishes only on CI's
-success for the exact tagged commit.
+gating job blocks the next release: the release workflow publishes only on CI's
+success for the exact tagged commit. That gate is the Ubuntu job and `cut-release` on
+the push to the default branch. CI's macOS job runs there, and with a `full-matrix`
+label on a change request, to inform: its result, or its absence, neither allows nor
+blocks a release, and nothing waits for it.
+
+Before tagging, run the full suite locally on macOS with Python 3.11. The release job
+cannot verify this, so it rests on whoever tags. A newer Python can hide what the
+declared minimum shows, so a run on one doesn't count. The separate environment
+leaves `.venv` alone:
+
+```bash
+uv python install 3.11
+uv run --no-project --python 3.11 python scripts/bootstrap-test-environment.py --environment .venv-3.11
+.venv-3.11/bin/python scripts/run-tests.py
+```
+
+Windows is not validated. Its code fixes and guards stay, unproven, and CI does not
+run it.
 
 `runtimeVersion` does not identify runtime bytes: two different runtimes can declare
 the same version, so compare digests. `scripts/cut-release.py` prints nothing on
@@ -99,6 +116,11 @@ usable file; `0` sets no limit.
 Mark a test class `run_serially = True`, or a module `RUN_SERIALLY = True`,
 when it cannot share the machine: a fixed port, a fixed path outside its own
 temporary folder, or process-wide state.
+
+Stop only processes you started, by the pid you recorded, and never by pattern with
+`pkill` or `killall`. BSD `pkill` stops reading options at the first pattern, so one
+such command, meant for a test's children, signalled other applications across the
+machine.
 
 Refresh output digests with the provenance writer rather than by hand. It
 recomputes the sha256 of every output `provenance.lock.json` lists, changes
