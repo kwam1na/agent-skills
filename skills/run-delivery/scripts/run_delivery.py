@@ -3084,6 +3084,10 @@ def lead_setup(args) -> None:
     if added:
         print(f"added the tracker publisher ({added}) to {c.binding_path.name}'s state.publishers: commit it with the "
               "delivery file")
+    loose = tracker_publisher.untargeted(tracker_conf(c)) if tracker_conf(c)["mode"] == "publisher" else []
+    if loose:
+        notes.append(f"name the status each of these moves leads to in tracker.transitions.targets, so one a person "
+                     f"already made reads as made: {', '.join(loose)}")
     print("next: give each story its lane, list the lanes and the files each owns, set inApp requirements, the finish "
           "lines and the brief notes (all from the approved plan), then lead-init and lead-brief")
     for n in notes:
@@ -4183,7 +4187,10 @@ class Doctor:
             return "ok", f"by hand ({self.c.name} sets tracker.updates to manual)"
         if conf["mode"] == "host":
             return "ok", f"through the host: the {conf['host']} publisher's outbox, posted with the host's tracker tools"
-        return "ok", f"the {conf['publisher']} publisher, through the {conf['adapter']['name']} tracker adapter"
+        loose = tracker_publisher.untargeted(conf)
+        return "ok", (f"the {conf['publisher']} publisher, through the {conf['adapter']['name']} tracker adapter"
+                      + (f"; these moves name no status in tracker.transitions.targets, so one a person already made "
+                         f"shows as not offered: {', '.join(loose)}" if loose else ""))
 
     def in_app(self):
         ia = self.c.in_app

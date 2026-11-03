@@ -996,6 +996,67 @@ class Scenarios:
         self.assertEqual((d.outcomes(1), d.outcomes(first["id"]), d.outcomes(second["id"])),
                          (["skip"], ["comment"], ["comment"]))
 
+    def test_a_replaced_records_move_at_the_same_journal_id_is_still_made(self) -> None:
+        d = self.delivery({"lead": {"candidate.merged": ["Complete"]}})
+        d.ticket("EP-2", status="In Review")
+        d.ticket("EP-3", status="In Review")
+        d.entry("candidate.merged", "EP-2")
+        self.published(d)
+        d.journal, d.clock = [], d.clock + 1000
+        d.entry("decision.recorded", summary="Record starts again.")
+        again = d.entry("candidate.merged", "EP-3")
+        failed = d.entry("candidate.stopped", "EP-3")
+        self.published(d)
+        self.assertEqual(d.outcomes(again["id"]), ["transition", "comment"])
+        self.assertEqual((d.status("EP-2"), d.status("EP-3")), ("Done", "Done"))
+        self.assertEqual(d.outcomes(failed["id"]), ["comment"])
+
+    def test_needs_you_reads_only_the_current_records_lines(self) -> None:
+        d = self.delivery()
+        d.ticket("EP-2")
+        d.entry("lease.granted", "EP-2")
+        d.fail("comment", 400, ticket="EP-2")
+        self.published(d)
+        self.assertEqual([item["holding"] for item in d.needs_you()], [False])
+        d.journal, d.clock = [], d.clock + 1000
+        d.entry("decision.recorded", summary="Record starts again.")
+        self.published(d)
+        self.assertEqual(d.needs_you(), [], "the replaced record's refusal isn't this record's")
+
+    def test_a_handled_move_ends_its_sequence_on_a_retry_too(self) -> None:
+        # "Start work" isn't offered from In Review, so "Complete" is never tried, on the retry either.
+        d = self.delivery({"lead": {"candidate.merged": ["Start work", "Complete"]}})
+        d.ticket("EP-2", status="In Review")
+        entry = d.entry("candidate.merged", "EP-2")
+        d.fail("comment", 503, ticket="EP-2")
+        self.assertEqual(d.publish()[0], 1)
+        self.published(d)
+        self.assertEqual(d.outcomes(entry["id"]), ["handled", "comment"])
+        self.assertEqual(d.status("EP-2"), "In Review")
+        self.assertIn('The move "Start work" isn\'t offered from In Review', d.comments("EP-2")[0])
+
+    def test_a_follow_up_filed_before_a_failed_comment_is_named_in_it(self) -> None:
+        d = self.delivery()
+        d.ticket("EP-2")
+        entry = d.entry("decision.recorded", "EP-2", "Deferred F3")
+        d.mark(entry, {"story": "EP-2", "finding": "F3", "title": "Later"})
+        d.fail("comment", 503, ticket="EP-2")
+        self.assertEqual(d.publish()[0], 1)
+        self.published(d)
+        [created] = [call[1] for call in d.calls() if call[0] == "create"]
+        self.assertIn(f"Follow-up: {created}.", d.comments("EP-2")[0])
+
+    def test_a_reassignment_at_the_same_moment_as_the_start_takes_it(self) -> None:
+        d = self.delivery({"start": ["Start work"]})
+        d.ticket("EP-2")
+        first = d.entry("lane.assigned", "EP-2", lane="lane-1")
+        second = d.entry("lane.assigned", "EP-2", lane="lane-2")
+        d.flow_log.mkdir(parents=True, exist_ok=True)
+        with open(d.flow_log / f"{EPIC}.lane-starts.jsonl", "a") as log:
+            log.write(json.dumps({"subject": "EP-2", "lane": "lane-2", "at": second["at"]}) + "\n")
+        self.published(d)
+        self.assertEqual((d.outcomes(first["id"]), d.outcomes(second["id"])), (["skip"], ["transition", "comment"]))
+
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class JiraPublisherTests(Scenarios, unittest.TestCase):
     BACKEND = JiraBackend
@@ -1063,6 +1124,14 @@ class HostOutboxTests(unittest.TestCase):
         version = doc["state"]["version"]
         tool("ack", "--version", str(version), "--through", "2")
         self.assertEqual(tp.needs_you(tool("show"), state, state.parent / "flow-log", "EP-1", conf), [])
+
+    def test_settings_refuse_bad_targets_and_name_the_moves_without_one(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="tracker-targets-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        own = lambda targets: {"tracker": {"argv": ["adapter"], "transitions": {
+            "start": ["Start work"], "lead": {"candidate.merged": ["Complete"]}, "targets": targets}}}
+        self.assertIn("tracker.transitions.targets", tp.refusal(tp.settings(tmp, own({"Complete": 7}), {})))
+        self.assertEqual(tp.untargeted(tp.settings(tmp, own({"Complete": "Done"}), {})), ["Start work"])
 
     def test_a_host_tracker_without_a_host_publisher_is_refused_unless_manual(self) -> None:
         tmp = Path(tempfile.mkdtemp(prefix="tracker-host-"))
@@ -1205,12 +1274,23 @@ class MarkedDecisionTests(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="tracker-mark-"))
         self.addCleanup(shutil.rmtree, tmp, True)
         c = types.SimpleNamespace(state=tmp / "state", flow_log=tmp / "flow-log", delivery="EP-1")
+        held_while_marking = []
+        real_mark = run_delivery.tracker_publisher.mark
+
+        def mark(*args, **kwargs):
+            with run_delivery.tracker_publisher.ledger_lock(c.state, wait=False) as taken:
+                held_while_marking.append(not taken)
+            return real_mark(*args, **kwargs)
+
+        self.addCleanup(setattr, run_delivery.tracker_publisher, "mark", real_mark)
+        run_delivery.tracker_publisher.mark = mark
         with run_delivery.marked_decision(c) as written:
             with run_delivery.tracker_publisher.ledger_lock(c.state, wait=False) as taken:
                 self.assertFalse(taken, "a publisher run inside the window must find the ledger held")
             written.append(7)
             self.assertEqual(tp.read_flow(c.flow_log, "EP-1", tp.MARKS), [], "the mark follows the journal write")
         self.assertEqual([m["journal"] for m in tp.read_flow(c.flow_log, "EP-1", tp.MARKS)], [7])
+        self.assertEqual(held_while_marking, [True], "the mark is written while the ledger is still held")
         with run_delivery.tracker_publisher.ledger_lock(c.state, wait=False) as taken:
             self.assertTrue(taken, "released once marked")
 

@@ -309,6 +309,15 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
             "problems": problems}
 
 
+def untargeted(conf: dict) -> list[str]:
+    """The configured moves with no `targets` entry: one a person already made reads as `handled` on a tracker that
+    lists only the moves out of a ticket's status, as Jira does."""
+    transitions = conf.get("transitions") or {}
+    targets = transitions.get("targets") or {}
+    names = [*(transitions.get("start") or []), *(n for moves in (transitions.get("lead") or {}).values() for n in moves)]
+    return sorted({name for name in names if name not in targets})
+
+
 def refusal(conf: dict) -> str | None:
     """Why this repository's tracker updates would be forgotten, with its fix, or None: doctor's row and lead-init's
     refusal."""
