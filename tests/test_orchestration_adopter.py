@@ -834,7 +834,7 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual(state["followups"][-1], {"id": "gamma-notes", "title": "Notes for gamma",
                                                   "reference": "gamma-notes"})
         self.assertEqual(state["planned"], [{"subject": "epsilon-copy", "title": "Copy for epsilon", "lane": None,
-                                             "stage": "review", "changeRequest": "change 5"}])
+                                             "stage": "review", "trackerStarted": True, "changeRequest": "change 5"}])
         recovered = adopter.item("delta-copy")
         self.assertEqual((recovered["stage"], recovered["syncedHead"], recovered["changeRequest"]),
                          ("merged", hand_merged, "change 4"))

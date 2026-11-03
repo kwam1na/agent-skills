@@ -432,8 +432,11 @@ run the sync loop in this order:
      follow-up.
    - Planned work at `planned` whose ticket the tracker shows `started` moves
      to `building`, so a lane starting its ticket moves its stop with no lead
-     step. Work at `building` or in review that the tracker shows back in
-     `backlog` is reported for the lead, never moved back.
+     step. The first time reconcile sees a planned item's ticket `started`, it
+     sets the item's `trackerStarted`. Work at `building` or in review whose
+     ticket was started and that the tracker shows back in `backlog` is
+     reported for the lead, never moved back. Work a draft change request
+     moved while its ticket was never started is not reported.
    - A change request is linked to its queue or planned item. A draft one
      moves planned work at `planned` to `building`, so a delivery with no
      tracker snapshot sees the stop move once the lane's draft opens; an open
