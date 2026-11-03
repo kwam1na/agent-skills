@@ -276,6 +276,15 @@ class RunlessReviewTests(unittest.TestCase):
         observed = state_tool.review_observations(self.directory, state_tool.read_state(self.directory), moved)
         self.assertTrue(observed["work-a"]["unavailable"])
 
+    def test_a_planned_story_captured_past_its_latest_journaled_round_is_unavailable(self):
+        self.plan_work_a()
+        self.planned_round(1, "changes")
+        self.planned_round(2)
+        third = self.root / "round3.json"
+        third.write_text(json.dumps(outcome(3, fixtures.HEAD_B), indent=2) + "\n")
+        self.capture([*self.files(), third])
+        self.assertTrue(state_tool.show(self.directory)["reviewEvidence"]["work-a"]["unavailable"])
+
     def test_a_handed_story_stays_bound_to_its_head(self):
         self.plan_work_a()
         self.planned_round(1, "changes")
