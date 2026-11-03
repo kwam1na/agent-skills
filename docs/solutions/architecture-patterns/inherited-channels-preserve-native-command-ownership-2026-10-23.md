@@ -1,3 +1,14 @@
+---
+title: "Borrow explicit channels without changing native command ownership"
+date: 2026-10-23
+category: architecture-patterns
+module: product-launcher
+problem_type: architecture_pattern
+severity: medium
+tags: [launcher, descriptors, cancellation]
+applies_when: "A repository's child process needs a channel to a product command it does not own"
+---
+
 # Borrow explicit channels without changing native command ownership
 
 A repository may keep pure analysis in its own child while each product command

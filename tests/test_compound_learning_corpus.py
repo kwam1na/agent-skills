@@ -80,6 +80,20 @@ class CompoundLearningCorpusTests(unittest.TestCase):
             section,
         )
 
+    def test_this_repositorys_notes_sit_in_their_categories_with_their_frontmatter(self) -> None:
+        notes = sorted((ROOT / "docs/solutions").rglob("*.md"))
+        self.assertTrue(notes)
+        for note in notes:
+            with self.subTest(note=note.name):
+                self.assertEqual(note.parent.parent, ROOT / "docs/solutions")
+                category = note.parent.name
+                self.assertIn(category, (*BUG_CATEGORIES, *KNOWLEDGE_CATEGORIES))
+                self.assertRegex(note.name, r"-\d{4}-\d{2}-\d{2}\.md$")
+                head = note.read_text(encoding="utf-8").split("---\n")[1]
+                self.assertIn(f"category: {category}\n", head)
+                for field in SHARED_FIELDS:
+                    self.assertRegex(head, rf"(?m)^{field}:")
+
     def test_each_track_lists_exactly_its_categories(self) -> None:
         section = _section("Solution Notes")
         for name, categories, others in (

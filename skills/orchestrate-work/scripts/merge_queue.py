@@ -2535,6 +2535,7 @@ def serve(
     sleep: Callable[[float], None] = time.sleep,
     on_result: Callable[[Result], None] | None = None,
     clock: Callable[[], float] = time.monotonic,
+    before_turn: Callable[[], None] = lambda: None,
 ) -> list[Result]:
     """Take what is queued, in order, whenever the merge slot is free.
 
@@ -2609,6 +2610,8 @@ def serve(
             continue
         heads = {item["subject"]: item["head"] for item in state["queue"]}
         runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams)
+        # Last, since dropping the previous runner above runs its finalizer, where a stop can land.
+        before_turn()
         taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting)
         if all(result.stop is not None and result.stop["reason"] == "queue_locked" for result in taken):
             # Another runner holds the queue: nothing was attempted, so nothing is recorded.
@@ -2720,18 +2723,23 @@ def main(argv: list[str] | None = None) -> int:
             stopped.append(signum)
             raise KeyboardInterrupt
 
-        def wait(seconds: float) -> None:
-            # Python only prints what a finalizer raises, so a stop landing in one is honoured at the next wait.
+        def honour_stop() -> None:
+            # Python only prints what a finalizer raises, so a stop landing in one is honoured before the next wait or turn.
             if stopped:
                 raise KeyboardInterrupt
+
+        def wait(seconds: float) -> None:
+            honour_stop()
             time.sleep(seconds)
 
         signal.signal(signal.SIGTERM, interrupt)
-        signal.signal(signal.SIGINT, interrupt)
+        # A shell starts a background job with SIGINT ignored: that stays ignored, and SIGTERM still stops it.
+        if signal.getsignal(signal.SIGINT) is not signal.SIG_IGN:
+            signal.signal(signal.SIGINT, interrupt)
         try:
             # Serving until stopped returns only when it cannot start.
             refused = serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
-                            poll=args.poll, on_result=report, sleep=wait)
+                            poll=args.poll, on_result=report, sleep=wait, before_turn=honour_stop)
         except KeyboardInterrupt:
             # A stop mid-turn leaves live state the next serve or run clears first.
             return 0

@@ -132,8 +132,10 @@ list of merged change requests. The release workflow:
 - requires the Ubuntu job and `cut-release` to have succeeded in CI's run on the exact
   tagged commit, waiting a bounded time for either still in progress. A missing run, or
   a run where either failed or is missing, publishes nothing. CI's macOS job only
-  informs: a run red, cancelled or still going because of it neither allows, blocks nor
-  delays a release;
+  informs: a run red, cancelled or still going because of it neither allows nor blocks a
+  release. It can delay one only where a gating job is absent while it still runs:
+  publishing cannot tell a job yet to appear from one that never will, so it waits its
+  bound and then refuses;
 - runs `scripts/cut-release.py` on the tagged tree, attests every output file, and
   publishes them all.
 
