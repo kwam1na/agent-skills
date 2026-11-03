@@ -9,4 +9,4 @@ unit from amendment 4 and overrides nothing.
   treated as healthy. A condition already seen does not wake the lead again until it clears and returns.
 - **The response.** Woken on pressure, the lead finds what is loading the machine before taking more work, reduces this delivery's
   own load first, and reports what it cannot reduce to the operator. It stops nothing it did not start without the operator's word.
-- **The cap.** Lane briefs carry a default cap on local test workers, and a lane's review lenses do not run suites beside its sensors.
+- **The cap.** Lane briefs carry a default cap on local test workers. A lane's review lenses still run in parallel.
