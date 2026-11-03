@@ -1129,9 +1129,15 @@ class HostOutboxTests(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="tracker-targets-"))
         self.addCleanup(shutil.rmtree, tmp, True)
         own = lambda targets: {"tracker": {"argv": ["adapter"], "transitions": {
-            "start": ["Start work"], "lead": {"candidate.merged": ["Complete"]}, "targets": targets}}}
+            "start": ["Start work"], "lead": {"candidate.merged": ["Complete"], "delivery.closed": ["Close epic"]},
+            "targets": targets}}}
         self.assertIn("tracker.transitions.targets", tp.refusal(tp.settings(tmp, own({"Complete": 7}), {})))
-        self.assertEqual(tp.untargeted(tp.settings(tmp, own({"Complete": "Done"}), {})), ["Start work"])
+        self.assertEqual(tp.untargeted(tp.settings(tmp, own({"Complete": "Done"}), {})), ["Close epic", "Start work"])
+        self.assertEqual(tp.untargeted(tp.settings(tmp, own({}), {})), ["Close epic", "Complete", "Start work"])
+        for bad in ({"lead": ["Complete"]}, {"start": "Start work"}):
+            conf = tp.settings(tmp, {"tracker": {"argv": ["adapter"], "transitions": bad}}, {})
+            self.assertTrue(tp.refusal(conf))
+            self.assertEqual(tp.untargeted(conf), [], "a malformed tracker is refused, never read for its moves")
 
     def test_a_host_tracker_without_a_host_publisher_is_refused_unless_manual(self) -> None:
         tmp = Path(tempfile.mkdtemp(prefix="tracker-host-"))

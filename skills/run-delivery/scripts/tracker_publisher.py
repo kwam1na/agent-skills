@@ -312,6 +312,8 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
 def untargeted(conf: dict) -> list[str]:
     """The configured moves with no `targets` entry: one a person already made reads as `handled` on a tracker that
     lists only the moves out of a ticket's status, as Jira does."""
+    if conf.get("problems"):
+        return []  # A malformed `tracker` is refused first; its moves can't be read.
     transitions = conf.get("transitions") or {}
     targets = transitions.get("targets") or {}
     names = [*(transitions.get("start") or []), *(n for moves in (transitions.get("lead") or {}).values() for n in moves)]
