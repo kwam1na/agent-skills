@@ -110,6 +110,10 @@ completion blocker.
 
 ## Handoff
 
+Save the plan in the planning folder the repository's instructions declare,
+otherwise at `docs/plans/<key>.md`, where `<key>` names the work, and report the
+path. A plan left only in the conversation or a scratch directory can be lost.
+
 Return the normalized scope, non-goals, finish line, dependencies, scenarios,
 posture, sensors, approval handoffs, and any unavailable optional operations.
 The plan is ready when execution can start without inventing coverage or success
