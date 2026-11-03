@@ -762,6 +762,24 @@ class SupervisorPassTests(unittest.TestCase):
     def holds(self, fx: Fixture) -> list[str]:
         return self.once(fx)["closeHeldBy"]
 
+    def test_a_lane_that_goes_quiet_after_its_hand_off_is_cleaned_up_when_its_story_merges(self) -> None:
+        fx = self.fixture()
+        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        # A pass saw the lane at work before it handed off; its hand-off is its last word, and no pass runs after it.
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "lane-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "building FX-2", "--state", "working")
+        self.once(fx)
+        wt = hand_off(fx, "FX-2", "lane-1", assign=False)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        held = self.holds(fx)
+        self.assertFalse(wt.exists(), "a lane quiet since its hand-off kept its checkout after the merge")
+        self.assertEqual(len([e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]), 1)
+        self.assertFalse(any("lane-1" in h for h in held), held)
+
     def test_the_close_waits_for_its_condition_and_each_failure_path_holds_it(self) -> None:
         fx = self.fixture()
         m = fx.main
@@ -777,9 +795,16 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertIn("not handed off: FX-2, FX-3", self.holds(fx))
         code, out = fx.flow("lead-brief", cwd=m)
         self.assertIn("The close waits on: not handed off: FX-2, FX-3", out)
-        wt = self.merged(fx, "FX-2", "lane-1")
-        # The queue rests a lane with nothing else open once its story merges; this lane is still at work in its checkout.
-        state_tool(fx, "focus", "--lane", "lane-1", "--text", "checking FX-2 on the base", "--state", "working")
+        # The lane is still at work on its story after handing it off, and a pass sees it say so before the merge.
+        wt = hand_off(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing FX-2's docs", "--state", "working")
+        self.once(fx)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        # The queue rests the lane's row once FX-2 merges; that is the queue's word, not the lane moving off.
+        row = next(lane for lane in record(fx)["state"]["lanes"] if lane["id"] == "lane-1")
+        self.assertEqual((row["state"], row.get("focusBy")), ("idle", "runner"), row)
         held = self.holds(fx)
         self.assertIn("not handed off: FX-3", held)
         # Cleanup waits until the lane moves off its merged story.

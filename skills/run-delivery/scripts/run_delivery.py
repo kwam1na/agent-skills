@@ -4653,10 +4653,32 @@ def base_head(c) -> str:
 
 # One pass's steps. Each returns what it did, in a line or a few.
 
-def lane_moved_off(doc: dict, item: dict) -> bool:
-    """A merged story's lane has moved off it: it is idle or done, or was assigned other work after the merge."""
+LANE_AT_WORK = ("assigned", "working", "reviewing", "blocked")
+
+
+def lane_words(doc: dict, remembered: dict | None) -> dict:
+    """Each lane's last state in its own words, with when it said it: a row the queue wrote doesn't replace it."""
+    words = dict(remembered or {})
+    for lane in doc["state"]["lanes"]:
+        if lane.get("focusBy") != "runner":
+            words[lane["id"]] = {"state": lane.get("state"), "at": lane.get("focusAt") or lane.get("since")}
+    return words
+
+
+def lane_moved_off(doc: dict, item: dict, words: dict | None = None) -> bool:
+    """A merged story's lane has moved off it: it is idle or done, or was assigned other work after the merge. The
+    queue rests a lane with nothing else open once its story merges; that row is the queue's word, so a lane whose own
+    last word since its hand-off was that it is at work still stands in its checkout."""
     lane = next((entry for entry in doc["state"]["lanes"] if entry["id"] == item["lane"]), None)
-    if lane is None or lane.get("state") in LANE_DONE:
+    if lane is None:
+        return True
+    rested = lane.get("focusBy") == "runner" and lane.get("focus") == f"{item['subject']} merged"
+    said = (words or {}).get(item["lane"]) or {}
+    handed = max((e["at"] for e in doc["journal"] if e["kind"] == "candidate.handed" and e.get("subject") == item["subject"]),
+                 default=None)
+    at_work = rested and said.get("state") in LANE_AT_WORK and bool(said.get("at")) and handed is not None \
+        and said["at"] >= handed
+    if lane.get("state") in LANE_DONE and not at_work:
         return True
     merged = max((e["id"] for e in doc["journal"] if e["kind"] == "candidate.merged" and e.get("subject") == item["subject"]),
                  default=None)
@@ -4665,14 +4687,14 @@ def lane_moved_off(doc: dict, item: dict) -> bool:
     return bool(later)
 
 
-def cleanup_merged(c, doc: dict) -> list[str]:
+def cleanup_merged(c, doc: dict, words: dict | None = None) -> list[str]:
     """What lead-cleanup does, for each merged story whose lane has moved off it. A story already cleaned up, by hand
     or by an earlier pass, has nothing left to clean and journals nothing."""
     said = []
     for item in doc["state"]["queue"]:
         if item["stage"] != "merged" or item["subject"] not in c.stories:
             continue
-        if not lane_moved_off(doc, item):
+        if not lane_moved_off(doc, item, words):
             said.append(f"{item['subject']}: waits for {item['lane']} to move off it")
             continue
         status, done, left = clean_story(item["subject"])
@@ -5215,7 +5237,15 @@ class Supervisor:
             write_needs(c, derived["needs"], number, started)
             return f"{len(derived['needs'])} item(s)"
 
-        steps = (("reconcile", reconcile_once), ("cleanup", lambda: cleanup_merged(c, load_state())),
+        earlier = read_log("supervisor", c.delivery)
+        remembered = (earlier[-1].get("laneWords") if earlier else None) or {}
+
+        def cleanup() -> list[str]:
+            doc = load_state()
+            entry["laneWords"] = lane_words(doc, remembered)
+            return cleanup_merged(c, doc, entry["laneWords"])
+
+        steps = (("reconcile", reconcile_once), ("cleanup", cleanup),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
