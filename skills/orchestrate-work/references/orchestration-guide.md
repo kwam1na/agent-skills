@@ -485,14 +485,12 @@ and the lead records it.
 Escalate only to the lead, never to the operator: set `focus --text "<your one
 short question>" --state blocked --waiting-on lead`, so the lead's `wait` sees it
 and carries the question, then send the question and stop. The lead answers, or
-takes it to the operator. When the answer comes, set `focus --state working
---waiting-on ""` before going on.
+takes it to the operator. When the answer comes, set `focus --text "<what you are
+doing>" --state working --waiting-on ""` before going on.
 
 **Local load**
 
-Run at most `<worker cap, default 4>` local test workers, and one test run at a
-time across the lane, its lenses included: a lens waits rather than running a
-suite beside your sensors.
+Run at most `<worker cap, default 4>` local test workers.
 
 **Run events**
 
@@ -656,16 +654,16 @@ a lane still blocked on the same question, low disk or steady high load doesn't
 wake the lead again and again, and swap growth keeps its baseline. A lane that
 blocks again or changes its question wakes the lead, even if nothing read it
 clear in between, and so does a different lane or signal. A held load or disk
-signal wakes it again once it is half as bad again, or after it clears 10% inside
-its limit and returns. A machine value this system can't read is named in
+signal wakes it again only once it has cleared, 10% inside its limit, and
+returned. A machine value this system can't read is named in
 `unavailable` and on stderr, and is never treated as healthy. Swap is read from
 `/proc/meminfo` or `vm.swapusage`; on any other system it is unavailable.
 
 Whenever a wait names pressure, whatever else woke it, the lead finds what is
 loading the machine before taking more work, and reduces this delivery's own
-load first: capped test workers, and one test run at a time per lane. It reports
-what it can't reduce to the operator, such as other work or a system service. It
-stops nothing it didn't start without the operator's word.
+load first, such as by capping test workers. It reports what it can't reduce to
+the operator, such as other work or a system service. It stops nothing it didn't
+start without the operator's word.
 
 ### Leases
 

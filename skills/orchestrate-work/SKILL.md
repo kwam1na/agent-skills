@@ -168,9 +168,9 @@ The wait reads the record and the machine only, and returns on a hand-off, a
 merge, a stop, a broken base, a blocker, a blocked lane, or machine pressure.
 Whenever a wait names pressure, whatever else woke it, the lead finds what is
 loading the machine before taking more work, and reduces this delivery's own
-load first: capped test workers, and one test run at a time per lane. It reports
-what it can't reduce to the operator, such as other work or a system service. It
-stops nothing it didn't start without the operator's word.
+load first, such as by capping test workers. It reports what it can't reduce to
+the operator, such as other work or a system service. It stops nothing it didn't
+start without the operator's word.
 
 ## Findings and a broken base
 

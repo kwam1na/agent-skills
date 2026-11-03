@@ -363,12 +363,12 @@ class RestartTests(RecordCase):
         self.assertEqual(again.returncode, state_tool.WAIT_EXPIRED_EXIT, again.stdout + again.stderr)
         self.assertEqual(json.loads(again.stdout)["restart"], restart)
 
-    def test_a_held_signal_with_no_value_is_refused(self) -> None:
-        for item in ("disk", "swap=1", "load=nan", "load=many"):
-            with self.subTest(item=item):
-                code, result = self.record.wait(f"--seen-pressure={item}")
-                self.assertEqual(code, 1)
-                self.assertEqual(result["code"], "wait_invalid")
+    def test_an_unknown_held_signal_is_a_usage_error(self) -> None:
+        done = subprocess.run(
+            [sys.executable, "-B", str(TOOL), "--dir", str(self.record.directory), "wait", "--seen-pressure=swap"],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
 
 
 def _seen_blocked(result: dict) -> list[str]:
@@ -485,20 +485,18 @@ class PressureTests(MachineCase):
                 self.assertEqual(code, 0, "a condition that cleared and returned did not wake it")
                 self.assertEqual(returned["pressure"][0]["signal"], signal)
 
-    def test_a_held_signal_that_keeps_worsening_wakes_it_again(self) -> None:
-        for signal, first, slightly, much in (
-            ("load", {"load5": 40.0}, {"load5": 50.0}, {"load5": 60.0}),
-            ("disk", {"diskFreeBytes": 18 * GIB}, {"diskFreeBytes": 15 * GIB}, {"diskFreeBytes": 12 * GIB}),
+    def test_a_held_signal_that_worsens_stays_quiet_until_it_clears(self) -> None:
+        for signal, first, worse in (
+            ("load", {"load5": 40.0}, {"load5": 400.0}),
+            ("disk", {"diskFreeBytes": 18 * GIB}, {"diskFreeBytes": 0}),
         ):
             with self.subTest(signal=signal):
                 _, woken = self.run_wait([_reading(**first)])
-                code, held = self.restart([_reading(**slightly)], woken)
-                self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "a slightly worse value woke it")
-                code, worse = self.restart([_reading(**much)], held)
-                self.assertEqual(code, 0)
-                self.assertEqual(worse["pressure"][0]["signal"], signal)
-                code, _ = self.restart([_reading(**much)], worse)
-                self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "the worse value woke it twice")
+                held = woken
+                for _ in range(3):
+                    code, held = self.restart([_reading(**worse)], held)
+                    self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT, "a seen condition woke it before clearing")
+                self.assertEqual(held["machine"], _reading(**worse))
 
     def test_a_value_hovering_at_its_limit_wakes_it_once(self) -> None:
         for high, near in (({"load5": 33.0}, {"load5": 31.0}), ({"diskFreeBytes": 19 * GIB}, {"diskFreeBytes": 21 * GIB})):
@@ -630,7 +628,8 @@ class StandingTextTests(unittest.TestCase):
         for text in (brief, run_delivery):
             self.assertRegex(text, r'focus --text "<your one short question>" --state blocked --waiting-on lead')
             self.assertIn("so the lead's `wait` sees it and carries the question", text)
-            self.assertIn('When the answer comes, set `focus --state working --waiting-on ""` before going on', text)
+            self.assertIn('When the answer comes, set `focus --text "<what you are doing>" --state working --waiting-on ""` '
+                          "before going on", text)
 
     def test_both_lane_briefs_cap_local_test_load(self) -> None:
         guide = GUIDE.read_text(encoding="utf-8")
@@ -638,7 +637,7 @@ class StandingTextTests(unittest.TestCase):
         run_delivery = " ".join(RUN_DELIVERY_BRIEF.read_text(encoding="utf-8").split())
         for text in (brief, run_delivery):
             self.assertRegex(text, r"at most (?:`<[^>]*default 4[^>]*>`|4) local test workers")
-            self.assertIn("a lens waits rather than running a suite beside your sensors", text)
+            self.assertNotIn("one test run at a time", text)
 
     def test_a_failed_claim_returns_to_a_lane_that_can_be_told(self) -> None:
         self.assert_phrases(
