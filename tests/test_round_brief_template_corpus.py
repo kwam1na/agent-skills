@@ -46,6 +46,8 @@ SKILL_MEMBER_PHRASES = {
     "Observation binding and selected output": (
         "Every selected lens runs in its own clean checkout of the prepared"
         " candidate tree"
+    ),    "Checks this lens runs": (
+        "The brief's `Checks this lens runs` member carries this rule"
     ),
 }
 
@@ -99,6 +101,10 @@ MEMBER_BODY_PHRASES = {
     "Observation binding and selected output": (
         "own clean checkout of the prepared candidate tree",
         "Repeat both checks after the review",
+    ),    "Checks this lens runs": (
+        "never the repository's full suite",
+        "scoped sensor commands",
+        "test files in scope for this round",
     ),
 }
 
