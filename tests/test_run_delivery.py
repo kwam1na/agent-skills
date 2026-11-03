@@ -1218,6 +1218,159 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         fresh, why = fx.call("record_is_current", stale, head, wt, cwd=wt)
         expect(not fresh and "can't be compared" in why, f"an uncomparable head counted as current: {why}")
 
+    def reduced_round_one(self, fx: Fixture, run_id: str | None = None) -> tuple[Path, Path, list]:
+        """FX-3 assigned and reviewed once, with one open P1, and not handed off: (lane checkout, review folder, lenses).
+        With a run id, FX-3's planned work names that product run before the round is reduced."""
+        m = fx.main
+        setup_delivery(fx)
+        fx.flow("lead-init", cwd=m)
+        fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        wt = fx.lane("FX-3")
+        (wt / "src/two.txt").write_text("two\n")
+        commit(wt, "FX-3: two")
+        review = wt / ".orchestration/review/FX-3"
+        review.mkdir(parents=True)
+        (review / "context.md").write_text("- evidence")
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, cwd=wt); expect(code == 0, out)
+        lenses = fx.lenses(wt)
+        short = lenses[0][1][0]
+        write_results(review, 1, "FX-3", lenses, findings=[{"id": f"{short}-r1-1", "severity": "P1",
+                                                            "summary": "the empty cart is not handled"}])
+        if run_id is not None:
+            record = fx.tmp / "record"
+            version = str(self.shown(record)["state"]["version"])
+            state_script = self.generation / "skills/orchestrate-work/scripts/delivery_state.py"
+            sh(sys.executable, "-B", state_script, "--dir", record, "patch", "--writer", "lead", "--version", version,
+               "--element", "planned[subject=FX-3]", "--patch", json.dumps({"runId": run_id}))
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt)
+        expect(code == 0 and "unresolved" in out, out)
+        return wt, review, lenses
+
+    def test_a_story_with_a_product_run_has_its_round_journaled_and_nothing_captured(self) -> None:
+        fx = self.fixture()
+        self.reduced_round_one(fx, run_id="run-1")
+        shown = self.shown(fx.tmp / "record")
+        kinds = [e["kind"] for e in shown["journal"] if e.get("subject") == "FX-3"
+                 and e["kind"] in ("review.round", "review.evidence")]
+        expect(kinds == ["review.round"], f"a run-backed round was recorded as {kinds}")
+        expect("FX-3" not in shown.get("reviewEvidence", {}), "a run-backed story got native evidence")
+
+    def shown(self, record: Path) -> dict:
+        state_script = self.generation / "skills/orchestrate-work/scripts/delivery_state.py"
+        return json.loads(sh(sys.executable, "-B", state_script, "--dir", record, "show").stdout)
+
+    def test_each_reduced_round_reaches_the_live_view_before_hand_off(self) -> None:
+        from tests.delivery_views_fixtures import render
+        fx = self.fixture()
+        wt, review, lenses = self.reduced_round_one(fx)
+        record = fx.tmp / "record"
+        first = json.loads((review / "round-1.json").read_text())["entries"][0]["binding"]["candidateRef"]
+        shown = self.shown(record)
+        expect(any(i["subject"] == "FX-3" for i in shown["state"]["planned"]), "FX-3 was handed off already")
+        observation = shown["reviewEvidence"]["FX-3"]
+        expect("unavailable" not in observation and observation["candidateRef"] == first, f"round 1 isn't shown: {observation}")
+        card = render.native_review_summaries(shown)["FX-3"]["roundDetail"]
+        expect([r["round"] for r in card] == [1] and card[0]["raised"][0]["summary"] == "the empty cart is not handled",
+               f"the round's card lacks its note: {card}")
+        kinds = lambda doc: [(e["kind"], e.get("lane")) for e in doc["journal"] if e.get("subject") == "FX-3"
+                             and e["kind"] in ("review.round", "review.evidence")]
+        expect(kinds(shown) == [("review.round", "lane-2"), ("review.evidence", "lane-2")], f"round 1 recorded as {kinds(shown)}")
+        # A re-run writes nothing more; a round whose capture failed is finished by one.
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt); expect(code == 0, out)
+        expect(kinds(self.shown(record)) == kinds(shown), "a second reduce wrote to the record again")
+        (wt / "src/two.txt").write_text("two, with an empty cart\n")
+        commit(wt, "FX-3: empty cart")
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 2, cwd=wt); expect(code == 0, out)
+        short = lenses[0][1][0]
+        write_results(review, 2, "FX-3", lenses, resolved=[{"id": f"{short}-r1-1", "state": "fixed", "resolution": "handled"}])
+        # The capture fails after the round is journaled: the live view shows it stale, and a re-run finishes it.
+        artifacts, aside = record / "review-artifacts", fx.tmp / "artifacts-aside"
+        artifacts.rename(aside)
+        artifacts.symlink_to(aside)
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 2, cwd=wt)
+        expect(code == 2 and (review / "round-2.json").exists(), f"a failed capture went unreported: {out}")
+        expect(kinds(self.shown(record)) == [("review.round", "lane-2"), ("review.evidence", "lane-2"), ("review.round", "lane-2")],
+               f"the round wasn't journaled before its capture: {kinds(self.shown(record))}")
+        expect(self.shown(record)["reviewEvidence"]["FX-3"].get("unavailable"), "an uncaptured round left round 1 current")
+        artifacts.unlink()
+        aside.rename(artifacts)
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 2, cwd=wt); expect(code == 0 and "aligned" in out, out)
+        shown = self.shown(record)
+        second = json.loads((review / "round-2.json").read_text())["entries"][0]["binding"]["candidateRef"]
+        expect(second != first and shown["reviewEvidence"]["FX-3"]["candidateRef"] == second,
+               f"round 2 isn't bound to its own candidate: {shown['reviewEvidence']['FX-3']}")
+        expect([r["outcome"] for r in render.native_review_summaries(shown)["FX-3"]["roundDetail"]] == ["changes", "approve"],
+               "the live view doesn't show both rounds")
+        expect(kinds(shown) == [("review.round", "lane-2"), ("review.evidence", "lane-2")] * 2, f"rounds recorded as {kinds(shown)}")
+
+    def served_document(self, argv: list, cwd: Path, env: dict, expect_record: Path) -> dict:
+        """Start the tool with these arguments, a `view`, check its first two lines, and return /document; it is stopped by pid."""
+        import urllib.request
+        served = subprocess.Popen([sys.executable, "-B", str(self.tool), *map(str, argv)], cwd=cwd, env=env,
+                                  text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            address = served.stdout.readline().strip()
+            expect(re.fullmatch(r"http://127\.0\.0\.1:\d+/", address), f"the first line isn't the address: {address}")
+            expect(str(expect_record) in served.stdout.readline(), "it doesn't say which record it serves")
+            with urllib.request.urlopen(address, timeout=10) as answer:
+                expect(answer.status == 200 and b"FX-3" in answer.read(), "the page isn't served")
+            with urllib.request.urlopen(address + "document", timeout=10) as answer:
+                return json.loads(answer.read())
+        finally:
+            served.send_signal(signal.SIGTERM)
+            served.communicate(timeout=10)
+
+    def test_view_serves_the_live_record_from_any_checkout_of_the_repository(self) -> None:
+        fx = self.fixture()
+        wt, _, _ = self.reduced_round_one(fx)
+        record = fx.tmp / "record"
+        for where in (wt, fx.main):
+            with self.subTest(where=where.name):
+                argv = ["--delivery", "FX-1", "view"] if where == fx.main else ["view"]
+                document = self.served_document(argv, where, fx.env, record)
+                rounds = [e["review"]["round"] for e in document["journal"]
+                          if e["kind"] == "review.round" and e["subject"] == "FX-3"]
+                expect(rounds == [1] and "unavailable" not in document["reviewEvidence"]["FX-3"],
+                       f"the live record's round isn't served: {rounds}, {document.get('reviewEvidence')}")
+        code, out = fx.flow("view", cwd=wt, env={**fx.env, "DELIVERY_STATE": str(fx.tmp / "gone")})
+        expect(code == 2 and "no record at" in out and "--archive" in out, f"a missing record was served: {out}")
+        # The binding's state member picks the views; its publishers never run from a view.
+        published = fx.tmp / "published"
+        (wt / ".agents/orchestration.json").write_text(json.dumps({"state": {
+            "renderers": [{"id": "notes", "builtin": "markdown", "output": "lead-notes.md"}],
+            "publishers": [{"id": "post", "argv": ["sh", "-c", f"touch {published}"]}]}}))
+        self.served_document(["view"], wt, fx.env, record)
+        expect((record / "lead-notes.md").is_file(), "the binding's own view wasn't rendered")
+        expect(not published.exists(), "a view ran the binding's publisher")
+
+    def test_view_serves_the_latest_copy_once_the_leads_checkout_is_gone(self) -> None:
+        fx = self.fixture()
+        self.reduced_round_one(fx)
+        record = fx.tmp / "record"
+        latest = fx.tmp / "archive" / "latest"
+        latest.mkdir(parents=True)
+        shutil.copytree(record, latest / "record")
+        (latest / "flow-log").mkdir()
+        before = sorted(p.name for p in (latest / "record").iterdir())
+        shutil.rmtree(fx.main)
+        shutil.rmtree(record)
+        outside = fx.tmp / "elsewhere"
+        outside.mkdir()
+        for path in (latest, latest / "record"):
+            with self.subTest(path=path.name):
+                document = self.served_document(["view", "--archive", path], outside, fx.env, latest / "record")
+                rounds = [e["review"]["round"] for e in document["journal"]
+                          if e["kind"] == "review.round" and e["subject"] == "FX-3"]
+                expect(rounds == [1], f"the copy's latest round isn't served: {rounds}")
+                expect("unavailable" not in document["reviewEvidence"]["FX-3"], "the copy's round has no evidence")
+        expect(sorted(p.name for p in (latest / "record").iterdir()) == sorted({*before, "state.lock"}),
+               "serving the copy rendered views into it")
+        code, out = fx.flow("view", "--archive", latest / "flow-log", cwd=outside)
+        expect(code == 2 and "holds no record" in out, f"a folder without a record was served: {out}")
+        shutil.copytree(latest / "record", latest / "another")
+        code, out = fx.flow("view", "--archive", latest, cwd=outside)
+        expect(code == 2 and "several records (another, record)" in out, f"one of several records was served: {out}")
+
     def test_changed_evals_and_discarded_rounds_are_visible(self) -> None:
         fx = self.fixture()
         flow_run = fx.flow
