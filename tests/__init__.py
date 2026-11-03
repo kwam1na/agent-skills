@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 import unittest
 from pathlib import Path
+
+# Bytecode under skills/ fails corpus validation, and tests import skill scripts and start them.
+sys.dont_write_bytecode = True
+os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
 
 TESTS = Path(__file__).resolve().parent

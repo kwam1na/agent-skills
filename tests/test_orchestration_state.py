@@ -2140,6 +2140,7 @@ class TrackerSnapshotTests(unittest.TestCase):
                                  "--output", str(self.root / "missing" / "out.json"))
         self.assertEqual((code, refused["code"]), (1, "output_invalid"), refused)
 
+    @unittest.skipIf(os.name == "nt", "what a command leaves running is looked for on POSIX only, as _run_bounded says")
     def test_a_child_that_holds_stdout_open_does_not_turn_valid_output_into_a_timeout(self) -> None:
         pid_file = self.root / "holder.pid"
 
@@ -3302,6 +3303,9 @@ class SnapshotCleanupTests(unittest.TestCase):
         self.assertTrue(self.gone(child))
         return selection
 
+    def state(self, pid: int) -> str:
+        return subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+
     def gone_now(self, pid: int) -> bool:
         # A process killed a moment ago answers until its new parent reaps it: give that time first.
         time.sleep(0.5)
@@ -3464,7 +3468,43 @@ class SnapshotCleanupTests(unittest.TestCase):
         with mock.patch.object(state_tool, "_process_table", side_effect=interrupted):
             with self.assertRaises(KeyboardInterrupt):
                 state_tool._run_bounded(argv, 20, 4096)
-        self.assertTrue(self.gone(int(pid_file.read_text())), "killed, not left stopped")
+        child = int(pid_file.read_text())
+        self.assertTrue(self.gone(child), f"killed, not left stopped: the process's state is {self.state(child)!r}")
+
+    def blind_after_the_freeze(self, *, interrupt: bool):
+        """The table read after the first freeze: from there no process's environment can be read."""
+        real_table, real_environment, reads, blind = state_tool._process_table, state_tool._process_environment, [], []
+
+        def table() -> dict | None:
+            reads.append(1)
+            if len(reads) == 2:
+                blind.append(True)
+                if interrupt:
+                    raise KeyboardInterrupt
+            return real_table()
+
+        def environment(pid: int) -> list[bytes] | None:
+            return None if blind else real_environment(pid)
+
+        return mock.patch.multiple(state_tool, _process_table=table, _process_environment=environment)
+
+    def test_a_frozen_process_is_killed_though_its_environment_can_no_longer_be_read(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=True)
+        with self.blind_after_the_freeze(interrupt=True), self.assertRaises(KeyboardInterrupt):
+            state_tool._run_bounded(argv, 20, 4096)
+        child = int(pid_file.read_text())
+        self.assertTrue(self.gone(child), f"killed, not left stopped: the process's state is {self.state(child)!r}")
+
+    def test_a_frozen_process_a_later_read_refuses_is_never_left_stopped(self) -> None:
+        argv, pid_file = self.command(detached=True)
+        self.previewed(argv, pid_file)
+        argv, pid_file = self.command(detached=True)
+        with self.blind_after_the_freeze(interrupt=False):
+            state_tool._run_bounded(argv, 20, 4096)
+        child = int(pid_file.read_text())
+        self.assertNotIn("T", self.state(child), "let go or killed, not left stopped")
 
     def test_a_command_reaped_elsewhere_is_previewed_without_its_group(self) -> None:
         argv, pid_file = self.command(detached=False)

@@ -35,6 +35,7 @@ import tempfile
 import time
 import unicodedata
 import uuid
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 from typing import Callable, Iterable, Iterator
@@ -86,8 +87,9 @@ PINNED_GIT_CONFIG = (
     "core.autocrlf=false",
     "core.safecrlf=false",
     f"core.attributesFile={os.devnull}",
-    # A global excludes file never hides an undeclared change from status.
-    f"core.excludesFile={os.devnull}",
+    # A global excludes file never hides an undeclared change from status. Empty, not the
+    # null device, which on Windows makes status die with "cannot use nul as an exclude file".
+    "core.excludesFile=",
     # Renames are always followed, so a rename never looks like a conflict;
     # a renamed directory never silently moves a file the candidate added there.
     "merge.renames=true",
@@ -624,6 +626,8 @@ class Runner:
         # Until the binding is read, git runs with a private empty hooks
         # directory, so even the first fetch fires no repository hook.
         self._bootstrap_hooks = Path(tempfile.mkdtemp(prefix="merge-queue-hooks-"))
+        # Whichever way this runner ends, short of the process being killed.
+        weakref.finalize(self, shutil.rmtree, self._bootstrap_hooks, ignore_errors=True)
         self.hooks_directory: Path | None = self._bootstrap_hooks
         self.hooks_bypassed = False
         # Candidates whose merge began in this runner: the forge may have them, so they are never put back.
@@ -697,12 +701,15 @@ class Runner:
         """Fetch ``branch`` into a private ref and return its commit.
 
         Only refs under the runner's own namespace change; the operator's
-        branches and checkout are never written.
+        branches and checkout are never written. ``--refmap=`` keeps that true
+        of remote-tracking refs, which git otherwise moves beside an explicit
+        refspec: worktrees share them, so another checkout's fetch holding one
+        would stop this one.
         """
         if not self.valid_branch(branch):
             raise Stop("ref_invalid", f"not a valid branch name: {branch}")
         target = f"{PRIVATE_REF}/{private}"
-        self.git("fetch", "--no-tags", "--quiet", self.remote, f"+refs/heads/{branch}:{target}")
+        self.git("fetch", "--no-tags", "--quiet", "--refmap=", self.remote, f"+refs/heads/{branch}:{target}")
         return self.rev(target)
 
     # -- checkouts ---------------------------------------------------------

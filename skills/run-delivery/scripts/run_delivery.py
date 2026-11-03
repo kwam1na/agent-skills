@@ -4347,7 +4347,14 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--run-adapters", action="store_true", help="also run the in-app adapters on the fixture page")
     p.add_argument("--run-gates", action="store_true", help="also run the gates on the base, in a fresh checkout")
     p.set_defaults(fn=doctor)
-    args = parser.parse_args(argv)
+    # What follows `--` is the adapter's. Python 3.11's argparse refuses it after a positional taking any number of values.
+    argv = list(sys.argv[1:] if argv is None else argv)
+    separator = argv.index("--") if "--" in argv else len(argv)
+    args = parser.parse_args(argv[:separator])
+    if hasattr(args, "passthrough"):
+        args.passthrough = [*args.passthrough, *argv[separator + 1:]]
+    elif separator < len(argv):
+        args = parser.parse_args(argv)
     DELIVERY_ARG = args.delivery
     for _signal in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(_signal, _terminate)

@@ -2807,6 +2807,16 @@ def _signal_selected(pids: list[int], group: int | None, marker: bytes, signum: 
     return signalled
 
 
+def _signal_frozen(pids: list[int], signum: signal.Signals) -> None:
+    """Signal what this run froze, without reading it again: a read that fails must not leave it stopped.
+
+    A stopped process cannot exec or exit by itself, so its pid is still the one frozen.
+    """
+    for pid in pids:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signum)
+
+
 def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
                     preview: Callable[[dict], None] | None, cleanup: list | None) -> None:
     """Stop what the exited command left: its group, while its unreaped pid holds the group id, and marked processes.
@@ -2848,14 +2858,14 @@ def _stop_leftovers(process: subprocess.Popen, marker: bytes, started: float, *,
                     selection["refused"].append(refusal)
             # A frozen process a later read refuses is let go again, never left stopped.
             refused_now = {pid for pid, _ in latest["refused"]}
-            _signal_selected([pid for pid in frozen if pid in refused_now], group, marker, signal.SIGCONT)
+            _signal_frozen([pid for pid in frozen if pid in refused_now], signal.SIGCONT)
             frozen = [pid for pid in frozen if pid not in refused_now]
     finally:
         # Never leave a frozen process behind: what was stopped is killed.
         if group is not None and whole_group:
             with contextlib.suppress(OSError):
                 os.killpg(group, signal.SIGKILL)
-        _signal_selected(frozen, group, marker, signal.SIGKILL)
+        _signal_frozen(frozen, signal.SIGKILL)
         selection["selected"] = sorted(frozen)
         selection["whole_group"] = whole_group
 

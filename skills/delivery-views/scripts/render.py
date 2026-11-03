@@ -31,6 +31,10 @@ Standard library only.
 
 from __future__ import annotations
 
+import sys
+
+sys.dont_write_bytecode = True
+
 import argparse
 import base64
 import binascii
@@ -41,7 +45,6 @@ import importlib.util
 import json
 import math
 import re
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -1101,6 +1104,9 @@ def history(arguments: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The pages are UTF-8 with plain newlines whatever the console uses: a Windows default can't hold their characters.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", newline="\n")
     parser = argparse.ArgumentParser(description="Print a delivery view for the delivery record on stdin.")
     commands = parser.add_subparsers(dest="command", required=True)
     drawn = commands.add_parser("line-map", help="the live line map")

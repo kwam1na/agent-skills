@@ -941,6 +941,8 @@ class FixtureAdopterLiveViewTests(unittest.TestCase):
         self.assertIn(text("The live view follows the record"), adopter.view())
         with contextlib.suppress(Exception):
             connection.sock.shutdown(socket.SHUT_RDWR)
+        if os.name == "nt":
+            return  # No SIGINT to send; the fixture's cleanup stops it.
         process.send_signal(signal.SIGINT)
         self.assertEqual(process.wait(10), 128 + signal.SIGINT)
 
