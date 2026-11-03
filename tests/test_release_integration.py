@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,6 +15,7 @@ from agent_skills.release import _release_view, build_release, verify_release
 from agent_skills.router import WorkflowRequest, route_workflow
 from agent_skills.validate import canonical_json, validate_corpus
 from lifecycle_support import initialize_repository
+from corpus_copy import SharedCorpus, copy_corpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -186,19 +186,20 @@ class ReleaseIntegrationTests(unittest.TestCase):
                 self.assertEqual(enums, [expected])
 
     def test_new_runtime_is_scanned_for_provider_and_repository_leakage(self) -> None:
-        for relative in sorted(path for path in NEW_PAYLOAD if path.startswith("agent_skills/")):
-            with self.subTest(path=relative), tempfile.TemporaryDirectory() as temporary:
-                copied = Path(temporary) / "corpus"
-                shutil.copytree(ROOT, copied, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.egg-info"))
-                path = copied / relative
-                path.write_text(path.read_text() + "\n# forbidden Linear transport\n")
-                findings = validate_corpus(copied).findings
-                self.assertTrue(any(f.rule_id == "core.boundary" and f.artifact == relative for f in findings), findings)
+        with tempfile.TemporaryDirectory() as temporary:
+            corpus = SharedCorpus(Path(temporary) / "corpus")
+            for relative in sorted(path for path in NEW_PAYLOAD if path.startswith("agent_skills/")):
+                with self.subTest(path=relative):
+                    copied = corpus.restored()
+                    path = copied / relative
+                    path.write_text(path.read_text() + "\n# forbidden Linear transport\n")
+                    findings = validate_corpus(copied).findings
+                    self.assertTrue(any(f.rule_id == "core.boundary" and f.artifact == relative for f in findings), findings)
 
     def test_runtime_requirements_follow_members_without_expanding_legacy_closure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             copied = Path(temporary) / "corpus"
-            shutil.copytree(ROOT, copied, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.egg-info"))
+            copy_corpus(copied)
             runtime = {path for path in NEW_PAYLOAD if path.startswith("agent_skills/")}
             for relative in runtime:
                 (copied / relative).unlink()

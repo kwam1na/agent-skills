@@ -9,6 +9,8 @@ from pathlib import Path
 # Bytecode under skills/ fails corpus validation, and tests import skill scripts and start them.
 sys.dont_write_bytecode = True
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+# Empty means no template: every fixture's git init and clone would otherwise write the sample hooks.
+os.environ.setdefault("GIT_TEMPLATE_DIR", "")
 
 
 TESTS = Path(__file__).resolve().parent

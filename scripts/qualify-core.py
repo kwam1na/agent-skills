@@ -156,6 +156,7 @@ TRUSTED_EVIDENCE_PATHS = (
     "tests/consumers/workflow_consumer.py",
     "tests/fixtures/delivery-provider-rails-v1.json",
     "tests/fixtures/workflow-graph/result-templates.json",
+    "tests/quiet_git.py",
     "tests/scenarios/core/compound.json",
     "tests/scenarios/core/diagnose.json",
     "tests/scenarios/core/execute.json",
