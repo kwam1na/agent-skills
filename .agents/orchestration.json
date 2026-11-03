@@ -8,8 +8,8 @@
   "candidate": [
     "python3",
     "-B",
-    "/Users/kwamina/delivery-artifacts/backlog-followups/candidate.py",
-    "/Users/kwamina/delivery-artifacts/adoption-gaps/candidate.py"
+    "/Users/kwamina/delivery-artifacts/adoption-gaps/candidate.py",
+    "{candidate}"
   ],
   "prepare": [
     [
