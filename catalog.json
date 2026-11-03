@@ -566,6 +566,8 @@
       "id": "run-delivery",
       "path": "skills/run-delivery/SKILL.md",
       "profiles": [
+        "jira",
+        "linear",
         "run-delivery"
       ],
       "provenanceId": "run-delivery"
