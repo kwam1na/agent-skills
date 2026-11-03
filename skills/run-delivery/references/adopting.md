@@ -466,6 +466,11 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
 - **`forge find failed`**: the forge adapter didn't answer. Check its settings and that the forge is reachable, or run
   the check with `--offline`.
 - **`the tracker snapshot reads`**: export the tracker variables the line names.
+- **`has an adapter but no tracker publisher`**: the tracker's updates would wait for someone to remember them.
+  `lead-setup` adds the tracker publisher to the binding's `state.publishers`; commit that. Or set `tracker.updates`
+  to `"manual"` in `.agents/run-delivery.json` to post them by hand.
+- **`reachable only through the host`**: add a host publisher, `{"id": "tracker", "kind": "host"}`, to the binding's
+  `state.publishers`, and post its outbox with the host's tracker tools; or set `tracker.updates` to `"manual"`.
 - **`these in-app adapters don't resolve`**: install the build, serve or check program the line names, or correct
   `inApp`.
 - **`isn't writable`**: make the in-app lease's folder or the baseline folder writable, or point `inApp` elsewhere.

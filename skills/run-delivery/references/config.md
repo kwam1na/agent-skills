@@ -70,10 +70,21 @@ checks may need no file at all.
     "lenses": { "lens.x": { "short": "x", "charter": "docs/review/x.md" } }  // added; the charter is a repository file
   },
   "tracker": {                                // optional
-    "transitions": {                          // the lanes' status moves, stated in the lane brief; absent: none
+    "updates": "publisher",                   // publisher | host | manual (below); default: publisher with an
+                                              // adapter, host for a Linear tracker snapshot, otherwise none
+    "adapter": "jira",                        // the shipped Jira adapter; or "argv": [...], an adopter's own adapter
+    "site": "https://example.atlassian.net", "userEnv": "JIRA_USER", "tokenEnv": "JIRA_TOKEN",
+                                              // Jira's: default, the binding's jira trackerSnapshot's flags
+    "project": "APP",                         // where follow-ups are filed; default: the delivery key's prefix
+    "followupType": "Task",                   // the issue type a follow-up is filed as
+    "transitions": {                          // every status move; absent: none
       "source": "https://wiki/workflow",      // the team's workflow page
-      "start": ["Refined", "Start work"],     // when a lane starts a story, in order
-      "review": ["Submit for review"]         // once its draft PR is open and the gates pass
+      "start": ["Refined", "Start work"],     // a story's start, in order: the publisher makes it on lane.assigned
+      "review": ["Submit for review"],        // once its draft PR is open and the gates pass
+      "lead": {                               // later journal kinds to the moves the publisher makes for them
+        "candidate.merged": ["Complete"],     // absent, or an empty list: no move, and the update says the move
+        "delivery.closed": ["Close epic"]     // belongs to people (the default)
+      }
     }
   },
   "harness": "ignore",                        // only to skip an unreadable harness.config.ts on purpose
@@ -193,6 +204,71 @@ The command is called with one of:
   a URL that isn't one of the repository's PRs. `head` may be abbreviated, to 7 characters at least.
 
 `FLOW_FORGE_REPOSITORY` and `FLOW_FORGE_TOKEN_ENV` carry the `forge` settings.
+
+## Tracker updates
+
+How a delivery's tracker updates (the orchestration guide's tracker-update table) and moves get made, by
+`tracker.updates`:
+
+- **`publisher`**: the tracker publisher, `tracker_publisher.py` beside `run_delivery.py`, posts them through a tracker adapter. The
+  binding names it in `state.publishers`, so it runs whenever the render wrapper runs; `lead-setup` adds it when the
+  configuration names an adapter: `{"id": "tracker", "argv": ["python3", "-B",
+  ".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py", "--state-dir", "{stateDirectory}"]}`.
+- **`host`**: a tracker reachable only through the host's connector (Linear, by this corpus's rule) uses a host
+  publisher, `{"id": "tracker", "kind": "host"}`, whose outbox the lead posts with the host's tracker tools.
+- **`manual`**: the lead posts them by hand. Without it, `doctor` fails and `lead-init` refuses a tracker with an
+  adapter but no tracker publisher, or a host-only tracker without a host publisher.
+
+**The ledger.** The publisher keeps `tracker-published.jsonl` beside the record, one JSON line per journal id and
+outcome: `{"journal", "outcome", "writer", "at", "ticket"?, "action"?, "move"?, "transition"?, "reason"?, "error"?,
+"final"?}`. The outcomes are `comment`, `transition` and `create` for an action taken, `skip` for an entry with nothing
+to post, `handled` for a move not offered from the ticket's status, and `failed` for a permanent rejection. Every entry
+gets at least one line; the ledger covers an entry once a command's line names it or the publisher's line for it is
+`final`. A lane or lead command that posts or moves for an entry it journals takes the ledger's lock
+(`tracker-published.lock`, waiting for it) across its journal write, its tracker call and its line, writes the line
+with its own `writer` and the `ticket`, and `"move": "review"` for a review move; when the call fails it writes no line
+and the publisher posts it later. A run that finds the lock held exits 0 at once.
+
+**What is posted.** Entries are taken in id order. A transient failure stops the run, and the next retries from there:
+a network error, a timeout, a 5xx, 409, 423, 429 or 401, or a 403 that the status read of the epic (or, with no epic or
+an unreadable one, of the project) also gets. Any other 4xx writes `failed` and the run goes on; nothing is journalled,
+and the failure shows in "Needs you". Each comment is cut to the adapter's `commentLimit`, with a pointer to the record.
+A `decision.recorded` entry is posted only when its journal id is in the flow log's `<delivery>.tracker-marks.jsonl`
+(`{"journal", "followup"?: {"story", "finding", "title"}}`), which the command that journals it writes while holding
+the ledger's lock: `lead-plan change` does. A mark with a `followup` files one follow-up item, labelled
+`agent-followup-<story>-<finding id>`, before posting. Every other unmarked decision gets a `skip` line.
+
+**Moves.** A story's `lane.assigned` waits for its start, a line `{"subject", "lane"?, "at"}` in the flow log's
+`<delivery>.lane-starts.jsonl`, at or after the entry. It then gets the start update and the `start` moves, once per
+story: never after the ledger holds the story's start or review move, and never when the ticket carries a start
+marker from the same delivery under an earlier record. An entry whose story is handed off, merged, reassigned or
+removed before it starts gets a `skip` line. The `lead` moves are made for their kinds. Each move reads the ticket's
+status first: a move whose target status the ticket already has is skipped and reported as made by someone else, and
+one the tracker doesn't offer from the current status is `handled`: shown, never retried or journalled.
+
+**Markers.** Each comment and move carries a marker the adapter stores on the ticket:
+`agent-delivery:<delivery>:<init id>:<journal id>:<action>`, where the init id is the time of the record's first
+journal entry, digits and letters only, and the action is `comment` or `transition:<name>`. Before writing, the
+publisher reads the ticket's markers, so a run that died between a write and its line never posts it twice.
+
+## The tracker adapter contract (`tracker-adapter/1`)
+
+The command is called with one of these, and prints one JSON object on stdout:
+
+- `status --ticket KEY` prints `{"status", "transitions": [{"name", "to", "offered"}], "commentLimit"}`: the ticket's
+  status, and every transition of its workflow with its target status and whether the current status offers it.
+  `status --project P` prints `{}` when the project can be read.
+- `markers --ticket KEY` prints `{"markers": [...]}`, every marker stored on the ticket, its comments' included.
+  `markers --project P --marker LABEL` prints `{"items": [{"key"}]}`, the project's items carrying that label.
+- `comment --ticket KEY --marker M --body-file F` posts the file as a comment, storing the marker with it.
+- `transition --ticket KEY --name NAME --marker M` makes the move, storing the marker with it.
+- `create --project P --title T --body-file F --marker LABEL [--parent KEY] [--type TYPE]` files an item carrying the
+  label, and prints `{"key"}`.
+
+A failure exits non-zero and prints `{"error", "httpStatus"}`, `httpStatus` null when the tracker wasn't reached. The
+shipped Jira adapter, `tracker_jira.py` in the skill's adapters folder, takes `--site`, `--user-env` and `--token-env` before the operation,
+as the delivery-views Jira snapshot does; it stores markers as issue properties and on the comment or move itself,
+and labels follow-ups, which it finds by JQL within the project.
 
 ## The in-app check contract
 

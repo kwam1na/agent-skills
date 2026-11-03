@@ -374,7 +374,7 @@ run the sync loop in this order:
      `state.trackerSnapshot`, `{argv, timeoutSeconds?}`, run it through the
      state tool. The repository's command prints the snapshot for the record's
      `meta.trackerParent`, which `{parent}` in its argv names; `{stateDirectory}`
-     names the resolved state directory, in a renderer's or `workHints` argv too. A command that
+     names the resolved state directory, in a renderer's, a publisher's or `workHints` argv too. A command that
      fails, or prints anything but a fresh tracker snapshot, keeps the last
      snapshot and journals why once, and reconcile then refuses that snapshot
      once it is too old. The command runs in its own process group with a

@@ -2606,7 +2606,10 @@ def doctor_binding() -> dict:
         "checkTimeoutSeconds": 600, "checkTimeoutCeiling": 1200, "environment": {},
         "ready": ["true", "{candidate}", "{expectedHead}"], "merge": ["true", "{branch}", "{expectedHead}"],
         "release": [], "fullHealth": ["true"], "leases": [],
-        "state": {"directory": ".orchestration/state", "publishers": [], "renderers": [],
+        "state": {"directory": ".orchestration/state", "renderers": [],
+                  "publishers": [{"id": "tracker", "argv": [
+                      "python3", "-B", ".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py",
+                      "--state-dir", "{stateDirectory}"], "timeoutSeconds": 600}],
                   "trackerSnapshot": {"argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
                                                "--kind", "jira", "--site", "https://tracker.test", "--parent", "{parent}",
                                                "--user-env", "FX_TRACKER_USER", "--token-env", "FX_TRACKER_TOKEN"],
@@ -2637,7 +2640,7 @@ TROUBLESHOOTING_KEYS = [
     "no gates are declared", "these don't resolve", "isn't ignored by git", "no tracker issue URL",
     "review.pr is configured, but", "gh isn't installed", "gh isn't signed in",
     "no token variable for the Bitbucket adapter", "the Bitbucket adapter reads its token from it", "forge find failed",
-    "the tracker snapshot reads", "these in-app adapters don't resolve", "isn't writable",
+    "the tracker snapshot reads", "has an adapter but no tracker publisher", "reachable only through the host", "these in-app adapters don't resolve", "isn't writable",
     "the in-app adapters break the contract", "lease held by", "video evidence needs both", "which video evidence uses",
     "needs Node 22.6 or newer", "no runtime loader", "harness.config.ts not read", "is missing (lead-setup writes it)",
     "stories without a lane", "lanes own the same files", "fails on", "isn't a valid delivery-plan/1",
@@ -2651,7 +2654,7 @@ def troubleshooting_section() -> str:
 
 DOCTOR_LABELS = ["host and tools", "orchestration binding", "configuration", "release generation",
                  "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
-                 "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
+                 "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token", "tracker updates",
                  "in-app adapters", "in-app adapter contract", "video evidence tools", "harness configuration",
                  "delivery file", "plan chapter", "gates on the base"]
 
@@ -2901,6 +2904,8 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             ("forge find", "missing", "export FX_FORGE_TOKEN", lambda: (edit_json(conf_path, lambda c: c.update(
                 forge={"adapter": "bitbucket", "repository": "ws/repo", "tokenEnv": "FX_FORGE_TOKEN"})), None)),
             ("tracker snapshot token", "missing", "export FX_TRACKER_TOKEN", lambda: env(FX_TRACKER_TOKEN=None)),
+            ("tracker updates", "missing", "run lead-setup", lambda: (edit_json(binding_path, lambda b: b["state"].update(
+                publishers=[])), None)),
             ("in-app adapters", "wrong", "install them", lambda: (edit_json(conf_path, lambda c: c["inApp"]["check"].update(
                 argv=["no-such-check-program"])), None)),
             ("in-app adapters", "wrong", "make it writable", lambda: (chmod_locked(), None)),

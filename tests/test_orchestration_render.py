@@ -1695,6 +1695,17 @@ class WrapperTests(DeliveryStateFixture):
         resolved = str(self.state_dir.resolve())
         self.assertEqual((self.state_dir / "where.txt").read_text(), repr([resolved, f"--state-dir={resolved}"]))
 
+    def test_a_publisher_argv_gets_the_resolved_state_directory(self) -> None:
+        # A tracker publisher keeps its ledger beside the record it publishes, wherever the binding puts it.
+        seen = self.tools / "seen.txt"
+        argv = python_argv(f"import sys\nopen({str(seen)!r}, 'w').write(repr(sys.argv[1:]))\n", self.tools, "where")
+        publishers = [{"id": "where", "argv": [*argv, "{stateDirectory}", "--state-dir={stateDirectory}"]}]
+        code, result = render_state.render(self.state_dir, json.loads(self.config([], publishers)))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["publishers"], [{"exitCode": 0, "id": "where", "ok": True}])
+        resolved = str(self.state_dir.resolve())
+        self.assertEqual(seen.read_text(), repr([resolved, f"--state-dir={resolved}"]))
+
     def test_a_built_in_view_that_fails_keeps_its_previous_view(self) -> None:
         renderers = [{"id": "summary", "builtin": "markdown", "output": "delivery.md"}]
         code, result = wrapper(self.state_dir, "--state-config", self.config(renderers))
