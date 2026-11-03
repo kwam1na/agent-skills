@@ -342,6 +342,13 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "A plan review that is not converging may end by operator decision rather"
         " than by count; termination is not guaranteed",
         "Each plan-review lens carries this mandate in its own round brief",
+        "its `plan-review` command runs these rounds for any plan, before the plan"
+        " is a delivery and with no delivery file, binding or record:"
+        " `plan-review prepare --plan <path> --lenses <ids>`",
+        "The plan names its review with `reviewSlug: <slug>` in its front matter,"
+        " committed before round 1, so renaming the plan file keeps its review",
+        "when the plan becomes a delivery, its `lead-setup` or `lead-init` adopts"
+        " that store, so the delivery's plan chapter shows every round",
         "Leaving plan review unbounded is a recorded decision rather than an"
         " omission, so a later plan review does not re-derive the question",
         "every lens reviewing a plan optimizes for the lowest number of rounds",

@@ -77,6 +77,17 @@ declined is re-checked like any carried finding. In a follow-up round, a new
 finding against unchanged plan text is raised only at P0 or P1, because a plan
 has no deferral path.
 
+Where the run-delivery tool is installed, its `plan-review` command runs these
+rounds for any plan, before the plan is a delivery and with no delivery file,
+binding or record: `plan-review prepare --plan <path> --lenses <ids>` for each
+round, `plan-review reduce --plan <path>` once its lenses return, and
+`plan-review end --plan <path> --reason <text>` when the operator ends a review
+that is not converging. The plan names its review with `reviewSlug: <slug>` in
+its front matter, committed before round 1, so renaming the plan file keeps its
+review. The rounds are kept in the work directory's `plan-review/<slug>/` store,
+and when the plan becomes a delivery, its `lead-setup` or `lead-init` adopts that
+store, so the delivery's plan chapter shows every round.
+
 ## Plan Extension Pins and Shared Resources
 
 For each unit that extends a registry, enum, or counted collection, search the
