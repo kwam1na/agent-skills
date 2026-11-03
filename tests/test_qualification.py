@@ -12,8 +12,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_skills.release import build_release
-from tests.qualification_pending_support import pending, skip_if_pending
+from agent_skills.release import build_release, verify_release
+from tests.built_product import build_product
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,17 +35,42 @@ def _load_runner():
 
 
 class QualificationTests(unittest.TestCase):
-    def test_checked_product_core_replays_exactly(self) -> None:
-        skip_if_pending(self, "core")
-        product = ROOT / "qualifications/product"
-        current = "core-draft-building-v1"
+    def test_registry_validation_no_longer_accepts_a_target_base(self) -> None:
+        script = ROOT / "scripts" / "validate-registry.py"
+        accepted = subprocess.run([sys.executable, "-B", str(script), "--root", str(ROOT)],
+                                  cwd=ROOT, capture_output=True, text=True, check=False)
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        for arguments in (["--target-base", "main"], ["--target-base=main"]):
+            with self.subTest(arguments=arguments):
+                refused = subprocess.run([sys.executable, "-B", str(script), "--root", str(ROOT), *arguments],
+                                         cwd=ROOT, capture_output=True, text=True, check=False)
+                self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
+                self.assertIn("--target-base", refused.stderr)
+
+    def test_core_product_built_from_the_tree_qualifies(self) -> None:
+        runner = _load_runner()
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
+            archive, metadata = build_product(directory, "core", "core-qualification-fixture")
             output = directory / "core.json"
-            result = self._run_qualification(product / f"{current}.zip",
-                                             product / f"{current}.release.json", output, directory)
+            result = self._run_qualification(archive, metadata, output, directory)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(output.read_bytes(), (product / f"{current}.json").read_bytes())
+            record = json.loads(output.read_text(encoding="utf-8"))
+            verified = verify_release(archive, metadata)
+        self.assertEqual(set(record), {
+            "qualificationDriverSha256", "redaction", "release", "replay", "scenarios", "schemaVersion", "summary",
+            "workflowGraphSha256",
+        })
+        self.assertEqual(record["schemaVersion"], "agent-skills-qualification/1")
+        self.assertEqual(record["release"], {
+            "archiveSha256": verified.archive_sha256,
+            "metadataSha256": verified.metadata_sha256,
+            "profile": "core",
+            "releaseId": "core-qualification-fixture",
+        })
+        self.assertEqual(record["summary"]["result"], "passed")
+        self.assertEqual([scenario["id"] for scenario in record["scenarios"]], list(runner.REQUIRED_SCENARIOS))
+        self.assertTrue(all(scenario["result"] == "passed" for scenario in record["scenarios"]))
 
     def test_record_output_cannot_alias_candidate_archive_or_metadata(self) -> None:
         for target in ("archive", "metadata", "symlink"):
@@ -280,7 +305,7 @@ class QualificationTests(unittest.TestCase):
             first_metadata = directory / "first.release.json"
             second_archive = directory / "second.zip"
             second_metadata = directory / "second.release.json"
-            release_id = "core-workflows-draft-building-v1"
+            release_id = "core-qualification-fixture"
             first = build_release(
                 ROOT,
                 first_archive,
@@ -338,11 +363,6 @@ class QualificationTests(unittest.TestCase):
             self.assertNotIn(str(directory), serialized)
             self.assertNotIn(secret, serialized)
             self.assertNotIn("linear", serialized.lower())
-            if pending("core") is None:
-                self.assertEqual(
-                    record_path.read_bytes(),
-                    (ROOT / "qualifications" / "core-workflows-draft-building-v1.json").read_bytes(),
-                )
 
             replay = self._run_qualification(
                 second_archive,
@@ -355,7 +375,6 @@ class QualificationTests(unittest.TestCase):
                 record_path.read_bytes(),
                 (directory / "replay.json").read_bytes(),
             )
-        skip_if_pending(self, "core")
 
     def test_anti_vacuity_rejects_missing_or_unasserted_scenarios(self) -> None:
         runner = _load_runner()
@@ -436,15 +455,7 @@ class QualificationTests(unittest.TestCase):
         self.assertNotIn(secret, json.dumps(record))
 
     def test_trusted_sensor_change_changes_the_driver_identity(self) -> None:
-        skip_if_pending(self, "core")
         runner = _load_runner()
-        recorded = json.loads(
-            (ROOT / "qualifications" / "core-workflows-draft-building-v1.json").read_text(encoding="utf-8")
-        )
-        self.assertEqual(
-            recorded["qualificationDriverSha256"],
-            runner.qualification_driver_sha256(ROOT),
-        )
         with tempfile.TemporaryDirectory() as temporary:
             copied = Path(temporary) / "trusted-evidence"
             for relative in runner.TRUSTED_EVIDENCE_PATHS:
@@ -464,7 +475,6 @@ class QualificationTests(unittest.TestCase):
 
             after_fixture_change = runner.qualification_driver_sha256(copied)
 
-            self.assertEqual(before, recorded["qualificationDriverSha256"])
             self.assertNotEqual(after_sensor_change, before)
             self.assertNotEqual(after_fixture_change, before)
 
