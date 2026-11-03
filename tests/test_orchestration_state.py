@@ -1252,6 +1252,7 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(state["queue"][0]["stage"], "merged")
         self.assertNotIn("pending", state["queue"][0])
         self.assertEqual(state["lanes"], rows, "the stage did not move, so the row keeps its word")
+        self.assertEqual([report["subject"] for report in result["reports"]], ["work-m"])
         self.assertEqual([entry["subject"] for entry in state_tool.read_journal(self.directory)
                           if entry["kind"] == "candidate.merged"], ["work-m"])
 
@@ -1268,6 +1269,22 @@ class ReconcileTests(unittest.TestCase):
                      if entry["kind"] == "candidate.merged"}
         self.assertIn("before the lead accepted", summaries["work-m"])
         self.assertNotIn("before the lead accepted", summaries["work-n"])
+
+    def test_planned_work_merged_with_no_hand_off_skipped_the_lead_only_under_its_policy(self) -> None:
+        for policy, reported in ((True, ["work-p"]), (False, [])):
+            with self.subTest(policy=policy):
+                directory = self.root / f"policy {policy}"
+                state_tool.init(directory, "Epic underway")
+                state_tool.patch(directory, writer="lead", version=state_tool.show(directory)["state"]["version"],
+                                 changes={"meta": {"handoffsNeedAcceptance": policy},
+                                          "planned": [{"subject": "work-p", "title": "P", "lane": "lane-1", "stage": "review"}]})
+                forge = self.snapshot("forge", [{"subject": "work-p", "state": "merged", "head": HEAD_B}])
+                code, result = run_tool(directory, "reconcile", "--snapshot", forge)
+                self.assertEqual(code, 0, result)
+                self.assertEqual([report["subject"] for report in result["reports"]], reported)
+                summary = next(entry["summary"] for entry in state_tool.read_journal(directory)
+                               if entry["kind"] == "candidate.merged")
+                self.assertEqual("before the lead accepted" in summary, policy)
 
     def leftover(self) -> str:
         """A merged, journaled item carrying the flag, as an earlier version left it; returns its forge snapshot."""
@@ -1852,11 +1869,27 @@ class RecoveryIntentTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 state_tool.reconcile(self.directory, [self.forge])
         self.assertTrue(self.intent().exists())
-        state_tool.reconcile(self.directory, [self.forge])
+        # A snapshot that does not name the item: only finishing the intent can clear the wait.
+        elsewhere = self.root / "tracker.json"
+        elsewhere.write_text(json.dumps({"takenAt": taken(), "source": "tracker", "items": []}), encoding="utf-8")
+        result = state_tool.reconcile(self.directory, [elsewhere])
         self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
         self.assertEqual(len(self.recovered()), 1)
         self.assertIn("before the lead accepted", self.recovered()[0]["summary"])
+        self.assertEqual([report["subject"] for report in result["reports"]], ["work-q"])
         self.assertFalse(self.intent().exists())
+
+    def test_a_crash_after_the_state_write_still_reports_the_skipped_acceptance(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, selector="queue[subject=work-q]",
+                         changes={"pending": True})
+        with mock.patch.object(state_tool, "_journal_recovery", side_effect=RuntimeError("the machine stopped")):
+            with self.assertRaises(RuntimeError):
+                state_tool.reconcile(self.directory, [self.forge])
+        self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
+        result = state_tool.reconcile(self.directory, [self.forge])
+        self.assertEqual([report["subject"] for report in result["reports"]], ["work-q"])
+        self.assertIn("lead-accept", result["reports"][0]["note"])
 
     def test_a_crash_after_the_entry_and_before_the_intent_is_cleared_writes_no_second_entry(self) -> None:
         journal = state_tool._journal_recovery

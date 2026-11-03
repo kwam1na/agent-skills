@@ -3228,7 +3228,7 @@ def lead_accept(args) -> None:
     # Work merged outside the queue skipped the lead's acceptance; its decisions can still be recorded, once.
     merged = item["stage"] == "merged"
     if merged:
-        if read_log("acceptance", key):
+        if any(entry["head"] == item["head"] for entry in read_log("acceptance", key)):
             problems.append("the hand-off was already accepted")
     elif not item.get("pending"):
         problems.append("the hand-off is not waiting for acceptance")
@@ -3240,7 +3240,8 @@ def lead_accept(args) -> None:
     numbers = [e["review"]["round"] for e in rounds]
     if len(numbers) != len(set(numbers)):
         problems.append(f"round numbers journaled more than once: {sorted(numbers)}")
-    if item.get("reportedRounds") != len(set(numbers)):
+    # Work merged with no hand-off reported no rounds; the journal's own are still checked below.
+    if not (merged and item.get("reportedRounds") is None) and item.get("reportedRounds") != len(set(numbers)):
         problems.append(f"the hand-off reports {item.get('reportedRounds')} rounds; the journal has {len(set(numbers))}")
     last = max(rounds, key=lambda e: e["review"]["round"], default=None)
     if not last or set(last["review"]["verdicts"]) != set(c.lenses) or set(last["review"]["verdicts"].values()) != {"approve"}:
@@ -3272,7 +3273,7 @@ def lead_accept(args) -> None:
             decisions.append(f"PR review by {review['author']} at {review['at'][:16]} triaged: {recorded['triage']}")
     git("fetch", "-q", c.remote, c.base_branch)
     base = git("merge-base", c.base_ref, head)
-    # Once merged, the head is on the base, so there is no diff left to read.
+    # Once merged, the base holds the head or a squash of it, so a diff against it no longer says what the work changed.
     changed = [] if merged else git("diff", "--name-only", f"{base}..{head}").splitlines()
     owns = c.lanes[c.lane_of(key)]["owns"]
     outside = [f for f in changed if not any(fnmatch.fnmatch(f, g) for g in owns)]

@@ -2013,6 +2013,8 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
             elif word == "closed" and entry.get("stage") != "merged":
                 report(subject, "its change request closed without merging")
             elif word == "merged":
+                # Work the lead's policy would have held, whether it waits now or never came through a hand-off.
+                unaccepted = "pending" in entry or (entry is planned(subject) and state["meta"].get("handoffsNeedAcceptance"))
                 if entry is planned(subject):
                     if "head" not in item:
                         report(subject, "merged on the forge, but the snapshot gives no head to record")
@@ -2038,7 +2040,7 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                     # ...and the merge the runner never saw is recovered as the runner's.
                     recoveries.append({"subject": subject, "head": item.get("head") or effective_head,
                                        "changeRequest": entry.get("changeRequest"), "lane": entry.get("lane"),
-                                       "occurredAt": item.get("mergedAt")})
+                                       "occurredAt": item.get("mergedAt"), "unaccepted": bool(unaccepted)})
                     change(subject, "merged on the forge but not recorded by the runner: recorded as merged", True)
                 elif "pending" in entry:
                     # Left by an earlier version; the merge it waited behind is already recorded.
@@ -2164,6 +2166,10 @@ def _current_merge(journal: list[dict], item: dict) -> bool:
 WAIT_BYPASSED = " before the lead accepted its hand-off"
 
 
+def _bypass_report(subject: str) -> dict:
+    return {"subject": subject, "note": f"merged{WAIT_BYPASSED}: check it with lead-accept"}
+
+
 def _recover(directory: Path, recoveries: list[dict], changes: list[dict], reports: list[dict]) -> None:
     """Record merges the runner missed, as the runner, only while no runner is running.
 
@@ -2216,10 +2222,11 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                     reports.append({"subject": item["subject"], "note": "recorded head changed: settle identity before recovery"})
                     break
                 where = f" as change request {recovery['changeRequest']}" if recovery["changeRequest"] else ""
+                bypassed = "pending" in item or recovery["unaccepted"]
                 intent = {
                     "subject": recovery["subject"], "head": recovery["head"], "lane": recovery["lane"],
                     "summary": f"Recorded from a forge snapshot: merged{where} at {recovery['head']}, "
-                               "not recorded by the runner" + (WAIT_BYPASSED if "pending" in item else ""),
+                               "not recorded by the runner" + (WAIT_BYPASSED if bypassed else ""),
                     "journalAfter": len(read_journal(directory)),
                     "occurredAt": recovery["occurredAt"],
                     "changeRequest": recovery["changeRequest"],
@@ -2248,9 +2255,8 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                     reports.append({"subject": item["subject"], "note": f"{error}: set aside as {_set_aside(directory)}"})
                     break
                 (directory / RECOVERY_FILE).unlink(missing_ok=True)
-                if "pending" in item:
-                    reports.append({"subject": item["subject"],
-                                    "note": f"merged{WAIT_BYPASSED}: check it with lead-accept"})
+                if bypassed:
+                    reports.append(_bypass_report(item["subject"]))
                 break
             else:
                 raise StateError("version_stale", "the record kept changing while a merge was recovered")
@@ -2361,6 +2367,8 @@ def _finish_intent(directory: Path, intent: dict, finished: list[dict], reports:
         if "pending" in item:
             _tool_write(directory, lambda state: next(entry for entry in state["queue"]
                                                       if entry["subject"] == intent["subject"]).pop("pending"))
+        if intent["summary"].endswith(WAIT_BYPASSED):
+            reports.append(_bypass_report(intent["subject"]))
     (directory / RECOVERY_FILE).unlink(missing_ok=True)
 
 

@@ -481,7 +481,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "6b9fa74108f6f64275278b9f1c545c13512905a3ed8077814b245a199b8e9f24"
+          "sha256": "82e2a8135a6077b038ee6a5b67a04c1566613aa4d50ea95a674a910f2dbc957b"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
@@ -1042,7 +1042,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "02bcebb1bdd7a22f5b4eea14d4feaec8ef521e9dd1f9212d6844f841177760d3"
+          "sha256": "1f94883a030bae538a62dd04a076d5a69cc8d30a4a567b18d1f4cf773ca582ca"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",
