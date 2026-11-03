@@ -605,8 +605,9 @@ operator, who may choose to deliver the tickets one at a time through
 A host that loses the ability to start or message sessions during a delivery is
 this blocker and not a held message. So is one that still refuses a message one
 retry later, at the next milestone or, with nothing else pending, at the lead's
-next event. No further lane starts, and every candidate a lane hands off still
-enters the queue. On a host that can still message its running lanes, they keep
+next event. No further lane starts. A candidate a lane hands off is still checked
+as a claim: it enters the queue if the report holds, and otherwise waits for the
+operator's answer, since the lane cannot always be told. On a host that can still message its running lanes, they keep
 working and the lead keeps assigning them as usual. On one that cannot, each
 running lane reaches its hand-off and takes no new assignment, which is not an
 idle-lane defect.

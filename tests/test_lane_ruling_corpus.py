@@ -128,7 +128,7 @@ class LaneRulingTests(unittest.TestCase):
             "held message.",
             _document(GUIDE),
         )
-        self.assertIn("every candidate a lane hands off still enters the queue", _document(GUIDE))
+        self.assertIn("A candidate a lane hands off is still checked as a claim: it enters the queue if the report holds", _document(GUIDE))
         self.assertIn("On a host that can still message its running lanes, they keep working", _document(GUIDE))
         self.assertIn("each running lane reaches its hand-off and takes no new assignment", _document(GUIDE))
         self.assertIn("A refusal that persists means the host cannot message sessions", _document(GUIDE))
