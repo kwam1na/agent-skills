@@ -1711,7 +1711,8 @@ if os.environ.get("FAKE_GH_MODE") == "fail-long":
     sys.exit("gh: authentication failed for token " + os.environ.get("GH_TOKEN", "") + "z" * 290)
 command = sys.argv[1:3]
 if command == ["pr", "list"]:
-    print(json.dumps([{"url": "https://github.com/o/n/pull/3"}]))
+    count = int(os.environ.get("FAKE_GH_PRS", "1"))
+    print(json.dumps([{"url": "https://github.com/o/n/pull/%d" % (3 + i)} for i in range(count)]))
 elif command == ["pr", "create"]:
     print("https://github.com/o/n/pull/4")
 elif command == ["pr", "view"]:
@@ -1722,6 +1723,11 @@ elif command == ["pr", "view"]:
                                             {"name": "test", "conclusion": "FAILURE", "completedAt": "2026-01-01T00:00:03Z"}],
                       "reviews": [{"author": {"login": "pipeline-bot"}, "submittedAt": "2026-01-01T00:00:02Z",
                                    "body": "Looks fine"}]}))
+elif command == ["pr", "merge"] and "--match-head-commit" in sys.argv:
+    # As gh does: the merge is refused when the pull request's head isn't the one named.
+    if sys.argv[sys.argv.index("--match-head-commit") + 1] != "abc":
+        sys.exit("gh: head branch was modified; not merged")
+    print("done")
 elif command in (["pr", "ready"], ["pr", "merge"]):
     print("done")
 '''
@@ -2167,6 +2173,29 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
                                                "reviews": [{"author": "pipeline-bot", "at": "2026-01-01T00:00:02Z",
                                                             "body": "Looks fine"}]})
             self.assertEqual((said["ready"], said["merge"]), ({"url": url, "draft": False}, {"url": url, "state": "merged"}))
+            # A binding's merge step knows the branch, not the pull request: --source finds its one open pull request
+            # and merges it at exactly the checked head.
+            done = run("merge", "--source", "feature/X-1", "--strategy", "merge", "--head", "abc")
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(json.loads(done.stdout), {"url": url, "state": "merged"})
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertEqual(calls[-2][:4], ["pr", "list", "--head", "feature/X-1"])
+            self.assertEqual(calls[-1][2:], [url, "--merge", "--match-head-commit", "abc", "--repo", "o/n"])
+            for refused, extra, words in ((["--head", "def"], {}, "head branch was modified"),
+                                          (["--head", "abc"], {"FAKE_GH_PRS": "0"}, "has no open pull requests"),
+                                          (["--head", "abc"], {"FAKE_GH_PRS": "2"}, "has 2 open pull requests"),
+                                          ([], {}, "needs --head")):
+                with self.subTest(refused=refused, extra=extra):
+                    before = len(log.read_text().splitlines())
+                    done = run("merge", "--source", "feature/X-1", "--strategy", "merge", *refused, **extra)
+                    self.assertNotEqual(done.returncode, 0, done.stdout)
+                    self.assertIn(words, done.stderr)
+                    merges = [json.loads(line) for line in log.read_text().splitlines()[before:]
+                              if json.loads(line)[:2] == ["pr", "merge"]]
+                    if "modified" in words:  # gh itself refuses the moved head the merge was pinned to
+                        self.assertEqual([m[m.index("--match-head-commit") + 1] for m in merges], ["def"])
+                    else:
+                        self.assertEqual(merges, [], "a merge was attempted on a refusal")
             # The rollup is the pull request's current head's: at another head nothing has run yet.
             self.assertEqual(json.loads(run("reviews", "--url", url, "--head", "def").stdout)["checks"], [])
             for refused in (("ready", "--url", "https://github.com/x/y/pull/3"),
@@ -2185,10 +2214,17 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
     def test_the_bitbucket_adapter_marks_ready_and_merges_only_the_head_it_was_given(self) -> None:
         spec = importlib.util.spec_from_file_location("forge_bitbucket_for_tests", self.adapter("bitbucket"))
         calls = []
+        open_prs = [1]
 
         def answer(request, timeout=None):
             calls.append((request.get_method(), request.full_url, json.loads(request.data) if request.data else None))
-            body = {"source": {"commit": {"hash": "abc123def456"}}} if request.get_method() == "GET" else {}
+            if "?q=" in request.full_url:
+                body = {"values": [{"links": {"html": {"href": f"https://bitbucket.org/ws/repo/pull-requests/{7 + i}"}}}
+                                   for i in range(open_prs[0])]}
+            elif request.get_method() == "GET":
+                body = {"source": {"commit": {"hash": "abc123def456"}}}
+            else:
+                body = {}
             return contextlib.closing(io.BytesIO(json.dumps(body).encode()))
 
         def adapter(*argv):
@@ -2215,6 +2251,23 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
                          {"url": url, "state": "merged"})
         self.assertEqual(calls[-2:], [("GET", api, None), ("POST", api + "/merge", {"merge_strategy": "merge_commit",
                                                                                      "close_source_branch": False})])
+        calls.clear()
+        # --source finds the branch's open pull request first.
+        self.assertEqual(adapter("merge", "--source", "feature/X-1", "--strategy", "squash", "--head", "abc123def456"),
+                         {"url": url, "state": "merged"})
+        self.assertIn('source.branch.name%3D%22feature/X-1%22', calls[0][1])
+        self.assertEqual(calls[-1], ("POST", api + "/merge", {"merge_strategy": "squash", "close_source_branch": False}))
+        # It refuses a moved head, a branch with no open pull request or two, and a merge not pinned to a head.
+        for count, argv, words in ((1, ["--head", "fff000"], "not merged"), (0, ["--head", "abc123def456"], "has no open"),
+                                   (2, ["--head", "abc123def456"], "has 2 open"), (1, [], "needs --head")):
+            with self.subTest(count=count, argv=argv):
+                open_prs[0] = count
+                calls.clear()
+                with self.assertRaises(SystemExit) as refused:
+                    adapter("merge", "--source", "feature/X-1", "--strategy", "merge", *argv)
+                self.assertIn(words, str(refused.exception.code))
+                self.assertFalse([c for c in calls if c[0] == "POST"], "merged on a refusal")
+        open_prs[0] = 1
         calls.clear()
         with self.assertRaises(SystemExit) as refused:
             adapter("merge", "--url", url, "--strategy", "squash", "--head", "fff000")
@@ -3963,6 +4016,7 @@ GUIDE_SUBSTITUTIONS = (
     "<delivery-key> and <story-key> placeholders -> fixture keys",
     "doctor -> doctor --offline",
     "the binding's <forge-owner> and <forge-name> -> the fake forge's repository",
+    "supervisor.passSeconds -> 1, so the supervisor's passes come within the case's time",
 )
 FIXTURE_KEYS = {"<delivery-key>": "FX-1", "<story-key>": "FX-2"}
 # Section 8 of the guide: the operating rules, by their opening words.
@@ -3972,8 +4026,25 @@ OPERATING_RULES = [
     "The evidence page follows each marked story's merge.", "Sign-in values stay out of commands.",
 ]
 GUIDE_SECTIONS = ["1. What the workflow does", "2. Prerequisites", "3. Install a release", "4. Configure the repository",
-                  "5. Run the setup check", "6. A first delivery", "7. Host notes", "8. Operating rules",
-                  "Troubleshooting"]
+                  "5. Run the setup check", "6. A first delivery", "7. A worked adopter",
+                  "8. Running deliveries", "9. Host notes", "10. Operating rules", "Troubleshooting"]
+# The guide's walk-through: what the lead does, in order. Everything else is the supervisor's or a lane's.
+GUIDE_WALKTHROUGH = ["Plan and review", "Set up", "Assign", "The lane delivers a story", "Accept", "Answer"]
+# What the guide must name, as phrases in its whitespace-normalized text.
+GUIDE_NAMES = {
+    "the supervisor": "`lead-run`",
+    "lane-start": "lane-start <story-key> --base main",
+    "bases": "\"bases\": [\"main\", \"integration-*\"]",
+    "the adapter merge": "forge_bitbucket.py\", \"merge\", \"--source\", \"{branch}\"",
+    "the formatter ignore list": "docs/plans/*.lane-brief.md",
+    "the settings-PR rule": "Settings land through reviewed pull requests.",
+    "the base-mismatch anchor": "### Base mismatch",
+    "reviewWhen": "\"reviewWhen\": \"pipeline-green\"",
+    "finish lines by covers and proofs": "by the record's covers and proofs",
+}
+# A push to `main` or to the base is labelled for an unprotected base, within its own block.
+UNPROTECTED = "unprotected base"
+PUSH_TO_BASE = re.compile(r"\bpush\b.*(?:\bmain\b|\{base\}|<base>)")
 
 
 def guide_blocks() -> list[dict]:
@@ -4014,6 +4085,9 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
             conf["inApp"]["check"]["argv"] = [sys.executable, "-B", str(fakes / "contract_check.py"), "{spec}", "{port}",
                                               "{args}"]
             used.add(GUIDE_SUBSTITUTIONS[1])
+            self.assertNotIn("supervisor", conf, "the guide shows the default pass; the case sets its own")
+            conf["supervisor"] = {"passSeconds": 1}
+            used.add(GUIDE_SUBSTITUTIONS[7])
             body = json.dumps(conf, indent=2) + "\n"
         if path == ".agents/orchestration.json" and "<forge-owner>" in body:
             body = body.replace("<forge-owner>", "fixture").replace("<forge-name>", "repository")
@@ -4102,6 +4176,25 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
             if "run_delivery.py doctor" in block["body"]:
                 self.assertEqual(failing(done.stdout), {}, done.stdout)
         self.assertEqual(used, set(GUIDE_SUBSTITUTIONS), "a pinned substitution is no longer needed; unpin it")
+        # The guide's last block is the lane's last word: the supervisor merges, cleans up, meets the finish line and
+        # closes the delivery itself, then stops. Nothing more is run.
+        closed = repo / ".orchestration/flow-log/FX-1.closed.json"
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline and not closed.exists():
+            time.sleep(0.5)
+        log = repo / ".orchestration/flow-log/FX-1.supervisor.jsonl"
+        self.assertTrue(closed.exists(), "the supervisor never closed the delivery: "
+                        + (log.read_text()[-3000:] if log.exists() else "it never ran a pass"))
+        lock = repo / ".orchestration/flow-log/FX-1.supervisor.lock"
+        while time.monotonic() < deadline:
+            with open(lock, "a+") as probe:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(probe, fcntl.LOCK_UN)
+                    break
+                except BlockingIOError:
+                    time.sleep(0.5)
+        self.assertTrue(Path(json.loads(closed.read_text())["friction"]).is_file(), "no friction note stub")
         # The delivery the guide declares has the plan chapter on: its plan passes check-plan and carries the change.
         plan_path = repo / ".orchestration/state/plan.json"
         checked = sh(sys.executable, "-B", repo / ".agent-skills/current/skills/delivery-views/scripts/views_common.py",
@@ -4123,11 +4216,20 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
                     and e["summary"].startswith("Hand-off checked as a claim")]
         self.assertEqual(len(accepted), 1, "the hand-off was never accepted")
         self.assertEqual(kinds[-1], "delivery.closed")
+        met = [e for e in state["journal"] if e["kind"] == "finish.met"]
+        self.assertEqual([e.get("subject") for e in met], ["greeting"], "the finish line wasn't met once, by its proofs")
         self.assertFalse(lane.exists(), "the lane's checkout outlived its merge")
+        # The operator's checkout was clean and on the base, so the close-out fast-forwarded it.
+        self.assertEqual((repo / "src/greeting.txt").read_text(), "Hello\n")
         sh("git", "fetch", "-q", "origin", cwd=repo)
         self.assertEqual(sh("git", "show", "origin/main:src/greeting.txt", cwd=repo).stdout, "Hello\n")
         self.assertTrue(list((home / ".local/share/run-delivery/archive/repository/FX-1").glob("*/state/journal.jsonl")))
-        left = [line for line in sh("ps", "-axo", "command=").stdout.splitlines() if str(root) in line]
+        left = []
+        while time.monotonic() < deadline:
+            left = [line for line in sh("ps", "-axo", "command=").stdout.splitlines() if str(root) in line]
+            if not left:
+                break
+            time.sleep(0.5)
         self.assertEqual(left, [], "the delivery left processes running")
         # The installed generation is still exactly what its receipt says.
         lifecycle = Lifecycle(repo).status().as_dict()
@@ -4175,9 +4277,47 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
                 usage = sh(sys.executable, "-B", self.generation / "skills/orchestrate-work/scripts" / script, "--help").stdout
                 self.assertIn(command, usage)
 
+    def test_the_walk_through_is_the_leads_own_steps(self) -> None:
+        text = GUIDE.read_text(encoding="utf-8")
+        prose = re.sub(r"^```.*?^```$", "", text, flags=re.MULTILINE | re.DOTALL)
+        section = prose[prose.index("## 6. A first delivery"):prose.index("## 7. A worked adopter")]
+        self.assertEqual(re.findall(r"^### (.+)$", section, re.MULTILINE), GUIDE_WALKTHROUGH)
+
+    def test_the_guide_names_what_the_workflow_now_does(self) -> None:
+        normalized = " ".join(GUIDE.read_text(encoding="utf-8").split())
+        for what, phrase in GUIDE_NAMES.items():
+            with self.subTest(what=what):
+                self.assertIn(" ".join(phrase.split()), normalized)
+        # The base-mismatch refusal points at this anchor; the heading it names is there.
+        tool = (SKILL / "scripts/run_delivery.py").read_text(encoding="utf-8")
+        self.assertIn("adopting.md#base-mismatch", tool)
+
+    def test_no_example_pushes_to_the_base_unless_labelled_for_an_unprotected_one(self) -> None:
+        for block in guide_blocks():
+            lines = block["body"].splitlines()
+            for index, line in enumerate(lines):
+                if PUSH_TO_BASE.search(line) and not line.lstrip().startswith("#"):
+                    with self.subTest(line=line):
+                        self.assertTrue(any(UNPROTECTED in earlier for earlier in lines[:index]),
+                                        f"an unlabelled push to the base: {line}")
+
+    def test_the_orchestration_guide_says_which_duties_run_delivery_does(self) -> None:
+        guide = " ".join((ROOT / "skills/orchestrate-work/references/orchestration-guide.md").read_text(
+            encoding="utf-8").split())
+        for phrase in ("With run-delivery's supervisor running, the lead does none of these by hand",
+                       "the supervisor judges `finish.met` by the record's covers and proofs",
+                       "a finish line the record can't prove stays in \"Needs you\"",
+                       "an entry the lead journalled by hand is skipped",
+                       "run-delivery's tracker publisher posts every update in this table",
+                       "skips a start `lane-start` recorded"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, guide)
+        skill = " ".join((ROOT / "skills/orchestrate-work/SKILL.md").read_text(encoding="utf-8").split())
+        self.assertIn("With run-delivery's supervisor running, the lead assigns, accepts and answers", skill)
+
     def test_the_operating_rules_are_pinned(self) -> None:
         text = GUIDE.read_text(encoding="utf-8")
-        section = text[text.index("## 8. Operating rules"):text.index("## Troubleshooting")]
+        section = text[text.index("## 10. Operating rules"):text.index("## Troubleshooting")]
         rules = re.findall(r"^- \*\*(.+?)\*\*", section, re.MULTILINE)
         self.assertEqual(rules, OPERATING_RULES)
         normalized = " ".join(section.split())
