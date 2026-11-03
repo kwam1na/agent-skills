@@ -129,6 +129,7 @@ class PlanReviewCommandTests(PlanReviewCase):
             self.assertIn(f"Your private checkout: `{checkout}`", brief)
             self.assertIn("`subjectRef`: `FX-1.plan`", brief)
             self.assertIn("P2 and P3 notes belong in `evidence`", brief)
+            self.assertIn("- scoped sensor commands: none; a plan review runs no checks", brief)
             self.assertNotIn("file each with `\"state\": \"deferred\"`", brief)
             self.assertIn(str(store(fx) / f"brief-r1-{SHORT[lens]}.md"), out)
         self.assertEqual(meta["startChecks"], {lens: "passed" for lens in (OC, AT)})
