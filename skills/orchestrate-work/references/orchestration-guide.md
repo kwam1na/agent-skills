@@ -105,6 +105,13 @@ journal kind maps to exactly one instruction below. An update is best-effort,
 like telemetry: one attempt, never a gate. With no tracker tools, delivery
 proceeds and the lead notes the gap in its close-out.
 
+Where the repository runs run-delivery with its tracker publisher in the
+binding, run-delivery's tracker publisher posts every update in this table,
+once each, from its own ledger, and makes the moves its configuration names:
+the lead posts none of them by hand. A tracker reachable only through the
+host gets them through a host publisher's outbox instead, which the lead
+posts as the publishing step says.
+
 | Journal kind | Tracker update |
 | --- | --- |
 | `lane.assigned` | On the ticket: it moves to started, naming the lane and what it delivers. |
@@ -170,6 +177,11 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   lead, and record it as a decision.
 
 ### 4. Run the queue
+
+With run-delivery's supervisor running, it keeps the queue's `serve` running,
+reconciles the record each pass, and cleans up each merged story once its lane
+has moved off it. The lead accepts each hand-off; the rest of this step is the
+supervisor's.
 
 - Lanes write their own hand-off, review rounds and focus through the state
   tool (the lane brief says how). Its `handoff` command moves a lane's planned
@@ -279,6 +291,9 @@ decision. Lanes post on their own tickets at the points the lane brief names.
 
 ### 5. Publish
 
+With run-delivery's supervisor running, it keeps the live view running and
+renders, publishers included, after each of its own writes.
+
 - Start the live view at the beginning of the delivery and point the
   operator at its address; it re-renders on every record write, so it is
   never stale.
@@ -291,6 +306,13 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   tool, follow the publishing step.
 
 ### 6. Check the finish lines live
+
+With run-delivery's supervisor running, the supervisor judges `finish.met` by
+the record's covers and proofs: a line whose covered criteria have every proof
+it names done is marked met and journalled once, and an entry the lead
+journalled by hand is skipped. Only a finish line the record can't prove is
+the lead's: a finish line the record can't prove holds the close until the
+lead checks it as below, marks it met and journals it.
 
 - For each finish line, run the observable check the plan names, against the
   merged base, not against a lane's checkout.
@@ -319,6 +341,15 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   rather than journalling the release again.
 
 ### 8. Close out
+
+With run-delivery's supervisor running, the lead does none of these by hand.
+Once nothing holds the close, the supervisor runs `fullHealth` once per base
+head, files a follow-up for each deferred finding, journals `delivery.closed`
+and waits until the tracker has every update, archives the record, aligns the operator's
+checkout when it is clean, and writes a friction note stub for
+`$compound-learning`, in that order. The lead's part is what holds the close,
+which every lead command names from the supervisor's last pass, and the
+friction note. The steps below are for a delivery without it.
 
 - Run the binding's `fullHealth` once, on the final base: in a fresh detached
   checkout of the final base tip, after the binding's `prepare` steps, with
@@ -1105,7 +1136,11 @@ them after every state write, recording any failure without stopping.
 Some hosts store a live document only through their own tool, not through a
 command the binding can name. Then publishing is a lead step. With a `host`
 publisher in the binding, publish the outbox it writes and acknowledge it, as
-the skill's sync loop says. Without one:
+the skill's sync loop says. When the outbox carries tracker updates for a
+repository that runs run-delivery, the lead's drain skips every
+`lane.assigned` start move and update: run-delivery's `lane-start` prints them
+for the lane to make when the story starts, so the start is posted once, at
+the start, never at the assignment. Without a host publisher:
 
 1. After each runner result (a sync, a check, a merge, a release or a stop),
    and after each lead write to the state, read the validated document with

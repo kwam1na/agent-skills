@@ -222,8 +222,14 @@ The command is called with one of:
   may take the candidate, when the delivery's `authority` grants `readyPullRequests`. A refusal leaves the hand-off
   pending.
 - `merge --url URL --strategy merge|squash [--head SHA]` merges the PR through the forge and prints `{"url", "state":
-  "merged"}`, refusing a PR whose head moved from `--head`. A binding's `merge` step may call it, so a repository that
-  merges through its forge needs no merge script of its own.
+  "merged"}`, refusing a PR whose head moved from `--head`.
+- `merge --source BRANCH --head SHA --strategy merge|squash` merges the branch's one open PR, at exactly `--head`. It
+  refuses a branch with no open PR or with more than one, and a PR whose head isn't `--head`. A binding's `merge` step,
+  which knows the branch and the checked head but not the PR, calls it directly:
+  `["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge", "--source",
+  "{branch}", "--head", "{expectedHead}", "--strategy", "merge"]`, with `FLOW_FORGE_REPOSITORY` and
+  `FLOW_FORGE_TOKEN_ENV` in the binding's `environment`. A repository that merges through its forge needs no merge
+  script of its own.
 
 `FLOW_FORGE_REPOSITORY` and `FLOW_FORGE_TOKEN_ENV` carry the `forge` settings. Both shipped adapters answer every
 command. With `forge.mergeNeedsReady` set, `doctor` reports a delivery without the `readyPullRequests` grant, and

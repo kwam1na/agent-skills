@@ -4526,17 +4526,35 @@ def group_of(pid: int) -> int | None:
         return None
 
 
+def waits_on(c) -> str:
+    """What the supervisor's last pass found holding the close: its "Needs you", and the close condition's open parts.
+    Read from its pass log, where each pass writes it; empty before the first pass, or once nothing holds it."""
+    path = lead_file(c, "supervisor.jsonl")
+    lines = [line for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
+    try:
+        last = json.loads(lines[-1]) if lines else {}
+    except ValueError:  # a pass still writing its line
+        last = {}
+    held = [str(item) for item in last.get("closeHeldBy") or []]
+    if not held:
+        return ""
+    shown = "; ".join(held[:5]) + (f"; and {len(held) - 5} more" if len(held) > 5 else "")
+    return f". The close waits on: {shown}"
+
+
 def supervisor_line(c) -> str | None:
-    """What every lead command repeats: the supervisor's state and the live view's address, or how to restart it."""
+    """What every lead command repeats: the supervisor's state, the live view's address and what the close waits on,
+    or how to restart it."""
     if not (c.state / "state.json").exists():
         return None
     held, recorded = read_lock(supervisor_lock_path(c))
     if held:
-        return f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
+        return (f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
+                + waits_on(c))
     closed = load_json(lead_file(c, "closed.json"))
     if closed:
         return "supervisor: stopped; the delivery is closed. " + closed_words(closed)
-    return f"supervisor: down; restart it with {flow_command()} lead-run --resume"
+    return f"supervisor: down; restart it with {flow_command()} lead-run --resume" + waits_on(c)
 
 
 def closed_words(closed: dict) -> str:
@@ -6074,7 +6092,8 @@ class Doctor:
             return "wrong", f"the supervisor is down; fix: {flow_command()} lead-run --resume"
         if not Path("/proc/self/status").exists():
             return "ok", (f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}. Its children's "
-                          "signal dispositions can't be read on this host (no /proc); it starts them with the defaults")
+                          "signal dispositions can't be read on this host (no /proc); it starts them with the defaults"
+                          + waits_on(d))
         ignored = []
         for child in recorded.get("children") or []:
             status = Path(f"/proc/{child.get('pid')}/status")
@@ -6087,7 +6106,7 @@ class Doctor:
             return "wrong", (f"the supervisor's children don't have the default signal dispositions: "
                              f"{'; '.join(ignored)}, so their checks fail as a broken base; fix: lead-close or stop "
                              f"them, then {flow_command()} lead-run --resume")
-        return "ok", f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}"
+        return "ok", f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}" + waits_on(d)
 
     def base_gates(self):
         if not self.args.run_gates:

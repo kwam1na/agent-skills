@@ -477,6 +477,15 @@ class SupervisorProcessTests(unittest.TestCase):
         wait_for(lambda: kinds(fx, "candidate.merged"), "serve merging FX-2")
         first = lock_of(fx)
         state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        # While it runs, every lead command and doctor say what the close waits on now: the latest pass, not the first.
+        latest = lambda p: p.get("closeHeldBy") == ["not handed off: FX-3"]
+        wait_for(lambda: passes(fx) and latest(passes(fx)[-1]), "a pass held only by FX-3")
+        code, out = fx.flow("lead-brief", cwd=m)
+        self.assertIn(f"supervisor: running (pid {first['pid']}); live view {first['address']}. The close waits on: "
+                      "not handed off: FX-3", out)
+        code, out = fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=m)
+        row = next(line for line in out.splitlines() if "delivery supervisor:" in line)
+        self.assertIn("The close waits on: not handed off: FX-3", row)
         with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
             changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"], "by": "lead",
                                       "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
@@ -590,6 +599,23 @@ class SupervisorPassTests(unittest.TestCase):
         queue_run(fx, "FX-3")
         self.once(fx)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, passes(fx)[-1])
+
+    def test_what_the_close_waits_on_is_cut_to_five_and_a_pass_still_writing_is_passed_over(self) -> None:
+        fx = self.fixture()
+        log = fx.tmp / "flow-log/FX-1.supervisor.jsonl"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        held = [f"hold {n}" for n in range(1, 8)]
+        log.write_text(json.dumps({"pass": 1, "closeHeldBy": held}) + "\n")
+        code, out = fx.flow("lead-brief", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("The close waits on: hold 1; hold 2; hold 3; hold 4; hold 5; and 2 more", out)
+        self.assertNotIn("hold 6", out)
+        # A pass still writing its line: the line is passed over, never a crash.
+        with open(log, "a") as partial:
+            partial.write('{"pass": 2, "closeHeldBy": ["hold')
+        code, out = fx.flow("lead-brief", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("The close waits on", out)
 
     def test_accepted_drafts_hold_the_close_when_the_merge_step_refuses_them(self) -> None:
         fx = self.fixture(grant_ready=False, merge_needs_ready=False)
@@ -734,8 +760,10 @@ class SupervisorPassTests(unittest.TestCase):
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
         code, out = fx.flow("lead-init", "--replace", cwd=m)
         self.assertEqual(code, 0, out)
-        # A planned story nobody took holds the close.
+        # A planned story nobody took holds the close, and every lead command says what the close waits on.
         self.assertIn("not handed off: FX-2, FX-3", self.holds(fx))
+        code, out = fx.flow("lead-brief", cwd=m)
+        self.assertIn("The close waits on: not handed off: FX-2, FX-3", out)
         wt = self.merged(fx, "FX-2", "lane-1")
         held = self.holds(fx)
         self.assertIn("not handed off: FX-3", held)

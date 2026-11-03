@@ -519,6 +519,11 @@ Work through [the lead checklist](references/orchestration-guide.md#lead-checkli
 decompose, assign, run the queue, publish, check the finish lines live,
 release with the operator's approval, and close out.
 
+With run-delivery's supervisor running, the lead assigns, accepts and answers:
+the supervisor runs the queue, publishes, meets each finish line the record
+proves, and closes out, as each checklist step says. A lead reading the
+checklist does none of those twice.
+
 ## Telemetry and tracker updates
 
 Telemetry is best-effort. Each existing run emission is attempted at most
@@ -528,7 +533,8 @@ Tracker updates follow the same rule: one attempt, never a gate. The lead
 posts one at each journal milestone, as
 [the tracker updates table](references/orchestration-guide.md#tracker-updates)
 maps them, and each lane posts on its own ticket at the points its brief
-names. With no tracker tools, delivery proceeds and the gap is noted.
+names. With no tracker tools, delivery proceeds and the gap is noted. Where
+run-delivery's tracker publisher is in the binding, it posts them instead.
 
 ## Delivery state
 

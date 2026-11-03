@@ -13,18 +13,25 @@ The skill's own files are named by their installed path, under `.agent-skills/cu
 angle brackets are yours to fill in: `<delivery-key>` is the epic's tracker key, `<story-key>` a story's, and
 `<forge-repository>` the repository as the forge names it (`owner/name`).
 
+Sections 3 to 6 walk a GitHub repository whose default branch, `main`, takes direct pushes. Each push to `main` there
+is marked as one for an unprotected base. Section 7 is a repository whose default branch is protected, and section 8
+says how settings and updates reach a protected base.
+
 ## 1. What the workflow does
 
 A delivery takes an approved plan of several stories through one integration base:
 
-- The **lead** sets the delivery up, assigns stories to lanes, checks each hand-off, merges through the merge queue,
-  and closes the delivery out.
+- The **lead** does three things: it assigns stories to lanes, accepts each hand-off, and answers what only it or the
+  operator can decide.
 - Each **lane** takes one story at a time in its own checkout. It builds and tests the change, gets it reviewed by the
   delivery's lenses, opens a draft change request and hands it off.
+- The **supervisor**, `lead-run`, does every other lead duty, pass after pass: the reconcile sweep, the merge queue
+  and the live view, cleanup after each merge, every tracker update and move, each finish line it can prove, a current
+  copy of the record outside the checkout, and the close-out.
 
-`run-delivery` does the mechanical steps of both as commands. It wraps the release it is installed with: the
-`orchestrate-work` state tool and merge queue, the `obtain-review` round brief and the lens charters. The record of the
-delivery is `orchestrate-work`'s.
+`run-delivery` does the mechanical steps as commands. It wraps the release it is installed with: the `orchestrate-work`
+state tool and merge queue, the `obtain-review` round brief and the lens charters. The record of the delivery is
+`orchestrate-work`'s.
 
 ## 2. Prerequisites
 
@@ -50,28 +57,40 @@ python3 -B /path/to/product.zip --root . --product apply \
 ```sh example repo
 git add -A
 git commit -q -m "Install agent-skills"
+# On an unprotected base: push it. On a protected one, push a branch and open a pull request (section 8).
 git push -q origin main
 ```
 
 Run the tool by its stable path, `.agent-skills/current/skills/run-delivery/scripts/run_delivery.py`, from the top of
-any checkout of the base. After an update, commit the new generation the same way.
+any checkout of the base. An update to the release lands the same way, in a pull request of its own (section 8).
 
 ## 4. Configure the repository
 
-Four kinds of file set a repository up. Each is written once and committed on the base.
+Five kinds of file set a repository up. Each is written once and committed on the base.
 
 **Ignored folders.** Lane checkouts, review folders and the record live under `.orchestration/`, which git must
-ignore. The in-app build writes `out/` here.
+ignore. The in-app build writes `out/` here. The host's own worktrees stay out of the repository too, but not the
+host's whole folder: the installer writes the skills' links for the host there, and they belong on the base.
 
 ```text example file .gitignore
 .orchestration/
 out/
+.claude/worktrees/
+```
+
+**Formatter and hook ignores.** A formatter or a commit hook that rewrites files must leave the delivery's generated
+files alone, or each lane's checkout shows changes no lane made: the record's folder, and the lane brief `lead-brief`
+writes beside the plan. List them in each tool's ignore file:
+
+```text example file .prettierignore
+.orchestration/
+docs/plans/*.lane-brief.md
 ```
 
 **The orchestrate-work binding** says what the merge queue runs: the base, the checks every candidate must pass, and
-how a candidate is found, made ready and merged. This one checks every candidate for whitespace errors against the base;
-put your own test command in `fallback` beside it. The `candidate` and `merge` steps here are a git-only pair, below;
-a repository that merges through its forge points them at that instead.
+how a candidate is found, made ready and merged. This one checks every candidate for whitespace errors against the
+base, leaving out the generated lane brief, whose layout is the tool's; put your own test command in `fallback` beside
+it. The `candidate` and `merge` steps here are a git-only pair, below; section 7 merges through the forge instead.
 
 ```json example file .agents/orchestration.json
 {
@@ -88,8 +107,8 @@ a repository that merges through its forge points them at that instead.
   "provider": null,
   "alwaysRun": [],
   "fallback": [
-    {"id": "whitespace", "argv": ["git", "diff", "--check", "{baseHead}"], "cwd": ".",
-     "reasons": ["every candidate is checked for whitespace errors against the base"], "prerequisites": []}
+    {"id": "whitespace", "argv": ["git", "diff", "--check", "{baseHead}", "--", ".", ":(exclude)docs/plans/*.lane-brief.md"],
+     "cwd": ".", "reasons": ["every candidate is checked for whitespace errors against the base"], "prerequisites": []}
   ],
   "checkTimeoutSeconds": 600,
   "checkTimeoutCeiling": 1200,
@@ -109,8 +128,8 @@ a repository that merges through its forge points them at that instead.
 ```
 
 `forgeSnapshot` reads the delivery's pull requests into the record; a repository that configures a forge declares
-one, and `lead-init` refuses without it. A binding that reads a tracker with `trackerSnapshot` also declares a
-tracker publisher in `publishers`.
+one, and `lead-init` refuses without it. A binding that reads a tracker with `trackerSnapshot` also declares a tracker
+publisher in `publishers` (section 7).
 
 A repository that delivers to more than one long-lived base, such as `main` and a run of integration branches, lists
 them in the binding's optional `bases`, beside `base.ref`, which stays the default:
@@ -118,7 +137,8 @@ them in the binding's optional `bases`, beside `base.ref`, which stays the defau
 segment of the name. A delivery to any base that matches then needs no edit to the binding. `lead-setup` requires
 `--base` once `bases` is declared, so where the work lands is settled before any lane starts. Lanes and the merge queue
 read the binding from the delivery's own base, so every base it serves carries a binding that lists it: cut a new base
-after the binding gained `bases`, or commit the binding there too.
+after the binding gained `bases`, or commit the binding there too. [Base mismatch](#base-mismatch) covers the
+refusals.
 
 The queue's `candidate` step turns a story key into its branch and that branch's tip on the remote:
 
@@ -137,7 +157,8 @@ if not tip:
 print(json.dumps({"branch": branch, "head": tip[0]}))
 ```
 
-Its `merge` step lands the checked head on the base, refusing a branch that moved after its check:
+Its `merge` step lands the checked head on the base, refusing a branch that moved after its check. It pushes to the
+base, so it suits only a base that takes direct pushes:
 
 ```python example file .agents/delivery/merge.py
 """The merge queue's merge step, git only: the checked head lands on the base as a merge commit."""
@@ -158,6 +179,7 @@ if not tip or tip[0] != expected:
 git("fetch", "--quiet", "origin", f"+refs/heads/{branch}:refs/merge-queue/candidate")
 tree = git("rev-parse", expected + "^{tree}")
 commit = git("commit-tree", tree, "-p", base_head, "-p", expected, "-m", "Merge " + branch)
+# For an unprotected base only: a protected one merges through the forge (section 7).
 git("push", "--quiet", f"--force-with-lease=refs/heads/{base}:{base_head}", "origin", f"{commit}:refs/heads/{base}")
 ```
 
@@ -212,8 +234,23 @@ Commit the configuration:
 ```sh example repo
 git add -A
 git commit -q -m "Configure deliveries"
+# On an unprotected base: push it. On a protected one, open a pull request (section 8).
 git push -q origin main
 ```
+
+### Checks the repository already has
+
+**A linter that fails on old code.** A gate runs on every candidate. When the repository's linter reports problems the
+delivery didn't make, lint only the files each candidate changes, so a lane is never held to code it didn't touch:
+
+```text example outline
+{"id": "lint", "argv": ["sh", "-c", "git diff --name-only --diff-filter=ACMR \"$0\"...HEAD -- '*.ts' '*.tsx' | xargs -r npx eslint", "{baseHead}"]}
+```
+
+**A red baseline.** `doctor --run-gates` runs the gates on the base, in a fresh checkout, before any lane starts. A
+gate that fails there fails every candidate, and the queue reads it as a broken base. Repair the base first, or
+narrow the gate as above to what candidates change, and say in the plan which old failure is out of scope. Never drop
+the gate.
 
 ## 5. Run the setup check
 
@@ -224,12 +261,15 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py doc
 It prints one line per check: `ok`, `missing` or `wrong` with its fix, or `skipped` with the check it waits on. Fix
 the first line that isn't `ok` and run it again, until it exits 0. It fetches the base (`--offline` reads the local
 copy instead) and runs Node on `harness.config.ts` when there is one; it writes nothing else. `--run-adapters` adds
-the adapter proof, and `--run-gates` runs the gates on the base. [Troubleshooting](#troubleshooting) explains each
-message.
+the adapter proof, and `--run-gates` runs the gates on the base. With `--delivery <key>` it also checks the delivery:
+every story has a plan section, every `context.sections` heading is in the plan, a configured forge or tracker has its
+snapshot and publisher in the binding, Node meets the runtime's minimum, the remote base carries the configuration
+lanes read, and the supervisor's state. `lead-init` refuses on each of these. [Troubleshooting](#troubleshooting)
+explains each message.
 
 ## 6. A first delivery
 
-### The lead sets it up
+### Plan and review
 
 Write the approved plan, with one heading per story:
 
@@ -242,6 +282,23 @@ Write the approved plan, with one heading per story:
 
 - Scenarios: the page shows the greeting.
 ```
+
+Review a plan before it is approved, with or without a delivery. Give it a `reviewSlug` in its front matter, so its
+review survives a rename, commit it, and run `plan-review prepare` with the lenses that review it:
+
+```text example outline
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py plan-review prepare --plan docs/plans/<delivery-key>.md --lenses lens.outcome-correctness,lens.adversarial-testing
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py plan-review reduce --plan docs/plans/<delivery-key>.md
+```
+
+`prepare` gives each lens a clean checkout of the commit and a filled brief, and prints the reviewer prompts. Save each
+reviewer's result where it says, then `reduce` the round. Revise the plan for the open findings, commit, and repeat.
+The review has no round bound: `reduce` says when it stops converging, and only the operator ends it, with
+`plan-review end --reason TEXT`. When the plan becomes a delivery, `lead-setup` and `lead-init` adopt its review, every
+round of which shows in the plan chapter's "Plan review" fold, and `lead-init` refuses to freeze the plan while the
+review is open. A delivery file can name its plan's lenses itself instead, `"planReview": {"lenses": [...]}`.
+
+### Set up
 
 Draft the delivery file from the plan's headings:
 
@@ -263,8 +320,9 @@ it; the finish line's `label` and `covers` and the `outcome` shape it. Every key
 `criteria` gets no plan and today's page. Give each story the acceptance criteria the plan names, each with an id
 unique across the delivery. A finish line's `covers` says which criteria it stands for (a list of ids, `"all"`, or
 `[]` for none by design) and which proofs must be done for it: `merged` here; `review` and `handed`, and
-`in-app-<mode>` or `clip` for the in-app checks and video evidence a story needs, are the others. `outcome` is the
-delivery's purpose in one sentence and in full. `lead-init` freezes all of it as the approved plan:
+`in-app-<mode>` or `clip` for the in-app checks and video evidence a story needs, are the others. The supervisor meets
+each finish line by these covers and proofs (Answer, below). `outcome` is the delivery's purpose in one sentence and
+in full. `lead-init` freezes all of it as the approved plan:
 
 ```json example file .agents/deliveries/<delivery-key>.json
 {
@@ -292,57 +350,61 @@ the file, mark each approval that blocks work `"blocking": true`; the plan chapt
 work", naming it, until `lead-plan approval <id> --state done` records it done and commits the delivery file. One that
 is merely ahead stays in the chapter's "Approvals ahead" fold.
 
-To review the plan itself before work starts, name its lenses in the delivery file, such as `"planReview": {"lenses":
-["lens.outcome-correctness", "lens.adversarial-testing"]}`, commit the plan, and run `plan-review prepare`. It gives
-each lens a clean checkout of the commit and a filled brief, and prints the reviewer prompts; save each reviewer's
-result where it says, then run `plan-review reduce`. Revise the plan for the open findings, commit, and repeat. The
-review has no round bound: `reduce` says when it stops converging, and only the operator ends it, with `plan-review end
---reason TEXT`. Every round, and the commit that closed each finding, is kept and shown in the plan chapter's "Plan
-review" fold; `lead-init` refuses to freeze the plan while the review is open.
-
-Commit it, check the delivery, create the record, write the lane brief and assign the story:
+Commit it, check the delivery, create the record and write the lane brief. `lead-init` refuses each setup gap
+`doctor --delivery` reports, then starts the supervisor and prints the live view's address; every lead command
+repeats it:
 
 ```sh example repo
 git add -A
 git commit -q -m "<delivery-key>: the delivery"
+# On an unprotected base: push it. On a protected one, open a pull request (section 8).
 git push -q origin main
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py doctor --delivery <delivery-key>
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-init
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-brief
 git add -A
 git commit -q -m "<delivery-key>: the lane brief"
+# On an unprotected base: push it. On a protected one, open a pull request (section 8).
 git push -q origin main
+```
+
+### Assign
+
+Assign the story, and start the lane with exactly what `lead-assign` prints. From here on, the lane works from the lane
+brief:
+
+```sh example repo
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-assign <story-key> --lane lane-1 --title "Lane 1"
 ```
 
-Start the lane with exactly what `lead-assign` prints. From here on, the lane works from the lane brief.
-
-Once the delivery has started, change the plan's criteria and finish lines only through `lead-plan change`. It
-records what the plan said before and after and why, edits the delivery file, and commits it; it never pushes, and it
-refuses on a checkout with uncommitted changes or one behind the base. `--kind changed` or `relaxed` rewords a
-criterion, `added` adds one to a story, `removed` takes stories out of the delivery (the plan keeps them, marked
-removed), and `finish` changes or adds a finish line's `covers`. Push the commit so lanes see it:
+Once the delivery has started, change the plan's criteria and finish lines only through `lead-plan change`. It records
+what the plan said before and after and why, edits the delivery file, and commits it; it never pushes, and it refuses
+on a checkout with uncommitted changes or one behind the base. `--kind changed` or `relaxed` rewords a criterion,
+`added` adds one to a story, `removed` takes stories out of the delivery (the plan keeps them, marked removed), and
+`finish` changes or adds a finish line's `covers`. Push the commit so lanes see it:
 
 ```sh example repo
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-plan change --kind relaxed --subjects <story-key> --criterion greeting-shown --text "The front page shows a greeting" --why "The operator accepted any greeting"
+# On an unprotected base: push it. On a protected one, open a pull request (section 8).
 git push -q origin main
 ```
 
-A story added to the delivery file mid-delivery is recorded as `added` when `lead-brief`, `lead-assign` or the sweep
-registers it, with no reason until you give one with `lead-plan why <change-id> --why <reason>`; the plan chapter
-flags every change without one. An edit made to the criteria or `covers` by hand shows in the plan as `unrecorded`.
-`doctor --delivery` checks the plan the delivery file makes, and says when the chapter is off.
+A story added to the delivery file mid-delivery is recorded as `added` when `lead-brief`, `lead-assign` or the
+supervisor registers it, with no reason until you give one with `lead-plan why <change-id> --why <reason>`; the plan
+chapter flags every change without one. An edit made to the criteria or `covers` by hand shows in the plan as
+`unrecorded`.
 
 ### The lane delivers a story
 
-Make the story's own checkout from the base:
+The lane begins its story with `lane-start`, from the main checkout. It makes the story's own checkout from the base,
+runs the prepare step, sets the lane's focus, and records the story's start, which the tracker's start move waits for:
 
 ```sh example repo
-git fetch -q origin
-git worktree add -q --no-track -b feature/<story-key> .orchestration/lanes/<story-key> origin/main
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lane-start <story-key> --base main
 ```
 
-Change and commit the story's files in that checkout. Then run the gates, build, and check the change in the app:
+It changes and commits the story's files in that checkout. Then it runs the gates, builds, and checks the change in
+the app:
 
 ```sh example lane
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py gate <story-key>
@@ -350,16 +412,18 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py bui
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py app-check <story-key> greeting --mode loaded --path / --eval "document.title !== ''"
 ```
 
-Prepare the review round. The first run seeds `.orchestration/review/<story-key>/context.md` from the plan and stops
-until you replace its TODO line under "Evidence so far" with what you ran and what it showed; then run it again:
+It prepares the review round. The first run seeds `.orchestration/review/<story-key>/context.md` from the plan and
+stops until the lane replaces its TODO line under "Evidence so far" with what it ran and what it showed; then it runs
+it again:
 
 ```sh example lane
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py review-prepare <story-key> --round 1
 ```
 
-It prints one prompt per lens. Start one reviewer per lens with its prompt, and save each reviewer's final JSON message,
-exactly as returned, to the result path printed beside it. Then reduce the round, push the branch, open its draft
-change request and hand off:
+It prints one prompt per lens. The lane starts one reviewer per lens with its prompt, and saves each reviewer's final
+JSON message, exactly as returned, to the result path printed beside it. Each reduced round shows on the live view's
+line map at once, before any hand-off. Then the lane reduces the round, pushes the branch, opens its draft change
+request and hands off:
 
 ```sh example lane
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py review-reduce <story-key> --round 1
@@ -369,58 +433,201 @@ pr=$(python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.p
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py handoff <story-key> --pr "$pr"
 ```
 
-If a lens asks for changes, fix them, commit, run the gates again and prepare the next round. End the turn after the
-hand-off with the message `handoff` prints.
+If a lens asks for changes, the lane fixes them, commits, runs the gates again and prepares the next round. It waits
+inside its turn for reviewers, gates and the pipeline, and ends the turn only to hand off, to report itself blocked, or
+to ask the lead: the message `handoff` prints is its report.
 
-### The lead accepts, merges and closes
+### Accept
 
-Check the hand-off's claims, merge through the queue, and clean up the lane's checkout:
+Check the hand-off's claims. `lead-accept` verifies the head, the change request, the rounds and their evidence, the
+owned files, the gates and the in-app checks, and makes you decide every blocked item. Then it releases the candidate
+to the queue the supervisor keeps running:
 
 ```sh example repo
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-accept <story-key>
-python3 -B .agent-skills/current/skills/orchestrate-work/scripts/merge_queue.py --repo . --state .orchestration/state --remote origin --base main run <story-key>
-python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-cleanup <story-key>
-python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-reconcile
 ```
 
-A delivery with several stories runs the queue's `serve` instead, once, and leaves it running (see the operating
-rules). A story marked for video evidence adds the evidence page after it merges:
+When the repository's merge step refuses a draft (`forge.mergeNeedsReady`), the delivery's `authority` grants
+`readyPullRequests`, and `lead-accept` marks the draft ready before the queue may take it; a failed ready leaves the
+hand-off pending and names the adapter. A candidate the queue stopped, which you have since resolved, goes back with
+`lead-accept --requeue <story-key>`, with no new hand-off.
+
+### Answer
+
+Everything else is the supervisor's. Each pass it reconciles the forge and the tracker, cleans up each merged story
+once its lane has moved off it, journals `finish.met` for each finish line it can prove, renders the views and posts
+the tracker's updates, and copies the record to `latest` at the archive location. It judges each finish line by the
+record's covers and proofs: once every criterion a line covers has every proof it names done, the line is met and
+journalled once. An entry you journalled by hand is skipped. A line the record can't prove holds the close until you
+check it, mark it met and journal `finish.met`.
+
+What waits on you is what holds the close, and every lead command ends by saying so: "the close waits on" whatever the
+supervisor's last pass found, as `doctor --delivery` does too. Each pass writes the same list to the flow log's
+`<delivery-key>.supervisor.jsonl`. It names a story not yet merged, a finish line not met, a lane still busy, and
+"Needs you": a failed `fullHealth`, a broken base, a lane that is blocked or waits on you, an unresolved blocker, a
+child process that won't stay up, and the tracker publisher's own items. The line map's Now chapter shows the same
+"Needs you" from the supervisor's last pass, what holds the close first, each item with where it comes from and what
+clears it. While the supervisor isn't running, or its list is a pass overdue, the chapter says the list is
+unavailable. Resolve a blocker, or rerun a `fullHealth` you judge flaky, with `lead-resolve`:
+
+```text example outline
+run_delivery.py lead-resolve <journal id> --why "<what was decided>"
+run_delivery.py lead-resolve full-health --why "<why it is flaky>"
+```
+
+When a lane has no story left, tell it so; it sets its focus `done`, as its brief shows:
+
+```sh example repo
+python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir .orchestration/state focus --lane lane-1 --text "<story-key> merged; nothing left" --state done
+```
+
+When every story is merged or removed, every finish line is met, every lane is idle or done, and nothing in "Needs
+you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head, a follow-up for
+each deferred finding, `delivery.closed` and then a wait until the tracker has every update, the archive, a friction
+note stub beside
+it for your `compound-learning` pass, and then it stops. There is nothing to run for the close. `lead-close` is for
+closing early, or with the supervisor down. With the lead's checkout gone, the archived copy still serves the live
+view:
+
+```text example outline
+run_delivery.py view --archive ~/.local/share/run-delivery/archive/<repository>/<delivery-key>/latest
+```
+
+A story marked for video evidence adds the evidence page after it merges, and a delivery whose base carries tooling
+that must not ship builds its product-only branch with `ship`:
 
 ```text example outline
 run_delivery.py lead-evidence record <story-key> --after-build <stamped build of the merged base>
 run_delivery.py lead-evidence page --out <folder>
 run_delivery.py lead-evidence published --url <address> --out <folder>
-run_delivery.py lead-evidence status
-```
-
-A delivery whose base carries tooling that must not ship builds its product-only branch with `ship`, and runs the
-gates there:
-
-```text example outline
 run_delivery.py ship
 ```
 
-When every finish line is met, journal the close-out, then close out the delivery's processes, checkouts and lease:
+## 7. A worked adopter
 
-```sh example repo
-python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir .orchestration/state journal --kind finish.met --subject greeting --summary "The front page shows the greeting"
-python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir .orchestration/state journal --kind delivery.closed --summary "Delivered"
-python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-close
+A repository on Bitbucket, with Jira as its tracker, a pipeline that reviews each pull request, a default branch,
+`main`, that only takes merged pull requests, and long-lived integration bases it delivers to. Each setting below is
+one this repository changes from the walk-through above; everything else stays as there.
+
+| Setting | Default | This repository |
+| --- | --- | --- |
+| `base.ref`, `bases` | `main`, none | `main`, `["main", "integration-*"]` |
+| The binding's `merge` | a git-only script | the forge adapter's `merge`, by branch |
+| `environment` | `{}` | the adapter's repository and token variable |
+| `forge` | `github` | `bitbucket`, with `mergeNeedsReady` |
+| `forgeSnapshot` | `--kind github` | `--kind bitbucket` |
+| `trackerSnapshot`, `publishers` | none | Jira's snapshot, and run-delivery's tracker publisher |
+| `tracker` | an issue address | Jira's adapter, and its moves |
+| `review.pr` | none | the pipeline's review |
+| `reviewWhen` | none: lanes make the review move by hand | `pipeline-green` |
+| `authority` | `push`, `draftPullRequests` | adds `readyPullRequests` |
+
+The binding merges through the forge adapter, by branch and checked head, so no merge script of its own is needed and
+nothing pushes to `main`:
+
+```json example outline
+{
+  "base": {"remote": "origin", "ref": "main"},
+  "bases": ["main", "integration-*"],
+  "merge": ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge", "--source", "{branch}",
+            "--head", "{expectedHead}", "--strategy", "merge"],
+  "environment": {"FLOW_FORGE_REPOSITORY": "<workspace>/<repository>", "FLOW_FORGE_TOKEN_ENV": "BITBUCKET_TOKEN"},
+  "state": {"directory": ".orchestration/state", "renderers": [],
+            "forgeSnapshot": {"argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
+                                       "--kind", "bitbucket", "--workspace", "<workspace>", "--repo", "<repository>",
+                                       "--binding", ".agents/orchestration.json",
+                                       "--subject-pattern", "^feature/(?P<subject>[A-Z]+-[0-9]+)$",
+                                       "--token-env", "BITBUCKET_TOKEN"]},
+            "trackerSnapshot": {"argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
+                                         "--kind", "jira", "--site", "https://tracker.example.com", "--parent", "{parent}",
+                                         "--user-env", "JIRA_USER", "--token-env", "JIRA_TOKEN"]},
+            "publishers": [{"id": "tracker", "argv": ["python3", "-B",
+                            ".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py",
+                            "--state-dir", "{stateDirectory}"], "timeoutSeconds": 600}]}
+}
 ```
 
-## 7. Host notes
+The run-delivery configuration names the forge, the tracker's moves and the pipeline's review:
 
-No command calls a host's own interface. A lane is always a session of its own, never a subagent and never the lead
-working in its own session. When the host cannot start or message sessions, no lane starts: the lead records the blocker
-and brings it to the operator, who may choose to deliver the stories one at a time through `$execute-work`. Where a host
-offers less otherwise, the workflow takes the path on the right:
+```json example outline
+{
+  "schemaVersion": "delivery-flow/1",
+  "forge": {"adapter": "bitbucket", "repository": "<workspace>/<repository>", "tokenEnv": "BITBUCKET_TOKEN",
+            "mergeNeedsReady": true},
+  "tracker": {"issueUrl": "https://tracker.example.com/browse/{key}", "adapter": "jira",
+              "transitions": {"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pipeline-green",
+                              "lead": {"candidate.merged": ["Complete"]}, "targets": {"Complete": "Done"}}},
+  "review": {"pr": {"author": "<the pipeline's reviewer>", "waitSeconds": 1800}}
+}
+```
+
+With `"reviewWhen": "pipeline-green"`, a lane's `pr-review <story-key> --wait` makes the review move once the pipeline
+is green at the change request's head, and `lead-accept` requires the pipeline's review current there, triaged by the
+lane. Jira gets every update in the orchestration guide's table, posted once each by the tracker publisher from its own
+ledger, and the start move at each `lane-start`. A delivery to an integration base names it at setup, which `bases`
+then requires:
+
+```text example outline
+run_delivery.py lead-setup <delivery-key> --base integration-2 --plan docs/plans/<delivery-key>.md \
+  --pattern '^### (?P<key>[A-Z]+-[0-9]+)\. (?P<title>.+)$' --review-when pipeline-green \
+  --authority push,draftPullRequests --granted-by 'the operator'
+```
+
+Add `"readyPullRequests": true` to the delivery file's `authority`, since the merge step refuses drafts. Every settings
+change and the delivery file reach `main`, and each integration base, through a reviewed pull request (section 8).
+
+## 8. Running deliveries
+
+- **Settings land through reviewed pull requests.** On a protected base, the binding, `.agents/run-delivery.json`, the
+  delivery file and the lane brief reach the base through a pull request, reviewed and merged like any change, before
+  the lanes that read them start. Lanes read them from the base, never from the lead's checkout.
+- **An install update goes in its own pull request.** Update the release in a pull request of its own, merged before
+  any delivery uses it. Parallel deliveries each carry their own tooling update this way: none rides in a story's
+  branch, and none waits for another delivery's.
+- **After an install update or a token change, `lead-run --resume`.** The supervisor runs the code and the environment
+  it started with. Stop it by the pid every lead command shows (`kill <pid>`), then `lead-run --resume` stops what it
+  left running and starts it on the new release, or with the new token exported. Nothing it did is done twice.
+- **Merge strategy.** Merge with merge commits. After each merge, the queue checks that the base holds the checked
+  head's tree on top of the base it checked against, and a squash passes that too. But a squashed story's branch never
+  reaches the base, so the supervisor's cleanup reports it unmerged and leaves its checkout and branches for you.
+  Squash, with the adapter's `--strategy squash`, only where the forge requires it.
+- **A test account that allows one session at a time.** The in-app lease serializes every lane's checks of the running
+  app, so one account signs in for one check at a time. Give the lease's lock a path every checkout shares.
+- **Lanes create their own worktrees.** `lane-start` makes each story's checkout from the delivery's base, so a lane
+  never edits the lead's checkout or another lane's, and the lead reads a lane's gate and in-app evidence from that
+  checkout at acceptance.
+- **The lead works from a checkout of the delivery's base.** On a base the binding serves, the lead's commands read the
+  settings from its own working tree; anywhere else, they read the base on the remote. Keep the lead's checkout on the
+  delivery's base, current with the remote.
+- **The start move happens at each `lane-start`.** A story's tracker start waits for its lane to begin it: assigning a
+  story moves nothing, and reassigning one already past started never moves it back.
+
+## 9. Host notes
+
+No command calls a host's own interface. What the workflow can't do for you:
+
+- **Starting lane sessions.** A lane is always a session of its own, never a subagent and never the lead working in its
+  own session. The lead starts each with what `lead-assign` prints. When the host can't start or message sessions, no
+  lane starts: the lead records the blocker and brings it to the operator, who may choose to deliver the stories one at a time
+  through `$execute-work`.
+- **Archiving lane sessions.** The close-out archives the record, never a session; the friction note lists archiving
+  them as yours.
+- **Queued lead messages.** A lane's message waits until the lead's session reads it. The record doesn't wait: a lane
+  that is blocked or waits on the lead holds the close, and every lead command names it, from the supervisor's next
+  pass after it says so in its focus; a hand-off is in the queue as soon as it is made.
+- **Pull requests the host can't watch.** A host that watches only some forges' pull requests leaves the rest to the
+  supervisor: its forge snapshot and the pipeline's review reach the record and the lanes without the host.
+- **Session limits.** A host's session limit ends a lane's turn mid-story. Its checkout, branch and record remain;
+  start it again from the lane brief and `lane-start`, which changes nothing the second time.
+
+Where a host offers less otherwise, the workflow takes the path on the right:
 
 | Host behaviour | Without it |
 | --- | --- |
 | Publishing the evidence page | A local page the operator shares |
-| Tracker moves | The lane reports the move in its hand-off, and the lead makes it |
+| Tracker moves | A host publisher's outbox, which the lead posts with the host's tracker tools |
 
-## 8. Operating rules
+## 10. Operating rules
 
 - **Lanes are sessions of their own.** Each lane runs as its own session the operator can open, watch and steer, never
   as a subagent and never as the lead working in its own session. A host that can't start or message sessions stops, as
@@ -430,12 +637,13 @@ offers less otherwise, the workflow takes the path on the right:
   round. The merge queue syncs each branch with the base when it merges.
 - **Review evidence is captured at hand-off.** `handoff` captures each round's review evidence; without it the line map
   shows no rounds for the story.
-- **Restart long-running commands after an update.** A running supervisor (`lead-run`), with the merge queue's
-  `serve` and the live view it keeps, runs the code it started with; after the release is updated, `lead-close` it or
-  stop it, then `lead-run --resume`.
-- **Start the merge queue with default signals.** Start `serve` with SIGINT, SIGHUP and SIGQUIT at their defaults, in
-  its own terminal or under a process manager, never with `nohup` or a background `&`: its checks inherit those
-  signals ignored, and signal-handling tests fail as a broken base.
+- **Restart long-running commands after an update.** The supervisor, `lead-run`, and the merge queue's `serve` and the
+  live view it keeps, run the code they started with. After an update, stop the supervisor by its pid, then
+  `lead-run --resume`.
+- **Start the merge queue with default signals.** The supervisor starts `serve` with SIGINT, SIGHUP and SIGQUIT at
+  their defaults, whatever its own parent ignored. A `serve` started by hand needs the same: in its own terminal or
+  under a process manager, never with `nohup` or a background `&`, whose ignored signals its checks inherit, so
+  signal-handling tests fail as a broken base.
 - **The evidence page follows each marked story's merge.** After each story marked for video evidence merges, record
   any missing clip, rebuild the page, publish it privately at the same address, and record it with
   `lead-evidence published`; the page shows application content.
@@ -527,13 +735,15 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
   base. Commit them on the base and push it. A local setup, whose lanes read their own working tree, sets
   `RUN_DELIVERY_LOCAL=1` instead.
 
-- **`forge.mergeNeedsReady says the merge step refuses a draft`**: the repository's merge step refuses a draft pull
-  request, and the delivery doesn't let the lead mark one ready. Add `"readyPullRequests": true` to the delivery file's
-  `authority`, so `lead-accept` marks each draft ready before the queue takes it.
-- **`the supervisor is down`**: the delivery's supervisor stopped, or was never started. `lead-run --resume` stops what
-  it left running and starts it again; the lead's commands work by hand meanwhile.
-- **`don't have the default signal dispositions`**: a child of the supervisor ignores SIGINT, SIGHUP or SIGQUIT, so its
-  checks would fail as a broken base. Stop it, then start the supervisor again with `lead-run --resume`.
+- **`forge.mergeNeedsReady says the merge step refuses a draft`**: the merge step refuses a draft pull request, and
+  the delivery gives the lead no grant to mark one ready. Add `"readyPullRequests": true` to the delivery file's
+  `authority`; `lead-accept` then marks each draft ready before the queue takes it.
+- **`the supervisor is down`**: the supervisor stopped, was killed, or was never started. `lead-run --resume` stops
+  whatever it left running and starts it again, and it skips what is already done. Meanwhile every lead command still
+  works by hand.
+- **`don't have the default signal dispositions`**: a child of the supervisor ignores SIGINT, SIGHUP or SIGQUIT, and
+  its checks would inherit that and fail as a broken base. Stop the supervisor, then `lead-run --resume`. On a host
+  without `/proc`, the line says it can't read them.
 
 ### Refusals before a delivery starts
 
@@ -563,7 +773,7 @@ the bases the binding serves:
 
 ### The merge queue
 
-- **Only signal-handling tests fail in the queue's checks, and the base is marked broken**: the runner was started
-  with SIGINT, SIGHUP or SIGQUIT ignored, as `nohup` and a background `&` leave them, and its checks inherited that.
-  Start the runner with those signals at their defaults, in its own terminal or under a process manager, then mark
-  the base repaired.
+- **Only signal-handling tests fail in the queue's checks, and the base is marked broken**: a `serve` started by hand
+  had SIGINT, SIGHUP or SIGQUIT ignored, as `nohup` and a background `&` leave them, and its checks inherited that.
+  Stop it and let the supervisor run the queue, or start it with those signals at their defaults, then journal
+  `base.repaired`.
