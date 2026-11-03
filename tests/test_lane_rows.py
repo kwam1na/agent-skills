@@ -156,6 +156,18 @@ class AfterAStop(LaneRowCase):
         self.assertEqual((row["focus"], row["state"], row["waitingOn"]), ("fixing the failing test", "working", None))
         self.assertNotIn("focusBy", row)
 
+    def test_a_lanes_raw_patch_ends_it_too(self) -> None:
+        self.stop()
+        state = state_tool.read_state(self.record.state)
+        state_tool.patch(self.record.state, writer="lane", lane="lane-1", version=state["version"], selector="lanes[id=lane-1]",
+                         changes={"focus": "fixing it"})
+        self.assertEqual((self.row()["focus"], self.row()["waitingOn"]), ("fixing it", None))
+
+    def test_a_focus_can_say_it_still_waits_on_the_same_one(self) -> None:
+        self.stop()
+        state_tool.set_focus(self.record.state, "lane-1", "asking the lead", waiting_on="lead")
+        self.assertEqual(self.row()["waitingOn"], "lead")
+
     def test_a_focus_can_say_it_still_waits(self) -> None:
         self.stop()
         state_tool.set_focus(self.record.state, "lane-1", "asking", state="blocked", waiting_on="the lead's answer")
@@ -282,6 +294,52 @@ class RoutesOtherThanTheMerge(LaneRowCase):
         self.assertEqual(self.record.item("feature")["stage"], "queued")
         row = self.row()
         self.assertEqual((row["focus"], row["state"], row["waitingOn"]), ("", "handed", None))
+
+    def test_a_batch_put_back_when_the_base_moved_no_longer_says_it_stopped(self) -> None:
+        self.lanes(lane_entry(focus="feature: review done", state="handed"))
+        self.candidate(self.record)
+        self.candidate(self.record, {"src/lib.txt": "lib two\n"}, name="second")
+
+        def push_base(runner, subject) -> None:
+            if subject == "feature":
+                self.record.advance_base({"src/other.txt": "other\n"})
+
+        results = self.record.runner(seams={"before_batch_landing": push_base}).run_command("batch", ["feature", "second"])
+        documents = {result.document()["candidate"]: result.document() for result in results}
+        self.assertEqual(documents["feature"]["stop"]["reason"], "batch_tree_mismatch")
+        self.assertEqual(self.record.item("feature")["stage"], "queued")
+        row = self.row()
+        self.assertEqual((row["focus"], row["state"], row["waitingOn"]), ("", "handed", None))
+
+    def queues_words(self, words: str, state: str = "idle") -> dict:
+        self.lanes(lane_entry(state=state))
+        head = self.candidate(self.record)
+        current = state_tool.read_state(self.record.state)
+        state_tool.patch(self.record.state, writer="runner", version=current["version"],
+                         changes={"lanes": [{**current["lanes"][0], "focus": words}]})
+        runner = self.record.runner()
+        runner.set_item("feature", stage="stopped")
+        before = self.row()
+        runner.write(build=queue._requeue("feature", head))
+        return before
+
+    def test_a_put_back_moves_the_time_the_state_changed(self) -> None:
+        before = self.queues_words("feature stopped: runner_error")
+        self.assertEqual(self.row()["state"], "handed")
+        self.assertNotEqual(self.row()["since"], before["since"])
+
+    def test_a_put_back_leaves_the_queues_words_about_another_candidate(self) -> None:
+        before = self.queues_words("second merged")
+        self.assertEqual(self.row(), before)
+
+    def test_a_put_back_leaves_a_lanes_own_words_that_read_the_same(self) -> None:
+        self.lanes(lane_entry(focus="feature stopped: I will look at it", state="working"))
+        head = self.candidate(self.record)
+        runner = self.record.runner()
+        runner.set_item("feature", stage="stopped")
+        before = self.row()
+        runner.write(build=queue._requeue("feature", head))
+        self.assertEqual(self.row(), before)
 
     def test_serve_says_why_it_stopped_a_refused_candidate(self) -> None:
         self.lanes(lane_entry(state="handed"))

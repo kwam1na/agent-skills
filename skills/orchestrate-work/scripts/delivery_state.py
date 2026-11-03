@@ -1053,9 +1053,6 @@ def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None
     # waitingOn is set exactly: a merge patch would read None as removing it, and the record requires it.
     assignments = {} if waiting_on is ... else {"/waitingOn": waiting_on}
     current = read_state(directory)
-    # What the queue said a lane waits on ends when the lane speaks, unless the lane says it still does.
-    if waiting_on is ... and any(entry["id"] == lane and entry.get("focusBy") == "runner" for entry in current["lanes"]):
-        assignments = {"/waitingOn": None}
     return patch(directory, writer="lane", lane=lane, version=current["version"], changes=changes,
                  selector=f"lanes[id={lane}]", assignments=assignments)
 
@@ -1096,7 +1093,13 @@ def patch(
             if violations:
                 raise StateError("writer_not_owned", "; ".join(violations))
             _stamp_lane(current, updated, lane)
-            _stamp_focus(current, updated, writer, lane if isinstance(changes, dict) and "focus" in changes else None)
+            speaks = isinstance(changes, dict) and "focus" in changes
+            # What the queue said a lane waits on ends when the lane speaks, unless the lane says it still does.
+            if speaks and "waitingOn" not in changes and "/waitingOn" not in (assignments or {}):
+                previous = next(entry for entry in current["lanes"] if entry["id"] == lane)
+                if previous.get("focusBy") == "runner":
+                    next(entry for entry in updated["lanes"] if entry["id"] == lane)["waitingOn"] = None
+            _stamp_focus(current, updated, writer, lane if speaks else None)
         else:
             violations = ownership_violations(current, updated, writer)
             if violations:
