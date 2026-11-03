@@ -21,11 +21,12 @@ def copy_corpus(target: Path, *, source: Path = ROOT, leaving_out: tuple[str, ..
     out along with every folder leading to it, so the copy ends. Folders are told
     apart by identity rather than by name, which a filesystem may spell several ways.
     """
-    target = Path(os.path.abspath(target))
+    destination = Path(os.path.realpath(target))
     patterns = shutil.ignore_patterns(*NEVER_COPIED, *leaving_out)
 
     def ignored(folder: str, names: list[str]) -> set[str]:
-        leading = {_identity(path) for path in (target, *target.parents)} - {None}
+        # Each time, because the target and the folders leading to it exist only once the copy has begun.
+        leading = {_identity(path) for path in (destination, *destination.parents)} - {None}
         return set(patterns(folder, names)) | {name for name in names if _identity(Path(folder) / name) in leading}
 
     shutil.copytree(source, target, ignore=ignored)
@@ -48,9 +49,11 @@ class SharedCorpus:
     entries: what a test added is removed, what it changed or removed is written
     back, and a symlink or folder put in a file's place is replaced. It reads
     the whole tree each time and compares it to what it held at the start, so
-    one test's writes cannot reach another however it made them. Call it at the
-    start of every test, and register it as a cleanup so the last test leaves
-    nothing behind in the copy.
+    what a test wrote before its turn ended cannot reach the next. A process or
+    an open file a test leaves behind can still write afterwards, which no
+    comparison can see: a test sharing a copy ends both. Call it at the start of
+    every test, and register it as a cleanup so the last test leaves nothing
+    behind in the copy.
     """
 
     def __init__(self, target: Path, *, source: Path = ROOT, leaving_out: tuple[str, ...] = ()) -> None:

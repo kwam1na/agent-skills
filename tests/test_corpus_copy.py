@@ -70,6 +70,23 @@ class CopyCorpusTests(unittest.TestCase):
         self.assertEqual((copied / "catalog.json").read_text(encoding="utf-8"), "{}\n")
         self.assertFalse((copied / "scratch").exists())
 
+    def test_a_link_in_the_source_to_the_target_does_not_copy_into_itself(self) -> None:
+        (self.source / "scratch").mkdir()
+        (self.source / "other").mkdir()
+        (self.source / "other/link").symlink_to(self.source / "scratch/copy", target_is_directory=True)
+        copied = copy_corpus(self.source / "scratch/copy", source=self.source)
+        self.assertTrue((copied / "other").is_dir())
+        self.assertFalse((copied / "other/link").exists())
+
+    def test_a_path_through_a_link_and_back_lands_where_the_system_says(self) -> None:
+        far = self.base / "far"
+        (far / "sub").mkdir(parents=True)
+        (self.source / "hop").symlink_to(far / "sub", target_is_directory=True)
+        copied = copy_corpus(self.source / "hop" / ".." / "copy", source=self.source)
+        self.assertEqual((far / "copy" / "catalog.json").read_text(encoding="utf-8"), "{}\n")
+        self.assertEqual((copied / "catalog.json").read_text(encoding="utf-8"), "{}\n")
+        self.assertFalse((self.source / "copy").exists())
+
     def test_a_folder_whose_name_starts_the_targets_is_kept(self) -> None:
         (self.source / "copy").mkdir()
         (self.source / "copy/held").write_text("x\n", encoding="utf-8")
@@ -256,7 +273,7 @@ class SharedCorpusTests(unittest.TestCase):
         self.assertRestored()
         self.assertEqual((self.root / "catalog.json").stat().st_nlink, 1)
 
-    def test_a_kept_handle_cannot_reach_the_next_test(self) -> None:
+    def test_a_handle_whose_write_was_found_is_cut_off(self) -> None:
         with (self.root / "catalog.json").open("a", encoding="utf-8") as kept:
             kept.write("first\n")
             kept.flush()

@@ -62,6 +62,7 @@ LATENCY_SECONDS = 0.1
 SETTLE_SECONDS = 5
 SETTLE_ATTEMPTS = 6
 COUNTS = ("events", "filesWritten", "foldersCreated", "left")
+_terminated = threading.Event()
 
 
 def classify(flags: int) -> tuple[bool, bool]:
@@ -169,8 +170,9 @@ def module_of(test_id: str) -> str:
 
 
 def left_in(folder: Path) -> list[str]:
-    """Every file and folder still in ``folder``, relative to it."""
-    return sorted(str(path.relative_to(folder)) for path in folder.rglob("*"))
+    """Every file and folder still in ``folder``, relative to it, as far as it can be read."""
+    return sorted(os.path.relpath(os.path.join(parent, name), folder)
+                  for parent, names, files in os.walk(folder) for name in [*names, *files])
 
 
 def summarize(units: list[dict], counts: dict[str, dict[str, int]], temps: dict[str, str]) -> dict:
@@ -247,7 +249,11 @@ def _open_folders(top: Path) -> None:
         for name in names:
             path = Path(folder) / name
             if not path.is_symlink():
-                os.chmod(path, 0o700)
+                # One a test's leftover child just removed, or that cannot change, must not cost the run's verdict.
+                try:
+                    os.chmod(path, 0o700)
+                except OSError:
+                    pass
 
 
 def measure(args: argparse.Namespace) -> int:
@@ -287,6 +293,9 @@ def measure(args: argparse.Namespace) -> int:
                 print("measure-test-writes: file events never arrived", file=sys.stderr)
                 return 2
             units = runner.discover_units(os.path.abspath(args.start_directory), args.top_level_dir, args.pattern)
+            # The test loader takes an interrupt during an import for that module's failure.
+            if _terminated.is_set():
+                raise KeyboardInterrupt
             started = time.perf_counter()
             combined = runner.run_suite(units, workers=args.workers, top=args.top_level_dir,
                                         unit_timeout=args.unit_timeout or None, unit_temp=base / "units")
@@ -334,8 +343,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.workers < 1:
         parser.error("--workers must be at least 1")
-    if args.output and not args.output.resolve().parent.is_dir():
-        parser.error(f"--output's folder does not exist: {args.output.parent}")
+    if args.output:
+        folder = args.output.resolve().parent
+        if args.output.is_dir() or not folder.is_dir() or not os.access(folder, os.W_OK):
+            parser.error(f"--output cannot be written: {args.output}")
     if sys.platform != "darwin":
         print("measure-test-writes: measuring needs FSEvents, so macOS; --compare runs anywhere", file=sys.stderr)
         return 2
@@ -343,7 +354,12 @@ def main(argv: list[str] | None = None) -> int:
     return measure(args)
 
 
+def _terminate(_signum: int, _frame: object) -> None:
+    _terminated.set()
+    raise KeyboardInterrupt
+
+
 if __name__ == "__main__":
     # A terminate stops the workers and removes the temp root, the same way an interrupt does.
-    signal.signal(signal.SIGTERM, lambda signum, frame: (_ for _ in ()).throw(KeyboardInterrupt()))
+    signal.signal(signal.SIGTERM, _terminate)
     raise SystemExit(main())

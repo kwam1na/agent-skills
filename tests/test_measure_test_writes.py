@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -124,11 +125,20 @@ class CompareTests(unittest.TestCase):
                 measure.compare({**clean, **field}, clean, out=out)
                 self.assertRegex(out.getvalue(), rf"before: .*{word}")
 
-    def test_an_output_nowhere_is_refused_before_the_run(self) -> None:
-        with mock.patch("sys.stderr", io.StringIO()) as err, self.assertRaises(SystemExit) as refused:
-            measure.main(["--output", "/nonexistent-folder/counts.json"])
-        self.assertEqual(refused.exception.code, 2)
-        self.assertIn("--output", err.getvalue())
+    def test_an_output_it_could_not_write_is_refused_before_the_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            closed = Path(temporary) / "closed"
+            closed.mkdir()
+            os.chmod(closed, 0o500)
+            for output in ("/nonexistent-folder/counts.json", temporary, str(closed / "counts.json")):
+                with self.subTest(output=output), mock.patch("sys.stderr", io.StringIO()) as err, \
+                        mock.patch.object(measure, "measure", return_value=0) as measured, \
+                        self.assertRaises(SystemExit) as refused:
+                    measure.main(["--output", output])
+                self.assertEqual(refused.exception.code, 2)
+                self.assertIn("--output", err.getvalue())
+                measured.assert_not_called()
+            os.chmod(closed, 0o700)
 
     def test_a_compare_of_files_runs_on_any_system(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -140,9 +150,12 @@ class CompareTests(unittest.TestCase):
         self.assertIn("40.0% of before", out.getvalue())
 
     def test_measuring_elsewhere_refuses_rather_than_reporting_nothing(self) -> None:
-        with mock.patch.object(measure.sys, "platform", "linux"), mock.patch("sys.stderr", io.StringIO()) as err:
+        # Patched so that a refusal lost fails here rather than measuring the suite this test is in.
+        with mock.patch.object(measure.sys, "platform", "linux"), mock.patch("sys.stderr", io.StringIO()) as err, \
+                mock.patch.object(measure, "measure", return_value=0) as measured:
             self.assertEqual(measure.main([]), 2)
         self.assertIn("macOS", err.getvalue())
+        measured.assert_not_called()
 
 
 class UnitTempTests(unittest.TestCase):
@@ -284,9 +297,12 @@ class MeasuringTests(unittest.TestCase):
         temps.mkdir()
         pid_file = self.root / "worker.pid"
         self.module("test_hanging", f"""
-            import os, pathlib, time, unittest
+            import os, pathlib, tempfile, time, unittest
             class Hanging(unittest.TestCase):
                 def test_hangs(self):
+                    closed = tempfile.mkdtemp(prefix="closed-")
+                    (pathlib.Path(closed) / "file").write_text("x")
+                    os.chmod(closed, 0)
                     pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))
                     time.sleep(120)
         """)
@@ -303,6 +319,54 @@ class MeasuringTests(unittest.TestCase):
         self.assertEqual(list(temps.iterdir()), [])
         with self.assertRaises(ProcessLookupError):
             os.kill(worker, 0)
+
+    def test_a_terminate_during_discovery_stops_the_run(self) -> None:
+        started, ran = self.root / "importing", self.root / "ran"
+        self.module("test_slow_import", f"""
+            import pathlib, time, unittest
+            pathlib.Path({str(started)!r}).write_text("x")
+            time.sleep(5)
+            class Slow(unittest.TestCase):
+                def test_runs(self):
+                    pathlib.Path({str(ran)!r}).write_text("x")
+        """)
+        process = subprocess.Popen([sys.executable, "-B", str(SCRIPT), "-s", "suite", "-t", "."], cwd=self.root,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   env={**os.environ, "PYTHONPATH": str(ROOT)})
+        self.addCleanup(lambda: process.poll() is None and process.kill())
+        deadline = time.monotonic() + 60
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        process.terminate()
+        self.assertEqual(process.wait(timeout=60), 130)
+        self.assertFalse(ran.exists())
+
+    def test_a_folder_that_cannot_be_opened_or_is_gone_costs_nothing(self) -> None:
+        (self.root / "held").mkdir()
+        for failure in (PermissionError("cannot change this one"), FileNotFoundError("a leftover child removed it")):
+            with self.subTest(failure=failure), mock.patch.object(measure.os, "chmod", side_effect=failure) as chmod:
+                measure._open_folders(self.root)
+                chmod.assert_called()
+
+    def test_a_link_a_test_left_does_not_open_what_it_points_to(self) -> None:
+        temps = self.root / "temps"
+        temps.mkdir()
+        outside = self.root / "outside"
+        outside.mkdir()
+        os.chmod(outside, 0o500)
+        self.addCleanup(os.chmod, outside, 0o700)
+        self.module("test_linker", f"""
+            import pathlib, tempfile, unittest
+            class Linker(unittest.TestCase):
+                def test_links(self):
+                    (pathlib.Path(tempfile.gettempdir()) / "link").symlink_to({str(outside)!r})
+        """)
+        result = subprocess.run([sys.executable, "-B", str(SCRIPT), "-s", "suite", "-t", "."], cwd=self.root,
+                                capture_output=True, text=True, timeout=120,
+                                env={**os.environ, "PYTHONPATH": str(ROOT), "TMPDIR": str(temps)})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o500)
+        self.assertEqual(list(temps.iterdir()), [])
 
     def test_a_folder_a_test_closed_is_counted_and_removed(self) -> None:
         temps = self.root / "temps"
