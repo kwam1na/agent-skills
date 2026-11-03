@@ -137,6 +137,8 @@ optional `lateFindings`.
   that records it instead.
 
 A lens is read-only, files no tracked item itself, and cannot return `failed`.
+It stops only processes it started, by the pid it recorded, never by pattern with
+`pkill` or `killall`, because it shares the machine with other work.
 
 ## Observation binding and selected output
 

@@ -968,9 +968,17 @@ class Runner:
                     ]
                     if item["stage"] != "merged":
                         item["stage"] = "stopped"
-            return {"queue": queue}, {"/meta/checking/now": None}
+            after = {**current, "queue": queue}
+            for item in queue:
+                if item["subject"] in interrupted and item["stage"] != "merged":
+                    after["lanes"] = delivery_state.lane_rows_after(self.state_directory, after, item["subject"], stopped="interrupted")
+            return {"queue": queue, "lanes": after["lanes"]}, {"/meta/checking/now": None}
 
         self.write(build=build)
+
+    def finish_item(self, subject: str, stage: str, stopped: str | None = None) -> None:
+        """Merge or stop an item and say so on its lane's row, in one write, so the row and the line agree."""
+        self.write(build=_finish_build(self.state_directory, subject, stage, stopped))
 
     def set_item(self, subject: str, **fields: object) -> None:
         self.write(selector=f"queue[subject={subject}]", assignments={f"/{key}": value for key, value in fields.items()})
@@ -1943,7 +1951,7 @@ class Runner:
         parent = self.git("rev-parse", "--verify", "-q", f"{merged}^1", check=False).stdout.strip()
         if self.tree(merged) != self.tree(synced) or parent != base_head:
             raise Stop("merged_unverified", f"{self.base} at {merged} is not {synced}'s tree on top of {base_head}")
-        self.set_item(subject, stage="merged")
+        self.finish_item(subject, "merged")
         self.write(assignments={"/meta/baseHead": merged})
         self.journal("candidate.merged", f"Merged {item['title']} at {synced}", subject)
         result.outcome = "merged"
@@ -2181,7 +2189,7 @@ class Runner:
                     if stop.reason == "batch_tree_mismatch":
                         # Nothing of it landed; it is batched again once the base is confirmed.
                         with contextlib.suppress(Stop, delivery_state.StateError):
-                            self.set_item(member.subject, stage="queued", checks=[])
+                            self.write(build=_put_back(member.subject))
                     requeue([other.subject for other in keep[keep.index(member) + 1:]] +
                             [other.subject for other in later], stop, queue_stopped=bool(landed))
                     return []
@@ -2305,7 +2313,7 @@ class Runner:
             # A refusal leaves the queue as it was, but never a stage mid-step.
             in_progress = subject is not None and self.item(subject)["stage"] in ("syncing", "checking", "merging")
             if subject is not None and (not refused or in_progress):
-                self.set_item(subject, stage="stopped")
+                self.finish_item(subject, "stopped", stop.reason)
             if queue_stopped:
                 # Every stop that stops the queue leaves the base to confirm by hand; serve waits for base.repaired.
                 self.journal("base.broken", f"{stop.reason}: {stop.detail}", subject)
@@ -2399,14 +2407,32 @@ def ascii_json(value: object) -> bytes:
     return (json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True) + "\n").encode("ascii")
 
 
-def _refused_stop(subject: str, head: str | None) -> Callable[[dict], tuple[dict | None, dict]]:
-    """Stop a refused candidate only as serve took it: a lane that handed it off again since keeps its new head."""
+def _finish_build(directory: Path, subject: str, stage: str, stopped: str | None) -> Callable[[dict], tuple[dict, dict]]:
+    def build(current: dict) -> tuple[dict, dict]:
+        queue = [{**item, "stage": stage} if item["subject"] == subject else item for item in current["queue"]]
+        return {"queue": queue, "lanes": delivery_state.lane_rows_after(directory, current, subject, stopped=stopped)}, {}
 
-    def build(current: dict) -> tuple[dict | None, dict]:
+    return build
+
+
+def _put_back_rows(current: dict, subject: str, fields: dict) -> dict:
+    queue = [{**item, **fields} if item["subject"] == subject else item for item in current["queue"]]
+    return {"queue": queue, "lanes": delivery_state.lane_rows_put_back(current, subject)}
+
+
+def _put_back(subject: str) -> Callable[[dict], tuple[dict, dict]]:
+    return lambda current: (_put_back_rows(current, subject, {"stage": "queued", "checks": []}), {})
+
+
+def _refused_stop(directory: Path, subject: str, head: str | None, reason: str) -> Callable[[dict], tuple[dict, dict]]:
+    """Stop a refused candidate only as serve took it: a lane that handed it off again since keeps its new head."""
+    finish = _finish_build(directory, subject, "stopped", reason)
+
+    def build(current: dict) -> tuple[dict, dict]:
         item = next((entry for entry in current["queue"] if entry["subject"] == subject), None)
         if item is None or item["stage"] != "queued" or item["head"] != head:
             raise Stop("candidate_unknown", f"{subject} changed since serve took it")
-        return None, {"/stage": "stopped"}
+        return finish(current)
 
     return build
 
@@ -2483,15 +2509,15 @@ def hold_for_setup(state_directory: Path, detail: str, kept: Iterable[str] = (),
     return False
 
 
-def _requeue(subject: str, head: str | None) -> Callable[[dict], tuple[dict | None, dict]]:
+def _requeue(subject: str, head: str | None) -> Callable[[dict], tuple[dict, dict]]:
     """Put a candidate back to queued, as serve took it: a lane that handed it off again since keeps its own."""
 
-    def build(current: dict) -> tuple[dict | None, dict]:
+    def build(current: dict) -> tuple[dict, dict]:
         item = next((entry for entry in current["queue"] if entry["subject"] == subject), None)
         if item is None or item["head"] != head or item["stage"] not in ("queued", "synced", "checked", "stopped"):
             raise Stop("candidate_unknown", f"{subject} changed since serve took it")
         # syncedHead stays: sync may already have pushed it to the candidate's branch, and the next sync accepts it.
-        return None, {"/stage": "queued", "/checks": []}
+        return _put_back_rows(current, subject, {"stage": "queued", "checks": []}), {}
 
     return build
 
@@ -2517,7 +2543,7 @@ def _requeue_after_setup(runner: Runner, taken: list[Result],
             kept.append(subject)
             continue
         with contextlib.suppress(Stop, delivery_state.StateError):
-            runner.write(selector=f"queue[subject={subject}]", build=_requeue(subject, heads.get(subject)))
+            runner.write(build=_requeue(subject, heads.get(subject)))
             requeued.append(subject)
     return requeued, kept
 
@@ -2535,6 +2561,7 @@ def serve(
     sleep: Callable[[float], None] = time.sleep,
     on_result: Callable[[Result], None] | None = None,
     clock: Callable[[], float] = time.monotonic,
+    before_turn: Callable[[], None] = lambda: None,
 ) -> list[Result]:
     """Take what is queued, in order, whenever the merge slot is free.
 
@@ -2609,6 +2636,8 @@ def serve(
             continue
         heads = {item["subject"]: item["head"] for item in state["queue"]}
         runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams)
+        # Last, since dropping the previous runner above runs its finalizer, where a stop can land.
+        before_turn()
         taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting)
         if all(result.stop is not None and result.stop["reason"] == "queue_locked" for result in taken):
             # Another runner holds the queue: nothing was attempted, so nothing is recorded.
@@ -2631,8 +2660,7 @@ def serve(
             if cause_known and broken is None and result in refused:
                 # A refusal leaves the candidate queued as it was; serve stops it, journaled once, as any stop.
                 with contextlib.suppress(Stop, delivery_state.StateError):
-                    runner.write(selector=f"queue[subject={result.candidate}]",
-                                 build=_refused_stop(result.candidate, heads.get(result.candidate)))
+                    runner.write(build=_refused_stop(state_directory, result.candidate, heads.get(result.candidate), result.stop["reason"]))
         if broken is not None:
             # None of this turn's candidates was at fault: back to queued, so no lane hands anything off again.
             requeued, kept = _requeue_after_setup(runner, taken, heads)
@@ -2720,18 +2748,23 @@ def main(argv: list[str] | None = None) -> int:
             stopped.append(signum)
             raise KeyboardInterrupt
 
-        def wait(seconds: float) -> None:
-            # Python only prints what a finalizer raises, so a stop landing in one is honoured at the next wait.
+        def honour_stop() -> None:
+            # Python only prints what a finalizer raises, so a stop landing in one is honoured before the next wait or turn.
             if stopped:
                 raise KeyboardInterrupt
+
+        def wait(seconds: float) -> None:
+            honour_stop()
             time.sleep(seconds)
 
         signal.signal(signal.SIGTERM, interrupt)
-        signal.signal(signal.SIGINT, interrupt)
+        # A shell starts a background job with SIGINT ignored: that stays ignored, and SIGTERM still stops it.
+        if signal.getsignal(signal.SIGINT) is not signal.SIG_IGN:
+            signal.signal(signal.SIGINT, interrupt)
         try:
             # Serving until stopped returns only when it cannot start.
             refused = serve(args.repo, args.state, remote=args.remote, base=args.base, lead=args.lead,
-                            poll=args.poll, on_result=report, sleep=wait)
+                            poll=args.poll, on_result=report, sleep=wait, before_turn=honour_stop)
         except KeyboardInterrupt:
             # A stop mid-turn leaves live state the next serve or run clears first.
             return 0

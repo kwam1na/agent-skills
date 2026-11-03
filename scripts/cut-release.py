@@ -143,7 +143,8 @@ def _qualify(version: str, directory: Path, work: Path) -> None:
     _run_qualifier("bootstrap", exact("bootstrap"), directory / f"bootstrap-{version}.json", work)
     _run_qualifier(
         "linear",
-        [*exact("core", "core-"), "--core-record", str(core_record), *exact("linear", "linear-")],
+        [*exact("core", "core-"), "--core-record", str(core_record), *exact("linear", "linear-"),
+         *exact("run-delivery", "run-delivery-")],
         directory / f"linear-{version}.json",
         work,
     )

@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from corpus_copy import copy_corpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +34,7 @@ def require(condition: bool, message: str) -> None:
 def with_copy(mutator) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory() as temporary:
         copied = Path(temporary) / "corpus"
-        shutil.copytree(ROOT, copied, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        copy_corpus(copied)
         mutator(copied)
         return run(copied)
 

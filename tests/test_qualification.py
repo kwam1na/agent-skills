@@ -14,6 +14,7 @@ from unittest import mock
 
 from agent_skills.release import build_release, verify_release
 from tests.built_product import build_product
+from corpus_copy import SharedCorpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +36,17 @@ def _load_runner():
 
 
 class QualificationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        holder = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(holder.cleanup)
+        cls.corpus = SharedCorpus(Path(holder.name) / "candidate")
+
+    def candidate_corpus(self) -> Path:
+        """The class's one copy, as it first was, for this test to change."""
+        self.addCleanup(self.corpus.restored)
+        return self.corpus.restored()
+
     def test_registry_validation_no_longer_accepts_a_target_base(self) -> None:
         script = ROOT / "scripts" / "validate-registry.py"
         accepted = subprocess.run([sys.executable, "-B", str(script), "--root", str(ROOT)],
@@ -234,8 +246,7 @@ class QualificationTests(unittest.TestCase):
     def test_new_runtime_and_public_schema_tampering_fails_exact_candidate_scenarios(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            candidate = directory / "mutated-workflow-candidate"
-            shutil.copytree(ROOT, candidate, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+            candidate = self.candidate_corpus()
             schema_path = candidate / "schemas/workflow-stage-result.schema.json"
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
             schema["additionalProperties"] = True
@@ -497,12 +508,7 @@ class QualificationTests(unittest.TestCase):
     def test_trusted_driver_qualifies_the_supplied_archive_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            candidate = directory / "broken-candidate"
-            shutil.copytree(
-                ROOT,
-                candidate,
-                ignore=shutil.ignore_patterns(".git", "__pycache__"),
-            )
+            candidate = self.candidate_corpus()
             router = candidate / "agent_skills" / "router.py"
             source = router.read_text(encoding="utf-8")
             router.write_text(
@@ -542,12 +548,7 @@ class QualificationTests(unittest.TestCase):
     def test_contract_conformance_comes_from_the_supplied_archive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            candidate = directory / "contract-candidate"
-            shutil.copytree(
-                ROOT,
-                candidate,
-                ignore=shutil.ignore_patterns(".git", "__pycache__"),
-            )
+            candidate = self.candidate_corpus()
             fixture_path = (
                 candidate
                 / "tests"
@@ -593,12 +594,7 @@ class QualificationTests(unittest.TestCase):
     def test_modified_packaged_contract_sensor_fails_qualification(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            candidate = directory / "modified-sensor-candidate"
-            shutil.copytree(
-                ROOT,
-                candidate,
-                ignore=shutil.ignore_patterns(".git", "__pycache__"),
-            )
+            candidate = self.candidate_corpus()
             sensor = candidate / "tests" / "test_delivery_provider_rails_contract.py"
             sensor.write_bytes(sensor.read_bytes() + b"\n# candidate-only sensor change\n")
             archive = directory / "modified-sensor.zip"
@@ -631,12 +627,7 @@ class QualificationTests(unittest.TestCase):
     def test_missing_required_contract_case_fails_qualification(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            candidate = directory / "missing-case-candidate"
-            shutil.copytree(
-                ROOT,
-                candidate,
-                ignore=shutil.ignore_patterns(".git", "__pycache__"),
-            )
+            candidate = self.candidate_corpus()
             fixture_path = (
                 candidate
                 / "tests"
@@ -729,12 +720,7 @@ class QualificationTests(unittest.TestCase):
             )
             self.assertEqual(expected.returncode, 0, expected.stdout + expected.stderr)
 
-            runner = directory / "mutated-runner"
-            shutil.copytree(
-                ROOT,
-                runner,
-                ignore=shutil.ignore_patterns(".git", "__pycache__"),
-            )
+            runner = self.candidate_corpus()
             omitted = runner / "skills" / "bootstrap-agent-harness" / "SKILL.md"
             omitted.write_bytes(omitted.read_bytes() + b"\n<!-- unrelated runner bytes -->\n")
             candidate_only = runner / "agent_skills" / "router.py"

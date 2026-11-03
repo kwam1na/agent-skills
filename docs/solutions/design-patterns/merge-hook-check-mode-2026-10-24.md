@@ -1,3 +1,14 @@
+---
+title: "Derive merge hook context at the merge boundary"
+date: 2026-10-24
+category: design-patterns
+module: merge-queue
+problem_type: design_pattern
+severity: medium
+tags: [merge-queue, hooks]
+applies_when: "A repository hook has to tell a single candidate's check from a batch's"
+---
+
 # Derive merge hook context at the merge boundary
 
 A repository hook may need to distinguish checks of one candidate from checks

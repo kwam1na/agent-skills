@@ -4,7 +4,6 @@ import importlib.util
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,6 +13,7 @@ from unittest import mock
 
 from agent_skills.release import VerifiedRelease, build_release
 from tests.built_product import build_product
+from corpus_copy import SharedCorpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -320,14 +320,10 @@ class ProviderQualificationTests(unittest.TestCase):
                 ),
             }
 
+            corpus = SharedCorpus(directory / "candidate")
             for name, (before, after, expected_failure) in mutations.items():
                 with self.subTest(name=name):
-                    candidate = directory / name
-                    shutil.copytree(
-                        ROOT,
-                        candidate,
-                        ignore=shutil.ignore_patterns(".git", "__pycache__"),
-                    )
+                    candidate = corpus.restored()
                     provider_path = candidate / "agent_skills" / "provider.py"
                     source = provider_path.read_text(encoding="utf-8")
                     self.assertIn(before, source)

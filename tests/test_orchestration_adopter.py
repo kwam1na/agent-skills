@@ -28,6 +28,7 @@ import urllib.parse
 from pathlib import Path
 
 from agent_skills.validate import LEAKAGE_PATTERNS
+from quiet_git import quieten
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -103,6 +104,7 @@ class FixtureAdopter:
             "XDG_CONFIG_HOME": str(home / "config"),
         }
         self.git("init", "--quiet", "--bare", f"--initial-branch={BASE}", str(self.remote), cwd=root)
+        quieten(self.remote)
         seed = root / "seed checkout"
         self.git("clone", "--quiet", "--origin", REMOTE, str(self.remote), str(seed), cwd=root)
         self.git("checkout", "--quiet", "-b", BASE, cwd=seed)
@@ -113,6 +115,7 @@ class FixtureAdopter:
         self.git("push", "--quiet", REMOTE, BASE, cwd=seed)
         for clone in (self.operator, self.lane):
             self.git("clone", "--quiet", "--origin", REMOTE, "--branch", BASE, str(self.remote), str(clone), cwd=root)
+            quieten(clone)
 
     def binding(self) -> dict:
         tokens = {

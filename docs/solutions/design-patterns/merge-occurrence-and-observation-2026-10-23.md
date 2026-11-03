@@ -1,3 +1,14 @@
+---
+title: "Preserve source time during merge recovery"
+date: 2026-10-23
+category: design-patterns
+module: merge-queue
+problem_type: design_pattern
+severity: medium
+tags: [merge-queue, recovery, journal]
+applies_when: "A queue's state and its journal disagree about a merge"
+---
+
 # Preserve source time during merge recovery
 
 A queue can say merged while its append-only journal has no merge event. This

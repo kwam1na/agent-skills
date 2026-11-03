@@ -20,8 +20,8 @@ generation. Host projection metadata in the active receipt describes discovery
 only and cannot redefine behavior.
 
 The core profile exposes `diagnose-work` and `obtain-review` through both roots
-alongside the existing workflows; the Linear profile contains that same core
-plus its tracker adapter and the two tracking workflows that reach the tracker
+alongside the existing workflows; the Linear profile contains that same core,
+the delivery views and `run-delivery`, plus its tracker adapter and the two tracking workflows that reach the tracker
 through it. `deliver-work` remains the single intake entry point. Its additive
 `RouteDecision.workflow_skill` property names the released downstream workflow
 only for direct or degraded routes; an unresolved handoff has no executable
@@ -50,7 +50,7 @@ deletes only the now-inert stable links proven by the current receipt and leaves
 unrelated host entries untouched. Interrupted projection changes are restored
 or completed through the existing repository lifecycle journal.
 
-On Windows, directory links use native runtime separators and explicit
+On Windows, which is not validated (see the README), directory links use native runtime separators and explicit
 directory-link semantics. Because the standard library cannot atomically
 replace an existing directory link there, the journaled switch removes the
 shared `current` link before installing its prepared replacement. Both hosts

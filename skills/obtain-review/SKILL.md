@@ -74,7 +74,10 @@ before the lens reads it. Repeat both checks after the lens finishes. A failed
 check fails the acquisition; never accept a result from a checkout that moved
 or stayed dirty. Temporary probes are permitted only in that lens's private
 checkout and must be removed before the ending identity and clean-status checks;
-never plant them in the executor's checkout or another shared checkout. The lens
+never plant them in the executor's checkout or another shared checkout. A lens
+stops only processes it started, by the pid it recorded, never by pattern with
+`pkill` or `killall`, because it shares the machine with other work, and the
+brief says so. The lens
 names the reviewed tree SHA and both successful
 identity checks in its evidence. This evidence uses the existing evidence
 member; it adds no result or runtime-schema field.

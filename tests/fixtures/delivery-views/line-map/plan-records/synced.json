@@ -1,8 +1,8 @@
 {
   "reviewEvidence": {
     "native-sync": {
-      "candidateRef": "f9bdb3c093aa5e788e4131123a52de3c899f0edb",
-      "digest": "f7a321c4101ff399ed50fe6b5df4913e43f0e955dfdb51dd0540573e32310911",
+      "candidateRef": "1da3495d6646508dd1d0386906b019fc65da8834",
+      "digest": "23d1f7e750b4c77c140ee706907751b04e2e3fcd308b1e8f13e3b4821377af90",
       "outcomes": [
         {
           "round": 1,
@@ -13,20 +13,20 @@
               "state": "obtained",
               "binding": {
                 "subjectRef": "native-sync",
-                "candidateRef": "f9bdb3c093aa5e788e4131123a52de3c899f0edb",
+                "candidateRef": "1da3495d6646508dd1d0386906b019fc65da8834",
                 "round": 1
               },
               "result": {
                 "schemaVersion": "review-lens-result/1",
                 "lensId": "lens.outcome-correctness",
                 "subjectRef": "native-sync",
-                "candidateRef": "f9bdb3c093aa5e788e4131123a52de3c899f0edb",
+                "candidateRef": "1da3495d6646508dd1d0386906b019fc65da8834",
                 "round": 1,
                 "outcome": "aligned",
                 "findings": [],
                 "resolvedFindings": [],
                 "evidence": {
-                  "startCommit": "f9bdb3c093aa5e788e4131123a52de3c899f0edb"
+                  "startCommit": "1da3495d6646508dd1d0386906b019fc65da8834"
                 }
               }
             },
@@ -35,20 +35,20 @@
               "state": "obtained",
               "binding": {
                 "subjectRef": "native-sync",
-                "candidateRef": "f9bdb3c093aa5e788e4131123a52de3c899f0edb",
+                "candidateRef": "1da3495d6646508dd1d0386906b019fc65da8834",
                 "round": 1
               },
               "result": {
                 "schemaVersion": "review-lens-result/1",
                 "lensId": "lens.adversarial-testing",
                 "subjectRef": "native-sync",
-                "candidateRef": "f9bdb3c093aa5e788e4131123a52de3c899f0edb",
+                "candidateRef": "1da3495d6646508dd1d0386906b019fc65da8834",
                 "round": 1,
                 "outcome": "aligned",
                 "findings": [],
                 "resolvedFindings": [],
                 "evidence": {
-                  "startCommit": "f9bdb3c093aa5e788e4131123a52de3c899f0edb"
+                  "startCommit": "1da3495d6646508dd1d0386906b019fc65da8834"
                 }
               }
             }
@@ -63,20 +63,20 @@
               "state": "obtained",
               "binding": {
                 "subjectRef": "native-sync",
-                "candidateRef": "f9bdb3c093aa5e788e4131123a52de3c899f0edb",
+                "candidateRef": "1da3495d6646508dd1d0386906b019fc65da8834",
                 "round": 2
               },
               "result": {
                 "schemaVersion": "review-lens-result/1",
                 "lensId": "lens.outcome-correctness",
                 "subjectRef": "native-sync",
-                "candidateRef": "f9bdb3c093aa5e788e4131123a52de3c899f0edb",
+                "candidateRef": "1da3495d6646508dd1d0386906b019fc65da8834",
                 "round": 2,
                 "outcome": "aligned",
                 "findings": [],
                 "resolvedFindings": [],
                 "evidence": {
-                  "startCommit": "f9bdb3c093aa5e788e4131123a52de3c899f0edb"
+                  "startCommit": "1da3495d6646508dd1d0386906b019fc65da8834"
                 }
               }
             },
@@ -85,20 +85,20 @@
               "state": "obtained",
               "binding": {
                 "subjectRef": "native-sync",
-                "candidateRef": "f9bdb3c093aa5e788e4131123a52de3c899f0edb",
+                "candidateRef": "1da3495d6646508dd1d0386906b019fc65da8834",
                 "round": 2
               },
               "result": {
                 "schemaVersion": "review-lens-result/1",
                 "lensId": "lens.adversarial-testing",
                 "subjectRef": "native-sync",
-                "candidateRef": "f9bdb3c093aa5e788e4131123a52de3c899f0edb",
+                "candidateRef": "1da3495d6646508dd1d0386906b019fc65da8834",
                 "round": 2,
                 "outcome": "aligned",
                 "findings": [],
                 "resolvedFindings": [],
                 "evidence": {
-                  "startCommit": "f9bdb3c093aa5e788e4131123a52de3c899f0edb"
+                  "startCommit": "1da3495d6646508dd1d0386906b019fc65da8834"
                 }
               }
             }
@@ -119,17 +119,19 @@
     "followups": [],
     "lanes": [
       {
-        "focus": "",
+        "focus": "journal-sync merged",
+        "focusAt": "2026-11-03T07:30:39.312025Z",
+        "focusBy": "runner",
         "id": "lane-1",
-        "since": "2026-10-30T09:09:23.994558Z",
-        "state": "handed",
+        "since": "2026-11-03T07:30:39.310536Z",
+        "state": "idle",
         "title": "Lane 1",
         "waitingOn": null
       },
       {
         "focus": "",
         "id": "lane-2",
-        "since": "2026-10-30T09:09:24.153243Z",
+        "since": "2026-11-03T07:30:36.102028Z",
         "state": "handed",
         "title": "Lane 2",
         "waitingOn": null
@@ -137,7 +139,7 @@
     ],
     "leases": [],
     "meta": {
-      "baseHead": "2b7f77d93e0a35fa71c7bd54900a8bfd84b4ae66",
+      "baseHead": "a73b25b7a0c57eabeb45584a44f921a53586d3bc",
       "checkHistory": {
         "checks": {
           "always": {
@@ -166,7 +168,7 @@
       },
       "headline": "Fixture delivery",
       "releasedHead": null,
-      "updatedAt": "2026-10-30T09:09:28.683732Z"
+      "updatedAt": "2026-11-03T07:30:41.571365Z"
     },
     "planned": [],
     "queue": [
@@ -182,7 +184,7 @@
             "state": "passed"
           }
         ],
-        "head": "4009c568a91304d953db71801a029c3f0eaecf5a",
+        "head": "f1942d5955886c4f1281f1f7e90f024b22f70f86",
         "lane": "lane-1",
         "leadInputs": [],
         "order": 1,
@@ -190,7 +192,7 @@
         "runId": null,
         "stage": "merged",
         "subject": "journal-sync",
-        "syncedHead": "2a37b603a7365a9307907eda3120c146d80e2dc0",
+        "syncedHead": "c2be75a7acbb446d28437efe369693d5b89be785",
         "title": "Synced with a journaled review"
       },
       {
@@ -205,7 +207,7 @@
             "state": "passed"
           }
         ],
-        "head": "f9bdb3c093aa5e788e4131123a52de3c899f0edb",
+        "head": "1da3495d6646508dd1d0386906b019fc65da8834",
         "lane": "lane-2",
         "leadInputs": [],
         "order": 2,
@@ -213,7 +215,7 @@
         "runId": null,
         "stage": "checked",
         "subject": "native-sync",
-        "syncedHead": "05075b1522e4ad50209eec3d08a3ac1f027eaa11",
+        "syncedHead": "85519fc0cdd0e4e570238496997178737278d194",
         "title": "Synced with a captured native review"
       }
     ],
@@ -222,7 +224,7 @@
   },
   "journal": [
     {
-      "at": "2026-10-30T09:09:23.989326Z",
+      "at": "2026-11-03T07:30:35.864079Z",
       "id": 1,
       "kind": "review.round",
       "lane": "lane-1",
@@ -233,9 +235,9 @@
           "P2": 0,
           "P3": 0
         },
-        "finishedAt": "2026-10-30T09:09:23.988231Z",
+        "finishedAt": "2026-11-03T07:30:35.862820Z",
         "round": 1,
-        "startedAt": "2026-10-30T09:09:23.988231Z",
+        "startedAt": "2026-11-03T07:30:35.862820Z",
         "verdicts": {
           "lens.adversarial-testing": "changes",
           "lens.outcome-correctness": "changes"
@@ -245,7 +247,7 @@
       "summary": "journal-sync: review round 1"
     },
     {
-      "at": "2026-10-30T09:09:23.993131Z",
+      "at": "2026-11-03T07:30:35.867396Z",
       "id": 2,
       "kind": "review.round",
       "lane": "lane-1",
@@ -256,9 +258,9 @@
           "P2": 0,
           "P3": 0
         },
-        "finishedAt": "2026-10-30T09:09:23.992277Z",
+        "finishedAt": "2026-11-03T07:30:35.866331Z",
         "round": 2,
-        "startedAt": "2026-10-30T09:09:23.992277Z",
+        "startedAt": "2026-11-03T07:30:35.866331Z",
         "verdicts": {
           "lens.adversarial-testing": "approve",
           "lens.outcome-correctness": "approve"
@@ -268,15 +270,15 @@
       "summary": "journal-sync: review round 2"
     },
     {
-      "at": "2026-10-30T09:09:23.997247Z",
+      "at": "2026-11-03T07:30:35.870679Z",
       "id": 3,
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "journal-sync",
-      "summary": "lane-1 handed journal-sync at 4009c568a91304d953db71801a029c3f0eaecf5a (#1) after 2 review rounds"
+      "summary": "lane-1 handed journal-sync at f1942d5955886c4f1281f1f7e90f024b22f70f86 (#1) after 2 review rounds"
     },
     {
-      "at": "2026-10-30T09:09:24.150903Z",
+      "at": "2026-11-03T07:30:36.098349Z",
       "id": 4,
       "kind": "review.round",
       "lane": "lane-2",
@@ -287,9 +289,9 @@
           "P2": 0,
           "P3": 0
         },
-        "finishedAt": "2026-10-30T09:09:24.149801Z",
+        "finishedAt": "2026-11-03T07:30:36.096795Z",
         "round": 1,
-        "startedAt": "2026-10-30T09:09:24.149801Z",
+        "startedAt": "2026-11-03T07:30:36.096795Z",
         "verdicts": {
           "lens.adversarial-testing": "changes",
           "lens.outcome-correctness": "changes"
@@ -299,7 +301,7 @@
       "summary": "native-sync: review round 1"
     },
     {
-      "at": "2026-10-30T09:09:24.152263Z",
+      "at": "2026-11-03T07:30:36.100453Z",
       "id": 5,
       "kind": "review.round",
       "lane": "lane-2",
@@ -310,9 +312,9 @@
           "P2": 0,
           "P3": 0
         },
-        "finishedAt": "2026-10-30T09:09:24.151464Z",
+        "finishedAt": "2026-11-03T07:30:36.099150Z",
         "round": 2,
-        "startedAt": "2026-10-30T09:09:24.151464Z",
+        "startedAt": "2026-11-03T07:30:36.099150Z",
         "verdicts": {
           "lens.adversarial-testing": "approve",
           "lens.outcome-correctness": "approve"
@@ -322,27 +324,27 @@
       "summary": "native-sync: review round 2"
     },
     {
-      "at": "2026-10-30T09:09:24.154714Z",
+      "at": "2026-11-03T07:30:36.104371Z",
       "id": 6,
       "kind": "candidate.handed",
       "lane": "lane-2",
       "subject": "native-sync",
-      "summary": "lane-2 handed native-sync at f9bdb3c093aa5e788e4131123a52de3c899f0edb (#2) after 2 review rounds"
+      "summary": "lane-2 handed native-sync at 1da3495d6646508dd1d0386906b019fc65da8834 (#2) after 2 review rounds"
     },
     {
-      "at": "2026-10-30T09:09:24.157519Z",
+      "at": "2026-11-03T07:30:36.108128Z",
       "id": 7,
       "kind": "review.evidence",
       "lane": "lane-2",
       "reviewArtifact": {
-        "candidateRef": "f9bdb3c093aa5e788e4131123a52de3c899f0edb",
-        "digest": "f7a321c4101ff399ed50fe6b5df4913e43f0e955dfdb51dd0540573e32310911"
+        "candidateRef": "1da3495d6646508dd1d0386906b019fc65da8834",
+        "digest": "23d1f7e750b4c77c140ee706907751b04e2e3fcd308b1e8f13e3b4821377af90"
       },
       "subject": "native-sync",
       "summary": "Native review outcomes captured for display; no admission authority"
     },
     {
-      "at": "2026-10-30T09:09:25.675383Z",
+      "at": "2026-11-03T07:30:37.902046Z",
       "id": 8,
       "kind": "check.started",
       "lane": "lane-1",
@@ -350,7 +352,7 @@
       "summary": "Checking Synced with a journaled review"
     },
     {
-      "at": "2026-10-30T09:09:25.989781Z",
+      "at": "2026-11-03T07:30:38.325081Z",
       "id": 9,
       "kind": "check.finished",
       "lane": "lane-1",
@@ -358,15 +360,15 @@
       "summary": "Checks passed for Synced with a journaled review"
     },
     {
-      "at": "2026-10-30T09:09:26.805645Z",
+      "at": "2026-11-03T07:30:39.322046Z",
       "id": 10,
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "journal-sync",
-      "summary": "Merged Synced with a journaled review at 2a37b603a7365a9307907eda3120c146d80e2dc0"
+      "summary": "Merged Synced with a journaled review at c2be75a7acbb446d28437efe369693d5b89be785"
     },
     {
-      "at": "2026-10-30T09:09:28.289422Z",
+      "at": "2026-11-03T07:30:41.119344Z",
       "id": 11,
       "kind": "check.started",
       "lane": "lane-2",
@@ -374,7 +376,7 @@
       "summary": "Checking Synced with a captured native review"
     },
     {
-      "at": "2026-10-30T09:09:28.621318Z",
+      "at": "2026-11-03T07:30:41.465747Z",
       "id": 12,
       "kind": "check.finished",
       "lane": "lane-2",
@@ -385,13 +387,13 @@
   "stats": {
     "journal-sync": {
       "assignedAt": null,
-      "handedAt": "2026-10-30T09:09:23.997247Z",
-      "checkStartedAt": "2026-10-30T09:09:25.675383Z",
-      "endedAt": "2026-10-30T09:09:26.805645Z",
+      "handedAt": "2026-11-03T07:30:35.870679Z",
+      "checkStartedAt": "2026-11-03T07:30:37.902046Z",
+      "endedAt": "2026-11-03T07:30:39.322046Z",
       "outcome": "merged",
       "buildSeconds": null,
       "reviewSeconds": 0,
-      "waitSeconds": 1,
+      "waitSeconds": 2,
       "checkToMergeSeconds": 1,
       "totalSeconds": null,
       "rounds": 2,
@@ -409,13 +411,13 @@
     },
     "native-sync": {
       "assignedAt": null,
-      "handedAt": "2026-10-30T09:09:24.154714Z",
-      "checkStartedAt": "2026-10-30T09:09:28.289422Z",
+      "handedAt": "2026-11-03T07:30:36.104371Z",
+      "checkStartedAt": "2026-11-03T07:30:41.119344Z",
       "endedAt": null,
       "outcome": null,
       "buildSeconds": null,
       "reviewSeconds": 0,
-      "waitSeconds": 4,
+      "waitSeconds": 5,
       "checkToMergeSeconds": null,
       "totalSeconds": null,
       "rounds": 2,
@@ -434,7 +436,7 @@
   },
   "estimates": {},
   "status": {
-    "text": "last landed journal-sync at 2026-10-30T09:09:26.805645Z",
+    "text": "last landed journal-sync at 2026-11-03T07:30:39.322046Z",
     "source": "derived"
   },
   "focus": {

@@ -646,8 +646,8 @@ forge. It returns on the first thing needing the lead:
 It exits 0 on a wake, 1 on an error, such as a malformed journal or a missing
 state directory, 2 on a usage error, and exits 3 when `--timeout` passes, 30
 minutes by default. It
-prints what it found: `woke`, `events`, `blockedLanes`, `pressure`, `machine`,
-`unavailable`, `through` and `restart`. Without `--after` it starts after the
+prints what it found: `woke`, `events`, `blockedLanes`, `pressure`, `quietLanes`,
+`machine`, `unavailable`, `through` and `restart`. Without `--after` it starts after the
 journal's last entry, so pass it on every restart: `restart` holds the arguments
 for the next wait, so an entry written between two waits is not missed, along with
 this wait's timeout, poll and limits. They also mark a held condition as seen, so

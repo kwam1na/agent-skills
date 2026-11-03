@@ -228,11 +228,13 @@ def _stop_all(processes: list[subprocess.Popen], *, ignore_interrupts: bool = Tr
 
 
 def run_suite(units: list[dict], *, workers: int, top: str, unit_timeout: float | None = None,
-              out=sys.stdout) -> dict:
+              out=sys.stdout, unit_temp: Path | None = None) -> dict:
     """Run every unit, at most ``workers`` at once, serial units alone; return the combined result.
 
     A unit still running after ``unit_timeout`` seconds is stopped, with
-    everything it started, and recorded as timed out.
+    everything it started, and recorded as timed out. With ``unit_temp``, each
+    unit gets a temp folder of its own under it, named in the result's
+    ``unitTemp``, so what a unit writes there can be told from another's.
     """
     scratch = Path(tempfile.mkdtemp(prefix="run-tests-"))
     parallel = [unit for unit in units if not unit["serial"]]
@@ -240,13 +242,19 @@ def run_suite(units: list[dict], *, workers: int, top: str, unit_timeout: float 
     pending = [*parallel]
     running: dict[str, tuple[subprocess.Popen, Path, Path, float, dict]] = {}
     combined = {"testsRun": 0, "failures": [], "errors": [], "skipped": 0, "expectedFailures": 0,
-                "unexpectedSuccesses": [], "crashed": [], "timedOut": [], "timings": {}, "units": {}}
+                "unexpectedSuccesses": [], "crashed": [], "timedOut": [], "timings": {}, "units": {}, "unitTemp": {}}
 
     def start(unit: dict) -> None:
         index = len(combined["units"]) + len(running)
         result_path, log_path = scratch / f"{index}.json", scratch / f"{index}.log"
         names_path = scratch / f"{index}.names.json"
         names_path.write_text(json.dumps({"names": unit["names"], "pattern": unit["pattern"]}), encoding="utf-8")
+        environment = None
+        if unit_temp is not None:
+            temp = unit_temp / str(index)
+            temp.mkdir()
+            combined["unitTemp"][unit["name"]] = str(temp)
+            environment = {**os.environ, "TMPDIR": str(temp), "TEMP": str(temp), "TMP": str(temp)}
         # An interrupt must not land between starting a worker and recording it: it would be left running.
         blocked = hasattr(signal, "pthread_sigmask")
         if blocked:
@@ -256,7 +264,7 @@ def run_suite(units: list[dict], *, workers: int, top: str, unit_timeout: float 
                 process = subprocess.Popen(
                     [sys.executable, "-B", os.path.abspath(__file__), "--unit", str(names_path),
                      "--result", str(result_path), "--top-level-dir", top],
-                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, cwd=top,
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, cwd=top, env=environment,
                     **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
                        else {"start_new_session": True}))
             running[unit["name"]] = (process, result_path, log_path, time.perf_counter(), unit)

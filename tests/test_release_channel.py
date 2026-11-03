@@ -202,6 +202,20 @@ class ContinuousIntegrationDecisionTests(unittest.TestCase):
         extra = {"name": "something new", "status": "in_progress", "conclusion": None}
         self.assertEqual(self.decide([self.run_record()], [*self.jobs(), extra]), channel.REFUSE)
 
+    def test_a_gating_job_absent_while_macos_runs_is_waited_for_then_refused(self) -> None:
+        # A job yet to appear looks like one that never will, so this is the one way macOS can delay a release.
+        going = self.run_record(status="in_progress", conclusion=None)
+        jobs = [job for job in self.jobs() if job["name"] != JOBS[0]]
+        jobs.append({"name": MACOS, "status": "in_progress", "conclusion": None})
+        self.assertEqual(self.decide([going], jobs), channel.WAIT)
+        decision = lambda: channel.Decision(channel.WAIT, "still going")
+        now = [0.0]
+        waited = channel.wait_for_success(decision, limit=10, missing_limit=10, interval=1, clock=lambda: now[0],
+                                          sleep=lambda seconds: now.__setitem__(0, now[0] + seconds), say=lambda _: None)
+        self.assertFalse(waited)
+        self.assertGreater(now[0], 0)
+        self.assertEqual(self.decide([self.run_record()], jobs), channel.REFUSE)
+
     def test_a_finished_run_missing_a_required_job_is_refused_not_waited_for(self) -> None:
         self.assertEqual(self.decide([self.run_record(conclusion="cancelled")], [self.jobs()[0]]), channel.REFUSE)
 

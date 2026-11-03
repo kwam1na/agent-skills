@@ -6,13 +6,19 @@ file it can't trust, naming the key path and never echoing a value from the file
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import http.client
 import importlib.util
 import json
 import os
+import re
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -654,6 +660,93 @@ class PlanSkillTextTests(unittest.TestCase):
             with self.subTest(drawn=title):
                 self.assertIn(f'"{title}"', page)
         self.assertIn('"Nothing in the plan needs you right now."', page)
+
+
+class LivePlanTests(unittest.TestCase):
+    """What an open page refreshes its plan from: its own address, as the live server serves it after a plan change."""
+
+    SCRIPTS = Path(__file__).resolve().parents[1] / "skills"
+
+    def start(self, folder: Path) -> str:
+        subprocess.run(["git", "init", "-q"], check=True, cwd=folder)
+        state = folder / "state"
+        state.mkdir()
+        (folder / "views.json").write_text(json.dumps({"spec": "delivery-views-config/1"}))
+        binding = folder / "orchestration.json"
+        argv = [sys.executable, "-B", str(self.SCRIPTS / "delivery-views/scripts/render.py"), "line-map",
+                "--config", str(folder / "views.json"), "--binding", str(binding)]
+        binding.write_text(json.dumps({"state": {"directory": str(state), "renderers": [
+            {"id": "line-map", "argv": argv, "output": "line-map.html", "timeoutSeconds": 30}]}}))
+        self.tool = [sys.executable, "-B", str(self.SCRIPTS / "orchestrate-work/scripts/delivery_state.py"), "--dir", str(state)]
+        subprocess.run([*self.tool, "init", "--headline", "Live plan"], check=True, capture_output=True, cwd=folder)
+        (state / "plan.json").write_text(json.dumps(plan()))
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(self.SCRIPTS / "orchestrate-work/scripts/render_state.py"), "live", "--dir", str(state),
+             "--binding", str(binding)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=folder)
+
+        def stop() -> None:
+            if process.poll() is None and os.name != "nt":  # Windows has no SIGINT to send.
+                process.send_signal(signal.SIGINT)
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.wait(10)
+            if process.poll() is None:
+                process.kill()
+                process.wait(10)
+            process.stdout.close()
+
+        self.addCleanup(stop)
+        self.state = state
+        return json.loads(process.stdout.readline())["live"]
+
+    def ask(self, address: str, method: str = "GET", host: str | None = None) -> tuple[int, str]:
+        connection = http.client.HTTPConnection(address, timeout=10)
+        self.addCleanup(connection.close)
+        connection.request(method, "/view/line-map.html", headers={"Host": host} if host else {})
+        answer = connection.getresponse()
+        return answer.status, answer.read().decode("utf-8")
+
+    def block(self, address: str) -> dict | None:
+        status, page = self.ask(address)
+        found = re.search(r'<script type="application/json" id="delivery-plan">([^<]*)</script>', page) if status == 200 else None
+        return json.loads(found.group(1)) if found else None
+
+    def replan(self, value: dict, updated: str) -> None:
+        moved = self.state / "plan.json.next"
+        moved.write_text(json.dumps(value))
+        moved.replace(self.state / "plan.json")
+        subprocess.run([*self.tool, "journal", "--kind", "decision.recorded", "--summary", f"Plan updated: {updated}; a change"],
+                       check=True, capture_output=True, cwd=self.state.parent)
+
+    def until(self, address: str, met) -> dict:
+        deadline = time.monotonic() + 30
+        while True:
+            block = self.block(address)
+            if block is not None and met(block):
+                return block
+            self.assertLess(time.monotonic(), deadline, f"the served page never moved past {block}")
+            time.sleep(0.1)
+
+    def test_an_open_page_finds_a_changed_plan_at_its_own_address_as_the_renderer_judged_it(self) -> None:
+        # Cleanups run last first, so the folder outlasts the server started in it.
+        folder = tempfile.mkdtemp(prefix="live plan ")
+        self.addCleanup(shutil.rmtree, folder, True)
+        address = self.start(Path(folder).resolve())
+        before = self.until(address, lambda block: "plan" in block)
+        self.assertEqual(before["plan"]["updated"], plan()["updated"])
+        changed = {**plan(), "updated": "2031-01-01T00:00:00Z"}
+        self.replan(changed, changed["updated"])
+        self.assertEqual(self.until(address, lambda block: block.get("plan", {}).get("updated") == changed["updated"])["plan"]["updated"],
+                         changed["updated"])
+        # The renderer's validator speaks for an invalid file: the page is told, and never given the file.
+        refused = {**plan(), "updated": "2031-01-02T00:00:00Z", "units": SECRET}
+        self.replan(refused, refused["updated"])
+        block = self.until(address, lambda block: "unreadable" in block)
+        self.assertTrue(block["unreadable"].startswith("units"), block)
+        self.assertNotIn(SECRET, json.dumps(block))
+        # What it is served from stays read-only, and for its own host and port only.
+        self.assertEqual(self.ask(address, "POST")[0], 501)
+        self.assertEqual(self.ask(address, host="elsewhere.example")[0], 403)
+        self.assertEqual(json.loads((self.state / "plan.json").read_text())["units"], SECRET)
 
 
 if __name__ == "__main__":

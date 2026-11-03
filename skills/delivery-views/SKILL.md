@@ -26,6 +26,13 @@ unknown; planned work has no start label, and a mutable lane focus time never
 supplies a work item's start. The journey's intermediate milestone label uses
 its own row so it cannot collide with the finish label.
 
+Each lane's row says how old its words are, from the `focusAt` the state tool
+keeps. An active row older than an hour also says it may be out of date; a row at
+rest isn't marked, since an old "merged" is still true. A row with no readable
+time, as in a record written before the tool kept one, says "No time recorded"
+rather than reading as fresh. Words the record derives from the line, for a lane with
+no focus of its own, carry no age.
+
 ## Dependencies
 
 - `$orchestrate-work` owns the delivery state, its binding, the render wrapper
@@ -288,15 +295,32 @@ reads "Nothing in the plan needs you right now."
 
 ### Live
 
-The page embeds the validated plan once and derives record proofs from each
-pushed record, so the chapter redraws as The line does. A producer writes
-`plan.json` only when its content, apart from `updated`, changed: atomically
-first, then a decision entry in the delivery journal whose summary starts "Plan updated:",
+The page embeds the validated plan and derives record proofs from each pushed
+record, so the chapter redraws as The line does. A producer writes `plan.json`
+only when its content, apart from `updated`, changed: atomically first, then a
+decision entry in the delivery journal whose summary starts "Plan updated:",
 names the new `updated` value and says what changed. That moves the record, so
-the live server renders the page again from the new file. An open page shows
+the live server renders the page again from the new file.
+
+A page the live server serves follows that entry with no reload. When the latest
+"Plan updated:" entry names an `updated` value other than the plan in use, the
+page fetches its own address and takes the plan from the block the renderer
+embedded there, so the renderer's validation is the only validation. It redraws
+with the reader's open folds and scroll position kept, and adds nothing to what
+the server serves. An answer holding a later plan than the one named is taken,
+since the file is written before its entry, and the page stops asking once the
+server has gone on holding it for about half a minute. While the server has not
+yet rendered the named plan the page keeps asking and says nothing. An answer that
+fails, a plan the renderer refused, one the page can't draw, or a render still
+behind after about half a minute leaves the current plan on screen with "The plan
+shown is out of date." beside the title, and the page keeps asking until the plan
+is current. A page opened with no plan has no plan chapter, and gains one only on
+a reload.
+
+A static page, one with no address to fetch from or no stream behind it, shows
 "The plan changed. Reload to see it." beside the title when the latest "Plan
-updated:" entry in a pushed record names an `updated` value other than its
-embedded plan's; a page rendered or reloaded after the change shows none.
+updated:" entry names an `updated` value other than its embedded plan's; a page
+rendered or reloaded after the change shows none.
 
 ## Configuration: `delivery-views-config/1`
 

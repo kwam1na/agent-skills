@@ -32,7 +32,7 @@ Classification and distribution status live only in `provenance.lock.json`.
 The default profile contains only releasable portable-core entries. Bootstrap
 is optional guidance. The Linear profile adds the narrow host-native tracker
 adapter, plus the decomposition and tracked-execution workflows that reach the
-tracker only through that adapter, to the complete core profile. A
+tracker only through that adapter, to the complete `run-delivery` profile. A
 `source-only` entry, whenever one is retained, stays cataloged for
 traceability and is never selected by a profile. Athena-specific merge gates,
 telemetry, deployment, reporting, generated-artifact policy, and domain rules

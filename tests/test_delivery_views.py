@@ -618,13 +618,12 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(receipt["release"]["profile"], "delivery-views")
 
     def test_a_missing_included_profile_is_refused_not_skipped(self) -> None:
-        import shutil
+        from corpus_copy import copy_corpus
 
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             copy_root = directory / "corpus"
-            shutil.copytree(ROOT, copy_root, ignore=shutil.ignore_patterns(".venv", ".venv-*", ".git", ".worktrees", "__pycache__",
-                                                                           "*.egg-info", "qualifications"))
+            copy_corpus(copy_root, leaving_out=("qualifications",))
             (copy_root / "profiles/delivery-views.json").unlink()
             from agent_skills import release
 

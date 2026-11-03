@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import json
-import shutil
 import tempfile
 import unittest
 import zipfile
@@ -12,6 +11,7 @@ from jsonschema import Draft202012Validator
 
 from agent_skills.release import build_release, verify_release
 from agent_skills.validate import canonical_json, validate_corpus
+from corpus_copy import SharedCorpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,11 +31,17 @@ def migrate(document: dict) -> dict:
 
 
 class ProvenanceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        holder = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(holder.cleanup)
+        cls.corpus = SharedCorpus(Path(holder.name) / "corpus")
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name) / "corpus"
-        shutil.copytree(ROOT, self.root, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        self.addCleanup(self.corpus.restored)
+        self.root = self.corpus.restored()
         self.path = self.root / "provenance.lock.json"
         self.original = json.loads(self.path.read_text())
         self.document = migrate(self.original)
