@@ -197,5 +197,15 @@
     },
     "refreshSeconds": 180,
     "liveHome": "line-map"
-  }
+  },
+  "flakes": [
+    {
+      "check": "full-suite",
+      "tests": [
+        "tests\\.test_merge_queue\\.BatchTests\\.test_a_base_push_before_the_first_landing_stops_the_queue_with_nothing_landed",
+        "tests\\.test_merge_queue\\.InterruptedRunTests\\.test_the_interruption_is_journalled_before_the_state_is_cleared"
+      ],
+      "ref": "https://linear.app/v26-technologies/issue/V26-3092"
+    }
+  ]
 }
