@@ -30,7 +30,7 @@ it merges.
 
 ## Decisions
 
-- **Three lanes.** A takes V26-3051, then V26-3050. B takes V26-3082, then V26-3078. C takes V26-3077, then V26-3076.
+- **Two lanes, reused.** The app cannot start a session from Remote Control, so the two sessions from the previous delivery carry this one. Lane-1 takes V26-3082, then V26-3078, then V26-3076. Lane-2 takes V26-3077, then V26-3051, then V26-3050.
 - **How it reaches `main`.** Tiers 1 to 3 land on `delivery/backlog-followups` through the queue, and reach `main` through one integration
   change with the delivery's binding removed. V26-3050 needs a tag holding V26-3051 to install, so it starts from `main` after that
   integration and goes straight into `main`, since it adds the standing binding.
@@ -38,7 +38,7 @@ it merges.
   V26-3050 touch `AGENTS.md` in sequence, not together.
 - **Gate at each hand-off.** A unit's own sensors in the lane, the queue's selected checks, and the full local macOS run on Python 3.11 at the
   integration. Local runs use four workers at most, and nobody uses `pkill` or `killall`.
-- **Item 3 of V26-3082 and the lens brief.** The stopping rule reaches a lens through `review-work` or `obtain-review`, which that ticket owns.
+- **Item 14 of V26-3082 and the lens brief.** The stopping rule reaches a lens through `review-work` or `obtain-review`, which that ticket owns.
 
 ## Approvals ahead
 
