@@ -289,16 +289,16 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   const failures = [...checking.querySelectorAll(".ck-fails li")];
   expect(failures.map((failure) => failure.querySelector(".ck-f")?.textContent)).toEqual([`Failed: ${ids[3]}`, `Failed: ${ids[9]}`]);
   expect(failures[0].querySelector(".ck-log")?.textContent).toBe(`Log: logs/003-${ids[3]}.log`);
-  expect([...failures[0].querySelectorAll(".ck-note")].map((note) => note.textContent)).toEqual([`▲ Already failing on main: ${ids[3]}, the motion inventory test.`]);
+  expect([...failures[0].querySelectorAll(".ck-note")].map((note) => note.textContent)).toEqual([`Already failing on main: ${ids[3]}, the motion inventory test.`]);
   expect(failures[1].textContent).toContain("Failing: harness-behavior stop.log");
   expect(failures[1].textContent).toContain("exit 1 after 2 retries");
   // Notes from before this run, or with no readable time, are left out.
   expect(checking.textContent).not.toContain("From an earlier run");
   expect(checking.textContent).not.toContain("Undated");
-  expect([...failures[1].querySelectorAll(".ck-note")].map((note) => note.textContent)).toEqual([`◆ Load flake, not a code failure: \`${ids[9]}\`.`]);
+  expect([...failures[1].querySelectorAll(".ck-note")].map((note) => note.textContent)).toEqual([`Load flake, not a code failure: \`${ids[9]}\`.`]);
   // A note on the piece that names no failed check follows the list; another piece's note stays out.
   expect([...checking.querySelectorAll(".ck-more .ck-note")].map((note) => note.textContent)).toEqual([
-    "◆ Verdict: this will not merge from this run.", `◆ Unrelated: ${ids[9]}.publishing passed.`]);
+    "Verdict: this will not merge from this run.", `Unrelated: ${ids[9]}.publishing passed.`]);
   expect(checking.textContent).not.toContain("About another piece");
   expect(checking.querySelectorAll(".ck-step")).toHaveLength(0);
   expect(checking.textContent).toContain("9 passed, 1 reused, 2 failed, 1 running, 7 waiting");
@@ -313,7 +313,7 @@ test("matches a note to a check whose name ends in punctuation", async () => {
   document.state.meta.checking.now.steps[1] = { label: "lint(webapp)", state: "failed" };
   document.journal.push({ at: "2026-10-22T05:06:00Z", id: 50, kind: "decision.recorded", lane: null, subject: "PAY-2361", summary: "Flaky: lint(webapp) passes alone" });
   const [{ app }] = await open(document);
-  expect(app.querySelector(".ck-fails li .ck-note")?.textContent).toBe("◆ Flaky: lint(webapp) passes alone");
+  expect(app.querySelector(".ck-fails li .ck-note")?.textContent).toBe("Flaky: lint(webapp) passes alone");
 });
 
 test("drops the chips for the failed-first list even when there are only a few checks", async () => {
@@ -700,7 +700,7 @@ test("shows pieces checked as one batch together, each with its change request",
   expect(failingApp.querySelector(".ck-verdict")?.textContent).toBe(
     "The batch won't land as one. 1 failed · 1 still to run · the pieces ahead of the one that broke it can still land");
   expect(failingApp.querySelector(".ck-fails li")?.textContent).toContain("Log: logs/batch-aa.log");
-  expect(failingApp.querySelector(".ck-fails li .ck-note")?.textContent).toBe("▲ shop.check.aa fails on the receipt page.");
+  expect(failingApp.querySelector(".ck-fails li .ck-note")?.textContent).toBe("shop.check.aa fails on the receipt page.");
 
   // A member carried out of a failed batch and checked again on its own is not in the old batch any more.
   const carried = batch();
