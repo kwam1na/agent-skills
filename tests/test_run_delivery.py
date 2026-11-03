@@ -4046,7 +4046,7 @@ WORKED_MERGE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/adap
                 "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge"]
 # Every push in an example is labelled, on the line just above it, for an unprotected base.
 UNPROTECTED = "unprotected base"
-PUSH = re.compile(r"\bgit push\b|git\(\"push\"")
+PUSH = re.compile(r"\bgit\b(?:\s+-[Cc]\s+\S+)*\s+push\b|git\(\"push\"")
 
 
 def guide_blocks() -> list[dict]:
