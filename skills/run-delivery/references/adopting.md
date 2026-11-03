@@ -69,12 +69,13 @@ any checkout of the base. An update to the release lands the same way, in a pull
 Five kinds of file set a repository up. Each is written once and committed on the base.
 
 **Ignored folders.** Lane checkouts, review folders and the record live under `.orchestration/`, which git must
-ignore. The in-app build writes `out/` here, and the host's own session folder stays out of the repository too.
+ignore. The in-app build writes `out/` here. The host's own worktrees stay out of the repository too, but not the
+host's whole folder: the installer writes the skills' links for the host there, and they belong on the base.
 
 ```text example file .gitignore
 .orchestration/
 out/
-.claude/
+.claude/worktrees/
 ```
 
 **Formatter and hook ignores.** A formatter or a commit hook that rewrites files must leave the delivery's generated
@@ -457,13 +458,15 @@ Everything else is the supervisor's. Each pass it reconciles the forge and the t
 once its lane has moved off it, journals `finish.met` for each finish line it can prove, renders the views and posts
 the tracker's updates, and copies the record to `latest` at the archive location. It judges each finish line by the
 record's covers and proofs: once every criterion a line covers has every proof it names done, the line is met and
-journalled once. An entry you journalled by hand is skipped, and a line the record can't prove stays in "Needs you"
-for you to settle.
+journalled once. An entry you journalled by hand is skipped. A line the record can't prove holds the close until you
+check it, mark it met and journal `finish.met`.
 
-What waits on you is "Needs you": the live view shows it, every lead command repeats where the supervisor stands, and
-`doctor --delivery` names the supervisor's state. It lists a failed `fullHealth`, a broken base, a lane that is
-blocked or waits on you, an unresolved blocker, a child process that won't stay up, and the tracker publisher's own
-items. Resolve a blocker, or rerun a `fullHealth` you judge flaky, with `lead-resolve`:
+What waits on you is what holds the close, and every lead command ends by saying so: "the close waits on" whatever the
+supervisor's last pass found, as `doctor --delivery` does too. Each pass writes the same list to the flow log's
+`<delivery-key>.supervisor.jsonl`. It names a story not yet merged, a finish line not met, a lane still busy, and
+"Needs you": a failed `fullHealth`, a broken base, a lane that is blocked or waits on you, an unresolved blocker, a
+child process that won't stay up, and the tracker publisher's own items. The live view doesn't show this list. Resolve
+a blocker, or rerun a `fullHealth` you judge flaky, with `lead-resolve`:
 
 ```text example outline
 run_delivery.py lead-resolve <journal id> --why "<what was decided>"
@@ -478,7 +481,8 @@ python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.
 
 When every story is merged or removed, every finish line is met, every lane is idle or done, and nothing in "Needs
 you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head, a follow-up for
-each deferred finding, `delivery.closed` once the tracker has every update, the archive, a friction note stub beside
+each deferred finding, `delivery.closed` and then a wait until the tracker has every update, the archive, a friction
+note stub beside
 it for your `compound-learning` pass, and then it stops. There is nothing to run for the close. `lead-close` is for
 closing early, or with the supervisor down. With the lead's checkout gone, the archived copy still serves the live
 view:
@@ -581,9 +585,10 @@ change and the delivery file reach `main`, and each integration base, through a 
 - **After an install update or a token change, `lead-run --resume`.** The supervisor runs the code and the environment
   it started with. Stop it by the pid every lead command shows (`kill <pid>`), then `lead-run --resume` stops what it
   left running and starts it on the new release, or with the new token exported. Nothing it did is done twice.
-- **Merge strategy.** A merge commit keeps the checked head on the base, which is what the queue verifies after each
-  merge. Squash only where the forge requires it, with the adapter's `--strategy squash`, and expect `fullHealth` to be
-  the check of record.
+- **Merge strategy.** Merge with merge commits. After each merge, the queue checks that the base holds the checked
+  head's tree on top of the base it checked against, and a squash passes that too. But a squashed story's branch never
+  reaches the base, so the supervisor's cleanup reports it unmerged and leaves its checkout and branches for you.
+  Squash, with the adapter's `--strategy squash`, only where the forge requires it.
 - **A test account that allows one session at a time.** The in-app lease serializes every lane's checks of the running
   app, so one account signs in for one check at a time. Give the lease's lock a path every checkout shares.
 - **Lanes create their own worktrees.** `lane-start` makes each story's checkout from the delivery's base, so a lane
@@ -606,8 +611,8 @@ No command calls a host's own interface. What the workflow can't do for you:
 - **Archiving lane sessions.** The close-out archives the record, never a session; the friction note lists archiving
   them as yours.
 - **Queued lead messages.** A lane's message waits until the lead's session reads it. The record doesn't wait: a lane
-  that is blocked or waits on the lead shows in "Needs you" as soon as it says so in its focus, and a hand-off is in
-  the queue as soon as it is made.
+  that is blocked or waits on the lead holds the close, and every lead command names it, from the supervisor's next
+  pass after it says so in its focus; a hand-off is in the queue as soon as it is made.
 - **Pull requests the host can't watch.** A host that watches only some forges' pull requests leaves the rest to the
   supervisor: its forge snapshot and the pipeline's review reach the record and the lanes without the host.
 - **Session limits.** A host's session limit ends a lane's turn mid-story. Its checkout, branch and record remain;

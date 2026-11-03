@@ -2179,7 +2179,7 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertEqual(json.loads(done.stdout), {"url": url, "state": "merged"})
             calls = [json.loads(line) for line in log.read_text().splitlines()]
-            self.assertEqual(calls[-2][:4], ["pr", "list", "--head", "feature/X-1"])
+            self.assertEqual(calls[-2][:6], ["pr", "list", "--head", "feature/X-1", "--state", "open"])
             self.assertEqual(calls[-1][2:], [url, "--merge", "--match-head-commit", "abc", "--repo", "o/n"])
             for refused, extra, words in ((["--head", "def"], {}, "head branch was modified"),
                                           (["--head", "abc"], {"FAKE_GH_PRS": "0"}, "has no open pull requests"),
@@ -4031,20 +4031,22 @@ GUIDE_SECTIONS = ["1. What the workflow does", "2. Prerequisites", "3. Install a
 # The guide's walk-through: what the lead does, in order. Everything else is the supervisor's or a lane's.
 GUIDE_WALKTHROUGH = ["Plan and review", "Set up", "Assign", "The lane delivers a story", "Accept", "Answer"]
 # What the guide must name, as phrases in its whitespace-normalized text.
+# What the guide must say, each where it belongs: (the section it is in, the phrase), whitespace-normalized.
 GUIDE_NAMES = {
-    "the supervisor": "`lead-run`",
-    "lane-start": "lane-start <story-key> --base main",
-    "bases": "\"bases\": [\"main\", \"integration-*\"]",
-    "the adapter merge": "forge_bitbucket.py\", \"merge\", \"--source\", \"{branch}\"",
-    "the formatter ignore list": "docs/plans/*.lane-brief.md",
-    "the settings-PR rule": "Settings land through reviewed pull requests.",
-    "the base-mismatch anchor": "### Base mismatch",
-    "reviewWhen": "\"reviewWhen\": \"pipeline-green\"",
-    "finish lines by covers and proofs": "by the record's covers and proofs",
+    "the supervisor": ("## 1. What the workflow does", "The **supervisor**, `lead-run`, does every other lead duty"),
+    "lane-start": ("### The lane delivers a story", "lane-start <story-key> --base main"),
+    "the settings-PR rule": ("## 8. Running deliveries", "**Settings land through reviewed pull requests.** On a protected "
+                             "base, the binding, `.agents/run-delivery.json`, the delivery file and the lane brief reach "
+                             "the base through a pull request, reviewed and merged like any change"),
+    "finish lines by covers and proofs": ("### Answer", "It judges each finish line by the record's covers and proofs"),
 }
-# A push to `main` or to the base is labelled for an unprotected base, within its own block.
+# The worked adopter's binding: its bases, and a merge step that calls the forge adapter, pinned to the checked head.
+WORKED_BASES = ["main", "integration-*"]
+WORKED_MERGE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge",
+                "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge"]
+# Every push in an example is labelled, on the line just above it, for an unprotected base.
 UNPROTECTED = "unprotected base"
-PUSH_TO_BASE = re.compile(r"\bpush\b.*(?:\bmain\b|\{base\}|<base>)")
+PUSH = re.compile(r"\bgit push\b|git\(\"push\"")
 
 
 def guide_blocks() -> list[dict]:
@@ -4103,6 +4105,8 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
     def test_the_guide_takes_an_empty_repository_to_a_closed_delivery(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="run-delivery-adopter-"))
         self.addCleanup(shutil.rmtree, root, True)
+        # Registered after the folder's removal, so it runs first: a failed case stops the supervisor it started.
+        self.addCleanup(stop_supervisors, root)
         fakes, home, bin_dir = root / "fakes", root / "home", root / "bin"
         for folder in (fakes, home, bin_dir):
             folder.mkdir()
@@ -4283,33 +4287,60 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
         section = prose[prose.index("## 6. A first delivery"):prose.index("## 7. A worked adopter")]
         self.assertEqual(re.findall(r"^### (.+)$", section, re.MULTILINE), GUIDE_WALKTHROUGH)
 
+    def section(self, heading: str) -> str:
+        """One section of the guide, by its heading line, up to the next heading at its level or above."""
+        text = GUIDE.read_text(encoding="utf-8")
+        level = heading.split(" ", 1)[0]
+        start = text.index(f"\n{heading}\n") + 1
+        following = [m.start() for m in re.finditer(r"^#{1,%d} " % len(level), text[start + len(heading):], re.MULTILINE)]
+        end = start + len(heading) + following[0] if following else len(text)
+        return text[start:end]
+
     def test_the_guide_names_what_the_workflow_now_does(self) -> None:
-        normalized = " ".join(GUIDE.read_text(encoding="utf-8").split())
-        for what, phrase in GUIDE_NAMES.items():
+        for what, (heading, phrase) in GUIDE_NAMES.items():
             with self.subTest(what=what):
-                self.assertIn(" ".join(phrase.split()), normalized)
-        # The base-mismatch refusal points at this anchor; the heading it names is there.
+                self.assertIn(" ".join(phrase.split()), " ".join(self.section(heading).split()))
+        blocks = guide_blocks()
+        # The formatter ignore list, in its own file, carries the generated lane brief.
+        ignore = next(b for b in blocks if b["path"] == ".prettierignore")
+        self.assertIn("docs/plans/*.lane-brief.md", ignore["body"].splitlines())
+        # The worked adopter's binding and configuration, read as the JSON they are.
+        worked = [json.loads(b["body"]) for b in blocks
+                  if b["kind"] == "outline" and b["lang"] == "json" and b in [m.groupdict() for m in GUIDE_BLOCK.finditer(
+                      self.section("## 7. A worked adopter"))]]
+        binding = next(document for document in worked if "merge" in document)
+        self.assertEqual(binding["bases"], WORKED_BASES)
+        self.assertEqual(binding["merge"], WORKED_MERGE)
+        self.assertEqual(set(binding["environment"]), {"FLOW_FORGE_REPOSITORY", "FLOW_FORGE_TOKEN_ENV"})
+        self.assertTrue(any("tracker_publisher.py" in part for entry in binding["state"]["publishers"]
+                            for part in entry["argv"]))
+        conf = next(document for document in worked if "forge" in document)
+        self.assertEqual(conf["tracker"]["transitions"]["reviewWhen"], "pipeline-green")
+        self.assertTrue(conf["forge"]["mergeNeedsReady"])
+        # The base-mismatch refusal points at this anchor; the heading it names is there, exactly.
         tool = (SKILL / "scripts/run_delivery.py").read_text(encoding="utf-8")
         self.assertIn("adopting.md#base-mismatch", tool)
+        self.assertRegex(GUIDE.read_text(encoding="utf-8"), r"(?m)^### Base mismatch$")
 
-    def test_no_example_pushes_to_the_base_unless_labelled_for_an_unprotected_one(self) -> None:
+    def test_no_example_pushes_unless_labelled_for_an_unprotected_base(self) -> None:
         for block in guide_blocks():
             lines = block["body"].splitlines()
             for index, line in enumerate(lines):
-                if PUSH_TO_BASE.search(line) and not line.lstrip().startswith("#"):
+                if PUSH.search(line) and not line.lstrip().startswith("#"):
+                    above = next((earlier for earlier in reversed(lines[:index]) if earlier.strip()), "")
                     with self.subTest(line=line):
-                        self.assertTrue(any(UNPROTECTED in earlier for earlier in lines[:index]),
-                                        f"an unlabelled push to the base: {line}")
+                        self.assertTrue(above.lstrip().startswith("#") and UNPROTECTED in above,
+                                        f"a push not labelled, on the line above it, for an unprotected base: {line}")
 
     def test_the_orchestration_guide_says_which_duties_run_delivery_does(self) -> None:
         guide = " ".join((ROOT / "skills/orchestrate-work/references/orchestration-guide.md").read_text(
             encoding="utf-8").split())
         for phrase in ("With run-delivery's supervisor running, the lead does none of these by hand",
                        "the supervisor judges `finish.met` by the record's covers and proofs",
-                       "a finish line the record can't prove stays in \"Needs you\"",
+                       "a finish line the record can't prove holds the close",
                        "an entry the lead journalled by hand is skipped",
                        "run-delivery's tracker publisher posts every update in this table",
-                       "skips a start `lane-start` recorded"):
+                       "the lead's drain skips every `lane.assigned` start move and update"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, guide)
         skill = " ".join((ROOT / "skills/orchestrate-work/SKILL.md").read_text(encoding="utf-8").split())

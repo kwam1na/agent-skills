@@ -733,8 +733,10 @@ class SupervisorPassTests(unittest.TestCase):
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
         code, out = fx.flow("lead-init", "--replace", cwd=m)
         self.assertEqual(code, 0, out)
-        # A planned story nobody took holds the close.
+        # A planned story nobody took holds the close, and every lead command says what the close waits on.
         self.assertIn("not handed off: FX-2, FX-3", self.holds(fx))
+        code, out = fx.flow("lead-brief", cwd=m)
+        self.assertIn("The close waits on: not handed off: FX-2, FX-3", out)
         wt = self.merged(fx, "FX-2", "lane-1")
         held = self.holds(fx)
         self.assertIn("not handed off: FX-3", held)
