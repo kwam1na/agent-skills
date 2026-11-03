@@ -152,6 +152,25 @@ or null. The repository's own command produces it when the binding declares
 `--hints` file is the fallback when the binding declares no command or the
 command fails, and the result says which was used and why.
 
+## Keeping the lead's wake
+
+A lead does not end its turn while a lane is working or a candidate is queued
+unless a `wait` is running in the background. It restarts the wait after each
+wake, with the arguments the last one printed. The host's notes are a
+convenience and never the lead's only wake. Where nothing can run in the
+background, the lead tells the operator that it won't wake on its own.
+
+```bash
+python3 -B scripts/delivery_state.py --dir <state directory> wait [--after <journal id>] [--timeout <seconds>]
+```
+
+The wait reads the record and the machine only, and returns on a hand-off, a
+merge, a stop, a broken base, a blocker, a blocked lane, or machine pressure.
+Woken on pressure, the lead finds what is loading the machine before taking more
+work, and reduces this delivery's own load first: capped test workers, and one
+test run at a time per lane. It reports what it can't reduce, such as other work
+or a system service, and it never kills what it didn't start.
+
 ## Findings and a broken base
 
 Triage every review finding with

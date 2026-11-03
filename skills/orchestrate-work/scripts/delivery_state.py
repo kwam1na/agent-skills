@@ -29,10 +29,12 @@ import copy
 import datetime
 import fnmatch
 import json
+import math
 import posixpath
 import os
 import re
 import select
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -3379,6 +3381,197 @@ def _select_command(args: argparse.Namespace) -> dict:
     return select_checks(args.dir, args.subject, binding=binding, head=args.head, checks=checks, reason=args.reason)
 
 
+# What a running `wait` returns on: the journal kinds that need the lead. A blocked lane and machine pressure also end it.
+WAIT_KINDS = frozenset({"candidate.handed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded"})
+# 0 is a wake and 1 an error, so a lead can tell what ended a wait left running in the background.
+WAIT_EXPIRED_EXIT = 3
+WAIT_TIMEOUT_SECONDS = 1800.0
+WAIT_POLL_SECONDS = 15.0
+WAIT_LOAD_MULTIPLE = 2.0
+WAIT_MIN_FREE_BYTES = 20 * 2**30
+WAIT_SWAP_GROWTH_BYTES = 4 * 2**30
+SWAP_UNITS = {"K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40}
+
+
+def _swap_from_meminfo(text: str) -> int | None:
+    fields = dict(re.findall(r"(?m)^(Swap(?:Total|Free)):\s+(\d+) kB$", text))
+    if len(fields) != 2:
+        return None
+    return (int(fields["SwapTotal"]) - int(fields["SwapFree"])) * 1024
+
+
+def _swap_from_swapusage(text: str) -> int | None:
+    match = re.search(r"\bused = ([0-9.]+)([KMGT])\b", text)
+    return None if match is None else int(float(match.group(1)) * SWAP_UNITS[match.group(2)])
+
+
+def _swap_used_bytes() -> int | None:
+    """Swap in use, or None where this system offers no way to read it."""
+    try:
+        if sys.platform.startswith("linux"):
+            return _swap_from_meminfo(Path("/proc/meminfo").read_text(encoding="ascii"))
+        if sys.platform == "darwin":
+            done = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True, timeout=5, check=False)
+            return _swap_from_swapusage(done.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def machine_reading(directory: Path) -> dict:
+    """The machine's counters, each None when this system can't read it, which is never read as healthy."""
+    try:
+        load5 = os.getloadavg()[1]
+    except (AttributeError, OSError):
+        load5 = None
+    try:
+        free = shutil.disk_usage(directory).free
+    except OSError:
+        free = None
+    return {"cores": os.cpu_count(), "load5": load5, "diskFreeBytes": free, "swapUsedBytes": _swap_used_bytes()}
+
+
+def _machine_unavailable(reading: dict) -> list[str]:
+    missing = []
+    if reading["diskFreeBytes"] is None:
+        missing.append("disk")
+    if reading["load5"] is None or reading["cores"] is None:
+        missing.append("load")
+    if reading["swapUsedBytes"] is None:
+        missing.append("swap")
+    return missing
+
+
+def wait_for_lead(
+    directory: Path,
+    *,
+    after: int | None,
+    timeout: float,
+    poll: float,
+    seen_blocked: list[str] | None = None,
+    seen_pressure: list[str] | None = None,
+    swap_baseline: int | None = None,
+    load_multiple: float = WAIT_LOAD_MULTIPLE,
+    min_free_bytes: int = WAIT_MIN_FREE_BYTES,
+    swap_growth_bytes: int = WAIT_SWAP_GROWTH_BYTES,
+    read_machine: Callable[[Path], dict] = machine_reading,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[int, dict]:
+    """Read the record and the machine until something needs the lead, or the time is up. Writes nothing.
+
+    A condition the lead has already seen stays quiet while it holds and is forgotten once it clears, so a restart
+    doesn't wake on it again and its return does. The result's ``restart`` carries that across waits.
+    """
+    deadline = clock() + timeout
+    held_blocked = set(seen_blocked or ())
+    held_pressure = set(seen_pressure or ())
+    baseline = swap_baseline
+    said_unavailable = False
+    while True:
+        state = read_state(directory)
+        entries = read_journal(directory)
+        through = entries[-1]["id"] if entries else 0
+        if after is None:
+            after = through
+        if after > through:
+            raise StateError("wait_invalid", f"--after {after} is past the journal's last entry, {through}")
+        events = [entry for entry in entries if entry["id"] > after and entry["kind"] in WAIT_KINDS]
+
+        lanes = {lane["id"]: lane for lane in state["lanes"] if lane["state"] == "blocked"}
+        held_blocked &= set(lanes)
+        newly_blocked = sorted(set(lanes) - held_blocked)
+        held_blocked |= set(lanes)
+
+        reading = read_machine(directory)
+        unavailable = _machine_unavailable(reading)
+        if unavailable and not said_unavailable:
+            print(f"wait: {', '.join(name + ' unavailable' for name in unavailable)}", file=sys.stderr)
+            said_unavailable = True
+        pressure = []
+        if "load" not in unavailable:
+            limit = load_multiple * reading["cores"]
+            if reading["load5"] <= limit:
+                held_pressure.discard("load")
+            elif "load" not in held_pressure:
+                held_pressure.add("load")
+                pressure.append({"signal": "load", "value": reading["load5"], "limit": limit, "cores": reading["cores"]})
+        if "disk" not in unavailable:
+            if reading["diskFreeBytes"] >= min_free_bytes:
+                held_pressure.discard("disk")
+            elif "disk" not in held_pressure:
+                held_pressure.add("disk")
+                pressure.append({"signal": "disk", "value": reading["diskFreeBytes"], "limit": min_free_bytes})
+        if "swap" not in unavailable:
+            used = reading["swapUsedBytes"]
+            if baseline is None or used < baseline:
+                baseline = used
+            elif used - baseline > swap_growth_bytes:
+                pressure.append({"signal": "swap", "value": used, "baseline": baseline, "limit": baseline + swap_growth_bytes})
+                baseline = used
+
+        remaining = deadline - clock()
+        if events or newly_blocked or pressure or remaining <= 0:
+            woke = "event" if events or newly_blocked else "pressure" if pressure else "expired"
+            restart = ["--after", str(through)]
+            for lane in sorted(held_blocked):
+                restart += ["--seen-blocked", lane]
+            for signal_name in sorted(held_pressure):
+                restart += ["--seen-pressure", signal_name]
+            if baseline is not None:
+                restart += ["--swap-baseline", str(baseline)]
+            return (WAIT_EXPIRED_EXIT if woke == "expired" else 0), {
+                "ok": True,
+                "woke": woke,
+                "events": [{key: entry.get(key) for key in ("id", "kind", "lane", "subject", "summary")} for entry in events],
+                "blockedLanes": [{key: lanes[lane].get(key) for key in ("id", "focus", "waitingOn")} for lane in newly_blocked],
+                "pressure": pressure,
+                "machine": reading,
+                "unavailable": unavailable,
+                "through": through,
+                "restart": restart,
+            }
+        sleep(min(poll, remaining))
+
+
+def _add_wait_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--after", type=int, help="the journal id to start after: the last entry when left out")
+    parser.add_argument("--timeout", type=float, default=WAIT_TIMEOUT_SECONDS, help="seconds before it expires")
+    parser.add_argument("--poll", type=float, default=WAIT_POLL_SECONDS, help="seconds between reads")
+    parser.add_argument("--seen-blocked", action="append", metavar="LANE", help="a blocked lane the lead already knows of")
+    parser.add_argument("--seen-pressure", action="append", choices=("load", "disk"), help="a held signal the lead already knows of")
+    parser.add_argument("--swap-baseline", type=int, metavar="BYTES", help="swap in use to measure growth from")
+    parser.add_argument("--load-multiple", type=float, default=WAIT_LOAD_MULTIPLE, help="five-minute load, as a multiple of the cores")
+    parser.add_argument("--min-free-bytes", type=int, default=WAIT_MIN_FREE_BYTES, help="free disk under the state directory")
+    parser.add_argument("--swap-growth-bytes", type=int, default=WAIT_SWAP_GROWTH_BYTES, help="swap growth since the baseline")
+
+
+def wait_arguments(arguments: list[str]) -> argparse.Namespace:
+    """Read the arguments a wait's ``restart`` printed, as the command line reads them."""
+    parser = argparse.ArgumentParser(add_help=False)
+    _add_wait_arguments(parser)
+    return parser.parse_args(arguments)
+
+
+def _wait_command(args: argparse.Namespace) -> tuple[int, dict]:
+    bounded = math.isfinite(args.timeout) and args.timeout >= 0 and math.isfinite(args.poll) and args.poll > 0
+    thresholds = math.isfinite(args.load_multiple) and args.load_multiple >= 0 and args.min_free_bytes >= 0 and args.swap_growth_bytes >= 0
+    if not bounded or not thresholds or (args.after is not None and args.after < 0):
+        raise StateError("wait_invalid", "--timeout, --poll, --after and the thresholds must be finite and not negative, and --poll above zero")
+    return wait_for_lead(
+        args.dir,
+        after=args.after,
+        timeout=args.timeout,
+        poll=args.poll,
+        seen_blocked=args.seen_blocked,
+        seen_pressure=args.seen_pressure,
+        swap_baseline=args.swap_baseline,
+        load_multiple=args.load_multiple,
+        min_free_bytes=args.min_free_bytes,
+        swap_growth_bytes=args.swap_growth_bytes,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", type=Path, required=True, help="the state directory")
@@ -3404,6 +3597,7 @@ def main(argv: list[str] | None = None) -> int:
     entry.add_argument("--subject")
     entry.add_argument("--writer", choices=("lead", "lane"), default="lead",
                        help="lane: a lane journals a review round of its own work")
+    _add_wait_arguments(commands.add_parser("wait", help="read the record and the machine until something needs the lead"))
     capture = commands.add_parser("capture-review", help="retain native review outcomes for display without a run")
     capture.add_argument("--subject", required=True)
     capture.add_argument("--candidate", required=True)
@@ -3511,6 +3705,10 @@ def main(argv: list[str] | None = None) -> int:
             result = {"ok": True, "state": set_status_override(args.dir, None if args.clear else args.text, age)}
         elif args.command == "select":
             result = {"ok": True, "item": _select_command(args)}
+        elif args.command == "wait":
+            code, result = _wait_command(args)
+            emit(result)
+            return code
         elif args.command == "capture-review":
             result = {"ok": True, "entry": capture_review(args.dir, subject=args.subject, candidate=args.candidate, outcomes=args.outcome)}
         elif args.command == "handoff":

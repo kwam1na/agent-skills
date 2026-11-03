@@ -113,7 +113,13 @@ Say what you're doing as it changes, with the installed release's state tool:
 
 ## Questions
 
-Escalate only to the lead, never to the user: one short question, then stop. The lead answers, or takes it to the user.
+Escalate only to the lead, never to the user: set `focus --state blocked --waiting-on lead`, so the lead's `wait` sees
+it, then send one short question and stop. The lead answers, or takes it to the user.
+
+## Local load
+
+Run at most 4 local test workers, and one test run at a time across the lane, its lenses included: a lens waits rather
+than running a suite beside your sensors.
 
 ## Delivery notes
 

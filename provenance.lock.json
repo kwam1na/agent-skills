@@ -469,11 +469,11 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "84618d8797722197a43cce44924d795867d84873c6fd45a48ab712b5cfc644c2"
+          "sha256": "88c82833a7086cc9390198e17094226b7f449cbd1f0cc0544f0cef9cf07b7d52"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "2b649e5a8ad477c9843d25140a7c7888830d9ee815a1b61b8aac864b64f97269"
+          "sha256": "2f80ec8a271a77c548321967065490f8f347a8f0b3c94ca07832a7c7b565b330"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -481,7 +481,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "40b4e5e06d377e79a1fd1381e3e94b44f9613af62c496fbe782893f1259e9499"
+          "sha256": "90355377839c5dbe29895e77fa5216c0394f24d58172063d1bfbc1f5ca0c2307"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
@@ -1054,7 +1054,7 @@
         },
         {
           "path": "skills/run-delivery/templates/lane-brief.md",
-          "sha256": "4067852659da8ec87a74a42747414fdb9253ec87da95568a7cd7193e8e0e5221"
+          "sha256": "7658c0fb21e4858c8a7ff494e5d59864f847bfb5305fb5c80c784ab58e956588"
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",
