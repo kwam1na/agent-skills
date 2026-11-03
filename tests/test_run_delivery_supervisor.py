@@ -631,6 +631,7 @@ class SupervisorPassTests(unittest.TestCase):
         code, out = fx.flow("lead-cleanup", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertIn("FX-2: waits for the lead's decision", out)
+        self.assertIn("FX-3:", out, "the sweep stopped at the story it held")
         self.assertTrue(wt.exists(), "lead-cleanup removed the checkout lead-accept reads")
         self.assertTrue([item for item in self.once(fx)["needsYou"] if "merged before you accepted" in item["text"]],
                         "cleaning up released the hold with no decision")
