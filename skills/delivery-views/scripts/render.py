@@ -985,11 +985,54 @@ def read_plan_block(state_directory: Path, document: object = None) -> dict | No
     return plan_block(plan)
 
 
+# The supervisor's "Needs you" list: written into the record by each pass, replaced whole, and only read here.
+
+NEEDS_FILE = "needs-you.json"
+NEEDS_SPEC = "delivery-needs-you/1"
+NEEDS_LIMIT_BYTES = 256 * 1024
+NEEDS_ITEMS = 100
+NEEDS_TEXT = 600
+_MOMENT = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$")
+
+
+def read_needs_block(state_directory: Path) -> dict | None:
+    """The page's "Needs you" block: None when no supervisor wrote a list, {"unreadable": True} for one that can't be
+    trusted, or the list as written, its texts cut to their share. The page decides whether it is current."""
+    path = state_directory / NEEDS_FILE
+    if not path.exists() and not path.is_symlink():
+        return None
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > NEEDS_LIMIT_BYTES:
+            raise ValueError("not a bounded regular file")
+        written = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(written, dict) or written.get("spec") != NEEDS_SPEC or type(written.get("running")) is not bool:
+            raise ValueError("not a Needs you list")
+        moments = ("at", "staleAfter") if written["running"] else ("at",)
+        if any(not isinstance(written.get(name), str) or not _MOMENT.match(written[name]) for name in moments):
+            raise ValueError("its times are not readable")
+        items = written.get("items")
+        if not isinstance(items, list) or any(
+                not isinstance(item, dict) or type(item.get("holding")) is not bool
+                or any(not isinstance(item.get(name), str) for name in ("source", "text", "clears")) for item in items):
+            raise ValueError("its items are not readable")
+    except (OSError, UnicodeError, ValueError):
+        return {"unreadable": True}
+    cut = lambda value: value if len(value) <= NEEDS_TEXT else value[:NEEDS_TEXT - 1] + "…"
+    block = {"running": written["running"], "at": written["at"],
+             "items": [{"holding": item["holding"], **{name: cut(item[name]) for name in ("source", "text", "clears")}}
+                       for item in items[:NEEDS_ITEMS]]}
+    if written["running"]:
+        block["staleAfter"] = written["staleAfter"]
+    if len(items) > NEEDS_ITEMS:
+        block["more"] = len(items) - NEEDS_ITEMS
+    return block
+
+
 # The page
 
 
 def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
-                    plan: dict | None = None) -> str:
+                    plan: dict | None = None, needs: dict | None = None) -> str:
     reviews = native_review_summaries(document)
     # One review payload budget, in stop order, regardless of its backing store.
     combined = {**{"run:" + key: value for key, value in runs.items()},
@@ -1040,6 +1083,7 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         f'<script type="application/json" id="delivery-links">{embed(page_links(document, runs, config))}</script>',
         f'<script type="application/json" id="delivery-view">{embed(view)}</script>',
         *([f'<script type="application/json" id="delivery-plan">{embed(plan)}</script>'] if plan is not None else []),
+        *([f'<script type="application/json" id="delivery-needs">{embed(needs)}</script>'] if needs is not None else []),
         f"<script>\n{_asset('run-summary.js')}{_asset('line-map.js')}</script>",
         "</body>",
         "</html>",
@@ -1084,7 +1128,8 @@ def line_map(arguments: argparse.Namespace) -> int:
     page = render_line_map(document, runs, inputs.config,
                            theme_key=views_common.theme_key(inputs.state_directory),
                            history=_renderer_output(inputs.binding, "history"),
-                           plan=read_plan_block(inputs.state_directory, document))
+                           plan=read_plan_block(inputs.state_directory, document),
+                           needs=read_needs_block(inputs.state_directory))
     sys.stdout.write(page)
     return 0
 

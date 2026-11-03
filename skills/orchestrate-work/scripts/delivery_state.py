@@ -1367,9 +1367,10 @@ def capture_review(directory: Path, *, subject: str, candidate: str, outcomes: l
 
 def review_observations(directory: Path, state: dict, journal: list[dict]) -> dict:
     references = {entry["subject"]: entry for entry in journal if entry["kind"] == "review.evidence"}
-    latest_rounds = {entry["subject"]: entry["id"] for entry in journal if entry["kind"] == "review.round"}
+    latest_rounds = {entry["subject"]: entry for entry in journal if entry["kind"] == "review.round"}
     observed, budget = {}, [REVIEW_READ_BUDGET]
     items = {item["subject"]: item for item in [*state["queue"], *state.get("planned", [])]}
+    queued = {item["subject"] for item in state["queue"]}
     for subject, event in references.items():
         reference = event["reviewArtifact"]
         if subject not in items or items[subject].get("runId"):
@@ -1377,15 +1378,21 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
         candidate = reference["candidateRef"]
         try:
             item = items[subject]
+            latest = latest_rounds.get(subject)
             # Bound to the reviewed head: a runner sync only merges the base in, under its own checks.
-            if item.get("head") != candidate:
+            if subject in queued and item.get("head") != candidate:
                 raise StateError("review_artifact_invalid", "review candidate is stale or unknown")
-            if latest_rounds.get(subject, 0) > event["id"]:
+            # Before hand-off there is no head: bound to the round the lane journaled last, captured after it.
+            if subject not in queued and latest is None:
+                raise StateError("review_artifact_invalid", "no review round is journaled for this capture")
+            if latest is not None and latest["id"] > event["id"]:
                 raise StateError("review_artifact_invalid", "a later review has not been captured")
             data = _read_review_file(_review_artifact_path(directory, reference["digest"]), REVIEW_ARTIFACT_LIMIT, budget)
             if hashlib.sha256(data).hexdigest() != reference["digest"]:
                 raise StateError("review_artifact_invalid", "review artifact digest mismatch")
             outcomes = _review_outcomes(_review_json(data), subject, candidate)
+            if subject not in queued and (latest.get("review") or {}).get("round") != len(outcomes):
+                raise StateError("review_artifact_invalid", "the capture is not of the latest journaled round")
             observed[subject] = {"candidateRef": candidate, "digest": reference["digest"], "outcomes": outcomes}
         except (StateError, OSError, ValueError, UnicodeError, RecursionError):
             observed[subject] = {"candidateRef": candidate, "unavailable": True}
@@ -1958,7 +1965,8 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                         change(subject, "in the tracker but not the record: added as a follow-up")
                     elif word == "started":
                         # Started means under way, so it joins as building, settled in this one pass.
-                        lead["planned"].append({"subject": subject, "title": title, "lane": None, "stage": "building"})
+                        lead["planned"].append({"subject": subject, "title": title, "lane": None, "stage": "building",
+                                                "trackerStarted": True})
                         change(subject, "started in the tracker but not in the record: added as planned work, building")
                     elif word == "completed":
                         report(subject, "completed in the tracker but never recorded")
@@ -1966,9 +1974,15 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                     report(subject, "a follow-up the tracker now shows started: assign it a lane")
                 elif word == "started" and planned(subject) and planned(subject)["stage"] == "planned":
                     # A lane moves its ticket to started as it begins; that alone moves the stop.
-                    planned(subject)["stage"] = "building"
+                    planned(subject).update(stage="building", trackerStarted=True)
                     change(subject, "started in the tracker: now building")
-                elif word == "backlog" and planned(subject) and planned(subject)["stage"] in ("building", "review"):
+                elif word == "started" and planned(subject) and not planned(subject).get("trackerStarted"):
+                    # Work a draft change request moved first: its ticket has now been started too.
+                    planned(subject)["trackerStarted"] = True
+                    change(subject, "started in the tracker: recorded as started")
+                elif (word == "backlog" and planned(subject) and planned(subject)["stage"] in ("building", "review")
+                      and planned(subject).get("trackerStarted")):
+                    # Only a ticket once seen started went back; one never started is simply not yet started.
                     report(subject, f"{where(planned(subject))} in the record but back in the tracker's backlog: check it")
                 elif word == "completed" and planned(subject):
                     report(subject, f"completed in the tracker but still {where(planned(subject))} in the record: check the forge")

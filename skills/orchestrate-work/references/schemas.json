@@ -664,6 +664,10 @@
             "runId": {
               "description": "The run that is building the work, as in the queue. Optional; the lead's patch writes it and reconcile keeps it.",
               "$ref": "#/$defs/name"
+            },
+            "trackerStarted": {
+              "description": "True once reconcile has seen the work's ticket started in the tracker; absent until then. Only work whose ticket was started is reported when its ticket is back in the tracker's backlog. Optional; reconcile writes it and keeps it.",
+              "type": "boolean"
             }
           }
         }
@@ -1782,6 +1786,13 @@
             "description": "The base branch name, without refs/heads/.",
             "$ref": "#/$defs/name"
           }
+        }
+      },
+      "bases": {
+        "description": "The other bases this binding serves besides base.ref, each an exact branch name without refs/heads/ or a pattern in which * matches any run of characters within one segment of the name, never a /, such as [\"main\", \"integration-*\"]. A delivery, the merge queue's --base and run-delivery's --base must name base.ref or a base that matches one. base.ref stays the default. Without bases, the binding serves base.ref alone. The binding is read from the base itself, so every base it serves carries a binding that lists it.",
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/name"
         }
       },
       "workRoot": {
