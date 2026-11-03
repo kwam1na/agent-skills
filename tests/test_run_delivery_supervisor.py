@@ -18,8 +18,9 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from tests.test_run_delivery import (CONTEXT_TODO, POSIX_ONLY, Fixture, commit, doctor_binding, installed_release,
-                                     setup_delivery, sh, stop_supervisors, write_results)
+from tests.test_run_delivery import (POSIX_ONLY, Fixture, commit, doctor_binding, installed_release, setup_delivery,
+                                     sh, stop_supervisors, write_results)
+from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
 # Supervisors, their children and a shared fake forge state: one case at a time.
 RUN_SERIALLY = True
@@ -155,9 +156,9 @@ def running(fx: Fixture) -> dict[str, str]:
     return {key: value for key, value in fx.env.items() if key != "RUN_DELIVERY_SUPERVISOR"}
 
 
-def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True) -> Path:
-    """A lane's whole flow for one story: its change, its gate, one approved review round, its draft PR, its
-    hand-off."""
+def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bool = False) -> Path:
+    """A lane's whole flow for one story: its change, its gate, one approved review round (with one finding deferred
+    to a follow-up, when asked), its draft PR, its hand-off."""
     m = fx.main
     if assign:
         code, out = fx.flow("lead-assign", key, "--lane", lane, "--title", lane, cwd=m)
@@ -172,7 +173,15 @@ def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True) -> Path:
     for argv in (("gate", key), ("review-prepare", key, "--round", "1")):
         code, out = fx.flow(*argv, cwd=wt)
         assert code == 0, out
-    write_results(review, 1, key, fx.lenses(wt))
+    lenses = fx.lenses(wt)
+    write_results(review, 1, key, lenses)
+    if deferred:
+        short = lenses[0][1][0]
+        path = review / f"result-r1-{short}.json"
+        result = json.loads(path.read_text())
+        result["findings"] = [{"id": f"{short}-r1-1", "severity": "P3", "summary": "later", "state": "deferred",
+                               "deferredIssue": "Tidy the one copy"}]
+        path.write_text(json.dumps(result))
     code, out = fx.flow("review-reduce", key, "--round", "1", cwd=wt)
     assert code == 0, out
     sh("git", "push", "-q", "-u", "origin", f"HEAD:feature/{key}", cwd=wt)
@@ -524,6 +533,175 @@ class SupervisorPassTests(unittest.TestCase):
         self.once(fx)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1)
         self.assertEqual(json.loads((fx.tmp / "flow-log/FX-1.closed.json").read_text())["archive"], str(archive))
+
+
+def tracked(fx: Fixture, backend_class, updates: str | None = None):
+    """The supervised fixture's tracker: a fake one the release's tracker publisher posts to, or a host outbox."""
+    m = fx.main
+    backend = backend_class(fx.tmp)
+    with backend.edit() as store:
+        store["projects"] = ["FX"]
+        for key, status in (("FX-1", "In Progress"), ("FX-2", "Backlog"), ("FX-3", "Backlog")):
+            store["issues"][key] = {"status": status, "comments": [], "markers": [], "labels": [],
+                                    "parent": None if key == "FX-1" else "FX-1", "summary": key}
+    conf_path = m / ".agents/run-delivery.json"
+    conf = json.loads(conf_path.read_text())
+    conf["tracker"] = {**conf["tracker"], **backend.adapter(), **({"updates": updates} if updates else {})}
+    conf_path.write_text(json.dumps(conf, indent=2))
+    binding_path = m / ".agents/orchestration.json"
+    binding = json.loads(binding_path.read_text())
+    publisher = fx.release / "skills/run-delivery/scripts/tracker_publisher.py"
+    binding["state"]["publishers"] = ([{"id": "tracker", "kind": "host"}] if updates == "host" else
+                                      [{"id": "tracker", "argv": [sys.executable, "-B", str(publisher), "--state-dir",
+                                                                  "{stateDirectory}"], "timeoutSeconds": 120}])
+    binding_path.write_text(json.dumps(binding, indent=2))
+    commit(m, "FX-1: a tracker the publisher posts to")
+    sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+    fx.env.update(backend.env())
+    return backend
+
+
+def epic_comments(backend) -> list[str]:
+    return [comment["text"] for comment in backend.read()["issues"]["FX-1"]["comments"]]
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class SupervisorTrackerTests(unittest.TestCase):
+    """What the supervisor reads of the tracker publisher: its "Needs you", its follow-up filings, and its ledger's
+    cover of delivery.closed."""
+
+    run_serially = True
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def fixture(self, backend_class=FileBackend, updates: str | None = None) -> tuple[Fixture, object]:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        supervised(fx)
+        backend = tracked(fx, backend_class, updates)
+        self.addCleanup(backend.close)
+        path = fx.main / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        d["finish"] = []
+        path.write_text(json.dumps(d, indent=2))
+        commit(fx.main, "FX-1: no finish lines")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        return fx, backend
+
+    def once(self, fx: Fixture) -> dict:
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        return passes(fx)[-1]
+
+    def closable(self, fx: Fixture, deferred: bool = False) -> None:
+        """FX-2 merged, its lane done, and FX-3 removed: nothing but the tracker can hold the close."""
+        wt = hand_off(fx, "FX-2", "lane-1", deferred=deferred)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        self.assertTrue(kinds(fx, "candidate.merged"))
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
+            changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"], "by": "lead",
+                                      "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
+        return wt
+
+    def test_a_failing_publisher_holds_the_close_and_the_fake_jira_gets_delivery_closed_once_it_clears(self) -> None:
+        fx, backend = self.fixture(JiraBackend)
+        with backend.edit() as store:
+            store["token"] = "revoked"
+        self.closable(fx)
+        held = self.once(fx)["closeHeldBy"]
+        self.assertTrue(any(h.startswith("The tracker publisher hasn't posted journal entries") for h in held), held)
+        self.assertEqual(kinds(fx, "delivery.closed"), [])
+        with backend.edit() as store:
+            store["token"] = "good"
+        for _ in range(3):
+            last = self.once(fx)
+            if (fx.tmp / "flow-log/FX-1.closed.json").exists():
+                break
+        self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1)
+        self.assertEqual(len([text for text in epic_comments(backend) if "Delivery closed" in text]), 1,
+                         epic_comments(backend))
+
+    def test_a_follow_up_whose_filing_fails_once_holds_the_close_and_is_filed_once(self) -> None:
+        fx, backend = self.fixture()
+        self.closable(fx, deferred=True)
+        with backend.edit() as store:
+            store["failures"].append({"op": "create", "ticket": None, "status": 409, "times": 1})
+        last = self.once(fx)
+        self.assertTrue(any(line.startswith("follow-ups: waiting for the tracker publisher") for line in
+                            last.get("closeOut", [])), last)
+        self.assertEqual(kinds(fx, "delivery.closed"), [])
+        for _ in range(3):
+            last = self.once(fx)
+            if (fx.tmp / "flow-log/FX-1.closed.json").exists():
+                break
+        self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
+        created = [call for call in backend.read()["calls"] if call[0] == "create"]
+        self.assertEqual(len(created), 1, created)
+        followups = [f["id"] for f in record(fx)["state"]["followups"]]
+        self.assertEqual(len(followups), 1, followups)
+        self.assertTrue(followups[0].startswith("FX-2-"), followups)
+
+    def test_a_follow_up_refused_for_good_is_shown_not_retried_and_doesnt_hold_the_close(self) -> None:
+        fx, backend = self.fixture()
+        self.closable(fx, deferred=True)
+        with backend.edit() as store:
+            store["failures"].append({"op": "create", "ticket": None, "status": 400, "times": -1})
+        for _ in range(4):
+            last = self.once(fx)
+            if (fx.tmp / "flow-log/FX-1.closed.json").exists():
+                break
+        self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
+        self.assertEqual([call for call in backend.read()["calls"] if call[0] == "create"], [])
+        archive = Path(json.loads((fx.tmp / "flow-log/FX-1.closed.json").read_text())["archive"])
+        friction = Path(str(archive) + ".friction.md").read_text()
+        self.assertIn("was refused", friction)
+
+    def test_with_a_host_publisher_the_close_waits_for_the_outbox_ack_and_by_hand_it_doesnt(self) -> None:
+        for updates in ("host", "manual"):
+            with self.subTest(updates=updates):
+                fx, backend = self.fixture(updates=updates)
+                self.closable(fx)
+                ack = lambda: state_tool(fx, "ack", "--version", str(record(fx)["state"]["version"]), "--through",
+                                         str(max(e["id"] for e in record(fx)["journal"])))
+                if updates == "host":
+                    held = self.once(fx)["closeHeldBy"]
+                    self.assertTrue(any(h.startswith("The host outbox holds") for h in held), held)
+                    ack()
+                    last = self.once(fx)
+                    self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+                    self.assertFalse((fx.tmp / "flow-log/FX-1.closed.json").exists(), "closed before the outbox was acked")
+                    ack()
+                last = self.once(fx)
+                self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
+
+    def test_a_running_supervisor_posts_a_command_s_entry_within_one_pass_and_once_across_a_resume(self) -> None:
+        fx, backend = self.fixture()
+        m = fx.main
+        code, out = fx.flow("lead-run", "--resume", cwd=m, env=running(fx))
+        self.assertEqual(code, 0, out)
+        wait_for(lambda: passes(fx), "a first pass")
+        state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "the API is down")
+        seen = len(passes(fx))
+        wait_for(lambda: len(passes(fx)) > seen + 1, "a whole pass after the entry")
+        self.assertEqual(len([t for t in epic_comments(backend) if "the API is down" in t]), 1, epic_comments(backend))
+        first = lock_of(fx)
+        os.kill(first["pid"], signal.SIGKILL)
+        wait_for(lambda: not alive(first["pid"]), "the supervisor to die")
+        code, out = fx.flow("lead-run", "--resume", cwd=m, env=running(fx))
+        self.assertEqual(code, 0, out)
+        seen = len(passes(fx))
+        wait_for(lambda: len(passes(fx)) > seen + 1, "two passes after the resume")
+        self.assertEqual(len([t for t in epic_comments(backend) if "the API is down" in t]), 1, "posted twice")
 
 
 if __name__ == "__main__":

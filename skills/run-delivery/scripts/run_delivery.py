@@ -53,6 +53,9 @@ import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import tracker_publisher  # noqa: E402
+
 TOOL = Path(__file__).resolve().parent.parent
 # The installed generation this tool runs from, through any projection link: the folder three above scripts/.
 GENERATION = Path(__file__).resolve().parents[3]
@@ -840,6 +843,26 @@ def append_log(name: str, key: str, entry: dict) -> None:
         log.write(json.dumps({**entry, "at": now()}) + "\n")
 
 
+def tracker_conf(c) -> dict:
+    """How the tracker's updates are made: by the tracker publisher, through the host, or by hand (tracker-adapter/1)."""
+    return tracker_publisher.settings(c.root, c.flow_raw, c.shelf.json(".agents/orchestration.json") or {})
+
+
+@contextlib.contextmanager
+def marked_decision(c, followup: dict | None = None):
+    """Journal a decision the tracker publisher posts: the ledger's lock is held, waiting for it, across the journal
+    write and its mark, so no publisher run sees the entry unmarked. Yields a list the journalled entry's id goes in."""
+    written: list[int] = []
+    with tracker_publisher.ledger_lock(c.state, wait=True):
+        yield written
+        for journal_id in written:
+            tracker_publisher.mark(c.flow_log, c.delivery, journal_id, followup)
+
+
+def journal_id(done: subprocess.CompletedProcess) -> int:
+    return json.loads(done.stdout)["entry"]["id"]
+
+
 def spec_digest(spec: dict, passthrough: list[str]) -> str:
     return hashlib.sha256(json.dumps([spec, passthrough], sort_keys=True).encode()).hexdigest()[:16]
 
@@ -1283,33 +1306,140 @@ def review_reduce(args) -> None:
 # -- the plan's review -------------------------------------------------------------------------
 # A plan review runs like a story's review, with no bound: one clean checkout and one brief per lens, carried findings,
 # and a reduction per round. Its store, .orchestration/review/<delivery>/plan/ without checkouts/, keeps every round in
-# full; build_plan reads it, and fits what the plan file holds of it to the plan contract's caps.
+# full; build_plan reads it, and fits what the plan file holds of it to the plan contract's caps. A plan that isn't a
+# delivery yet is reviewed with --plan: its store is .orchestration/plan-review/<reviewSlug>/, keyed by the slug in the
+# plan's front matter so a renamed plan keeps its review, and lead-setup or lead-init moves it into the delivery's.
 
 PLAN_REVIEW_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 PLAN_REVIEW_REASON = 600
 PLAN_REVIEW_CLOSED = ("closed", "fixed", "withdrawn", "dropped")
+REVIEW_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 
 def plan_review_dir(c) -> Path:
-    return c.main / c.work / "review" / c.delivery / "plan"
+    return getattr(c, "plan_store", None) or c.main / c.work / "review" / c.delivery / "plan"
 
 
 def plan_review_subject(c) -> str:
-    return f"{c.delivery}.plan"
+    """The store's own subject, kept when a delivery adopts it; a delivery's own review is `<delivery>.plan`."""
+    own = load_json(plan_review_dir(c) / "store.json")
+    return own["subject"] if own else f"{c.delivery}.plan"
+
+
+def plan_review_name(c) -> str:
+    """Who the review belongs to, as its messages name it."""
+    return f"plan {c.plan}" if getattr(c, "plan_store", None) else c.delivery
+
+
+def plan_review_command(c, action: str) -> str:
+    return f"{flow_command()} plan-review {action}" + (f" --plan {shlex.quote(str(c.plan))}"
+                                                       if getattr(c, "plan_store", None) else "")
 
 
 def plan_review_lenses(c) -> list[str]:
-    """The lenses the delivery file names for its plan review: declared lenses, each with a charter."""
-    lenses = (c.raw.get("planReview") or {}).get("lenses")
-    if not isinstance(lenses, list) or not lenses:
-        raise Stop(f"{c.delivery_where} names no plan review lenses: set planReview.lenses, such as {list(c.lenses)}")
-    if len(lenses) > 12 or len(set(lenses)) != len(lenses):
-        raise Stop(f"{c.delivery_where}: planReview.lenses must be 1 to 12 different lenses")
+    """The lenses the delivery file names for its plan review, or --lenses (round 1's when omitted) for a plan's own
+    review: declared lenses, each with a charter."""
+    if getattr(c, "plan_store", None):
+        where = "--lenses"
+        lenses = c.plan_lenses
+        if lenses is None:
+            rounds = plan_review_rounds(c)
+            if rounds:
+                return rounds[0]["lenses"]
+            raise Stop(f"name the plan review's lenses with --lenses, such as --lenses {','.join(c.lenses)}")
+    else:
+        where = f"{c.delivery_where} planReview.lenses"
+        lenses = (c.raw.get("planReview") or {}).get("lenses")
+        if not isinstance(lenses, list) or not lenses:
+            raise Stop(f"{c.delivery_where} names no plan review lenses: set planReview.lenses, such as {list(c.lenses)}")
+    if not lenses or len(lenses) > 12 or len(set(lenses)) != len(lenses):
+        raise Stop(f"{where} must be 1 to 12 different lenses")
     unknown = [lens for lens in lenses if lens not in c.lenses or not PLAN_REVIEW_ID.fullmatch(lens)]
     if unknown:
-        raise Stop(f"{c.delivery_where}: planReview.lenses names {', '.join(map(str, unknown))}, which this repository "
-                   f"doesn't declare; its lenses are {', '.join(c.lenses)}")
+        raise Stop(f"{where} names {', '.join(map(str, unknown))}, which this repository doesn't declare; its lenses "
+                   f"are {', '.join(c.lenses)}")
     return lenses
+
+
+def front_matter(text: str) -> dict[str, str]:
+    """A plan's leading `---` block, as its `key: value` lines."""
+    block = re.match(r"---\n(.*?)\n---(?:\n|$)", text, re.S)
+    if not block:
+        return {}
+    pairs = (line.partition(":") for line in block.group(1).splitlines())
+    return {key.strip(): value.strip().strip("'\"") for key, colon, value in pairs if colon}
+
+
+def review_slug(plan: Path, text: str) -> str | None:
+    """The plan's `reviewSlug`, or None when its front matter has none."""
+    slug = front_matter(text).get("reviewSlug")
+    if slug is not None and not REVIEW_SLUG.fullmatch(slug):
+        raise Stop(f"{plan}: reviewSlug {slug!r} must be 1 to 64 lowercase letters, digits and hyphens, starting with a "
+                   "letter or digit")
+    return slug
+
+
+def plan_review_config(args):
+    """The config a plan-review command runs under: the delivery's, or with --plan the plan's own store, which needs no
+    delivery file, binding or record."""
+    if not getattr(args, "plan", None):
+        return cfg()
+    global CFG
+    c = CFG = Config(repo(), need_delivery=False, pick=False)
+    plan = Path(args.plan)
+    path = c.root / plan
+    if not path.is_file():
+        raise Stop(f"no plan at {path}")
+    slug = review_slug(plan, path.read_text())
+    if slug is None:
+        suggested = re.sub(r"[^a-z0-9]+", "-", plan.stem.lower()).strip("-")[:64] or "plan"
+        raise Stop(f"{plan} has no review slug, which keeps its review when the plan is renamed. Add this front matter "
+                   f"at its top and commit it before round 1:\n---\nreviewSlug: {suggested}\n---")
+    c.plan, c.plan_store = plan, c.main / c.work / "plan-review" / slug
+    adopted = load_json(c.plan_store / "adopted.json")
+    if adopted:
+        raise Stop(f"the review of {plan} was adopted by delivery {adopted['delivery']} ({adopted['store']}); run "
+                   f"{flow_command()} plan-review {args.action} without --plan")
+    given = getattr(args, "lenses", None)
+    c.plan_lenses = [lens.strip() for lens in given.split(",") if lens.strip()] if given is not None else None
+    return c
+
+
+def adoptable_plan_review(c, plan: Path) -> Path | None:
+    """The plan's own review store, when it holds rounds no delivery has adopted; refused while a round is prepared,
+    since its checkouts live in the store."""
+    path = c.root / plan
+    slug = review_slug(plan, path.read_text()) if path.is_file() else None
+    source = c.main / c.work / "plan-review" / slug if slug else None
+    if not source or not source.is_dir() or (source / "adopted.json").exists():
+        return None
+    n = len(round_files(source)) + 1
+    if (source / f"round-{n}.meta.json").exists():
+        raise Stop(f"the plan's review round {n} is prepared in {source}; reduce it ({flow_command()} plan-review reduce "
+                   f"--plan {shlex.quote(str(plan))}) before a delivery adopts the review")
+    return source if n > 1 else None
+
+
+def adopt_plan_review(c, source: Path, delivery: str) -> str:
+    """Move the plan's own review store into the delivery's, leaving a pointer behind, so the plan chapter shows it."""
+    target = c.main / c.work / "review" / delivery / "plan"
+    if target.exists() and any(target.iterdir()):
+        raise Stop(f"delivery {delivery} already has a plan review in {target}, so it can't adopt the one in {source}; "
+                   "keep one of them and remove the other")
+    checkouts = source / "checkouts"
+    if checkouts.exists():
+        if any(checkouts.iterdir()):
+            raise Stop(f"{checkouts} still holds lens checkouts; reduce the round, or remove them, before adopting")
+        checkouts.rmdir()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        target.rmdir()
+    rounds = len(round_files(source))
+    shutil.move(str(source), str(target))
+    source.mkdir()
+    (source / "adopted.json").write_text(json.dumps({"delivery": delivery, "store": str(target), "at": now()},
+                                                    indent=2) + "\n")
+    return f"adopted the plan review ({rounds} round{'' if rounds == 1 else 's'}) from {source} into {target}"
 
 
 def plan_review_rounds(c) -> list[dict]:
@@ -1405,8 +1535,8 @@ def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, 
                  "- `resolvedFindings`: required. One entry for every finding this lens raised in an earlier round and "
                  'has not closed, `{"id", "state": "closed|fixed|withdrawn|open", "resolution": "..."}`. Every carried '
                  "finding must appear; a plan review defers none.")
-    context = (f"The plan under review is `{c.plan}` in your checkout, the plan of delivery {c.delivery}. Judge whether it "
-               "is ready to approve: its outcome, scope, contract decisions, units, sensors and finish line. The plan "
+    whose = "" if getattr(c, "plan_store", None) else f", the plan of delivery {c.delivery}"
+    context = (f"The plan under review is `{c.plan}` in your checkout{whose}. Judge whether it is ready to approve: its outcome, scope, contract decisions, units, sensors and finish line. The plan "
                "is the whole subject; there is no ticket or code diff to review beyond it.")
     values = {
         "lens": lens, "short": short, "key": subject, "round": str(n), "candidate": candidate, "tree": tree,
@@ -1424,7 +1554,7 @@ def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, 
 
 
 def plan_review_prepare(args) -> None:
-    c = cfg()
+    c = plan_review_config(args)
     release_tuple()  # refuse an unidentified generation before anything is checked out or written
     folder = plan_review_dir(c)
     lenses = plan_review_lenses(c)
@@ -1432,7 +1562,8 @@ def plan_review_prepare(args) -> None:
         raise Stop(f"the plan review was ended ({folder / 'ended.json'}); a new review needs a new store")
     rounds = plan_review_rounds(c)
     if rounds and rounds[0]["lenses"] != lenses:
-        raise Stop(f"the plan review's lenses were fixed at round 1 as {rounds[0]['lenses']}; {c.delivery_where} now "
+        where = "--lenses" if getattr(c, "plan_store", None) else c.delivery_where
+        raise Stop(f"the plan review's lenses were fixed at round 1 as {rounds[0]['lenses']}; {where} now "
                    f"names {lenses}. An amendment is judged by the lenses that reviewed the plan")
     n = len(rounds) + 1
     meta_path = folder / f"round-{n}.meta.json"
@@ -1449,6 +1580,10 @@ def plan_review_prepare(args) -> None:
     if prior_candidate == candidate:
         raise Stop(f"HEAD {candidate[:10]} is the candidate of round {n - 1}; commit the plan's revision first")
     folder.mkdir(parents=True, exist_ok=True)
+    if getattr(c, "plan_store", None) and not (folder / "store.json").exists():
+        slug = folder.name
+        (folder / "store.json").write_text(json.dumps({"slug": slug, "plan": c.plan.as_posix(),
+                                                       "subject": f"{slug}.plan"}, indent=2) + "\n")
     if previous:
         for lens in lenses:
             path = result_path(folder, n, c.lenses[lens][0])
@@ -1473,7 +1608,7 @@ def plan_review_prepare(args) -> None:
         briefs.append((lens, path, result_path(folder, n, short)))
     meta_path.write_text(json.dumps({"round": n, "candidate": candidate, "tree": tree, "startedAt": now(),
                                      "lenses": lenses, "startChecks": checks}, indent=2) + "\n")
-    print(f"{c.delivery} plan review round {n}: candidate {candidate[:10]}, tree {tree[:10]}; no round bound")
+    print(f"{plan_review_name(c)} plan review round {n}: candidate {candidate[:10]}, tree {tree[:10]}; no round bound")
     print()
     print("Start one reviewer per lens, in parallel, each with exactly this prompt" if n == 1 and not previous else
           "Resume the same reviewer for each lens, in parallel, with exactly this message; only if one can't be resumed, "
@@ -1482,7 +1617,7 @@ def plan_review_prepare(args) -> None:
     for lens, path, result in briefs:
         print(f"- {lens}\n  prompt: Read {path} and follow it exactly. Your final message is only the JSON it asks for.\n"
               f"  save to: {result}")
-    print(f"\nThen: {flow_command()} plan-review reduce")
+    print(f"\nThen: {plan_review_command(c, 'reduce')}")
 
 
 def plan_check_result(result: object, *, subject: str, lens: str, short: str, n: int, meta: dict, carried: set[str],
@@ -1547,7 +1682,7 @@ def plan_check_result(result: object, *, subject: str, lens: str, short: str, n:
 
 
 def plan_review_reduce(args) -> None:
-    c = cfg()
+    c = plan_review_config(args)
     folder = plan_review_dir(c)
     rounds = plan_review_rounds(c)
     n = len(rounds) + 1
@@ -1556,7 +1691,7 @@ def plan_review_reduce(args) -> None:
         if rounds:
             plan_review_summary(c, rounds)
             return
-        raise Stop(f"no plan review round is prepared: run {flow_command()} plan-review prepare first")
+        raise Stop(f"no plan review round is prepared: run {plan_review_command(c, 'prepare')} first")
     subject = plan_review_subject(c)
     opened = plan_review_open(rounds)
     known = {f["id"]: e["lens"] for r in rounds for e in r["entries"] for f in e["result"].get("findings", [])}
@@ -1592,7 +1727,7 @@ def plan_review_reduce(args) -> None:
             failed.append(f"{lens}: its checkout {checkout} failed the end identity check: it {problem}")
     if failed:
         raise Stop("the round fails; its checkouts are kept for inspection:\n  " + "\n  ".join(failed)
-                   + f"\nPrepare it again with {flow_command()} plan-review prepare --restart")
+                   + f"\nPrepare it again with {plan_review_command(c, 'prepare')} --restart")
     after = plan_review_open([*rounds, {"entries": entries}])
     aligned = all(e["result"]["outcome"] == "aligned" for e in entries) and not after
     outcome = {"round": n, "outcome": "aligned" if aligned else "unresolved", "candidate": meta["candidate"],
@@ -1603,7 +1738,7 @@ def plan_review_reduce(args) -> None:
     for lens in meta["lenses"]:
         remove_checkout(folder / "checkouts" / lens)
     plan_review_summary(c, [*rounds, outcome])
-    if (c.state / "state.json").exists():
+    if not getattr(c, "plan_store", None) and (c.state / "state.json").exists():
         print(f"  {rebuild_plan_quietly(c)}")
 
 
@@ -1611,10 +1746,12 @@ def plan_review_summary(c, rounds: list[dict]) -> None:
     outcome = rounds[-1]
     n = outcome["round"]
     if outcome["outcome"] == "aligned":
-        print(f"{c.delivery} plan review round {n}: every lens aligned; the plan is ready for the operator's approval")
+        print(f"{plan_review_name(c)} plan review round {n}: every lens aligned; the plan is ready for the operator's "
+              "approval")
         return
     count = len(outcome["open"])
-    print(f"{c.delivery} plan review round {n}: changes requested; {count} open finding{'' if count == 1 else 's'}")
+    print(f"{plan_review_name(c)} plan review round {n}: changes requested; {count} open finding"
+          f"{'' if count == 1 else 's'}")
     for f in outcome["open"]:
         print(f"  open {f['severity']} {f['id']} ({f['lens']}): {f['summary']}")
     if n > 1:
@@ -1622,13 +1759,13 @@ def plan_review_summary(c, rounds: list[dict]) -> None:
         raised = any(e["result"].get("findings") for e in outcome["entries"])
         if raised and count >= before:
             print(f"The plan review isn't converging: round {n} raised a new finding and leaves {count} open, no fewer "
-                  f"than round {n - 1}'s {before}. The operator may end it: {flow_command()} plan-review end --reason "
+                  f"than round {n - 1}'s {before}. The operator may end it: {plan_review_command(c, 'end')} --reason "
                   "TEXT. Nothing ends it on its own.")
-    print(f"  Revise the plan for the open findings, commit, then: {flow_command()} plan-review prepare")
+    print(f"  Revise the plan for the open findings, commit, then: {plan_review_command(c, 'prepare')}")
 
 
 def plan_review_end(args) -> None:
-    c = cfg()
+    c = plan_review_config(args)
     reason = args.reason.strip()
     if not reason or len(reason) > PLAN_REVIEW_REASON or re.search(r"[\x00-\x1f\x7f-\x9f  ]", reason):
         raise Stop(f"--reason must be one line of 1 to {PLAN_REVIEW_REASON} characters")
@@ -1644,8 +1781,8 @@ def plan_review_end(args) -> None:
         raise Stop(f"round {len(rounds) + 1} is prepared; reduce it first, then end the review")
     (folder / "ended.json").write_text(json.dumps({"at": now(), "round": rounds[-1]["round"], "reason": reason},
                                                   indent=2) + "\n")
-    print(f"{c.delivery} plan review ended after round {rounds[-1]['round']}: {reason}")
-    if (c.state / "state.json").exists():
+    print(f"{plan_review_name(c)} plan review ended after round {rounds[-1]['round']}: {reason}")
+    if not getattr(c, "plan_store", None) and (c.state / "state.json").exists():
         print(f"  {rebuild_plan_quietly(c)}")
 
 
@@ -2912,9 +3049,10 @@ def check_plan(plan: dict, c) -> None:
         raise Stop(f"the plan this delivery file makes holds {size} bytes, over the 1 MiB a plan may hold")
 
 
-def rebuild_plan(c) -> str | None:
+def rebuild_plan(c, mark: bool = False) -> str | None:
     """Rebuild plan.json under the lock. Writes it, atomically, only when its content apart from `updated` changed,
-    then journals the write so the live view re-renders. Returns what changed, or None when nothing did."""
+    then journals the write so the live view re-renders. Returns what changed, or None when nothing did. With
+    `mark`, a plan change the lead made, the journal entry is marked for the tracker publisher to post."""
     if not (c.state / "state.json").exists():
         return None
     with plan_lock(c):
@@ -2941,7 +3079,12 @@ def rebuild_plan(c) -> str | None:
         temporary = path.with_name(f".{PLAN_FILE}.{os.getpid()}.tmp")
         temporary.write_text(json.dumps(plan, indent=2) + "\n")
         os.replace(temporary, path)
-        state_tool("journal", "--kind", "decision.recorded", "--summary", f"Plan updated: {plan['updated']}; {moved}")
+        summary = f"Plan updated: {plan['updated']}; {moved}"
+        if mark:
+            with marked_decision(c) as written:
+                written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary", summary)))
+        else:
+            state_tool("journal", "--kind", "decision.recorded", "--summary", summary)
         return moved
 
 
@@ -3062,7 +3205,7 @@ def lead_plan(args) -> None:
         if record_finish is not None:
             doc = load_state()
             patch({"finish": [*doc["state"]["finish"], record_finish]}, doc["state"]["version"])
-        rebuild_plan(c)
+        rebuild_plan(c, mark=True)
     print(f"recorded {entry['id']}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
     print(f"committed the delivery file; push it so lanes see it: git push {c.remote} HEAD:{c.base_branch}")
 
@@ -3250,10 +3393,6 @@ def context_problems(c) -> list[str]:
             f"remove it from context.sections in {c.delivery_where}"]
 
 
-def tracker_publisher(publisher: dict) -> bool:
-    return publisher.get("kind") == "host" or any("tracker_publisher" in part for part in publisher.get("argv") or [])
-
-
 def publishing_problems(c, binding: dict) -> list[str]:
     """A forge or tracker the repository configures, with nothing in the binding that reads or posts to it."""
     state = binding.get("state") or {}
@@ -3262,10 +3401,10 @@ def publishing_problems(c, binding: dict) -> list[str]:
         problems.append("the forge is configured, but the binding has no state.forgeSnapshot, so the record never sees "
                         "the delivery's pull requests; fix: add state.forgeSnapshot to the binding (delivery-views' "
                         "snapshot.py prints one for GitHub and Bitbucket)")
-    if state.get("trackerSnapshot") and not any(map(tracker_publisher, state.get("publishers") or [])):
-        problems.append("the tracker is configured, but the binding has no tracker publisher, so nothing posts the "
-                        "delivery's moves to it; fix: add one to state.publishers: run-delivery's tracker publisher, or "
-                        "a host publisher whose outbox the lead publishes")
+    # The one tracker check (tracker-adapter/1): a tracker whose updates nothing posts, unless tracker.updates is manual.
+    tracker = tracker_publisher.refusal(tracker_publisher.settings(c.root, c.flow_raw, binding))
+    if tracker:
+        problems.append(tracker)
     return problems
 
 
@@ -3413,6 +3552,13 @@ def lead_setup(args) -> None:
             print(f"drafted {len(items)} {noun} from '{name}'")
     if existing:
         drafted.update({name: existing[name] for name in ("approvals", "outOfScope", "planReview") if name in existing})
+    adoptable = adoptable_plan_review(c, Path(args.plan))
+    if adoptable:
+        drafted.setdefault("planReview", {"lenses": json.loads(round_files(adoptable)[0].read_text())["lenses"]})
+        target = c.main / c.work / "review" / key / "plan"
+        if target.exists() and any(target.iterdir()):
+            raise Stop(f"delivery {key} already has a plan review in {target}, so it can't adopt the one in {adoptable}; "
+                       "keep one of them and remove the other")
     git("fetch", "-q", c.remote)
     base = args.base or c.binding_base
     if not base:
@@ -3445,10 +3591,37 @@ def lead_setup(args) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(delivery, indent=2) + "\n")
     print(f"drafted {path}: {len(stories)} stories")
+    added = add_tracker_publisher(c)
+    if added:
+        print(f"added the tracker publisher ({added}) to {c.binding_path.name}'s state.publishers: commit it with the "
+              "delivery file")
+    loose = tracker_publisher.untargeted(tracker_conf(c)) if tracker_conf(c)["mode"] == "publisher" else []
+    if loose:
+        notes.append(f"name the status each of these moves leads to in tracker.transitions.targets, so one a person "
+                     f"already made reads as made: {', '.join(loose)}")
+    if adoptable:
+        print(adopt_plan_review(c, adoptable, key))
     print("next: give each story its lane, list the lanes and the files each owns, set inApp requirements, the finish "
           "lines and the brief notes (all from the approved plan), then lead-init and lead-brief")
     for n in notes:
         print(f"  note: {n}")
+
+
+def add_tracker_publisher(c) -> str | None:
+    """With a tracker adapter configured and no tracker publisher bound, add one to the binding's state.publishers, so
+    every render posts the delivery's tracker updates. Returns the publisher's id, or None when nothing was added."""
+    conf = tracker_conf(c)
+    if conf["mode"] != "publisher" or conf["publisher"] or conf["problems"] or not c.binding_path.exists():
+        return None
+    binding = json.loads(c.binding_path.read_text())
+    publishers = binding.setdefault("state", {}).setdefault("publishers", [])
+    entry = tracker_publisher.publisher_entry(TOOL_PATH.replace("run_delivery.py", "tracker_publisher.py"))
+    taken = {item.get("id") for item in publishers if isinstance(item, dict)}
+    entry["id"] = next(name for name in ("tracker", *(f"tracker-{n}" for n in range(2, len(taken) + 3)))
+                       if name not in taken)
+    publishers.append(entry)
+    c.binding_path.write_text(json.dumps(binding, indent=2) + "\n")
+    return entry["id"]
 
 
 def plan_list_items(body: str) -> list[str]:
@@ -3472,6 +3645,9 @@ def lead_init(args) -> None:
     c.check_lanes()
     if c.ship and not c.ship.get("toolingCommit"):
         raise Stop(f"{c.delivery_where}: ship.toolingCommit isn't set")
+    adoptable = adoptable_plan_review(c, c.plan)
+    if adoptable:
+        print(adopt_plan_review(c, adoptable, c.delivery))
     if plan_declared(c):
         rounds = plan_review_rounds(c)
         if rounds and plan_review_state(c, rounds) == "open" and (args.replace or not any(
@@ -3608,8 +3784,10 @@ def lead_assign(args) -> None:
     lanes.append({"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
                   "waitingOn": None, "since": now()})
     patch({"lanes": lanes}, doc["state"]["version"])
-    state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", keys[0], "--summary",
-               f"{args.lane} assigned {', '.join(keys)}" + (f" ({args.note})" if args.note else ""))
+    # One entry per story, so each ticket's start is its own, made when its lane begins it.
+    for key in keys:
+        state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", key, "--summary",
+                   f"{args.lane} assigned {key}: {c.stories[key]['title']}" + (f" ({args.note})" if args.note else ""))
     print(f"Assignment message for {args.lane} ({args.title}):\n")
     print(f"You are {args.lane} in the {c.delivery} delivery. Read the lane brief first: {c.root / c.lane_brief}\n")
     print("Your stories, in order (one branch, one review and one hand-off each):")
@@ -4185,19 +4363,6 @@ def base_head(c) -> str:
     return git("rev-parse", c.base_ref, check=False)
 
 
-def tracker_module(c):
-    """The release's tracker publisher, whose ledger and "Needs you" the supervisor reads, when the release has one."""
-    path = c.release / "skills/run-delivery/scripts/tracker_publisher.py"
-    if not path.exists():
-        return None
-    folder = str(path.parent)
-    if folder not in sys.path:
-        sys.path.insert(0, folder)
-    sys.dont_write_bytecode = True
-    import tracker_publisher  # noqa: E402  (the installed release's own publisher)
-    return tracker_publisher
-
-
 # One pass's steps. Each returns what it did, in a line or a few.
 
 def lane_moved_off(doc: dict, item: dict) -> bool:
@@ -4356,11 +4521,7 @@ def blocker_resolved(c, doc: dict, entry: dict, resolutions: set[int]) -> bool:
 def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = False) -> list[dict]:
     """What waits on the lead or the operator, each {holding, text}: holding items hold the close; shown ones are
     listed in the friction note. The close condition and the supervisor's pass log read this same list."""
-    items: list[dict] = []
-    tracker = tracker_module(c)
-    if tracker is not None:
-        conf = tracker.settings(c.root)
-        items += tracker.needs_you(doc, c.state, c.flow_log, c.delivery, conf, closing=closing)
+    items = tracker_publisher.needs_you(doc, c.state, c.flow_log, c.delivery, tracker_conf(c), closing=closing)
     head = base_head(c)
     last, rerun = full_health_results(c, head) if head else (None, False)
     if last and last["result"] == "failed" and not rerun:
@@ -4466,21 +4627,37 @@ def deferred_findings(c) -> list[dict]:
     return list(found.values())
 
 
+FOLLOWUP = "Deferred finding {finding} of {story} becomes follow-up {story}-{finding}: {title}"
+
+
 def followups_step(c, doc: dict) -> tuple[bool, str]:
-    """One follow-up item per deferred finding, keyed by story and finding id, recorded in the record's followups."""
+    """One follow-up item per deferred finding, keyed by story and finding id, which is also its followups[] id.
+    Each is journalled as a decision marked for the tracker publisher to file; the step holds until the publisher's
+    ledger covers every one: a transient failure is retried by its next run, and a permanent one is shown. Through
+    the host, the outbox carries the filings; by hand, the record's followups are all there is."""
     have = {item["id"] for item in doc["state"]["followups"]}
     missing = [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
-    if not missing:
-        return True, "follow-ups: every deferred finding has one"
     for finding in missing:
-        state_tool("journal", "--kind", "decision.recorded", "--subject", finding["story"], "--summary",
-                   f"Deferred finding {finding['finding']} of {finding['story']} becomes follow-up "
-                   f"{finding['story']}-{finding['finding']}: {finding['title']}")
-    fresh = load_state()
-    followups = [*fresh["state"]["followups"], *({"id": f"{f['story']}-{f['finding']}", "title": f["title"],
-                                                  "reference": None} for f in missing)]
-    patch({"followups": followups}, fresh["state"]["version"])
-    return True, f"follow-ups: recorded {', '.join(f['story'] + '-' + f['finding'] for f in missing)}"
+        with marked_decision(c, followup=finding) as written:
+            written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--subject",
+                                                 finding["story"], "--summary", FOLLOWUP.format(**finding))))
+    if missing:
+        fresh = load_state()
+        followups = [*fresh["state"]["followups"], *({"id": f"{f['story']}-{f['finding']}", "title": f["title"],
+                                                      "reference": None} for f in missing)]
+        patch({"followups": followups}, fresh["state"]["version"])
+        render_views(c)
+        doc = load_state()
+    if tracker_conf(c)["mode"] != "publisher":
+        return True, f"follow-ups: {len(doc['state']['followups'])} recorded"
+    marks = {entry["journal"] for entry in tracker_publisher.read_flow(c.flow_log, c.delivery, tracker_publisher.MARKS)
+             if entry.get("followup")}
+    journal = sorted(doc["journal"], key=lambda e: e["id"])
+    done = tracker_publisher.covered(tracker_publisher.read_ledger(c.state), tracker_publisher.init_id(journal))
+    waiting = sorted(marks - done)
+    if waiting:
+        return False, f"follow-ups: waiting for the tracker publisher to file journal entries {', '.join(map(str, waiting))}"
+    return True, f"follow-ups: {len(marks)} filed or refused"
 
 
 def closed_step(c) -> tuple[bool, str]:
@@ -4493,11 +4670,10 @@ def closed_step(c) -> tuple[bool, str]:
         render_views(c)
         doc = load_state()
         closed = next(e for e in doc["journal"] if e["kind"] == "delivery.closed")
-    tracker = tracker_module(c)
-    mode = tracker.settings(c.root).get("mode") if tracker else None
+    mode = tracker_conf(c)["mode"]
     if mode == "publisher":
         journal = sorted(doc["journal"], key=lambda e: e["id"])
-        done = tracker.covered(tracker.read_ledger(c.state), tracker.init_id(journal))
+        done = tracker_publisher.covered(tracker_publisher.read_ledger(c.state), tracker_publisher.init_id(journal))
         owed = [e["id"] for e in journal if e["id"] <= closed["id"] and e["id"] not in done]
         if owed:
             return False, f"waiting for the tracker publisher to cover journal entries {', '.join(map(str, owed[:10]))}"
@@ -4565,7 +4741,7 @@ def friction_step(c, archive: Path, said: list[str], shown: list[str]) -> Path:
     return note
 
 
-def close_out(c, shown: list[str]) -> tuple[list[str], bool]:
+def close_out(c, flapping: tuple[str, ...] = ()) -> tuple[list[str], bool]:
     """C6, in order. Returns (what it did, whether the delivery is closed and the supervisor may stop)."""
     said = []
     for step in (full_health_step, lambda c: followups_step(c, load_state()), closed_step):
@@ -4575,6 +4751,8 @@ def close_out(c, shown: list[str]) -> tuple[list[str], bool]:
             return said, False
     archive, archived = archive_step(c)
     said += archived
+    # Read once the steps above ran, so a filing the publisher refused for good during them is listed.
+    shown = [item["text"] for item in needs_you(c, load_state(), flapping, closing=True) if not item["holding"]]
     note = friction_step(c, archive, archived, shown)
     said.append(f"wrote the friction note stub {note}: write it up, and archive the lane sessions")
     return said, True
@@ -4694,8 +4872,7 @@ class Supervisor:
             holds = close_holds(c, doc, needs)
             entry["needsYou"], entry["closeHeldBy"] = needs, holds
             if not holds:
-                shown = [item["text"] for item in needs_you(c, doc, self.flapping(), closing=True) if not item["holding"]]
-                entry["closeOut"], closed = close_out(c, shown)
+                entry["closeOut"], closed = close_out(c, self.flapping())
                 render_views(c)
         except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
             entry["close"] = f"failed: {error}"
@@ -5375,10 +5552,16 @@ class Doctor:
         if problems:
             return "wrong", "; ".join(problems)
         state = self.binding.get("state") or {}
-        read = [name for name, there in (("forge snapshot", state.get("forgeSnapshot")),
-                                         ("tracker publisher", any(map(tracker_publisher, state.get("publishers") or []))))
-                if there]
-        return "ok", f"the binding has {' and '.join(read) or 'neither, and needs neither'}"
+        conf = tracker_publisher.settings(self.root, self.c.flow_raw, self.binding or {})
+        updates = {"publisher": f"the {conf['publisher']} tracker publisher posts tracker updates",
+                   "host": f"the {conf['host']} host publisher's outbox carries tracker updates",
+                   "manual": f"the lead posts tracker updates by hand ({self.c.name} sets tracker.updates to manual)"}
+        said = [*(["a forge snapshot"] if state.get("forgeSnapshot") else []),
+                *([updates[conf["mode"]]] if conf["mode"] in updates else [])]
+        loose = tracker_publisher.untargeted(conf) if conf["mode"] == "publisher" else []
+        return "ok", ("; ".join(said) or "the binding has neither a forge snapshot nor a tracker publisher, and needs "
+                      "neither") + (f"; these moves name no status in tracker.transitions.targets, so one a person "
+                                    f"already made shows as not offered: {', '.join(loose)}" if loose else "")
 
     def node(self):
         problem = node_problem(self.release())
@@ -5593,12 +5776,16 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=review_reduce)
     p = command(sub, "plan-review", help="review the plan before it is approved: prepare, reduce or end a round")
     review_commands = p.add_subparsers(dest="action", required=True)
+    plan_help = "review this plan in its own store, keyed by its reviewSlug, with no delivery"
     q = command(review_commands, "prepare", help="the next round's checkouts and briefs, one per lens")
     q.add_argument("--restart", action="store_true", help="discard the prepared round's results and prepare it again")
+    q.add_argument("--plan", help=plan_help)
+    q.add_argument("--lenses", help="with --plan: the comma-separated lenses, fixed at round 1 (later rounds keep them)")
     q.set_defaults(fn=plan_review_prepare)
     q = command(review_commands, "reduce", help="check the lenses' results and record the round")
-    q.set_defaults(fn=plan_review_reduce)
+    q.add_argument("--plan", help=plan_help); q.set_defaults(fn=plan_review_reduce)
     q = command(review_commands, "end", help="end a review that isn't converging, with the operator's reason")
+    q.add_argument("--plan", help=plan_help)
     q.add_argument("--reason", required=True); q.set_defaults(fn=plan_review_end)
     p = command(sub, "gate"); p.add_argument("key"); p.set_defaults(fn=gate)
     p = command(sub, "build"); p.add_argument("key"); p.set_defaults(fn=build)

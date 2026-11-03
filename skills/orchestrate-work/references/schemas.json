@@ -652,6 +652,10 @@
             "runId": {
               "description": "The run that is building the work, as in the queue. Optional; the lead's patch writes it and reconcile keeps it.",
               "$ref": "#/$defs/name"
+            },
+            "trackerStarted": {
+              "description": "True once reconcile has seen the work's ticket started in the tracker; absent until then. Only work whose ticket was started is reported when its ticket is back in the tracker's backlog. Optional; reconcile writes it and keeps it.",
+              "type": "boolean"
             }
           }
         }

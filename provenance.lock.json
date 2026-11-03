@@ -469,19 +469,19 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "3d11654ce2bb11ac4f2137e8c9eabfb29e04197b53343fb20b53c8dd317b1b26"
+          "sha256": "db0251c3299156213cd66c55a8e82d176f427cdb5b0e6ac8e35dc5f85ec7189d"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "e62f5b22da69d4ffd40d4e87b2819f8b4d80c4d90ee856ca1dd6835cc057d746"
+          "sha256": "7ec09e9a0241f0ddf6a88424a1c1bb7f184f01256fbcb9ef5d55be88fdc6e7e6"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "6ac61494316529c3042b990fd43cf02d67a97e6f2bea7ea70017c7de046b47e2"
+          "sha256": "45fdda7945ad8c54c88156b39e7b9f1db8ac4355e2665651e07f5ed22ede55d1"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "fa797b6c44bc18333fc2b747746e3c2fa7c90cea7ca341e3ce6ea87b2f6aaa1d"
+          "sha256": "a6b8bc7d3421b514b8b6ebf579ca2a2c6a6d31426312159cb53b760f159c4061"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
@@ -489,7 +489,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "7203ad1428b4e82967f012d3372ba0fb6da40f5011b2f42751a71224b6531560"
+          "sha256": "06a4aeb459b139dd7d8a3400d0b012b72dbfa88e39e8ed74aeb0be3a87c29f85"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -968,7 +968,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "6a5eb0b4fb3c9ab161c31f27aa4b33038113681ba9e76419adabc4e29952bcc0"
+          "sha256": "e1fac2aca5ba58fb02b11be4c3893a9c06b5ec3cb2d7ba460674009a45e52ff5"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -1029,20 +1029,28 @@
           "sha256": "3c86f0ccb4b972fd904ba87250ec08f2b17890268ab22914697ab49e43fd24a7"
         },
         {
+          "path": "skills/run-delivery/adapters/tracker_jira.py",
+          "sha256": "f0fc5c61a510d07adb3b7b597a27ae3d156e120221e0dcc0f8d32a3f7cbf91e0"
+        },
+        {
           "path": "skills/run-delivery/assets/adapter-fixture/index.html",
           "sha256": "31257fd55d83ebc6aa602b7a508248d6f44776991f54e1127ce1629b0bf59a81"
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "fef2f7f429353e3c7957d04807b1dc1d26342c3412c5d412b8f8d16eb441fe36"
+          "sha256": "6b620fec3a5f568fe3323a74baa79f9f519af1f6df91ecba29632eb03e48f5c1"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "4596c3e4d62caea3bfa83c9ed65dc30f582684d6130af2e5331eb175e7b28cb9"
+          "sha256": "89b2f043f3d6a6ed85fa5aa8209366627562e0f9a9bbea24df8858537600599e"
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "203eac6023b4ac450014702b3fb62e3a04cec7d9a95dc94b2a6844ff2b9150b9"
+          "sha256": "e77199285f5ff824de7f25c8b5a070b8097035d5cc1fcc669528a80602e9948f"
+        },
+        {
+          "path": "skills/run-delivery/scripts/tracker_publisher.py",
+          "sha256": "8baa9e933b3a8e09220a35850959a88fac844098f1c4f8a0a1a8aa36e2f51f39"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",
