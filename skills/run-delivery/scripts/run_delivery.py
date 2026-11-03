@@ -37,6 +37,7 @@ if os.name == "nt":
     sys.exit(2)
 
 import argparse
+import contextlib
 import datetime
 import fcntl
 import fnmatch
@@ -51,6 +52,9 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import tracker_publisher  # noqa: E402
 
 TOOL = Path(__file__).resolve().parent.parent
 # The installed generation this tool runs from, through any projection link: the folder three above scripts/.
@@ -837,6 +841,26 @@ def read_log(name: str, key: str) -> list[dict]:
 def append_log(name: str, key: str, entry: dict) -> None:
     with open(flow_log(name, key), "a") as log:
         log.write(json.dumps({**entry, "at": now()}) + "\n")
+
+
+def tracker_conf(c) -> dict:
+    """How the tracker's updates are made: by the tracker publisher, through the host, or by hand (tracker-adapter/1)."""
+    return tracker_publisher.settings(c.root, c.flow_raw, c.shelf.json(".agents/orchestration.json") or {})
+
+
+@contextlib.contextmanager
+def marked_decision(c, followup: dict | None = None):
+    """Journal a decision the tracker publisher posts: the ledger's lock is held, waiting for it, across the journal
+    write and its mark, so no publisher run sees the entry unmarked. Yields a list the journalled entry's id goes in."""
+    written: list[int] = []
+    with tracker_publisher.ledger_lock(c.state, wait=True):
+        yield written
+        for journal_id in written:
+            tracker_publisher.mark(c.flow_log, c.delivery, journal_id, followup)
+
+
+def journal_id(done: subprocess.CompletedProcess) -> int:
+    return json.loads(done.stdout)["entry"]["id"]
 
 
 def spec_digest(spec: dict, passthrough: list[str]) -> str:
@@ -3025,9 +3049,10 @@ def check_plan(plan: dict, c) -> None:
         raise Stop(f"the plan this delivery file makes holds {size} bytes, over the 1 MiB a plan may hold")
 
 
-def rebuild_plan(c) -> str | None:
+def rebuild_plan(c, mark: bool = False) -> str | None:
     """Rebuild plan.json under the lock. Writes it, atomically, only when its content apart from `updated` changed,
-    then journals the write so the live view re-renders. Returns what changed, or None when nothing did."""
+    then journals the write so the live view re-renders. Returns what changed, or None when nothing did. With
+    `mark`, a plan change the lead made, the journal entry is marked for the tracker publisher to post."""
     if not (c.state / "state.json").exists():
         return None
     with plan_lock(c):
@@ -3054,7 +3079,12 @@ def rebuild_plan(c) -> str | None:
         temporary = path.with_name(f".{PLAN_FILE}.{os.getpid()}.tmp")
         temporary.write_text(json.dumps(plan, indent=2) + "\n")
         os.replace(temporary, path)
-        state_tool("journal", "--kind", "decision.recorded", "--summary", f"Plan updated: {plan['updated']}; {moved}")
+        summary = f"Plan updated: {plan['updated']}; {moved}"
+        if mark:
+            with marked_decision(c) as written:
+                written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary", summary)))
+        else:
+            state_tool("journal", "--kind", "decision.recorded", "--summary", summary)
         return moved
 
 
@@ -3175,7 +3205,7 @@ def lead_plan(args) -> None:
         if record_finish is not None:
             doc = load_state()
             patch({"finish": [*doc["state"]["finish"], record_finish]}, doc["state"]["version"])
-        rebuild_plan(c)
+        rebuild_plan(c, mark=True)
     print(f"recorded {entry['id']}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
     print(f"committed the delivery file; push it so lanes see it: git push {c.remote} HEAD:{c.base_branch}")
 
@@ -3363,10 +3393,6 @@ def context_problems(c) -> list[str]:
             f"remove it from context.sections in {c.delivery_where}"]
 
 
-def tracker_publisher(publisher: dict) -> bool:
-    return publisher.get("kind") == "host" or any("tracker_publisher" in part for part in publisher.get("argv") or [])
-
-
 def publishing_problems(c, binding: dict) -> list[str]:
     """A forge or tracker the repository configures, with nothing in the binding that reads or posts to it."""
     state = binding.get("state") or {}
@@ -3375,10 +3401,10 @@ def publishing_problems(c, binding: dict) -> list[str]:
         problems.append("the forge is configured, but the binding has no state.forgeSnapshot, so the record never sees "
                         "the delivery's pull requests; fix: add state.forgeSnapshot to the binding (delivery-views' "
                         "snapshot.py prints one for GitHub and Bitbucket)")
-    if state.get("trackerSnapshot") and not any(map(tracker_publisher, state.get("publishers") or [])):
-        problems.append("the tracker is configured, but the binding has no tracker publisher, so nothing posts the "
-                        "delivery's moves to it; fix: add one to state.publishers: run-delivery's tracker publisher, or "
-                        "a host publisher whose outbox the lead publishes")
+    # The one tracker check (tracker-adapter/1): a tracker whose updates nothing posts, unless tracker.updates is manual.
+    tracker = tracker_publisher.refusal(tracker_publisher.settings(c.root, c.flow_raw, binding))
+    if tracker:
+        problems.append(tracker)
     return problems
 
 
@@ -3553,12 +3579,37 @@ def lead_setup(args) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(delivery, indent=2) + "\n")
     print(f"drafted {path}: {len(stories)} stories")
+    added = add_tracker_publisher(c)
+    if added:
+        print(f"added the tracker publisher ({added}) to {c.binding_path.name}'s state.publishers: commit it with the "
+              "delivery file")
+    loose = tracker_publisher.untargeted(tracker_conf(c)) if tracker_conf(c)["mode"] == "publisher" else []
+    if loose:
+        notes.append(f"name the status each of these moves leads to in tracker.transitions.targets, so one a person "
+                     f"already made reads as made: {', '.join(loose)}")
     if adoptable:
         print(adopt_plan_review(c, adoptable, key))
     print("next: give each story its lane, list the lanes and the files each owns, set inApp requirements, the finish "
           "lines and the brief notes (all from the approved plan), then lead-init and lead-brief")
     for n in notes:
         print(f"  note: {n}")
+
+
+def add_tracker_publisher(c) -> str | None:
+    """With a tracker adapter configured and no tracker publisher bound, add one to the binding's state.publishers, so
+    every render posts the delivery's tracker updates. Returns the publisher's id, or None when nothing was added."""
+    conf = tracker_conf(c)
+    if conf["mode"] != "publisher" or conf["publisher"] or conf["problems"] or not c.binding_path.exists():
+        return None
+    binding = json.loads(c.binding_path.read_text())
+    publishers = binding.setdefault("state", {}).setdefault("publishers", [])
+    entry = tracker_publisher.publisher_entry(TOOL_PATH.replace("run_delivery.py", "tracker_publisher.py"))
+    taken = {item.get("id") for item in publishers if isinstance(item, dict)}
+    entry["id"] = next(name for name in ("tracker", *(f"tracker-{n}" for n in range(2, len(taken) + 3)))
+                       if name not in taken)
+    publishers.append(entry)
+    c.binding_path.write_text(json.dumps(binding, indent=2) + "\n")
+    return entry["id"]
 
 
 def plan_list_items(body: str) -> list[str]:
@@ -3717,8 +3768,10 @@ def lead_assign(args) -> None:
     lanes.append({"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
                   "waitingOn": None, "since": now()})
     patch({"lanes": lanes}, doc["state"]["version"])
-    state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", keys[0], "--summary",
-               f"{args.lane} assigned {', '.join(keys)}" + (f" ({args.note})" if args.note else ""))
+    # One entry per story, so each ticket's start is its own, made when its lane begins it.
+    for key in keys:
+        state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", key, "--summary",
+                   f"{args.lane} assigned {key}: {c.stories[key]['title']}" + (f" ({args.note})" if args.note else ""))
     print(f"Assignment message for {args.lane} ({args.title}):\n")
     print(f"You are {args.lane} in the {c.delivery} delivery. Read the lane brief first: {c.root / c.lane_brief}\n")
     print("Your stories, in order (one branch, one review and one hand-off each):")
@@ -4724,10 +4777,16 @@ class Doctor:
         if problems:
             return "wrong", "; ".join(problems)
         state = self.binding.get("state") or {}
-        read = [name for name, there in (("forge snapshot", state.get("forgeSnapshot")),
-                                         ("tracker publisher", any(map(tracker_publisher, state.get("publishers") or []))))
-                if there]
-        return "ok", f"the binding has {' and '.join(read) or 'neither, and needs neither'}"
+        conf = tracker_publisher.settings(self.root, self.c.flow_raw, self.binding or {})
+        updates = {"publisher": f"the {conf['publisher']} tracker publisher posts tracker updates",
+                   "host": f"the {conf['host']} host publisher's outbox carries tracker updates",
+                   "manual": f"the lead posts tracker updates by hand ({self.c.name} sets tracker.updates to manual)"}
+        said = [*(["a forge snapshot"] if state.get("forgeSnapshot") else []),
+                *([updates[conf["mode"]]] if conf["mode"] in updates else [])]
+        loose = tracker_publisher.untargeted(conf) if conf["mode"] == "publisher" else []
+        return "ok", ("; ".join(said) or "the binding has neither a forge snapshot nor a tracker publisher, and needs "
+                      "neither") + (f"; these moves name no status in tracker.transitions.targets, so one a person "
+                                    f"already made shows as not offered: {', '.join(loose)}" if loose else "")
 
     def node(self):
         problem = node_problem(self.release())

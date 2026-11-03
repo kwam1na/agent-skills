@@ -1354,7 +1354,9 @@ def render(directory: Path, config: object) -> tuple[int, dict]:
             continue
         # A publisher's output is not used; a child it leaves holding the
         # output does not change how its exit is judged.
-        outcome = _execute(publisher["argv"], document, publisher["timeout"])
+        # A publisher that keeps its own ledger keeps it beside the record it publishes.
+        argv = [part.replace("{stateDirectory}", str(directory.resolve())) for part in publisher["argv"]]
+        outcome = _execute(argv, document, publisher["timeout"])
         entry = {"exitCode": outcome.exit_code, "id": publisher["id"], "ok": outcome.error is None}
         if outcome.error is not None:
             entry["error"] = outcome.error

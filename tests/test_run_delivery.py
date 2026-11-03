@@ -2796,7 +2796,10 @@ def doctor_binding() -> dict:
         "checkTimeoutSeconds": 600, "checkTimeoutCeiling": 1200, "environment": {},
         "ready": ["true", "{candidate}", "{expectedHead}"], "merge": ["true", "{branch}", "{expectedHead}"],
         "release": [], "fullHealth": ["true"], "leases": [],
-        "state": {"directory": ".orchestration/state", "publishers": [{"id": "tracker", "kind": "host"}], "renderers": [],
+        "state": {"directory": ".orchestration/state", "renderers": [],
+                  "publishers": [{"id": "tracker", "argv": [
+                      "python3", "-B", ".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py",
+                      "--state-dir", "{stateDirectory}"], "timeoutSeconds": 600}],
                   "forgeSnapshot": {"argv": ["true"]},
                   "trackerSnapshot": {"argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
                                                "--kind", "jira", "--site", "https://tracker.test", "--parent", "{parent}",
@@ -2828,7 +2831,7 @@ TROUBLESHOOTING_KEYS = [
     "no gates are declared", "these don't resolve", "isn't ignored by git", "no tracker issue URL",
     "review.pr is configured, but", "gh isn't installed", "gh isn't signed in",
     "no token variable for the Bitbucket adapter", "the Bitbucket adapter reads its token from it", "forge find failed",
-    "the tracker snapshot reads", "these in-app adapters don't resolve", "isn't writable",
+    "the tracker snapshot reads", "reachable only through the host", "these in-app adapters don't resolve", "isn't writable",
     "the in-app adapters break the contract", "lease held by", "video evidence needs both", "which video evidence uses",
     "needs Node 22.6 or newer", "no runtime loader", "harness.config.ts not read", "is missing (lead-setup writes it)",
     "stories without a lane", "lanes own the same files", "fails on", "isn't a valid delivery-plan/1",
@@ -3601,11 +3604,19 @@ class RunDeliveryDoctorTests(unittest.TestCase):
                 self.assertIn(detail, refused)
                 self.assertIn(fix, refused)
                 self.assertFalse(record.exists(), f"lead-init kept a record while refusing: {refused}")
-        # Run-delivery's own tracker publisher counts as one, as a host publisher does.
-        undo = edit_json(binding_path, lambda b: b["state"].update(publishers=[
-            {"id": "tracker", "argv": ["python3", "-B", "tools/tracker_publisher.py", "{stateDirectory}"]}]))
+        # A Jira tracker has an adapter, so its publisher is run-delivery's own: a host publisher doesn't post for it,
+        # unless tracker.updates says the lead posts by hand.
+        undo = edit_json(binding_path, lambda b: b["state"].update(publishers=[{"id": "tracker", "kind": "host"}]))
         try:
-            self.assertEqual(doctor_lines(self.doctor(fx, "--offline"))["snapshots and publishers"][0], "ok")
+            out = self.doctor(fx, "--offline", expect_code=1)
+            self.assertIn("the binding has no tracker publisher", failing(out)["snapshots and publishers"], out)
+            manual = edit_json(m / conf_rel, lambda c: c["tracker"].update(updates="manual"))
+            try:
+                line = doctor_lines(self.doctor(fx, "--offline"))["snapshots and publishers"]
+                self.assertEqual(line[0], "ok")
+                self.assertIn("the lead posts tracker updates by hand", line[1])
+            finally:
+                manual()
         finally:
             undo()
         # Node exactly at the runtime's nodeMinimum is enough.

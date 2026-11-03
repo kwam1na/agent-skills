@@ -51,6 +51,8 @@ REFERENCED_KINDS: dict[str, tuple[str, ...]] = {
         "`decision.recorded`",
         "`blocker.recorded`",
     ),
+    # The tracker publisher's configuration names the journal's decision kind, which it posts when marked.
+    "skills/run-delivery/references/config.md": ("`decision.recorded`",),
     "skills/execute-work/SKILL.md": (
         "`lens.selected`",
         "`review.round.opened`",
