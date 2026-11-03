@@ -3424,6 +3424,24 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         self.assertEqual(seen, [given])
         self.assertEqual(received, [["FX-1"]])
 
+    def test_only_the_command_decides_not_a_value_that_spells_one(self) -> None:
+        for given, keys in ((["lead-assign", "FX-1", "--lane", "app-check", "--title", "t"], ["FX-1"]),
+                            (["lead-assign", "FX-1", "--lane", "l", "--title", "app-video"], ["FX-1"]),
+                            (["--delivery", "app-check", "lead-assign", "FX-1", "--lane", "l", "--title", "t"], ["FX-1"]),
+                            (["lead-assign", "--lane", "app-check", "--title", "t", "--", "FX-1"], ["FX-1"])):
+            with self.subTest(given=given):
+                received = []
+                with mock.patch.object(self.tool, "lead_assign", lambda args: received.append(list(args.keys))), \
+                        mock.patch.object(self.tool.signal, "signal"):
+                    self.tool.main(given)
+                self.assertEqual(received, [keys])
+        received = []
+        with mock.patch.object(self.tool, "app_check", lambda args: received.append(list(args.passthrough))), \
+                mock.patch.object(self.tool.signal, "signal"):
+            self.tool.main(["--delivery", "lead-assign", "app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one", "--", "x"])
+            self.tool.main(["--delivery=lead-assign", "app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one", "--", "y"])
+        self.assertEqual(received, [["x"], ["y"]])
+
     def test_no_separator_leaves_the_arguments_as_they_were(self) -> None:
         given = ["app-check", "FX-1", "page", "--mode", "loaded", "--path", "/one"]
         self.assertEqual(self.parsed(*given), [given, []])

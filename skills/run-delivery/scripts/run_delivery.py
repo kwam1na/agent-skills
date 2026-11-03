@@ -4350,7 +4350,9 @@ def main(argv: list[str] | None = None) -> None:
     # What follows `--` is the adapter's. Python 3.11's argparse refuses it after a positional taking any number of values.
     argv = list(sys.argv[1:] if argv is None else argv)
     separator = argv.index("--") if "--" in argv else len(argv)
-    if {"app-check", "app-video"} & set(argv[:separator]):
+    # The command is the first word after the top-level option, which a value elsewhere may spell too.
+    first = 2 if argv[:1] == ["--delivery"] else 1 if argv[:1] and argv[0].startswith("--delivery=") else 0
+    if argv[first:first + 1] in (["app-check"], ["app-video"]):
         args = parser.parse_args(argv[:separator])
         args.passthrough = [*args.passthrough, *argv[separator + 1:]]
     else:

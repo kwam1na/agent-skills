@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import select
 import shutil
 import signal
 import subprocess
@@ -3491,8 +3492,11 @@ class SnapshotCleanupTests(unittest.TestCase):
 
         return mock.patch.multiple(state_tool, _process_table=table, _process_environment=environment, _signal_selected=signalled)
 
+    # Without waitid an exit is watched with kqueue, so that path exists only where kqueue does.
+    WAITID_PATHS = (False, True) if hasattr(select, "kqueue") else (False,)
+
     def test_an_interrupt_between_the_passes_never_leaves_a_process_frozen(self) -> None:
-        for absent in (False, True):
+        for absent in self.WAITID_PATHS:
             with self.subTest(without_waitid=absent), self.without_waitid(absent):
                 argv, pid_file = self.command(detached=True)
                 self.previewed(argv, pid_file)
@@ -3503,7 +3507,7 @@ class SnapshotCleanupTests(unittest.TestCase):
                 self.assertTrue(self.gone(child), f"killed, not left stopped: the process's state is {self.state(child)!r}")
 
     def test_a_frozen_process_is_killed_though_its_environment_can_no_longer_be_read(self) -> None:
-        for absent in (False, True):
+        for absent in self.WAITID_PATHS:
             with self.subTest(without_waitid=absent), self.without_waitid(absent):
                 argv, pid_file = self.command(detached=True)
                 self.previewed(argv, pid_file)

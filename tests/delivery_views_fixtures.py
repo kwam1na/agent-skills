@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -94,16 +95,19 @@ FAKE_RUNS = r'''
 import json, os, sys, time
 table = json.load(open(sys.argv[1], encoding="utf-8"))
 key = " ".join(sys.argv[2:])
-with open(sys.argv[1] + ".calls", "a", encoding="utf-8") as calls:
-    calls.write(key + "\n")
+def log(kind, line):
+    # Each entry is its own file: appends from concurrent processes can overwrite each other on Windows.
+    folder = sys.argv[1] + kind
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, f"{time.time_ns():020d}-{os.getpid()}-{len(os.listdir(folder))}"), "x", encoding="utf-8") as entry:
+        entry.write(line)
+log(".calls", key)
 answer = table.get(key)
 if isinstance(answer, dict) and "sleep" in answer:
     # Each slow read leaves its start and end, so a test can count how many ran at once.
-    with open(sys.argv[1] + ".spans", "a", encoding="utf-8") as spans:
-        spans.write(f"1 {time.time()}\n")
+    log(".spans", f"1 {time.time()}")
     time.sleep(answer["sleep"])
-    with open(sys.argv[1] + ".spans", "a", encoding="utf-8") as spans:
-        spans.write(f"-1 {time.time()}\n")
+    log(".spans", f"-1 {time.time()}")
     answer = answer.get("then")
 if isinstance(answer, dict) and "bytes" in answer:
     sys.stdout.write("x" * answer["bytes"])
@@ -129,17 +133,18 @@ class Runs:
     def answer(self, table: dict) -> None:
         self.table.write_text(json.dumps(table), encoding="utf-8")
         for suffix in (".calls", ".spans"):
-            Path(str(self.table) + suffix).unlink(missing_ok=True)
+            shutil.rmtree(str(self.table) + suffix, ignore_errors=True)
 
     def calls(self) -> list[str]:
-        calls = Path(str(self.table) + ".calls")
-        return calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+        return self.entries(".calls")
+
+    def entries(self, kind: str) -> list[str]:
+        folder = Path(str(self.table) + kind)
+        return [path.read_text(encoding="utf-8") for path in sorted(folder.iterdir())] if folder.exists() else []
 
     def most_at_once(self) -> int:
         """The most slow reads that were running at the same time."""
-        spans = Path(str(self.table) + ".spans")
-        events = sorted((float(at), int(step)) for step, at in
-                        (line.split() for line in spans.read_text(encoding="utf-8").splitlines())) if spans.exists() else []
+        events = sorted((float(at), int(step)) for step, at in (line.split() for line in self.entries(".spans")))
         running = most = 0
         for _, step in events:
             running += step
