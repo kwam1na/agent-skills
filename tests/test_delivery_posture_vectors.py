@@ -124,6 +124,37 @@ class RuntimeTrustTests(unittest.TestCase):
             result = resolved_by_runtime(clone)
             self.assertEqual((result["posture"], result["baseTipSha"], result["code"]), ("gate", earlier, None))
 
+    def test_offline_a_branch_naming_itself_as_the_base_gets_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            clone, seed = self.repository(Path(folder))
+            self.publish(seed, declaration("focused"), "self")
+            run_git(clone, "fetch", "-q", "origin")
+            run_git(clone, "remote", "set-url", "origin", str(Path(folder) / "gone.git"))
+            result = resolved_by_runtime(clone, base="origin/self")
+            self.assertEqual((result["posture"], result["code"], result["source"]), ("gate", "posture_unreadable", "fallback"))
+
+    def test_a_failed_fetch_does_not_read_a_stale_focused_over_a_restored_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            clone, seed = self.repository(Path(folder))
+            self.publish(seed, declaration("focused"))
+            resolved_by_runtime(clone)
+            tip = self.publish(seed, declaration("gate"))
+            run_git(clone, "fetch", "-q", "origin")
+            run_git(clone, "remote", "set-url", "origin", str(Path(folder) / "gone.git"))
+            result = resolved_by_runtime(clone)
+            self.assertEqual((result["posture"], result["baseTipSha"], result["code"]), ("gate", tip, None))
+
+    def test_a_failed_fetch_with_two_focused_tips_reports_the_tracking_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            clone, seed = self.repository(Path(folder))
+            self.publish(seed, declaration("focused"))
+            resolved_by_runtime(clone)
+            tip = self.publish(seed, declaration("focused"))
+            run_git(clone, "fetch", "-q", "origin")
+            run_git(clone, "remote", "set-url", "origin", str(Path(folder) / "gone.git"))
+            result = resolved_by_runtime(clone)
+            self.assertEqual((result["posture"], result["baseTipSha"], result["code"]), ("focused", tip, None))
+
     def test_a_repository_in_the_tree_does_not_answer_for_an_unconfigured_origin(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             clone, seed = self.repository(Path(folder))
@@ -224,6 +255,10 @@ class BuiltProductTests(unittest.TestCase):
 
     def test_each_command_gives_only_its_own_refusal_with_no_declaration(self) -> None:
         self.assert_gated(None, {})
+
+    def test_each_command_gives_only_its_own_refusal_with_a_plain_base_that_reads_as_unreadable(self) -> None:
+        with mock.patch.dict(CONSUMER_CONFIG, {"baseRef": "main"}):
+            self.assert_gated(declaration("gate"), {})
 
     def test_a_malformed_declaration_adds_its_code_and_reason_before_the_refusal(self) -> None:
         code = f"posture_malformed: {POSTURE_PATH} on origin/main is malformed"
