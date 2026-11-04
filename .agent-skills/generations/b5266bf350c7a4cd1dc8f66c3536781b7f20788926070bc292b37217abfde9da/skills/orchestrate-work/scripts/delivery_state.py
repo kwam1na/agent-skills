@@ -665,6 +665,9 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
             for item_before, item_after in zip(old, new):
                 for field in set(item_before) | set(item_after):
                     if field not in RUNNER_QUEUE and item_before.get(field) != item_after.get(field):
+                        # Recording a merge ends any wait for the lead; the runner clears it only in a write that leaves the item merged.
+                        if field == "pending" and item_after.get("stage") == "merged" and "pending" not in item_after:
+                            continue
                         violations.append(f"/queue[subject={item_before.get('subject')}]/{field} belongs to the lead")
         return violations
     for field in RUNNER_META:
@@ -723,6 +726,13 @@ def _stamp_focus(before: dict, after: dict, writer: str, spoke: str | None) -> N
                     entry["focusBy"] = "runner"
         else:
             entry.update({key: previous[key] for key in ("focusAt", "focusBy") if key in previous})
+
+
+def merged_item(item: dict, **fields: object) -> dict:
+    """A queue item as recording its merge leaves it: the merge ends any wait for the lead."""
+    merged = {**item, "stage": "merged", **fields}
+    merged.pop("pending", None)
+    return merged
 
 
 def lane_rows_after(directory: Path, state: dict, subject: str, *, stopped: str | None = None) -> list[dict]:
@@ -916,7 +926,8 @@ def handoff(
 
 def _pending(state: dict, subject: str) -> dict:
     item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
-    if item is None or not item.get("pending"):
+    # A merged item an earlier version left carrying the flag has no hand-off left to accept or reject.
+    if item is None or not item.get("pending") or item["stage"] == "merged":
         raise StateError("handoff_invalid", f"{subject} has no hand-off waiting for the lead")
     return item
 
@@ -2030,6 +2041,9 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                     }
                     if entry.get("changeRequest"):
                         element["changeRequest"] = entry["changeRequest"]
+                    # Under the lead's policy it waits like any hand-off, so its recovery can say the wait was skipped.
+                    if state["meta"].get("handoffsNeedAcceptance"):
+                        element["pending"] = True
                     lead["queue"].append(element)
                     change(subject, "merged on the forge while still planned: added to the queue")
                     entry = element
@@ -2043,6 +2057,10 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                                        "changeRequest": entry.get("changeRequest"), "lane": entry.get("lane"),
                                        "occurredAt": item.get("mergedAt")})
                     change(subject, "merged on the forge but not recorded by the runner: recorded as merged", True)
+                elif "pending" in entry:
+                    # Left by an earlier version; the merge it waited behind is already recorded.
+                    del entry["pending"]
+                    change(subject, "merged and recorded, but still marked as waiting for the lead: wait cleared")
     if not lead["planned"] and "planned" not in state:
         del lead["planned"]
     changed = {key: value for key, value in lead.items() if value != state.get(key, [] if key == "planned" else None)}
@@ -2160,6 +2178,14 @@ def _current_merge(journal: list[dict], item: dict) -> bool:
     return False
 
 
+WAIT_BYPASSED = " before the lead accepted it"
+
+
+def _bypass_report(subject: str) -> dict:
+    return {"subject": subject, "note": f"merged{WAIT_BYPASSED}: check it with lead-accept, "
+                                        "or journal your decision if lead-accept can't take it"}
+
+
 def _recover(directory: Path, recoveries: list[dict], changes: list[dict], reports: list[dict]) -> None:
     """Record merges the runner missed, as the runner, only while no runner is running.
 
@@ -2212,10 +2238,11 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                     reports.append({"subject": item["subject"], "note": "recorded head changed: settle identity before recovery"})
                     break
                 where = f" as change request {recovery['changeRequest']}" if recovery["changeRequest"] else ""
+                bypassed = "pending" in item
                 intent = {
                     "subject": recovery["subject"], "head": recovery["head"], "lane": recovery["lane"],
                     "summary": f"Recorded from a forge snapshot: merged{where} at {recovery['head']}, "
-                               "not recorded by the runner",
+                               "not recorded by the runner" + (WAIT_BYPASSED if bypassed else ""),
                     "journalAfter": len(read_journal(directory)),
                     "occurredAt": recovery["occurredAt"],
                     "changeRequest": recovery["changeRequest"],
@@ -2224,10 +2251,12 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                 # the journal entry is then finished by the next reconcile.
                 _write_atomically(directory / RECOVERY_FILE, dumps(intent))
                 try:
-                    if item["stage"] != "merged":
-                        queue = [{**entry, "stage": "merged", "syncedHead": recovery["head"]} if entry is item else entry for entry in state["queue"]]
-                        patch(directory, writer="runner", version=state["version"],
-                              changes={"queue": queue, "lanes": lane_rows_after(directory, state, recovery["subject"])})
+                    if item["stage"] != "merged" or "pending" in item:
+                        merged = merged_item(item, syncedHead=recovery["head"])
+                        written = {"queue": [merged if entry is item else entry for entry in state["queue"]]}
+                        if item["stage"] != "merged":
+                            written["lanes"] = lane_rows_after(directory, state, recovery["subject"])
+                        patch(directory, writer="runner", version=state["version"], changes=written)
                 except StateError as error:
                     (directory / RECOVERY_FILE).unlink(missing_ok=True)
                     if error.code != "version_stale":
@@ -2242,6 +2271,8 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                     reports.append({"subject": item["subject"], "note": f"{error}: set aside as {_set_aside(directory)}"})
                     break
                 (directory / RECOVERY_FILE).unlink(missing_ok=True)
+                if bypassed:
+                    reports.append(_bypass_report(item["subject"]))
                 break
             else:
                 raise StateError("version_stale", "the record kept changing while a merge was recovered")
@@ -2335,20 +2366,27 @@ def _finish_intent(directory: Path, intent: dict, finished: list[dict], reports:
     journal = read_journal(directory)
     # Any merge entry for the subject since the intent, whoever wrote it: the
     # runner may have recorded the merge itself before this reconcile.
-    journaled = any(entry["id"] > intent["journalAfter"] and entry["kind"] == "candidate.merged"
-                    and entry["subject"] == intent["subject"] for entry in journal)
+    entries = [entry for entry in journal if entry["id"] > intent["journalAfter"] and entry["kind"] == "candidate.merged"
+               and entry["subject"] == intent["subject"]]
+    journaled = bool(entries)
     item = next((item for item in read_state(directory)["queue"] if item["subject"] == intent["subject"]), None)
-    if (not journaled and item is not None and item["stage"] == "merged"
-            and (item.get("syncedHead") or item["head"]) == intent["head"]):
-        try:
-            _journal_recovery(directory, intent)
-        except StateError as error:
-            if error.code != "recovery_identity":
-                raise
-            reports.append({"subject": intent["subject"], "note": f"{error}: set aside as {_set_aside(directory)}"})
-            return
-        finished.append({"subject": intent["subject"], "recovery": True,
-                         "change": "an interrupted recovery's journal entry: appended"})
+    if item is not None and item["stage"] == "merged" and (item.get("syncedHead") or item["head"]) == intent["head"]:
+        if not journaled:
+            try:
+                _journal_recovery(directory, intent)
+            except StateError as error:
+                if error.code != "recovery_identity":
+                    raise
+                reports.append({"subject": intent["subject"], "note": f"{error}: set aside as {_set_aside(directory)}"})
+                return
+            finished.append({"subject": intent["subject"], "recovery": True,
+                             "change": "an interrupted recovery's journal entry: appended"})
+        if "pending" in item:
+            _tool_write(directory, lambda state: next(entry for entry in state["queue"]
+                                                      if entry["subject"] == intent["subject"]).pop("pending", None))
+        # A merge the runner journaled went through the queue, so its acceptance was not skipped.
+        if intent["summary"].endswith(WAIT_BYPASSED) and (not journaled or any(entry["summary"] == intent["summary"] for entry in entries)):
+            reports.append(_bypass_report(intent["subject"]))
     (directory / RECOVERY_FILE).unlink(missing_ok=True)
 
 
