@@ -254,7 +254,7 @@ and every lead command repeats it. It keeps the merge queue's `serve` and the li
 The close condition: every planned and queued story merged or removed, every finish line met, every lane idle or
 done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,
 never read back: a failed `fullHealth` at the
-current base head, a broken base, a blocked lane or one waiting on the lead, an unresolved `blocker.recorded`, a
+current base head, unless the base declares the `focused` posture, a broken base, a blocked lane or one waiting on the lead, an unresolved `blocker.recorded`, a
 child that won't stay up, and the tracker publisher's own items. `lead-resolve <journal id> --why TEXT` resolves a
 blocker; `lead-resolve full-health --why TEXT` asks the next pass to rerun a failed `fullHealth`. The runner's own
 blocker clears when its hold does, or with `base.repaired`. Each item says whether it holds the close or is only
@@ -262,7 +262,7 @@ shown, where it comes from and what clears it. The line map's Now chapter lists 
 from a supervisor that has stopped, or one more than a pass overdue, is shown as unavailable rather than stale.
 
 The close-out runs in order, each step succeeding before the next: `fullHealth`, once per base head, in a fresh
-checkout of the base; a follow-up for each deferred finding, keyed `<story>-<finding id>`; `delivery.closed`, then
+checkout of the base, or skipped under the `focused` posture; a follow-up for each deferred finding, keyed `<story>-<finding id>`; `delivery.closed`, then
 waiting for the tracker to have it; releasing the lead's leases, archiving the record and fast-forwarding the
 operator's checkout if it is clean and on the base; a friction note stub beside the archive; then the supervisor
 stops. Each pass writes what it did to the flow log's `<delivery>.supervisor.jsonl`.
@@ -271,6 +271,40 @@ The lead's commands keep working while it is down, and the supervisor skips what
 back. `lead-run --resume` stops what an earlier supervisor left running and starts it again; `lead-run --once` runs one
 pass in the foreground. `lead-close` asks a running supervisor to stop after its pass, and refuses while the lead's
 settings have uncommitted changes. `lead-init --no-supervisor`, or `RUN_DELIVERY_SUPERVISOR=off`, starts none.
+
+## The delivery posture
+
+`.agents/delivery-posture.json`, read from the tip of the delivery's own `<remote>/<base>` and nowhere else, decides
+whether the close-out runs `fullHealth`. It lives outside this file and the binding because a branch or a lead's
+checkout mustn't be able to change it, and because `"harness": "ignore"` must still reach it:
+
+```json
+{
+  "schemaVersion": "delivery-posture/1",
+  "posture": "focused",
+  "reason": "The gate is still being optimized."
+}
+```
+
+`schemaVersion`, `posture` (`gate` or `focused`) and a non-blank `reason` are required for either posture, and any other
+member is ignored. `full_health_step`, "Needs you" and `lead-close` each read it fresh, with a fetch bounded at 15 seconds;
+offline, the last fetched tip decides.
+
+| What the base holds | Posture | Code |
+| --- | --- | --- |
+| A valid `focused` declaration | `focused` | none |
+| A valid `gate` declaration | `gate` | none |
+| No file at the tip | `gate` | `posture_undeclared` |
+| Not valid UTF-8 JSON, an object failing the shape above, or an unknown `posture` | `gate` | `posture_malformed` |
+| A symlink, tree or submodule at that path, or a blob over 64 KiB | `gate` | `posture_malformed` |
+| The base ref can't be resolved or read, or `git` fails or times out | `gate` | `posture_unreadable` |
+
+Under `focused` no run starts and a failed run at that head holds nothing; nothing runs instead. The skip goes in the
+full-health log with no `result`. The first skip journals one `decision.recorded`, as does each later change of posture
+at close-out. The close-out summary, `delivery.closed`, `closed.json` on both close paths and the plan chapter's `closeOut` say
+the run was skipped, naming the source and the reason. A later `gate` starts a real run, even at the same head, and a
+result clears `closeOut`. Under `gate` nothing changes, and `posture_malformed` or `posture_unreadable` is named once in
+the journal and on each close-out line.
 
 ## Tracker updates
 

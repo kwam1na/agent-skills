@@ -15,7 +15,10 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
+import types
 import unittest
 import urllib.request
 from pathlib import Path
@@ -260,6 +263,19 @@ def lock_of(fx: Fixture) -> dict:
     return json.loads(path.read_text() or "{}") if path.exists() else {}
 
 
+def settled_lock(fx: Fixture, seconds: float = 10) -> dict:
+    """The supervisor's lock as written: `write_lock` truncates and then writes on every restart, so a read can land
+    between the two and find it empty. Retries within the bound, and fails naming the file past it."""
+    deadline = time.monotonic() + seconds
+    while True:
+        lock = lock_of(fx)
+        if lock:
+            return lock
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{fx.tmp / 'flow-log/FX-1.supervisor.lock'} stayed empty for {seconds}s")
+        time.sleep(0.02)
+
+
 def alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -437,7 +453,7 @@ class SupervisorProcessTests(unittest.TestCase):
         code, out = fx.flow("lead-init", cwd=m, env=running(fx))
         self.assertEqual(code, 0, out)
         wait_for(lambda: passes(fx), "a first pass")
-        serve = lambda: next(child["pid"] for child in lock_of(fx)["children"] if child["name"] == "serve")
+        serve = lambda: next(child["pid"] for child in settled_lock(fx)["children"] if child["name"] == "serve")
         for _ in range(3):
             before = serve()
             os.kill(before, signal.SIGKILL)
@@ -453,18 +469,18 @@ class SupervisorProcessTests(unittest.TestCase):
                                                                          for item in p.get("needsYou", []))],
                             "a pass reporting serve won't stay up", 60)
         self.assertTrue(flapping)
-        self.assertTrue(alive(lock_of(fx)["pid"]), "a child that won't stay up ended the supervisor")
+        self.assertTrue(alive(settled_lock(fx)["pid"]), "a child that won't stay up ended the supervisor")
         # A restart that fails is logged, and the supervisor carries on.
         binding_path = m / ".agents/orchestration.json"
         good = binding_path.read_text()
         binding = json.loads(good)
         binding["state"]["renderers"] = "not a list"
         binding_path.write_text(json.dumps(binding))
-        live = next(child["pid"] for child in lock_of(fx)["children"] if child["name"] == "live")
+        live = next(child["pid"] for child in settled_lock(fx)["children"] if child["name"] == "live")
         os.kill(live, signal.SIGKILL)
         log = fx.tmp / "flow-log/FX-1.supervisor.live.log"
         wait_for(lambda: "restart failed" in log.read_text(), "the failed restart to be logged", 60)
-        self.assertTrue(alive(lock_of(fx)["pid"]), "a failed restart ended the supervisor")
+        self.assertTrue(alive(settled_lock(fx)["pid"]), "a failed restart ended the supervisor")
         binding_path.write_text(good)
 
     def test_lead_close_stops_a_running_supervisor_after_its_pass(self) -> None:
@@ -520,6 +536,33 @@ class SupervisorProcessTests(unittest.TestCase):
         for pid in [first["pid"], *(child["pid"] for child in first["children"])]:
             wait_for(lambda: not alive(pid), f"process {pid} to stop once the delivery closed", 30)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1)
+
+
+class SettledLockTests(unittest.TestCase):
+    """A read during a restart finds the truncated file: the test's reads retry, within their bound."""
+
+    def fixture(self) -> tuple[types.SimpleNamespace, Path]:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        lock = Path(folder.name) / "flow-log/FX-1.supervisor.lock"
+        lock.parent.mkdir()
+        lock.write_text("")
+        return types.SimpleNamespace(tmp=Path(folder.name)), lock
+
+    def test_a_read_during_a_restart_waits_for_the_write(self) -> None:
+        fx, lock = self.fixture()
+        writer = threading.Timer(0.2, lock.write_text, ['{"pid": 7, "children": []}'])
+        writer.start()
+        self.addCleanup(writer.join)
+        self.assertEqual(lock_of(fx), {}, "the plain read this guards against no longer finds the race")
+        self.assertEqual(settled_lock(fx)["children"], [])
+
+    def test_a_lock_that_stays_empty_fails_within_the_bound(self) -> None:
+        fx, lock = self.fixture()
+        started = time.monotonic()
+        with self.assertRaisesRegex(AssertionError, "stayed empty for 0.2s"):
+            settled_lock(fx, seconds=0.2)
+        self.assertLess(time.monotonic() - started, 5)
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
@@ -1298,6 +1341,362 @@ class SupervisorTrackerTests(unittest.TestCase):
         seen = len(passes(fx))
         wait_for(lambda: len(passes(fx)) > seen + 1, "two passes after the resume")
         self.assertEqual(len([t for t in epic_comments(backend) if "the API is down" in t]), 1, "posted twice")
+
+
+FOCUSED_REASON = "The gate is still being optimized."
+PASS_WORDING = re.compile(r"\bpass(ed|es|ing)?\b", re.IGNORECASE)
+
+
+def declaration(posture: str = "focused", reason: str = FOCUSED_REASON) -> str:
+    return json.dumps({"schemaVersion": "delivery-posture/1", "posture": posture, "reason": reason}) + "\n"
+
+
+def declare(fx: Fixture, text: str, branch: str = "feature/FX-1", path: str = ".agents/delivery-posture.json") -> str:
+    """Push a declaration to the remote's branch from a clone of its own, so the lead's checkout and tracking ref don't
+    move: what the supervisor reads of it, it reads by fetching. Returns the new tip."""
+    other = fx.tmp / "declaring"
+    if not other.exists():
+        origin = sh("git", "remote", "get-url", "origin", cwd=fx.main).stdout.strip()
+        sh("git", "clone", "-q", origin, other)
+    sh("git", "fetch", "-q", "origin", cwd=other)
+    sh("git", "checkout", "-q", "-B", branch, f"origin/{branch}", cwd=other)
+    target = other / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+    commit(other, "the posture")
+    sh("git", "push", "-q", "origin", f"HEAD:refs/heads/{branch}", cwd=other)
+    return sh("git", "rev-parse", "HEAD", cwd=other).stdout.strip()
+
+
+def health_runs(fx: Fixture) -> int:
+    runs = fx.tmp / "health.runs"
+    return len(runs.read_text().splitlines()) if runs.exists() else 0
+
+
+def decisions(fx: Fixture, words: str) -> list[dict]:
+    return [e for e in kinds(fx, "decision.recorded") if words in e["summary"]]
+
+
+def plan_of(fx: Fixture) -> dict:
+    return json.loads((fx.tmp / "record/plan.json").read_text())
+
+
+def closed_of(fx: Fixture) -> dict:
+    return json.loads((fx.tmp / "flow-log/FX-1.closed.json").read_text())
+
+
+def fix_criteria(path: Path) -> None:
+    """Criteria turn the plan chapter on; no finish lines leave the close to what a case opens."""
+    d = json.loads(path.read_text())
+    d["stories"]["FX-2"]["criteria"] = [{"id": "one-works", "text": "One works"}]
+    d["stories"]["FX-3"]["criteria"] = [{"id": "two-works", "text": "Two works"}]
+    d["finish"] = []
+    path.write_text(json.dumps(d, indent=2))
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class SupervisorPostureTests(unittest.TestCase):
+    """`focused` on the delivery's base: the close-out runs no fullHealth, says so everywhere, and never reads as a pass."""
+
+    run_serially = True
+    setUpClass = classmethod(SupervisorPassTests.setUpClass.__func__)
+    merged = SupervisorPassTests.merged
+    once = SupervisorPassTests.once
+
+    def fixture(self, closable: bool = True) -> Fixture:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        path = supervised(fx)
+        fix_criteria(path)
+        commit(fx.main, "FX-1: criteria, no finish lines")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        if closable:
+            self.closable(fx)
+        return fx
+
+    def closable(self, fx: Fixture) -> None:
+        self.merged(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
+            changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"], "by": "lead",
+                                      "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
+
+    def lead_close(self, fx: Fixture) -> str:
+        """It exits 1 for what it leaves to the operator, and the fixture keeps its remote branches."""
+        code, out = fx.flow("lead-close", cwd=fx.main)
+        self.assertIn(code, (0, 1), out)
+        self.assertIn("FX-1: closed out", out)
+        self.assertNotIn("posture wasn't recorded", out)
+        return out
+
+    def assert_says_skipped(self, fx: Fixture, text: str) -> None:
+        for words in ("skipped", "focused", "origin/feature/FX-1", FOCUSED_REASON):
+            self.assertIn(words, text)
+        self.assertIsNone(PASS_WORDING.search(text), text)
+
+    def assert_skip_recorded(self, fx: Fixture) -> None:
+        said = decisions(fx, "fullHealth skipped")
+        self.assertEqual(len(said), 1, said)
+        self.assert_says_skipped(fx, said[0]["summary"])
+        self.assertEqual(plan_of(fx)["closeOut"], {"fullHealth": "skipped", "posture": "focused",
+                                                   "source": "origin/feature/FX-1", "reason": FOCUSED_REASON})
+        self.assert_says_skipped(fx, json.dumps(closed_of(fx)["fullHealth"]))
+        self.assertEqual(health_runs(fx), 0, "a run started under focused")
+
+    def test_focused_on_the_base_closes_with_no_run_and_every_record_says_skipped(self) -> None:
+        fx = self.fixture()
+        declare(fx, declaration())
+        last = self.once(fx)
+        self.assertEqual(last["closeHeldBy"], [], last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+        self.assert_skip_recorded(fx)
+        # The supervisor's close-out summary, in its pass log and in delivery.closed.
+        self.assert_says_skipped(fx, last["closeOut"][0])
+        self.assert_says_skipped(fx, kinds(fx, "delivery.closed")[0]["summary"])
+        # No entry the log calls a result, so nothing can read it as a pass.
+        entries = [json.loads(line) for line in (fx.tmp / "flow-log/FX-1.full-health.jsonl").read_text().splitlines()]
+        self.assertTrue(entries)
+        self.assertFalse([e for e in entries if "result" in e], entries)
+        # Further passes write nothing more.
+        self.once(fx)
+        self.once(fx)
+        self.assert_skip_recorded(fx)
+        self.assertEqual(len(decisions(fx, "posture changed")), 0)
+
+    def test_gate_or_nothing_declared_runs_and_holds_as_it_always_did(self) -> None:
+        for name, text in (("undeclared", None), ("gate", declaration("gate", "The gate is on."))):
+            with self.subTest(declared=name):
+                fx = self.fixture()
+                if text:
+                    declare(fx, text)
+                (fx.tmp / "health").write_text("fail")
+                self.once(fx)
+                self.assertEqual(health_runs(fx), 1)
+                held = self.once(fx)["closeHeldBy"]
+                self.assertTrue(any(h.startswith("fullHealth failed at") for h in held), held)
+                self.assertEqual(health_runs(fx), 1)
+                self.assertEqual(kinds(fx, "delivery.closed"), [])
+                (fx.tmp / "health").write_text("pass")
+                code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=fx.main)
+                self.assertEqual(code, 0, out)
+                last = self.once(fx)
+                self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+                self.assertTrue(last["closeOut"][0].startswith("fullHealth passed at"), last)
+                self.assertNotIn("closeOut", plan_of(fx))
+                self.assertEqual(decisions(fx, "skipped") + decisions(fx, "posture"), [])
+                self.assertNotIn("fullHealth", closed_of(fx))
+                self.assertNotIn("skipped", json.dumps(closed_of(fx)))
+
+    def test_the_base_moving_to_focused_after_a_failed_run_frees_the_close_and_is_recorded_once(self) -> None:
+        fx = self.fixture()
+        (fx.tmp / "health").write_text("fail")
+        self.once(fx)
+        self.assertTrue(any(h.startswith("fullHealth failed at") for h in self.once(fx)["closeHeldBy"]))
+        self.assertEqual(health_runs(fx), 1)
+        declare(fx, declaration())
+        last = self.once(fx)
+        self.assertEqual(last["closeHeldBy"], [], last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+        self.once(fx)
+        self.assertEqual(health_runs(fx), 1, "a run started once the base said focused")
+        changed = decisions(fx, "posture changed")
+        self.assertEqual(len(changed), 1, changed)
+        self.assertIn("from gate to focused", changed[0]["summary"])
+        self.assertEqual(len(decisions(fx, "fullHealth skipped")), 1)
+        self.assertEqual(plan_of(fx)["closeOut"]["fullHealth"], "skipped")
+
+    def test_a_failed_run_at_exactly_the_tip_that_says_focused_holds_nothing(self) -> None:
+        fx = self.fixture()
+        tip = declare(fx, declaration())
+        with open(fx.tmp / "flow-log/FX-1.full-health.jsonl", "a") as log:
+            log.write(json.dumps({"head": tip, "result": "failed", "output": "boom", "at": "2026-01-01T00:00:00.000000Z"}) + "\n")
+        last = self.once(fx)
+        self.assertEqual(last["closeHeldBy"], [], last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+        self.assertEqual(health_runs(fx), 0)
+        self.assertEqual(plan_of(fx)["closeOut"]["fullHealth"], "skipped")
+        # A lead-resolve rerun entry isn't a result: the skip stands while the base says focused.
+        code, out = fx.flow("lead-resolve", "full-health", "--why", "one more", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(plan_of(fx)["closeOut"]["fullHealth"], "skipped")
+        self.once(fx)
+        self.assertEqual(plan_of(fx)["closeOut"]["fullHealth"], "skipped")
+        self.assertEqual(health_runs(fx), 0)
+
+    def test_focused_anywhere_but_the_tip_of_the_remote_base_gets_nothing(self) -> None:
+        fx = self.fixture()
+        declare(fx, declaration("gate", "The gate is on."))
+        # A candidate's branch, the lead's working tree, and a local commit nobody pushed.
+        sh("git", "checkout", "-q", "-b", "feature/candidate", "origin/feature/FX-1", cwd=fx.tmp / "declaring")
+        (fx.tmp / "declaring/.agents/delivery-posture.json").write_text(declaration())
+        commit(fx.tmp / "declaring", "a candidate says focused")
+        sh("git", "push", "-q", "origin", "feature/candidate", cwd=fx.tmp / "declaring")
+        (fx.main / ".agents/delivery-posture.json").write_text(declaration())
+        commit(fx.main, "a local commit nobody pushed")
+        (fx.main / ".agents/delivery-posture.json").write_text(declaration("focused", "And the working tree."))
+        self.once(fx)
+        self.assertEqual(health_runs(fx), 1, "fullHealth didn't run under the base's gate")
+        self.assertEqual(decisions(fx, "fullHealth skipped"), [])
+
+    def test_a_malformed_declaration_runs_with_the_reason_named_once(self) -> None:
+        fx = self.fixture()
+        declare(fx, '{"schemaVersion": "delivery-posture/1", "posture": "focused", "reason": "   "}\n')
+        (fx.tmp / "health").write_text("fail")
+        last = self.once(fx)
+        self.assertEqual(health_runs(fx), 1)
+        self.assertIn("posture_malformed", last["closeOut"][0])
+        self.assertIn(".agents/delivery-posture.json", last["closeOut"][0])
+        self.once(fx)
+        named = decisions(fx, "posture_malformed")
+        self.assertEqual(len(named), 1, named)
+        self.assertIn("origin/feature/FX-1", named[0]["summary"])
+        self.assertNotIn("closeOut", plan_of(fx))
+
+    def test_the_delivery_s_base_decides_when_the_binding_names_another(self) -> None:
+        for delivery_says, binding_says, runs in (("gate", "focused", 1), ("focused", "gate", 0)):
+            with self.subTest(delivery=delivery_says, binding=binding_says):
+                fx = Fixture(self.generation, self.receipt)
+                self.addCleanup(fx.close)
+                self.addCleanup(stop_supervisors, fx.tmp)
+                path = supervised(fx)
+                fix_criteria(path)
+                d = json.loads(path.read_text())
+                d["baseBranch"] = "feature/FX-1"
+                path.write_text(json.dumps(d, indent=2))
+                binding_path = fx.main / ".agents/orchestration.json"
+                binding = json.loads(binding_path.read_text())
+                binding["base"]["ref"] = "main"
+                binding["bases"] = ["feature/FX-1"]
+                binding_path.write_text(json.dumps(binding, indent=2))
+                commit(fx.main, "FX-1: a binding based elsewhere")
+                sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+                fx.env["RUN_DELIVERY_BASE"] = "feature/FX-1"
+                code, out = fx.flow("lead-init", cwd=fx.main)
+                self.assertEqual(code, 0, out)
+                self.closable(fx)
+                declare(fx, declaration(delivery_says, "Said on the delivery's base."))
+                declare(fx, declaration(binding_says, "Said on the binding's base."), branch="main")
+                self.once(fx)
+                self.assertEqual(health_runs(fx), runs)
+
+    def test_lead_close_with_the_supervisor_down_records_the_skip_the_same_way(self) -> None:
+        fx = self.fixture()
+        declare(fx, declaration())
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
+        out = self.lead_close(fx)
+        self.assert_skip_recorded(fx)
+        self.assert_says_skipped(fx, next(line for line in out.splitlines() if "fullHealth skipped" in line))
+        # Run again, it records nothing new.
+        self.lead_close(fx)
+        self.assert_skip_recorded(fx)
+
+    def test_lead_close_under_gate_does_what_it_did(self) -> None:
+        fx = self.fixture()
+        declare(fx, declaration("gate", "The gate is on."))
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
+        out = self.lead_close(fx)
+        self.assertEqual(health_runs(fx), 0)
+        self.assertNotIn("skipped", out)
+        self.assertNotIn("fullHealth", closed_of(fx))
+        self.assertFalse((fx.tmp / "flow-log/FX-1.full-health.jsonl").exists())
+        self.assertNotIn("closeOut", plan_of(fx))
+
+    def test_one_running_supervisor_honours_the_new_tip_with_no_help(self) -> None:
+        fx = self.fixture()
+        (fx.tmp / "health").write_text("fail")
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        wait_for(lambda: any(h.startswith("fullHealth failed at") for p in passes(fx) for h in p.get("closeHeldBy", [])),
+                 "a failed fullHealth holding the close")
+        pid = settled_lock(fx)["pid"]
+        tracking = sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout.strip()
+        declare(fx, declaration())
+        self.assertEqual(sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout.strip(), tracking,
+                         "the fixture moved the tracking ref")
+        wait_for(lambda: kinds(fx, "delivery.closed"), "the same supervisor to close on the new tip", 60)
+        self.assertEqual(health_runs(fx), 1)
+        self.assertEqual(len(decisions(fx, "posture changed")), 1)
+        wait_for(lambda: not alive(pid), "the supervisor to stop", 60)
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class SupervisorPostureRestoredTests(unittest.TestCase):
+    """A skip, then `gate`, with the tracker holding the close open between the two passes: a real run starts, and once
+    it passes nothing says skipped."""
+
+    run_serially = True
+    setUpClass = classmethod(SupervisorTrackerTests.setUpClass.__func__)
+    once = SupervisorTrackerTests.once
+    closable = SupervisorTrackerTests.closable
+
+    def fixture(self) -> tuple[Fixture, object]:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        path = supervised(fx)
+        backend = tracked(fx, FileBackend)
+        self.addCleanup(backend.close)
+        fix_criteria(path)
+        commit(fx.main, "FX-1: criteria, no finish lines")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        return fx, backend
+
+    def skipped_and_held_open(self) -> Fixture:
+        fx, backend = self.fixture()
+        self.closable(fx, deferred=True)
+        declare(fx, declaration())
+        with backend.edit() as store:
+            store["failures"].append({"op": "create", "ticket": None, "status": 409, "times": 1})
+        last = self.once(fx)
+        self.assertTrue(last["closeOut"][0].startswith("fullHealth skipped"), last)
+        self.assertTrue(any(line.startswith("follow-ups: waiting") for line in last["closeOut"]), last)
+        self.assertEqual(kinds(fx, "delivery.closed"), [])
+        self.assertEqual(plan_of(fx)["closeOut"]["fullHealth"], "skipped")
+        self.assertEqual(health_runs(fx), 0)
+        return fx
+
+    def assert_closed_on_a_pass(self, fx: Fixture) -> None:
+        last = self.once(fx)
+        for _ in range(3):
+            if (fx.tmp / "flow-log/FX-1.closed.json").exists():
+                break
+            last = self.once(fx)
+        self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
+        self.assertEqual(health_runs(fx), 1)
+        self.assertNotIn("closeOut", plan_of(fx))
+        self.assertTrue(last["closeOut"][0].startswith("fullHealth passed at"), last)
+        self.assertNotIn("fullHealth", closed_of(fx))
+        self.assertNotIn("skipped", json.dumps(closed_of(fx)))
+        self.assertNotIn("skipped", kinds(fx, "delivery.closed")[0]["summary"])
+
+    def test_gate_at_a_later_head_starts_a_real_run_and_clears_the_skip(self) -> None:
+        fx = self.skipped_and_held_open()
+        declare(fx, declaration("gate", "The gate is back."))
+        self.assert_closed_on_a_pass(fx)
+        changed = decisions(fx, "posture changed")
+        self.assertEqual(len(changed), 1, changed)
+        self.assertIn("from focused to gate", changed[0]["summary"])
+
+    def test_gate_at_the_same_head_starts_a_real_run_and_clears_the_skip(self) -> None:
+        fx = self.skipped_and_held_open()
+        # The tip can't be read once, so the same head resolves to gate with the code that says why.
+        real = sh("sh", "-c", "command -v git").stdout.strip()
+        stubs = fx.tmp / "stubs"
+        stubs.mkdir()
+        (stubs / "git").write_text(f'#!/bin/sh\nif [ "$1" = ls-tree ]; then exit 1; fi\nexec {real} "$@"\n')
+        (stubs / "git").chmod(0o755)
+        path = fx.env["PATH"]
+        fx.env["PATH"] = f"{stubs}{os.pathsep}{path}"
+        last = self.once(fx)
+        fx.env["PATH"] = path
+        self.assertEqual(health_runs(fx), 1, last)
+        self.assertIn("posture_unreadable", last["closeOut"][0])
+        self.assert_closed_on_a_pass(fx)
 
 
 if __name__ == "__main__":

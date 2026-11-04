@@ -363,14 +363,20 @@ lead checks it as below, marks it met and journals it.
 
 With run-delivery's supervisor running, the lead does none of these by hand.
 Once nothing holds the close, the supervisor runs `fullHealth` once per base
-head, files a follow-up for each deferred finding, journals `delivery.closed`
+head, unless the base declares the `focused` posture, files a follow-up for each deferred finding, journals `delivery.closed`
 and waits until the tracker has every update, archives the record, aligns the operator's
 checkout when it is clean, and writes a friction note stub for
 `$compound-learning`, in that order. The lead's part is what holds the close,
 which every lead command names from the supervisor's last pass, and the
 friction note. The steps below are for a delivery without it.
 
-- Run the binding's `fullHealth` once, on the final base: in a fresh detached
+- Read `.agents/delivery-posture.json` at the tip of the delivery's base, fetched
+  fresh: never a candidate's copy or your own checkout's. Under `focused`, no run
+  starts, a failed run at that head holds nothing, nothing runs in its place, and
+  the journal, the close-out summary and the plan chapter
+  say the run was skipped under the posture, naming its source and reason. `gate`,
+  no file, or a file that is malformed or unreadable is a gate.
+- Unless the delivery's base declares the `focused` posture at its tip, run the binding's `fullHealth` once, on the final base: in a fresh detached
   checkout of the final base tip, after the binding's `prepare` steps, with
   the binding's `environment` set and its placeholders filled in. Never run
   it in the operator's own checkout. It is the backstop for every
@@ -887,7 +893,7 @@ it is not a freshness proof or permission to skip any admission check.
 | `ready` | An argv run before merging; a non-zero exit stops with `ready_refused`. |
 | `merge` | An argv that must use `{expectedHead}`. A binding whose `merge` lacks it is invalid. |
 | `release` | Ordered targets, each with an `id`, `argv`, `stopsOnFailure` and `requiresApproval`, and an optional `timeoutSeconds`. |
-| `fullHealth` | The argv for the close-out run. |
+| `fullHealth` | The argv for the close-out run. Required, and not run while the base declares the `focused` posture. |
 | `leases` | Each lease's `id`, `description` and `defaultHolder`, plus optional `materialize` and `withdraw` argv. |
 | `state` | `{directory, renderers, publishers, snapshotMaxAgeSeconds?, trackerSnapshot?, forgeSnapshot?, refreshSeconds?, workHints?, liveHome?}`. `liveHome` is the id of a declared argv renderer whose HTML view the live server serves at its front page, with the live store injected as at `/view/<output>`; the view must carry `<meta name="delivery-state-live">`. Without it the front page is the built-in static page. A `liveHome` that names a built-in renderer, an unknown id, or a view whose output is not an HTML file is refused. `trackerSnapshot`, `{argv, timeoutSeconds?}`, is the repository's command that prints the delivery's `work-snapshot/1` tracker snapshot; `{parent}` in its argv is the record's `meta.trackerParent`, and `{stateDirectory}` in it, or in a renderer's, a publisher's or `workHints` argv, is the resolved state directory the command runs for, so a repository that keeps several records reads the one being served rather than the one its binding names; the command owns whatever access it needs. `forgeSnapshot`, the same shape, prints the forge snapshot of the delivery's change requests; this workflow ships no forge or tracker client, so both are the repository's own, or the ready-made commands described below. `serve` runs them from the repository's checkout every `refreshSeconds`, 180 when absent and at most 86400, and 0 turns that off; it does not start on a block or interval it cannot use. Each command's stdout is read until it exits, plus a two-second drain: output that a process it leaves behind writes later is not read, and output written during the drain can spoil the snapshot. Each runs in its own process group with a per-run marker in its environment; afterwards, interrupted or not, the state tool stops what is left in that group or carries the marker, never the caller or its parents, pid 1, another user's process or one that started before the run, and stops nothing when it cannot read the process table. A child that clears its environment, or whose environment the system hides, such as some system binaries on macOS, survives. On Windows only the command itself is stopped, and only when it overran or was interrupted. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`, or `{id, kind: "host"}`, which writes an outbox for the lead to publish; at most one publisher is a host publisher. `workHints`, `{argv, timeoutSeconds?}`, is the repository's command that prints a `work-hints/1` document of each item's files and priority for `next`, run the same way. `snapshotMaxAgeSeconds`, a whole number of seconds, is how old a forge or tracker snapshot may be before `reconcile` refuses it, 900 when absent. After each of its state writes the runner passes this member to the render wrapper; when it is valid and declares no renderer and no publisher, the runner starts no wrapper, and reads the record itself instead, noting a failure as the wrapper would. |
 

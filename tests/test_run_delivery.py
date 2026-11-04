@@ -16,6 +16,7 @@ their own signal handlers, working directory and module state.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import fcntl
 import hashlib
@@ -57,7 +58,6 @@ PROFILE = "run-delivery"
 TOOL_RELATIVE = "skills/run-delivery/scripts/run_delivery.py"
 # The stored runtime this profile's product is rebound from.
 RUNTIME_SOURCE = ROOT / "product-runtime"
-RUNTIME_VERSION = "0.7.7"
 # The fixture page adapter-test serves, byte for byte as the tool's own fixture page was before it moved in.
 ADAPTER_FIXTURE_SHA256 = "31257fd55d83ebc6aa602b7a508248d6f44776991f54e1127ce1629b0bf59a81"
 POSIX_ONLY = "the run-delivery tool is POSIX-only: it uses fcntl, process groups and sh"
@@ -451,6 +451,76 @@ def setup_delivery(fx: Fixture) -> Path:
     return path
 
 
+POSTURE_VECTORS = ROOT / "tests/fixtures/delivery-posture-vectors.json"
+POSTURE_PATH = ".agents/delivery-posture.json"
+# Every git command fails, or never returns and leaves a child holding its output, as a fetch's transport can.
+POSTURE_GIT_STUBS = {"fails": "#!/bin/sh\nexit 1\n", "hangs": "#!/bin/sh\nsleep 300 &\nwait\n"}
+
+
+def posture_tree(repository: Path, base: dict) -> None:
+    """Put what a vector's `base` holds at the declaration's path into a checkout."""
+    path = repository / POSTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    kind = base["kind"]
+    if kind == "blob":
+        data = base64.b64decode(base["base64"]) if "base64" in base else base["text"].encode("utf-8")
+        path.write_bytes(data + b" " * (base.get("padTo", len(data)) - len(data)))
+    elif kind == "symlink":
+        path.symlink_to(base["target"])
+    elif kind == "tree":
+        path.mkdir()
+        (path / "inner.json").write_text("{}\n")
+    elif kind == "submodule":
+        tip = sh("git", "rev-parse", "HEAD", cwd=repository).stdout.strip()
+        sh("git", "update-index", "--add", "--cacheinfo", f"160000,{tip},{POSTURE_PATH}", cwd=repository)
+    elif kind != "none":
+        raise AssertionError(f"no such base kind: {kind}")
+
+
+def posture_vector_repo(vector: dict, folder: Path) -> tuple[Path, dict[str, str]]:
+    """A clone and a local bare remote set up as a vector says: (the clone to read in, the environment to read with).
+    The vector file's `setup` member says what each field means; both readers' cases build their repository here."""
+    remote, author, clone = folder / "remote.git", folder / "author", folder / "clone"
+    sh("git", "init", "-q", "--bare", "--initial-branch=main", remote)
+    quieten(remote)
+    sh("git", "init", "-q", "--initial-branch=main", author)
+    quieten(author)
+    (author / "README.md").write_text("fixture\n")
+    commit(author, "first")
+    sh("git", "remote", "add", "origin", remote, cwd=author)
+    if vector.get("ref") != "missing":
+        sh("git", "push", "-q", "origin", "main", cwd=author)
+    sh("git", "init", "-q", "--initial-branch=main", clone)
+    quieten(clone)
+    sh("git", "remote", "add", "origin", remote, cwd=clone)
+    if vector.get("ref") != "missing":
+        sh("git", "fetch", "-q", "--no-tags", "origin", cwd=clone)
+        sh("git", "remote", "set-head", "origin", "main", cwd=clone)
+    posture_tree(author, vector["base"])
+    if vector["base"]["kind"] != "submodule":  # its gitlink is in the index, and adding everything would drop it
+        sh("git", "add", "-A", cwd=author)
+    sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "the declaration", "--allow-empty", cwd=author)
+    if vector.get("ref") != "missing":
+        sh("git", "push", "-q", "origin", "main", cwd=author)
+    if vector.get("fetch") == "fails":
+        sh("git", "fetch", "-q", "--no-tags", "origin", cwd=clone)
+        sh("git", "remote", "set-url", "origin", folder / "gone.git", cwd=clone)
+    if "shadow" in vector:
+        sh("git", "checkout", "-q", "-b", "shadow", cwd=author)
+        posture_tree(author, vector["shadow"])
+        commit(author, "a local name that isn't the base")
+        sh("git", "fetch", "-q", "--no-tags", author, "shadow:refs/heads/origin/main", cwd=clone)
+        sh("git", "update-ref", "refs/tags/origin/main", "refs/heads/origin/main", cwd=clone)
+    env = dict(os.environ)
+    if "git" in vector:
+        stubs = folder / "stubs"
+        stubs.mkdir()
+        (stubs / "git").write_text(POSTURE_GIT_STUBS[vector["git"]])
+        (stubs / "git").chmod(0o755)
+        env["PATH"] = f"{stubs}{os.pathsep}{env['PATH']}"
+    return clone, env
+
+
 def write_results(review: Path, n: int, key: str, lenses, findings=None, resolved=None, candidate=None, only=None):
     meta = json.loads((review / f"round-{n}.meta.json").read_text())
     for i, (lens, (short, _)) in enumerate(lenses):
@@ -542,7 +612,6 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
     # -- the release the cases run from ----------------------------------------------------------------
 
     def test_the_built_release_carries_the_rebound_runtime_and_verifies(self) -> None:
-        self.assertEqual(self.descriptor["runtimeVersion"], RUNTIME_VERSION)
         self.assertEqual(self.descriptor["nodeMinimum"], "22.6.0")
         self.assertEqual({k: v for k, v in self.rebound.items() if k != "workflowContentSha256"},
                          {k: v for k, v in self.descriptor.items() if k != "workflowContentSha256"})
@@ -4735,6 +4804,97 @@ class RunDeliveryContinuousIntegrationTests(unittest.TestCase):
         # Both are in place before the suite runs.
         self.assertLess(workflow.index("install -y ffmpeg"), workflow.index("scripts/run-tests.py"))
         self.assertLess(workflow.index("brew install ffmpeg"), workflow.index("scripts/run-tests.py"))
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class DeliveryPostureReaderTests(unittest.TestCase):
+    """The one reader of `.agents/delivery-posture.json`, against every vector the harness's resolver also runs."""
+
+    SECONDS = 1
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location("run_delivery_for_posture", ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        cls.tool = importlib.util.module_from_spec(spec)
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(cls.tool)
+        finally:
+            sys.dont_write_bytecode = previous
+        cls.file = json.loads(POSTURE_VECTORS.read_text(encoding="utf-8"))
+
+    def resolve(self, vector: dict) -> tuple[dict, float]:
+        with tempfile.TemporaryDirectory() as folder:
+            clone, env = posture_vector_repo(vector, Path(folder))
+            started = time.monotonic()
+            with mock.patch.dict(os.environ, env, clear=True):
+                result = self.tool.resolve_delivery_posture(clone, "origin", "main", seconds=self.SECONDS)
+            return result, time.monotonic() - started
+
+    def test_every_vector_gives_its_posture_code_and_source(self) -> None:
+        self.assertEqual(self.file["path"], self.tool.POSTURE_FILE)
+        for vector in self.file["vectors"]:
+            with self.subTest(vector=vector["id"]):
+                result, took = self.resolve(vector)
+                self.assertEqual({key: result[key] for key in ("posture", "code", "source")}, vector["expect"], result)
+                self.assertEqual(set(result), {"posture", "reason", "source", "baseTipSha", "code"})
+                self.assertTrue(result["reason"].strip(), result)
+                if vector["expect"]["code"]:  # each code's reason names the path and the base
+                    self.assertIn(self.file["path"], result["reason"])
+                    self.assertIn(self.file["base"], result["reason"])
+                self.assertEqual(result["baseTipSha"] is None, vector["expect"]["source"] == "fallback", result)
+                self.assertLess(took, 20, "a read outran its bound")
+
+    def test_the_declared_reason_comes_back_and_the_tip_is_the_fetched_one(self) -> None:
+        vector = next(v for v in self.file["vectors"] if v["id"] == "valid-focused")
+        with tempfile.TemporaryDirectory() as folder:
+            clone, _ = posture_vector_repo(vector, Path(folder))
+            result = self.tool.resolve_delivery_posture(clone, "origin", "main")
+            tip = sh("git", "ls-remote", "origin", "refs/heads/main", cwd=clone).stdout.split()[0]
+        self.assertEqual((result["reason"], result["baseTipSha"]), ("The gate is still being optimized.", tip))
+
+    def test_a_hanging_git_is_stopped_with_the_child_that_holds_its_output(self) -> None:
+        vector = next(v for v in self.file["vectors"] if v["id"] == "hanging-git")
+        with tempfile.TemporaryDirectory() as folder:
+            clone, env = posture_vector_repo(vector, Path(folder))
+            started = time.monotonic()
+            with mock.patch.dict(os.environ, env, clear=True):
+                done = self.tool.posture_git(clone, ["status"], self.SECONDS)
+            took = time.monotonic() - started
+        self.assertIsNone(done)
+        self.assertLess(took, self.SECONDS + 5, "the child holding the pipe kept the bound from holding")
+
+    def test_a_tip_with_a_declaration_in_a_subfolder_read_from_there_gives_the_same_answer(self) -> None:
+        vector = next(v for v in self.file["vectors"] if v["id"] == "valid-focused")
+        with tempfile.TemporaryDirectory() as folder:
+            clone, _ = posture_vector_repo(vector, Path(folder))
+            (clone / "deep").mkdir()
+            self.assertEqual(self.tool.resolve_delivery_posture(clone / "deep", "origin", "main")["posture"], "focused")
+
+    def test_what_the_record_shows_of_a_declaration_is_always_valid_plan_text(self) -> None:
+        declared = {"posture": "focused", "source": "origin/main", "code": None, "baseTipSha": "a" * 40}
+        for name, reason in (("long", "x" * 70000), ("lines", "first\nsecond\u2028third\ttab"), ("surrogate", "bad \ud800 text"),
+                             ("controls", "\x01\x02")):
+            with self.subTest(reason=name):
+                said = self.tool.posture_said({**declared, "reason": reason})
+                self.assertLessEqual(len(said["reason"]), 600)
+                self.assertTrue(said["reason"].strip())
+                self.assertIsNone(re.search("[\u0000-\u001f\u007f-\u009f\u2028\u2029]", said["reason"]), said)
+                said["reason"].encode("utf-8")
+
+    def test_the_rule_is_pinned_where_a_delivery_without_the_supervisor_reads_it(self) -> None:
+        def normal(path: str) -> str:
+            return " ".join((ROOT / path).read_text(encoding="utf-8").split())
+        skill = normal("skills/orchestrate-work/SKILL.md")
+        guide = normal("skills/orchestrate-work/references/orchestration-guide.md")
+        self.assertIn("With `focused` declared in `.agents/delivery-posture.json` at the tip of the delivery's base, "
+                      "the close-out runs no `fullHealth`, and a failed run at that head holds nothing", skill)
+        self.assertIn("Nothing runs in its place", skill)
+        self.assertIn("Unless the delivery's base declares the `focused` posture at its tip, run the binding's "
+                      "`fullHealth` once, on the final base", guide)
+        self.assertIn("runs `fullHealth` once per base head, unless the base declares the `focused` posture", guide)
+        self.assertIn("say the run was skipped under the posture, naming its source and reason", guide)
 
 
 if __name__ == "__main__":

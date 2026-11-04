@@ -683,7 +683,7 @@ PLAN_LIST = 100
 PLAN_RECORD_KINDS = ("handed", "merged", "review")
 PLAN_CHANGE_KINDS = ("added", "removed", "relaxed", "changed", "finish")
 PLAN_KEYS = ("schemaVersion", "updated", "outcome", "requiredLenses", "proofKinds", "units", "finish", "approved",
-             "changes", "evidence", "approvals", "outOfScope", "planReview")
+             "changes", "evidence", "approvals", "outOfScope", "planReview", "closeOut")
 PLAN_REQUIRED = ("schemaVersion", "updated", "outcome", "requiredLenses", "proofKinds", "units", "finish", "approved",
                  "changes", "evidence")
 PLAN_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -1014,6 +1014,15 @@ def validate_plan(value: object) -> dict:
         _text(text, f"outOfScope[{i}]", PLAN_TEXT)
     if "planReview" in plan:
         _plan_review(plan["planReview"])
+    if "closeOut" in plan:
+        members = {"fullHealth", "posture", "source", "reason"}
+        close_out = _plan_object(plan["closeOut"], "closeOut", members, members)
+        if close_out["fullHealth"] != "skipped":
+            raise ConfigError("closeOut.fullHealth: must be skipped")
+        if close_out["posture"] != "focused":
+            raise ConfigError("closeOut.posture: must be focused")
+        _text(close_out["source"], "closeOut.source", PLAN_LABEL)
+        _text(close_out["reason"], "closeOut.reason", PLAN_TEXT)
     return plan
 
 
