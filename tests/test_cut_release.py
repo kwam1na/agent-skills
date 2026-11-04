@@ -163,7 +163,8 @@ class RebindingTests(unittest.TestCase):
                     descriptor = store / "runtime.json"
                     text = descriptor.read_text(encoding="utf-8")
                     digest = json.loads(text)["workflowContentSha256"]
-                    descriptor.write_text(text.replace('"0.7.7"', f'"{digest}"'), encoding="utf-8")
+                    version = json.loads(text)["runtimeVersion"]
+                    descriptor.write_text(text.replace(f'"{version}"', f'"{digest}"'), encoding="utf-8")
                 with mock.patch.object(command, "RUNTIME_SOURCE", store), self.assertRaises(ValueError):
                     command.rebound_runtime("core", directory / "core")
 
