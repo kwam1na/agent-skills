@@ -4782,9 +4782,10 @@ class RunDeliveryRenderHalvesTests(unittest.TestCase):
 
     def test_each_half_runs_only_its_own_entries_and_no_half_runs_both(self) -> None:
         state = {"directory": "s", "renderers": [{"id": "page", "builtin": "static-page", "output": "p.html"}],
-                 "publishers": [{"id": "post", "argv": ["true"]}]}
+                 "publishers": [{"id": "post", "argv": ["true"]}], "liveHome": "page"}
+        unhomed = {key: value for key, value in state.items() if key != "liveHome"}
         c = types.SimpleNamespace(release=Path("/release"), state=Path("/record"), root=Path("/repo"))
-        for only, expected in ((None, state), ("publishers", {**state, "renderers": []}),
+        for only, expected in ((None, state), ("publishers", {**unhomed, "renderers": []}),
                                ("renderers", {**state, "publishers": []})):
             with self.subTest(only=only):
                 seen = []
@@ -4793,6 +4794,23 @@ class RunDeliveryRenderHalvesTests(unittest.TestCase):
                         mock.patch.object(self.tool, "run", lambda argv, **_: seen.append(argv) or done):
                     self.assertEqual(self.tool.render_views(c, only=only), "rendered")
                 self.assertEqual(json.loads(seen[0][seen[0].index("--state-config") + 1]), expected)
+
+    def test_the_publishers_half_of_a_binding_with_a_live_home_refreshes_the_outbox(self) -> None:
+        state_tool = ROOT / "skills/orchestrate-work/scripts/delivery_state.py"
+        config = {"directory": "s", "liveHome": "home", "publishers": [{"id": "tracker", "kind": "host"}],
+                  "renderers": [{"id": "home", "argv": ["sh", "-c", "cat >/dev/null; echo home"], "output": "home.html"}]}
+        with tempfile.TemporaryDirectory() as folder:
+            record = Path(folder) / "state"
+            c = types.SimpleNamespace(release=ROOT, state=record, root=Path(folder))
+            subprocess.run([sys.executable, "-B", str(state_tool), "--dir", str(record), "init", "--headline", "A delivery"],
+                           check=True, capture_output=True)
+            with mock.patch.object(self.tool, "binding_state", lambda _: config):
+                self.assertEqual(self.tool.render_views(c, only="publishers"), "rendered")
+                self.assertTrue((record / "outbox/outbox.json").is_file())
+                self.assertFalse((record / "home.html").exists(), "the publishers half draws no view")
+                # The renderers half still answers to the home it names.
+                self.assertEqual(self.tool.render_views(c, only="renderers"), "rendered")
+                self.assertTrue((record / "home.html").is_file())
 
 
 class RunDeliveryContinuousIntegrationTests(unittest.TestCase):
