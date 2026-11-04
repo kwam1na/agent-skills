@@ -184,8 +184,8 @@ Setting `PYTHONDONTWRITEBYTECODE=1` for the suite stops it being written.
 `v26-technologies/agent-delivery-harness`. It declares 0.7.8 and was built with
 `npm run product:build-runtime` from a clean checkout of `b43281987d8bbb87e4b6d26c7cb636da5f7f4fbe`, the tip of that
 repository's `runtime/0.7.8` branch. That branch is `fa63884` with the declared posture
-cherry-picked. It leaves out the two V26-2347 commits on that repository's `main`, which
-are unfinished, and a later runtime built from `main` picks them up.
+cherry-picked. It leaves out the two later commits on that repository's `main`, whose work
+isn't finished, and a later runtime built from `main` picks them up.
 
 ### Before the first version tag
 
@@ -247,7 +247,7 @@ A script that chooses its own checks imports `resolveDeliveryPosture` from the r
 
 Protection stops at the repository's own `.git/config`, and at the repository root.
 A repository including a tracked file from that config has handed the candidate control of
-git. V26-3162 tracks the runs from a subdirectory that can still read `focused`.
+git. Runs from a subdirectory that can still read `focused` are a known open gap.
 
 ### Moving Athena off its local version
 
