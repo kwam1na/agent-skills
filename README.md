@@ -294,6 +294,12 @@ gh attestation verify run-delivery-*.release.json --repo kwam1na/agent-skills --
 Install the pair with `apply` below, which verifies the archive against its
 `.release.json` again before it writes anything.
 
+A repository can declare on its base that its deliveries run without the gate, in
+`.agents/delivery-posture.json`. A runtime from 0.7.8 on honours it, and a repository
+declaring nothing behaves as before.
+[The product generation guide](docs/product-generation.md#declaring-a-delivery-posture) has
+the file, what each case resolves to, and how to move off a local version.
+
 Releases before the first version tag carry no attestation, so that check finds
 nothing for them. Releases before the first version tag, which is what latest
 resolves to until then, carry a 0.7.7 runtime without the installed-data protocol,
