@@ -256,7 +256,8 @@ done, and no "Needs you" item holding. "Needs you" is derived each pass, and its
 never read back: a failed `fullHealth` at the
 current base head, unless the base declares the `focused` posture, a broken base, a blocked lane or one waiting on the lead, an unresolved `blocker.recorded`, a
 child that won't stay up, and the tracker publisher's own items. `lead-resolve <journal id> --why TEXT` resolves a
-blocker; `lead-resolve full-health --why TEXT` asks the next pass to rerun a failed `fullHealth`. The runner's own
+blocker; `lead-resolve full-health --why TEXT` asks the next pass to rerun a failed `fullHealth` (under the `focused` posture, once
+the base returns to `gate`). The runner's own
 blocker clears when its hold does, or with `base.repaired`. Each item says whether it holds the close or is only
 shown, where it comes from and what clears it. The line map's Now chapter lists the holding items first. A list
 from a supervisor that has stopped, or one more than a pass overdue, is shown as unavailable rather than stale.

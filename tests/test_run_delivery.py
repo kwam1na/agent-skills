@@ -455,7 +455,8 @@ def setup_delivery(fx: Fixture) -> Path:
 POSTURE_VECTORS = ROOT / "tests/fixtures/delivery-posture-vectors.json"
 POSTURE_PATH = ".agents/delivery-posture.json"
 # Every git command fails, or never returns and leaves a child holding its output, as a fetch's transport can.
-POSTURE_GIT_STUBS = {"fails": "#!/bin/sh\nexit 1\n", "hangs": "#!/bin/sh\nsleep 300 &\nwait\n"}
+# Not `sleep 30...`: the timeout case below looks for that machine-wide, and this stub can run beside it.
+POSTURE_GIT_STUBS = {"fails": "#!/bin/sh\nexit 1\n", "hangs": "#!/bin/sh\nsleep 299 &\nwait\n"}
 
 
 def posture_tree(repository: Path, base: dict) -> None:
@@ -4902,7 +4903,7 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             child = Path(folder) / "child.pid"
             stub = Path(folder) / "git"
-            stub.write_text(f'#!/bin/sh\nsleep 300 &\necho $! > "{child}"\nwait\n')
+            stub.write_text(f'#!/bin/sh\nsleep 299 &\necho $! > "{child}"\nwait\n')
             stub.chmod(0o755)
             started = time.monotonic()
             with mock.patch.dict(os.environ, {"PATH": f"{folder}{os.pathsep}{os.environ['PATH']}"}):
@@ -4953,6 +4954,7 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         self.assertIn("Unless the delivery's base declares the `focused` posture at its tip, run the binding's "
                       "`fullHealth` once, on the final base", guide)
         self.assertIn("runs `fullHealth` once per base head, unless the base declares the `focused` posture", guide)
+        self.assertIn("remains the backstop for anything a selection missed, unless the base declares the `focused` posture", guide)
         self.assertIn("say the run was skipped under the posture, naming its source and reason", guide)
 
 

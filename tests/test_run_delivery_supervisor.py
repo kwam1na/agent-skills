@@ -1689,12 +1689,13 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
 
     def test_gate_at_a_later_head_starts_a_real_run_and_clears_the_skip(self) -> None:
         fx = self.skipped_and_held_open()
+        added = len(decisions(fx, "changed closeOut"))
         declare(fx, declaration("gate", "The gate is back."))
         self.assert_closed_on_a_pass(fx)
         changed = decisions(fx, "posture changed")
         self.assertEqual(len(changed), 1, changed)
         self.assertIn("from focused to gate", changed[0]["summary"])
-        self.assertTrue(decisions(fx, "changed closeOut"), "the rebuild didn't name the member it removed")
+        self.assertEqual(len(decisions(fx, "changed closeOut")), added + 1, "the rebuild didn't name the member it removed")
 
     def test_focused_at_a_later_head_with_a_new_reason_replaces_the_skip_and_journals_nothing_new(self) -> None:
         fx = self.skipped_and_held_open()
@@ -1710,6 +1711,19 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
         self.assertEqual(len(decisions(fx, "fullHealth skipped")), 1, "each skip after the first was journalled")
         self.assertEqual(decisions(fx, "posture changed"), [])
         self.assertEqual(health_runs(fx), 0)
+
+    def test_focused_at_a_later_head_with_the_same_reason_moves_the_skip_to_that_head(self) -> None:
+        fx = self.skipped_and_held_open()
+        said = json.loads(declaration())
+        tip = declare(fx, json.dumps({**said, "since": "later"}) + "\n")
+        last = self.once(fx)
+        for _ in range(3):
+            if (fx.tmp / "flow-log/FX-1.closed.json").exists():
+                break
+            last = self.once(fx)
+        self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
+        self.assertEqual(closed_of(fx)["fullHealth"]["head"], tip)
+        self.assertEqual(len(decisions(fx, "fullHealth skipped")), 1)
 
     def test_lead_close_under_gate_after_a_skip_records_the_change_and_stops_saying_skipped(self) -> None:
         fx = self.skipped_and_held_open()
