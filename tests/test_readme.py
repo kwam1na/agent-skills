@@ -75,6 +75,11 @@ class ReadmeLifecycleTests(unittest.TestCase):
         self.assertIn("gh attestation verify", section)
         self.assertIn("carry no attestation", " ".join(section.split()))
 
+    def test_the_posture_link_reaches_its_section_of_the_guide(self) -> None:
+        self.assertIn("docs/product-generation.md#declaring-a-delivery-posture", _readme())
+        guide = (Path(__file__).resolve().parents[1] / "docs/product-generation.md").read_text(encoding="utf-8")
+        self.assertIn("\n## Declaring a delivery posture\n", guide)
+
     def test_the_install_section_warns_about_releases_before_the_first_version_tag(self) -> None:
         section = " ".join(_section("Getting a release").split())
         for phrase in (

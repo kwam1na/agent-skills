@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,8 @@ KERNEL = ROOT / "product-runtime" / "kernel.mjs"
 VECTORS = ROOT / "tests" / "fixtures" / "delivery-posture-vectors.json"
 POSTURE_PATH = ".agents/delivery-posture.json"
 COMMANDS = ("verify", "gate", "record", "resume")
+# What each refuses with on a candidate with no record and no preparation, whatever `gate` case the base is in.
+GATED_BLOCKERS = {"verify": "[delivery_record_missing]", "gate": "[preparation_missing]", "record": "[preparation_missing]", "resume": "[resume_context_missing]"}
 # A hanging git is stopped at the resolver's own 15 second bound, and it reads more than once in the worst case.
 READ_LIMIT_SECONDS = 90
 # Valid for the runtime's config check, and as erasable TypeScript it needs nothing installed.
@@ -50,14 +53,86 @@ def resolved_by_runtime(clone: Path, env: dict[str, str] | None = None, base: st
 class RuntimeExportTests(unittest.TestCase):
     def test_the_built_kernel_exports_the_resolver_and_its_result_type(self) -> None:
         types = (ROOT / "product-runtime" / "kernel.d.mts").read_text(encoding="utf-8")
-        self.assertIn("resolveDeliveryPosture", types)
-        self.assertIn("DeliveryPostureResult", types)
+        # The export statements, since an interface declared but left out of them also holds the name.
+        exported = " ".join(re.findall(r"export (?:type )?\{[^}]*\}", types))
+        self.assertRegex(exported, r"\bresolveDeliveryPosture\b")
+        self.assertRegex(exported, r"\bDeliveryPostureResult\b")
         with tempfile.TemporaryDirectory() as folder:
             result = resolved_by_runtime(Path(folder))
         self.assertEqual(result["posture"], "gate")
         self.assertEqual(result["code"], "posture_unreadable")
         self.assertEqual(result["source"], "fallback")
         self.assertEqual(set(result), {"posture", "reason", "source", "baseTipSha", "code"})
+
+
+@unittest.skipIf(os.name == "nt", "POSIX git")
+class RuntimeTrustTests(unittest.TestCase):
+    """The rules only the harness's reader holds, which the shared vectors leave out."""
+
+    def repository(self, folder: Path) -> tuple[Path, Path]:
+        """(a clone whose origin's default is main, a seed that publishes to that origin)."""
+        remote, seed, clone = folder / "remote.git", folder / "seed", folder / "clone"
+        for path in (seed,):
+            path.mkdir()
+        run_git(folder, "init", "-q", "--bare", "--initial-branch=main", str(remote))
+        run_git(seed, "init", "-q", "--initial-branch=main")
+        run_git(seed, "config", "user.email", "tests@example.invalid")
+        run_git(seed, "config", "user.name", "Posture Tests")
+        run_git(seed, "remote", "add", "origin", str(remote))
+        self.publish(seed, None)
+        run_git(folder, "clone", "-q", str(remote), str(clone))
+        return clone, seed
+
+    def publish(self, seed: Path, content: str | None, branch: str = "main") -> str:
+        path = seed / POSTURE_PATH
+        path.parent.mkdir(exist_ok=True)
+        if content is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(content, encoding="utf-8")
+        (seed / "touched").write_text(run_git(seed, "rev-parse", "--short", "HEAD") if (seed / ".git/refs/heads/main").exists() else "first", encoding="utf-8")
+        run_git(seed, "add", "-A")
+        run_git(seed, "commit", "-qm", "publish", "--allow-empty")
+        run_git(seed, "push", "-qf", "origin", f"HEAD:refs/heads/{branch}")
+        return run_git(seed, "rev-parse", "HEAD")
+
+    def test_a_branch_naming_itself_as_the_base_gets_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            clone, seed = self.repository(Path(folder))
+            self.publish(seed, declaration("focused"), "self")
+            run_git(clone, "fetch", "-q", "origin")
+            result = resolved_by_runtime(clone, base="origin/self")
+            self.assertEqual((result["posture"], result["code"], result["source"]), ("gate", "posture_unreadable", "fallback"))
+
+    def test_a_read_finds_the_new_tip_and_leaves_the_tracking_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            clone, seed = self.repository(Path(folder))
+            before = run_git(clone, "rev-parse", "refs/remotes/origin/main")
+            tip = self.publish(seed, declaration("focused"))
+            result = resolved_by_runtime(clone)
+            self.assertEqual((result["posture"], result["baseTipSha"], result["code"]), ("focused", tip, None))
+            self.assertEqual(run_git(clone, "rev-parse", "refs/remotes/origin/main"), before)
+
+    def test_a_failed_fetch_needs_both_refs_to_say_focused(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            clone, seed = self.repository(Path(folder))
+            earlier = self.publish(seed, declaration("gate"))
+            resolved_by_runtime(clone)
+            self.publish(seed, declaration("focused"))
+            run_git(clone, "fetch", "-q", "origin")
+            run_git(clone, "remote", "set-url", "origin", str(Path(folder) / "gone.git"))
+            result = resolved_by_runtime(clone)
+            self.assertEqual((result["posture"], result["baseTipSha"], result["code"]), ("gate", earlier, None))
+
+    def test_a_repository_in_the_tree_does_not_answer_for_an_unconfigured_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            clone, seed = self.repository(Path(folder))
+            self.publish(seed, declaration("focused"))
+            run_git(Path(folder), "clone", "-q", "--bare", str(Path(folder) / "remote.git"), str(clone / "origin"))
+            run_git(clone, "remote", "remove", "origin")
+            self.assertIn("refs/heads/main", run_git(clone, "ls-remote", "origin", "refs/heads/main"))
+            result = resolved_by_runtime(clone)
+            self.assertEqual((result["posture"], result["code"], result["source"]), ("gate", "posture_unreadable", "fallback"))
 
 
 @unittest.skipIf(os.name == "nt", "POSIX product entry")
@@ -74,13 +149,14 @@ class BuiltProductTests(unittest.TestCase):
         cls.addClassCleanup(cls.folder.cleanup)
         cls.archive, cls.metadata = build_product(Path(cls.folder.name), "linear", "posture-fixture")
 
-    def consumer(self, folder: Path, posture: str) -> Path:
-        """An adopter with the product installed, a real origin, and `posture` on its base."""
+    def consumer(self, folder: Path, declared: str | None) -> Path:
+        """An adopter with the product installed, a real origin, and this at the path on its base, if anything."""
         repository = initialize_repository(folder)
         run_git(repository, "branch", "-M", "main")
         (repository / "harness.config.ts").write_text(f"export default {json.dumps(CONSUMER_CONFIG)};\n", encoding="utf-8")
-        (repository / ".agents").mkdir(exist_ok=True)
-        (repository / POSTURE_PATH).write_text(declaration(posture), encoding="utf-8")
+        if declared is not None:
+            (repository / ".agents").mkdir(exist_ok=True)
+            (repository / POSTURE_PATH).write_text(declared, encoding="utf-8")
         run_git(repository, "add", "-A")
         run_git(repository, "commit", "-qm", "the declaration")
         remote = folder / "remote.git"
@@ -91,31 +167,67 @@ class BuiltProductTests(unittest.TestCase):
         run_git(repository, "remote", "set-head", "origin", "main")
         run_git(repository, "checkout", "-q", "-b", "candidate")
         Lifecycle(repository).install(self.archive, self.metadata, maintainer=True)
+        # Committed, or every gated command refuses on the untracked install rather than for its own reason.
+        run_git(repository, "add", "-A")
+        run_git(repository, "commit", "-qm", "the install")
         return repository
 
-    def harness(self, repository: Path, command: str) -> subprocess.CompletedProcess:
-        return subprocess.run([sys.executable, "-B", str(repository / ".agent-skills/current"), "--root", str(repository), "harness", command],
+    def harness(self, repository: Path, *command: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, "-B", str(repository / ".agent-skills/current"), "--root", str(repository), "harness", *command],
                               text=True, capture_output=True, timeout=READ_LIMIT_SECONDS)
 
-    def test_each_command_exits_0_naming_the_posture_and_source_with_no_record(self) -> None:
+    def written(self, repository: Path) -> dict[str, bytes]:
+        """Every file a command could write: the tree, and the harness's stores in the git directory."""
+        roots = [repository, repository / ".git/managed-delivery", repository / ".git/delivery-harness"]
+        written: dict[str, bytes] = {}
+        for root in roots:
+            for path in root.rglob("*") if root.exists() else ():
+                relative = path.relative_to(repository).as_posix()
+                if path.is_file() and not path.is_symlink() and not relative.startswith(".agent-skills/") and (root != repository or not relative.startswith(".git/")):
+                    written[relative] = path.read_bytes()
+        return written
+
+    def test_each_command_exits_0_naming_the_posture_and_source_and_writes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
-            repository = self.consumer(Path(folder), "focused")
+            repository = self.consumer(Path(folder), declaration("focused"))
             tip = run_git(repository, "rev-parse", "refs/remotes/origin/main")
+            # A current run, so that a command journaling its completion would show.
+            started = self.harness(repository, "emit", "run.started", "--json", json.dumps({"host": "codex", "workflow": {"releaseId": "fixture", "profile": "linear"}}))
+            self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+            before = self.written(repository)
+            self.assertTrue([name for name in before if name.startswith(".git/managed-delivery/")], "the run store isn't in use")
             for command in COMMANDS:
                 with self.subTest(command=command):
                     result = self.harness(repository, command)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(result.stdout, "outcome: focused\nposture: focused\nreason: A fixture's reason.\n"
                                                     f"source: origin/main\nbase tip: {tip}\n")
+                    self.assertEqual(self.written(repository), before)
 
-    def test_each_command_stays_gated_under_gate(self) -> None:
+    def assert_gated(self, declared: str | None, first_lines: dict[str, list[str]]) -> None:
+        """The command's own refusal and nothing else on stdout, after any lines the case adds on stderr."""
         with tempfile.TemporaryDirectory() as folder:
-            repository = self.consumer(Path(folder), "gate")
-            for command in COMMANDS:
+            repository = self.consumer(Path(folder), declared)
+            for command, blocker in GATED_BLOCKERS.items():
                 with self.subTest(command=command):
                     result = self.harness(repository, command)
-                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertNotIn("outcome: focused", result.stdout)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    lines = [line for line in result.stderr.splitlines() if "ExperimentalWarning" not in line and "--trace-warnings" not in line]
+                    expected = first_lines.get(command, [])
+                    for index, prefix in enumerate(expected):
+                        self.assertTrue(lines[index].startswith(prefix), lines)
+                    self.assertTrue(lines[len(expected)].startswith(blocker), lines)
+
+    def test_each_command_gives_only_its_own_refusal_under_a_valid_gate(self) -> None:
+        self.assert_gated(declaration("gate"), {})
+
+    def test_each_command_gives_only_its_own_refusal_with_no_declaration(self) -> None:
+        self.assert_gated(None, {})
+
+    def test_a_malformed_declaration_adds_its_code_and_reason_before_the_refusal(self) -> None:
+        code = f"posture_malformed: {POSTURE_PATH} on origin/main is malformed"
+        self.assert_gated("not json\n", {command: [code] for command in GATED_BLOCKERS})
 
 
 @unittest.skipIf(os.name == "nt", "POSIX git stubs")

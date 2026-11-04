@@ -251,8 +251,19 @@ git. V26-3162 tracks the runs from a subdirectory that can still read `focused`.
 
 ### Moving Athena off its local version
 
-Athena's `athena-delivery-posture/1` is not accepted: the adoption commit changes the file's
-`schemaVersion`. These are the sites its local version touches, and what replaces each.
+Athena's `athena-delivery-posture/1` is not accepted: its adoption changes the file's
+`schemaVersion`. Land that in two steps, because the base decides. A single commit changing the
+file and the reader reads the old file from the base as `posture_malformed`, so its own push
+falls back to the gate.
+
+1. Update the runtime, make the local parser accept both schema versions, and change the file
+   on the base.
+2. Remove the module, as below.
+
+Open branches still carrying the old parser read the new file as malformed, and are gated until
+they rebase onto the first step.
+
+These are the sites its local version touches, and what replaces each.
 
 | Site | What replaces it |
 | --- | --- |
@@ -260,7 +271,7 @@ Athena's `athena-delivery-posture/1` is not accepted: the adoption commit change
 | `scripts/delivery-posture.ts` and its test | Removed. `resolveDeliveryPosture` comes from the runtime's `kernel.mjs`. Its `describeDeliveryPosture` has no export: the outcome names the same facts. |
 | `FOCUSED_PUSH_CHECKS`, `branchUpdatesOtherThanHead`, `runFocusedPushChecks` in that module | Move into `scripts/pre-push-review.ts`. They are the repository's own checks, so the product doesn't carry them. |
 | The call in `scripts/pre-push-review.ts` | Imports the runtime's resolver, with `{ rootDir, baseRef: "origin/main" }`, and keeps choosing between its focused checks and `verify`. |
-| The call in `scripts/pr-athena-delivery-run.ts` | Goes. Its note said a running gate isn't required. Under `focused` the product's `gate` now says the same by not running one, so check what this entry should do there. |
+| The call in `scripts/pr-athena-delivery-run.ts` | Goes, and the entry has to return early on the focused outcome. Under `focused` the product's `gate` and `record` exit 0 and write nothing, so `runDeliverySequence` would otherwise fail at `git add` of the absent record. The real gate can't be run through the product while the base says `focused`. |
 | The stdin capture in `.husky/pre-push` | Stays while `branchUpdatesOtherThanHead` needs the pushed refs. |
 | The `delivery posture` arm of the `awk` filter in `.husky/pre-push` | Stays only if `pre-push-review.ts` keeps logging that line. |
 | The boundary rule in `scripts/harness-blocker-inventory.ts` | Its `resolveDeliveryPosture` pattern still matches the import. Check that the rule still describes the script. |
