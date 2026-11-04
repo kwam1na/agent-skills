@@ -2958,10 +2958,125 @@ def handoff(args) -> None:
             lane_print(c, key, {"post": post, "kind": "candidate.handed"})
 
 
+# -- the delivery posture ---------------------------------------------------------------------
+# One declaration on the delivery's base says whether its close-out runs fullHealth. It is read fresh on every use,
+# through git, from the tip of the remote's branch: never from the shelf, a working tree or a merge base, and never
+# held between passes. The vectors in tests/fixtures/delivery-posture-vectors.json keep this reader and the harness's
+# exported resolver giving the same answer for the same bytes.
+
+POSTURE_FILE = ".agents/delivery-posture.json"
+POSTURE_SCHEMA = "delivery-posture/1"
+POSTURE_LIMIT_BYTES = 64 * 1024
+POSTURE_SECONDS = 15
+# What Python's strip and JavaScript's trim remove, together: the two disagree, and both readers must not.
+POSTURE_BLANK = re.compile("[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*")
+# delivery-plan/1's caps and refusals, so what the record shows of a declaration can always go in the plan.
+POSTURE_SOURCE_SHOWN, POSTURE_REASON_SHOWN = 200, 600
+POSTURE_UNSHOWABLE = re.compile("[\u0000-\u001f\u007f-\u009f\u2028\u2029]+")
+
+
+def posture_git(root: Path, args: list[str], seconds: int) -> subprocess.CompletedProcess | None:
+    """One bounded git command, as bytes: None when it can't start or outruns its bound. In its own group, so a stopped
+    fetch takes its transport with it and nothing is left holding the output open."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        proc = subprocess.Popen(["git", *args], cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, start_new_session=True)
+    except OSError:
+        return None
+    try:
+        out, err = proc.communicate(timeout=seconds)
+        return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.communicate(timeout=seconds)
+        return None
+
+
+def posture_of_bytes(raw: bytes) -> tuple[dict | None, str]:
+    """A declaration's posture and reason, or None and what is wrong with it."""
+    def constant(name: str) -> None:
+        raise ValueError(f"{name} isn't JSON")
+    try:
+        # Numbers as floats: a member is ignored whatever its size, as JSON.parse ignores it.
+        value = json.loads(raw.decode("utf-8"), parse_constant=constant, parse_int=float)
+    except (ValueError, RecursionError):
+        return None, "it isn't valid UTF-8 JSON"
+    if not isinstance(value, dict):
+        return None, "it isn't an object"
+    if value.get("schemaVersion") != POSTURE_SCHEMA:
+        return None, f"its schemaVersion isn't {POSTURE_SCHEMA}"
+    if not isinstance(value.get("posture"), str) or value["posture"] not in ("gate", "focused"):
+        return None, "its posture is neither gate nor focused"
+    reason = value.get("reason")
+    if not isinstance(reason, str) or POSTURE_BLANK.fullmatch(reason):
+        return None, "its reason is missing or blank"
+    return {"posture": value["posture"], "reason": reason}, ""
+
+
+def resolve_delivery_posture(root: Path, remote: str, branch: str, seconds: int = POSTURE_SECONDS) -> dict:
+    """The posture the tip of `<remote>/<branch>` declares: {posture, reason, source, baseTipSha, code}. Anything but a
+    valid declaration is `gate`, with the code that says why. Offline, the last fetched tip decides."""
+    base = f"{remote}/{branch}"
+    ref = f"refs/remotes/{remote}/{branch}"
+
+    def gate(code: str, reason: str, tip: str | None, source: str = base) -> dict:
+        return {"posture": "gate", "reason": f"{POSTURE_FILE} on {base}: {reason}; the posture is gate.", "source": source,
+                "baseTipSha": tip, "code": code}
+
+    def unreadable(what: str) -> dict:
+        return gate("posture_unreadable", what, None, "fallback")
+
+    posture_git(root, ["fetch", "-q", "--no-tags", remote, f"+refs/heads/{branch}:{ref}"], seconds)  # best effort
+    found = posture_git(root, ["rev-parse", "--verify", "-q", f"{ref}^{{commit}}"], seconds)
+    if found is None or found.returncode != 0:
+        return unreadable(f"{ref} can't be resolved")
+    tip = found.stdout.decode("ascii", "replace").strip()
+    listed = posture_git(root, ["ls-tree", "--full-tree", "-z", "-l", tip, "--", POSTURE_FILE], seconds)
+    if listed is None or listed.returncode != 0:
+        return unreadable(f"the tree of {tip[:10]} can't be read")
+    if not listed.stdout:
+        return gate("posture_undeclared", "no file at the tip", tip)
+    try:
+        mode, kind, blob, size = listed.stdout.split(b"\t", 1)[0].decode("ascii", "replace").split()
+    except ValueError:
+        return unreadable(f"the tree of {tip[:10]} can't be read")
+    if kind != "blob" or mode == "120000":
+        return gate("posture_malformed", "a symlink, tree or submodule is at the path, not a file", tip)
+    if not size.isdigit():
+        return unreadable(f"the tree of {tip[:10]} can't be read")
+    if int(size) > POSTURE_LIMIT_BYTES:
+        return gate("posture_malformed", f"the file holds over {POSTURE_LIMIT_BYTES} bytes", tip)
+    shown = posture_git(root, ["show", blob], seconds)
+    if shown is None or shown.returncode != 0:
+        return unreadable(f"the file at {tip[:10]} can't be read")
+    declared, wrong = posture_of_bytes(shown.stdout)
+    if declared is None:
+        return gate("posture_malformed", wrong, tip)
+    return {**declared, "source": base, "baseTipSha": tip, "code": None}
+
+
+def delivery_posture(c) -> dict:
+    """The delivery's own base decides, not the binding's: an integration base is the lead's own."""
+    return resolve_delivery_posture(c.root, c.remote, c.base_branch)
+
+
+def posture_said(posture: dict) -> dict:
+    """{posture, source, reason} as the record shows them: within delivery-plan/1's caps and free of what it refuses
+    or an argument can't carry, whatever the declaration held."""
+    def shown(text: str, cap: int) -> str:
+        clean = POSTURE_UNSHOWABLE.sub(" ", text.encode("utf-8", "replace").decode("utf-8")).strip()
+        return clean[:cap].strip() or "(the declaration's text can't be shown)"
+    return {"posture": posture["posture"], "source": shown(posture["source"], POSTURE_SOURCE_SHOWN),
+            "reason": shown(posture["reason"], POSTURE_REASON_SHOWN)}
+
+
 # -- the plan chapter's producer -------------------------------------------------------------------
 # plan.json, the delivery-views input `delivery-plan/1`, is a pure function of the delivery file at the base, the
-# append-only plan-changes.jsonl beside the lead's flow logs, the app-check and video flow logs, and the acceptance
-# log. Only lead-side commands and the reconcile sweep rebuild it, under one lock; lanes only append their flow logs,
+# append-only plan-changes.jsonl beside the lead's flow logs, the app-check and video flow logs, the acceptance log and
+# the full-health log. Only lead-side commands and the reconcile sweep rebuild it, under one lock; lanes only append their flow logs,
 # and the file is never read back as a source.
 
 PLAN_FILE = "plan.json"
@@ -3264,6 +3379,9 @@ def build_plan(c, log: list[dict]) -> dict:
             plan[key] = c.raw[key]
     if review:
         plan["planReview"] = review
+    skip = full_health_skip(c)
+    if skip:
+        plan["closeOut"] = {"fullHealth": "skipped", **{key: skip[key] for key in ("posture", "source", "reason")}}
     return plan
 
 
@@ -3315,7 +3433,7 @@ def rebuild_plan(c, mark: bool = False) -> str | None:
         if old is not None and same(old, plan):
             return None
         moved = "first build" if old is None else "changed " + ", ".join(
-            key for key in plan if key != "updated" and old.get(key) != plan.get(key))
+            key for key in sorted({*plan, *old}) if key != "updated" and old.get(key) != plan.get(key))
         temporary = path.with_name(f".{PLAN_FILE}.{os.getpid()}.tmp")
         temporary.write_text(json.dumps(plan, indent=2) + "\n")
         os.replace(temporary, path)
@@ -4461,6 +4579,16 @@ def lead_close(args) -> None:
         print(stopped)
     lead = c.lane_checkout(c.delivery)
     done, left = [], []
+    # Holds nothing: before the final render and the archive, so both carry it.
+    try:
+        posture = delivery_posture(c)
+        if posture["posture"] == "focused":
+            done.append(record_focused(c, posture))
+        else:
+            with plan_lock(c):
+                note_posture(c, posture)
+    except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
+        left.append(f"the delivery posture wasn't recorded: {error}")
     for key in c.stories:
         status, d, l = clean_story(key)
         done += [f"{key}: {x}" for x in d]
@@ -4477,7 +4605,7 @@ def lead_close(args) -> None:
     done += archived
     c.flow_log.mkdir(parents=True, exist_ok=True)
     lead_file(c, "closed.json").write_text(json.dumps({"archive": str(archive), "said": archived, "by": "lead-close",
-                                                       "at": now()}, indent=2) + "\n")
+                                                       "at": now(), **closed_full_health(c)}, indent=2) + "\n")
     for pid, command in delivery_processes(lead, c.state, c.delivery, c.main):
         try:
             os.kill(pid, signal.SIGTERM)
@@ -4829,8 +4957,11 @@ def render_views(c, only: str | None = None) -> str:
     config = binding_state(c)
     if config is None:
         return "no binding: nothing to render"
-    if only is not None:
-        config = {**config, "renderers" if only == "publishers" else "publishers": []}
+    if only == "publishers":
+        # `liveHome` names a renderer, and this half declares none; the renderers half still answers to it.
+        config = {**{key: value for key, value in config.items() if key != "liveHome"}, "renderers": []}
+    elif only == "renderers":
+        config = {**config, "publishers": []}
     script = c.release / "skills/orchestrate-work/scripts/render_state.py"
     done = run([sys.executable, "-B", str(script), "--dir", str(c.state), "--state-config", json.dumps(config)],
                cwd=c.root, check=False, timeout=300)
@@ -4862,6 +4993,25 @@ def copy_latest(c) -> Path:
 
 
 # "Needs you": derived each pass from live conditions, never stored.
+
+def full_health_entries(c) -> list[dict]:
+    """The full-health log: `result` entries, the lead's `rerun` entries, and what the close-out saw of the posture: a
+    `skipped` entry, which has no `result` so nothing can read it as one, and a `posture` entry, for a change or a named
+    code. Read by path, since the plan's producer also runs for a delivery that isn't the configured one."""
+    path = c.flow_log / f"{c.delivery}.full-health.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
+
+
+def latest_close_out(entries: list[dict]) -> dict | None:
+    """The latest entry that says what the close-out did or saw. A rerun request isn't one."""
+    return next((e for e in reversed(entries) if e.get("result") or e.get("skipped") or e.get("posture")), None)
+
+
+def full_health_skip(c) -> dict | None:
+    """The skip the close-out stands on, if its latest word is one."""
+    latest = latest_close_out(full_health_entries(c))
+    return latest if latest and latest.get("skipped") else None
+
 
 def full_health_results(c, head: str) -> tuple[dict | None, bool]:
     """(the latest fullHealth result at this base head, whether the lead asked for a rerun after it)."""
@@ -4900,7 +5050,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
              tracker_publisher.needs_you(doc, c.state, c.flow_log, c.delivery, conf, closing=closing)]
     head = base_head(c)
     last, rerun = full_health_results(c, head) if head else (None, False)
-    if last and last["result"] == "failed" and not rerun:
+    if last and last["result"] == "failed" and not rerun and delivery_posture(c)["posture"] != "focused":
         items.append({"holding": True, "source": "fullHealth",
                       "text": f"fullHealth failed at {head[:10]}: {last.get('output', '')[-300:]}. It "
                       f"runs again at a later base head, or when you judge it flaky: {flow_command()} lead-resolve "
@@ -5002,18 +5152,77 @@ def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
 
 # The close-out (C6): each step must succeed before the next, and each is skipped once done.
 
+def append_full_health(c, entry: dict) -> str:
+    """Append to the full-health log, which is an input of plan.json, and rebuild it. One line on the rebuild."""
+    append_log("full-health", c.delivery, entry)
+    return rebuild_plan_quietly(c)
+
+
+def journal_posture(c, summary: str) -> None:
+    with marked_decision(c) as written:
+        written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary", summary)))
+
+
+def note_posture(c, posture: dict) -> str | None:
+    """Journal what is new about the posture at close-out, once however many passes see it: a change, and a declaration
+    that didn't take. Nothing is written for a repository whose gate has nothing to say. Returns the plan's line."""
+    code, said = posture["code"], posture_said(posture)
+    seen = latest_close_out(full_health_entries(c))
+    before = (seen.get("posture") or "gate") if seen else None
+    moved = before is not None and before != posture["posture"]
+    named = code in ("posture_malformed", "posture_unreadable") and (seen or {}).get("code") != code
+    if not (moved or named):
+        return None
+    if moved:
+        journal_posture(c, f"The delivery posture changed from {before} to {posture['posture']} on {said['source']}: "
+                        f"{said['reason']}")
+    if named:
+        journal_posture(c, f"fullHealth runs as under gate, {code}: {said['reason']}")
+    return append_full_health(c, {"head": posture["baseTipSha"], "code": code, **said})
+
+
+def record_focused(c, posture: dict) -> str:
+    """The close-out under `focused`: no run, and a skip in the log unless a real pass already stands at this head. Once
+    per head, source and reason. The first skip is journalled; each later one is the posture change's to say."""
+    head, said = posture["baseTipSha"], posture_said(posture)
+    with plan_lock(c):
+        note_posture(c, posture)
+        last, _ = full_health_results(c, head)
+        if last and last["result"] == "passed":
+            return f"fullHealth passed at {head[:10]}"
+        words = (f"fullHealth skipped at {head[:10]} under the {said['posture']} posture declared on {said['source']}, and "
+                 f"no run started: {said['reason']}")
+        entries = full_health_entries(c)
+        latest = latest_close_out(entries)
+        rebuilt = ""
+        if not (latest and latest.get("skipped") and latest.get("head") == head
+                and all(latest.get(key) == said[key] for key in said)):
+            if not any(e.get("skipped") for e in entries):
+                journal_posture(c, words)
+            rebuilt = append_full_health(c, {"head": head, "skipped": True, **said})
+    return words + (f"; {rebuilt}" if "not rebuilt" in rebuilt else "")
+
+
 def full_health_step(c) -> tuple[bool, str]:
     binding = c.shelf.json(".agents/orchestration.json") or {}
     argv = binding.get("fullHealth")
     if not argv:
         return True, "fullHealth: the binding declares none"
+    posture = delivery_posture(c)
+    if posture["posture"] == "focused":
+        return True, record_focused(c, posture)
+    with plan_lock(c):
+        note_posture(c, posture)
+    # Only a declaration that didn't take adds to what a gate run reports.
+    named = f" ({posture['code']}: {posture_said(posture)['reason']})" if posture["code"] in (
+        "posture_malformed", "posture_unreadable") else ""
     git("fetch", "-q", c.remote, c.base_branch, check=False)
     head = base_head(c)
     last, rerun = full_health_results(c, head)
     if last and last["result"] == "passed":
-        return True, f"fullHealth passed at {head[:10]}"
+        return True, f"fullHealth passed at {head[:10]}{named}"
     if last and not rerun:
-        return False, f"fullHealth failed at {head[:10]}; it runs again at a later head, or on lead-resolve full-health"
+        return False, f"fullHealth failed at {head[:10]}{named}; it runs again at a later head, or on lead-resolve full-health"
     checkout = Path(tempfile.mkdtemp(prefix="run-delivery-full-health-")) / "base"
     try:
         git("worktree", "add", "--detach", "-q", str(checkout), head, cwd=c.root)
@@ -5026,8 +5235,9 @@ def full_health_step(c) -> tuple[bool, str]:
         run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
         shutil.rmtree(checkout.parent, ignore_errors=True)
     result = "passed" if code == 0 else "failed"
-    append_log("full-health", c.delivery, {"head": head, "result": result, "output": out[-2000:]})
-    return result == "passed", f"fullHealth {result} at {head[:10]}"
+    with plan_lock(c):
+        append_full_health(c, {"head": head, "result": result, "output": out[-2000:], "posture": "gate", "code": posture["code"]})
+    return result == "passed", f"fullHealth {result} at {head[:10]}{named}"
 
 
 def deferred_findings(c) -> list[dict]:
@@ -5084,8 +5294,11 @@ def closed_step(c) -> tuple[bool, str]:
     doc = load_state()
     closed = next((e for e in doc["journal"] if e["kind"] == "delivery.closed"), None)
     if closed is None:
+        skip = full_health_skip(c)
+        skipped = (f" fullHealth was skipped under the {skip['posture']} posture declared on {skip['source']}: "
+                   f"{skip['reason']}" if skip else "")
         state_tool("journal", "--kind", "delivery.closed", "--summary",
-                   f"{c.delivery} closed: every story merged or removed, every finish line met, and nothing holding.")
+                   f"{c.delivery} closed: every story merged or removed, every finish line met, and nothing holding.{skipped}")
         render_views(c)
         doc = load_state()
         closed = next(e for e in doc["journal"] if e["kind"] == "delivery.closed")
@@ -5115,6 +5328,12 @@ def archive_delivery(c) -> tuple[Path, list[str]]:
                      f"evidence in {archive}"]
 
 
+def closed_full_health(c) -> dict:
+    """What closed.json says of a skipped run: nothing at all when a real result stands."""
+    skip = full_health_skip(c)
+    return {"fullHealth": {"state": "skipped", **{key: skip[key] for key in ("posture", "source", "reason", "head")}}} if skip else {}
+
+
 def archive_step(c) -> tuple[Path, list[str]]:
     """Release every lease the lead holds, archive the record, and fast-forward the operator's checkout when it is
     clean and on the final base. Done once: a resumed close-out finds its archive."""
@@ -5140,7 +5359,7 @@ def archive_step(c) -> tuple[Path, list[str]]:
                     else f"left {operator} where it is: it can't fast-forward to {c.base_ref}")
     else:
         said.append(f"left {operator} where it is: " + ("it has uncommitted changes" if dirty else f"it is on {branch}"))
-    marker.write_text(json.dumps({"archive": str(archive), "said": said, "at": now()}, indent=2) + "\n")
+    marker.write_text(json.dumps({"archive": str(archive), "said": said, "at": now(), **closed_full_health(c)}, indent=2) + "\n")
     return archive, said
 
 
@@ -5406,12 +5625,15 @@ def lead_resolve(args) -> None:
             raise Stop(f"fullHealth hasn't failed at the base head {head[:10]}; there is nothing to rerun")
         if rerun:
             raise Stop(f"a rerun of fullHealth at {head[:10]} is already asked for; the supervisor's next pass runs it")
-        append_log("full-health", c.delivery, {"rerun": True, "head": head, "why": args.why})
+        with plan_lock(c):
+            append_full_health(c, {"rerun": True, "head": head, "why": args.why})
+        # Under focused no run starts, so the rerun waits on the base returning to gate.
+        when = ("if the base returns to gate" if delivery_posture(c)["posture"] == "focused"
+                else "on the supervisor's next pass")
         with marked_decision(c) as written:
             written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary",
-                                                 f"fullHealth at {head[:10]} runs again on the supervisor's next pass: "
-                                                 f"{args.why}")))
-        print(f"asked the supervisor's next pass to rerun fullHealth at {head[:10]}")
+                                                 f"fullHealth at {head[:10]} runs again {when}: {args.why}")))
+        print(f"asked for a rerun of fullHealth at {head[:10]}, which runs {when}")
         return
     try:
         number = int(args.id)
