@@ -44,8 +44,8 @@ Three lanes. Tiers are ownership hand-overs rather than calendar stages, and wit
 | 6 | lead | V26-3105 | `.agents/delivery/candidate.py`, the views' `meta.planFile` flag |
 
 **Moving ownership.** No two lanes hold one file at a time, and a file passes when the ticket holding it merges. `lead-accept` enforces a lane's
-`owns`, and `doctor --delivery` refuses an overlap, so the lead rewrites `lanes.*.owns` in the delivery file at each hand-over, and commits and pushes it to
-`main` before the next acceptance, since lanes read that file from the remote. `provenance.lock.json` moves to the lane being accepted immediately before each `lead-accept`, because a lane commits a refreshed
+`owns`, and `doctor --delivery` refuses an overlap, so the lead rewrites `lanes.*.owns` in the delivery file at each hand-over, and commits it locally, where `lead-accept` reads it, because `lead-close` and `lead-plan` refuse
+uncommitted changes. It pushes pending rewrites only while no candidate is synced or checking, because a push moves the queue's base, and before `lead-close`. `provenance.lock.json` moves to the lane being accepted immediately before each `lead-accept`, because a lane commits a refreshed
 lock for its own gate. A lane that finds it needs a file its row doesn't list raises it with the lead, who moves it or re-sequences, before hand-off.
 A ticket's test-pin updates belong to that ticket, including the `schemas.json` shape pins and the tracker updates table when a journal kind is added.
 
@@ -125,8 +125,8 @@ comment adds. Sensors: `tests/test_run_delivery.py`, `tests/test_compound_learni
 Lane 1, tier 5, after V26-3107. One story with one hand-off, holding the tests, the wording, the flakes and the close fix, because the state tool refuses a
 second hand-off of a merged story. The V26-3109 and Bounded flake work decisions apply. Files: `skills/delivery-views/`, its page tests,
 `scripts/release_channel.py`, `run_delivery.py`, `delivery_state.py`, `schemas.json`, and `.agents/orchestration.json` only for a declaration that decision
-allows. Sensors: `tests/test_delivery_views_page.py`, `tests/test_release_channel.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_state.py`,
-`tests/test_registry.py`.
+allows. Sensors: `tests/test_delivery_views_page.py`, `tests/test_release_channel.py`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`,
+`tests/test_orchestration_state.py`, `tests/test_registry.py`.
 
 ### V26-3110. Forge adapters' merge --source should refuse a pull request that targets another base
 
@@ -250,18 +250,22 @@ The lead, tier 6, after all others. The merges and snapshots of this delivery ar
     running, reads as stopped partway. No marks reads as an older record, closed as before. A mark for an earlier entry doesn't count, so a delivery closed,
     reopened and closed again is judged on the last close. `closed.json` isn't used, because it sits beside the flow logs rather than in what the renderer
     reads, and it's written after the final render.
-  - *Which command.* The page names `lead-run --resume` for every close started and not finished, on either path, so nothing in the record has to select one.
-    `lead-close` isn't named, because it has no tracker wait and would finish a close with updates unposted. To make that hold after a reopen, `closed.json`
-    carries the closing entry's id, `lead-run`'s refusal and `archive_step`'s done-once return apply only when that id is the latest `delivery.closed` entry's,
-    and `closed_step` uses the latest entry rather than the first.
+  - *Which command.* The page names `lead-run --resume` when the record meets the close condition: no planned story, nothing unmerged, every finish line met
+    and no busy lane. Otherwise it names `lead-close` and says that it doesn't wait for the tracker, because a resumed supervisor holds on what's unmet and never
+    finishes that close. To make this hold after a reopen, `closed.json` carries the closing entry's id, `lead-run`'s refusal and `archive_step`'s done-once return
+    apply only when that id is the latest `delivery.closed` entry's, and a `closed.json` with no id keeps today's behaviour. `closed_step` uses the latest entry,
+    and journals a new one when the latest precedes the reopen. The status command and `doctor` read the mark when the record has a started mark, so they agree
+    with the page.
   - *Boundary.* On the supervisor's path the finished mark follows `archive_step`, which runs only once the tracker covers the closing entry, and a resume that
     takes the done-once return still writes it, in the live record and the kept archive. `lead-close` writes it after the archive, before `closed.json`, and
     renders again after it. A stop after the mark, in `friction_step` or after `closed.json`, reads as finished by decision, because only local follow-up is
     left, and the status command still reports it.
   - *Rows, run through the real commands, not composed by hand.* Supervisor: stopped at the publisher wait, in `archive_step` before `closed.json`, and after
     `closed.json` before the mark, each read as unfinished; in `friction_step`, read as finished. `lead-close`: stopped before the final render and in the
-    archive, read as unfinished; after `closed.json`, read as finished. Each row read as unfinished pins `lead-run --resume` as the named command, runs it, and
-    asserts the close finishes with the tracker covered and the mark in the live record and the archive. A clean close on each path, and a clean second close
+    archive, read as unfinished; after `closed.json`, read as finished. Each of those rows read as unfinished pins `lead-run --resume` as the named command, runs it, and
+    asserts the close finishes with the tracker covered and the mark in the live record and the archive. An early close with an unmet finish line, journaled by hand and stopped in `lead-close` before the mark, pins `lead-close`, runs it, and asserts the mark in the
+    live record and the archive and that it reports unposted updates; a resumed supervisor on that record holds and writes no mark. An older `closed.json` with no
+    id is still refused and still returns its archive. A clean close on each path, and a clean second close
     on each path, asserted on the live record, the archived copy and the rendered page. A record written without the marks. A close waiting on the host
     outbox under a live supervisor, which shows the existing Needs you box and doesn't name a resume. A delivery closed, reopened, closed again and stopped.
 - **V26-3100.** Add no churn guard, since noise exceeds the margin, and record that on the ticket. Cut the extraction if the inspection can do without it.
@@ -287,6 +291,6 @@ The lead, tier 6, after all others. The merges and snapshots of this delivery ar
 ## Approvals ahead
 
 - `LINEAR_API_KEY` and `GITHUB_TOKEN` exported in the lead's shell, for the views' snapshots throughout and V26-3105's online `doctor`.
-- Filing the follow-ups: Athena's side of V26-2986 and V26-2807, and this repository adopting V26-3094's key.
+- Filing the follow-ups: Athena's side of V26-2986 and V26-2807, this repository adopting V26-3094's key, and any the Bounded flake work decision produces.
 - Any tag. The record-shape tickets (V26-3093, V26-3099, V26-3108, V26-3005, V26-3089, V26-2807, V26-3109) mean the next release goes out
   first as a candidate, applied in one adopter.
