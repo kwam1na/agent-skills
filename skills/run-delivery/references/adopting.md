@@ -501,7 +501,7 @@ To turn the close-out's `fullHealth` off while a repository's broad gate is bein
 `.agents/delivery-posture.json` to the base, with `"schemaVersion": "delivery-posture/1"`, `"posture": "focused"` and a
 `reason`. Nothing else needs changing, and the binding keeps its `fullHealth` so that `"posture": "gate"`, or removing the
 file, restores it. A branch or your checkout declaring it does nothing until it reaches the base. If you already have
-Athena's `athena-delivery-posture/1` file, change its `schemaVersion`: the old value reads as malformed, so as `gate`. See
+a file like it under another `schemaVersion`, change that member: any other value reads as malformed, so as `gate`. See
 "The delivery posture" in `config.md`.
 
 A story marked for video evidence adds the evidence page after it merges, and a delivery whose base carries tooling

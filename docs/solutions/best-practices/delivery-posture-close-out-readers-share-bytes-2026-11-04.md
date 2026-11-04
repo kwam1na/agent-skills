@@ -32,14 +32,14 @@ Three smaller things the close-out taught:
 - **A skip needs its own entry, not a state that reads like a result.** The skip has no `result` member, so nothing
   that reads results can count it. The plan chapter gets its own `closeOut` member rather than reusing `done`.
 
-## What a broad run would have caught on V26-2985 and V26-3111
+## What a broad run would have caught on the two deliveries that ran without one
 
-Nothing can be shown either way, because neither delivery ran one. The owner removed the run on both, on 2026-10-31 and
-2026-11-04. So this is no evidence that `focused` is safe, only that the record has no defect traced to the missing run.
+The proposal-rails epic and the in-store onboarding readiness epic both ran with no close-out run. Nothing can be shown
+either way, because neither ran one: the owner removed it on 2026-10-31 and 2026-11-04. So this is no evidence that `focused` is safe, only that the record has no defect traced to the missing run.
 
-- V26-2985's lead recorded selected checks on each candidate, then 848 tests across 28 files from a clean checkout of
+- The proposal-rails lead recorded selected checks on each candidate, then 848 tests across 28 files from a clean checkout of
   the merged base. Its follow-ups came from those runs and from review.
-- V26-3111 is still in progress, and its rehearsal hasn't happened.
+- The onboarding epic is still in progress, and its rehearsal hasn't happened.
 
 The ticket's question, whether `focused` should skip the run outright, was settled by the owner's ruling and not by this
 evidence. To answer it from evidence, run `fullHealth` once on one such delivery's final base and compare.
