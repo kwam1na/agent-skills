@@ -1521,10 +1521,23 @@ class SupervisorPostureTests(unittest.TestCase):
         # A lead-resolve rerun entry isn't a result: the skip stands while the base says focused.
         code, out = fx.flow("lead-resolve", "full-health", "--why", "one more", cwd=fx.main)
         self.assertEqual(code, 0, out)
+        self.assertIn("if the base returns to gate", out)
+        self.assertNotIn("next pass", kinds(fx, "decision.recorded")[-1]["summary"])
         self.assertEqual(plan_of(fx)["closeOut"]["fullHealth"], "skipped")
         self.once(fx)
         self.assertEqual(plan_of(fx)["closeOut"]["fullHealth"], "skipped")
         self.assertEqual(health_runs(fx), 0)
+
+    def test_a_long_multi_line_reason_still_reaches_the_plan_and_every_record(self) -> None:
+        fx = self.fixture()
+        declare(fx, declaration("focused", "first line\nsecond " + "x" * 700))
+        last = self.once(fx)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+        shown = plan_of(fx)["closeOut"]["reason"]
+        self.assertTrue(shown.startswith("first line second "), shown)
+        self.assertLessEqual(len(shown), 600)
+        self.assertEqual(closed_of(fx)["fullHealth"]["reason"], shown)
+        self.assertEqual(len(decisions(fx, "fullHealth skipped")), 1)
 
     def test_focused_anywhere_but_the_tip_of_the_remote_base_gets_nothing(self) -> None:
         fx = self.fixture()
@@ -1681,6 +1694,34 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
         changed = decisions(fx, "posture changed")
         self.assertEqual(len(changed), 1, changed)
         self.assertIn("from focused to gate", changed[0]["summary"])
+        self.assertTrue(decisions(fx, "changed closeOut"), "the rebuild didn't name the member it removed")
+
+    def test_focused_at_a_later_head_with_a_new_reason_replaces_the_skip_and_journals_nothing_new(self) -> None:
+        fx = self.skipped_and_held_open()
+        tip = declare(fx, declaration("focused", "A newer reason."))
+        last = self.once(fx)
+        for _ in range(3):
+            if (fx.tmp / "flow-log/FX-1.closed.json").exists():
+                break
+            last = self.once(fx)
+        self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
+        self.assertEqual(plan_of(fx)["closeOut"]["reason"], "A newer reason.")
+        self.assertEqual((closed_of(fx)["fullHealth"]["reason"], closed_of(fx)["fullHealth"]["head"]), ("A newer reason.", tip))
+        self.assertEqual(len(decisions(fx, "fullHealth skipped")), 1, "each skip after the first was journalled")
+        self.assertEqual(decisions(fx, "posture changed"), [])
+        self.assertEqual(health_runs(fx), 0)
+
+    def test_lead_close_under_gate_after_a_skip_records_the_change_and_stops_saying_skipped(self) -> None:
+        fx = self.skipped_and_held_open()
+        declare(fx, declaration("gate", "The gate is back."))
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
+        code, out = fx.flow("lead-close", cwd=fx.main)
+        self.assertIn(code, (0, 1), out)
+        self.assertNotIn("posture wasn't recorded", out)
+        self.assertEqual(len(decisions(fx, "posture changed")), 1)
+        self.assertNotIn("closeOut", plan_of(fx))
+        self.assertNotIn("fullHealth", closed_of(fx))
+        self.assertEqual(health_runs(fx), 0)
 
     def test_gate_at_the_same_head_starts_a_real_run_and_clears_the_skip(self) -> None:
         fx = self.skipped_and_held_open()
@@ -1696,6 +1737,7 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
         fx.env["PATH"] = path
         self.assertEqual(health_runs(fx), 1, last)
         self.assertIn("posture_unreadable", last["closeOut"][0])
+        self.assertEqual(len(decisions(fx, "posture_unreadable")), 1)
         self.assert_closed_on_a_pass(fx)
 
 

@@ -3433,7 +3433,7 @@ def rebuild_plan(c, mark: bool = False) -> str | None:
         if old is not None and same(old, plan):
             return None
         moved = "first build" if old is None else "changed " + ", ".join(
-            key for key in plan if key != "updated" and old.get(key) != plan.get(key))
+            key for key in sorted({*plan, *old}) if key != "updated" and old.get(key) != plan.get(key))
         temporary = path.with_name(f".{PLAN_FILE}.{os.getpid()}.tmp")
         temporary.write_text(json.dumps(plan, indent=2) + "\n")
         os.replace(temporary, path)
@@ -5624,11 +5624,13 @@ def lead_resolve(args) -> None:
             raise Stop(f"a rerun of fullHealth at {head[:10]} is already asked for; the supervisor's next pass runs it")
         with plan_lock(c):
             append_full_health(c, {"rerun": True, "head": head, "why": args.why})
+        # Under focused no run starts, so the rerun waits on the base returning to gate.
+        when = ("if the base returns to gate" if delivery_posture(c)["posture"] == "focused"
+                else "on the supervisor's next pass")
         with marked_decision(c) as written:
             written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary",
-                                                 f"fullHealth at {head[:10]} runs again on the supervisor's next pass: "
-                                                 f"{args.why}")))
-        print(f"asked the supervisor's next pass to rerun fullHealth at {head[:10]}")
+                                                 f"fullHealth at {head[:10]} runs again {when}: {args.why}")))
+        print(f"asked for a rerun of fullHealth at {head[:10]}, which runs {when}")
         return
     try:
         number = int(args.id)

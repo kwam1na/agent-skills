@@ -22,6 +22,7 @@ import fcntl
 import hashlib
 import io
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -4846,6 +4847,49 @@ class DeliveryPostureReaderTests(unittest.TestCase):
                 self.assertEqual(result["baseTipSha"] is None, vector["expect"]["source"] == "fallback", result)
                 self.assertLess(took, 20, "a read outran its bound")
 
+    def test_every_blank_character_has_its_vector_and_nothing_else_is_blank(self) -> None:
+        listed = {int(code.removeprefix("U+"), 16) for code in self.file["blankCharacters"]}
+        ids = {v["id"] for v in self.file["vectors"] if v["id"].startswith("whitespace-reason-u")}
+        self.assertEqual(ids, {f"whitespace-reason-u{code:04x}" for code in listed})
+        self.assertEqual(listed, {code for code in range(0x10000) if self.tool.POSTURE_BLANK.fullmatch(chr(code))})
+
+    def vector(self, name: str) -> dict:
+        return next(v for v in self.file["vectors"] if v["id"] == name)
+
+    def test_one_git_command_failing_past_the_ref_reads_as_unreadable(self) -> None:
+        real = shutil.which("git")
+        for name, body in (("an unparseable listing", 'if [ "$1" = ls-tree ]; then echo garbage; exit 0; fi'),
+                           ("a listing with no size", 'if [ "$1" = ls-tree ]; then printf \'100644 blob abc x\\tp\\0\'; exit 0; fi'),
+                           ("a failing show", 'if [ "$1" = show ]; then exit 1; fi')):
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as folder:
+                clone, env = posture_vector_repo(self.vector("valid-focused"), Path(folder))
+                stubs = Path(folder) / "stubs"
+                stubs.mkdir()
+                (stubs / "git").write_text(f'#!/bin/sh\n{body}\nexec {real} "$@"\n')
+                (stubs / "git").chmod(0o755)
+                with mock.patch.dict(os.environ, {"PATH": f"{stubs}{os.pathsep}{env['PATH']}"}):
+                    result = self.tool.resolve_delivery_posture(clone, "origin", "main", seconds=5)
+                self.assertEqual((result["posture"], result["code"], result["source"]), ("gate", "posture_unreadable", "fallback"), result)
+
+    def test_a_rewritten_base_is_read_at_its_new_tip_and_no_tag_arrives(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            clone, _ = posture_vector_repo(self.vector("valid-focused"), Path(folder))
+            self.assertEqual(self.tool.resolve_delivery_posture(clone, "origin", "main")["posture"], "focused")
+            author = Path(folder) / "author"
+            sh("git", "tag", "a-tag", cwd=author)
+            sh("git", "reset", "-q", "--hard", "HEAD~1", cwd=author)
+            (author / POSTURE_PATH).parent.mkdir(exist_ok=True)
+            (author / POSTURE_PATH).write_text(json.dumps({"schemaVersion": "delivery-posture/1", "posture": "gate", "reason": "Back on."}))
+            commit(author, "rewritten")
+            sh("git", "push", "-q", "--force", "--tags", "origin", "main", cwd=author)
+            result = self.tool.resolve_delivery_posture(clone, "origin", "main")
+            self.assertEqual((result["posture"], result["code"]), ("gate", None), result)
+            self.assertEqual(sh("git", "tag", "--list", cwd=clone).stdout.strip(), "", "the read imported a tag")
+
+    def test_the_bound_is_fifteen_seconds_by_default(self) -> None:
+        self.assertEqual(self.tool.POSTURE_SECONDS, 15)
+        self.assertEqual(inspect.signature(self.tool.resolve_delivery_posture).parameters["seconds"].default, 15)
+
     def test_the_declared_reason_comes_back_and_the_tip_is_the_fetched_one(self) -> None:
         vector = next(v for v in self.file["vectors"] if v["id"] == "valid-focused")
         with tempfile.TemporaryDirectory() as folder:
@@ -4855,15 +4899,27 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         self.assertEqual((result["reason"], result["baseTipSha"]), ("The gate is still being optimized.", tip))
 
     def test_a_hanging_git_is_stopped_with_the_child_that_holds_its_output(self) -> None:
-        vector = next(v for v in self.file["vectors"] if v["id"] == "hanging-git")
         with tempfile.TemporaryDirectory() as folder:
-            clone, env = posture_vector_repo(vector, Path(folder))
+            child = Path(folder) / "child.pid"
+            stub = Path(folder) / "git"
+            stub.write_text(f'#!/bin/sh\nsleep 300 &\necho $! > "{child}"\nwait\n')
+            stub.chmod(0o755)
             started = time.monotonic()
-            with mock.patch.dict(os.environ, env, clear=True):
-                done = self.tool.posture_git(clone, ["status"], self.SECONDS)
+            with mock.patch.dict(os.environ, {"PATH": f"{folder}{os.pathsep}{os.environ['PATH']}"}):
+                done = self.tool.posture_git(Path(folder), ["status"], self.SECONDS)
             took = time.monotonic() - started
+            pid = int(child.read_text())
         self.assertIsNone(done)
         self.assertLess(took, self.SECONDS + 5, "the child holding the pipe kept the bound from holding")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        os.kill(pid, signal.SIGKILL)
+        self.fail("the child that held the output outlived the bound")
 
     def test_a_tip_with_a_declaration_in_a_subfolder_read_from_there_gives_the_same_answer(self) -> None:
         vector = next(v for v in self.file["vectors"] if v["id"] == "valid-focused")
@@ -4873,15 +4929,18 @@ class DeliveryPostureReaderTests(unittest.TestCase):
             self.assertEqual(self.tool.resolve_delivery_posture(clone / "deep", "origin", "main")["posture"], "focused")
 
     def test_what_the_record_shows_of_a_declaration_is_always_valid_plan_text(self) -> None:
+        from tests.test_delivery_views_plan import plan, views
+
         declared = {"posture": "focused", "source": "origin/main", "code": None, "baseTipSha": "a" * 40}
-        for name, reason in (("long", "x" * 70000), ("lines", "first\nsecond\u2028third\ttab"), ("surrogate", "bad \ud800 text"),
-                             ("controls", "\x01\x02")):
-            with self.subTest(reason=name):
-                said = self.tool.posture_said({**declared, "reason": reason})
-                self.assertLessEqual(len(said["reason"]), 600)
+        for name, change in (("long", {"reason": "x" * 70000}), ("lines", {"reason": "first\nsecond\u2028third\ttab"}),
+                             ("surrogate", {"reason": "bad \ud800 text"}), ("controls", {"reason": "\x01\x02"}),
+                             ("long source", {"reason": "r", "source": "o/" + "b" * 500})):
+            with self.subTest(case=name):
+                said = self.tool.posture_said({**declared, **change})
                 self.assertTrue(said["reason"].strip())
-                self.assertIsNone(re.search("[\u0000-\u001f\u007f-\u009f\u2028\u2029]", said["reason"]), said)
                 said["reason"].encode("utf-8")
+                closing = {"fullHealth": "skipped", **said}
+                views.validate_plan({**plan(), "closeOut": closing})
 
     def test_the_rule_is_pinned_where_a_delivery_without_the_supervisor_reads_it(self) -> None:
         def normal(path: str) -> str:

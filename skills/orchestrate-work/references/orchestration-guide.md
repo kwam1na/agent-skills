@@ -1024,7 +1024,8 @@ It is off unless the binding sets `selection: {"lead": true}`.
   impact analysis: a check the lead leaves out does not run before the merge.
   Select only when you can name, from the diff, what the change can affect, and
   say why in the reason. The close-out `fullHealth` run on the final base
-  remains the backstop for anything a selection missed.
+  remains the backstop for anything a selection missed, unless the base declares
+  the `focused` posture.
 
 ### Lead inputs and leases
 
