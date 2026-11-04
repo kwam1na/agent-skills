@@ -3039,9 +3039,14 @@ def resolve_delivery_posture(root: Path, remote: str, branch: str, seconds: int 
         return unreadable(f"the tree of {tip[:10]} can't be read")
     if not listed.stdout:
         return gate("posture_undeclared", "no file at the tip", tip)
-    mode, kind, blob, size = listed.stdout.split(b"\t", 1)[0].decode("ascii", "replace").split()
+    try:
+        mode, kind, blob, size = listed.stdout.split(b"\t", 1)[0].decode("ascii", "replace").split()
+    except ValueError:
+        return unreadable(f"the tree of {tip[:10]} can't be read")
     if kind != "blob" or mode == "120000":
         return gate("posture_malformed", "a symlink, tree or submodule is at the path, not a file", tip)
+    if not size.isdigit():
+        return unreadable(f"the tree of {tip[:10]} can't be read")
     if int(size) > POSTURE_LIMIT_BYTES:
         return gate("posture_malformed", f"the file holds over {POSTURE_LIMIT_BYTES} bytes", tip)
     shown = posture_git(root, ["show", blob], seconds)
