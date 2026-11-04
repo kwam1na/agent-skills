@@ -35,17 +35,17 @@ Three lanes. Tiers are ownership hand-overs rather than calendar stages, and wit
 | 1 | 3 | V26-3092, V26-3101, V26-3102 | `tests/test_merge_queue.py`, `scripts/run-tests.py` and its test, the four older solution notes, `tests/test_compound_learning_corpus.py`, `.agents/orchestration.json` |
 | 2 | 1 | V26-3094, V26-3064, V26-2986 | `merge_queue.py`, `tests/test_merge_queue.py`, `schemas.json` and `tests/test_registry.py` until V26-3094 merges, `scripts/update-provenance.py`, `tests/test_update_provenance.py` |
 | 2 | 2 | V26-3108, V26-3095, V26-3103, V26-3091 | `run_delivery.py`, `tests/test_run_delivery.py`, `delivery_state.py`, `schemas.json` and `tests/test_registry.py` after V26-3094, `tests/test_orchestration_state.py`, `tests/test_lane_rows.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_tracker.py`, the recorded-pid and gate-condition notes |
-| 2 | 3 | V26-3109, V26-3110, V26-3068 | `skills/delivery-views/`, its page tests, `scripts/release_channel.py`, `tests/test_release_channel.py`, `.agents/orchestration.json`, then after V26-3091 `skills/run-delivery/adapters/`, `references/adopting.md`, `tests/test_run_delivery.py`, and `catalog.json` and the profiles if an output is added |
+| 2 | 3 | V26-3110, V26-3068 | after V26-3091 `skills/run-delivery/adapters/`, `references/adopting.md`, `tests/test_run_delivery.py`, and `catalog.json` and the profiles if an output is added |
 | 3 | 1 | V26-3089, V26-3005, V26-2807 | `merge_queue.py`, `tests/test_merge_queue.py`, `delivery_state.py`, `schemas.json`, `tests/test_orchestration_state.py`, `tests/test_registry.py`, `skills/delivery-views/`, its page tests, `references/orchestration-guide.md`, `skills/run-delivery/templates/lane-brief.md` |
 | 3 | 2 | V26-3085, V26-3104, V26-3087, V26-3074 | `run_delivery.py`, `tests/test_run_delivery.py`, `tests/test_run_delivery_plan_review.py`, `skills/run-delivery/templates/round-brief.md`, `skills/obtain-review/references/round-brief-template.md`, `tests/test_round_brief_template_corpus.py` |
 | 3 | 3 | V26-3100 | `agent_skills/generations.py`, `tests/test_lifecycle.py` |
 | 4 | 2 | V26-3065, V26-3066, V26-3067, V26-3069, V26-3073 | `run_delivery.py`, `tests/test_run_delivery.py`, the tracker-properties validator and its test |
-| 5 | 1 | V26-3088, V26-3107, V26-3109's close fix | `merge_queue.py`, `tests/test_merge_queue.py`, `run_delivery.py`, `tests/test_run_delivery.py`, `delivery_state.py`, `schemas.json`, `tests/test_orchestration_state.py`, `tests/test_registry.py`, `skills/delivery-views/`, its page tests, `references/orchestration-guide.md` |
+| 5 | 1 | V26-3088, V26-3107, V26-3109 | `merge_queue.py`, `tests/test_merge_queue.py`, `run_delivery.py`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `delivery_state.py`, `schemas.json`, `tests/test_orchestration_state.py`, `tests/test_registry.py`, `skills/delivery-views/`, its page tests, `references/orchestration-guide.md`, `scripts/release_channel.py`, `tests/test_release_channel.py`, `.agents/orchestration.json` |
 | 6 | lead | V26-3105 | `.agents/delivery/candidate.py`, the views' `meta.planFile` flag |
 
 **Moving ownership.** No two lanes hold one file at a time, and a file passes when the ticket holding it merges. `lead-accept` enforces a lane's
-`owns`, and `doctor --delivery` refuses an overlap, so the lead rewrites `lanes.*.owns` in the delivery file at each hand-over, committed in the
-lead's checkout. `provenance.lock.json` moves to the lane being accepted immediately before each `lead-accept`, because a lane commits a refreshed
+`owns`, and `doctor --delivery` refuses an overlap, so the lead rewrites `lanes.*.owns` in the delivery file at each hand-over, and commits and pushes it to
+`main` before the next acceptance, since lanes read that file from the remote. `provenance.lock.json` moves to the lane being accepted immediately before each `lead-accept`, because a lane commits a refreshed
 lock for its own gate. A lane that finds it needs a file its row doesn't list raises it with the lead, who moves it or re-sequences, before hand-off.
 A ticket's test-pin updates belong to that ticket, including the `schemas.json` shape pins and the tracker updates table when a journal kind is added.
 
@@ -122,13 +122,15 @@ comment adds. Sensors: `tests/test_run_delivery.py`, `tests/test_compound_learni
 
 ### V26-3109. Pin the line map's remaining closed-delivery behaviours with tests, and finish its wording
 
-Lane 3, tier 2, after V26-3102, for the tests, wording and flakes. The close fix lands in tier 5 under the V26-3109 decision, and the ticket closes
-then. The Bounded flake work decision applies. Files: `skills/delivery-views/`, its page tests, `scripts/release_channel.py`,
-`tests/test_release_channel.py`. Sensors: `tests/test_delivery_views_page.py`, `tests/test_release_channel.py`.
+Lane 1, tier 5, after V26-3107. One story with one hand-off, holding the tests, the wording, the flakes and the close fix, because the state tool refuses a
+second hand-off of a merged story. The V26-3109 and Bounded flake work decisions apply. Files: `skills/delivery-views/`, its page tests,
+`scripts/release_channel.py`, `run_delivery.py`, `delivery_state.py`, `schemas.json`, and `.agents/orchestration.json` only for a declaration that decision
+allows. Sensors: `tests/test_delivery_views_page.py`, `tests/test_release_channel.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_state.py`,
+`tests/test_registry.py`.
 
 ### V26-3110. Forge adapters' merge --source should refuse a pull request that targets another base
 
-Lane 3, tier 2, after V26-3109 and V26-3091. `--destination` stays optional. Files: `skills/run-delivery/adapters/`, `references/adopting.md`,
+Lane 3, tier 2, after V26-3102 and V26-3091. `--destination` stays optional. Files: `skills/run-delivery/adapters/`, `references/adopting.md`,
 `tests/test_run_delivery.py`. Sensors: `tests/test_run_delivery.py`.
 
 ### V26-3068. Ship a ready-made candidate command for common forges
@@ -140,7 +142,7 @@ Sensors: `tests/test_run_delivery.py`, `scripts/validate-registry.py`.
 
 ### V26-3089. Wake the lead when a check fails, not when the base rerun ends
 
-Lane 1, tier 3, after V26-3108, V26-3103, V26-3109 and V26-2986. Files: `merge_queue.py`, `delivery_state.py`, `schemas.json`, `skills/delivery-views/`,
+Lane 1, tier 3, after V26-3108, V26-3103 and V26-2986. Files: `merge_queue.py`, `delivery_state.py`, `schemas.json`, `skills/delivery-views/`,
 `references/orchestration-guide.md`. Sensors: `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`, `tests/test_delivery_views_page.py`.
 
 ### V26-3005. orchestrate-work: in-flight planned work carries its run id before hand-off
@@ -167,8 +169,9 @@ to the lead before any code. Files: `run_delivery.py`, `skills/run-delivery/temp
 
 ### V26-3087. Give a lens one checkout per delivery instead of one per round
 
-Lane 2, tier 3, after V26-3104. The ticket has no criterion, so this plan states it: a lens keeps one checkout across a delivery's rounds, and at each
-round that checkout holds exactly that round's candidate, with no file or environment left from the last one. Files: `run_delivery.py`,
+Lane 2, tier 3, after V26-3104. The ticket has no criterion, so this plan states it: a lens keeps one checkout across a delivery's rounds, at each round
+that checkout holds exactly that round's candidate, and the environment is re-prepared when a dependency changed. A row plants an untracked file, an ignored
+file and a dependency change between rounds. Files: `run_delivery.py`,
 `tests/test_run_delivery.py`. Sensors: `tests/test_run_delivery.py`.
 
 ### V26-3074. Have plan-review write a validated review record
@@ -233,7 +236,11 @@ The lead, tier 6, after all others. The merges and snapshots of this delivery ar
   as it does today. A path with no such command regenerates as today. `AGENTS.md` lets a person take the changed side by hand; the queue is deliberately
   narrower, and never decides for a candidate. Rows, with a lock-shaped fixture, both at sync and in a batch merge: a digest-only conflict regenerates and
   merges; the candidate adds, the candidate removes, and both sides add different outputs each stop; a base-only addition regenerates; a `gen/**` path
-  regenerates. This repository's binding adopts the key after the release, so until then the installed behaviour stands.
+  regenerates. A listing command that fails, prints nothing or prints something unparsable at any of the three versions, or a version without the path, stops
+  with `source_conflict` naming the path and never regenerates. The digest-only and candidate-adds rows run the real `update-provenance.py` listing over a
+  real-format lock, and `tests/test_update_provenance.py` proves that listing is unchanged by a digest-only edit, changes when an output is added or removed,
+  reads the version it's given, and refuses a malformed lock. This repository's binding adopts the key after the release, so until then the installed
+  behaviour stands, and an open follow-up item, filed when V26-3094 closes, tracks that adoption.
 - **V26-3110.** `--destination` stays optional, so existing bindings keep working and this stays a minor.
 - **V26-3109's stopped-partway limit is fixed on the page, by the operator's ruling.** A delivery whose close stopped partway says so and names the
   command that finishes it.
@@ -243,23 +250,29 @@ The lead, tier 6, after all others. The merges and snapshots of this delivery ar
     running, reads as stopped partway. No marks reads as an older record, closed as before. A mark for an earlier entry doesn't count, so a delivery closed,
     reopened and closed again is judged on the last close. `closed.json` isn't used, because it sits beside the flow logs rather than in what the renderer
     reads, and it's written after the final render.
-  - *Boundary.* On the supervisor's path the finished mark follows `archive_step`, and on `lead-close` it follows the archive. A stop after it, in
-    `friction_step` or after `closed.json`, reads as finished by decision, because only local follow-up is left, and the status command still reports it.
-  - *Rows, run through the real commands, not composed by hand.* Supervisor: stopped at the publisher wait and in `archive_step`, read as unfinished; in
-    `friction_step`, read as finished. `lead-close`: stopped before the final render and in the archive, read as unfinished; after `closed.json`, read as
-    finished. A clean close on each path, asserted on the live record and the archived copy. A record written without the marks. A close waiting on the host
+  - *Which command.* The page names `lead-run --resume` for every close started and not finished, on either path, so nothing in the record has to select one.
+    `lead-close` isn't named, because it has no tracker wait and would finish a close with updates unposted. To make that hold after a reopen, `closed.json`
+    carries the closing entry's id, `lead-run`'s refusal and `archive_step`'s done-once return apply only when that id is the latest `delivery.closed` entry's,
+    and `closed_step` uses the latest entry rather than the first.
+  - *Boundary.* On the supervisor's path the finished mark follows `archive_step`, which runs only once the tracker covers the closing entry, and a resume that
+    takes the done-once return still writes it, in the live record and the kept archive. `lead-close` writes it after the archive, before `closed.json`, and
+    renders again after it. A stop after the mark, in `friction_step` or after `closed.json`, reads as finished by decision, because only local follow-up is
+    left, and the status command still reports it.
+  - *Rows, run through the real commands, not composed by hand.* Supervisor: stopped at the publisher wait, in `archive_step` before `closed.json`, and after
+    `closed.json` before the mark, each read as unfinished; in `friction_step`, read as finished. `lead-close`: stopped before the final render and in the
+    archive, read as unfinished; after `closed.json`, read as finished. Each row read as unfinished pins `lead-run --resume` as the named command, runs it, and
+    asserts the close finishes with the tracker covered and the mark in the live record and the archive. A clean close on each path, and a clean second close
+    on each path, asserted on the live record, the archived copy and the rendered page. A record written without the marks. A close waiting on the host
     outbox under a live supervisor, which shows the existing Needs you box and doesn't name a resume. A delivery closed, reopened, closed again and stopped.
-    Each stopped row runs the command the page names and asserts it finishes the close; `lead-run --resume` is refused once a close is recorded, so the page
-    names `lead-close` on that path.
 - **V26-3100.** Add no churn guard, since noise exceeds the margin, and record that on the ticket. Cut the extraction if the inspection can do without it.
   Cache it only if keyed on the sha256 of both the archive and metadata bytes read at inspection, never on a path or mtime, with nothing cached across a
   verification failure, and with rows that replace the archive and then the metadata at one path between two inspections and assert refusal or the new
   version, and that an extraction altered on disk isn't trusted. Otherwise record no cache and close with the guard decision.
 - **Design choices left to a lane.** V26-3103's carry-over and V26-3104's other two items are proposed to the lead at ticket start, before any code.
-- **Bounded flake work.** V26-3092 and the flakes in V26-3109 each get five full runs at the recorded load of about 10, with each attempt's result on the
-  ticket. These runs are exempt from the one-suite-per-head rule and still use the shared slot. A failure that won't reproduce in those runs may be declared
-  on the binding's `flakes` only by exact failure ids, with no wildcard across a module and no whole-check form. A failure with no readable id, such as
-  V26-3109's unit-limit timeout or its lost page-lane output, isn't declared. A declaration's `ref` is an open follow-up item, not the ticket being closed,
+- **Bounded flake work.** V26-3092 and the flakes in V26-3109 each get five full runs at the recorded load of about 10, with each attempt's result and measured load on
+  the ticket. These runs are exempt from the one-suite-per-head rule and still use the shared slot. A failure that won't reproduce in those runs may be declared
+  on the binding's `flakes` only by exact failure ids, as anchored patterns with no wildcard across a module and no whole-check form. A failure with no readable id, such as
+  V26-3109's unit-limit timeout or its lost page-lane output, isn't declared, and stays open as a follow-up item with what was tried. A declaration's `ref` is an open follow-up item, not the ticket being closed,
   and counts under the finish line's deferrals.
 - **Posture.** Each ticket's own posture applies. Where it names none, `test-first`, and `characterization-first` for V26-2951, V26-3092 and V26-3067.
 
@@ -274,6 +287,6 @@ The lead, tier 6, after all others. The merges and snapshots of this delivery ar
 ## Approvals ahead
 
 - `LINEAR_API_KEY` and `GITHUB_TOKEN` exported in the lead's shell, for the views' snapshots throughout and V26-3105's online `doctor`.
-- Filing the Athena follow-ups for V26-2986 and V26-2807.
-- Any tag. The record-shape tickets (V26-3093, V26-3099, V26-3108, V26-3005, V26-3089, V26-2807, and V26-3109's close fix) mean the next release goes out
+- Filing the follow-ups: Athena's side of V26-2986 and V26-2807, and this repository adopting V26-3094's key.
+- Any tag. The record-shape tickets (V26-3093, V26-3099, V26-3108, V26-3005, V26-3089, V26-2807, V26-3109) mean the next release goes out
   first as a candidate, applied in one adopter.
