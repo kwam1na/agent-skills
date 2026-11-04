@@ -75,9 +75,9 @@ determined, resolves to `gate` with `posture_unreadable`. This holds however `ba
 edit, and a branch that publishes itself as its own `baseRef` gets nothing.
 
 **No side effect on the base.** The harness's commands don't fetch today, and moving `refs/remotes/origin/<branch>` would turn a passing `verify` into `base_tip_moved`
-in a repository that declares nothing. So the harness reader fetches only into a private ref, `git fetch --refmap= origin +refs/heads/<branch>:refs/delivery/posture/<branch>`,
+in a repository that declares nothing. So the harness reader fetches only into a private ref, `git fetch --no-tags --refmap= origin +refs/heads/<branch>:refs/delivery/posture/<branch>`,
 and reads from it. When that fetch fails, either ref can be the stale one: an earlier run left the private ref, and a normal fetch moves only the tracking ref. So it reads
-`refs/remotes/origin/<branch>` and, if it exists, the private ref, and resolves `focused` only when every one it can read says `focused`. Otherwise it is `gate`, with the base tip of the ref that said so.
+`refs/remotes/origin/<branch>`, which must be readable, and the private ref if it exists, and resolves `focused` only when both say `focused`, with the tracking ref's tip as the base tip. Otherwise it is `gate`, with the base tip and code of the ref that said so, and `posture_unreadable` when the tracking ref can't be read.
 
 **One exported resolver.** `packages/kernel/src/index.ts` exports `resolveDeliveryPosture` and its result type, so the built runtime's `kernel.mjs` carries them. A
 repository that chooses its own checks by posture calls this. That is how Athena's `scripts/pre-push-review.ts` keeps its behaviour once its module is gone, with
@@ -105,7 +105,7 @@ reason to what a command reports, since there a repository has declared somethin
   close-out summary, `closed.json` on both close paths, and the live view's plan chapter say the run was skipped under the posture, naming the source and the reason.
 - The plan chapter's carrier is an additive optional `delivery-plan/1` member, `closeOut: {fullHealth: "skipped", posture, source, reason}`, in the schema and validator in
   `views_common.py`, and it renders as skipped. The full-health log's skip entry becomes a producer input of `plan.json`, which is rebuilt in the step that records the
-  skip, before close-out's final render. `closeOut` follows the log's latest entry, so a later real run clears it. No approval state is reused for it, since `done` reads like a pass.
+  skip, before close-out's final render. `closeOut` follows the log's latest result or skip entry, so a later real run clears it and a `lead-resolve` rerun entry doesn't. No approval state is reused for it, since `done` reads like a pass.
 - Nothing runs instead. There is no lighter close-out check to configure.
 - `lead-close` holds nothing new. Under `focused` it records the skip the same way when no full-health result exists. Under `gate` it does what it does today.
 - `orchestration-binding/1` doesn't change. `fullHealth` stays required, so restoring `gate` needs no binding change.
@@ -160,11 +160,15 @@ for several commits. It informs and doesn't gate, so it stays out of this delive
   - A local branch and a tag named `origin/main` carrying `focused`, base `gate`: `gate`.
   - A candidate branched from a `focused` base with the base later `gate`, and the mirror case: the tip's posture.
   - The remote moved and the tracking ref stale: the new tip's posture, `refs/remotes/origin/main` unmoved, and `verify`'s record outcome unchanged in a repository that declares nothing.
-  - An unreachable remote with a fetched `focused` tip: `focused` with no code. A hanging fetch: the bound holds.
+  - An unreachable remote with a fetched `focused` tip: `focused` with no code. A hanging fetch with the same tip: the bound holds, `focused` with no code.
   - Remote unreachable, `refs/remotes/origin/HEAD` names the default, `baseRef` a self-publishing branch carrying `focused`: `gate` with `posture_unreadable`.
   - Remote unreachable, `refs/remotes/origin/HEAD` absent, a `baseRef` that would otherwise read `focused`: `gate` with `posture_unreadable`.
-  - A hanging `ls-remote`: the bound holds, and `gate` with `posture_unreadable`.
+  - A hanging `ls-remote` with `refs/remotes/origin/HEAD` absent: the bound holds, `gate` with `posture_unreadable`.
+  - A hanging `ls-remote` with `refs/remotes/origin/HEAD` naming the default and a fetched `focused` tip: `focused` with no code, each network call within its bound.
   - Fetch failing, private ref at `focused` and tracking ref at `gate`, then the reverse: `gate` both ways, with the base tip of the ref that said `gate`.
+  - Fetch failing, private ref and tracking ref at two different `focused` tips: `focused` with no code, and the base tip is the tracking ref's.
+  - Fetch failing, tracking ref missing, private ref at `focused`: `gate` with `posture_unreadable`.
+  - Fetch failing, private ref at `focused`, tracking ref malformed: `gate` with `posture_malformed`.
   - Fetch succeeding, a stale private ref: it moves to the remote's new tip, and the reported base tip is that tip.
   - A valid `gate` declaration and `posture_unreadable`: output byte for byte as before.
   - `baseRef` moved to a branch that publishes itself, by a direct edit, by an imported module and by an uncommitted edit: `gate` with `posture_unreadable`.
@@ -189,7 +193,8 @@ for several commits. It informs and doesn't gate, so it stays out of this delive
   - A skip at a head, then a `gate` resolution at that head: a real run starts. When it passes and the delivery closes, `plan.json` has no `closeOut` skip, the plan chapter and
     `closed.json` don't say skipped, and the close-out summary reports the pass. The same with the `gate` declaration arriving at a later head.
   - In `tests/delivery_views_page/line-map-plan.test.mjs`, a plan with `closeOut` renders "skipped", the posture, the source and the reason, with no pass wording.
-  - A corpus pin on the new rule in `orchestrate-work`'s `SKILL.md` and guide.
+  - After a skip, a `lead-resolve full-health` rerun entry leaves `closeOut` in place while the posture is `focused`.
+  - A corpus pin on the new rule in `orchestrate-work`'s `SKILL.md`, and on the guide's close-out step's new qualifying wording.
   - Two or more passes write exactly one `decision.recorded` for the skip and one for a posture change.
   - The supervisor test's race, with a read during a restart retrying within its bound.
 - Sensors: `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_plan_fixtures.py`, `tests/test_delivery_views_page.py`.
