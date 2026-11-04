@@ -4829,8 +4829,11 @@ def render_views(c, only: str | None = None) -> str:
     config = binding_state(c)
     if config is None:
         return "no binding: nothing to render"
-    if only is not None:
-        config = {**config, "renderers" if only == "publishers" else "publishers": []}
+    if only == "publishers":
+        # `liveHome` names a renderer, and this half declares none; the renderers half still answers to it.
+        config = {**{key: value for key, value in config.items() if key != "liveHome"}, "renderers": []}
+    elif only == "renderers":
+        config = {**config, "publishers": []}
     script = c.release / "skills/orchestrate-work/scripts/render_state.py"
     done = run([sys.executable, "-B", str(script), "--dir", str(c.state), "--state-config", json.dumps(config)],
                cwd=c.root, check=False, timeout=300)
