@@ -20,6 +20,7 @@ leave open, so both can start against one contract, and decides how the work rea
   at close-out.
 - Which checks a repository runs under `focused`, and a per-delivery waiver.
 - `admit`, `check` and `prepare`, which keep their behaviour under either posture.
+- The hosted action in the harness's `packages/action`, which calls the record check directly. The tickets name four commands, and the action stays as it is.
 - The two commits on the harness's `main` after `fa63884`, which belong to V26-2347, still in progress.
 
 ## Decisions
@@ -45,8 +46,8 @@ from the candidate's tree, which a branch controls, and reading it would run val
 
 ### How it resolves
 
-A best-effort bounded fetch of the base, 15 seconds, then `git ls-tree` and `git show` against the full ref `refs/remotes/<remote>/<branch>`, so a tag or local
-branch of the same short name can't win. Offline, the last fetched tip decides. Every reader gives the same answer:
+Given a base, a reader runs a best-effort fetch bounded at 15 seconds, then `git ls-tree` and `git show` against a full ref, so a tag or local branch of the same short
+name can't win. Offline, the last fetched tip decides. It reads the tip, never a merge base. Every reader gives the same answer for the same bytes:
 
 | What the base holds | Posture | Code |
 | --- | --- | --- |
@@ -58,13 +59,28 @@ branch of the same short name can't win. Offline, the last fetched tip decides. 
 | The base ref can't be resolved or read, or `git` fails or times out | `gate` | `posture_unreadable` |
 
 The result is `{posture, reason, source, baseTipSha, code}`. `source` is the base as text, such as `origin/main`, or `fallback` where nothing was read. Each code's
-`reason` names the path and the base. Both suites carry this table as test vectors with the same rows and codes, so the two readers can't drift apart unseen.
+`reason` names the path and the base.
+
+One vector file, `tests/fixtures/delivery-posture-vectors.json` in this repository, holds one vector per case rather than per row: invalid UTF-8, a byte-order mark,
+non-object JSON, missing and blank `reason`, a whitespace-only `reason` including characters Python and JavaScript trim differently, wrong and Athena `schemaVersion`,
+unknown and non-string `posture`, extra members, symlink, tree, submodule, exactly 64 KiB, one byte over, an unresolved ref, a failing `git` and a hanging `git`. It runs
+here against both `run_delivery.py`'s reader and the built runtime's exported resolver, and they must give the same posture and code. That comparison is what keeps
+the two readers from drifting.
 
 ### The harness's commands (V26-3124)
 
-The base is `config.baseRef`. It must name a remote-tracking branch, `origin/<branch>`; anything else resolves to `gate` with `posture_unreadable`. A candidate whose
-diff against its merge base changes `harness.config.ts` resolves to `gate` with `posture_config_changed`, because that file names the base and a branch could
-otherwise point `baseRef` at itself. It carries a named reason and costs a repository only the benefit, for that one candidate.
+**Trust.** The base is `config.baseRef`, which the candidate's config supplies, so its value can't be trusted on its own. It must name `origin/<branch>`, and `<branch>`
+must be the remote's default branch, read from `git ls-remote --symref origin HEAD` and, offline, from `refs/remotes/origin/HEAD`. A mismatch, or a default that can't be
+determined, resolves to `gate` with `posture_unreadable`. This holds however `baseRef` was changed: in `harness.config.ts`, in a module it imports, or in an uncommitted
+edit, and a branch that publishes itself as its own `baseRef` gets nothing.
+
+**No side effect on the base.** The harness's commands don't fetch today, and moving `refs/remotes/origin/<branch>` would turn a passing `verify` into `base_tip_moved`
+in a repository that declares nothing. So the harness reader fetches only into a private ref, `git fetch --refmap= origin +refs/heads/<branch>:refs/delivery/posture/<branch>`,
+reads from it, and falls back to `refs/remotes/origin/<branch>` only when that fetch fails.
+
+**One exported resolver.** `packages/kernel/src/index.ts` exports `resolveDeliveryPosture` and its result type, so the built runtime's `kernel.mjs` carries them. A
+repository that chooses its own checks by posture calls this. That is how Athena's `scripts/pre-push-review.ts` keeps its behaviour once its module is gone, with
+`FOCUSED_PUSH_CHECKS` moving into Athena's own script.
 
 Under `focused`:
 
@@ -73,67 +89,99 @@ Under `focused`:
 - No obligation applies. Review evidence and focused checks stay the repository's, as the ticket's scope says.
 - The outcome is the whole record. There is no new record shape and no new run event kind.
 
-Under `gate`, with `posture_undeclared`, each command's output and exit code are byte for byte what they are today, so existing fixtures don't change. With any other
-code, each command behaves as today and adds the code and reason to what it reports.
+Under `gate`, each command's output and exit code are byte for byte what they are today for a valid `gate` declaration, `posture_undeclared` and `posture_unreadable`, so
+existing fixtures and a repository whose `baseRef` is a plain `main` don't change. The result object still carries the code. Only `posture_malformed` adds its code and
+reason to what a command reports, since there a repository has declared something and it didn't take.
 
 ### Run-delivery's close-out (V26-3125)
 
-- `run_delivery.py` gets one reader, used by `full_health_step`, `needs_you` and `lead-close`. It reads the delivery's own `<remote>/<base>` fresh on each use and
-  is never frozen at `lead-init`.
+- `run_delivery.py` gets one reader, used by `full_health_step`, `needs_you` and `lead-close`. It reads the delivery's own `<remote>/<base>` fresh on each use, through
+  git and never the shelf helper or the lead's working tree, and is never frozen at `lead-init` or held across a supervisor's passes. An integration base is the lead's
+  own, so the default-branch rule is the harness's alone.
 - Under `focused`, `full_health_step` starts no run and succeeds, and a failed run at this base head holds nothing. The skip goes in the full-health log with no
-  `result` member, so `full_health_results` can never read it as a pass.
-- A posture that changes at close-out journals one `decision.recorded`, as does the first skip. The journal entry, the supervisor's close-out summary, `closed.json`
-  and the live view's plan chapter say the run was skipped under the posture, naming the source and the reason.
+  `result` member, so `full_health_results` can never read it as a pass, and a later `gate` resolution at the same head starts a real run.
+- The first skip journals one `decision.recorded`, and so does each posture change at close-out, however many passes see them. The journal entry, the supervisor's
+  close-out summary, `closed.json` on both close paths, and the live view's plan chapter say the run was skipped under the posture, naming the source and the reason.
+- The plan chapter's carrier is an additive optional `delivery-plan/1` member, `closeOut: {fullHealth: "skipped", posture, source, reason}`, in the schema and validator in
+  `views_common.py`, and it renders as skipped. The full-health log's skip entry becomes a producer input of `plan.json`, which is rebuilt in the step that records the
+  skip, before close-out's final render. No approval state is reused for it, since `done` reads like a pass.
 - Nothing runs instead. There is no lighter close-out check to configure.
 - `lead-close` holds nothing new. Under `focused` it records the skip the same way when no full-health result exists. Under `gate` it does what it does today.
 - `orchestration-binding/1` doesn't change. `fullHealth` stays required, so restoring `gate` needs no binding change.
-- `orchestrate-work`'s guide states the same rule for a delivery without the supervisor.
+- `orchestrate-work`'s `SKILL.md` and guide state the same rule for a delivery without the supervisor.
 
 ### Two repositories
 
 The runtime's source is `kwam1na/agent-delivery-harness`. `product-runtime/` is its build output, and today it matches a build of that repository's `fa63884` byte for
 byte. So V26-3124 has two change requests:
 
-1. **The source,** a pull request to the harness's `main`, bumping the kernel and CLI packages to 0.7.8. That repository's main CI has been red since before this work
-   and requires no check, so the lane's evidence is `npm run check` compared against `main`'s own result. The lead merges it, once reviewed.
+1. **The source,** a pull request to the harness's `main`, bumping the kernel and CLI packages to 0.7.8. The lead merges it, once reviewed.
 2. **The build,** `product-runtime/` rebuilt with `npm run product:build-runtime` from a clean checkout of a branch `runtime/0.7.8` in that repository, which is
    `fa63884` plus the merged change cherry-picked. The commit it was built from is named in the change request and in `docs/product-generation.md`. This keeps V26-2347's
    unfinished commits out of what adopters run. A later runtime build from `main` picks up both.
 
-Each lane's hand-off through the queue is the second change request, for V26-3124. The first is outside the queue because the binding serves only this repository.
+**Evidence on a red base.** That repository's main CI has been red since before this work and requires no check, so a bare `npm run check` proves little, and it stops at
+its first failing step. The lane runs `npm run typecheck` and `npx vitest run` as separate steps, on `main` before the work starts and on `fa63884`, and records the
+failures of each by test name. Its evidence is a per-test comparison: on the pull request against `main`, and on the `runtime/0.7.8` tip, the tree that ships, against
+`fa63884`, with no new failure and the new scenarios passing by name. Both runs are named in the build's change request.
+
+The queue carries the second change request. The first is outside it because the binding serves only this repository.
 
 ### Order
 
-The tickets record V26-3125 as blocked by V26-3124 because it settled the declaration. This plan settles it, so both start now. `tests/test_run_delivery.py` pins the
-runtime version and lane 2 owns that file, so V26-3125 derives the pin from `product-runtime/runtime.json` and merges first. V26-3124's build is handed off after that.
+The tickets record V26-3125 as blocked by V26-3124 because it settled the declaration. This plan settles it, so both start now.
+
+`tests/test_run_delivery.py` pins the runtime version and lane 2 owns that file. That assertion compares the descriptor with a literal, so V26-3125 removes it, and V26-3124's
+build adds a literal `0.7.8` pin to `tests/test_product_release.py`, which lane 1 owns. `tests/test_cut_release.py` replaces the literal `"0.7.7"` in its repeated-digest
+subtest, so V26-3124 changes it to use the descriptor's own `runtimeVersion`. V26-3125 merges first, since its reader creates the vector file, and V26-3124's build is handed
+off after that.
 
 ### A base that is already red
 
 CI's Ubuntu job on `fe6ff2f` failed one test,
-`SupervisorProcessTests.test_a_running_supervisor_restarts_its_children_and_reports_one_that_wont_stay_up`, with `KeyError: 'children'`. The test reads the lock file
-before the supervisor has written its children. Earlier commits passed that job. V26-3125 owns that suite and fixes the race, since the finish line needs that job
-green. CI's macOS job has timed out in `tests.test_run_delivery` for several commits. It informs and doesn't gate, so it stays out of this delivery.
+`SupervisorProcessTests.test_a_running_supervisor_restarts_its_children_and_reports_one_that_wont_stay_up`, with `KeyError: 'children'`. `write_lock` truncates and then
+writes on every restart, and `lock_of` maps an empty read to `{}`, so a read during a restart finds no children. Earlier commits passed that job. V26-3125 owns that suite
+and fixes the race: every lock read in that test retries within a bound. The finish line needs that job green. CI's macOS job has timed out in `tests.test_run_delivery`
+for several commits. It informs and doesn't gate, so it stays out of this delivery.
 
 ## Stories
 
 ### V26-3124. Let a repository declare its delivery posture, focused or gate, in the harness
 
-- Lane: lane-1. Not blocked.
+- Lane: lane-1. Not blocked. Its build is handed off after V26-3125 merges.
 - Files in the harness repository: `packages/kernel/src/`, `packages/cli/src/commands/verify.ts`, `gate.ts`, `record.ts`, `resume.ts`, their tests, the package versions, the docs.
-- Files here: `product-runtime/**`, `docs/product-generation.md`, `README.md`, `skills/bootstrap-agent-harness/**`, `tests/test_product_release.py`, `tests/test_product_descriptors.py`, `tests/test_product_launcher.py`, `tests/built_product.py`.
-- Scenarios, written first in the harness's suites: base `focused`, `verify` and `resume` report the focused outcome; base `gate`, candidate `focused`, still gated; a
-  candidate changing `harness.config.ts`, still gated with `posture_config_changed`; a malformed declaration, gated with the named code; no declaration, existing fixtures
-  unchanged; every row of the resolution table.
-- Scenario here: a built product's `harness verify`, with `focused` on a fixture's base and no record, exits 0 and names the posture and source.
-- Sensors: `npm run check` in the harness repository; here, the listed test modules and `tests/test_cut_release.py`.
-- Adoption notes: the file, its schema, the fallback table, and a mapping from Athena's local version to this one covering V26-3124's fifth acceptance criterion.
+- Files here: `product-runtime/**`, `docs/product-generation.md`, `README.md`, `skills/bootstrap-agent-harness/**`, `tests/test_product_release.py`, `tests/test_product_descriptors.py`, `tests/test_product_launcher.py`, `tests/test_cut_release.py`, `tests/built_product.py`, `tests/test_delivery_posture_vectors.py`.
+- Scenarios, written first in the harness's suites:
+  - A table over `verify`, `gate`, `record` and `resume`: base `focused`, no record, exit 0 and the `focused` outcome with posture, reason, source and base tip.
+  - Base `focused`, a corrupt record present, an obligation whose command writes a sentinel: the record's bytes unchanged, no new file in the record or run store, no sentinel.
+  - Base `focused`: `admit` and `check` refuse what they refuse under `gate`.
+  - Base `gate`, candidate `focused`: still gated.
+  - A local branch and a tag named `origin/main` carrying `focused`, base `gate`: `gate`.
+  - A candidate branched from a `focused` base with the base later `gate`, and the mirror case: the tip's posture.
+  - The remote moved and the tracking ref stale: the new tip's posture, `refs/remotes/origin/main` unmoved, and `verify`'s record outcome unchanged in a repository that declares nothing.
+  - An unreachable remote with a fetched `focused` tip: `focused` with no code. A hanging fetch: the bound holds.
+  - `baseRef` moved to a branch that publishes itself, by a direct edit, by an imported module and by an uncommitted edit: `gate` with `posture_unreadable`.
+  - A malformed declaration: gated, with the named code in the output. No declaration, and a plain `baseRef` of `main`: output byte for byte as before.
+- Scenarios here: a built product's `verify`, `gate`, `record` and `resume`, with `focused` on a fixture's base and no record, exit 0 and name the posture and source. The
+  vector file runs against the built runtime's exported `resolveDeliveryPosture`, and the same results as `run_delivery.py`'s reader. A test imports that export from the built `kernel.mjs`.
+- Sensors: the harness's `npm run typecheck` and `npx vitest run`, compared as Two repositories says; here, the listed test modules.
+- Adoption notes: the file, its schema, the fallback table, and a mapping that names what replaces each Athena site in V26-3124's fifth acceptance criterion.
   Compounding: record what Athena's use since 2026-11-04 needed.
 
 ### V26-3125. Make run-delivery's supervisor honour the focused posture at close-out
 
-- Lane: lane-2. Not blocked.
-- Files: `skills/run-delivery/**`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/delivery-views/**`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_delivery_views*.py`.
-- Scenarios, written first: every one of V26-3125's six; every row of the resolution table; a skip never reads as a pass in the journal, the close-out summary or the
-  plan chapter; the supervisor test's race, fixed so that a read before the children are written retries.
-- Sensors: `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_delivery_views_render.py`.
+- Lane: lane-2. Not blocked. Merges first.
+- Files: `skills/run-delivery/**`, `skills/orchestrate-work/SKILL.md`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/delivery-views/**`, `provenance.lock.json`, `tests/fixtures/delivery-posture-vectors.json`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_delivery_views*.py`.
+- Scenarios, written first:
+  - Every one of V26-3125's six, and every vector in the vector file.
+  - The lead's working tree and a local unpushed commit declare `focused`, remote base `gate`: `fullHealth` runs.
+  - The delivery's base differs from the binding's base, with opposite declarations: the delivery's base decides.
+  - One running supervisor across two passes, the remote base flipped between them and the tracking ref not updated by the fixture: the second pass honours the new tip.
+  - A `failed` entry at exactly the tip that holds `focused`: `needs_you` holds nothing and `full_health_step` succeeds with no run. The ticket's moved-head scenario as well.
+  - On both close paths, the journal entry, close-out summary, `closed.json` and plan chapter contain "skipped", the posture, the source and the reason, and no pass wording.
+  - A skip at a head, then a `gate` resolution at that head: a real run starts.
+  - Two or more passes write exactly one `decision.recorded` for the skip and one for a posture change.
+  - The supervisor test's race, with a read during a restart retrying within its bound.
+- Sensors: `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_plan.py`, `tests/test_delivery_views_plan_fixtures.py`.
+- Adoption notes: `references/config.md` and the adoption guide.
 - Compounding: record what, if anything, a broad run would have caught on V26-2985 and V26-3111.
