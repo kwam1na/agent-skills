@@ -1975,6 +1975,11 @@
     var review = planReview();
     nodes.push(title, el("p", "say plan-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")));
     if (review) { nodes.push(approvalLine(review)); }
+    var closeOut = isObject(plan.closeOut) && plan.closeOut.fullHealth === "skipped" ? plan.closeOut : null;
+    if (closeOut) {
+      nodes.push(el("p", "say plan-close-out", "The close-out's fullHealth run was skipped under the " + text(closeOut.posture)
+        + " posture declared on " + text(closeOut.source) + ": " + text(closeOut.reason)));
+    }
     var flagged = flagList(planFlags(doc, counts), Boolean(closedEntry(doc)));
     if (flagged) { nodes.push(flagged); }
     var open = counts.units.filter(function (unit) { return !counts.proofs[text(unit.subject)].proven; });

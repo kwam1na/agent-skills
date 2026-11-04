@@ -485,7 +485,8 @@ python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.
 ```
 
 When every story is merged or removed, every finish line is met, every lane is idle or done, and nothing in "Needs
-you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head, a follow-up for
+you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head (skipped when the
+base declares the `focused` posture), a follow-up for
 each deferred finding, `delivery.closed` and then a wait until the tracker has every update, the archive, a friction
 note stub beside
 it for your `compound-learning` pass, and then it stops. There is nothing to run for the close. `lead-close` is for
@@ -495,6 +496,13 @@ view:
 ```text example outline
 run_delivery.py view --archive ~/.local/share/run-delivery/archive/<repository>/<delivery-key>/latest
 ```
+
+To turn the close-out's `fullHealth` off while a repository's broad gate is being worked on, commit
+`.agents/delivery-posture.json` to the base, with `"schemaVersion": "delivery-posture/1"`, `"posture": "focused"` and a
+`reason`. Nothing else needs changing, and the binding keeps its `fullHealth` so that `"posture": "gate"`, or removing the
+file, restores it. A branch or your checkout declaring it does nothing until it reaches the base. If you already have
+a file like it under another `schemaVersion`, change that member: any other value reads as malformed, so as `gate`. See
+"The delivery posture" in `config.md`.
 
 A story marked for video evidence adds the evidence page after it merges, and a delivery whose base carries tooling
 that must not ship builds its product-only branch with `ship`:

@@ -1179,3 +1179,18 @@ test("plan text never becomes markup, and a ref becomes a link only through the 
   const [shown] = await open(linkedPage);
   expect(shown.app.querySelector(".plan-change .pc-why a").getAttribute("href")).toBe("https://forge.example/acme/shop/pull/77");
 });
+
+test("a close-out skipped under the posture says so, with its source and reason, and reads nothing like a pass", async () => {
+  const { document, plan } = proven();
+  const closeOut = { fullHealth: "skipped", posture: "focused", source: "origin/main", reason: "The <gate> is still being optimized." };
+  const app = await first(document, { ...plan, closeOut });
+  const line = app.querySelector("#plan .plan-close-out");
+  expect(line.textContent).toContain("skipped");
+  expect(line.textContent).toContain("focused");
+  expect(line.textContent).toContain("origin/main");
+  expect(line.textContent).toContain("The <gate> is still being optimized.");
+  expect(/\bpass(ed|es)?\b/i.test(line.textContent)).toBe(false);
+  expect(/\bdone\b/i.test(line.textContent)).toBe(false);
+  const plain = await first(document, plan);
+  expect(plain.querySelector("#plan .plan-close-out")).toBeNull();
+});
