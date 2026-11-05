@@ -237,6 +237,11 @@ Sensors: `tests/test_run_delivery.py`, with a write forced between read and patc
 Lane 1, added by the lead while V26-2986 waits for V26-3064 to merge: a follow-up lane 1 found at V26-3005's hand-off. Files: `delivery_state.py`,
 `tests/test_orchestration_state.py`. Sensors: `tests/test_orchestration_state.py`, `tests/test_registry.py`.
 
+### V26-3192. Close the round-brief drift test's three remaining gaps
+
+Lane 3, added by the lead after V26-3085: the three gaps V26-3085's last review round passed on, in lane 3's own test. Files:
+`tests/test_round_brief_template_corpus.py`, and the two round-brief templates only where an entry is reconciled. Sensors: that test.
+
 ### V26-3105. Prove this repository's own delivery path on its first real run
 
 The lead, tier 6, after all others. The merges and snapshots of this delivery are its evidence. The lead also fixes or declines the two small gaps. Files:
