@@ -379,7 +379,8 @@ class Fixture:
     def stop_in_app(self) -> None:
         """Stop what a killed in-app holder left running. Its lease still names the groups it started, and taking the
         lease, as lead-close does, has the tool stop them. A lease released cleanly names none, so this costs a run only
-        after a kill."""
+        after a kill. The wait is defensive: the tool only signals the groups, and the folder they serve is removed next.
+        The fixture's own serve and check exit on SIGTERM well inside the tool's one-second port wait, so no case pins it."""
         lock = self.tmp / "app.lock"
         groups = [int(g) for g in re.findall(r"pgid (\d+)", lock.read_text())] if lock.exists() else []
         if not groups:
@@ -1905,6 +1906,26 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                 if group_alive(group):
                     with contextlib.suppress(ProcessLookupError, PermissionError):
                         os.killpg(group, signal.SIGKILL)
+
+    def test_closing_a_fixture_leaves_a_live_holders_lease_and_groups_alone(self) -> None:
+        fx = self.fixture()
+        lock = fx.tmp / "app.lock"
+        served = subprocess.Popen(["sleep", "60"], start_new_session=True)
+        holder = subprocess.Popen([sys.executable, "-c", "import fcntl,sys,time; f=open(sys.argv[1],'a+'); "
+                                   "fcntl.flock(f, fcntl.LOCK_EX); f.write('lane-1 FX-2 hold pid 1 pgid %s\\n' % sys.argv[2]); "
+                                   "f.flush(); print('held', flush=True); time.sleep(60)", str(lock), str(served.pid)],
+                                  stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(holder.stdout.readline().strip(), "held")
+            fx.stop_in_app()  # raises if a held lease isn't left to its holder
+            self.assertIsNone(served.poll(), "closing the fixture stopped a live holder's group")
+            self.assertIn(f"pgid {served.pid}", lock.read_text(), "closing the fixture rewrote a live holder's lease")
+        finally:
+            for proc in (holder, served):  # both started here, stopped by the pids recorded here
+                if proc.poll() is None:
+                    proc.kill()
+                proc.wait()
+            holder.stdout.close()
 
 # The fallbacks to the tool's earlier names, pinned: removing one takes a later approved change to this list.
 LEGACY_NAMES = (
