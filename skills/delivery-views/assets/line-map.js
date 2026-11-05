@@ -1151,7 +1151,10 @@
           : null;
       }
       var candidate = reviewedCandidate(doc, item, evidence);
-      if (!isObject(native) || native.unavailable === true || typeof candidate !== "string" || native.candidateRef !== candidate
+      // Evidence the lead carried to a later head covers that head; its rounds still name the head they reviewed.
+      var carried = isObject(native) && isObject(native.carried) ? native.carried : null;
+      var covers = carried ? carried.to : (isObject(native) ? native.candidateRef : undefined);
+      if (!isObject(native) || native.unavailable === true || typeof candidate !== "string" || covers !== candidate
           || native.journalId !== boundary
           || (evidence && (!isObject(evidence.reviewArtifact) || evidence.reviewArtifact.digest !== native.digest))
           || (isObject(doc.reviewEvidence) && (!isObject(observation) || observation.unavailable === true || observation.digest !== native.digest))) {
@@ -1159,6 +1162,7 @@
           ? " Its rounds show here again once the lane's review-reduce records its latest round." : ""));
       }
       var nativeBox = el("div", "d-run");
+      if (carried) { nativeBox.appendChild(el("div", "d-run-carried", "Carried by the lead. " + text(carried.note))); }
       nativeBox.appendChild(runSummaryNode(native, { lenses: VIEW.lenses }));
       return nativeBox;
     }
@@ -1464,7 +1468,8 @@
     }
     var native = own(nativeReviews, subject);
     var observed = isObject(doc.reviewEvidence) ? own(doc.reviewEvidence, subject) : undefined;
-    if (item && isObject(native) && native.unavailable !== true && native.candidateRef === item.head
+    if (item && isObject(native) && native.unavailable !== true
+        && (isObject(native.carried) ? native.carried.to : native.candidateRef) === item.head
         && (!isObject(doc.reviewEvidence) || (isObject(observed) && observed.unavailable !== true && observed.digest === native.digest))) {
       var detail = list(native.roundDetail).filter(isObject);
       var final = detail[detail.length - 1];
