@@ -392,6 +392,14 @@
               "enum": [
                 "runner"
               ]
+            },
+            "waitingBy": {
+              "description": "Kept by the tool alone: which writer set the row's waitingOn, present while waitingOn is set. Only a wait the queue (runner) set ends when the lane next writes its focus without setting one, or at a new hand-off or put-back; a wait the lane or the lead set stays until they change it. A row written before the tool kept it reads as the queue's when focusBy is runner.",
+              "enum": [
+                "runner",
+                "lane",
+                "lead"
+              ]
             }
           }
         }

@@ -59,12 +59,17 @@ file that is malformed or can't be read runs `fullHealth` and holds the close on
   `waitingOn` and `since`. A lane with nothing else open rests. A row that doesn't
   name the candidate stays if its lane has another assignment open, or is
   active and has spoken since its hand-off. So does a blocked lane's row while it
-  has other work open. Any later `focus` wins, and ends a `waitingOn` the queue
-  wrote unless it sets its own; a new hand-off, or the queue putting the candidate
-  back, ends the queue's words. A lead who drops a stopped candidate from the
-  queue also clears a row still saying it stopped, since no later queue write
-  will. The tool alone keeps a row's `focusAt` and
-  `focusBy`, which says the queue wrote its words. A lane writes only its own
+  has other work open. Any later `focus` wins: the lane's next write of its
+  own focus, by `focus` or by `patch` with `--patch` or `--set`, ends a
+  `waitingOn` the queue set unless it sets its own. A `waitingOn` the lane or
+  the lead set stays until they change it, even under the queue's words, and
+  a lead rewriting only the focus leaves the queue's `waitingOn` for the lane
+  to end. A new hand-off, or the queue putting the candidate back, ends the
+  queue's words and a `waitingOn` the queue set. A lead who drops a stopped
+  candidate from the queue also clears a row still saying it stopped, since no
+  later queue write will. The tool alone keeps a row's `focusAt`, `focusBy`,
+  which says the queue wrote its words, and `waitingBy`, which says who set
+  its `waitingOn`. A lane writes only its own
   lane's `focus`, `state` and `waitingOn`, its own review rounds, and its own
   hand-off, which the tool turns into a queue element, with any suite evidence
   it gives in `queue[i].evidence`, which only a hand-off writes. Every write goes
