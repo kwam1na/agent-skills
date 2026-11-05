@@ -142,7 +142,8 @@ the views show the run's rounds while the work is still planned. It binds only
 its own lane's planned element, never replaces a bound run (binding the same
 one again changes nothing), and is refused with `run_bound` for a run another
 subject holds; another lane's or a queued element is refused with
-`writer_not_owned`. The hand-off keeps the bound run unless it names another.
+`writer_not_owned`. The hand-off keeps the bound run unless it names another. A
+hand-off naming a run another subject holds is refused with `run_bound` too.
 
 The lane hands off the candidate reference, the reviewed head, the review
 rounds, the validation, the run id or `none`, every declared lead input the
