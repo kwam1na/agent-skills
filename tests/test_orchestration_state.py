@@ -3327,6 +3327,84 @@ class LaneWriterTests(unittest.TestCase):
         self.lead({"waitingBy": "runner"}, selector="lanes[id=lane-2]")
         self.assertNotIn("waitingBy", self.row("lane-2"))
 
+    def planned_entry(self, subject: str) -> dict:
+        return next(entry for entry in state_tool.read_state(self.directory)["planned"] if entry["subject"] == subject)
+
+    def test_a_lane_binds_a_run_to_its_own_planned_work_before_its_hand_off(self) -> None:
+        journal = (self.directory / state_tool.JOURNAL_FILE).read_bytes()
+        bound = state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-a")
+        self.assertEqual(bound, {**planned("work-a"), "runId": "run-a"})
+        self.assertEqual(self.planned_entry("work-a")["runId"], "run-a")
+        self.assertNotIn("runId", self.planned_entry("work-b"))
+        self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), journal, "a binding journals nothing")
+        # The same run again changes nothing at all.
+        before = (self.directory / state_tool.STATE_FILE).read_bytes()
+        self.assertEqual(state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-a"), bound)
+        self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
+
+    def test_a_lane_cannot_bind_a_run_to_work_that_is_not_its_own_planned_work(self) -> None:
+        for name, lane_id, subject, code in (
+                ("another lane's planned work", "lane-1", "work-b", "writer_not_owned"),
+                ("its own queued work", "lane-1", "work-q", "writer_not_owned"),
+                ("work the record lacks", "lane-1", "work-z", "subject_unknown"),
+                ("a lane the record lacks", "lane-9", "work-z", "writer_not_owned")):
+            with self.subTest(name):
+                self.assertEqual(self.refused(lambda: state_tool.bind_run(
+                    self.directory, lane=lane_id, subject=subject, run="run-x")), code)
+        self.assertEqual(self.refused(lambda: state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="")),
+                         "run_bound")
+
+    def test_a_bound_run_is_never_replaced_nor_bound_to_a_second_subject(self) -> None:
+        state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-a")
+        self.assertEqual(self.refused(lambda: state_tool.bind_run(
+            self.directory, lane="lane-1", subject="work-a", run="run-x")), "run_bound")
+        self.assertEqual(self.refused(lambda: state_tool.bind_run(
+            self.directory, lane="lane-2", subject="work-b", run="run-a")), "run_bound")
+        # A run a queued candidate carries is taken too.
+        state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr", run="run-b")
+        self.lead({"planned": [*state_tool.read_state(self.directory)["planned"], planned("work-c")]})
+        self.assertEqual(self.refused(lambda: state_tool.bind_run(
+            self.directory, lane="lane-1", subject="work-c", run="run-b")), "run_bound")
+        self.assertEqual(self.planned_entry("work-a")["runId"], "run-a")
+
+    def test_the_write_checks_again_under_the_lock_when_the_record_moved_after_the_first_look(self) -> None:
+        # The first look reads the record from before another write; the write under the lock must still refuse.
+        for name, settle, lane_id, subject, run in (
+                ("another subject took the run", ("lane-2", "work-b", "run-a"), "lane-1", "work-a", "run-a"),
+                ("the element was bound to another run", ("lane-1", "work-a", "run-x"), "lane-1", "work-a", "run-y")):
+            with self.subTest(name):
+                stale = state_tool.read_state(self.directory)
+                state_tool.bind_run(self.directory, lane=settle[0], subject=settle[1], run=settle[2])
+                before = (self.directory / state_tool.STATE_FILE).read_bytes()
+                real = state_tool.read_state
+                looks = iter([stale])
+                with mock.patch.object(state_tool, "read_state", side_effect=lambda directory: next(looks, None) or real(directory)):
+                    self.assertEqual(self.refused(lambda: state_tool.bind_run(
+                        self.directory, lane=lane_id, subject=subject, run=run)), "run_bound")
+                self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
+                # Start the next case from a record with no run bound.
+                for entry in ("work-a", "work-b"):
+                    version = self.version()
+                    state_tool.patch(self.directory, writer="lead", version=version, selector=f"planned[subject={entry}]",
+                                     changes={"runId": None})
+
+    def test_the_hand_off_keeps_the_bound_run_unless_it_names_another(self) -> None:
+        state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-a")
+        state_tool.bind_run(self.directory, lane="lane-2", subject="work-b", run="run-b")
+        kept = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr")
+        named = state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr",
+                                   run="run-other")
+        self.assertEqual((kept["runId"], named["runId"]), ("run-a", "run-other"))
+
+    def test_the_command_line_binds_a_run_and_says_why_it_refuses(self) -> None:
+        code, bound = run_tool(self.directory, "bind-run", "--lane", "lane-1", "--subject", "work-a", "--run", "run-a")
+        self.assertEqual(code, 0, bound)
+        self.assertEqual(bound["item"]["runId"], "run-a")
+        code, refused = run_tool(self.directory, "bind-run", "--lane", "lane-1", "--subject", "work-a", "--run", "run-x")
+        self.assertEqual((code, refused["code"]), (1, "run_bound"))
+        code, refused = run_tool(self.directory, "bind-run", "--lane", "lane-1", "--subject", "work-b", "--run", "run-y")
+        self.assertEqual((code, refused["code"]), (1, "writer_not_owned"))
+
     def test_every_write_a_lane_does_not_own_is_refused(self) -> None:
         refusals = {
             "another lane's focus": lambda: self.as_lane("lane-1", {"focus": "x"}, selector="lanes[id=lane-2]"),
@@ -5164,6 +5242,22 @@ class SkillTextTests(unittest.TestCase):
                     continue
                 with self.subTest(path=path.name, link=target):
                     self.assertTrue((path.parent / target).is_file(), target)
+
+    def test_the_run_is_bound_at_start_in_the_skill_and_the_lane_brief(self) -> None:
+        def normal(path: Path) -> str:
+            return " ".join(path.read_text(encoding="utf-8").split())
+        skill = normal(SKILL / "SKILL.md")
+        for phrase in ("A lane whose work a product run builds binds that run at start, with"
+                       " `delivery_state.py bind-run --lane <lane> --subject <subject> --run <id>`",
+                       "is refused with `run_bound` for a run another subject holds",
+                       "The hand-off keeps the bound run unless it names another."):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
+        brief = normal(PRODUCT_ROOT / "skills/run-delivery/templates/lane-brief.md")
+        for phrase in ("If a product run builds your story, bind its run id at start, before your first round:",
+                       "bind-run --lane <lane> --subject <key> --run <run id>"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, brief)
 
     def test_the_work_root_row_lists_every_git_folder_the_runner_refuses(self) -> None:
         runner = _load("merge_queue")

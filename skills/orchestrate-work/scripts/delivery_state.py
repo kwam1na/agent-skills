@@ -1127,6 +1127,47 @@ def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None
                  selector=f"lanes[id={lane}]", assignments=assignments)
 
 
+def bind_run(directory: Path, *, lane: str, subject: str, run: str) -> dict:
+    """A lane binds the run building its planned work, so the views show the run's rounds before the hand-off.
+
+    Only the lane's own planned element takes a run, and a bound run is never replaced: binding the same run again
+    changes nothing, and a different one, or a run another subject holds, is refused with ``run_bound``. The hand-off
+    keeps the bound run unless it names another.
+    """
+    if not isinstance(run, str) or not run:
+        raise StateError("run_bound", "name the run to bind")
+
+    def change(state: dict) -> dict | None:
+        if lane not in [entry["id"] for entry in state["lanes"]]:
+            raise StateError("writer_not_owned", f"there is no lane {lane}")
+        element = next((entry for entry in state.get("planned", []) if entry["subject"] == subject), None)
+        if element is None:
+            queued = any(item["subject"] == subject for item in state["queue"])
+            raise StateError("writer_not_owned" if queued else "subject_unknown",
+                             f"{subject} is queued; its hand-off names its run" if queued else f"{subject} is not planned")
+        if element["lane"] != lane:
+            raise StateError("writer_not_owned", f"{subject} is planned in {element['lane']}, not {lane}")
+        holder = next((entry["subject"] for entry in [*state.get("planned", []), *state["queue"]]
+                       if entry["subject"] != subject and entry.get("runId") == run), None)
+        if holder is not None:
+            raise StateError("run_bound", f"run {run} is already bound to {holder}")
+        if element.get("runId") not in (None, run):
+            raise StateError("run_bound", f"{subject} is already bound to run {element['runId']}")
+        if element.get("runId") == run:
+            return None
+        element["runId"] = run
+        return copy.deepcopy(element)
+
+    # Binding the same run again writes nothing, so the record's version stays where it is; the write checks again.
+    current = read_state(directory)
+    if change(copy.deepcopy(current)) is None:
+        return copy.deepcopy(next(entry for entry in current["planned"] if entry["subject"] == subject))
+    _, bound = _tool_write(directory, change)
+    if bound is None:
+        return copy.deepcopy(next(entry for entry in read_state(directory)["planned"] if entry["subject"] == subject))
+    return bound  # type: ignore[return-value]
+
+
 def patch(
     directory: Path,
     *,
@@ -3972,6 +4013,10 @@ def main(argv: list[str] | None = None) -> int:
     focused.add_argument("--text", required=True)
     focused.add_argument("--state", choices=("idle", "assigned", "working", "reviewing", "handed", "blocked", "done"))
     focused.add_argument("--waiting-on", help="who or what the lane waits on; an empty value clears it")
+    binding_run = commands.add_parser("bind-run", help="a lane binds the run building its planned work, before its hand-off")
+    binding_run.add_argument("--lane", required=True)
+    binding_run.add_argument("--subject", required=True)
+    binding_run.add_argument("--run", required=True, help="the id of the run, in the adopter's delivery product")
     display = commands.add_parser("show", help="print the validated state and journal, and whether publication lags")
     display.add_argument("--binding", type=Path, help="the repository binding, to tell whether the outbox is orphaned")
     sync = commands.add_parser("reconcile", help="bring the record up to date with forge and tracker snapshots")
@@ -4061,6 +4106,8 @@ def main(argv: list[str] | None = None) -> int:
             waiting = ... if args.waiting_on is None else (args.waiting_on or None)
             result = {"ok": True, "state": set_focus(args.dir, args.lane, args.text, state=args.state,
                                                      waiting_on=waiting)}
+        elif args.command == "bind-run":
+            result = {"ok": True, "item": bind_run(args.dir, lane=args.lane, subject=args.subject, run=args.run)}
         elif args.command == "reconcile":
             bound = binding_state(args.binding).get("snapshotMaxAgeSeconds") if args.binding is not None else None
             max_age = args.max_age if args.max_age is not None else bound
