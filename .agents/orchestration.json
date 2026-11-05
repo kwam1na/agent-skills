@@ -2,7 +2,7 @@
   "schemaVersion": "orchestration-binding/1",
   "base": {
     "remote": "origin",
-    "ref": "main"
+    "ref": "delivery/workflow-reliability"
   },
   "workRoot": ".orchestration/work",
   "candidate": [

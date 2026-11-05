@@ -1,0 +1,493 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3169",
+  "headline": "V26-3169: make the delivery workflow reliable",
+  "plan": "docs/plans/2026-11-03-workflow-reliability.md",
+  "laneBrief": "docs/plans/2026-11-03-workflow-reliability.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-03-workflow-reliability.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "skills/orchestrate-work/references/schemas.json",
+        "skills/orchestrate-work/SKILL.md",
+        "tests/test_orchestration_state.py",
+        "tests/test_registry.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/scripts/run_delivery.py",
+        "tests/test_run_delivery.py"
+      ]
+    },
+    "lane-3": {
+      "owns": [
+        "tests/test_merge_queue.py",
+        "scripts/run-tests.py",
+        "tests/test_run_tests.py",
+        "docs/solutions/architecture-patterns/inherited-channels-preserve-native-command-ownership-2026-10-23.md",
+        "docs/solutions/design-patterns/runless-review-observations-2026-10-23.md",
+        "docs/solutions/design-patterns/merge-occurrence-and-observation-2026-10-23.md",
+        "docs/solutions/design-patterns/merge-hook-check-mode-2026-10-24.md",
+        "tests/test_compound_learning_corpus.py",
+        ".agents/orchestration.json"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3093": {
+      "title": "Keep a planned story's started flag through a rejected hand-off",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3093-done",
+          "text": "A story seen started, handed off and rejected keeps trackerStarted; its return to backlog is reported, with no extra started change"
+        }
+      ]
+    },
+    "V26-3099": {
+      "title": "End the queue's waitingOn by who set it, not by focusBy",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3099-done",
+          "text": "The queue's waitingOn ends by who set it: a lane's --set /focus counts as speaking, and each listed case has a test"
+        }
+      ]
+    },
+    "V26-3086": {
+      "title": "Keep run-delivery tests' cached release alive across test modules",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3086-done",
+          "text": "The two run-delivery test modules pass in one process in either order, and the cached build is still removed"
+        }
+      ]
+    },
+    "V26-2951": {
+      "title": "run-delivery characterization tests leave in-app serve processes running",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-2951-done",
+          "text": "A full suite run leaves no in-app serve process behind, and a killed app-check doesn't orphan its server"
+        }
+      ]
+    },
+    "V26-3092": {
+      "title": "Merge-queue tests fail intermittently on a loaded machine",
+      "lane": "lane-3",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3092-done",
+          "text": "Each named merge-queue test is made deterministic with its cause stated, or its failure is shown outside the test and handled, under the plan's bounded flake runs"
+        }
+      ]
+    },
+    "V26-3101": {
+      "title": "Stop run-tests.py losing a SIGTERM during discovery",
+      "lane": "lane-3",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3101-done",
+          "text": "A SIGTERM during discovery stops run-tests.py with the documented exit, with a test"
+        }
+      ]
+    },
+    "V26-3102": {
+      "title": "Bring the older solution notes up to the store's format",
+      "lane": "lane-3",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3102-done",
+          "text": "The four older notes have the required sections, and the test checks sections and problem_type"
+        }
+      ]
+    },
+    "V26-3094": {
+      "title": "Don't drop a candidate's new outputs when the merge queue resolves a regenerable conflict",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3094-done",
+          "text": "A candidate's added or removed listed output is never silently dropped at sync or batch: it stops with source_conflict naming the path, per the plan's rows"
+        }
+      ]
+    },
+    "V26-3064": {
+      "title": "Have the merge queue check the PR review before it merges",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3064-done",
+          "text": "The queue's merge refuses a candidate whose PR review is missing or not current at the synced head, and a current review merges"
+        }
+      ]
+    },
+    "V26-2986": {
+      "title": "Merge queue reports merge_refused after a successful github:pr-merge",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-2986-done",
+          "text": "The merge command's stderr reaches the runner's stop detail, scrubbed; Athena's side goes to a filed follow-up"
+        }
+      ]
+    },
+    "V26-3108": {
+      "title": "Keep a lane's own word on the row the queue rests, so cleanup can't miss it",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3108-done",
+          "text": "The queue keeps a resting row's own lane word, so cleanup waits for a lane at work with no pass between its word and the merge"
+        }
+      ]
+    },
+    "V26-3095": {
+      "title": "Close the test gaps left at the review bound in the lane and lead commands",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3095-done",
+          "text": "Each of the four lane and lead command paths has a test that fails when its guard is removed"
+        }
+      ]
+    },
+    "V26-3103": {
+      "title": "Make capture-review say what it refused, and keep cards across a fixture commit",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3103-done",
+          "text": "A capture-review refusal names the field and round, and the agreed carry-over keeps reviewed evidence across a judged commit"
+        }
+      ]
+    },
+    "V26-3091": {
+      "title": "Tighten the recorded-pid solution note and test the pid -1 and pid 1 guard",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3091-done",
+          "text": "The recorded-pid note states each case accurately, and a test proves the pid -1 and pid 1 guard without a real signal"
+        }
+      ]
+    },
+    "V26-3109": {
+      "title": "Pin the line map's remaining closed-delivery behaviours with tests, and finish its wording",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3109-done",
+          "text": "Each listed line-map mutation turns a test red, closed-delivery wording implies no work to come, a close stopped partway says so and names its command, and each possible flake is reproduced and fixed or explained"
+        }
+      ]
+    },
+    "V26-3110": {
+      "title": "Forge adapters' merge --source should refuse a pull request that targets another base",
+      "lane": "lane-3",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3110-done",
+          "text": "Both forge adapters' merge --source refuses a PR retargeted away from --destination, naming its base, with the existing checks unchanged"
+        }
+      ]
+    },
+    "V26-3068": {
+      "title": "Ship a ready-made candidate command for common forges",
+      "lane": "lane-3",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3068-done",
+          "text": "run-delivery ships a candidate command for feature/<key> branches on GitHub and Bitbucket, and the guide's worked adopter uses it"
+        }
+      ]
+    },
+    "V26-3089": {
+      "title": "Wake the lead when a check fails, not when the base rerun ends",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3089-done",
+          "text": "A failed check journals an entry before any base rerun, wait wakes on it, the rerun's start and verdict are journaled, and the views show the waiting stage"
+        }
+      ]
+    },
+    "V26-3005": {
+      "title": "orchestrate-work: in-flight planned work carries its run id before hand-off",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3005-done",
+          "text": "A planned story shows its run's review rounds in the line map before hand-off, with ownership enforced"
+        }
+      ]
+    },
+    "V26-2807": {
+      "title": "Give each merge check a readable name the live view can show",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-2807-done",
+          "text": "Checks carry an optional readable title through the provider contract, record, runner and generic renderer, falling back to the id; Athena's side goes to a filed follow-up"
+        }
+      ]
+    },
+    "V26-3085": {
+      "title": "Keep the two round briefs from drifting apart",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3085-done",
+          "text": "Removing a shared sentence from either round brief fails a test"
+        }
+      ]
+    },
+    "V26-3104": {
+      "title": "Close the review round gaps a run-delivery rehearsal found",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3104-done",
+          "text": "The round brief states resolvedFindings holds only open findings, and the other two items have a decision and any fix"
+        }
+      ]
+    },
+    "V26-3087": {
+      "title": "Give a lens one checkout per delivery instead of one per round",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3087-done",
+          "text": "A lens keeps one checkout across a delivery's rounds, holding exactly each round's candidate, re-prepared when a dependency changed"
+        }
+      ]
+    },
+    "V26-3074": {
+      "title": "Have plan-review write a validated review record",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3074-done",
+          "text": "plan-review writes a validated review record from its store when the lenses align or on end"
+        }
+      ]
+    },
+    "V26-3100": {
+      "title": "Keep the suite's temp churn from creeping back",
+      "lane": "lane-3",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3100-done",
+          "text": "The generation extraction is cut, or cached only as the plan allows, and the no-guard decision is recorded on the ticket"
+        }
+      ]
+    },
+    "V26-3065": {
+      "title": "Serve the lead's integration build under the in-app lease",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3065-done",
+          "text": "The lead can serve a build under the in-app lease, or app-check names the process holding the port and how to release it"
+        }
+      ]
+    },
+    "V26-3066": {
+      "title": "Record the evidence page's per-story notes in the record",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3066-done",
+          "text": "lead-evidence records the per-story notes, so republishing after a compaction loses nothing"
+        }
+      ]
+    },
+    "V26-3067": {
+      "title": "Make ship's tooling strip robust to later tooling changes and merged bases",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3067-done",
+          "text": "ship builds the product-only branch correctly in all three listed cases"
+        }
+      ]
+    },
+    "V26-3069": {
+      "title": "Warn early when a lane's work needs a file another lane owns",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3069-done",
+          "text": "doctor --delivery or lead-assign reports a story whose plan section names files outside its lane's ownership, before the lane starts"
+        }
+      ]
+    },
+    "V26-3073": {
+      "title": "Small setup fixes: build without a story key, tracker validation without AGENTS.md",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3073-done",
+          "text": "build accepts no key for the integration build, and the tracker-properties validator runs without AGENTS.md"
+        }
+      ]
+    },
+    "V26-3088": {
+      "title": "Prove the merge queue's candidate step at setup, and show why it failed",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3088-done",
+          "text": "A candidate step's failure shows its exit code and stderr; a binding without {candidate} is refused; doctor and serve catch a missing candidate program"
+        }
+      ]
+    },
+    "V26-3107": {
+      "title": "Have the lead review their own integration changes before merging to the default branch",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3107-done",
+          "text": "The close-out names the lead's integration review as its own step before merging to the default branch, guarded by a pin"
+        }
+      ]
+    },
+    "V26-3105": {
+      "title": "Prove this repository's own delivery path on its first real run",
+      "lane": "lane-3",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3105-done",
+          "text": "This delivery's real ready, merge, tracker snapshot, forge snapshot and online doctor results are recorded on the ticket, and both small gaps are fixed or declined"
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each story merged to delivery/workflow-reliability through the merge queue, or removed with its recorded reason where the plan allows",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration branch's last merged commit",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration-ci",
+      "label": "Integration CI",
+      "text": "CI's Ubuntu job passes on a draft change request from delivery/workflow-reliability to main, with the run linked; main itself waits for the operator's word to integrate",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "deferrals",
+      "label": "Deferrals",
+      "text": "Every deferral has an open follow-up item, filed under the epic",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "grantedBy": "the operator",
+    "grantedOn": "2026-11-04",
+    "readyPullRequests": true
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "`LINEAR_API_KEY` and `GITHUB_TOKEN` exported in the lead's shell, for the views' snapshots throughout and V26-3105's online `doctor`.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-2",
+      "text": "Filing the follow-ups: Athena's side of V26-2986 and V26-2807, this repository adopting V26-3094's key, and any the Bounded flake work decision produces.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-3",
+      "text": "Any tag. The record-shape tickets (V26-3093, V26-3099, V26-3108, V26-3005, V26-3089, V26-2807, V26-3109) mean the next release goes out first as a candidate, applied in one adopter.",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "The release and lifecycle tickets (V26-2803, V26-2804, V26-2805, V26-3096, V26-3097, V26-3098), which come next as their own delivery.",
+    "The bundled runtime tickets (V26-2383, V26-2352, V26-2348, V26-2335, V26-2313, V26-2838).",
+    "The parked tickets (V26-2828, V26-3080, V26-2302, V26-3083, V26-3070, V26-3071, V26-3072).",
+    "Athena's side of V26-2986 and V26-2807: the `github:pr-merge` helper, titles from `harness:plan`, and V26-2807's proof-merge record, which this binding can't produce because its provider is null.",
+    "Cutting a release, which waits for the operator's word.",
+    "Integrating delivery/workflow-reliability into main, which waits for the operator's word; by the operator's ruling this delivery lands on its own integration branch, not straight to main."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "outcome": {
+    "summary": "The delivery workflow keeps its record true and tells the lead what happened when it happens.",
+    "text": "Thirty-three backlog tickets land on delivery/workflow-reliability: the state document and merge queue keep their facts true across hand-offs and conflicts, the lead hears of failures when they happen, run-delivery's lane and lead commands and round briefs close the gaps rehearsals found, the suite stops flaking and churning, and this repository's own delivery path is proven on a real run."
+  }
+}
