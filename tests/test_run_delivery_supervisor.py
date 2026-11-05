@@ -8,6 +8,7 @@ process they start; the pass cases run `lead-run --once`, one pass at a time, so
 from __future__ import annotations
 
 import datetime
+import fcntl
 import importlib.util
 import json
 import os
@@ -22,6 +23,7 @@ import types
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 from tests.test_run_delivery import (POSIX_ONLY, Fixture, commit, doctor_binding, installed_release, setup_delivery,
                                      sh, stop_supervisors, write_results)
@@ -301,6 +303,93 @@ class ProofStateTests(unittest.TestCase):
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class RecordedPidGuardTests(unittest.TestCase):
+    """The guard against stopping a recorded pid of -1, 0 or 1, or one that isn't an integer. Every signal call is
+    patched: a real kill(-1, sig) would signal every process the user may signal, and kill(1, sig) init."""
+
+    def setUp(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
+        spec = importlib.util.spec_from_file_location("run_delivery_for_pid_guard", path)
+        self.module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = self.module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(self.module)
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.c = types.SimpleNamespace(flow_log=Path(folder.name), delivery="FX-1")
+        self.lock = self.module.supervisor_lock_path(self.c)
+        self.sent: list[tuple[str, object, object]] = []
+        self.held = None
+        # Nothing reaches the operating system: every call is recorded, and answers that no such process exists.
+        def refuse(name):
+            def call(pid, sig):
+                self.sent.append((name, pid, sig))
+                if self.held is not None:  # the positive control's stand-in "exits" on the first signal
+                    self.release()
+                raise ProcessLookupError
+            return call
+        for name in ("kill", "killpg"):
+            patcher = mock.patch.object(self.module.os, name, side_effect=refuse(name))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(self.module.os, "getpgid", side_effect=lambda pid: self.groups.get(pid, None) or
+                                    (_ for _ in ()).throw(ProcessLookupError()))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.groups: dict[int, int] = {}
+        self.addCleanup(self.release)
+
+    def record(self, recorded: dict, held: bool) -> None:
+        self.lock.write_text(json.dumps(recorded))
+        if held:
+            self.held = open(self.lock, "a+")
+            fcntl.flock(self.held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def release(self) -> None:
+        if self.held is not None:
+            fcntl.flock(self.held, fcntl.LOCK_UN)
+            self.held.close()
+            self.held = None
+
+    def test_a_held_lock_with_an_unsafe_pid_is_refused_without_a_signal(self) -> None:
+        for pid in (-1, 0, 1, True, "123", None, 2.5):
+            with self.subTest(pid=pid):
+                self.sent.clear()
+                self.record({"pid": pid}, held=True)
+                with self.assertRaises(self.module.Stop) as refused:
+                    self.module.stop_supervisor(self.c)
+                self.assertIn("records no pid to stop", str(refused.exception))
+                self.assertEqual(self.sent, [], f"a recorded pid of {pid!r} was signalled")
+                self.release()
+
+    def test_a_held_lock_with_a_real_pid_is_signalled(self) -> None:
+        # The positive control: the same patched calls do see a pid the guard lets through.
+        self.record({"pid": 424242}, held=True)
+        self.assertEqual(self.module.stop_supervisor(self.c), "stopped the supervisor (pid 424242)")
+        self.assertEqual(self.sent[0], ("killpg", 424242, signal.SIGTERM))
+
+    def test_orphans_under_an_unsafe_group_or_with_unsafe_pids_are_left_alone(self) -> None:
+        for group, child in ((-1, 424243), (0, 424243), (1, 424243), (True, 424243), (424242, -1), (424242, 1),
+                             (424242, True)):
+            with self.subTest(group=group, child=child):
+                self.sent.clear()
+                self.groups = {424243: group, -1: 424242, 1: 424242, True: 424242}
+                self.record({"pid": group, "children": [{"name": "queue", "pid": child}]}, held=False)
+                self.assertEqual(self.module.stop_orphans(self.c), [])
+                self.assertEqual(self.sent, [], f"group {group!r} or child {child!r} was signalled")
+
+    def test_an_orphan_in_a_real_group_is_stopped_by_its_group(self) -> None:
+        self.groups = {424243: 424242}
+        self.record({"pid": 424242, "children": [{"name": "queue", "pid": 424243}]}, held=False)
+        def gone(pid, sig):
+            self.sent.append(("killpg", pid, sig))
+            self.groups.clear()
+        with mock.patch.object(self.module.os, "killpg", side_effect=gone):
+            said = self.module.stop_orphans(self.c)
+        self.assertEqual(self.sent, [("killpg", 424242, signal.SIGTERM)])
+        self.assertEqual(said, ["stopped queue (pid 424243), left by the earlier supervisor (pid 424242)"])
+
+
 class SupervisorProcessTests(unittest.TestCase):
     """The real supervisor: detached, holding its lock, keeping serve and the live view running."""
 
