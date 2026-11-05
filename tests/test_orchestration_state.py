@@ -3396,6 +3396,40 @@ class LaneWriterTests(unittest.TestCase):
                                    run="run-other")
         self.assertEqual((kept["runId"], named["runId"]), ("run-a", "run-other"))
 
+    def test_a_hand_off_naming_a_run_another_subject_holds_is_refused_and_writes_nothing(self) -> None:
+        state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-r")
+        self.assertEqual(self.refused(lambda: state_tool.handoff(
+            self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr", run="run-r")), "run_bound")
+        self.assertEqual(self.planned_entry("work-b")["subject"], "work-b", "work-b is still planned")
+        # A queued subject holds its run too.
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr")
+        self.assertEqual(self.refused(lambda: state_tool.handoff(
+            self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr", run="run-r")), "run_bound")
+        # A queued subject handed off again at a new head, naming another subject's run, is refused the same way.
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-q]",
+                         assignments={"/stage": "stopped"})
+        self.assertEqual(self.refused(lambda: state_tool.handoff(
+            self.directory, lane="lane-1", subject="work-q", head="b" * 40, change_request="cr", run="run-r")), "run_bound")
+        code, refused = run_tool(self.directory, "handoff", "--lane", "lane-2", "--subject", "work-b", "--head", "c" * 40,
+                                 "--change-request", "cr", "--run", "run-r")
+        self.assertEqual((code, refused["code"]), (1, "run_bound"))
+        self.assertIn("run-r", refused["error"])
+        self.assertIn("work-a", refused["error"])
+
+    def test_the_bound_subject_hands_off_with_its_own_run_and_a_hand_off_without_a_run_still_works(self) -> None:
+        state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-r")
+        handed = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr",
+                                    run="run-r")
+        self.assertEqual(handed["runId"], "run-r")
+        # Handed off again at a new head with the same run, once it stopped.
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-a]",
+                         assignments={"/stage": "stopped"})
+        again = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="d" * 40, change_request="cr",
+                                   run="run-r")
+        self.assertEqual((again["head"], again["runId"]), ("d" * 40, "run-r"))
+        plain = state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr")
+        self.assertIsNone(plain["runId"])
+
     def test_the_command_line_binds_a_run_and_says_why_it_refuses(self) -> None:
         code, bound = run_tool(self.directory, "bind-run", "--lane", "lane-1", "--subject", "work-a", "--run", "run-a")
         self.assertEqual(code, 0, bound)
