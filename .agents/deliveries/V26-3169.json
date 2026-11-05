@@ -459,7 +459,8 @@
     {
       "id": "approval-1",
       "text": "`LINEAR_API_KEY` and `GITHUB_TOKEN` exported in the lead's shell, for the views' snapshots throughout and V26-3105's online `doctor`.",
-      "state": "waiting"
+      "state": "done",
+      "who": "the operator"
     },
     {
       "id": "approval-2",
