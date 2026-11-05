@@ -20,24 +20,17 @@ hung fetch blocked pushes because Bun 1.1.29's `spawnSync` ignores `timeout`, an
 checks read the checkout, so a push of another branch had to be refused. It also needed its own
 quick checks to run in place of the gate, which is why those stay the repository's.
 
-## What git let a candidate do
-
-The harness's reader passed its scenarios and still fell to these, each found by an adversarial
-review constructing the attack:
-
-- With no `origin` remote configured, git reads `origin` as a relative path, so a bare repository
-  committed at `origin/` in the candidate's tree answered as the remote.
-- From a subdirectory, git discovers a bare layout committed there as the repository.
-- `rev-parse` of a full ref name that is missing falls through its lookup rules, so a tag or branch
-  literally named `refs/remotes/origin/main` answers for it. `for-each-ref` matches the ref itself.
-- Local replace refs change what a commit or blob reads as, while the reported tip stays true.
-
 ## Solution
 
 Require `remote.origin.url`, pass `-c safe.bareRepository=explicit` and `GIT_NO_REPLACE_OBJECTS=1`
 on every call, find refs with `for-each-ref`, and keep transport variables on network calls while
 dropping the repository-selecting ones. Otherwise a machine that reaches its remote only through
 `GIT_SSH_COMMAND` takes the offline path, and a stale tip decides.
+
+## Why This Matters
+
+The harness's reader passed its scenarios and still fell to each attack under Examples, every one
+found by an adversarial review constructing it. A wrongful read of an off switch is a wrongful pass.
 
 ## Prevention
 
@@ -50,3 +43,19 @@ dropping the repository-selecting ones. Otherwise a machine that reaches its rem
   store's bytes, because comparing file names misses an append.
 - An inner call can bypass or inherit a new rule. `admit` called the `gate` command directly, so a
   check placed in that command would have changed `admit`.
+
+## Examples
+
+### What git let a candidate do
+
+- With no `origin` remote configured, git reads `origin` as a relative path, so a bare repository
+  committed at `origin/` in the candidate's tree answered as the remote.
+- From a subdirectory, git discovers a bare layout committed there as the repository.
+- `rev-parse` of a full ref name that is missing falls through its lookup rules, so a tag or branch
+  literally named `refs/remotes/origin/main` answers for it. `for-each-ref` matches the ref itself.
+- Local replace refs change what a commit or blob reads as, while the reported tip stays true.
+
+## Related
+
+- [Two readers of one declaration agree only where a shared vector forces them to](delivery-posture-close-out-readers-share-bytes-2026-11-04.md),
+  the close-out of the same declaration.
