@@ -48,6 +48,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -422,7 +423,20 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--workers and --chunk must be at least 1")
     if args.unit_timeout is not None and not (math.isfinite(args.unit_timeout) and args.unit_timeout >= 0):
         parser.error("--unit-timeout must be a finite number of seconds, 0 for none")
+    try:
+        return _discover_and_run(args)
+    except KeyboardInterrupt:
+        # Raised outside run_suite, which handles its own, so no worker is running.
+        print("interrupted: no worker was running", file=sys.stderr)
+        return 130
+
+
+def _discover_and_run(args: argparse.Namespace) -> int:
     units = discover_units(os.path.abspath(args.start_directory), args.top_level_dir, args.pattern, args.chunk)
+    # The test loader takes an interrupt raised while it imports a module for that module's import failure,
+    # and carries on, so the handler's flag is what says one arrived.
+    if _interrupted.is_set():
+        raise KeyboardInterrupt
     # Why the limit is not taken from --timings-from, when it is given and cannot be.
     timings_note = None
     if args.timings_from is not None:
@@ -478,8 +492,18 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if passed else 1
 
 
+# Set by the handler, so an interrupt the test loader swallowed during discovery is still seen.
+_interrupted = threading.Event()
+
+
+def _interrupt(_signum: int, _frame: object) -> None:
+    _interrupted.set()
+    raise KeyboardInterrupt
+
+
 if __name__ == "__main__":
+    # A terminate stops the workers the same way an interrupt does, including while the loader imports.
+    signal.signal(signal.SIGINT, _interrupt)
     if os.name != "nt":
-        # A terminate stops the workers the same way an interrupt does.
-        signal.signal(signal.SIGTERM, lambda signum, frame: (_ for _ in ()).throw(KeyboardInterrupt()))
+        signal.signal(signal.SIGTERM, _interrupt)
     raise SystemExit(main())

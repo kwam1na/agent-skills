@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import importlib.util
+import io
 import json
 import os
 import signal
@@ -10,6 +13,7 @@ import textwrap
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "run-tests.py"
@@ -255,6 +259,53 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertEqual(runner.returncode, 130)
         self.assertTrue(marker.exists(), "the worker got SIGTERM, and time to act on it, before any SIGKILL")
         self.assert_gone(recorded)
+
+    @unittest.skipIf(os.name == "nt", "signals the runner")
+    def test_a_terminate_during_discovery_stops_the_run(self) -> None:
+        self.signal_during_discovery(signal.SIGTERM)
+
+    @unittest.skipIf(os.name == "nt", "signals the runner")
+    def test_an_interrupt_during_discovery_stops_the_run(self) -> None:
+        self.signal_during_discovery(signal.SIGINT)
+
+    def signal_during_discovery(self, signum: int) -> None:
+        """The test loader takes an interrupt raised while it imports a module for that module's import failure."""
+        started, ran = self.root / "importing", self.root / "ran"
+        self.module("test_slow_import", f"""
+            import pathlib, time, unittest
+            pathlib.Path({str(started)!r}).write_text("x")
+            time.sleep(5)
+            class Slow(unittest.TestCase):
+                def test_runs(self):
+                    pathlib.Path({str(ran)!r}).write_text("x")
+        """)
+        runner = subprocess.Popen([sys.executable, "-B", str(RUNNER), "-s", "suite", "-t", "."], cwd=self.root,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                  env={**os.environ, "TRACE": str(self.trace)})
+        self.addCleanup(lambda: runner.poll() is None and runner.kill())
+        deadline = time.monotonic() + 60
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(started.exists(), "discovery reached the slow import")
+        runner.send_signal(signum)
+        out, err = runner.communicate(timeout=60)
+        self.assertEqual(runner.returncode, 130, out + err)
+        self.assertIn("interrupted", err)
+        self.assertFalse(ran.exists(), "no test ran after the interrupt")
+        self.assertNotIn("unit timeout:", out, "the run never started")
+
+    def test_an_interrupt_raised_outside_an_import_during_discovery_exits_130(self) -> None:
+        spec = importlib.util.spec_from_file_location("run_tests_for_discovery_interrupt", RUNNER)
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        self.passing_suite()
+        errors = io.StringIO()
+        with mock.patch.object(runner, "discover_units", side_effect=KeyboardInterrupt), \
+                mock.patch.object(runner, "run_suite") as run_suite, contextlib.redirect_stderr(errors):
+            code = runner.main(["-s", str(self.root / "suite"), "-t", str(self.root)])
+        self.assertEqual(code, 130)
+        self.assertIn("interrupted", errors.getvalue())
+        run_suite.assert_not_called()
 
     def assert_gone(self, recorded: list[int]) -> None:
         for pid in recorded:
