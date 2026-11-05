@@ -148,22 +148,26 @@ WINDOWS = os.name == "nt"
 
 # What a stop detail never carries from a command's output: the command's own secret-looking environment values,
 # common token shapes, and whatever follows a keyword that introduces one. Redacted before the tail is cut.
-SECRET_NAME = re.compile(r"token|secret|passw|api[-_]?key|credent\w*|auth|private[-_]?key", re.IGNORECASE)
+# "auth" counts only as a whole name segment, so the runner's own GIT_AUTHOR_* identity is not taken for a secret.
+SECRET_NAME = re.compile(r"token|secret|passw|api[-_]?key|credent\w*|private[-_]?key|(?:^|[_-])o?auth(?:[_-]|$)",
+                         re.IGNORECASE)
 TOKEN_SHAPE = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|glpat-[A-Za-z0-9_-]{16,}|xox[abprs]-[A-Za-z0-9-]{10,}"
     r"|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,})")
 # An authorization header is redacted to the end of its line, whatever scheme and value follow.
 HEADER_VALUE = re.compile(r"(?im)\b(authorization|proxy-authorization)(\s*:\s*)[^\r\n]+")
+# A keyword, the separator after it (quoted as JSON writes it, or not), and the value that follows.
 KEYED_VALUE = re.compile(
-    r"(?i)\b(bearer|token|password|passwd|secret|api[-_]?key)(\s*[:=]\s*|\s+)(?!\[redacted\])(\S+)")
+    r'(?i)\b(bearer|token|password|passwd|secret|api[-_]?key)("?\s*[:=]\s*"?|\s+)(?!\[redacted\])([^\s"]+)')
 TAIL_LIMIT = 400
 
 
 def scrubbed_tail(text: str, environment: dict[str, str], limit: int = TAIL_LIMIT) -> str:
     """The last ``limit`` characters of a command's output, with anything that looks secret redacted first."""
-    for name, value in environment.items():
-        if SECRET_NAME.search(name) and len(value) >= 4:
-            text = text.replace(value, "[redacted]")
+    # Longest first, so a value that contains a shorter one is redacted whole.
+    for value in sorted((value for name, value in environment.items() if SECRET_NAME.search(name) and len(value) >= 4),
+                        key=len, reverse=True):
+        text = text.replace(value, "[redacted]")
     text = TOKEN_SHAPE.sub("[redacted]", text)
     text = HEADER_VALUE.sub(lambda match: f"{match[1]}{match[2]}[redacted]", text)
     text = KEYED_VALUE.sub(lambda match: f"{match[1]}{match[2]}[redacted]", text)

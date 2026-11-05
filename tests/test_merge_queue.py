@@ -253,11 +253,15 @@ with open(os.environ["MQ_LOG"], "a") as log:
 if sys.argv[1] == "ready":
     sys.exit(1 if os.environ.get("MQ_READY") == "refuse" else 0)
 branch, expected = sys.argv[2], sys.argv[3]
+if os.environ.get("MQ_MERGE") == "hang":
+    import time
+    time.sleep(30)
 if os.environ.get("MQ_MERGE") == "loud":
     # A refusal that says why, and echoes what a careless helper might: secrets among the reason.
     sys.stderr.write("POST /repos/acme/shop/pulls/7/merge\\n" + "x" * int(os.environ.get("MQ_MERGE_PAD", "0"))
-                     + "token=ghx_keyedvalue123 Authorization: Bearer abc.def.ghi " + os.environ.get("MQ_FORGE_TOKEN", "")
-                     + " ghp_" + "A" * 36 + "\\nmerge refused: Head branch was modified. Review and try the merge again.\\n")
+                     + "token=ghx_keyedvalue123 Authorization: Bearer abc.def.ghi\\n"
+                     # On a line of their own, so only the environment and token-shape rules can remove them.
+                     + os.environ.get("MQ_FORGE_TOKEN", "") + " ghp_" + "A" * 36 + "\\nmerge refused: Head branch was modified. Review and try the merge again.\\n")
     sys.exit(1)
 if os.environ.get("MQ_MERGE") == "refuse" or tip(branch) != expected:
     sys.exit(1)
@@ -1383,6 +1387,30 @@ class MergeRefusalDetailTests(MergeQueueTestCase):
         self.assertIn("printed nothing", document["stop"]["detail"])
         self.assertTrue((adopter.state / re.search(r"logs/\S+\.log", document["stop"]["detail"]).group(0)).is_file())
 
+    def test_a_merge_that_times_out_says_so_and_names_its_log(self) -> None:
+        adopter = self.environment_adopter({"MQ_MERGE": "hang"}, {"checkTimeoutSeconds": 4})
+        self.candidate(adopter)
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "merge_refused")
+        self.assertIn(": timed out;", document["stop"]["detail"])
+        self.assertTrue((adopter.state / re.search(r"logs/\S+\.log", document["stop"]["detail"]).group(0)).is_file())
+
+    def test_the_scrub_covers_each_kind_of_name_shape_and_length(self) -> None:
+        names = {"API_KEY": "key-value-1", "DB_PASSWORD": "pass-value-2", "APP_SECRET": "secret-value-3",
+                 "CLOUD_CREDENTIALS": "cred-value-4", "SSH_PRIVATE_KEY": "private-value-5", "FORGE_TOKEN": "token-value-6"}
+        for name, value in names.items():
+            with self.subTest(name=name):
+                self.assertEqual(queue.scrubbed_tail(f"saw {value} here", {name: value}), "saw [redacted] here")
+        # The length boundary: four characters are redacted, three are left, as too likely to be ordinary text.
+        self.assertEqual(queue.scrubbed_tail("x abcd y", {"A_TOKEN": "abcd"}), "x [redacted] y")
+        self.assertEqual(queue.scrubbed_tail("x abc y", {"A_TOKEN": "abc"}), "x abc y")
+        shapes = ("ghp_" + "a" * 36, "gho_" + "b" * 36, "github_pat_" + "c" * 30, "glpat-" + "d" * 20,
+                  "xoxb-" + "1" * 12, "AKIA" + "E" * 16, "sk-" + "f" * 24)
+        for shape in shapes:
+            with self.subTest(shape=shape[:6]):
+                self.assertEqual(queue.scrubbed_tail(f"leaked {shape} there", {}), "leaked [redacted] there")
+        self.assertEqual(queue.scrubbed_tail("Proxy-Authorization: Basic Zm9vOmJhcg==\nnext", {}),
+                         "Proxy-Authorization: [redacted]\nnext")
+
     def test_the_scrub_redacts_before_it_cuts(self) -> None:
         environment = {"FORGE_TOKEN": "value-of-the-token", "API_KEY": "abcd1234", "PATH": "/usr/bin", "SHORT_SECRET": "ab"}
         cases = {
@@ -1393,10 +1421,20 @@ class MergeRefusalDetailTests(MergeQueueTestCase):
             "a token shape": ("saw github_pat_" + "B" * 30 + " there", "saw [redacted] there"),
             "a variable not named secret": ("in /usr/bin", "in /usr/bin"),
             "a secret too short to match safely": ("ab cd", "ab cd"),
+            "JSON-quoted keys": ('{"token": "plainvalue1", "password":"hunter22"}', '{"token": "[redacted]", "password":"[redacted]"}'),
         }
         for name, (text, expected) in cases.items():
             with self.subTest(name):
                 self.assertEqual(queue.scrubbed_tail(text, environment), expected)
+        # A value containing a shorter one is redacted whole.
+        self.assertEqual(queue.scrubbed_tail("leak abcdSECRETTAIL99 end", {"A_TOKEN": "abcd", "B_TOKEN": "abcdSECRETTAIL99"}),
+                         "leak [redacted] end")
+        # The runner's own identity is not a secret, though its variable names hold "AUTH"; an auth segment is.
+        self.assertEqual(queue.scrubbed_tail("refused by merge-queue rule", {"GIT_AUTHOR_NAME": "merge-queue"}),
+                         "refused by merge-queue rule")
+        for name in ("HTTP_AUTH", "AUTH_HEADER", "FORGE_OAUTH_KEY"):
+            with self.subTest(name=name):
+                self.assertEqual(queue.scrubbed_tail("sent hidden-value-1", {name: "hidden-value-1"}), "sent [redacted]")
         # A secret straddling the cut is redacted whole before the tail is taken, so no part of it survives.
         straddling = "value-of-the-token" + "y" * 20
         tail = queue.scrubbed_tail(straddling, environment, limit=25)
