@@ -215,6 +215,18 @@ else:
     print(json.dumps({**pr, "url": args.url, "head": pr.get("head") or head(pr["source"])}))
 '''
 
+# A real listener: argv is the port, a mark that names it in its command line, and "reuse" to share the port.
+LISTENER = r'''
+import socket, sys, time
+s = socket.socket()
+if sys.argv[3] == "reuse":
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+s.bind(("127.0.0.1", int(sys.argv[1])))
+s.listen()
+print("listening", flush=True)
+time.sleep(60)
+'''
+
 FAKE_CHECK = r'''
 import datetime, json, sys, time, urllib.request
 spec = json.load(open(sys.argv[1])); port = sys.argv[2]
@@ -1807,18 +1819,65 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                     orphan.kill()
                 orphan.wait()
 
+    def listener(self, port: int, mark: str, reuse: bool = False) -> subprocess.Popen:
+        """A real listener on `port`, started here and stopped at cleanup by the pid recorded here. `mark` rides in its
+        argv, so its command line can be told from any other's."""
+        proc = subprocess.Popen([sys.executable, "-c", LISTENER, str(port), mark, "reuse" if reuse else "plain"],
+                                stdout=subprocess.PIPE, text=True)
+
+        def stop():
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            proc.stdout.close()
+        self.addCleanup(stop)
+        self.assertEqual(proc.stdout.readline().strip(), "listening", f"the {mark} listener didn't start")
+        return proc
+
     def test_the_port_holder_is_named_by_its_listening_pid(self) -> None:
-        with socket.socket() as listener:  # a real listener this case owns, on an ephemeral port
-            listener.bind(("127.0.0.1", 0))
-            listener.listen()
-            port = listener.getsockname()[1]
+        port = free_port()  # an ephemeral port this case owns
+        listener = self.listener(port, "holder-mark-one")
+        # A client connected to the port (a browser looking at the build, say) isn't a holder, and isn't to be killed.
+        client = subprocess.Popen([sys.executable, "-c", "import socket,sys,time; c=socket.create_connection(('127.0.0.1', "
+                                   "int(sys.argv[1]))); print('connected', flush=True); time.sleep(60)", str(port)],
+                                  stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(client.stdout.readline().strip(), "connected")
             holders = self.call("port_holders", port)
-            self.assertEqual([pid for pid, _ in holders], [os.getpid()], holders)
-            self.assertTrue(holders[0][1], "the holder's command line is empty")
-            with tempfile.TemporaryDirectory() as empty:  # no lsof or ps on PATH: nothing named, nothing raised
-                self.assertEqual(call(self.tool, "port_holders", port, cwd=Path(empty),
-                                      env={**clean_environment(), "PATH": empty}), [])
+            self.assertEqual([pid for pid, _ in holders], [listener.pid], holders)
+            self.assertIn("holder-mark-one", holders[0][1], "the named command line isn't the listener's")
+            busy = self.call("port_busy", port)
+            self.assertIn(f"outside the in-app lease: pid {listener.pid} (", busy)
+            self.assertIn(f"stop it (kill {listener.pid}) and run again", busy)
+            self.assertNotIn(str(client.pid), busy, "the kill hint named a connected client")
+        finally:
+            if client.poll() is None:  # started here, stopped by the pid recorded here
+                client.kill()
+            client.wait()
+            client.stdout.close()
+        with tempfile.TemporaryDirectory() as empty:  # no lsof or ps on PATH: nothing named, nothing raised
+            unseen = dict(cwd=Path(empty), env={**clean_environment(), "PATH": empty})
+            self.assertEqual(call(self.tool, "port_holders", port, **unseen), [])
+            busy = call(self.tool, "port_busy", port, **unseen)
+            self.assertIn(f"something else is listening on {port}, outside the in-app lease (its process isn't visible here)", busy)
+            self.assertNotIn("kill", busy, "an unseen holder got a kill hint")
+        listener.kill()
+        listener.wait()
         self.assertEqual(self.call("port_holders", port), [], "a closed port still named a holder")
+
+    def test_every_holder_of_a_shared_port_is_named_once(self) -> None:
+        if not hasattr(socket, "SO_REUSEPORT"):
+            self.skipTest("no SO_REUSEPORT here, so two listeners can't share a port")
+        port = free_port()
+        first, second = self.listener(port, "holder-mark-a", reuse=True), self.listener(port, "holder-mark-b", reuse=True)
+        holders = self.call("port_holders", port)
+        self.assertEqual([pid for pid, _ in holders], sorted([first.pid, second.pid]), holders)
+        self.assertEqual({pid: "holder-mark-a" in command or "holder-mark-b" in command for pid, command in holders},
+                         {first.pid: True, second.pid: True})
+        busy = self.call("port_busy", port)
+        hint = re.search(r"stop it \(kill ([\d ]+)\)", busy)
+        self.assertIsNotNone(hint, busy)
+        self.assertEqual(hint.group(1).split(), [str(pid) for pid in sorted([first.pid, second.pid])], busy)
 
     def test_a_check_refused_by_a_busy_port_names_the_listener_and_how_to_release_it(self) -> None:
         fx = self.fixture()
@@ -1828,23 +1887,14 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         (wt / "src/one.txt").write_text("one\n")
         commit(wt, "FX-2: one")
         fx.flow("build", "FX-2", cwd=wt)
-        # A build served for someone to look at, on the in-app port but outside the lease.
-        listener = subprocess.Popen([sys.executable, "-c", "import socket,sys,time; s=socket.socket(); "
-                                     "s.bind(('127.0.0.1', int(sys.argv[1]))); s.listen(); print('listening', flush=True); "
-                                     "time.sleep(60)", str(fx.port)], stdout=subprocess.PIPE, text=True)
-        try:
-            self.assertEqual(listener.stdout.readline().strip(), "listening")
-            code, out = fx.flow("app-check", "FX-2", "page", "--mode", "loaded", "--path", "/one", "--eval", "true", cwd=wt)
-            self.assertEqual(code, 2, out)
-            self.assertIn(f"something else is listening on {fx.port}, outside the in-app lease: pid {listener.pid} (", out)
-            self.assertIn(f"stop it (kill {listener.pid}) and run again", out)
-            self.assertIsNone(listener.poll(), "app-check stopped a process it didn't start")
-            self.assertFalse((wt / ".orchestration/review/FX-2/app-checks/page.json").exists(), "a refused check became evidence")
-        finally:
-            if listener.poll() is None:  # started here, stopped by the pid recorded here
-                listener.kill()
-            listener.wait()
-            listener.stdout.close()
+        listener = self.listener(fx.port, "served-by-hand")  # a build served on the in-app port, outside the lease
+        code, out = fx.flow("app-check", "FX-2", "page", "--mode", "loaded", "--path", "/one", "--eval", "true", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"something else is listening on {fx.port}, outside the in-app lease: pid {listener.pid} (", out)
+        self.assertIn("served-by-hand", out)
+        self.assertIn(f"stop it (kill {listener.pid}) and run again", out)
+        self.assertIsNone(listener.poll(), "app-check stopped a process it didn't start")
+        self.assertFalse((wt / ".orchestration/review/FX-2/app-checks/page.json").exists(), "a refused check became evidence")
 
     def test_an_interrupted_check_releases_the_lease_and_its_server(self) -> None:
         fx = self.fixture()
@@ -4164,9 +4214,8 @@ class RunDeliveryDoctorTests(unittest.TestCase):
 
     def test_a_busy_port_outside_the_lease_names_its_listener_in_the_adapter_run(self) -> None:
         fx = self.fixture()
-        listener = subprocess.Popen([sys.executable, "-c", "import socket,sys,time; s=socket.socket(); "
-                                     "s.bind(('127.0.0.1', int(sys.argv[1]))); s.listen(); print('listening', flush=True); "
-                                     "time.sleep(60)", str(fx.port)], stdout=subprocess.PIPE, text=True)
+        listener = subprocess.Popen([sys.executable, "-c", LISTENER, str(fx.port), "served-by-hand", "plain"],
+                                    stdout=subprocess.PIPE, text=True)
         try:
             self.assertEqual(listener.stdout.readline().strip(), "listening")
             out = self.doctor(fx, "--run-adapters")

@@ -1903,7 +1903,9 @@ def port_busy(port: int) -> str:
     holders = port_holders(port)
     if not holders:
         return f"something else is listening on {port}, outside the in-app lease (its process isn't visible here); stop it first"
-    named = ", ".join(f"pid {pid} ({command[:120]})" for pid, command in holders)
+    # A long command keeps its head (the program) and its tail (the arguments, which tell one server from another).
+    short = lambda command: command if len(command) <= 160 else f"{command[:40]} ... {command[-110:]}"
+    named = ", ".join(f"pid {pid} ({short(command)})" for pid, command in holders)
     pids = " ".join(str(pid) for pid, _ in holders)
     return (f"something else is listening on {port}, outside the in-app lease: {named}. A build served by hand doesn't "
             f"hold the lease, so app-check can't use the port: stop it (kill {pids}) and run again")
@@ -4669,10 +4671,11 @@ def lead_close(args) -> None:
         try:
             Lease(lock, port, "lead-close", 0).close()  # stops whatever a dead holder left running
             done.append(f"the in-app lease {lock} is free")
-        except Stop as held:
+        except Stop as held:  # a live check's: its server is inside the lease, and isn't the operator's to kill
             left.append(str(held))
-        if port_open(port):
-            left.append(port_busy(port))
+        else:
+            if port_open(port):
+                left.append(port_busy(port))
     print(f"{c.delivery}: closed out")
     for line in done:
         print(f"  done: {line}")
