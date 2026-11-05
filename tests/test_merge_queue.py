@@ -534,6 +534,62 @@ class MergeQueueTestCase(unittest.TestCase):
         return last
 
 
+class FixtureMaintenanceTests(MergeQueueTestCase):
+    """No git in a fixture starts automatic maintenance, so nothing repacks a repository a test is still reading.
+
+    Git starts a detached `git maintenance run --auto` after a push, a fetch or a
+    commit, and from Git 2.52 its default strategy repacks geometrically on nearly
+    every push: it writes a temporary `bitmap-ref-tips` file and deletes the packs
+    it merged, beside a test's next clone, fetch or push. On a loaded machine the
+    detached repack outlives the command that started it, which is how a fixture
+    clone failed to copy a vanished `bitmap-ref-tips` file and a batch landing
+    stopped on `runner_error` rather than `batch_tree_mismatch`. `quieten` sets
+    `maintenance.auto = false` on every repository the fixture makes.
+    """
+
+    MAINTENANCE = ("maintenance", "gc", "repack", "multi-pack-index", "pack-refs")
+
+    def started(self, trace: Path) -> list[list[str]]:
+        """Every git command the trace saw start, as its argv after the program."""
+        commands = []
+        for path in trace.iterdir():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                event = json.loads(line)
+                if event.get("event") in ("start", "child_start"):
+                    commands.append([str(part) for part in event.get("argv", [])[1:]])
+        return commands
+
+    def test_a_batch_whose_base_moves_starts_no_maintenance_in_any_fixture_repository(self) -> None:
+        trace = self.directory / "trace"
+        trace.mkdir()
+        with mock.patch.dict(os.environ, {"GIT_TRACE2_EVENT": str(trace)}):
+            adopter = self.adopter()
+            subjects = ["first", "second", "third"]
+            for name, path in zip(subjects, ("src/lib.txt", "src/app.txt", "src/extra.txt")):
+                self.candidate(adopter, {path: f"{name}\n"}, name=name)
+
+            def push_base(runner, subject) -> None:
+                if subject == "first":
+                    adopter.advance_base({"src/other.txt": "other\n"})
+
+            results = adopter.runner(seams={"before_batch_landing": push_base}).run_command("batch", subjects)
+        documents = {result.document()["candidate"]: result.document() for result in results}
+        self.assertEqual(documents["first"]["stop"]["reason"], "batch_tree_mismatch", documents["first"]["stop"])
+        commands = self.started(trace)
+        # The trace saw the fixture's pushes and the runner's fetches, so an empty match is not an empty trace.
+        self.assertTrue(any("push" in command for command in commands), commands[:20])
+        self.assertTrue(any("receive-pack" in " ".join(command) for command in commands), commands[:20])
+        maintenance = [command for command in commands if any(word in command for word in self.MAINTENANCE)]
+        self.assertEqual(maintenance, [])
+
+    def test_every_repository_the_fixture_makes_turns_automatic_maintenance_off(self) -> None:
+        adopter = self.adopter()
+        lane = adopter.lane
+        for repository in (adopter.remote, adopter.operator, lane):
+            with self.subTest(repository.name):
+                self.assertEqual(run("config", "--get", "maintenance.auto", cwd=repository), "false")
+
+
 class LeadWriteTests(MergeQueueTestCase):
     """A lead's write while serve runs reads the record again when the runner wrote first, as a real lead does."""
 
