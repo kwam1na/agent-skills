@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest import mock
 
@@ -38,6 +39,12 @@ if command == ["pr", "list"]:
             entry["baseRefName"] = os.environ["FAKE_GH_BASE"]
         listed.append({key: value for key, value in entry.items() if key in fields})
     print(json.dumps(listed))
+elif sys.argv[1] == "api":
+    # As GitHub's matching-refs does: every ref that starts with the asked-for name, here from FAKE_GH_REFS.
+    asked = "refs/" + sys.argv[2].split("/git/matching-refs/", 1)[1]
+    refs = json.loads(os.environ.get("FAKE_GH_REFS", "{}"))
+    print(json.dumps([{"ref": "refs/heads/" + name, "object": {"sha": sha, "type": "commit"}}
+                      for name, sha in refs.items() if ("refs/heads/" + name).startswith(asked)]))
 elif command == ["pr", "merge"]:
     if sys.argv[sys.argv.index("--match-head-commit") + 1] != "abc":
         sys.exit("gh: head branch was modified; not merged")
@@ -227,6 +234,131 @@ class BitbucketMergeDestinationTests(unittest.TestCase):
                                "--destination", "release-1")
         self.assertIn("merge --destination applies only with --source", message)
         self.assertEqual(self.calls, [], "nothing was asked of the forge")
+
+
+HEAD = "0123456789abcdef0123456789abcdef01234567"
+OTHER = "fedcba9876543210fedcba9876543210fedcba98"
+
+
+class GitHubCandidateTests(unittest.TestCase):
+    """`candidate` turns a story key into its conventional branch and that branch's tip, as the queue's step needs."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "bin").mkdir()
+        gh = root / "bin" / "gh"
+        gh.write_text(FAKE_GH.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1))
+        gh.chmod(0o755)
+        self.log = root / "gh.jsonl"
+        self.log.write_text("")
+        self.env = {**os.environ, "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
+                    "FAKE_GH_LOG": str(self.log), "FLOW_FORGE_REPOSITORY": "o/n"}
+
+    def candidate(self, refs: dict[str, str], *argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, "-B", str(ADAPTERS / "forge_github.py"), "candidate", *argv],
+                              env={**self.env, "FAKE_GH_REFS": json.dumps(refs)}, capture_output=True, text=True,
+                              timeout=60)
+
+    def test_a_key_resolves_to_its_feature_branch_and_its_tip(self) -> None:
+        # A longer key and a branch below this one share the name's start; neither is this story's branch.
+        refs = {"feature/X-1": HEAD, "feature/X-10": OTHER, "feature/X-1/spike": OTHER, "main": OTHER}
+        done = self.candidate(refs, "--key", "X-1")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"branch": "feature/X-1", "head": HEAD})
+
+    def test_another_prefix_names_another_branch(self) -> None:
+        done = self.candidate({"feature/X-1": OTHER, "story/X-1": HEAD}, "--key", "X-1", "--prefix", "story/")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"branch": "story/X-1", "head": HEAD})
+
+    def test_a_missing_branch_is_refused(self) -> None:
+        # A branch that differs only in case is not this story's branch either.
+        for refs in ({"feature/X-10": OTHER}, {"feature/x-1": OTHER}):
+            with self.subTest(refs=refs):
+                done = self.candidate(refs, "--key", "X-1")
+                self.assertNotEqual(done.returncode, 0)
+                self.assertEqual(done.stdout, "")
+                self.assertIn("github: no branch feature/X-1 on o/n; not resolved", done.stderr)
+
+    def test_a_tip_that_is_not_a_full_hash_is_refused(self) -> None:
+        done = self.candidate({"feature/X-1": HEAD[:12]}, "--key", "X-1")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertEqual(done.stdout, "")
+        self.assertIn("not a full commit hash", done.stderr)
+
+    def test_a_name_several_branches_answer_to_is_refused(self) -> None:
+        # Names that differ only in case are one branch to a case-insensitive checkout.
+        done = self.candidate({"feature/X-1": HEAD, "feature/x-1": OTHER}, "--key", "X-1")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertEqual(done.stdout, "")
+        self.assertIn("github: 2 branches on o/n answer to feature/X-1 (feature/X-1, feature/x-1), not one; "
+                      "not resolved", done.stderr)
+
+
+class BitbucketCandidateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.spec = importlib.util.spec_from_file_location("forge_bitbucket_for_candidate_tests",
+                                                           ADAPTERS / "forge_bitbucket.py")
+        self.branches: dict[str, str] = {}
+        self.calls: list[str] = []
+
+    def answer(self, request, timeout=None):
+        self.calls.append(request.full_url)
+        url = urllib.parse.urlsplit(request.full_url)
+        query = urllib.parse.parse_qs(url.query).get("q", [""])[0]
+        # As Bitbucket's `~` does: every branch whose name contains the text, ignoring case.
+        text = query.split('"')[1].lower() if '"' in query else ""
+        values = [{"name": name, "target": {"hash": sha}} for name, sha in self.branches.items() if text in name.lower()]
+        assert url.path.endswith("/refs/branches") and query.startswith("name ~ "), request.full_url
+        return contextlib.closing(io.BytesIO(json.dumps({"values": values}).encode()))
+
+    def candidate(self, *argv: str) -> dict:
+        module = importlib.util.module_from_spec(self.spec)
+        with mock.patch.dict(os.environ, {"FLOW_FORGE_REPOSITORY": "ws/repo", "FLOW_FORGE_TOKEN_ENV": "FX_TOKEN",
+                                          "FX_TOKEN": "bb-secret"}), \
+                mock.patch.object(sys, "argv", ["forge_bitbucket.py", "candidate", *argv]), \
+                mock.patch("urllib.request.urlopen", self.answer), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            previous = sys.dont_write_bytecode
+            sys.dont_write_bytecode = True
+            try:
+                self.spec.loader.exec_module(module)
+                module.main()
+            finally:
+                sys.dont_write_bytecode = previous
+        return json.loads(out.getvalue())
+
+    def refused(self, *argv: str) -> str:
+        with self.assertRaises(SystemExit) as refusal:
+            self.candidate(*argv)
+        return str(refusal.exception.code)
+
+    def test_a_key_resolves_to_its_feature_branch_and_its_full_tip(self) -> None:
+        self.branches = {"feature/X-1": HEAD, "feature/X-10": OTHER, "feature/X-1/spike": OTHER, "main": OTHER}
+        self.assertEqual(self.candidate("--key", "X-1"), {"branch": "feature/X-1", "head": HEAD})
+
+    def test_another_prefix_names_another_branch(self) -> None:
+        self.branches = {"feature/X-1": OTHER, "story/X-1": HEAD}
+        self.assertEqual(self.candidate("--key", "X-1", "--prefix", "story/"), {"branch": "story/X-1", "head": HEAD})
+
+    def test_a_missing_branch_is_refused(self) -> None:
+        # A branch that differs only in case is not this story's branch either.
+        for branches in ({"feature/X-10": OTHER}, {"feature/x-1": OTHER}):
+            with self.subTest(branches=branches):
+                self.branches = branches
+                self.assertIn("bitbucket: no branch feature/X-1 on ws/repo; not resolved", self.refused("--key", "X-1"))
+
+    def test_a_name_several_branches_answer_to_is_refused(self) -> None:
+        self.branches = {"feature/X-1": HEAD, "feature/x-1": OTHER}
+        self.assertIn("bitbucket: 2 branches on ws/repo answer to feature/X-1 (feature/X-1, feature/x-1), not one; "
+                      "not resolved", self.refused("--key", "X-1"))
+
+    def test_a_tip_that_is_not_a_full_hash_is_refused(self) -> None:
+        # The queue takes only a full object name; a short one must not reach it.
+        self.branches = {"feature/X-1": HEAD[:12]}
+        self.assertIn("not a full commit hash", self.refused("--key", "X-1"))
 
 
 if __name__ == "__main__":

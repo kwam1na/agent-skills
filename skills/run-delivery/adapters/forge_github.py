@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """run-delivery forge adapter for GitHub, through the `gh` CLI (which keeps its own sign-in).
 
+  candidate --key KEY [--prefix P]                       -> {"branch": P+KEY, "head": its tip} (P defaults to feature/)
   find --source BRANCH                                   -> {"url": ...} for its open PR, or {}
   open --source B --destination D --title T --body-file F -> {"url": ...}  (opened as a draft)
   get  --url URL                                          -> {"url", "state": open|merged|closed, "draft", "head", "source",
@@ -12,7 +13,9 @@
   merge --source BRANCH --head SHA --strategy merge|squash [--destination D] -> {"url", "state": "merged"}
 
 Environment: FLOW_FORGE_REPOSITORY (owner/name). Prints JSON on stdout; exits 1 with a message on stderr otherwise.
-It writes three ways: it opens a pull request as a draft (a lane's open-pr), marks one ready (the lead's acceptance,
+`candidate` is a merge queue's candidate step for the conventional branch: it prints the branch `--prefix` + `--key`
+names and that branch's tip, and refuses when no branch has that name or when several answer to it, differing only in
+case, as a case-insensitive checkout would mix them. It writes three ways: it opens a pull request as a draft (a lane's open-pr), marks one ready (the lead's acceptance,
 under the delivery's readyPullRequests grant), and merges one (the binding's merge step), refusing a head that moved
 when --head is given. `merge --source` merges the branch's one open pull request at exactly `--head`, so a binding's
 merge step, which knows the branch and the checked head but not the pull request, can call it; it refuses a branch
@@ -26,6 +29,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 
 sys.dont_write_bytecode = True
 REPO = os.environ.get("FLOW_FORGE_REPOSITORY", "")
@@ -43,6 +47,14 @@ def fail(message):
     sys.exit(redact(message))
 
 
+def gh_api(path):
+    """A `gh api` call, which names its repository in the path rather than through --repo."""
+    done = subprocess.run(["gh", "api", path], text=True, capture_output=True)
+    if done.returncode != 0:
+        fail(f"gh api: {redact(done.stderr.strip())[-300:]}")
+    return done.stdout
+
+
 def gh(*args):
     done = subprocess.run(["gh", *args, "--repo", REPO], text=True, capture_output=True)
     if done.returncode != 0:
@@ -53,6 +65,19 @@ def gh(*args):
 # A check run's conclusion, or a status context's state, as the pipeline review reads it.
 CHECK_STATES = {"SUCCESS": "passed", "NEUTRAL": "passed", "SKIPPED": "passed", "FAILURE": "failed", "ERROR": "failed",
                 "CANCELLED": "failed", "TIMED_OUT": "failed", "ACTION_REQUIRED": "failed", "STARTUP_FAILURE": "failed"}
+
+
+def resolve_candidate(forge, branch, tips):
+    """The candidate step's answer from the forge's branches and their tips: exactly the one named, at a full hash."""
+    answering = sorted(name for name in tips if name.lower() == branch.lower())
+    if len(answering) > 1:
+        fail(f"{forge}: {len(answering)} branches on {REPO} answer to {branch} ({', '.join(answering)}), not one; "
+             "not resolved")
+    if branch not in tips:
+        fail(f"{forge}: no branch {branch} on {REPO}; not resolved")
+    if not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", tips[branch]):
+        fail(f"{forge}: {branch}'s tip {tips[branch]!r} is not a full commit hash; not resolved")
+    return {"branch": branch, "head": tips[branch]}
 
 
 def pull_request(url):
@@ -66,6 +91,7 @@ def main():
         fail("github: set FLOW_FORGE_REPOSITORY (owner/name)")
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("candidate"); p.add_argument("--key", required=True); p.add_argument("--prefix", default="feature/")
     p = sub.add_parser("find"); p.add_argument("--source", required=True)
     p = sub.add_parser("open"); p.add_argument("--source", required=True); p.add_argument("--destination", required=True)
     p.add_argument("--title", required=True); p.add_argument("--body-file", required=True)
@@ -77,7 +103,13 @@ def main():
     p.add_argument("--destination", help="with --source: the branch the pull request must target")
     p.add_argument("--strategy", choices=("merge", "squash"), required=True); p.add_argument("--head")
     args = parser.parse_args()
-    if args.command == "find":
+    if args.command == "candidate":
+        branch = args.prefix + args.key
+        refs = json.loads(gh_api(f"repos/{REPO}/git/matching-refs/heads/{urllib.parse.quote(args.prefix, safe='/')}"))
+        tips = {ref["ref"][len("refs/heads/"):]: (ref.get("object") or {}).get("sha", "") for ref in refs
+                if ref.get("ref", "").startswith("refs/heads/")}
+        print(json.dumps(resolve_candidate("github", branch, tips)))
+    elif args.command == "find":
         found = json.loads(gh("pr", "list", "--head", args.source, "--state", "open", "--json", "url"))
         print(json.dumps({"url": found[0]["url"]} if found else {}))
     elif args.command == "open":
