@@ -8,6 +8,7 @@ process they start; the pass cases run `lead-run --once`, one pass at a time, so
 from __future__ import annotations
 
 import datetime
+import fcntl
 import importlib.util
 import json
 import os
@@ -22,6 +23,7 @@ import types
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 from tests.test_run_delivery import (POSIX_ONLY, Fixture, commit, doctor_binding, installed_release, setup_delivery,
                                      sh, stop_supervisors, write_results)
@@ -298,6 +300,161 @@ class ProofStateTests(unittest.TestCase):
         self.assertEqual(handed({"stage": "queued", "pending": True}), "open")
         self.assertEqual(handed({"stage": "stopped"}), "open")
         self.assertEqual(handed({"stage": "queued"}), "done")
+
+
+class ArchiveNameTests(unittest.TestCase):
+    """Two close-outs' archives in one second: each gets its own folder, and the folders sort in the order made."""
+
+    def setUp(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
+        spec = importlib.util.spec_from_file_location("run_delivery_for_archive_names", path)
+        self.module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = self.module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(self.module)
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        (self.root / "record").mkdir()
+        (self.root / "record/state.json").write_text("{}\n")
+        (self.root / "flow-log").mkdir()
+        self.c = types.SimpleNamespace(state=self.root / "record", flow_log=self.root / "flow-log")
+        for name, value in (("archive_root", lambda c: self.root / "archive"), ("archive_plan_review", lambda archive: None)):
+            patcher = mock.patch.object(self.module, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def archive_at(self, *instants: datetime.datetime) -> list[Path]:
+        """Archive once per instant, with the clock reading that instant."""
+        made = []
+        for instant in instants:
+            clock = types.SimpleNamespace(datetime=types.SimpleNamespace(now=lambda instant=instant: instant))
+            with mock.patch.object(self.module, "datetime", clock):
+                made.append(self.module.archive_delivery(self.c)[0])
+        return made
+
+    def test_two_archives_in_one_second_each_get_their_own_folder(self) -> None:
+        second = datetime.datetime(2026, 11, 4, 23, 47, 25)
+        made = self.archive_at(second.replace(microsecond=1000), second.replace(microsecond=2000))
+        self.assertEqual(len(set(made)), 2, made)
+        self.assertTrue(all((path / "record/state.json").is_file() for path in made), made)
+        self.assertEqual(sorted(made), made, "the archives don't sort in the order they were made")
+
+    def test_the_same_instant_twice_still_gets_two_folders_in_order(self) -> None:
+        instant = datetime.datetime(2026, 11, 4, 23, 47, 25, 1000)
+        made = self.archive_at(instant, instant, instant)
+        self.assertEqual(len(set(made)), 3, made)
+        self.assertTrue(all((path / "record/state.json").is_file() for path in made), made)
+        self.assertEqual(sorted(made), made, "the archives don't sort in the order they were made")
+        self.assertTrue(all(path.name.startswith("20261104T234725") for path in made), made)
+
+    def test_a_dozen_at_one_instant_still_sort_in_the_order_made(self) -> None:
+        instant = datetime.datetime(2026, 11, 4, 23, 47, 25, 1000)
+        made = self.archive_at(*[instant] * 12)  # past -009, where an unpadded -10 would sort before -2
+        self.assertEqual(len(set(made)), 12, made)
+        self.assertEqual(sorted(made), made, "the archives don't sort in the order they were made")
+
+    def test_every_name_at_one_instant_taken_stops_without_a_folder(self) -> None:
+        instant = datetime.datetime(2026, 11, 4, 23, 47, 25, 1000)
+        stamp = instant.strftime("%Y%m%dT%H%M%S.%f")
+        root = self.root / "archive"
+        for n in range(1, 1000):
+            (root / (stamp if n == 1 else f"{stamp}-{n:03d}")).mkdir(parents=True)
+        before = sorted(path.name for path in root.iterdir())
+        with self.assertRaises(self.module.Stop) as refused:
+            self.archive_at(instant)
+        self.assertIn(str(root), str(refused.exception))
+        self.assertEqual(sorted(path.name for path in root.iterdir()), before, "an exhausted root still made a folder")
+        self.assertFalse((root / "record").exists(), "the record was archived into the root itself")
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class RecordedPidGuardTests(unittest.TestCase):
+    """The guard against stopping a recorded pid of -1, 0 or 1, or one that isn't an integer. Every signal call is
+    patched: a real kill(-1, sig) would signal every process the user may signal, and kill(1, sig) init."""
+
+    def setUp(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
+        spec = importlib.util.spec_from_file_location("run_delivery_for_pid_guard", path)
+        self.module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = self.module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(self.module)
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.c = types.SimpleNamespace(flow_log=Path(folder.name), delivery="FX-1")
+        self.lock = self.module.supervisor_lock_path(self.c)
+        self.sent: list[tuple[str, object, object]] = []
+        self.held = None
+        # Nothing reaches the operating system: every call is recorded, and answers that no such process exists.
+        def refuse(name):
+            def call(pid, sig):
+                self.sent.append((name, pid, sig))
+                if self.held is not None:  # the positive control's stand-in "exits" on the first signal
+                    self.release()
+                raise ProcessLookupError
+            return call
+        for name in ("kill", "killpg"):
+            patcher = mock.patch.object(self.module.os, name, side_effect=refuse(name))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        # Membership, not truthiness: a recorded group of 0 must reach the guard as 0.
+        patcher = mock.patch.object(self.module.os, "getpgid", side_effect=lambda pid: self.groups[pid] if pid in self.groups
+                                    else (_ for _ in ()).throw(ProcessLookupError()))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.groups: dict[int, int] = {}
+        self.addCleanup(self.release)
+
+    def record(self, recorded: dict, held: bool) -> None:
+        self.lock.write_text(json.dumps(recorded))
+        if held:
+            self.held = open(self.lock, "a+")
+            fcntl.flock(self.held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def release(self) -> None:
+        if self.held is not None:
+            fcntl.flock(self.held, fcntl.LOCK_UN)
+            self.held.close()
+            self.held = None
+
+    def test_a_held_lock_with_an_unsafe_pid_is_refused_without_a_signal(self) -> None:
+        for pid in (-1, 0, 1, True, "123", None, 2.5):
+            with self.subTest(pid=pid):
+                self.sent.clear()
+                self.record({"pid": pid}, held=True)
+                with self.assertRaises(self.module.Stop) as refused:
+                    self.module.stop_supervisor(self.c)
+                self.assertIn("records no pid to stop", str(refused.exception))
+                self.assertEqual(self.sent, [], f"a recorded pid of {pid!r} was signalled")
+                self.release()
+
+    def test_a_held_lock_with_a_real_pid_is_signalled(self) -> None:
+        # The positive control: the same patched calls do see a pid the guard lets through.
+        self.record({"pid": 424242}, held=True)
+        self.assertEqual(self.module.stop_supervisor(self.c), "stopped the supervisor (pid 424242)")
+        self.assertEqual(self.sent[0], ("killpg", 424242, signal.SIGTERM))
+
+    def test_orphans_under_an_unsafe_group_or_with_unsafe_pids_are_left_alone(self) -> None:
+        for group, child in ((-1, 424243), (0, 424243), (1, 424243), (True, 424243), (424242, -1), (424242, 0),
+                             (424242, 1), (424242, True)):
+            with self.subTest(group=group, child=child):
+                self.sent.clear()
+                self.groups = {424243: group, -1: 424242, 0: 424242, 1: 424242}
+                self.record({"pid": group, "children": [{"name": "queue", "pid": child}]}, held=False)
+                self.assertEqual(self.module.stop_orphans(self.c), [])
+                self.assertEqual(self.sent, [], f"group {group!r} or child {child!r} was signalled")
+
+    def test_an_orphan_in_a_real_group_is_stopped_by_its_group(self) -> None:
+        self.groups = {424243: 424242}
+        self.record({"pid": 424242, "children": [{"name": "queue", "pid": 424243}]}, held=False)
+        def gone(pid, sig):
+            self.sent.append(("killpg", pid, sig))
+            self.groups.clear()
+        with mock.patch.object(self.module.os, "killpg", side_effect=gone):
+            said = self.module.stop_orphans(self.c)
+        self.assertEqual(self.sent, [("killpg", 424242, signal.SIGTERM)])
+        self.assertEqual(said, ["stopped queue (pid 424243), left by the earlier supervisor (pid 424242)"])
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)

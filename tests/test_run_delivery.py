@@ -5207,7 +5207,7 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         record = lambda args: seen.append(self.tool.DELIVERY_ARG)
         with mock.patch.object(self.tool, "lead_init", record), mock.patch.object(self.tool, "plan_review_prepare", record), \
                 mock.patch.object(self.tool, "lead_plan", record), mock.patch.object(self.tool, "lead_assign", record), \
-                mock.patch.object(self.tool.signal, "signal"):
+                mock.patch.object(self.tool, "view", record), mock.patch.object(self.tool.signal, "signal"):
             self.tool.main(list(argv))
         return seen[0]
 
@@ -5215,7 +5215,8 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         for argv in (["--delivery", "K", "lead-init"], ["lead-init", "--delivery", "K"], ["--delivery=K", "lead-init"],
                      ["lead-init", "--delivery=K"], ["--delivery", "K", "lead-init", "--delivery", "K"],
                      ["plan-review", "prepare", "--delivery", "K"], ["lead-plan", "why", "c1", "--why", "x", "--delivery", "K"],
-                     ["lead-assign", "FX-1", "--delivery", "K", "--lane", "l", "--title", "t"]):
+                     ["lead-assign", "FX-1", "--delivery", "K", "--lane", "l", "--title", "t"],
+                     ["view", "--delivery", "K"], ["--delivery", "K", "view"], ["view", "--archive", "a", "--delivery=K"]):
             with self.subTest(argv=argv):
                 self.assertEqual(self.delivery_of(*argv), "K")
         self.assertIsNone(self.delivery_of("lead-init"))

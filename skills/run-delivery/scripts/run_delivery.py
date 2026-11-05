@@ -5410,10 +5410,25 @@ def closed_step(c) -> tuple[bool, str]:
     return True, f"delivery.closed is journal entry {closed['id']}"
 
 
+def new_archive_folder(root: Path) -> Path:
+    """A new, empty folder under `root`, named by the time to the microsecond as replace_record's are, so two close-outs
+    in one second don't collide. A name already taken, by a clock that didn't move or another process, gets the next
+    free -002, -003 suffix. Every name sorts in the order the folders were made."""
+    stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S.%f")
+    root.mkdir(parents=True, exist_ok=True)
+    for n in range(1, 1000):
+        folder = root / (stamp if n == 1 else f"{stamp}-{n:03d}")
+        try:
+            folder.mkdir()
+            return folder
+        except FileExistsError:
+            continue
+    raise Stop(f"{root} already holds 999 archives stamped {stamp}; remove some, then run it again")
+
+
 def archive_delivery(c) -> tuple[Path, list[str]]:
     """Copy the record, the lead-side logs, the lanes' evidence and the plan review into a new archive folder."""
-    archive = archive_root(c) / datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
-    archive.mkdir(parents=True)
+    archive = new_archive_folder(archive_root(c))
     for source in (c.state, c.flow_log, c.flow_log.parent / "evidence"):
         if source.exists():
             shutil.copytree(source, archive / source.name)
