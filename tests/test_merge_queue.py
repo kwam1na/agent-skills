@@ -4,6 +4,7 @@ import contextlib
 import copy
 import errno
 import gc
+import hashlib
 import io
 import importlib.util
 import io
@@ -947,6 +948,272 @@ class SyncSafetyTests(MergeQueueTestCase):
         self.assertIn("pre-commit", fired)
         self.assertIn("pre-push", fired)
         self.assertFalse(any(result.document()["hooksBypassed"] for result in results))
+
+
+REGEN_LOCK = """
+import hashlib, json, pathlib, sys
+# Refreshes only the digests, as update-provenance.py does: it never adds or removes an output.
+lock_path = pathlib.Path("gen/lock.json")
+if lock_path.exists():
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    for entry in lock["entries"]:
+        for output in entry["outputs"]:
+            path = pathlib.Path(output["path"])
+            if not path.is_file():
+                sys.exit(f"listed output {output['path']} is missing")
+            output["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    lock_path.write_bytes((json.dumps(lock, indent=2, sort_keys=True) + "\\n").encode("utf-8"))
+"""
+
+# A listing that fails as the version it reads says to, so each of the three versions can be made the one that fails.
+FAILING_LISTING = """
+import json, sys
+text = sys.stdin.read()
+lock = json.loads(text)
+how = lock.get("listingMode")
+if how == "fails":
+    sys.exit("cannot list")
+if how == "empty":
+    sys.exit(0)
+if how == "garbage":
+    print("not a listing")
+    sys.exit(0)
+if how == "deep":
+    print("[" * 100000 + "]" * 100000)
+    sys.exit(0)
+if how == "object":
+    print(json.dumps({"outputs": []}))
+    sys.exit(0)
+if how == "numbers":
+    print(json.dumps([1, 2]))
+    sys.exit(0)
+# A listing given an argument checks it is the head the runner placed there, so a missing placeholder value shows.
+if len(sys.argv) > 1 and len(sys.argv[1]) != 40:
+    sys.exit(f"expected a head, not {sys.argv[1]!r}")
+print(json.dumps(sorted(output["path"] for entry in lock["entries"] for output in entry["outputs"])))
+"""
+
+REAL_LISTING = [PY, "-B", str(ROOT / "scripts" / "update-provenance.py"), "--list-outputs"]
+
+
+def fixture_lock(files: dict[str, str], **extra: object) -> str:
+    """A lock in provenance.lock.json's real format, listing ``files`` with their digests."""
+    outputs = [{"path": path, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()} for path, text in sorted(files.items())]
+    lock = {"entries": [{"classification": "fixture", "id": "fixture-entry", "outputs": outputs, "owner": "fixture"}],
+            "schemaVersion": "provenance-lock/1", "sourceBaseline": {"commit": "0" * 40}, **extra}
+    return json.dumps(lock, indent=2, sort_keys=True) + "\n"
+
+
+class RegenerableListingTests(MergeQueueTestCase):
+    """A conflicted lock regenerates only when the candidate left its listing alone; otherwise the queue stops."""
+
+    START = {"src/app.txt": "app one\n", "src/lib.txt": "lib one\n", "gen/generated.txt": "app one\nlib one\n"}
+
+    def lock_adopter(self, listing: list[str] | None = None, **extra: object) -> Adopter:
+        adopter = self.adopter({"regenerable": {
+            "paths": ["gen/**"], "regenerators": [[PY, "tools/regen.py"], [PY, "tools/regen_lock.py"]],
+            "listings": [{"path": "gen/lock.json", "argv": listing or REAL_LISTING}]}})
+        adopter.advance_base({"tools/regen_lock.py": REGEN_LOCK.lstrip(), "tools/listing.py": FAILING_LISTING.lstrip(),
+                              "gen/lock.json": fixture_lock(self.START, **extra)})
+        return adopter
+
+    def side(self, files: dict[str, str], listed: dict[str, str] | None = None, **extra: object) -> dict[str, str]:
+        """A side's own change, carrying the generated file and the lock as that side regenerated them."""
+        tree = {**self.START, **files}
+        generated = "".join(tree[path] for path in sorted(path for path in tree if path.startswith("src/")))
+        tree["gen/generated.txt"] = generated
+        listed_files = {path: tree[path] for path in (listed if listed is not None else self.START)}
+        return {**files, "gen/generated.txt": generated, "gen/lock.json": fixture_lock(listed_files, **extra)}
+
+    def listed(self, adopter: Adopter, revision: str = "origin/main") -> list[str]:
+        lock = json.loads(adopter.show(revision, "gen/lock.json"))
+        return sorted(output["path"] for entry in lock["entries"] for output in entry["outputs"])
+
+    def stopped_naming_the_lock(self, adopter: Adopter, results: list, base: str, head: str, expect: str) -> None:
+        document = self.assertStopped(results, "source_conflict")
+        self.assertIn("gen/lock.json", document["stop"]["detail"])
+        self.assertIn(expect, document["stop"]["detail"])
+        self.assertEqual(document["stop"]["paths"], ["gen/lock.json"])
+        # Nothing was regenerated or pushed: the base and the candidate's branch are as they were.
+        self.assertEqual(adopter.tip("main"), base)
+        self.assertEqual(adopter.tip("feature"), head)
+
+    def test_a_digest_only_conflict_regenerates_and_merges(self) -> None:
+        adopter = self.lock_adopter()
+        self.candidate(adopter, self.side({"src/app.txt": "app two\n"}))
+        adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document().get("stop"))
+        # gen/generated.txt, a regenerable path with no listing, regenerates as before.
+        self.assertEqual(adopter.show("origin/main", "gen/generated.txt"), "app two\nlib two")
+        lock = json.loads(adopter.show("origin/main", "gen/lock.json"))
+        digests = {output["path"]: output["sha256"] for output in lock["entries"][0]["outputs"]}
+        self.assertEqual(digests["src/app.txt"], hashlib.sha256(b"app two\n").hexdigest())
+        self.assertEqual(digests["src/lib.txt"], hashlib.sha256(b"lib two\n").hexdigest())
+        self.assertEqual(sorted(digests), sorted(self.START))
+
+    def test_a_candidate_that_adds_an_output_stops_before_any_check(self) -> None:
+        adopter = self.lock_adopter()
+        head = self.candidate(adopter, self.side({"src/new.txt": "new\n"},
+                                                 listed={**self.START, "src/new.txt": "new\n"}))
+        base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        results = self.run_queue(adopter, "feature")
+        self.stopped_naming_the_lock(adopter, results, base, head, "added src/new.txt")
+        self.assertFalse([line for line in adopter.log_lines() if line.startswith("check ")], "no check ran")
+
+    def test_a_candidate_that_removes_an_output_stops(self) -> None:
+        adopter = self.lock_adopter()
+        listed = {path: text for path, text in self.START.items() if path != "src/lib.txt"}
+        head = self.candidate(adopter, self.side({"src/app.txt": "app two\n"}, listed=listed))
+        base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        self.stopped_naming_the_lock(adopter, self.run_queue(adopter, "feature"), base, head, "removed src/lib.txt")
+
+    def test_both_sides_adding_different_outputs_stops(self) -> None:
+        adopter = self.lock_adopter(listing=[PY, "tools/listing.py"])
+        head = self.candidate(adopter, self.side({"src/c.txt": "c\n"}, listed={**self.START, "src/c.txt": "c\n"}))
+        base = adopter.advance_base(self.side({"src/b.txt": "b\n"}, listed={**self.START, "src/b.txt": "b\n"}))
+        self.stopped_naming_the_lock(adopter, self.run_queue(adopter, "feature"), base, head, "added src/c.txt")
+
+    def test_an_output_only_the_base_added_regenerates_and_merges(self) -> None:
+        adopter = self.lock_adopter()
+        self.candidate(adopter, self.side({"src/app.txt": "app two\n"}))
+        adopter.advance_base(self.side({"src/b.txt": "b\n"}, listed={**self.START, "src/b.txt": "b\n"}))
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document().get("stop"))
+        self.assertEqual(self.listed(adopter), sorted([*self.START, "src/b.txt"]))
+        lock = json.loads(adopter.show("origin/main", "gen/lock.json"))
+        digests = {output["path"]: output["sha256"] for output in lock["entries"][0]["outputs"]}
+        self.assertEqual(digests["src/app.txt"], hashlib.sha256(b"app two\n").hexdigest())
+
+    def test_a_listing_that_fails_at_any_version_stops_and_never_regenerates(self) -> None:
+        for how, says in (("fails", "exited"), ("empty", "printed nothing"), ("garbage", "printed something other than a JSON array"),
+                          ("deep", "printed something other than a JSON array"),
+                          ("object", "printed something other than a JSON array of strings"),
+                          ("numbers", "printed something other than a JSON array of strings")):
+            for version in ("merge base", "base", "candidate"):
+                with self.subTest(listing=how, version=version):
+                    self.fresh()
+                    marked = {"listingMode": how}
+                    adopter = self.lock_adopter([PY, "tools/listing.py"], **(marked if version == "merge base" else {}))
+                    keep = marked if version == "merge base" else {}
+                    head = self.candidate(adopter, self.side({"src/app.txt": "app two\n"},
+                                                             **(marked if version == "candidate" else keep)))
+                    base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"},
+                                                          **(marked if version == "base" else keep)))
+                    results = self.run_queue(adopter, "feature")
+                    self.stopped_naming_the_lock(adopter, results, base, head, f"at the {version} {says}")
+
+    def test_a_version_without_the_path_stops(self) -> None:
+        adopter = self.adopter({"regenerable": {
+            "paths": ["gen/**"], "regenerators": [[PY, "tools/regen.py"], [PY, "tools/regen_lock.py"]],
+            "listings": [{"path": "gen/lock.json", "argv": REAL_LISTING}]}})
+        adopter.advance_base({"tools/regen_lock.py": REGEN_LOCK.lstrip()})
+        # Both sides add the lock: the merge base has none, so there is nothing to compare against.
+        head = self.candidate(adopter, self.side({"src/app.txt": "app two\n"}))
+        base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        self.stopped_naming_the_lock(adopter, self.run_queue(adopter, "feature"), base, head, "absent at the merge base")
+
+    def test_in_a_batch_a_member_that_adds_an_output_is_dropped_and_a_digest_only_one_merges(self) -> None:
+        adopter = self.lock_adopter()
+        self.candidate(adopter, self.side({"src/lib.txt": "lib two\n"}), name="first")
+        self.candidate(adopter, self.side({"src/new.txt": "new\n"}, listed={**self.START, "src/new.txt": "new\n"}),
+                       name="adds")
+        self.candidate(adopter, self.side({"src/app.txt": "app two\n"}), name="digests")
+        documents = {result.document()["candidate"]: result.document()
+                     for result in adopter.runner().run_command("batch", ["first", "adds", "digests"])}
+        self.assertEqual(documents["adds"]["stop"]["reason"], "source_conflict")
+        self.assertIn("dropped from the batch", documents["adds"]["stop"]["detail"])
+        self.assertIn("added src/new.txt", documents["adds"]["stop"]["detail"])
+        self.assertEqual((documents["first"]["outcome"], documents["digests"]["outcome"]), ("merged", "merged"))
+        self.assertEqual(self.listed(adopter), sorted(self.START))
+        self.assertEqual(adopter.show("origin/main", "gen/generated.txt"), "app two\nlib two")
+
+    def batched(self, adopter: Adopter, first: dict[str, str], member: dict[str, str]) -> dict:
+        """The member's result when a batch merges it into a tree that already holds ``first``: the batch's base side."""
+        self.candidate(adopter, first, name="first")
+        head = self.candidate(adopter, member, name="member")
+        documents = {result.document()["candidate"]: result.document()
+                     for result in adopter.runner().run_command("batch", ["first", "member"])}
+        self.assertEqual(documents["first"]["outcome"], "merged", documents["first"].get("stop"))
+        return {"document": documents["member"], "head": head}
+
+    def test_in_a_batch_every_row_holds_as_at_sync(self) -> None:
+        listed_without_lib = {path: text for path, text in self.START.items() if path != "src/lib.txt"}
+        stops = {
+            "removes": ({"src/lib.txt": "lib two\n"}, ({"src/app.txt": "app two\n"}, listed_without_lib), "removed src/lib.txt"),
+            "both add": ({"src/b.txt": "b\n"}, ({"src/c.txt": "c\n"}, {**self.START, "src/c.txt": "c\n"}), "added src/c.txt"),
+        }
+        for name, (first, (member, listed), expect) in stops.items():
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.lock_adopter()
+                base_listed = {**self.START, "src/b.txt": "b\n"} if name == "both add" else None
+                got = self.batched(adopter, self.side(first, listed=base_listed), self.side(member, listed=listed))
+                self.assertEqual(got["document"]["stop"]["reason"], "source_conflict")
+                self.assertIn("dropped from the batch", got["document"]["stop"]["detail"])
+                self.assertIn(expect, got["document"]["stop"]["detail"])
+                self.assertEqual(got["document"]["stop"]["paths"], ["gen/lock.json"])
+                self.assertEqual(adopter.tip("member"), got["head"])
+                # What landed is the first member's lock, untouched by the dropped one.
+                self.assertEqual(adopter.show("origin/main", "gen/lock.json").rstrip("\n"),
+                                 self.side(first, listed=base_listed)["gen/lock.json"].rstrip("\n"))
+        with self.subTest("only the batch's side added an output"):
+            self.fresh()
+            adopter = self.lock_adopter()
+            got = self.batched(adopter, self.side({"src/b.txt": "b\n"}, listed={**self.START, "src/b.txt": "b\n"}),
+                               self.side({"src/app.txt": "app two\n"}))
+            self.assertEqual(got["document"]["outcome"], "merged", got["document"].get("stop"))
+            self.assertEqual(self.listed(adopter), sorted([*self.START, "src/b.txt"]))
+        for how in ("fails", "empty", "garbage", "deep", "object", "numbers"):
+            for version in ("merge base", "base", "candidate"):
+                with self.subTest(listing=how, version=version):
+                    self.fresh()
+                    marked = {"listingMode": how}
+                    keep = marked if version == "merge base" else {}
+                    adopter = self.lock_adopter([PY, "tools/listing.py"], **keep)
+                    first = self.side({"src/lib.txt": "lib two\n"}, **(marked if version == "base" else keep))
+                    member = self.side({"src/app.txt": "app two\n"}, **(marked if version == "candidate" else keep))
+                    got = self.batched(adopter, first, member)
+                    self.assertEqual(got["document"]["stop"]["reason"], "source_conflict")
+                    self.assertIn(f"listing of gen/lock.json at the {version}", got["document"]["stop"]["detail"])
+                    self.assertEqual(adopter.tip("member"), got["head"])
+        with self.subTest("a version without the path"):
+            self.fresh()
+            adopter = self.adopter({"regenerable": {
+                "paths": ["gen/**"], "regenerators": [[PY, "tools/regen.py"], [PY, "tools/regen_lock.py"]],
+                "listings": [{"path": "gen/lock.json", "argv": REAL_LISTING}]}})
+            adopter.advance_base({"tools/regen_lock.py": REGEN_LOCK.lstrip()})
+            got = self.batched(adopter, self.side({"src/lib.txt": "lib two\n"}), self.side({"src/app.txt": "app two\n"}))
+            self.assertEqual(got["document"]["stop"]["reason"], "source_conflict")
+            self.assertIn("absent at the merge base", got["document"]["stop"]["detail"])
+
+    def test_a_listing_gets_the_placeholder_values_of_its_step(self) -> None:
+        argv = [PY, "tools/listing.py", "{head}"]
+        adopter = self.lock_adopter(argv)
+        self.candidate(adopter, self.side({"src/app.txt": "app two\n"}))
+        adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document().get("stop"))
+        self.fresh()
+        adopter = self.lock_adopter(argv)
+        got = self.batched(adopter, self.side({"src/lib.txt": "lib two\n"}), self.side({"src/app.txt": "app two\n"}))
+        self.assertEqual(got["document"]["outcome"], "merged", got["document"].get("stop"))
+
+    def test_a_listing_must_name_one_regenerable_file(self) -> None:
+        binding = Adopter.default_binding(type("Fixture", (), {"work": Path("/work"), "state": Path("/state"),
+                                                                "remote": Path("/r"), "log": Path("/l")})())
+        for name, listings, error in (
+                ("a pattern", [{"path": "gen/*.json", "argv": REAL_LISTING}], "names one file, not a pattern"),
+                ("a source file", [{"path": "src/app.txt", "argv": REAL_LISTING}], "is not a regenerable path"),
+                ("twice", [{"path": "gen/lock.json", "argv": REAL_LISTING}] * 2, "is listed twice"),
+                ("an empty argv", [{"path": "gen/lock.json", "argv": []}], "an argv must not be empty"),
+                ("an unknown placeholder", [{"path": "gen/lock.json", "argv": ["{nope}"]}], "unknown placeholder")):
+            with self.subTest(name):
+                changed = {**binding, "regenerable": {**binding["regenerable"], "listings": listings}}
+                self.assertTrue(any(error in problem for problem in queue.binding_errors(changed)),
+                                queue.binding_errors(changed))
+        self.assertEqual(queue.binding_errors({**binding, "regenerable": {
+            **binding["regenerable"], "listings": [{"path": "gen/lock.json", "argv": REAL_LISTING}]}}), [])
 
 
 class SelectionTests(MergeQueueTestCase):

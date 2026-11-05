@@ -257,6 +257,16 @@ def binding_errors(binding: object) -> list[str]:
     ]
     commands += [(f"/prepare/{i}", argv) for i, argv in enumerate(binding["prepare"])]
     commands += [(f"/regenerable/regenerators/{i}", argv) for i, argv in enumerate(binding["regenerable"]["regenerators"])]
+    listings = binding["regenerable"].get("listings", [])
+    commands += [(f"/regenerable/listings/{i}", entry["argv"]) for i, entry in enumerate(listings)]
+    for index, entry in enumerate(listings):
+        if "*" in entry["path"]:
+            errors.append(f"/regenerable/listings/{index}: a listing names one file, not a pattern")
+        elif not matches_any(entry["path"], binding["regenerable"]["paths"]):
+            errors.append(f"/regenerable/listings/{index}: {entry['path']} is not a regenerable path")
+    listed = [entry["path"] for entry in listings]
+    for path in sorted({path for path in listed if listed.count(path) > 1}):
+        errors.append(f"/regenerable/listings: {path} is listed twice")
     commands += [(f"/postSync/{i}", step["argv"]) for i, step in enumerate(binding["postSync"])]
     commands += [(f"/leadInputs/{i}", item["argv"]) for i, item in enumerate(binding["leadInputs"])]
     commands += [(f"/release/{i}", target["argv"]) for i, target in enumerate(binding["release"])]
@@ -1330,7 +1340,7 @@ class Runner:
         self.checking(subject, item["title"], [{"label": "sync", "state": "running"}])
         context = context.with_values(branch=branch, head=head)
         checkout = self.checkout(head, "sync", prepare=True, context=context.with_values(treeSha=self.tree(head)))
-        self.merge_base_in(checkout, base_head, branch)
+        self.merge_base_in(checkout, base_head, branch, context)
         declared = self.declared_paths(item)
         self.settle(subject, item, checkout, context, inputs, declared, f"Regenerate after syncing {branch} with {self.base}")
         self.seam("after_sync", subject)
@@ -1366,18 +1376,21 @@ class Runner:
         if undeclared:
             raise Stop("undeclared_change", "a sync step changed files outside the declared paths", undeclared)
 
-    def merge_base_in(self, checkout: Path, base_head: str, branch: str) -> None:
-        self.merge_in(checkout, base_head, base_head, "--theirs", f"Merge {self.base} into {branch}")
+    def merge_base_in(self, checkout: Path, base_head: str, branch: str, context: Context | None = None) -> None:
+        self.merge_in(checkout, base_head, base_head, "--theirs", f"Merge {self.base} into {branch}", context=context)
 
     def merge_in(
         self, checkout: Path, other: str, base_side: str, side: str, message: str, against: str = "the base",
+        context: Context | None = None,
     ) -> None:
         """Merge ``other`` into the checkout; only regenerable paths may conflict, and they take the base side.
 
         ``base_side`` is the commit that holds the base's version of a path and
         ``side`` the checkout option that selects it: the base is the incoming
         side when a candidate syncs, and the checkout's own side when a batch
-        merges a candidate into the tree it has accumulated.
+        merges a candidate into the tree it has accumulated. A conflicted path
+        with a listing takes the base side only when the candidate left its
+        listing as the merge base had it.
         """
         merged = self.git("merge", "--no-ff", "--no-commit", "--no-edit", other, cwd=checkout, check=False)
         conflicts = sorted(set(filter(None, self.git(
@@ -1388,6 +1401,18 @@ class Runner:
         if outside:
             self.git("merge", "--abort", cwd=checkout, check=False)
             raise Stop("source_conflict", f"{against} conflicts outside the regenerable paths", outside)
+        listings = {entry["path"]: entry["argv"] for entry in self.binding["regenerable"].get("listings", [])}
+        if any(path in listings for path in conflicts):
+            # The candidate is the side that isn't the base's: the incoming commit in a batch, the checkout's own in a sync.
+            candidate = other if other != base_side else self.rev("HEAD", cwd=checkout)
+            merge_base = self.git("merge-base", base_side, candidate, cwd=checkout).stdout.strip()
+            try:
+                for path in conflicts:
+                    if path in listings:
+                        self.check_listing(checkout, path, listings[path], merge_base, base_side, candidate, context)
+            except Stop:
+                self.git("merge", "--abort", cwd=checkout, check=False)
+                raise
         for path in conflicts:
             # Take the base side; a path the base deleted stays deleted.
             if self.git("cat-file", "-e", f"{base_side}:{path}", cwd=checkout, check=False).returncode == 0:
@@ -1398,6 +1423,46 @@ class Runner:
         if self.git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=checkout, check=False).returncode == 0:
             # Committed before anything else runs, so every later step sees the new merge base.
             self.git("commit", "--quiet", "-m", message, cwd=checkout)
+
+    def listed_outputs(self, checkout: Path, path: str, argv: list[str], commit: str, which: str,
+                       context: Context | None) -> list[str]:
+        """The outputs one version of ``path`` lists, as its listing command prints them."""
+        shown = self.git("show", f"{commit}:{path}", cwd=checkout, check=False)
+        if shown.returncode != 0:
+            raise Stop("source_conflict", f"{path} is absent at the {which}, so its listings can't be compared; "
+                       "nothing was regenerated", [path])
+        completed = self.run_argv(argv, checkout, context or Context(), self.binding["checkTimeoutSeconds"], stdin=shown.stdout)
+        listed: object = None
+        why = None
+        if completed.timed_out:
+            why = "timed out"
+        elif completed.returncode != 0:
+            why = f"exited {completed.returncode}: {completed.stderr.strip()[-200:]}"
+        elif not completed.stdout.strip():
+            why = "printed nothing"
+        else:
+            try:
+                listed = json.loads(completed.stdout)
+            except (ValueError, RecursionError):
+                listed = None
+            if not isinstance(listed, list) or not all(isinstance(entry, str) for entry in listed):
+                why = "printed something other than a JSON array of strings"
+        if why is not None:
+            raise Stop("source_conflict", f"the listing of {path} at the {which} {why}; nothing was regenerated", [path])
+        return listed  # type: ignore[return-value]
+
+    def check_listing(
+        self, checkout: Path, path: str, argv: list[str], merge_base: str, base: str, candidate: str, context: Context | None,
+    ) -> None:
+        """Stop when the candidate changed what ``path`` lists: regeneration can't restore an output it added or removed."""
+        before = set(self.listed_outputs(checkout, path, argv, merge_base, "merge base", context))
+        self.listed_outputs(checkout, path, argv, base, "base", context)
+        after = set(self.listed_outputs(checkout, path, argv, candidate, "candidate", context))
+        if after != before:
+            changes = [f"added {', '.join(sorted(after - before))}" if after - before else "",
+                       f"removed {', '.join(sorted(before - after))}" if before - after else ""]
+            raise Stop("source_conflict", f"the candidate changed the outputs {path} lists ({'; '.join(filter(None, changes))}); "
+                       "resolve it by hand, taking the candidate's side, and hand off again", [path])
 
     def run_pass(self, subject: str, item: dict, checkout: Path, context: Context, inputs: dict) -> None:
         timeout = self.binding["checkTimeoutSeconds"]
@@ -2026,7 +2091,7 @@ class Runner:
                     raise Stop("binding_invalid", f"the binding declares no lead input {unknown}")
                 context = context.with_values(branch=branch, head=head)
                 self.merge_in(checkout, head, accumulated, "--ours", f"Merge {branch} into the batch",
-                              against="the batch built so far")
+                              against="the batch built so far", context=context)
                 declared = self.declared_paths(item)
                 self.settle(subject, item, checkout, context, inputs, declared, f"Regenerate after adding {branch} to the batch")
                 self.compare_with_review(checkout, item["head"], accumulated, declared)
