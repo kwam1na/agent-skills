@@ -244,7 +244,8 @@ class BuiltProductTests(unittest.TestCase):
                     result = self.harness(repository, command)
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertEqual(result.stdout, "")
-                    lines = [line for line in result.stderr.splitlines() if "ExperimentalWarning" not in line and "--trace-warnings" not in line]
+                    # Node's own warnings differ by version, and none is the command's.
+                    lines = [line for line in result.stderr.splitlines() if not line.startswith("(node:") and "--trace-warnings" not in line]
                     expected = first_lines.get(command, [])
                     for index, prefix in enumerate(expected):
                         self.assertTrue(lines[index].startswith(prefix), lines)
