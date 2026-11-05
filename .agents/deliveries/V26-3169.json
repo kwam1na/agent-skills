@@ -66,17 +66,6 @@
         }
       ]
     },
-    "V26-3086": {
-      "title": "Keep run-delivery tests' cached release alive across test modules",
-      "lane": "lane-2",
-      "inApp": "none",
-      "criteria": [
-        {
-          "id": "v26-3086-done",
-          "text": "The two run-delivery test modules pass in one process in either order, and the cached build is still removed"
-        }
-      ]
-    },
     "V26-2951": {
       "title": "run-delivery characterization tests leave in-app serve processes running",
       "lane": "lane-2",
