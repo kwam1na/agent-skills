@@ -19,7 +19,8 @@
         "skills/orchestrate-work/references/schemas.json",
         "skills/orchestrate-work/SKILL.md",
         "tests/test_orchestration_state.py",
-        "tests/test_registry.py"
+        "tests/test_registry.py",
+        "provenance.lock.json"
       ]
     },
     "lane-2": {
@@ -459,12 +460,14 @@
     {
       "id": "approval-1",
       "text": "`LINEAR_API_KEY` and `GITHUB_TOKEN` exported in the lead's shell, for the views' snapshots throughout and V26-3105's online `doctor`.",
-      "state": "waiting"
+      "state": "done",
+      "who": "the operator"
     },
     {
       "id": "approval-2",
       "text": "Filing the follow-ups: Athena's side of V26-2986 and V26-2807, this repository adopting V26-3094's key, and any the Bounded flake work decision produces.",
-      "state": "waiting"
+      "state": "done",
+      "who": "the operator"
     },
     {
       "id": "approval-3",
