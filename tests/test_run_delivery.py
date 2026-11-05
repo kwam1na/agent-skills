@@ -402,6 +402,16 @@ def stop_supervisors(root: Path) -> None:
                 os.killpg(pid, signal.SIGKILL)
 
 
+def process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # the pid exists, but isn't ours to signal
+        return True
+
+
 def report(**over):
     base = {"ready": True, "build": {"head": "h"}, "pageErrors": [], "consoleErrors": [], "alertsSeen": [],
             "evals": [{"expr": "x", "result": True, "evalAt": "2026-01-01T00:00:02Z"}],
@@ -1786,14 +1796,38 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect(code == 2 and "no hand-off" in out and "journal your decision" in out, f"no claims, yet checked: {out}")
 
     def test_timeouts_and_interruptions_stop_their_processes(self) -> None:
-        started = time.time()
-        try:
-            self.call("run_group", ["sh", "-c", "sleep 30 & sleep 30"], Path(tempfile.gettempdir()), 1)
-            raise AssertionError("a timed-out command didn't stop")
-        except Stopped as error:
-            expect("took longer" in str(error) and time.time() - started < 15, str(error))
-        leftover = sh("pgrep", "-f", "sleep 30", check=False).stdout.split()
-        expect(not leftover, f"the timed-out group left processes behind: {leftover}")
+        # Another `sleep 30` on the machine, outside the timed-out group: the check must not count it.
+        unrelated = subprocess.Popen(["sleep", "30"], start_new_session=True)
+        recorded: list[int] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            pids = Path(tmp) / "pids"
+            try:
+                started = time.time()
+                # The group records its own pids as it starts: the background sleep's, then its leader's, which the
+                # exec'd sleep keeps. Those, and only those, are the group the timeout must stop.
+                try:
+                    self.call("run_group", ["sh", "-c", 'sleep 30 & echo $! > "$0"; echo $$ >> "$0"; exec sleep 30', str(pids)],
+                              Path(tempfile.gettempdir()), 1)
+                    raise AssertionError("a timed-out command didn't stop")
+                except Stopped as error:
+                    expect("took longer" in str(error) and time.time() - started < 15, str(error))
+                recorded = [int(line) for line in pids.read_text().split()]
+                self.assertEqual(len(set(recorded)), 2, f"the group didn't record both its processes: {recorded}")
+                self.assertNotIn(unrelated.pid, recorded)
+                deadline = time.monotonic() + 5  # an orphaned child is reaped by init, a moment after its signal
+                while time.monotonic() < deadline and any(process_alive(pid) for pid in recorded):
+                    time.sleep(0.1)
+                leftover = [pid for pid in recorded if process_alive(pid)]
+                expect(not leftover, f"the timed-out group left processes behind: {leftover}")
+                self.assertIsNone(unrelated.poll(), "stopping the timed-out group stopped a process outside it")
+            finally:
+                if unrelated.poll() is None:  # started here, stopped by the pid recorded here
+                    unrelated.kill()
+                unrelated.wait()
+                for pid in recorded:  # a group that outlived its timeout: stopped by the pids it recorded
+                    if process_alive(pid):
+                        with contextlib.suppress(ProcessLookupError, PermissionError):
+                            os.kill(pid, signal.SIGKILL)
         with tempfile.TemporaryDirectory() as tmp:
             lock = Path(tmp) / "lock"
             orphan = subprocess.Popen(["sleep", "60"], start_new_session=True)
