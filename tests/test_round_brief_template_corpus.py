@@ -454,7 +454,8 @@ class RoundBriefDriftTests(unittest.TestCase):
         self.assertEqual(extras, set(RUN_DELIVERY_ONLY_SECTIONS))
         for heading in RUN_DELIVERY_ONLY_SECTIONS:
             with self.subTest(extra=heading):
-                self.assertRegex(" ".join(_sentences(_brief_sections(brief)[heading])), r"^\{\{\w+\}\}$")
+                # The raw body, fences included: `_sentences` drops fenced text, so it can't be the check here.
+                self.assertRegex(_brief_sections(brief)[heading].strip(), r"^\{\{\w+\}\}$")
         found = _divergence(template, brief)
         self.assertEqual(set(found), set(DIVERGENCES), "a compared section appeared or went")
         for heading, (only_template, only_brief) in DIVERGENCES.items():
