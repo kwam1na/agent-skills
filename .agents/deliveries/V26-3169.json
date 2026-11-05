@@ -20,18 +20,20 @@
         "skills/orchestrate-work/SKILL.md",
         "tests/test_orchestration_state.py",
         "tests/test_registry.py",
-        "provenance.lock.json",
         "skills/delivery-views/*",
         "tests/test_delivery_views*",
         "tests/delivery_views_page/*",
         "tests/delivery_views_fixtures.py",
-        "skills/run-delivery/templates/lane-brief.md"
+        "skills/run-delivery/templates/lane-brief.md",
+        "agent_skills/generations.py",
+        "tests/test_lifecycle.py"
       ]
     },
     "lane-2": {
       "owns": [
         "skills/run-delivery/scripts/run_delivery.py",
-        "tests/test_run_delivery.py"
+        "tests/test_run_delivery.py",
+        "provenance.lock.json"
       ]
     },
     "lane-3": {
@@ -304,7 +306,7 @@
     },
     "V26-3100": {
       "title": "Keep the suite's temp churn from creeping back",
-      "lane": "lane-3",
+      "lane": "lane-1",
       "inApp": "none",
       "criteria": [
         {
