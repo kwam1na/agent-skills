@@ -1037,6 +1037,78 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         code, out = flow_run("ship", cwd=m)
         expect(code == 2 and "already exists" in out, f"ship overwrote an existing branch: {out}")
 
+    # -- ship: the product-only branch ---------------------------------------------------------------------
+
+    def ship_fixture(self, **ship) -> tuple[Fixture, Path]:
+        """A delivery whose base is ready to ship, with `ship` overridden by `ship`, and a checkout of `main` beside."""
+        fx = self.fixture()
+        path = setup_delivery(fx)
+        if ship:
+            d = json.loads(path.read_text())
+            d["ship"].update(ship)
+            path.write_text(json.dumps(d, indent=2))
+            commit(fx.main, "FX-1: ship settings")
+            sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        main = fx.tmp / "default"
+        sh("git", "worktree", "add", "-q", main, "main", cwd=fx.main)
+        return fx, main
+
+    def on(self, checkout: Path, branch: str, files: dict[str, str], message: str) -> str:
+        for rel, text in files.items():
+            (checkout / rel).parent.mkdir(parents=True, exist_ok=True)
+            (checkout / rel).write_text(text)
+        commit(checkout, message)
+        sh("git", "push", "-q", "origin", branch, cwd=checkout)
+        return sh("git", "rev-parse", "HEAD", cwd=checkout).stdout.strip()
+
+    def shipped(self, fx: Fixture) -> tuple[list[str], dict[str, str]]:
+        """The ship checkout's staged files, and their staged contents."""
+        path = fx.main / "lanes/ship-FX-1"
+        names = sh("git", "diff", "--cached", "--name-only", cwd=path).stdout.split()
+        return names, {n: sh("git", "show", f":{n}", cwd=path).stdout for n in names}
+
+    def test_ship_leaves_out_tooling_changed_after_the_tooling_commit(self) -> None:
+        fx, main = self.ship_fixture(paths=["."])
+        m = fx.main
+        # The lead's tooling spans two commits, and the second is the one ship names.
+        tooling = self.on(m, "feature/FX-1", {"tools/lead.sh": "echo lead\n"}, "FX-1: more tooling")
+        d = json.loads((m / ".agents/deliveries/FX-1.json").read_text())
+        d["ship"]["toolingCommit"] = tooling[:12]
+        (m / ".agents/deliveries/FX-1.json").write_text(json.dumps(d, indent=2))
+        # Later, a product change, and tooling changed again: the run-delivery config, the tooling commits' own files.
+        conf = json.loads((m / ".agents/run-delivery.json").read_text())
+        conf["gates"].append({"id": "later", "argv": ["true"]})
+        self.on(m, "feature/FX-1", {"src/one.txt": "one\n", "tools/lead.sh": "echo lead, changed\n",
+                                    ".agents/run-delivery.json": json.dumps(conf, indent=2)}, "FX-1: product and tooling")
+        code, out = fx.flow("ship", "--no-gates", cwd=m)
+        self.assertEqual(code, 0, out)
+        names, _ = self.shipped(fx)
+        self.assertEqual(names, ["src/one.txt"], out)
+
+    def test_ship_refuses_a_branch_with_nothing_staged(self) -> None:
+        fx, main = self.ship_fixture()
+        self.on(fx.main, "feature/FX-1", {"src/one.txt": "one\n"}, "FX-2: one")
+        self.on(main, "main", {"src/one.txt": "one\n"}, "the same change, already on the default branch")
+        code, out = fx.flow("ship", "--no-gates", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("nothing to ship", out)
+        self.assertNotIn("next:", out)
+
+    def test_ship_builds_from_a_base_that_merged_the_default_branch(self) -> None:
+        fx, main = self.ship_fixture()
+        m = fx.main
+        self.on(m, "feature/FX-1", {"src/one.txt": "one\n"}, "FX-2: one")
+        self.on(main, "main", {"src/main-only.txt": "main\n", "src/app.txt": "app, on main\n"}, "the default branch moves")
+        sh("git", "fetch", "-q", "origin", cwd=m)
+        sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "--no-ff", "-m", "merge main", "origin/main", cwd=m)
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        self.on(m, "feature/FX-1", {"src/two.txt": "two\n", "src/app.txt": "app, on main\nand the delivery\n"}, "FX-3: two")
+        code, out = fx.flow("ship", "--no-gates", cwd=m)
+        self.assertEqual(code, 0, out)
+        names, staged = self.shipped(fx)
+        self.assertEqual(names, ["src/app.txt", "src/one.txt", "src/two.txt"], out)
+        self.assertEqual(staged["src/app.txt"], "app, on main\nand the delivery\n")
+
     def test_cleanup_removes_only_merged_clean_work_and_close_archives(self) -> None:
         fx = self.fixture()
         flow_run = fx.flow
