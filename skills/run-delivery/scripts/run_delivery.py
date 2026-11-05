@@ -1882,6 +1882,35 @@ def port_open(port: int) -> bool:
     return False
 
 
+def port_holders(port: int) -> list[tuple[int, str]]:
+    """The processes listening on `port`, as (pid, command line); empty when none can be seen (or lsof is missing)."""
+    try:
+        listing = run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"], check=False).stdout
+    except OSError:
+        return []
+    holders = []
+    for pid in sorted({int(line) for line in listing.split() if line.isdigit()}):
+        try:
+            command = run(["ps", "-o", "command=", "-p", str(pid)], check=False).stdout.strip()
+        except OSError:
+            command = ""
+        holders.append((pid, command or "command unknown"))
+    return holders
+
+
+def port_busy(port: int) -> str:
+    """Why the in-app port can't be used: who listens on it, outside the lease, and how to release it."""
+    holders = port_holders(port)
+    if not holders:
+        return f"something else is listening on {port}, outside the in-app lease (its process isn't visible here); stop it first"
+    # A long command keeps its head (the program) and its tail (the arguments, which tell one server from another).
+    short = lambda command: command if len(command) <= 160 else f"{command[:40]} ... {command[-110:]}"
+    named = ", ".join(f"pid {pid} ({short(command)})" for pid, command in holders)
+    pids = " ".join(str(pid) for pid, _ in holders)
+    return (f"something else is listening on {port}, outside the in-app lease: {named}. A build served by hand doesn't "
+            f"hold the lease, so app-check can't use the port: stop it (kill {pids}) and run again")
+
+
 class Lease:
     """An in-app lease: an OS lock held for the whole check (released if we die). It records the process groups it
     starts, so the next holder can stop a server or browser that a killed holder left behind."""
@@ -1991,7 +2020,7 @@ def run_in_app(dist: Path, spec: dict, passthrough: list[str], owner: str, lock_
     try:
         spec_file.write_text(json.dumps(spec))
         if port_open(port):
-            raise Stop(f"something else is listening on {port} (a dev server?); stop it first")
+            raise Stop(port_busy(port))
         server = subprocess.Popen(expand_argv(ia["serve"]["argv"], dir=str(dist), port=str(port)),
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         lease.track(server.pid)
@@ -4679,10 +4708,11 @@ def lead_close(args) -> None:
         try:
             Lease(lock, port, "lead-close", 0).close()  # stops whatever a dead holder left running
             done.append(f"the in-app lease {lock} is free")
-        except Stop as held:
+        except Stop as held:  # a live check's: its server is inside the lease, and isn't the operator's to kill
             left.append(str(held))
-        if port_open(port):
-            left.append(f"something still listens on port {port}")
+        else:
+            if port_open(port):
+                left.append(port_busy(port))
     print(f"{c.delivery}: closed out")
     for line in done:
         print(f"  done: {line}")
@@ -5869,7 +5899,7 @@ def adapter_contract(ia: dict, lease: "Lease", say) -> list[str]:
         failures = []
         try:
             if port_open(ia["port"]):
-                raise Stop(f"something else is listening on {ia['port']}; stop it first")
+                raise Stop(port_busy(ia["port"]))
             server = subprocess.Popen(expand_argv(ia["serve"]["argv"], dir=str(site), port=str(ia["port"])),
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             lease.track(server.pid)

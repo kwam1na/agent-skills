@@ -19,7 +19,14 @@
         "skills/orchestrate-work/references/schemas.json",
         "skills/orchestrate-work/SKILL.md",
         "tests/test_orchestration_state.py",
-        "tests/test_registry.py"
+        "tests/test_registry.py",
+        "skills/delivery-views/*",
+        "tests/test_delivery_views*",
+        "tests/delivery_views_page/*",
+        "tests/delivery_views_fixtures.py",
+        "skills/run-delivery/templates/lane-brief.md",
+        "agent_skills/generations.py",
+        "tests/test_lifecycle.py"
       ]
     },
     "lane-2": {
@@ -299,7 +306,7 @@
     },
     "V26-3100": {
       "title": "Keep the suite's temp churn from creeping back",
-      "lane": "lane-3",
+      "lane": "lane-1",
       "inApp": "none",
       "criteria": [
         {

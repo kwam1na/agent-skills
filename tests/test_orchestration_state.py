@@ -3153,6 +3153,258 @@ class LaneWriterTests(unittest.TestCase):
         unchanged = self.as_lane("lane-1", {"focus": "Still wiring"}, selector="lanes[id=lane-1]")
         self.assertEqual(next(entry for entry in unchanged["lanes"] if entry["id"] == "lane-1")["since"], own["since"])
 
+    def queue_stops(self, lane_id: str = "lane-1", waiting_on: str = "lead") -> None:
+        """The queue's words on a row, as the runner writes them when it stops a candidate."""
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector=f"lanes[id={lane_id}]",
+                         changes={"focus": "work-q stopped: check_failed", "state": "blocked", "waitingOn": waiting_on})
+
+    def row(self, lane_id: str = "lane-1") -> dict:
+        return next(entry for entry in state_tool.read_state(self.directory)["lanes"] if entry["id"] == lane_id)
+
+    def test_the_queues_wait_ends_when_its_lane_speaks_by_set_too(self) -> None:
+        self.queue_stops()
+        self.assertEqual((self.row()["waitingOn"], self.row()["waitingBy"]), ("lead", "runner"))
+        self.as_lane("lane-1", selector="lanes[id=lane-1]", assignments={"/focus": "fixing the check"})
+        row = self.row()
+        self.assertEqual((row["focus"], row["waitingOn"]), ("fixing the check", None))
+        self.assertNotIn("waitingBy", row)
+        self.assertNotIn("focusBy", row)
+        # On the command line as well.
+        self.queue_stops()
+        code, result = run_tool(self.directory, "patch", "--writer", "lane", "--lane", "lane-1", "--version",
+                                str(self.version()), "--element", "lanes[id=lane-1]", "--set", '{"/focus": "again"}')
+        self.assertEqual(code, 0, result)
+        self.assertEqual((self.row()["focus"], self.row()["waitingOn"]), ("again", None))
+
+    def test_a_wait_the_lane_sets_under_the_queues_words_stays_through_its_next_focus(self) -> None:
+        for name, waiting, kwargs in (
+                ("a new wait by --patch", "the lead's answer", {"changes": {"waitingOn": "the lead's answer"}}),
+                ("the same wait by --patch", "lead", {"changes": {"waitingOn": "lead"}}),
+                ("the same wait by --set", "lead", {"assignments": {"/waitingOn": "lead"}})):
+            with self.subTest(name):
+                self.queue_stops()
+                self.as_lane("lane-1", selector="lanes[id=lane-1]", **kwargs)
+                row = self.row()
+                self.assertEqual((row["focus"], row["waitingOn"], row["waitingBy"], row["focusBy"]),
+                                 ("work-q stopped: check_failed", waiting, "lane", "runner"))
+                state_tool.set_focus(self.directory, "lane-1", "still asking")
+                self.assertEqual((self.row()["waitingOn"], self.row()["waitingBy"]), (waiting, "lane"))
+                state_tool.set_focus(self.directory, "lane-1", "answered", waiting_on="")
+                self.assertNotIn("waitingBy", self.row())
+
+    def test_a_wait_the_lead_sets_under_the_queues_words_stays_through_the_lanes_next_focus(self) -> None:
+        for name, kwargs in (("by --patch", {"changes": {"waitingOn": "lead"}}),
+                             ("by --set", {"assignments": {"/waitingOn": "lead"}})):
+            with self.subTest(name):
+                self.queue_stops()
+                state_tool.patch(self.directory, writer="lead", version=self.version(), selector="lanes[id=lane-1]",
+                                 **kwargs)
+                self.assertEqual((self.row()["waitingBy"], self.row()["focusBy"]), ("lead", "runner"))
+                state_tool.set_focus(self.directory, "lane-1", "working on it")
+                self.assertEqual((self.row()["waitingOn"], self.row()["waitingBy"]), ("lead", "lead"))
+                state_tool.patch(self.directory, writer="lead", version=self.version(), selector="lanes[id=lane-1]",
+                                 assignments={"/waitingOn": None})
+                self.assertNotIn("waitingBy", self.row())
+
+    def test_the_lead_rewriting_only_the_focus_leaves_the_queues_wait_for_the_lane_to_end(self) -> None:
+        self.queue_stops()
+        self.lead({"focus": "the lead says: see the failing check"}, selector="lanes[id=lane-1]")
+        row = self.row()
+        self.assertNotIn("focusBy", row)
+        self.assertEqual((row["waitingOn"], row["waitingBy"]), ("lead", "runner"))
+        state_tool.set_focus(self.directory, "lane-1", "fixing the check")
+        self.assertEqual(self.row()["waitingOn"], None)
+
+    def runner_stops_as_the_queue_does(self, subject: str = "work-q") -> None:
+        """The queue's stop as the runner writes it: the whole lanes list from lane_rows_after, with no selector."""
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="runner", version=state["version"],
+                         changes={"lanes": state_tool.lane_rows_after(self.directory, state, subject,
+                                                                      stopped="check_failed")})
+
+    def test_the_queue_rewriting_a_rows_words_owns_its_wait_even_at_the_same_value(self) -> None:
+        state_tool.set_focus(self.directory, "lane-1", "work-q: asking the lead", waiting_on="lead")
+        self.assertEqual(self.row()["waitingBy"], "lane")
+        self.runner_stops_as_the_queue_does()
+        row = self.row()
+        self.assertEqual((row["focus"], row["waitingOn"], row["waitingBy"], row["focusBy"]),
+                         ("work-q stopped: check_failed", "lead", "runner", "runner"))
+        state_tool.set_focus(self.directory, "lane-1", "fixing the check")
+        self.assertEqual(self.row()["waitingOn"], None)
+
+    def test_a_wait_the_lead_changes_in_a_whole_lanes_list_is_the_leads(self) -> None:
+        self.runner_stops_as_the_queue_does()
+        self.assertEqual(self.row()["waitingBy"], "runner")
+        lanes = [{**entry, "waitingOn": "the lead's ruling"} if entry["id"] == "lane-1" else entry
+                 for entry in state_tool.read_state(self.directory)["lanes"]]
+        self.lead({"lanes": lanes})
+        self.assertEqual((self.row()["waitingOn"], self.row()["waitingBy"]), ("the lead's ruling", "lead"))
+        state_tool.set_focus(self.directory, "lane-1", "working on it")
+        self.assertEqual((self.row()["waitingOn"], self.row()["waitingBy"]), ("the lead's ruling", "lead"))
+
+    def test_a_hand_off_ends_the_queues_wait_after_the_lead_rewrote_its_words(self) -> None:
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-q]",
+                         assignments={"/stage": "stopped"})
+        self.runner_stops_as_the_queue_does()
+        self.lead({"focus": "the lead says: see the failing check"}, selector="lanes[id=lane-1]")
+        self.assertNotIn("focusBy", self.row())
+        # Another lane the queue stopped, whose words and wait a hand-off in lane-1 must leave alone.
+        self.queue_stops("lane-2")
+        other = self.row("lane-2")
+        self.assertEqual((other["focusBy"], other["waitingBy"]), ("runner", "runner"))
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-q", head="b" * 40, change_request="cr")
+        row = self.row()
+        self.assertEqual((row["focus"], row["state"], row["waitingOn"]),
+                         ("the lead says: see the failing check", "handed", None))
+        self.assertNotIn("waitingBy", row)
+        self.assertEqual(self.row("lane-2"), other)
+
+    def test_a_put_back_leaves_the_queues_wait_once_the_lead_rewrote_its_words(self) -> None:
+        self.runner_stops_as_the_queue_does()
+        self.lead({"focus": "the lead says: retrying it"}, selector="lanes[id=lane-1]")
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="runner", version=state["version"],
+                         changes={"lanes": state_tool.lane_rows_put_back(state, "work-q")})
+        row = self.row()
+        self.assertEqual((row["focus"], row["waitingOn"], row["waitingBy"]), ("the lead says: retrying it", "lead", "runner"))
+        state_tool.set_focus(self.directory, "lane-1", "back on it")
+        self.assertEqual(self.row()["waitingOn"], None)
+
+    def test_a_hand_off_and_a_put_back_end_only_the_queues_wait(self) -> None:
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-q]",
+                         assignments={"/stage": "stopped"})
+        for name, own in (("the queue's wait", None), ("the lane's own wait", "the lead's answer")):
+            with self.subTest(name):
+                self.queue_stops()
+                if own:
+                    self.as_lane("lane-1", {"waitingOn": own}, selector="lanes[id=lane-1]")
+                state_tool.handoff(self.directory, lane="lane-1", subject="work-q", head="b" * 40, change_request="cr")
+                row = self.row()
+                self.assertEqual((row["focus"], row["waitingOn"], row.get("waitingBy")),
+                                 ("", own, "lane" if own else None))
+                state_tool.patch(self.directory, writer="runner", version=self.version(),
+                                 selector="queue[subject=work-q]", assignments={"/stage": "stopped"})
+                self.as_lane("lane-1", selector="lanes[id=lane-1]", assignments={"/waitingOn": None})
+        for name, own in (("the queue's wait", None), ("the lane's own wait", "the lead's answer")):
+            with self.subTest("put back: " + name):
+                self.queue_stops()
+                if own:
+                    self.as_lane("lane-1", {"waitingOn": own}, selector="lanes[id=lane-1]")
+                state = state_tool.read_state(self.directory)
+                rows = state_tool.lane_rows_put_back(state, "work-q")
+                state_tool.patch(self.directory, writer="runner", version=state["version"], changes={"lanes": rows})
+                row = self.row()
+                self.assertEqual((row["focus"], row["state"], row["waitingOn"], row.get("waitingBy")),
+                                 ("", "handed", own, "lane" if own else None))
+                self.as_lane("lane-1", selector="lanes[id=lane-1]", assignments={"/waitingOn": None})
+
+    def test_a_row_written_before_waiting_by_reads_as_the_queues_while_its_words_stand(self) -> None:
+        state = state_tool.read_state(self.directory)
+        for entry in state["lanes"]:
+            if entry["id"] == "lane-1":
+                entry.update(focus="work-q stopped: check_failed", state="blocked", waitingOn="lead",
+                             focusBy="runner", focusAt="2026-10-21T09:00:00Z")
+            if entry["id"] == "lane-2":
+                entry.update(focus="asking", state="blocked", waitingOn="lead")
+        (self.directory / state_tool.STATE_FILE).write_text(state_tool.dumps(state), encoding="utf-8")
+        # A lead write that leaves the wait alone labels it from the words that stood.
+        self.lead({"focus": "the lead says: see the failing check"}, selector="lanes[id=lane-1]")
+        self.assertEqual(self.row()["waitingBy"], "runner")
+        self.assertNotIn("waitingBy", self.row("lane-2"))
+        state_tool.set_focus(self.directory, "lane-1", "fixing the check")
+        state_tool.set_focus(self.directory, "lane-2", "still asking")
+        self.assertEqual((self.row()["waitingOn"], self.row("lane-2")["waitingOn"]), (None, "lead"))
+
+    def test_who_set_the_wait_is_the_tools_alone(self) -> None:
+        self.queue_stops()
+        self.assertEqual(self.refused(lambda: self.as_lane("lane-1", {"waitingBy": "lead"}, selector="lanes[id=lane-1]")),
+                         "writer_not_owned")
+        self.assertEqual(self.refused(lambda: state_tool.patch(
+            self.directory, writer="runner", version=self.version(), selector="lanes[id=lane-1]",
+            changes={"waitingBy": "lead"})), "field_not_owned")
+        self.lead({"waitingBy": "lane", "title": "Renamed"}, selector="lanes[id=lane-1]")
+        self.assertEqual(self.row()["waitingBy"], "runner")
+        self.lead({"waitingBy": "runner"}, selector="lanes[id=lane-2]")
+        self.assertNotIn("waitingBy", self.row("lane-2"))
+
+    def planned_entry(self, subject: str) -> dict:
+        return next(entry for entry in state_tool.read_state(self.directory)["planned"] if entry["subject"] == subject)
+
+    def test_a_lane_binds_a_run_to_its_own_planned_work_before_its_hand_off(self) -> None:
+        journal = (self.directory / state_tool.JOURNAL_FILE).read_bytes()
+        bound = state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-a")
+        self.assertEqual(bound, {**planned("work-a"), "runId": "run-a"})
+        self.assertEqual(self.planned_entry("work-a")["runId"], "run-a")
+        self.assertNotIn("runId", self.planned_entry("work-b"))
+        self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), journal, "a binding journals nothing")
+        # The same run again changes nothing at all.
+        before = (self.directory / state_tool.STATE_FILE).read_bytes()
+        self.assertEqual(state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-a"), bound)
+        self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
+
+    def test_a_lane_cannot_bind_a_run_to_work_that_is_not_its_own_planned_work(self) -> None:
+        for name, lane_id, subject, code in (
+                ("another lane's planned work", "lane-1", "work-b", "writer_not_owned"),
+                ("its own queued work", "lane-1", "work-q", "writer_not_owned"),
+                ("work the record lacks", "lane-1", "work-z", "subject_unknown"),
+                ("a lane the record lacks", "lane-9", "work-z", "writer_not_owned")):
+            with self.subTest(name):
+                self.assertEqual(self.refused(lambda: state_tool.bind_run(
+                    self.directory, lane=lane_id, subject=subject, run="run-x")), code)
+        self.assertEqual(self.refused(lambda: state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="")),
+                         "run_bound")
+
+    def test_a_bound_run_is_never_replaced_nor_bound_to_a_second_subject(self) -> None:
+        state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-a")
+        self.assertEqual(self.refused(lambda: state_tool.bind_run(
+            self.directory, lane="lane-1", subject="work-a", run="run-x")), "run_bound")
+        self.assertEqual(self.refused(lambda: state_tool.bind_run(
+            self.directory, lane="lane-2", subject="work-b", run="run-a")), "run_bound")
+        # A run a queued candidate carries is taken too.
+        state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr", run="run-b")
+        self.lead({"planned": [*state_tool.read_state(self.directory)["planned"], planned("work-c")]})
+        self.assertEqual(self.refused(lambda: state_tool.bind_run(
+            self.directory, lane="lane-1", subject="work-c", run="run-b")), "run_bound")
+        self.assertEqual(self.planned_entry("work-a")["runId"], "run-a")
+
+    def test_the_write_checks_again_under_the_lock_when_the_record_moved_after_the_first_look(self) -> None:
+        # The first look reads the record from before another write; the write under the lock must still refuse.
+        for name, settle, lane_id, subject, run in (
+                ("another subject took the run", ("lane-2", "work-b", "run-a"), "lane-1", "work-a", "run-a"),
+                ("the element was bound to another run", ("lane-1", "work-a", "run-x"), "lane-1", "work-a", "run-y")):
+            with self.subTest(name):
+                stale = state_tool.read_state(self.directory)
+                state_tool.bind_run(self.directory, lane=settle[0], subject=settle[1], run=settle[2])
+                before = (self.directory / state_tool.STATE_FILE).read_bytes()
+                real = state_tool.read_state
+                looks = iter([stale])
+                with mock.patch.object(state_tool, "read_state", side_effect=lambda directory: next(looks, None) or real(directory)):
+                    self.assertEqual(self.refused(lambda: state_tool.bind_run(
+                        self.directory, lane=lane_id, subject=subject, run=run)), "run_bound")
+                self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
+                # Start the next case from a record with no run bound.
+                for entry in ("work-a", "work-b"):
+                    version = self.version()
+                    state_tool.patch(self.directory, writer="lead", version=version, selector=f"planned[subject={entry}]",
+                                     changes={"runId": None})
+
+    def test_the_hand_off_keeps_the_bound_run_unless_it_names_another(self) -> None:
+        state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-a")
+        state_tool.bind_run(self.directory, lane="lane-2", subject="work-b", run="run-b")
+        kept = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr")
+        named = state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr",
+                                   run="run-other")
+        self.assertEqual((kept["runId"], named["runId"]), ("run-a", "run-other"))
+
+    def test_the_command_line_binds_a_run_and_says_why_it_refuses(self) -> None:
+        code, bound = run_tool(self.directory, "bind-run", "--lane", "lane-1", "--subject", "work-a", "--run", "run-a")
+        self.assertEqual(code, 0, bound)
+        self.assertEqual(bound["item"]["runId"], "run-a")
+        code, refused = run_tool(self.directory, "bind-run", "--lane", "lane-1", "--subject", "work-a", "--run", "run-x")
+        self.assertEqual((code, refused["code"]), (1, "run_bound"))
+        code, refused = run_tool(self.directory, "bind-run", "--lane", "lane-1", "--subject", "work-b", "--run", "run-y")
+        self.assertEqual((code, refused["code"]), (1, "writer_not_owned"))
+
     def test_every_write_a_lane_does_not_own_is_refused(self) -> None:
         refusals = {
             "another lane's focus": lambda: self.as_lane("lane-1", {"focus": "x"}, selector="lanes[id=lane-2]"),
@@ -4735,7 +4987,7 @@ SNAPSHOT = {"takenAt": "2026-10-20T10:00:00Z", "source": "tracker",
 VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
     "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
-    "queued with its ticket started",
+    "queued with its ticket started", "lane wait set by the queue",
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
@@ -4771,6 +5023,8 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("check without state", with_change(state, ("queue", 0, "checks"), [{"id": "unit"}])),
                 ("unknown lane state", with_change(state, ("lanes", 0, "state"), "napping")),
                 ("waitingOn as number", with_change(state, ("lanes", 0, "waitingOn"), 3)),
+                ("lane wait set by the queue", with_change(state, ("lanes", 0, "waitingBy"), "runner")),
+                ("lane wait set by someone else", with_change(state, ("lanes", 0, "waitingBy"), "someone")),
                 ("checking now absent", with_change(state, ("meta", "checking", "now"), KeyError)),
                 ("checking now null", with_change(state, ("meta", "checking", "now"), None)),
                 ("step state unknown",
@@ -4988,6 +5242,22 @@ class SkillTextTests(unittest.TestCase):
                     continue
                 with self.subTest(path=path.name, link=target):
                     self.assertTrue((path.parent / target).is_file(), target)
+
+    def test_the_run_is_bound_at_start_in_the_skill_and_the_lane_brief(self) -> None:
+        def normal(path: Path) -> str:
+            return " ".join(path.read_text(encoding="utf-8").split())
+        skill = normal(SKILL / "SKILL.md")
+        for phrase in ("A lane whose work a product run builds binds that run at start, with"
+                       " `delivery_state.py bind-run --lane <lane> --subject <subject> --run <id>`",
+                       "is refused with `run_bound` for a run another subject holds",
+                       "The hand-off keeps the bound run unless it names another."):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
+        brief = normal(PRODUCT_ROOT / "skills/run-delivery/templates/lane-brief.md")
+        for phrase in ("If a product run builds your story, bind its run id at start, before your first round:",
+                       "bind-run --lane <lane> --subject <key> --run <run id>"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, brief)
 
     def test_the_work_root_row_lists_every_git_folder_the_runner_refuses(self) -> None:
         runner = _load("merge_queue")

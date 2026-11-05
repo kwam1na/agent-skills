@@ -115,6 +115,10 @@ Say what you're doing as it changes, with the installed release's state tool:
 `python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir {{state}} focus --lane <lane> --text "<what you are doing>" [--state working|reviewing|blocked] [--waiting-on <who>]`.
 `review-prepare` sets `reviewing` for you.
 
+If a product run builds your story, bind its run id at start, before your first round:
+`python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir {{state}} bind-run --lane <lane> --subject <key> --run <run id>`.
+The live view then shows the run's rounds before your hand-off, and the hand-off keeps the run. A story with no run binds none.
+
 ## Your turn
 
 End your turn only to hand off, to report yourself blocked, or to ask the lead. Never end it just to wait for a
