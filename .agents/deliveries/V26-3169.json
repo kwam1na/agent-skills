@@ -395,6 +395,17 @@
           "text": "This delivery's real ready, merge, tracker snapshot, forge snapshot and online doctor results are recorded on the ticket, and both small gaps are fixed or declined"
         }
       ]
+    },
+    "V26-3171": {
+      "title": "Check only the timed-out group's own pids in run-delivery's timeout test",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3171-done",
+          "text": "The timeout test asserts on the pids of the group it started, passes with an unrelated sleep 30 alive, and still fails when the timed-out group's own process survives"
+        }
+      ]
     }
   },
   "finish": [
