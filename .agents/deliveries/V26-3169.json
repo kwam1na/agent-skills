@@ -60,7 +60,8 @@
         "skills/run-delivery/adapters/*",
         "skills/run-delivery/references/adopting.md",
         "skills/run-delivery/SKILL.md",
-        "tests/test_forge_adapters.py"
+        "tests/test_forge_adapters.py",
+        "skills/run-delivery/references/config.md"
       ]
     }
   },
