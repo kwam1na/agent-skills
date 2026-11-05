@@ -92,6 +92,12 @@ def expect(condition, message):
         raise AssertionError(message)
 
 
+def group_members(group: int) -> list[int]:
+    """The live processes in one process group; a zombie has already stopped."""
+    rows = [line.split() for line in sh("ps", "-A", "-o", "pid=,pgid=,stat=").stdout.splitlines()]
+    return [int(pid) for pid, pgid, state in rows if int(pgid) == group and not state.startswith("Z")]
+
+
 def commit(cwd: Path, message: str):
     sh("git", "add", "-A", cwd=cwd)
     sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", message, cwd=cwd)
@@ -1787,14 +1793,23 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
 
     def test_timeouts_and_interruptions_stop_their_processes(self) -> None:
         started = time.time()
-        try:
-            self.call("run_group", ["sh", "-c", "sleep 30 & sleep 30"], Path(tempfile.gettempdir()), 1)
-            raise AssertionError("a timed-out command didn't stop")
-        except Stopped as error:
-            expect("took longer" in str(error) and time.time() - started < 15, str(error))
-        leftover = sh("pgrep", "-f", "sleep 30", check=False).stdout.split()
-        expect(not leftover, f"the timed-out group left processes behind: {leftover}")
         with tempfile.TemporaryDirectory() as tmp:
+            # The shell leads its own group, so its pid names what this command started and nothing else on the machine.
+            group = Path(tmp) / "group"
+            try:
+                self.call("run_group", ["sh", "-c", 'echo $$ > "$1"; sleep 30 & sleep 30', "sh", str(group)], Path(tmp), 2)
+                raise AssertionError("a timed-out command didn't stop")
+            except Stopped as error:
+                expect("took longer" in str(error) and time.time() - started < 15, str(error))
+            leader = int(group.read_text())
+            deadline = time.monotonic() + 5
+            leftover = group_members(leader)
+            while leftover and time.monotonic() < deadline:
+                time.sleep(0.05)
+                leftover = group_members(leader)
+            if leftover:
+                os.killpg(leader, signal.SIGKILL)
+            expect(not leftover, f"the timed-out group left processes behind: {leftover}")
             lock = Path(tmp) / "lock"
             orphan = subprocess.Popen(["sleep", "60"], start_new_session=True)
             try:
