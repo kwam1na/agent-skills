@@ -431,11 +431,12 @@
     {
       "id": "local-suite",
       "label": "Local suite",
-      "text": "The full local suite passes on macOS with Python 3.11 at the integration branch's last merged commit",
+      "text": "The full local suite passes on macOS with Python 3.11 and Node 22 at the head of the integration change request into main, where base.ref is back to main",
       "covers": {
         "criteria": [],
         "proofs": []
-      }
+      },
+      "at": "2026-11-05T03:45:48.239711Z"
     },
     {
       "id": "integration-ci",
