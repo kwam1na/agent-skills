@@ -205,5 +205,14 @@
     },
     "refreshSeconds": 180,
     "liveHome": "line-map"
-  }
+  },
+  "flakes": [
+    {
+      "check": "run-delivery-supervisor",
+      "tests": [
+        "test_lead_close_with_the_supervisor_down_records_the_skip_the_same_way"
+      ],
+      "ref": "V26-3181"
+    }
+  ]
 }

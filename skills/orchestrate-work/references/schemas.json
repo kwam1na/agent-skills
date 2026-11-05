@@ -1759,6 +1759,7 @@
           "base_broken",
           "base_moved",
           "ready_refused",
+          "review_not_current",
           "merge_refused",
           "merged_unverified",
           "batch_tree_mismatch",
@@ -2032,6 +2033,24 @@
       "merge": {
         "description": "Merges the candidate at exactly {expectedHead}, which must appear as a whole element.",
         "$ref": "#/$defs/argv"
+      },
+      "reviewGate": {
+        "description": "Optional. A command the runner runs after ready and before merge, at the synced head, at a single merge and at each batch landing. Exit 0 says the candidate's change-request review is current at that head; any other exit, or running past timeoutSeconds, stops the candidate with review_not_current and nothing merges. The command may wait for the forge's pipeline itself, within its timeout. Its argv must name the head as a whole element, {expectedHead} or {head}. Its output is kept under the state directory, as a failed check's is, and only that log's path reaches the record. Absent, merging is unchanged.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "argv"
+        ],
+        "properties": {
+          "argv": {
+            "$ref": "#/$defs/argv"
+          },
+          "timeoutSeconds": {
+            "description": "Seconds the gate may run; checkTimeoutSeconds when absent, and never above checkTimeoutCeiling.",
+            "type": "integer",
+            "minimum": 1
+          }
+        }
       },
       "release": {
         "type": "array",
