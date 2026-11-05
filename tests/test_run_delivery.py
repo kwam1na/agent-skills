@@ -4609,6 +4609,8 @@ GUIDE_NAMES = {
 WORKED_BASES = ["main", "integration-*"]
 WORKED_MERGE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge",
                 "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"]
+WORKED_CANDIDATE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py",
+                    "candidate", "--key", "{candidate}"]
 # Every push in an example is labelled, on the line just above it, for an unprotected base.
 UNPROTECTED = "unprotected base"
 PUSH = re.compile(r"\bgit\b(?:\s+-[Cc]\s+\S+)*\s+push\b|git\(\"push\"")
@@ -4883,6 +4885,7 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
         binding = next(document for document in worked if "merge" in document)
         self.assertEqual(binding["bases"], WORKED_BASES)
         self.assertEqual(binding["merge"], WORKED_MERGE)
+        self.assertEqual(binding["candidate"], WORKED_CANDIDATE)
         self.assertEqual(set(binding["environment"]), {"FLOW_FORGE_REPOSITORY", "FLOW_FORGE_TOKEN_ENV"})
         self.assertTrue(any("tracker_publisher.py" in part for entry in binding["state"]["publishers"]
                             for part in entry["argv"]))

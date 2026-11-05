@@ -174,7 +174,7 @@ checks may need no file at all.
   },
   "ship": {                                   // optional
     "from": "origin/main",                    // the product branch's base
-    "toolingCommit": "abc1234",               // the delivery-only commit; what follows it under `paths` ships
+    "toolingCommit": "abc1234",               // the last delivery-only commit: its files never ship, see below
     "paths": ["src/"],
     "branch": "ship/{delivery}",
     "checkout": ".orchestration/lanes/{branch}", // default: beside the lane checkouts
@@ -182,6 +182,12 @@ checks may need no file at all.
   }
 }
 ```
+
+`ship` builds the product-only branch from the delivery's changes under `paths` since the base and `ship.from` last
+met, so changes the base merged from the default branch aren't shipped again. The tooling never ships, whenever it
+changed: every file the tooling commits touched (from that meeting point to `toolingCommit`), `.agents`,
+`.agent-skills` and `gateTooling` are left out. A file the tooling commits touched that changed again after
+`toolingCommit` is left out too, and `ship` names each one, since a product change there doesn't ship.
 
 `ship` runs the prepare steps and the gates in the ship checkout, with `{base}` as `ship.from`. The ship tree carries
 only the ship paths, so a gate script that lives with the delivery's tooling isn't there. `ship` lends it for the run:
@@ -232,6 +238,12 @@ The command is called with one of:
   "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"]`, with `FLOW_FORGE_REPOSITORY` and
   `FLOW_FORGE_TOKEN_ENV` in the binding's `environment`. A repository that merges through its forge needs no merge
   script of its own.
+- `candidate --key KEY [--prefix P]` prints `{"branch", "head"}` for the branch named `P` + `KEY` (`P` is `feature/`
+  unless given) and its tip, a full commit hash, read from the forge. It refuses when no branch has that name, and when
+  several answer to it, differing only in case. A binding's `candidate` step can call it directly, so a repository
+  whose story branches follow the convention needs no candidate script of its own:
+  `["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "candidate", "--key",
+  "{candidate}"]`.
 
 `FLOW_FORGE_REPOSITORY` and `FLOW_FORGE_TOKEN_ENV` carry the `forge` settings. Both shipped adapters answer every
 command. With `forge.mergeNeedsReady` set, `doctor` reports a delivery without the `readyPullRequests` grant, and
