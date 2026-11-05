@@ -220,6 +220,12 @@ Lane 2, added by the lead when the queue stopped with `base_broken` on it, ahead
 `pgrep -f "sleep 30"` fails whenever a lane's own test run has a `sleep 30` alive, so it broke the base for V26-2951's check. Files:
 `tests/test_run_delivery.py`. Sensors: `tests/test_run_delivery.py`, run while an unrelated `sleep 30` is alive.
 
+### V26-3181. Find why a SupervisorPostureTests case failed once in a loaded full run
+
+Lane 2, added by the lead after V26-3091, because it can stop the queue as V26-3171's flake did. Lane 2 found the cause: `archive_delivery` names
+the archive folder to the second and creates it without `exist_ok`, so two archives in the same second collide with `FileExistsError`. Files:
+`run_delivery.py`, `tests/test_run_delivery_supervisor.py`. Sensors: `tests/test_run_delivery_supervisor.py`, including two archives in one second.
+
 ### V26-3105. Prove this repository's own delivery path on its first real run
 
 The lead, tier 6, after all others. The merges and snapshots of this delivery are its evidence. The lead also fixes or declines the two small gaps. Files:
