@@ -1122,7 +1122,12 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
     def test_ship_builds_from_a_base_that_merged_the_default_branch(self) -> None:
         fx, main = self.ship_fixture()
         m = fx.main
-        self.on(m, "feature/FX-1", {"src/one.txt": "one\n"}, "FX-2: one")
+        # Tooling outside the ship paths (src/), named by ship and changed later: nothing under the paths is lost.
+        tooling = self.on(m, "feature/FX-1", {"tools/lead.sh": "echo lead\n"}, "FX-1: more tooling")
+        d = json.loads((m / ".agents/deliveries/FX-1.json").read_text())
+        d["ship"]["toolingCommit"] = tooling[:12]
+        (m / ".agents/deliveries/FX-1.json").write_text(json.dumps(d, indent=2))
+        self.on(m, "feature/FX-1", {"src/one.txt": "one\n", "tools/lead.sh": "echo lead, changed\n"}, "FX-2: one")
         self.on(main, "main", {"src/main-only.txt": "main\n", "src/app.txt": "app, on main\n"}, "the default branch moves")
         sh("git", "fetch", "-q", "origin", cwd=m)
         sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "--no-ff", "-m", "merge main", "origin/main", cwd=m)
@@ -1133,6 +1138,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         names, staged = self.shipped(fx)
         self.assertEqual(names, ["src/app.txt", "src/one.txt", "src/two.txt"], out)
         self.assertEqual(staged["src/app.txt"], "app, on main\nand the delivery\n")
+        self.assertNotIn("changed after the tooling commit", out, "a later tooling change outside the ship paths was named")
 
     def test_cleanup_removes_only_merged_clean_work_and_close_archives(self) -> None:
         fx = self.fixture()
