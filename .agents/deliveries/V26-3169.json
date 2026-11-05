@@ -38,8 +38,7 @@
         "skills/run-delivery/scripts/run_delivery.py",
         "docs/solutions/best-practices/stopping-a-recorded-pid-2026-11-03.md",
         "docs/solutions/best-practices/prove-each-gate-condition-alone-2026-11-03.md",
-        "tests/test_run_delivery_supervisor.py",
-        "tests/test_run_delivery.py"
+        "tests/test_run_delivery_supervisor.py"
       ]
     },
     "lane-3": {
@@ -63,7 +62,8 @@
         "skills/run-delivery/references/config.md",
         "provenance.lock.json",
         "catalog.json",
-        "profiles/*"
+        "profiles/*",
+        "tests/test_run_delivery.py"
       ]
     }
   },
