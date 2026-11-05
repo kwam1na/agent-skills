@@ -187,7 +187,9 @@ python3 -B scripts/delivery_state.py --dir <state directory> wait [--after <jour
 ```
 
 The wait reads the record and the machine only, and returns on a hand-off, a
-merge, a stop, a broken base, a blocker, a blocked lane, or machine pressure.
+failed check, a merge, a stop, a broken base, a blocker, a blocked lane, or
+machine pressure. A failed check is news, not the outcome: the turn is still
+telling it from the base's own failure, and its stop follows.
 A lane whose row has stood still past `--quiet-seconds`, an hour by default, is
 information, not a reason to return: `quietLanes` names it when the wait next ends,
 once a quiet stretch, and it may be waiting on a long review for good reason.
@@ -243,7 +245,8 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   provider selects, plus `alwaysRun`, plus `fallback` when impact is unknown,
   on a fresh checkout of the synced head. Each check's elapsed time shows
   against its usual duration; a failed check's failing tests and its log reach
-  the record, the journal and the views. A failure made only of the binding's
+  the record, the journal and the views, journaled as `check.failed` as soon as
+  the check fails, before the base re-run. A failure made only of the binding's
   declared flakes is retried once and journaled as `check.retried`; any other
   failure is never retried. A check the binding lists in `reusableChecks` is
   not run again when the synced tree is exactly the tree the lane's hand-off

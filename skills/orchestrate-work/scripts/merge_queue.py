@@ -1843,6 +1843,7 @@ class Runner:
                 if not running:
                     continue
                 done, _ = concurrent.futures.wait(running, return_when=concurrent.futures.FIRST_COMPLETED)
+                failing: list[dict] = []
                 for future in done:
                     check = running.pop(future)
                     completed = future.result()
@@ -1866,7 +1867,15 @@ class Runner:
                         entry = {**finish(check, again), "retried": first}
                     outcomes[check["id"]] = entry["state"]
                     result.checks.append(entry)
+                    if entry["state"] != "passed":
+                        failing.append(entry)
                 show()
+                # Telling a failure from the base's own can take as long as the check, so the lead hears now, once
+                # the row above says the same. A batch's culprit search only re-runs what its whole run already said.
+                for entry in failing if whole_run else []:
+                    said = "Check timed out: " if entry["state"] == "timed_out" else "Check failed: "
+                    for subject in subjects:
+                        self.journal("check.failed", said + self.failure_text(entry["id"], result), subject)
         # A run that reused a check is not a whole run, so it does not shorten the run estimates.
         whole = checks and whole_run and not reused
         self.record_history(passed, flaked, int(round(time.monotonic() - began)) if whole else None)

@@ -120,6 +120,7 @@ posts as the publishing step says.
 | `candidate.handed` | On the ticket: the hand-off checked as a claim and queued, with its change request, reviewed head and review rounds. |
 | `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. |
 | `check.finished` | None: its outcome posts with `candidate.merged` or `candidate.stopped`. |
+| `check.failed` | None: its outcome posts with `candidate.stopped` once the failure is classified. |
 | `check.retried` | On the flake's tracking reference: one more retry, naming the candidate and the failing tests, as evidence for fixing the flake. |
 | `check.reused` | None: the candidate's work item already says it was handed off and is being checked; the reused check shows in the record and the views. |
 | `check.selected` | None: the lead's selection and its reason show in the record and the views, and the checks it ran post with `candidate.merged` or `candidate.stopped`. |
@@ -730,7 +731,7 @@ python3 -B <skill>/scripts/delivery_state.py --dir <state> wait [--after <journa
 `wait` reads the record and the machine only, writes nothing, and reads no CI or
 forge. It returns on the first thing needing the lead:
 
-- a journal entry after `--after` of kind `candidate.handed`,
+- a journal entry after `--after` of kind `candidate.handed`, `check.failed`,
   `candidate.merged`, `candidate.stopped`, `base.broken` or `blocker.recorded`;
 - a lane in the `blocked` state;
 - machine pressure: five-minute load above `--load-multiple` times the cores
@@ -1080,6 +1081,20 @@ binding declares may change.
   message, and the log. The queue row names the same tests and log, and so
   does the `check_failed` stop, a batch culprit's included, up to ten tests
   and then how many more; the journal entry and the views carry the same.
+- **Hearing of a failure.** The runner journals `check.failed` as soon as a check
+  fails or times out, naming the same tests and log, once for each candidate
+  being checked. A declared flake journals it only if its retry fails too, and a
+  batch's culprit search adds none to its whole run's. The entry wakes a running
+  `wait`, and is not the outcome: the turn goes on, holding the merge slot, to
+  tell the candidate's failure from the base's own, and `candidate.stopped`, with
+  `base.broken` when it is the base's, follows. The lead can read the log and warn
+  the lane meanwhile, but stops, re-queues and repairs nothing on this entry.
+- **Re-running on the base.** That comparison runs the whole check, not just its
+  failing tests. A binding's `argv` is opaque to the runner, which has no general
+  way to name a test to it, and `failurePattern` may name steps rather than tests.
+  A narrower run would also change the answer: a test the candidate adds doesn't
+  exist on the base, so it could fail there for that reason alone and read as a
+  broken base, and a test that fails only beside others could pass there alone.
 - **Queue estimates.** The state tool's `show` adds a position and an expected
   start for each candidate waiting at `queued`. The start counts what remains
   of the run in progress once (a batch is one run), then one median run for

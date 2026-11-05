@@ -59,6 +59,7 @@ UPDATES: dict[str, tuple[str, str] | None] = {
     "candidate.handed": ("ticket", "Handed off and queued"),
     "check.started": None,
     "check.finished": None,
+    "check.failed": None,
     "check.retried": ("ticket-or-epic", "Check retried"),
     "check.reused": None,
     "check.selected": None,
