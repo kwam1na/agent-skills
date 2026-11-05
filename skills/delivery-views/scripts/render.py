@@ -519,12 +519,19 @@ def native_review_summaries(document: dict) -> dict:
         except (review_state.StateError, ValueError, TypeError, UnicodeError, RecursionError):
             summaries[subject] = {"unavailable": True}
             continue
+        carried = observation.get("carried")
+        if carried is not None and not (isinstance(carried, dict) and set(carried) == {"from", "to", "note"}
+                                        and all(isinstance(carried[key], str) and carried[key] for key in carried)):
+            summaries[subject] = {"unavailable": True}
+            continue
         rounds = review_projection.round_detail(observation.get("outcomes", []))
         summaries[subject] = {"observationKey": subject + ":" + observation["digest"],
                               "digest": observation["digest"],
                               "journalId": boundary,
                               "candidateRef": observation["candidateRef"], "roundDetail": rounds,
-                              "observational": True, "open": False}
+                              "observational": True, "open": False,
+                              # The lead carried the evidence to a later head: shown as carried, never as its review.
+                              **({"carried": dict(carried)} if carried is not None else {})}
     return summaries
 
 

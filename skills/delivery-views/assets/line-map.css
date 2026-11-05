@@ -218,6 +218,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .ck-in { margin-left: 8px; font-size: 12px; color: var(--soft); border: 1px solid var(--hair); border-radius: 4px; padding: 0 7px; }
 .detail .d-batch { font-size: 13px; color: var(--soft); }
 .detail .d-run-none { font-size: 13px; color: var(--faint); }
+.detail .d-run-carried { font-size: 13px; color: var(--faint); margin-bottom: 6px; }
 .d-run { margin-top: 24px; }
 .issue-card { position: fixed; z-index: 30; max-width: 300px; padding: 10px 12px; border-radius: 6px; background: var(--lift); color: var(--ink);
   border: 1px solid var(--hair); box-shadow: 0 8px 24px rgba(0,0,0,.14); font-size: 13px; line-height: 1.45; pointer-events: none; }
