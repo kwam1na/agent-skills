@@ -27,7 +27,6 @@
         "skills/run-delivery/templates/lane-brief.md",
         "agent_skills/generations.py",
         "tests/test_lifecycle.py",
-        "provenance.lock.json",
         "tests/test_merge_queue.py",
         "skills/orchestrate-work/scripts/merge_queue.py",
         "scripts/update-provenance.py",
@@ -37,7 +36,8 @@
     "lane-2": {
       "owns": [
         "skills/run-delivery/scripts/run_delivery.py",
-        "tests/test_run_delivery.py"
+        "tests/test_run_delivery.py",
+        "provenance.lock.json"
       ]
     },
     "lane-3": {
