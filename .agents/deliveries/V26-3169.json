@@ -37,7 +37,10 @@
       "owns": [
         "skills/run-delivery/scripts/run_delivery.py",
         "tests/test_run_delivery.py",
-        "provenance.lock.json"
+        "provenance.lock.json",
+        "docs/solutions/best-practices/stopping-a-recorded-pid-2026-11-03.md",
+        "docs/solutions/best-practices/prove-each-gate-condition-alone-2026-11-03.md",
+        "tests/test_run_delivery_supervisor.py"
       ]
     },
     "lane-3": {
@@ -51,8 +54,6 @@
         "tests/test_compound_learning_corpus.py",
         ".agents/orchestration.json",
         "docs/solutions/best-practices/fake-trackers-list-moves-as-the-tracker-does-2026-11-03.md",
-        "docs/solutions/best-practices/prove-each-gate-condition-alone-2026-11-03.md",
-        "docs/solutions/best-practices/stopping-a-recorded-pid-2026-11-03.md",
         "docs/solutions/design-patterns/show-a-derived-list-without-storing-it-2026-11-03.md",
         "docs/solutions/best-practices/delivery-posture-close-out-readers-share-bytes-2026-11-04.md",
         "docs/solutions/best-practices/delivery-posture-harness-read-from-the-base-2026-11-04.md",
