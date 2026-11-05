@@ -232,6 +232,11 @@ Lane 2, added by the lead after V26-3181, because it failed V26-3091's queue che
 supervisor write in between fails the guide's end-to-end test with `version_stale`. Files: `run_delivery.py`, `tests/test_run_delivery.py`.
 Sensors: `tests/test_run_delivery.py`, with a write forced between read and patch.
 
+### V26-3178. Refuse a hand-off whose --run another subject already holds
+
+Lane 1, added by the lead while V26-2986 waits for V26-3064 to merge: a follow-up lane 1 found at V26-3005's hand-off. Files: `delivery_state.py`,
+`tests/test_orchestration_state.py`. Sensors: `tests/test_orchestration_state.py`, `tests/test_registry.py`.
+
 ### V26-3105. Prove this repository's own delivery path on its first real run
 
 The lead, tier 6, after all others. The merges and snapshots of this delivery are its evidence. The lead also fixes or declines the two small gaps. Files:
