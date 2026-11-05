@@ -347,6 +347,25 @@ class ArchiveNameTests(unittest.TestCase):
         self.assertEqual(sorted(made), made, "the archives don't sort in the order they were made")
         self.assertTrue(all(path.name.startswith("20261104T234725") for path in made), made)
 
+    def test_a_dozen_at_one_instant_still_sort_in_the_order_made(self) -> None:
+        instant = datetime.datetime(2026, 11, 4, 23, 47, 25, 1000)
+        made = self.archive_at(*[instant] * 12)  # past -009, where an unpadded -10 would sort before -2
+        self.assertEqual(len(set(made)), 12, made)
+        self.assertEqual(sorted(made), made, "the archives don't sort in the order they were made")
+
+    def test_every_name_at_one_instant_taken_stops_without_a_folder(self) -> None:
+        instant = datetime.datetime(2026, 11, 4, 23, 47, 25, 1000)
+        stamp = instant.strftime("%Y%m%dT%H%M%S.%f")
+        root = self.root / "archive"
+        for n in range(1, 1000):
+            (root / (stamp if n == 1 else f"{stamp}-{n:03d}")).mkdir(parents=True)
+        before = sorted(path.name for path in root.iterdir())
+        with self.assertRaises(self.module.Stop) as refused:
+            self.archive_at(instant)
+        self.assertIn(str(root), str(refused.exception))
+        self.assertEqual(sorted(path.name for path in root.iterdir()), before, "an exhausted root still made a folder")
+        self.assertFalse((root / "record").exists(), "the record was archived into the root itself")
+
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class SupervisorProcessTests(unittest.TestCase):
