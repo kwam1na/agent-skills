@@ -223,11 +223,13 @@ The command is called with one of:
   pending.
 - `merge --url URL --strategy merge|squash [--head SHA]` merges the PR through the forge and prints `{"url", "state":
   "merged"}`, refusing a PR whose head moved from `--head`.
-- `merge --source BRANCH --head SHA --strategy merge|squash` merges the branch's one open PR, at exactly `--head`. It
-  refuses a branch with no open PR or with more than one, and a PR whose head isn't `--head`. A binding's `merge` step,
-  which knows the branch and the checked head but not the PR, calls it directly:
-  `["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge", "--source",
-  "{branch}", "--head", "{expectedHead}", "--strategy", "merge"]`, with `FLOW_FORGE_REPOSITORY` and
+- `merge --source BRANCH --head SHA --strategy merge|squash [--destination D]` merges the branch's one open PR, at
+  exactly `--head`. It refuses a branch with no open PR or with more than one, and a PR whose head isn't `--head`. With
+  `--destination`, it also refuses a PR that doesn't target `D`, naming the base it does target. `--destination` is
+  optional, but a binding that serves several bases should pass it as `{base}`, or a PR retargeted in the forge merges
+  into another base. A binding's `merge` step, which knows the branch and the checked head but not the PR, calls it
+  directly: `["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge",
+  "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"]`, with `FLOW_FORGE_REPOSITORY` and
   `FLOW_FORGE_TOKEN_ENV` in the binding's `environment`. A repository that merges through its forge needs no merge
   script of its own.
 
