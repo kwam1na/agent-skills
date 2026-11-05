@@ -27,7 +27,11 @@
         "skills/run-delivery/templates/lane-brief.md",
         "agent_skills/generations.py",
         "tests/test_lifecycle.py",
-        "provenance.lock.json"
+        "provenance.lock.json",
+        "tests/test_merge_queue.py",
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "scripts/update-provenance.py",
+        "tests/test_update_provenance.py"
       ]
     },
     "lane-2": {
@@ -38,7 +42,6 @@
     },
     "lane-3": {
       "owns": [
-        "tests/test_merge_queue.py",
         "scripts/run-tests.py",
         "tests/test_run_tests.py",
         "docs/solutions/architecture-patterns/inherited-channels-preserve-native-command-ownership-2026-10-23.md",
