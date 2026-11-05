@@ -30,14 +30,12 @@
         "tests/test_merge_queue.py",
         "skills/orchestrate-work/scripts/merge_queue.py",
         "scripts/update-provenance.py",
-        "tests/test_update_provenance.py",
-        "provenance.lock.json"
+        "tests/test_update_provenance.py"
       ]
     },
     "lane-2": {
       "owns": [
         "skills/run-delivery/scripts/run_delivery.py",
-        "tests/test_run_delivery.py",
         "docs/solutions/best-practices/stopping-a-recorded-pid-2026-11-03.md",
         "docs/solutions/best-practices/prove-each-gate-condition-alone-2026-11-03.md",
         "tests/test_run_delivery_supervisor.py"
@@ -61,7 +59,9 @@
         "skills/run-delivery/references/adopting.md",
         "skills/run-delivery/SKILL.md",
         "tests/test_forge_adapters.py",
-        "skills/run-delivery/references/config.md"
+        "skills/run-delivery/references/config.md",
+        "provenance.lock.json",
+        "tests/test_run_delivery.py"
       ]
     }
   },
