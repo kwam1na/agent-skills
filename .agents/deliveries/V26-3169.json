@@ -30,7 +30,8 @@
         "tests/test_merge_queue.py",
         "skills/orchestrate-work/scripts/merge_queue.py",
         "scripts/update-provenance.py",
-        "tests/test_update_provenance.py"
+        "tests/test_update_provenance.py",
+        "provenance.lock.json"
       ]
     },
     "lane-2": {
@@ -61,7 +62,6 @@
         "skills/run-delivery/SKILL.md",
         "tests/test_forge_adapters.py",
         "skills/run-delivery/references/config.md",
-        "provenance.lock.json",
         "catalog.json",
         "profiles/*",
         "skills/run-delivery/templates/round-brief.md",
