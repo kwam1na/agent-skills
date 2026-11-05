@@ -332,8 +332,9 @@ class RecordedPidGuardTests(unittest.TestCase):
             patcher = mock.patch.object(self.module.os, name, side_effect=refuse(name))
             patcher.start()
             self.addCleanup(patcher.stop)
-        patcher = mock.patch.object(self.module.os, "getpgid", side_effect=lambda pid: self.groups.get(pid, None) or
-                                    (_ for _ in ()).throw(ProcessLookupError()))
+        # Membership, not truthiness: a recorded group of 0 must reach the guard as 0.
+        patcher = mock.patch.object(self.module.os, "getpgid", side_effect=lambda pid: self.groups[pid] if pid in self.groups
+                                    else (_ for _ in ()).throw(ProcessLookupError()))
         patcher.start()
         self.addCleanup(patcher.stop)
         self.groups: dict[int, int] = {}
@@ -369,11 +370,11 @@ class RecordedPidGuardTests(unittest.TestCase):
         self.assertEqual(self.sent[0], ("killpg", 424242, signal.SIGTERM))
 
     def test_orphans_under_an_unsafe_group_or_with_unsafe_pids_are_left_alone(self) -> None:
-        for group, child in ((-1, 424243), (0, 424243), (1, 424243), (True, 424243), (424242, -1), (424242, 1),
-                             (424242, True)):
+        for group, child in ((-1, 424243), (0, 424243), (1, 424243), (True, 424243), (424242, -1), (424242, 0),
+                             (424242, 1), (424242, True)):
             with self.subTest(group=group, child=child):
                 self.sent.clear()
-                self.groups = {424243: group, -1: 424242, 1: 424242, True: 424242}
+                self.groups = {424243: group, -1: 424242, 0: 424242, 1: 424242}
                 self.record({"pid": group, "children": [{"name": "queue", "pid": child}]}, held=False)
                 self.assertEqual(self.module.stop_orphans(self.c), [])
                 self.assertEqual(self.sent, [], f"group {group!r} or child {child!r} was signalled")
@@ -390,6 +391,7 @@ class RecordedPidGuardTests(unittest.TestCase):
         self.assertEqual(said, ["stopped queue (pid 424243), left by the earlier supervisor (pid 424242)"])
 
 
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class SupervisorProcessTests(unittest.TestCase):
     """The real supervisor: detached, holding its lock, keeping serve and the live view running."""
 
