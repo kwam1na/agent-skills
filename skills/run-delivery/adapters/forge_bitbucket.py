@@ -17,8 +17,8 @@ It writes three ways: it opens a pull request as a draft (a lane's open-pr), mar
 under the delivery's readyPullRequests grant), and merges one (the binding's merge step), refusing a head that moved
 when --head is given. `merge --source` merges the branch's one open pull request at exactly `--head`, so a binding's
 merge step, which knows the branch and the checked head but not the pull request, can call it; it refuses a branch
-with no open pull request or with more than one. With `--destination`, which a binding passes as `{base}`, it also
-refuses unless that pull request targets that branch, so a pull request retargeted to another base is never merged. Neither the token nor the Authorization value is ever printed.
+with no open pull request or with more than one. With the optional `--destination`, which a binding serving several
+bases passes as `{base}`, it also refuses unless that pull request targets that branch, so a pull request retargeted to another base is never merged. Neither the token nor the Authorization value is ever printed.
 """
 
 import argparse

@@ -1022,11 +1022,11 @@
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
-          "sha256": "62cf1e5ae3acfef129284128c7571a129ee40ed678e234bdd674506ed3e90141"
+          "sha256": "a8eed17fdf041402733cf525c8e22ec72d9e783be191c24d5d7de0f2208e1fdb"
         },
         {
           "path": "skills/run-delivery/adapters/forge_github.py",
-          "sha256": "f866283fde723b85e5766849a028a8a9d60ee8b0e05bb95fe6d3f7b3fbe76031"
+          "sha256": "795f55d19a43abaf329138ee92d8b398ec587bcbae1de5de00e2433a92014c59"
         },
         {
           "path": "skills/run-delivery/adapters/tracker_jira.py",
