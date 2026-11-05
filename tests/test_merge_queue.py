@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -1214,6 +1215,133 @@ class RegenerableListingTests(MergeQueueTestCase):
                                 queue.binding_errors(changed))
         self.assertEqual(queue.binding_errors({**binding, "regenerable": {
             **binding["regenerable"], "listings": [{"path": "gen/lock.json", "argv": REAL_LISTING}]}}), [])
+
+
+REVIEW_GATE = """
+import os, subprocess, sys, time
+remote = os.environ["MQ_REMOTE"]
+branch, head = sys.argv[1], sys.argv[2]
+with open(os.environ["MQ_LOG"], "a") as log:
+    log.write("review " + branch + " " + head + "\\n")
+listed = subprocess.run(["git", "ls-remote", "--heads", remote, "refs/heads/" + branch],
+                        capture_output=True, text=True, check=True).stdout.split()
+mode = os.environ.get("MQ_REVIEW", "current")
+if mode == "slow":
+    # Past the gate's own timeout, within checkTimeoutSeconds: only the gate's timeout stops it.
+    time.sleep(5)
+if mode == "pause":
+    time.sleep(2)
+if mode == "missing":
+    sys.exit("no review by the pipeline yet; token=ghp_SECRETVALUE123")
+if mode == "stale" or not listed or listed[0] != head:
+    sys.exit("the latest review is of another head")
+"""
+
+GATE = {"argv": [PY, "tools/review_gate.py", "{branch}", "{expectedHead}"], "timeoutSeconds": 10}
+
+
+class ReviewGateTests(MergeQueueTestCase):
+    """The merge step merges only with a review current at the synced head, when the binding declares a gate."""
+
+    def gated(self, review: str = "current", gate: dict | None = None) -> Adopter:
+        adopter = self.environment_adopter({"MQ_REVIEW": review}, {"reviewGate": gate or GATE})
+        adopter.advance_base({"tools/review_gate.py": REVIEW_GATE.lstrip()})
+        return adopter
+
+    def forge_steps(self, adopter: Adopter) -> list[str]:
+        return [line.split()[0] + " " + line.split()[1] for line in adopter.log_lines()
+                if line.startswith(("forge ready", "forge merge", "review "))]
+
+    def test_a_current_review_at_the_synced_head_merges(self) -> None:
+        adopter = self.gated()
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        adopter.advance_base({"src/lib.txt": "lib two\n"})
+        results = self.run_queue(adopter, "feature")
+        document = results[-1].document()
+        self.assertEqual(document["outcome"], "merged", document.get("stop"))
+        # The gate ran after ready and before merge, given the synced head the base now carries as a parent.
+        self.assertEqual(self.forge_steps(adopter), ["forge ready", "review feature", "forge merge"])
+        reviewed = next(line.split()[2] for line in adopter.log_lines() if line.startswith("review "))
+        self.assertEqual(reviewed, document["syncedHead"])
+        self.assertNotEqual(reviewed, adopter.item("feature")["head"], "the sync moved the head, and the gate saw the new one")
+
+    def test_a_missing_stale_or_slow_review_stops_and_nothing_merges(self) -> None:
+        for review, how in (("missing", "exited 1"), ("stale", "exited 1"), ("slow", "timed out")):
+            with self.subTest(review=review):
+                self.fresh()
+                gate = {**GATE, "timeoutSeconds": 1} if review == "slow" else None
+                adopter = self.gated(review, gate)
+                self.candidate(adopter, {"src/app.txt": "app two\n"})
+                before = adopter.tip("main")
+                document = self.assertStopped(self.run_queue(adopter, "feature"), "review_not_current")
+                Draft202012Validator(schema("merge-queue-result")).validate(document)
+                self.assertIn(f"the review gate {how}", document["stop"]["detail"])
+                self.assertIn(document["syncedHead"], document["stop"]["detail"])
+                self.assertEqual(adopter.tip("main"), before)
+                self.assertNotIn("forge merge", self.forge_steps(adopter))
+                self.assertEqual(adopter.item("feature")["stage"], "stopped")
+
+    def test_the_gates_output_stays_in_its_log_and_out_of_the_record(self) -> None:
+        adopter = self.gated("missing")
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "review_not_current")
+        log = re.search(r"logs/\S+\.log", document["stop"]["detail"]).group(0)
+        self.assertIn("ghp_SECRETVALUE123", (adopter.state / log).read_text(encoding="utf-8"))
+        for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
+            self.assertNotIn("ghp_SECRETVALUE123", (adopter.state / name).read_text(encoding="utf-8"))
+        self.assertNotIn("ghp_SECRETVALUE123", json.dumps(document))
+
+    def test_in_a_batch_each_member_lands_only_with_a_current_review(self) -> None:
+        adopter = self.gated()
+        self.candidate(adopter, {"src/one.txt": "one\n"}, name="one")
+        self.candidate(adopter, {"src/two.txt": "two\n"}, name="two")
+        documents = {result.document()["candidate"]: result.document()
+                     for result in adopter.runner().run_command("batch", ["one", "two"])}
+        self.assertEqual((documents["one"]["outcome"], documents["two"]["outcome"]), ("merged", "merged"))
+        reviewed = [line.split()[1:] for line in adopter.log_lines() if line.startswith("review ")]
+        self.assertEqual(reviewed, [["one", documents["one"]["syncedHead"]], ["two", documents["two"]["syncedHead"]]])
+        self.fresh()
+        adopter = self.gated("missing")
+        self.candidate(adopter, {"src/one.txt": "one\n"}, name="one")
+        self.candidate(adopter, {"src/two.txt": "two\n"}, name="two")
+        before = adopter.tip("main")
+        documents = {result.document()["candidate"]: result.document()
+                     for result in adopter.runner().run_command("batch", ["one", "two"])}
+        self.assertEqual(documents["one"]["stop"]["reason"], "review_not_current")
+        self.assertEqual(adopter.tip("main"), before)
+        self.assertNotIn("forge merge", self.forge_steps(adopter))
+
+    def test_a_gate_without_its_own_timeout_has_the_checks_timeout(self) -> None:
+        # Two seconds is within checkTimeoutSeconds (20), so the gate finishes and the candidate merges.
+        adopter = self.gated("pause", {"argv": GATE["argv"]})
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        document = self.run_queue(adopter, "feature")[-1].document()
+        self.assertEqual(document["outcome"], "merged", document.get("stop"))
+
+    def test_without_a_gate_merging_is_unchanged(self) -> None:
+        adopter = self.environment_adopter({"MQ_REVIEW": "missing"})
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        self.assertEqual(self.run_queue(adopter, "feature")[-1].document()["outcome"], "merged")
+        self.assertNotIn("review feature", self.forge_steps(adopter))
+
+    def test_the_binding_refuses_a_gate_that_names_no_head(self) -> None:
+        binding = Adopter.default_binding(type("Fixture", (), {"work": Path("/work"), "state": Path("/state"),
+                                                                "remote": Path("/r"), "log": Path("/l")})())
+        for name, gate, error in (
+                ("no head", {"argv": [PY, "gate.py", "{branch}"]}, "must name the head"),
+                ("a head inside an element", {"argv": [PY, "gate.py", "--head={expectedHead}"]}, "must name the head"),
+                ("an empty argv", {"argv": []}, "an argv must not be empty"),
+                ("an unknown placeholder", {"argv": [PY, "{expectedHead}", "{nope}"]}, "unknown placeholder"),
+                ("over the ceiling", {**GATE, "timeoutSeconds": 61}, "above checkTimeoutCeiling"),
+                ("no time at all", {**GATE, "timeoutSeconds": 0}, "timeoutSeconds")):
+            with self.subTest(name):
+                problems = queue.binding_errors({**binding, "reviewGate": gate})
+                self.assertTrue(any(error in problem for problem in problems), problems)
+        for head in ("{expectedHead}", "{head}"):
+            with self.subTest(head=head):
+                self.assertEqual(queue.binding_errors({**binding, "reviewGate": {"argv": [PY, "gate.py", head]}}), [])
+        self.assertEqual(queue.binding_errors({**binding, "reviewGate": {**GATE, "timeoutSeconds": 60}}), [],
+                         "a gate may take the whole ceiling")
 
 
 class SelectionTests(MergeQueueTestCase):
