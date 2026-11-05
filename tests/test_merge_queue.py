@@ -1214,7 +1214,10 @@ listed = subprocess.run(["git", "ls-remote", "--heads", remote, "refs/heads/" + 
                         capture_output=True, text=True, check=True).stdout.split()
 mode = os.environ.get("MQ_REVIEW", "current")
 if mode == "slow":
-    time.sleep(30)
+    # Past the gate's own timeout, within checkTimeoutSeconds: only the gate's timeout stops it.
+    time.sleep(5)
+if mode == "pause":
+    time.sleep(2)
 if mode == "missing":
     sys.exit("no review by the pipeline yet; token=ghp_SECRETVALUE123")
 if mode == "stale" or not listed or listed[0] != head:
@@ -1258,6 +1261,7 @@ class ReviewGateTests(MergeQueueTestCase):
                 self.candidate(adopter, {"src/app.txt": "app two\n"})
                 before = adopter.tip("main")
                 document = self.assertStopped(self.run_queue(adopter, "feature"), "review_not_current")
+                Draft202012Validator(schema("merge-queue-result")).validate(document)
                 self.assertIn(f"the review gate {how}", document["stop"]["detail"])
                 self.assertIn(document["syncedHead"], document["stop"]["detail"])
                 self.assertEqual(adopter.tip("main"), before)
@@ -1294,6 +1298,13 @@ class ReviewGateTests(MergeQueueTestCase):
         self.assertEqual(adopter.tip("main"), before)
         self.assertNotIn("forge merge", self.forge_steps(adopter))
 
+    def test_a_gate_without_its_own_timeout_has_the_checks_timeout(self) -> None:
+        # Two seconds is within checkTimeoutSeconds (20), so the gate finishes and the candidate merges.
+        adopter = self.gated("pause", {"argv": GATE["argv"]})
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        document = self.run_queue(adopter, "feature")[-1].document()
+        self.assertEqual(document["outcome"], "merged", document.get("stop"))
+
     def test_without_a_gate_merging_is_unchanged(self) -> None:
         adopter = self.environment_adopter({"MQ_REVIEW": "missing"})
         self.candidate(adopter, {"src/app.txt": "app two\n"})
@@ -1308,13 +1319,16 @@ class ReviewGateTests(MergeQueueTestCase):
                 ("a head inside an element", {"argv": [PY, "gate.py", "--head={expectedHead}"]}, "must name the head"),
                 ("an empty argv", {"argv": []}, "an argv must not be empty"),
                 ("an unknown placeholder", {"argv": [PY, "{expectedHead}", "{nope}"]}, "unknown placeholder"),
-                ("over the ceiling", {**GATE, "timeoutSeconds": 61}, "above checkTimeoutCeiling")):
+                ("over the ceiling", {**GATE, "timeoutSeconds": 61}, "above checkTimeoutCeiling"),
+                ("no time at all", {**GATE, "timeoutSeconds": 0}, "timeoutSeconds")):
             with self.subTest(name):
                 problems = queue.binding_errors({**binding, "reviewGate": gate})
                 self.assertTrue(any(error in problem for problem in problems), problems)
         for head in ("{expectedHead}", "{head}"):
             with self.subTest(head=head):
                 self.assertEqual(queue.binding_errors({**binding, "reviewGate": {"argv": [PY, "gate.py", head]}}), [])
+        self.assertEqual(queue.binding_errors({**binding, "reviewGate": {**GATE, "timeoutSeconds": 60}}), [],
+                         "a gate may take the whole ceiling")
 
 
 class SelectionTests(MergeQueueTestCase):
