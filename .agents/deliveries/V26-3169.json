@@ -455,6 +455,17 @@
           "text": "run-delivery's lead commands re-read and recompute on version_stale, a bounded number of times, and a forced write between read and patch no longer fails them"
         }
       ]
+    },
+    "V26-3178": {
+      "title": "Refuse a hand-off whose --run another subject already holds",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3178-done",
+          "text": "handoff --run refuses with run_bound when another planned or queued subject holds that run, and the bound subject's own hand-off still works"
+        }
+      ]
     }
   },
   "finish": [
