@@ -9,7 +9,7 @@
                                                               "reviews": [{"author", "at", "body"}]}
   ready --url URL                                         -> {"url", "draft": false}
   merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
-  merge --source BRANCH --head SHA --strategy merge|squash -> {"url", "state": "merged"}
+  merge --source BRANCH --head SHA --strategy merge|squash [--destination D] -> {"url", "state": "merged"}
 
 Environment: FLOW_FORGE_REPOSITORY (workspace/repo) and FLOW_FORGE_TOKEN_ENV (the name of the variable holding a
 token Bitbucket accepts as a bearer token). Prints JSON on stdout; exits 1 with a message on stderr otherwise.
@@ -17,7 +17,8 @@ It writes three ways: it opens a pull request as a draft (a lane's open-pr), mar
 under the delivery's readyPullRequests grant), and merges one (the binding's merge step), refusing a head that moved
 when --head is given. `merge --source` merges the branch's one open pull request at exactly `--head`, so a binding's
 merge step, which knows the branch and the checked head but not the pull request, can call it; it refuses a branch
-with no open pull request or with more than one. Neither the token nor the Authorization value is ever printed.
+with no open pull request or with more than one. With `--destination`, which a binding passes as `{base}`, it also
+refuses unless that pull request targets that branch, so a pull request retargeted to another base is never merged. Neither the token nor the Authorization value is ever printed.
 """
 
 import argparse
@@ -100,6 +101,7 @@ def main():
     p = sub.add_parser("ready"); p.add_argument("--url", required=True)
     p = sub.add_parser("merge"); target = p.add_mutually_exclusive_group(required=True)
     target.add_argument("--url"); target.add_argument("--source")
+    p.add_argument("--destination", help="with --source: the branch the pull request must target")
     p.add_argument("--strategy", choices=tuple(STRATEGIES), required=True); p.add_argument("--head")
     args = parser.parse_args()
     if args.command == "find":
@@ -125,6 +127,8 @@ def main():
         call("PUT", f"/pullrequests/{pr_number(args.url)}", {"draft": False})
         print(json.dumps({"url": args.url, "draft": False}))
     elif args.command == "merge":
+        if args.destination is not None and not args.source:
+            fail("bitbucket: merge --destination applies only with --source; not merged")
         if args.source:
             if not args.head:
                 fail("bitbucket: merge --source needs --head, the head the merge is pinned to")
@@ -136,10 +140,16 @@ def main():
             args.url = values[0]["links"]["html"]["href"]
         number = pr_number(args.url)
         if args.head:
-            # Bitbucket's merge takes no expected head, so the head is checked just before it.
-            head = call("GET", f"/pullrequests/{number}")["source"]["commit"]["hash"]
+            # Bitbucket's merge takes no expected head or destination, so both are checked just before it.
+            pr = call("GET", f"/pullrequests/{number}")
+            head = pr["source"]["commit"]["hash"]
             if not (head.startswith(args.head) or args.head.startswith(head)):
                 fail(f"bitbucket: {args.url} is at {head[:12]}, not {args.head[:12]}; not merged")
+            if args.destination is not None:
+                target = ((pr.get("destination") or {}).get("branch") or {}).get("name")
+                if target != args.destination:
+                    fail(f"bitbucket: {args.source}'s open pull request targets {target}, not {args.destination}; "
+                         "not merged")
         call("POST", f"/pullrequests/{number}/merge", {"merge_strategy": STRATEGIES[args.strategy],
                                                        "close_source_branch": False})
         print(json.dumps({"url": args.url, "state": "merged"}))
