@@ -66,7 +66,9 @@
         "profiles/*",
         "skills/run-delivery/templates/round-brief.md",
         "skills/obtain-review/references/round-brief-template.md",
-        "tests/test_round_brief_template_corpus.py"
+        "tests/test_round_brief_template_corpus.py",
+        ".agents/delivery/candidate.py",
+        "tests/test_own_deliveries.py"
       ]
     }
   },
