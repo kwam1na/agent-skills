@@ -877,6 +877,55 @@ class ReconcileTests(unittest.TestCase):
                 {"subject": "work-x", "note": "building in the record but back in the tracker's backlog: check it"}])
             self.assertEqual(self.bytes(), before)
 
+    def test_a_ticket_seen_started_keeps_its_flag_through_a_rejected_hand_off(self) -> None:
+        """The flag rides the queue element and comes back with the rejection, so the return to backlog is still
+        reported and a ticket still started writes no second "recorded as started"."""
+        self.lead({"meta": {"handoffsNeedAcceptance": True}, "lanes": [lane("lane-1")],
+                   "planned": [{"subject": "work-x", "title": "X", "lane": "lane-1", "stage": "planned"},
+                               {"subject": "work-y", "title": "Y", "lane": "lane-1", "stage": "building"}]})
+        started = self.snapshot("tracker", [{"subject": "work-x", "title": "X", "state": "started"}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", started)
+        self.assertEqual([entry["change"] for entry in result["changes"]], ["started in the tracker: now building"])
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-x", head=HEAD_A, change_request="cr-x")
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-y", head=HEAD_B, change_request="cr-y")
+        queue = {entry["subject"]: entry for entry in state_tool.show(self.directory)["state"]["queue"]}
+        self.assertIs(queue["work-x"]["trackerStarted"], True)
+        self.assertNotIn("trackerStarted", queue["work-y"], "a ticket never seen started gains no flag")
+        back = state_tool.reject_handoff(self.directory, "work-x", "the review missed a case")
+        never = state_tool.reject_handoff(self.directory, "work-y", "the review missed a case")
+        self.assertIs(back["trackerStarted"], True)
+        self.assertNotIn("trackerStarted", never)
+        planned_now = {entry["subject"]: entry for entry in state_tool.show(self.directory)["state"]["planned"]}
+        self.assertIs(planned_now["work-x"]["trackerStarted"], True)
+        self.assertNotIn("trackerStarted", planned_now["work-y"])
+        # Still started: nothing to record, so the pass writes nothing.
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", started)
+        self.assertEqual((code, result["drift"], result["changes"], result["reports"]), (0, False, [], []), result)
+        self.assertEqual(self.bytes(), before)
+        # Back in backlog before reconcile sees it started again: reported, and the record is left as it is.
+        backlog = self.snapshot("tracker", [{"subject": "work-x", "title": "X", "state": "backlog"},
+                                            {"subject": "work-y", "title": "Y", "state": "backlog"}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", backlog)
+        self.assertEqual((code, result["drift"], result["changes"]), (0, False, []), result)
+        self.assertEqual(result["reports"], [
+            {"subject": "work-x", "note": "in review in the record but back in the tracker's backlog: check it"}])
+        self.assertEqual(self.bytes(), before)
+
+    def test_planned_work_found_merged_takes_its_started_flag_into_the_queue(self) -> None:
+        self.lead({"meta": {"handoffsNeedAcceptance": True}, "lanes": [lane("lane-1")],
+                   "planned": [{"subject": "work-m", "title": "M", "lane": "lane-1", "stage": "review",
+                                "trackerStarted": True, "changeRequest": "cr-m"},
+                               {"subject": "work-n", "title": "N", "lane": "lane-1", "stage": "review",
+                                "changeRequest": "cr-n"}]})
+        forge = self.snapshot("forge", [{"subject": "work-m", "state": "merged", "changeRequest": "cr-m", "head": HEAD_A},
+                                        {"subject": "work-n", "state": "merged", "changeRequest": "cr-n", "head": HEAD_B}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual(code, 0, result)
+        queue = {entry["subject"]: entry for entry in state_tool.show(self.directory)["state"]["queue"]}
+        self.assertIs(queue["work-m"]["trackerStarted"], True)
+        self.assertNotIn("trackerStarted", queue["work-n"])
+
     def test_each_stage_against_each_tracker_state_settles_in_one_pass(self) -> None:
         # (stage, ticket seen started before, tracker state) -> (stage after, change, report); a second pass writes
         # nothing. A ticket counts as started once reconcile has seen it started, and stays so.
@@ -4686,6 +4735,7 @@ SNAPSHOT = {"takenAt": "2026-10-20T10:00:00Z", "source": "tracker",
 VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
     "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
+    "queued with its ticket started",
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
@@ -4738,6 +4788,9 @@ class SchemaAgreementTests(unittest.TestCase):
                     {"subject": "pr-3", "title": "Planned", "lane": "lane-1", "stage": "building", "trackerStarted": True}])),
                 ("planned with trackerStarted as text", with_change(state, ("planned",), [
                     {"subject": "pr-3", "title": "Planned", "lane": "lane-1", "stage": "building", "trackerStarted": "yes"}])),
+                ("queued with its ticket started", with_change(state, ("queue", 0, "trackerStarted"), True)),
+                ("queued with trackerStarted false", with_change(state, ("queue", 0, "trackerStarted"), False)),
+                ("queued with trackerStarted as text", with_change(state, ("queue", 0, "trackerStarted"), "yes")),
                 ("planned with an empty run", with_change(state, ("planned",), [
                     {"subject": "pr-3", "title": "Planned", "lane": "lane-1", "stage": "planned", "runId": ""}])),
                 ("empty run", with_change(state, ("queue", 0, "runId"), "")),
