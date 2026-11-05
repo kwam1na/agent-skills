@@ -226,6 +226,12 @@ Lane 2, added by the lead after V26-3091, because it can stop the queue as V26-3
 the archive folder to the second and creates it without `exist_ok`, so two archives in the same second collide with `FileExistsError`. Files:
 `run_delivery.py`, `tests/test_run_delivery_supervisor.py`. Sensors: `tests/test_run_delivery_supervisor.py`, including two archives in one second.
 
+### V26-3191. Retry run-delivery's lead writes when the record moved under them
+
+Lane 2, added by the lead after V26-3181, because it failed V26-3091's queue check: `lead_assign` patches pinned to the version it read, so a
+supervisor write in between fails the guide's end-to-end test with `version_stale`. Files: `run_delivery.py`, `tests/test_run_delivery.py`.
+Sensors: `tests/test_run_delivery.py`, with a write forced between read and patch.
+
 ### V26-3105. Prove this repository's own delivery path on its first real run
 
 The lead, tier 6, after all others. The merges and snapshots of this delivery are its evidence. The lead also fixes or declines the two small gaps. Files:
