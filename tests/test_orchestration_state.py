@@ -4987,7 +4987,7 @@ SNAPSHOT = {"takenAt": "2026-10-20T10:00:00Z", "source": "tracker",
 VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
     "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
-    "queued with its ticket started", "lane wait set by the queue",
+    "queued with its ticket started", "lane wait set by the queue", "a decision carrying a review",
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
@@ -5053,6 +5053,12 @@ class SchemaAgreementTests(unittest.TestCase):
             "delivery-journal/1": [
                 ("valid", VALID_ENTRY),
                 ("with lane", {**VALID_ENTRY, "lane": "lane-1"}),
+                ("a decision carrying a review", {**VALID_ENTRY, "kind": "decision.recorded",
+                                                 "reviewCarry": {"from": HEAD_A, "to": HEAD_B, "digest": "0" * 64}}),
+                ("a review carry with a short digest", {**VALID_ENTRY, "kind": "decision.recorded",
+                                                       "reviewCarry": {"from": HEAD_A, "to": HEAD_B, "digest": "0" * 8}}),
+                ("a review carry without its target", {**VALID_ENTRY, "kind": "decision.recorded",
+                                                      "reviewCarry": {"from": HEAD_A, "digest": "0" * 64}}),
                 ("unknown kind", {**VALID_ENTRY, "kind": "candidate.vanished"}),
                 ("id zero", {**VALID_ENTRY, "id": 0}),
                 ("id as boolean", {**VALID_ENTRY, "id": True}),
@@ -5311,6 +5317,148 @@ class ReviewRefusalTests(unittest.TestCase):
                                  *[part for path in paths for part in ("--outcome", str(path))])
         self.assertIn("round 1: the outcome file is not bounded JSON", refused["error"])
         self.assertEqual(state_tool.read_journal(directory), [])
+
+
+HEAD_C = "c" * 40
+HEAD_D = "d" * 40
+
+
+class CarryReviewTests(unittest.TestCase):
+    """The lead carries captured review evidence across a commit it judged needs no new round, and nothing more."""
+
+    def setUp(self, rounds: list[dict] | None = None) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.directory = self.root / "state"
+        state_tool.init(self.directory, "Epic underway")
+        state_tool.patch(self.directory, writer="lead", version=1, changes={
+            "lanes": [lane("lane-1")], "planned": [{"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "review"}]})
+        # Reviewed at HEAD_B; a fixture commit after the last round hands off HEAD_C.
+        self.capture(rounds or [review_round(1, HEAD_A, finding=True), review_round(2, HEAD_B, resolved=True)])
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_C, change_request="cr", rounds=2)
+
+    def capture(self, rounds: list[dict], candidate: str = HEAD_B) -> dict:
+        paths = []
+        for number, data in enumerate(rounds, 1):
+            paths.append(self.root / f"round-{len(list(self.root.glob('round-*')))}-{number}.json")
+            paths[-1].write_text(json.dumps(data), encoding="utf-8")
+        return state_tool.capture_review(self.directory, subject="work-a", candidate=candidate, outcomes=paths)
+
+    def carry(self, from_head: str = HEAD_B, to_head: str = HEAD_C, reason: str = "only a fixture changed") -> dict:
+        return state_tool.carry_review(self.directory, subject="work-a", from_head=from_head, to_head=to_head, reason=reason)
+
+    def refused(self, call) -> str:
+        before = (self.directory / state_tool.JOURNAL_FILE).read_bytes()
+        with self.assertRaises(state_tool.StateError) as caught:
+            call()
+        self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), before)
+        return f"{caught.exception.code}: {caught.exception}"
+
+    def evidence(self) -> dict:
+        return state_tool.review_evidence(self.directory, "work-a")
+
+    def test_a_carry_makes_the_evidence_hold_at_the_queued_head_and_says_so(self) -> None:
+        self.assertEqual(self.evidence()["evidence"], "unavailable", "a capture binds to the head it reviewed")
+        before = state_tool.show(self.directory)
+        entry = self.carry()
+        self.assertEqual((entry["kind"], entry["subject"]), ("decision.recorded", "work-a"))
+        self.assertEqual(entry["reviewCarry"]["from"], HEAD_B)
+        self.assertEqual(entry["reviewCarry"]["to"], HEAD_C)
+        self.assertIn("only a fixture changed", entry["summary"])
+        found = self.evidence()
+        self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_B, HEAD_C))
+        after = state_tool.show(self.directory)
+        observed = after["reviewEvidence"]["work-a"]
+        # The evidence itself is unchanged: its rounds, its own reviewed head, its digest.
+        self.assertEqual(observed["candidateRef"], HEAD_B)
+        self.assertEqual(len(observed["outcomes"]), 2)
+        self.assertEqual(observed["carried"], {"from": HEAD_B, "to": HEAD_C, "note": entry["summary"]})
+
+    def test_a_carry_is_no_run_no_round_and_no_admission_evidence(self) -> None:
+        before = state_tool.show(self.directory)
+        self.carry()
+        after = state_tool.show(self.directory)
+        self.assertEqual(after["state"]["queue"], before["state"]["queue"], "the queue element, its run and evidence, unchanged")
+        self.assertIsNone(after["state"]["queue"][0]["runId"])
+        self.assertNotIn("evidence", after["state"]["queue"][0])
+        self.assertEqual(after["stats"]["work-a"].get("rounds"), before["stats"]["work-a"].get("rounds"))
+        self.assertEqual([entry["kind"] for entry in after["journal"]][len(before["journal"]):], ["decision.recorded"])
+
+    def test_a_later_round_or_capture_ends_a_carry(self) -> None:
+        self.carry()
+        state_tool.append_journal(self.directory, kind="review.round", summary="Round 3", lane="lane-1", subject="work-a",
+                                  review=review(3, "2026-10-21T09:00:00Z", "2026-10-21T09:10:00Z"), writer="lane")
+        self.assertEqual(self.evidence()["evidence"], "unavailable")
+        self.capture([review_round(1, HEAD_A, finding=True), review_round(2, HEAD_B, resolved=True),
+                      review_round(3, HEAD_B)])
+        found = self.evidence()
+        self.assertEqual(found["evidence"], "unavailable", "the new capture is of HEAD_B and needs a carry of its own")
+        self.assertNotIn("carriedTo", found)
+        self.carry()
+        self.assertEqual(self.evidence()["evidence"], "captured")
+
+    def test_each_hop_is_carried_by_name_from_the_head_the_last_carry_reached(self) -> None:
+        self.carry()
+        state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                         selector="queue[subject=work-a]", assignments={"/stage": "stopped"})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_D, change_request="cr", rounds=2)
+        self.assertEqual(self.evidence()["evidence"], "unavailable", "the carry was to HEAD_C, not the new head")
+        self.assertIn(f"covers {HEAD_C}, not {HEAD_B}", self.refused(lambda: self.carry(HEAD_B, HEAD_D)))
+        self.carry(HEAD_C, HEAD_D, "another fixture")
+        found = self.evidence()
+        self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_C, HEAD_D))
+
+    def test_a_carry_never_changes_what_the_evidence_says(self) -> None:
+        cases = (
+            ("an open P1", [review_round(1, HEAD_A), review_round(2, HEAD_B, finding=True)], "leaves F1 (P1) open"),
+            ("an unaligned last round", [review_round(1, HEAD_A), {**review_round(2, HEAD_B, finding=True),
+                                                                   "entries": self.minor_open(HEAD_B)}],
+             "round 2, is not aligned"),
+        )
+        for name, rounds, message in cases:
+            with self.subTest(name):
+                self.setUp(rounds)
+                self.assertEqual(self.evidence()["evidence"], "unavailable")
+                self.assertIn(message, self.refused(lambda: self.carry()))
+                self.assertEqual(self.evidence()["evidence"], "unavailable")
+
+    def minor_open(self, candidate: str) -> list[dict]:
+        entries = review_round(2, candidate, finding=True)["entries"]
+        entries[0]["result"]["findings"][0]["severity"] = "P2"
+        return entries
+
+    def test_each_refusal_says_why_and_writes_nothing(self) -> None:
+        self.assertIn("carry_invalid: say why", self.refused(lambda: self.carry(reason=" ")))
+        self.assertIn(f"covers {HEAD_B}, not {HEAD_A}", self.refused(lambda: self.carry(from_head=HEAD_A)))
+        self.assertIn("to a different head", self.refused(lambda: self.carry(to_head=HEAD_B)))
+        self.assertIn(f"queued at {HEAD_C}, not {HEAD_D}", self.refused(lambda: self.carry(to_head=HEAD_D)))
+        state_tool.append_journal(self.directory, kind="review.round", summary="Round 3", lane="lane-1", subject="work-a",
+                                  review=review(3, "2026-10-21T09:00:00Z", "2026-10-21T09:10:00Z"), writer="lane")
+        self.assertIn("latest review round has not been captured", self.refused(lambda: self.carry()))
+        self.assertIn("no queued work named work-z", self.refused(lambda: state_tool.carry_review(
+            self.directory, subject="work-z", from_head=HEAD_B, to_head=HEAD_C, reason="r")))
+
+    def test_planned_work_and_work_without_a_capture_have_nothing_to_carry(self) -> None:
+        state_tool.patch(self.directory, writer="lead", version=state_tool.read_state(self.directory)["version"],
+                         changes={"planned": [{"subject": "work-b", "title": "B", "lane": "lane-1", "stage": "review"},
+                                              {"subject": "work-c", "title": "C", "lane": "lane-1", "stage": "review"}]})
+        self.assertIn("planned, not handed off", self.refused(lambda: state_tool.carry_review(
+            self.directory, subject="work-b", from_head=HEAD_B, to_head=HEAD_C, reason="r")))
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-c", head=HEAD_C, change_request="cr")
+        self.assertIn("no captured review", self.refused(lambda: state_tool.carry_review(
+            self.directory, subject="work-c", from_head=HEAD_B, to_head=HEAD_C, reason="r")))
+
+    def test_only_the_lead_carries_and_only_a_decision_holds_a_carry(self) -> None:
+        arguments = ("carry-review", "--subject", "work-a", "--from", HEAD_B, "--to", HEAD_C, "--reason", "fixtures only")
+        code, refused = run_tool(self.directory, *arguments, "--writer", "lane")
+        self.assertEqual((code, refused["code"]), (1, "writer_not_owned"))
+        code, carried = run_tool(self.directory, *arguments, "--writer", "lead")
+        self.assertEqual(code, 0, carried)
+        self.assertEqual(carried["entry"]["reviewCarry"]["to"], HEAD_C)
+        stray = {**VALID_ENTRY, "kind": "candidate.merged", "reviewCarry": {"from": HEAD_B, "to": HEAD_C, "digest": "0" * 64}}
+        self.assertTrue(any("only a decision about a subject carries its review" in error
+                            for error in state_tool.journal_errors([stray])))
 
 
 class SkillTextTests(unittest.TestCase):

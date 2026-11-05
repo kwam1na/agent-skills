@@ -432,6 +432,8 @@ def journal_errors(entries: list[object]) -> list[str]:
             errors.extend(f"entry {index + 1}: {problem}" for problem in _review_problems(entry))
             if (entry["kind"] == "review.evidence") != ("reviewArtifact" in entry) or (entry["kind"] == "review.evidence" and entry["subject"] is None):
                 errors.append(f"entry {index + 1}: review.evidence names its subject and artifact")
+            if "reviewCarry" in entry and (entry["kind"] != "decision.recorded" or entry["subject"] is None):
+                errors.append(f"entry {index + 1}: only a decision about a subject carries its review")
             if "occurredAt" in entry:
                 if entry["kind"] != "candidate.merged":
                     errors.append(f"entry {index + 1}: only a merge carries occurredAt")
@@ -1245,6 +1247,7 @@ def append_journal(
     occurred_at: str | None = None,
     recovery: dict | None = None,
     review_artifact: dict | None = None,
+    review_carry: dict | None = None,
 ) -> dict:
     """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset."""
     if writer == "runner" and kind == REVIEW_KIND:
@@ -1279,6 +1282,8 @@ def append_journal(
                 raise StateError("recovery_identity", "candidate identity changed before recovery journal append")
         if review_artifact is not None:
             entry["reviewArtifact"] = review_artifact
+        if review_carry is not None:
+            entry["reviewCarry"] = review_carry
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
@@ -1347,10 +1352,11 @@ def _review_outcomes(payload: dict, subject: str, candidate: str) -> list[dict]:
     return outcomes
 
 
-def validate_review_outcomes(outcomes: object, subject: str, candidate: str) -> None:
+def validate_review_outcomes(outcomes: object, subject: str, candidate: str) -> dict[str, str]:
     """Validate decoded reports at both the state reader and renderer boundary.
 
     Every refusal names the round, and the lens and field where one is at fault, so a lane can mend its outcome files.
+    Returns the findings still open after the last round, each with its severity.
     """
     def require(ok, what, where=""):
         if not ok:
@@ -1449,6 +1455,7 @@ def validate_review_outcomes(outcomes: object, subject: str, candidate: str) -> 
         if number == len(outcomes):
             require(round_candidate == candidate,
                     f"the last round reviewed {round_candidate!r}, not the captured candidate {candidate!r}", here)
+    return {identifier: severities[identifier] for identifier in sorted(open_findings)}
 
 
 def _review_artifact_path(directory: Path, digest: str) -> Path:
@@ -1522,6 +1529,67 @@ def capture_review(directory: Path, *, subject: str, candidate: str, outcomes: l
         raise StateError("review_artifact_invalid", "native review artifact could not be read or stored") from error
 
 
+def _standing_carry(journal: list[dict], subject: str, capture: dict) -> dict | None:
+    """The lead's latest carry of a subject's capture, while it still holds: after that capture and its last round."""
+    carry = next((entry for entry in reversed(journal) if entry["subject"] == subject and "reviewCarry" in entry), None)
+    if carry is None or carry["reviewCarry"]["digest"] != capture["reviewArtifact"]["digest"] or carry["id"] < capture["id"]:
+        return None
+    rounds = [entry["id"] for entry in journal if entry["subject"] == subject and entry["kind"] == "review.round"]
+    return carry if not rounds or max(rounds) < carry["id"] else None
+
+
+def carry_review(directory: Path, *, subject: str, from_head: str, to_head: str, reason: str) -> dict:
+    """The lead carries a subject's captured review across a commit it judged needs no new round.
+
+    The carry changes nothing the evidence says: a capture whose last round isn't aligned, or that leaves a P0 or P1
+    open, is refused. It is display and acceptance evidence only, never a run, a review round or admission evidence.
+    """
+    if not isinstance(reason, str) or not reason.strip():
+        raise StateError("carry_invalid", "say why the commit needs no new round with --reason")
+    with file_lock(directory / "review-capture.lock"):
+        state, journal = read_state(directory), read_journal(directory)
+        item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
+        if item is None:
+            planned = any(entry["subject"] == subject for entry in state.get("planned", []))
+            raise StateError("carry_invalid", f"{subject} is planned, not handed off: a carry moves evidence to a queued head"
+                             if planned else f"the record holds no queued work named {subject}")
+        if item.get("runId"):
+            raise StateError("carry_invalid", f"{subject} is built by run {item['runId']}, which keeps its own evidence")
+        if item["stage"] == "merged":
+            raise StateError("carry_invalid", f"{subject} is merged")
+        capture = next((entry for entry in reversed(journal)
+                        if entry["subject"] == subject and entry["kind"] == "review.evidence"), None)
+        if capture is None:
+            raise StateError("carry_invalid", f"{subject} has no captured review to carry")
+        reference = capture["reviewArtifact"]
+        rounds = [entry for entry in journal if entry["subject"] == subject and entry["kind"] == "review.round"]
+        if rounds and rounds[-1]["id"] > capture["id"]:
+            raise StateError("carry_invalid", f"{subject}'s latest review round has not been captured")
+        standing = _standing_carry(journal, subject, capture)
+        covered = standing["reviewCarry"]["to"] if standing else reference["candidateRef"]
+        if from_head != covered:
+            raise StateError("carry_invalid", f"{subject}'s evidence covers {covered}, not {from_head}")
+        if to_head == from_head:
+            raise StateError("carry_invalid", "carry the evidence to a different head")
+        if item["head"] != to_head:
+            raise StateError("carry_invalid", f"{subject} is queued at {item['head']}, not {to_head}")
+        data = _read_review_file(_review_artifact_path(directory, reference["digest"]), REVIEW_ARTIFACT_LIMIT)
+        if hashlib.sha256(data).hexdigest() != reference["digest"]:
+            raise StateError("carry_invalid", "the captured review artifact is damaged")
+        outcomes = _review_outcomes(_review_json(data), subject, reference["candidateRef"])
+        still_open = {identifier: severity for identifier, severity in
+                      validate_review_outcomes(outcomes, subject, reference["candidateRef"]).items()}
+        blocking = [f"{identifier} ({severity})" for identifier, severity in still_open.items() if severity in ("P0", "P1")]
+        if blocking:
+            raise StateError("carry_invalid", f"the captured review leaves {', '.join(blocking)} open; a carry can't approve it")
+        if outcomes[-1].get("outcome") != "aligned":
+            raise StateError("carry_invalid", f"the captured review's last round, round {len(outcomes)}, is not aligned")
+        return append_journal(directory, kind="decision.recorded", subject=subject, lane=item.get("lane"),
+                              summary=f"The lead carried {subject}'s review from {from_head} to {to_head}, "
+                                      f"no new round needed: {reason.strip()}",
+                              review_carry={"from": from_head, "to": to_head, "digest": reference["digest"]})
+
+
 def review_observations(directory: Path, state: dict, journal: list[dict]) -> dict:
     references = {entry["subject"]: entry for entry in journal if entry["kind"] == "review.evidence"}
     latest_rounds = {entry["subject"]: entry for entry in journal if entry["kind"] == "review.round"}
@@ -1536,8 +1604,12 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
         try:
             item = items[subject]
             latest = latest_rounds.get(subject)
-            # Bound to the reviewed head: a runner sync only merges the base in, under its own checks.
-            if subject in queued and item.get("head") != candidate:
+            # Bound to the reviewed head: a runner sync only merges the base in, under its own checks. A head the
+            # lead carried the evidence to stands in for it while that carry holds.
+            carry = _standing_carry(journal, subject, event) if subject in queued else None
+            if carry is not None and carry["reviewCarry"]["to"] != item.get("head"):
+                carry = None
+            if subject in queued and item.get("head") != candidate and carry is None:
                 raise StateError("review_artifact_invalid", "review candidate is stale or unknown")
             # Before hand-off there is no head: bound to the round the lane journaled last, captured after it.
             if subject not in queued and latest is None:
@@ -1551,6 +1623,9 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
             if subject not in queued and (latest.get("review") or {}).get("round") != len(outcomes):
                 raise StateError("review_artifact_invalid", "the capture is not of the latest journaled round")
             observed[subject] = {"candidateRef": candidate, "digest": reference["digest"], "outcomes": outcomes}
+            if carry is not None and item.get("head") != candidate:
+                observed[subject]["carried"] = {"from": carry["reviewCarry"]["from"], "to": carry["reviewCarry"]["to"],
+                                                "note": carry["summary"]}
         except (StateError, OSError, ValueError, UnicodeError, RecursionError):
             observed[subject] = {"candidateRef": candidate, "unavailable": True}
     return observed
@@ -1576,7 +1651,9 @@ def review_evidence(directory: Path, subject: str) -> dict:
         return {**found, "evidence": "unavailable"}
     if len(observed["outcomes"]) < rounds:
         return {**found, "evidence": "incomplete", "roundsCaptured": len(observed["outcomes"])}
-    return {**found, "evidence": "captured", "roundsCaptured": len(observed["outcomes"])}
+    carried = ({"carriedFrom": observed["carried"]["from"], "carriedTo": observed["carried"]["to"]}
+               if "carried" in observed else {})
+    return {**found, "evidence": "captured", "roundsCaptured": len(observed["outcomes"]), **carried}
 
 
 def show(directory: Path, *, between_reads: Callable[[], None] | None = None) -> dict:
@@ -4055,6 +4132,13 @@ def main(argv: list[str] | None = None) -> int:
     focused.add_argument("--text", required=True)
     focused.add_argument("--state", choices=("idle", "assigned", "working", "reviewing", "handed", "blocked", "done"))
     focused.add_argument("--waiting-on", help="who or what the lane waits on; an empty value clears it")
+    carried = commands.add_parser("carry-review",
+                                  help="the lead carries a captured review across a commit it judged needs no new round")
+    carried.add_argument("--writer", required=True, choices=WRITERS)
+    carried.add_argument("--subject", required=True)
+    carried.add_argument("--from", dest="from_head", required=True, help="the head the evidence covers now")
+    carried.add_argument("--to", dest="to_head", required=True, help="the queued head to carry it to")
+    carried.add_argument("--reason", required=True, help="why the commit between them needs no new round")
     binding_run = commands.add_parser("bind-run", help="a lane binds the run building its planned work, before its hand-off")
     binding_run.add_argument("--lane", required=True)
     binding_run.add_argument("--subject", required=True)
@@ -4148,6 +4232,11 @@ def main(argv: list[str] | None = None) -> int:
             waiting = ... if args.waiting_on is None else (args.waiting_on or None)
             result = {"ok": True, "state": set_focus(args.dir, args.lane, args.text, state=args.state,
                                                      waiting_on=waiting)}
+        elif args.command == "carry-review":
+            if args.writer != "lead":
+                raise StateError("writer_not_owned", "only the lead carries a review")
+            result = {"ok": True, "entry": carry_review(args.dir, subject=args.subject, from_head=args.from_head,
+                                                        to_head=args.to_head, reason=args.reason)}
         elif args.command == "bind-run":
             result = {"ok": True, "item": bind_run(args.dir, lane=args.lane, subject=args.subject, run=args.run)}
         elif args.command == "reconcile":
