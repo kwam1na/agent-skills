@@ -119,6 +119,16 @@ class StandingBinding(unittest.TestCase):
             done = candidate("WORK-1", title, "WORK-2: Follow up on WORK-1", "WORK-12: a longer key")
             self.assertEqual(json.loads(done.stdout)["branch"], "branch-0", done.stderr)
         self.assertEqual(candidate("WORK-1", "WORK-2: Follow up on WORK-1").returncode, 1)
+        # A change request for two tickets names both, and each resolves to it, as the forge snapshot counts it.
+        for key in ("WORK-1", "WORK-2"):
+            done = candidate(key, "[WORK-1, WORK-2]: one change for both", "WORK-12: a longer key")
+            self.assertEqual(json.loads(done.stdout)["branch"], "branch-0", done.stderr)
+        # A key named only after the opening list, or one the list holds only as a prefix, is not one it names.
+        self.assertEqual(candidate("WORK-1", "[WORK-2, WORK-12]: Follow up on WORK-1").returncode, 1)
+        # Two change requests that both name the key are refused, as two that open with it are.
+        done = candidate("WORK-2", "[WORK-1, WORK-2]: one change", "WORK-2: another change")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("expected one open change request, found 2", done.stderr)
 
     def test_the_delivery_folders_are_ignored(self) -> None:
         for path in (".orchestration/lanes/x", ".orchestration/state/state.json", ".worktrees/x", ".claude/worktrees/x"):
