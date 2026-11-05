@@ -61,7 +61,9 @@
         "skills/run-delivery/SKILL.md",
         "tests/test_forge_adapters.py",
         "skills/run-delivery/references/config.md",
-        "provenance.lock.json"
+        "provenance.lock.json",
+        "catalog.json",
+        "profiles/*"
       ]
     }
   },
