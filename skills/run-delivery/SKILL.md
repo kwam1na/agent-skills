@@ -150,7 +150,9 @@ merging, or marking a pull request ready.
 - **Lane.** A marked story's hand-off needs a current before/after clip (`app-video`); `lead-accept` re-checks it.
 - **Lead, after each marked story merges:**
   1. `lead-evidence record <key> --after-build <stamped build of the merged base>` for any story without a clip.
-  2. `lead-evidence page --out <dir>` (with `--note KEY=TEXT` for a story that has no clip and why).
+  2. `lead-evidence page --out <dir>` (with `--note KEY=TEXT` for a story that has no clip and why). The page's
+     `--title`, `--intro` and notes are kept in the record (`evidence-notes.json`) and reused on every rebuild; a flag
+     given again replaces what was kept, and `--note KEY=` removes that story's note.
   3. Publish the page privately, at the same address each time (with the host's publishing, or as a local page the
      operator shares), then `lead-evidence published --url <address> --out <dir>`. The page shows application
      content.
@@ -185,7 +187,8 @@ merging, or marking a pull request ready.
 
 - **Forge:** `forge.adapter` is `bitbucket` or `github`, the reference adapters in `adapters/`, or `forge.argv`
   names your own command with the same contract: `find`, `open` and `get`, printing JSON, and `reviews` where the forge
-  has it. A reference adapter's only write is opening a draft change request, which `open-pr` does only under the
+  has it. The reference adapters also answer `candidate`, which a binding's candidate step can call for the
+  conventional `feature/<key>` branch. A reference adapter's only write is opening a draft change request, which `open-pr` does only under the
   delivery's `authority`; neither prints a token. The GitHub adapter uses `gh` and its own sign-in, and has no
   `reviews`.
 - **Sign-in values** come only from the environment or the adopter's own adapter. `app-check` and `app-video` refuse an
