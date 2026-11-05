@@ -534,14 +534,15 @@ one this repository changes from the walk-through above; everything else stays a
 | `authority` | `push`, `draftPullRequests` | adds `readyPullRequests` |
 
 The binding merges through the forge adapter, by branch and checked head, so no merge script of its own is needed and
-nothing pushes to `main`:
+nothing pushes to `main`. Because it serves several bases, it passes `--destination {base}` too, so a pull request
+retargeted to another base in the forge is refused rather than merged there:
 
 ```json example outline
 {
   "base": {"remote": "origin", "ref": "main"},
   "bases": ["main", "integration-*"],
   "merge": ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge", "--source", "{branch}",
-            "--head", "{expectedHead}", "--strategy", "merge"],
+            "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"],
   "environment": {"FLOW_FORGE_REPOSITORY": "<workspace>/<repository>", "FLOW_FORGE_TOKEN_ENV": "BITBUCKET_TOKEN"},
   "state": {"directory": ".orchestration/state", "renderers": [],
             "forgeSnapshot": {"argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
