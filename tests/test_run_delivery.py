@@ -879,6 +879,26 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertEqual({p["subject"] for p in state["planned"]}, {"FX-2", "FX-3"})
         self.assertEqual(len(patches), 2, patches)
 
+    def test_a_story_registered_under_a_race_is_planned_and_journalled_once(self) -> None:
+        fx = self.assigned_fixture()
+        path = fx.main / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        d["stories"]["FX-4"] = {**{k: v for k, v in d["stories"]["FX-3"].items() if k != "inApp"}, "title": "Thing four",
+                                "lane": "lane-1"}
+        path.write_text(json.dumps(d, indent=2))
+        plan = fx.main / "docs/plan.md"
+        plan.write_text(plan.read_text() + "\n### S4 (FX-4). Thing four\n\n- Scenarios: it four.\n")
+        commit(fx.main, "FX-1: a story added")
+        # The race lands on the first patch, register_stories' own, so its retry runs from a fresh read.
+        code, out, patches = self.raced_lead(fx, ["lead-assign", "FX-4", "--lane", "lane-1", "--title", "Lane 1"], writes=1)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(patches), 3, f"register_stories' raced patch wasn't tried again: {patches}")
+        record = json.loads((fx.tmp / "record/state.json").read_text())
+        self.assertEqual([p["subject"] for p in record["planned"]].count("FX-4"), 1, record["planned"])
+        journal = [json.loads(line) for line in (fx.tmp / "record/journal.jsonl").read_text().splitlines()]
+        added = [e for e in journal if e.get("subject") == "FX-4" and "added to the delivery as planned work" in e["summary"]]
+        self.assertEqual(len(added), 1, added)
+
     def test_a_lead_write_that_never_lands_says_so_after_its_bound(self) -> None:
         fx = self.assigned_fixture()
         code, out, patches = self.raced_lead(fx, ["lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2"], writes=99)
@@ -5211,6 +5231,8 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         def state_tool(*args, check=True):
             calls.append(list(args))
             answer = answers[len(calls) - 1]
+            if isinstance(answer, str):  # a state tool that crashed: no JSON, its traceback on stderr
+                return types.SimpleNamespace(returncode=1, stdout=answer, stderr="Traceback: the state tool broke")
             return types.SimpleNamespace(returncode=0 if answer.get("ok") else 1, stdout=json.dumps(answer, indent=2),
                                          stderr="")
         with mock.patch.object(self.tool, "load_state", show), mock.patch.object(self.tool, "state_tool", state_tool):
@@ -5235,6 +5257,12 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         with self.assertRaises(self.tool.Stop) as stopped:
             self.written_by_patch_from([], gone)
         self.assertEqual(str(stopped.exception), "it moved on")
+
+    def test_patch_from_stops_at_once_on_a_refusal_it_cant_read(self) -> None:
+        with self.assertRaises(self.tool.Stop) as stopped:
+            self.written_by_patch_from(["not json", {"ok": True}], lambda doc: {"n": 1})
+        self.assertIn("the state tool refused the thing: Traceback: the state tool broke", str(stopped.exception))
+        self.assertNotIn("version_stale", str(stopped.exception))
 
     def test_patch_from_passes_an_element_patch_through(self) -> None:
         element = ["--element", "queue[subject=K]", "--set", '{"/stage": "queued"}']
