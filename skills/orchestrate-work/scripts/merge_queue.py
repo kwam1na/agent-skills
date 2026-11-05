@@ -2061,7 +2061,7 @@ class Runner:
             return
         completed = self.run_argv(gate["argv"], anchor, context, gate.get("timeoutSeconds", self.binding["checkTimeoutSeconds"]))
         if completed.timed_out or completed.returncode != 0:
-            # Its output may carry what the forge said, credentials included: it stays in a log, as a failed check's does.
+            # Its output may carry whatever the forge printed, secrets included: it stays in a log, as a failed check's does.
             log = self.save_log("review-gate", completed)
             how = "timed out" if completed.timed_out else f"exited {completed.returncode}"
             raise Stop("review_not_current", f"the review gate {how}: {subject} has no current review at {synced}; "
