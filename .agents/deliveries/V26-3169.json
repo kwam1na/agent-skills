@@ -428,6 +428,17 @@
           "text": "The timeout test asserts on the pids of the group it started, passes with an unrelated sleep 30 alive, and still fails when the timed-out group's own process survives"
         }
       ]
+    },
+    "V26-3181": {
+      "title": "Find why a SupervisorPostureTests case failed once in a loaded full run",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3181-done",
+          "text": "Two archives of one delivery in the same second no longer collide, and the supervisor posture test passes with two closes inside one second"
+        }
+      ]
     }
   },
   "finish": [
