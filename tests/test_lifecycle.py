@@ -12,7 +12,8 @@ from pathlib import Path
 from unittest import mock
 
 from agent_skills.cli import main as lifecycle_cli
-from agent_skills.generations import inspect_release
+from agent_skills import generations
+from agent_skills.generations import GenerationError, inspect_adoption_release, inspect_release
 from agent_skills.hosts.exposure import HOSTS, _normalized_link
 from agent_skills.lifecycle import Lifecycle
 from agent_skills.locking import RepositoryLock
@@ -798,6 +799,107 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         )
         self.assertEqual(active["release"]["releaseId"], "core-v3")
         self.assertEqual(active["previous"]["release"]["releaseId"], "core-v2")
+
+
+
+class InspectionCacheTests(LifecycleFixture, unittest.TestCase):
+    """An inspection extracts a release once per content in a process: keyed on the bytes it read, never on a path."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        generations._INSPECTED.clear()
+        self.addCleanup(generations._INSPECTED.clear)
+        # One path pair, whose bytes the rows replace between two inspections.
+        self.archive = self.base / "release.zip"
+        self.metadata = self.base / "release.json"
+        self.put(self.v1)
+
+    def put(self, version: tuple[Path, Path], *, archive: bool = True, metadata: bool = True) -> None:
+        if archive:
+            self.archive.write_bytes(version[0].read_bytes())
+        if metadata:
+            self.metadata.write_bytes(version[1].read_bytes())
+
+    def counted(self, side_effect=None):
+        """verify_release, counted, run for real unless a side effect is given."""
+        return mock.patch("agent_skills.generations.verify_release", side_effect=side_effect or verify_release)
+
+    def test_the_same_bytes_are_verified_once_and_each_caller_gets_its_own_copy(self) -> None:
+        first = inspect_release(self.archive, self.metadata)
+        first["files"].clear()
+        with self.counted() as verify:
+            again = inspect_release(self.archive, self.metadata)
+            adopted = inspect_adoption_release(self.archive, self.metadata, "compound-delivery-kernel")
+        self.assertEqual(verify.call_count, 0)
+        self.assertTrue(again["files"], "a caller's change never reaches the cache")
+        self.assertEqual(again, adopted)
+        self.assertEqual(again, inspect_release(*self.v1))
+
+    def test_replacing_the_archive_at_one_path_is_refused_or_read_as_the_new_release(self) -> None:
+        first = inspect_release(self.archive, self.metadata)
+        self.put(self.v2, metadata=False)
+        with self.counted() as verify, self.assertRaisesRegex(ValueError, "release.archive_checksum"):
+            inspect_release(self.archive, self.metadata)
+        self.assertEqual(verify.call_count, 1)
+        self.put(self.v2, archive=False)
+        second = inspect_release(self.archive, self.metadata)
+        self.assertEqual(second["release"]["releaseId"], "core-v2")
+        self.assertNotEqual(second["generation"], first["generation"])
+
+    def test_replacing_the_metadata_at_one_path_is_refused_or_read_as_the_new_release(self) -> None:
+        inspect_release(self.archive, self.metadata)
+        self.put(self.v2, archive=False)
+        with self.counted() as verify, self.assertRaisesRegex(ValueError, "release.archive_checksum"):
+            inspect_release(self.archive, self.metadata)
+        self.assertEqual(verify.call_count, 1)
+        # The same release's metadata, other bytes: verified again, and recorded with the bytes it now has.
+        changed = self.v1[1].read_bytes() + b"\n"
+        self.metadata.write_bytes(changed)
+        with self.counted() as verify:
+            version = inspect_release(self.archive, self.metadata)
+        self.assertEqual(verify.call_count, 1)
+        self.assertEqual(version["release"]["metadataSha256"], hashlib.sha256(changed).hexdigest())
+
+    def test_nothing_is_cached_across_a_verification_failure(self) -> None:
+        self.archive.write_bytes(self.v1[0].read_bytes() + b"tampered")
+        for _ in range(2):
+            with self.counted() as verify, self.assertRaisesRegex(ValueError, "release.archive_checksum"):
+                inspect_release(self.archive, self.metadata)
+            self.assertEqual(verify.call_count, 1)
+        self.assertEqual(len(generations._INSPECTED), 0)
+
+    def test_an_extraction_altered_on_disk_is_not_trusted(self) -> None:
+        def verify_then_alter(archive: Path, metadata: Path, *, extract_to: Path):
+            verified = verify_release(archive, metadata, extract_to=extract_to)
+            (extract_to / "catalog.json").write_bytes(b"{}\n")
+            return verified
+
+        with self.counted(verify_then_alter), self.assertRaisesRegex(GenerationError, "differs from its archive"):
+            inspect_release(self.archive, self.metadata)
+        self.assertEqual(len(generations._INSPECTED), 0)
+        with self.counted() as verify:
+            version = inspect_release(self.archive, self.metadata)
+        self.assertEqual(verify.call_count, 1)
+        self.assertEqual(version, inspect_release(*self.v1))
+
+    def test_a_release_replaced_while_it_is_inspected_is_refused(self) -> None:
+        def replace_then_verify(archive: Path, metadata: Path, *, extract_to: Path):
+            self.put(self.v2)
+            return verify_release(archive, metadata, extract_to=extract_to)
+
+        with self.counted(replace_then_verify), self.assertRaisesRegex(GenerationError, "source-changed"):
+            inspect_release(self.archive, self.metadata)
+        self.assertEqual(len(generations._INSPECTED), 0)
+        self.assertEqual(inspect_release(self.archive, self.metadata)["release"]["releaseId"], "core-v2")
+
+    def test_the_cache_keeps_only_its_newest_entries(self) -> None:
+        with mock.patch.object(generations, "INSPECTED_LIMIT", 1):
+            inspect_release(*self.v1)
+            inspect_release(*self.v2)
+            self.assertEqual(len(generations._INSPECTED), 1)
+            with self.counted() as verify:
+                inspect_release(*self.v1)
+            self.assertEqual(verify.call_count, 1)
 
 
 if __name__ == "__main__":
