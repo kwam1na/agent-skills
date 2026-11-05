@@ -167,7 +167,9 @@ test('evidence the lead carried to a later head shows as carried, and only at th
     expect(stale.app.querySelector('.d-run-carried')).toBeNull();
   }
   // A carry that isn't the shape the state tool writes is refused outright.
-  const [refused] = await openPage(pageWithRuns(carriedDocument(C, {...carry, extra:'x'}), {}, {config}));
-  expect(refused.app.querySelector('.d-run-carried')).toBeNull();
-  expect(refused.app.querySelector('.d-run-none').textContent).toContain('unavailable or stale');
+  for (const malformed of [{...carry, extra:'x'}, {...carry, note:''}, {...carry, to:7}]) {
+    const [refused] = await openPage(pageWithRuns(carriedDocument(C, malformed), {}, {config}));
+    expect(refused.app.querySelector('.d-run-carried')).toBeNull();
+    expect(refused.app.querySelector('.d-run-none').textContent).toContain('unavailable or stale');
+  }
 });

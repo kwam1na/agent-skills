@@ -5412,6 +5412,8 @@ class CarryReviewTests(unittest.TestCase):
     def test_a_carry_never_changes_what_the_evidence_says(self) -> None:
         cases = (
             ("an open P1", [review_round(1, HEAD_A), review_round(2, HEAD_B, finding=True)], "leaves F1 (P1) open"),
+            ("an open P0", [review_round(1, HEAD_A), {**review_round(2, HEAD_B, finding=True),
+                                                     "entries": self.open_at(HEAD_B, "P0")}], "leaves F1 (P0) open"),
             ("an unaligned last round", [review_round(1, HEAD_A), {**review_round(2, HEAD_B, finding=True),
                                                                    "entries": self.minor_open(HEAD_B)}],
              "round 2, is not aligned"),
@@ -5424,9 +5426,27 @@ class CarryReviewTests(unittest.TestCase):
                 self.assertEqual(self.evidence()["evidence"], "unavailable")
 
     def minor_open(self, candidate: str) -> list[dict]:
+        return self.open_at(candidate, "P2")
+
+    def open_at(self, candidate: str, severity: str) -> list[dict]:
         entries = review_round(2, candidate, finding=True)["entries"]
-        entries[0]["result"]["findings"][0]["severity"] = "P2"
+        entries[0]["result"]["findings"][0]["severity"] = severity
         return entries
+
+    def test_run_built_merged_or_damaged_evidence_is_never_carried(self) -> None:
+        artifact = next((self.directory / "review-artifacts").glob("*.json"))
+        original = artifact.read_bytes()
+        artifact.write_bytes(original + b" ")
+        self.assertIn("carry_invalid: the captured review artifact is damaged", self.refused(lambda: self.carry()))
+        artifact.write_bytes(original)
+        version = state_tool.read_state(self.directory)["version"]
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-a]",
+                         assignments={"/stage": "merged"})
+        self.assertIn("carry_invalid: work-a is merged", self.refused(lambda: self.carry()))
+        state = state_tool.read_state(self.directory)
+        state["queue"][0].update(stage="queued", runId="run-a")
+        (self.directory / state_tool.STATE_FILE).write_text(state_tool.dumps(state), encoding="utf-8")
+        self.assertIn("carry_invalid: work-a is built by run run-a", self.refused(lambda: self.carry()))
 
     def test_each_refusal_says_why_and_writes_nothing(self) -> None:
         self.assertIn("carry_invalid: say why", self.refused(lambda: self.carry(reason=" ")))
@@ -5456,9 +5476,13 @@ class CarryReviewTests(unittest.TestCase):
         code, carried = run_tool(self.directory, *arguments, "--writer", "lead")
         self.assertEqual(code, 0, carried)
         self.assertEqual(carried["entry"]["reviewCarry"]["to"], HEAD_C)
-        stray = {**VALID_ENTRY, "kind": "candidate.merged", "reviewCarry": {"from": HEAD_B, "to": HEAD_C, "digest": "0" * 64}}
-        self.assertTrue(any("only a decision about a subject carries its review" in error
-                            for error in state_tool.journal_errors([stray])))
+        carry = {"from": HEAD_B, "to": HEAD_C, "digest": "0" * 64}
+        for stray in ({**VALID_ENTRY, "kind": "candidate.merged", "reviewCarry": carry},
+                      {**VALID_ENTRY, "kind": "decision.recorded", "subject": None, "reviewCarry": carry}):
+            with self.subTest(kind=stray["kind"], subject=stray["subject"]):
+                self.assertTrue(any("only a decision about a subject carries its review" in error
+                                    for error in state_tool.journal_errors([stray])))
+        self.assertEqual(state_tool.journal_errors([{**VALID_ENTRY, "kind": "decision.recorded", "reviewCarry": carry}]), [])
 
 
 class SkillTextTests(unittest.TestCase):
