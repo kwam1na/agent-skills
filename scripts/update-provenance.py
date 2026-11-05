@@ -11,8 +11,15 @@ is missing, unsafe or outside the corpus is refused and nothing is written.
 A rebase that conflicts only in the lock is resolved by taking either side and
 running this writer.
 
-Exit codes: 0 when the lock is current or was rewritten; 1 when ``--check``
-finds it stale; 2 for a refusal, such as a malformed lock or a missing output.
+``--list-outputs`` reads one version of a lock on stdin and prints the outputs
+it lists, as a sorted JSON array of paths, reading nothing on disk. The merge
+queue compares these listings at the merge base, the base and a candidate, so a
+digest-only conflict regenerates while one where the candidate added or removed
+an output stops.
+
+Exit codes: 0 when the lock is current or was rewritten, or a listing printed;
+1 when ``--check`` finds it stale; 2 for a refusal, such as a malformed lock or
+a missing output.
 """
 
 from __future__ import annotations
@@ -100,6 +107,25 @@ def recompute(root: Path, skill: str | None = None) -> tuple[dict, list[str], bo
     return lock, changed, noncanonical
 
 
+def listed_outputs(raw: bytes) -> list[str]:
+    """The output paths one version of a lock lists, sorted; a malformed lock is refused."""
+    try:
+        lock = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
+        raise WriterError(f"the lock is not JSON: {type(error).__name__}: {error}") from error
+    if not isinstance(lock, dict) or not isinstance(lock.get("entries"), list):
+        raise WriterError("the lock has no list of entries")
+    paths = set()
+    for entry in lock["entries"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("outputs"), list):
+            raise WriterError("a lock entry has no list of outputs")
+        for output in entry["outputs"]:
+            if not isinstance(output, dict) or not isinstance(output.get("path"), str) or not output["path"]:
+                raise WriterError("a listed output has no path")
+            paths.add(output["path"])
+    return sorted(paths)
+
+
 def write_atomically(path: Path, contents: bytes) -> None:
     """Replace ``path`` in one step, so an interrupted write leaves the old lock."""
     handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -122,7 +148,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="the corpus root (default: this checkout)")
     parser.add_argument("--skill", help="recompute only this catalog skill's provenance entry")
     parser.add_argument("--check", action="store_true", help="report stale digests and exit 1, writing nothing")
+    parser.add_argument("--list-outputs", action="store_true",
+                        help="print the outputs the lock on stdin lists, as a JSON array, reading nothing else")
     args = parser.parse_args(argv)
+    if args.list_outputs:
+        if args.check or args.skill:
+            print("update-provenance: --list-outputs takes no other option", file=sys.stderr)
+            return 2
+        try:
+            listed = listed_outputs(sys.stdin.buffer.read())
+        except WriterError as error:
+            print(f"update-provenance: {error}", file=sys.stderr)
+            return 2
+        print(json.dumps(listed))
+        return 0
     root = args.root.resolve()
     try:
         lock, changed, noncanonical = recompute(root, args.skill)
