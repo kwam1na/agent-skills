@@ -819,6 +819,101 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                     holder.wait()
                 holder.stdout.close()
 
+    def raced_lead(self, fx: Fixture, argv: list[str], writes: int) -> tuple[int, str, list[str]]:
+        """Run a lead command in-process, with lane-1 writing its focus just before each of the command's first
+        `writes` patches: the record moves between the command's read and its patch, as a supervisor's or a lane's
+        write does. Returns (exit code, output, every patch call's first argument)."""
+        spec = importlib.util.spec_from_file_location("run_delivery_raced", ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        tool = importlib.util.module_from_spec(spec)
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(tool)
+        finally:
+            sys.dont_write_bytecode = previous
+        real, patches = tool.state_tool, []
+
+        def raced(*args, check=True):
+            if args and args[0] == "patch":
+                if len(patches) < writes:
+                    state = json.loads(real("show").stdout)["state"]
+                    if any(lane["id"] == "lane-1" for lane in state["lanes"]):
+                        real("focus", "--lane", "lane-1", "--text", f"lane-1 at work ({len(patches) + 1})")
+                    else:  # no lane yet: another writer moves the record's headline
+                        real("patch", "--writer", "lead", "--version", str(state["version"]), "--patch",
+                             json.dumps({"meta": {"headline": f"moved in between ({len(patches) + 1})"}}))
+                patches.append(args[0])
+            return real(*args, check=check)
+        out, code = io.StringIO(), 0
+        here = os.getcwd()
+        try:
+            os.chdir(fx.main)
+            with mock.patch.dict(os.environ, fx.env, clear=True), mock.patch.object(tool, "state_tool", raced), \
+                    mock.patch.object(tool.signal, "signal"), contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                tool.main(argv)
+        except SystemExit as stopped:
+            code = stopped.code
+        finally:
+            os.chdir(here)
+        return code, out.getvalue(), patches
+
+    def assigned_fixture(self) -> Fixture:
+        fx = self.fixture()
+        setup_delivery(fx)
+        for argv in (["lead-init"], ["lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1"]):
+            code, out = fx.flow(*argv, cwd=fx.main)
+            self.assertEqual(code, 0, out)
+        return fx
+
+    def test_a_lead_write_raced_by_another_writer_reads_again_and_keeps_both(self) -> None:
+        fx = self.assigned_fixture()
+        code, out, patches = self.raced_lead(fx, ["lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2"], writes=1)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(patches), 2, f"the raced patch wasn't tried again from a fresh read: {patches}")
+        lanes = {lane["id"]: lane for lane in json.loads((fx.tmp / "record/state.json").read_text())["lanes"]}
+        self.assertEqual((lanes["lane-2"]["state"], lanes["lane-2"]["focus"]), ("assigned", "assigned FX-3"))
+        self.assertEqual(lanes["lane-1"]["focus"], "lane-1 at work (1)", "the write in between was overwritten")
+
+    def test_lead_init_raced_by_another_writer_reads_again_and_keeps_both(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        code, out, patches = self.raced_lead(fx, ["lead-init"], writes=1)
+        self.assertEqual(code, 0, out)
+        state = json.loads((fx.tmp / "record/state.json").read_text())
+        self.assertEqual(state["meta"]["headline"], "moved in between (1)", "the write in between was overwritten")
+        self.assertEqual(state["meta"]["trackerParent"], "FX-1")
+        self.assertEqual({p["subject"] for p in state["planned"]}, {"FX-2", "FX-3"})
+        self.assertEqual(len(patches), 2, patches)
+
+    def test_a_story_registered_under_a_race_is_planned_and_journalled_once(self) -> None:
+        fx = self.assigned_fixture()
+        path = fx.main / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        d["stories"]["FX-4"] = {**{k: v for k, v in d["stories"]["FX-3"].items() if k != "inApp"}, "title": "Thing four",
+                                "lane": "lane-1"}
+        path.write_text(json.dumps(d, indent=2))
+        plan = fx.main / "docs/plan.md"
+        plan.write_text(plan.read_text() + "\n### S4 (FX-4). Thing four\n\n- Scenarios: it four.\n")
+        commit(fx.main, "FX-1: a story added")
+        # The race lands on the first patch, register_stories' own, so its retry runs from a fresh read.
+        code, out, patches = self.raced_lead(fx, ["lead-assign", "FX-4", "--lane", "lane-1", "--title", "Lane 1"], writes=1)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(patches), 3, f"register_stories' raced patch wasn't tried again: {patches}")
+        record = json.loads((fx.tmp / "record/state.json").read_text())
+        self.assertEqual([p["subject"] for p in record["planned"]].count("FX-4"), 1, record["planned"])
+        journal = [json.loads(line) for line in (fx.tmp / "record/journal.jsonl").read_text().splitlines()]
+        added = [e for e in journal if e.get("subject") == "FX-4" and "added to the delivery as planned work" in e["summary"]]
+        self.assertEqual(len(added), 1, added)
+
+    def test_a_lead_write_that_never_lands_says_so_after_its_bound(self) -> None:
+        fx = self.assigned_fixture()
+        code, out, patches = self.raced_lead(fx, ["lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2"], writes=99)
+        self.assertEqual(code, 2, out)
+        self.assertIn("version_stale: the record kept changing while lane-2's assignment was written; tried 5 times", out)
+        self.assertEqual(len(patches), 5, patches)
+        lanes = {lane["id"] for lane in json.loads((fx.tmp / "record/state.json").read_text())["lanes"]}
+        self.assertNotIn("lane-2", lanes, "a patch from a stale read was written")
+
     def test_plan_context_is_found_by_key(self) -> None:
         sections = self.call("plan_sections", PLAN)
         expect(any("FX-2" in title for _, title, _ in sections), "no FX-2 section")
@@ -5116,6 +5211,56 @@ class RunDeliveryArgumentTests(unittest.TestCase):
             with self.subTest(argv=argv):
                 self.assertEqual(self.delivery_of(*argv), "K")
         self.assertIsNone(self.delivery_of("lead-init"))
+
+    def written_by_patch_from(self, answers: list[dict], compute) -> tuple[object, list[list[str]], list[int]]:
+        """patch_from against a fake state tool: each read returns the next version, each patch the next answer."""
+        reads, calls = [], []
+
+        def show():
+            reads.append(len(reads) + 1)
+            return {"state": {"version": reads[-1], "n": reads[-1]}}
+
+        def state_tool(*args, check=True):
+            calls.append(list(args))
+            answer = answers[len(calls) - 1]
+            if isinstance(answer, str):  # a state tool that crashed: no JSON, its traceback on stderr
+                return types.SimpleNamespace(returncode=1, stdout=answer, stderr="Traceback: the state tool broke")
+            return types.SimpleNamespace(returncode=0 if answer.get("ok") else 1, stdout=json.dumps(answer, indent=2),
+                                         stderr="")
+        with mock.patch.object(self.tool, "load_state", show), mock.patch.object(self.tool, "state_tool", state_tool):
+            written = self.tool.patch_from(compute, "the thing")
+        return written, calls, reads
+
+    def test_patch_from_computes_each_try_from_its_own_fresh_read(self) -> None:
+        stale = {"ok": False, "code": "version_stale", "error": "patch is pinned to version 1; state is at 2"}
+        written, calls, reads = self.written_by_patch_from([stale, stale, {"ok": True}], lambda doc: {"n": doc["state"]["n"]})
+        self.assertEqual(written, {"n": 3})
+        self.assertEqual([(c[c.index("--version") + 1], c[-1]) for c in calls], [("1", '{"n": 1}'), ("2", '{"n": 2}'), ("3", '{"n": 3}')])
+
+    def test_patch_from_doesnt_retry_another_refusal_or_write_nothing(self) -> None:
+        refused = {"ok": False, "code": "writer_not_owned", "error": "the lead can't write that"}
+        with self.assertRaises(self.tool.Stop) as stopped:
+            self.written_by_patch_from([refused, {"ok": True}], lambda doc: {"n": 1})
+        self.assertIn("the state tool refused the thing: the lead can't write that", str(stopped.exception))
+        written, calls, _ = self.written_by_patch_from([], lambda doc: None)
+        self.assertEqual((written, calls), (None, []))
+        def gone(doc):
+            raise self.tool.Stop("it moved on")
+        with self.assertRaises(self.tool.Stop) as stopped:
+            self.written_by_patch_from([], gone)
+        self.assertEqual(str(stopped.exception), "it moved on")
+
+    def test_patch_from_stops_at_once_on_a_refusal_it_cant_read(self) -> None:
+        with self.assertRaises(self.tool.Stop) as stopped:
+            self.written_by_patch_from(["not json", {"ok": True}], lambda doc: {"n": 1})
+        self.assertIn("the state tool refused the thing: Traceback: the state tool broke", str(stopped.exception))
+        self.assertNotIn("version_stale", str(stopped.exception))
+
+    def test_patch_from_passes_an_element_patch_through(self) -> None:
+        element = ["--element", "queue[subject=K]", "--set", '{"/stage": "queued"}']
+        written, calls, _ = self.written_by_patch_from([{"ok": True}], lambda doc: element)
+        self.assertEqual(written, element)
+        self.assertEqual(calls[0][-4:], element)
 
     def test_two_different_deliveries_are_a_usage_error(self) -> None:
         with mock.patch.object(self.tool, "lead_init", side_effect=AssertionError("reached the command")), \
