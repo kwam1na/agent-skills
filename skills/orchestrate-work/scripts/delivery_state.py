@@ -3602,7 +3602,7 @@ def _select_command(args: argparse.Namespace) -> dict:
 
 
 # What a running `wait` returns on: the journal kinds that need the lead. A blocked lane and machine pressure also end it.
-WAIT_KINDS = frozenset({"candidate.handed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded"})
+WAIT_KINDS = frozenset({"candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded"})
 # 0 is a wake and 1 an error, so a lead can tell what ended a wait left running in the background.
 WAIT_EXPIRED_EXIT = 3
 WAIT_TIMEOUT_SECONDS = 1800.0

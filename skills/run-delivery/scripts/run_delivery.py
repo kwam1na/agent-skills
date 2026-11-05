@@ -5318,7 +5318,7 @@ def closed_step(c) -> tuple[bool, str]:
 
 def archive_delivery(c) -> tuple[Path, list[str]]:
     """Copy the record, the lead-side logs, the lanes' evidence and the plan review into a new archive folder."""
-    archive = archive_root(c) / datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    archive = archive_root(c) / datetime.datetime.now().strftime("%Y%m%dT%H%M%S.%f")
     archive.mkdir(parents=True)
     for source in (c.state, c.flow_log, c.flow_log.parent / "evidence"):
         if source.exists():

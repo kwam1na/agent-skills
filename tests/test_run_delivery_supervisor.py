@@ -1606,6 +1606,19 @@ class SupervisorPostureTests(unittest.TestCase):
         self.lead_close(fx)
         self.assert_skip_recorded(fx)
 
+    def test_two_archives_in_the_same_second_each_get_a_folder(self) -> None:
+        fx = self.fixture(closable=False)
+        script = ("import sys\nfrom pathlib import Path\nsys.path.insert(0, sys.argv[1])\nimport run_delivery as flow\n"
+                  "flow.CFG = c = flow.Config(Path.cwd(), 'FX-1')\n"
+                  "print(flow.archive_delivery(c)[0])\nprint(flow.archive_delivery(c)[0])\n")
+        done = subprocess.run([sys.executable, "-B", "-c", script, str(fx.tool.parent)], cwd=fx.main, env=fx.env,
+                              text=True, capture_output=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        first, second = done.stdout.split()
+        self.assertNotEqual(first, second)
+        self.assertTrue((Path(first) / "record/journal.jsonl").exists())
+        self.assertTrue((Path(second) / "record/journal.jsonl").exists())
+
     def test_lead_close_under_gate_does_what_it_did(self) -> None:
         fx = self.fixture()
         declare(fx, declaration("gate", "The gate is on."))
