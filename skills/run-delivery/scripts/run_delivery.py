@@ -5760,15 +5760,29 @@ def ship(args) -> None:
         raise Stop(f"{path} or the branch {branch} already exists; remove both first if you mean to rebuild")
     if run(["git", "merge-base", "--is-ancestor", s["toolingCommit"], c.base_ref], check=False).returncode != 0:
         raise Stop(f"the tooling commit {s['toolingCommit']} is not an ancestor of {c.base_ref}")
-    diff = run(["git", "diff", "--binary", s["toolingCommit"], c.base_ref, "--", *s["paths"]]).stdout  # unstripped
+    diff, tooling = ship_diff(c, s)
     if not diff:
         raise Stop(f"nothing under {s['paths']} to ship")
     git("worktree", "add", "-q", "--no-track", "-b", branch, str(path), s["from"])
     applied = apply_patch(diff, path)
     files = git("diff", "--cached", "--name-only", cwd=path).splitlines()
-    outside = [f for f in files if not any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") for p in s["paths"])]
+    outside = [f for f in files if not any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") or p in (".", "./")
+                                           for p in s["paths"])]
     print(f"{branch} at {path}, from {s['from']} ({git('rev-parse', '--short', s['from'])})")
+    print(f"  left out the delivery's tooling: {', '.join(tooling[:10])}" + (f" and {len(tooling) - 10} more" if len(tooling) > 10 else ""))
+    # A tooling file the delivery changed again later is left out too: name every one, so a product change to a file
+    # the tooling commit also touched can't go missing unnoticed.
+    committed = set(git("diff", "--name-only", git("merge-base", s["from"], s["toolingCommit"]), s["toolingCommit"]).splitlines())
+    later = sorted(f for f in git("diff", "--name-only", s["toolingCommit"], c.base_ref, "--", *s["paths"]).splitlines()
+                   if f in committed and not f.startswith((".agents/", ".agent-skills/")))
+    if later:
+        print(f"  changed after the tooling commit and left out: {', '.join(later)}; a product change there doesn't ship")
     print(f"  {len(files)} file(s) staged; outside {s['paths']}: {outside or 'none'}")
+    if applied.returncode == 0 and not files:  # a clean apply that changed nothing is no product branch
+        git("worktree", "remove", "--force", str(path))
+        git("branch", "-D", branch)
+        raise Stop(f"nothing to ship: {s['from']} already has every change the delivery made under {s['paths']}; "
+                   f"removed {path} and {branch}")
     if applied.returncode != 0:
         unmerged = git("diff", "--name-only", "--diff-filter=U", cwd=path)
         raise Stop("git apply failed" + (f"; resolve the conflicts in {path}: {unmerged}" if unmerged else f": {applied.stderr.strip()}"))
@@ -5779,6 +5793,21 @@ def ship(args) -> None:
         return
     ship_gates(c, path, s)
     print("  next: commit the staged change as one commit. Its PR waits for the user.")
+
+
+def ship_diff(c, s: dict) -> tuple[str, list[str]]:
+    """The delivery's product changes under the ship paths, as one diff to apply onto `ship.from`, and the tooling it
+    leaves out. The diff starts where the base and `ship.from` last met, so changes the base merged from the default
+    branch aren't shipped again. Tooling never ships, whenever it changed: every file the tooling commits touched
+    (from that meeting point to `ship.toolingCommit`), run-delivery's own `.agents/` settings, the installed generation
+    and `ship.gateTooling`."""
+    since = git("merge-base", s["from"], c.base_ref)
+    fork = git("merge-base", s["from"], s["toolingCommit"])
+    tooling = sorted(set(git("diff", "--name-only", fork, s["toolingCommit"]).splitlines())
+                     | {".agents", ".agent-skills", *s.get("gateTooling", [])})
+    left_out = [f":(top,exclude,literal){rel.rstrip('/')}" for rel in tooling]
+    diff = run(["git", "diff", "--binary", since, c.base_ref, "--", *s["paths"], *left_out]).stdout  # unstripped
+    return diff, tooling
 
 
 def ship_tooling(c, path: Path, s: dict) -> list[str]:
