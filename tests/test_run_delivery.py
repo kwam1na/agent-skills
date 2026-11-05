@@ -385,7 +385,23 @@ class Fixture:
 
     def close(self):
         stop_supervisors(self.tmp)
+        self.stop_in_app()
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def stop_in_app(self) -> None:
+        """Stop what a killed in-app holder left running. Its lease still names the groups it started, and taking the
+        lease, as lead-close does, has the tool stop them. A lease released cleanly names none, so this costs a run only
+        after a kill. The wait is defensive: the tool only signals the groups, and the folder they serve is removed next.
+        The fixture's own serve and check exit on SIGTERM well inside the tool's one-second port wait, so no case pins it."""
+        lock = self.tmp / "app.lock"
+        groups = [int(g) for g in re.findall(r"pgid (\d+)", lock.read_text())] if lock.exists() else []
+        if not groups:
+            return
+        with contextlib.suppress(Stopped):  # still held: its live holder stops its own groups
+            self.call("Lease", lock, self.port, "fixture-close", 0, then="close", cwd=Path(tempfile.gettempdir()))
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and any(group_alive(g) for g in groups):
+            time.sleep(0.1)
 
 
 def stop_supervisors(root: Path) -> None:
@@ -412,6 +428,16 @@ def stop_supervisors(root: Path) -> None:
         if held or any(in_group(child) for child in recorded.get("children") or []):
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)
+
+
+def group_alive(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # the group exists, but isn't ours to signal
+        return True
 
 
 def process_alive(pid: int) -> bool:
@@ -2024,6 +2050,64 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             time.sleep(0.5)
             expect(not port_open(), f"the server outlived a check interrupted by {sent.name}")
             fx.call("Lease", fx.tmp / "app.lock", fx.port, "selftest", 2, then="close", cwd=fx.tmp)
+
+    def test_a_killed_check_leaves_nothing_running_once_its_fixture_closes(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        fx.flow("lead-init", cwd=fx.main)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        fx.flow("build", "FX-2", cwd=wt)
+        lock = fx.tmp / "app.lock"
+        recorded = lambda: [int(g) for g in re.findall(r"pgid (\d+)", lock.read_text())] if lock.exists() else []
+        groups: list[int] = []
+        proc = subprocess.Popen([sys.executable, "-B", str(fx.tool), "app-check", "FX-2", "slow", "--mode", "loaded",
+                                 "--path", "/slow", "--eval", "true"], cwd=wt, env=fx.env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and len(recorded()) < 2:  # the server's group, then the check's
+                time.sleep(0.1)
+            groups = recorded()
+            self.assertEqual(len(groups), 2, f"the lease didn't record the server and the check: {lock.read_text()}")
+            self.assertTrue(fx.call("port_open", fx.port, cwd=fx.tmp), "the check's server never came up")
+            # A SIGKILL can't be caught, so app-check never stops what it started: the lease's record is what's left.
+            proc.kill()
+            proc.wait(timeout=20)
+            time.sleep(0.5)
+            self.assertTrue(all(group_alive(g) for g in groups), "the kill didn't leave the check's groups running")
+            fx.close()
+            self.assertEqual([g for g in groups if group_alive(g)], [], "the fixture closed with the check's groups running")
+            self.assertFalse(fx.call("port_open", fx.port, cwd=Path(tempfile.gettempdir())), "the server outlived its fixture")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            for group in groups:  # the groups this case's own check started, by the pids its lease recorded
+                if group_alive(group):
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        os.killpg(group, signal.SIGKILL)
+
+    def test_closing_a_fixture_leaves_a_live_holders_lease_and_groups_alone(self) -> None:
+        fx = self.fixture()
+        lock = fx.tmp / "app.lock"
+        served = subprocess.Popen(["sleep", "60"], start_new_session=True)
+        holder = subprocess.Popen([sys.executable, "-c", "import fcntl,sys,time; f=open(sys.argv[1],'a+'); "
+                                   "fcntl.flock(f, fcntl.LOCK_EX); f.write('lane-1 FX-2 hold pid 1 pgid %s\\n' % sys.argv[2]); "
+                                   "f.flush(); print('held', flush=True); time.sleep(60)", str(lock), str(served.pid)],
+                                  stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(holder.stdout.readline().strip(), "held")
+            fx.stop_in_app()  # raises if a held lease isn't left to its holder
+            self.assertIsNone(served.poll(), "closing the fixture stopped a live holder's group")
+            self.assertIn(f"pgid {served.pid}", lock.read_text(), "closing the fixture rewrote a live holder's lease")
+        finally:
+            for proc in (holder, served):  # both started here, stopped by the pids recorded here
+                if proc.poll() is None:
+                    proc.kill()
+                proc.wait()
+            holder.stdout.close()
 
 # The fallbacks to the tool's earlier names, pinned: removing one takes a later approved change to this list.
 LEGACY_NAMES = (
