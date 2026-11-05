@@ -29,7 +29,6 @@ import os
 import re
 import subprocess
 import sys
-import urllib.parse
 
 sys.dont_write_bytecode = True
 REPO = os.environ.get("FLOW_FORGE_REPOSITORY", "")
@@ -105,9 +104,11 @@ def main():
     args = parser.parse_args()
     if args.command == "candidate":
         branch = args.prefix + args.key
-        refs = json.loads(gh_api(f"repos/{REPO}/git/matching-refs/heads/{urllib.parse.quote(args.prefix, safe='/')}"))
+        # Every head, in one answer: GitHub matches a ref prefix with its case, and a branch that differs from this one
+        # only in its prefix's case answers to the name too.
+        refs = json.loads(gh_api(f"repos/{REPO}/git/matching-refs/heads/"))
         tips = {ref["ref"][len("refs/heads/"):]: (ref.get("object") or {}).get("sha", "") for ref in refs
-                if ref.get("ref", "").startswith("refs/heads/")}
+                if ref.get("ref", "").lower().startswith("refs/heads/" + args.prefix.lower())}
         print(json.dumps(resolve_candidate("github", branch, tips)))
     elif args.command == "find":
         found = json.loads(gh("pr", "list", "--head", args.source, "--state", "open", "--json", "url"))

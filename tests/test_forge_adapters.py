@@ -40,7 +40,9 @@ if command == ["pr", "list"]:
         listed.append({key: value for key, value in entry.items() if key in fields})
     print(json.dumps(listed))
 elif sys.argv[1] == "api":
-    # As GitHub's matching-refs does: every ref that starts with the asked-for name, here from FAKE_GH_REFS.
+    if os.environ.get("FAKE_GH_API_FAIL"):
+        sys.exit("gh: HTTP 401: Bad credentials for token " + os.environ.get("GH_TOKEN", ""))
+    # As GitHub's matching-refs does: every ref that starts with the asked-for name, with its case, from FAKE_GH_REFS.
     asked = "refs/" + sys.argv[2].split("/git/matching-refs/", 1)[1]
     refs = json.loads(os.environ.get("FAKE_GH_REFS", "{}"))
     print(json.dumps([{"ref": "refs/heads/" + name, "object": {"sha": sha, "type": "commit"}}
@@ -282,11 +284,34 @@ class GitHubCandidateTests(unittest.TestCase):
                 self.assertEqual(done.stdout, "")
                 self.assertIn("github: no branch feature/X-1 on o/n; not resolved", done.stderr)
 
-    def test_a_tip_that_is_not_a_full_hash_is_refused(self) -> None:
-        done = self.candidate({"feature/X-1": HEAD[:12]}, "--key", "X-1")
+    def test_a_name_a_branch_under_another_case_of_the_prefix_answers_to_is_refused(self) -> None:
+        done = self.candidate({"feature/X-1": HEAD, "Feature/X-1": OTHER}, "--key", "X-1")
         self.assertNotEqual(done.returncode, 0)
         self.assertEqual(done.stdout, "")
-        self.assertIn("not a full commit hash", done.stderr)
+        self.assertIn("github: 2 branches on o/n answer to feature/X-1 (Feature/X-1, feature/X-1), not one; "
+                      "not resolved", done.stderr)
+
+    def test_only_a_full_hash_is_a_tip(self) -> None:
+        sha256 = HEAD + HEAD[:24]
+        done = self.candidate({"feature/X-1": sha256}, "--key", "X-1")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"branch": "feature/X-1", "head": sha256})
+        for tip in (HEAD[:12], HEAD + "0"):
+            with self.subTest(tip=tip):
+                done = self.candidate({"feature/X-1": tip}, "--key", "X-1")
+                self.assertNotEqual(done.returncode, 0)
+                self.assertEqual(done.stdout, "")
+                self.assertIn("not a full commit hash", done.stderr)
+
+    def test_a_failing_gh_api_is_reported_without_its_token(self) -> None:
+        done = subprocess.run([sys.executable, "-B", str(ADAPTERS / "forge_github.py"), "candidate", "--key", "X-1"],
+                              env={**self.env, "FAKE_GH_API_FAIL": "1", "GH_TOKEN": "ghp-secret-value"},
+                              capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertEqual(done.stdout, "")
+        self.assertTrue(done.stderr.startswith("gh api:"), done.stderr)
+        self.assertNotIn("ghp-secret-value", done.stderr)
+        self.assertIn("[redacted]", done.stderr)
 
     def test_a_name_several_branches_answer_to_is_refused(self) -> None:
         # Names that differ only in case are one branch to a case-insensitive checkout.
@@ -303,6 +328,7 @@ class BitbucketCandidateTests(unittest.TestCase):
                                                            ADAPTERS / "forge_bitbucket.py")
         self.branches: dict[str, str] = {}
         self.calls: list[str] = []
+        self.page_size = 100
 
     def answer(self, request, timeout=None):
         self.calls.append(request.full_url)
@@ -312,7 +338,12 @@ class BitbucketCandidateTests(unittest.TestCase):
         text = query.split('"')[1].lower() if '"' in query else ""
         values = [{"name": name, "target": {"hash": sha}} for name, sha in self.branches.items() if text in name.lower()]
         assert url.path.endswith("/refs/branches") and query.startswith("name ~ "), request.full_url
-        return contextlib.closing(io.BytesIO(json.dumps({"values": values}).encode()))
+        # Paged, as Bitbucket pages: `page_size` values a page, and a `next` link while more are left.
+        page = int(urllib.parse.parse_qs(url.query).get("page", ["1"])[0])
+        body = {"values": values[(page - 1) * self.page_size:page * self.page_size]}
+        if page * self.page_size < len(values):
+            body["next"] = request.full_url.split("&page=")[0] + f"&page={page + 1}"
+        return contextlib.closing(io.BytesIO(json.dumps(body).encode()))
 
     def candidate(self, *argv: str) -> dict:
         module = importlib.util.module_from_spec(self.spec)
@@ -355,10 +386,30 @@ class BitbucketCandidateTests(unittest.TestCase):
         self.assertIn("bitbucket: 2 branches on ws/repo answer to feature/X-1 (feature/X-1, feature/x-1), not one; "
                       "not resolved", self.refused("--key", "X-1"))
 
-    def test_a_tip_that_is_not_a_full_hash_is_refused(self) -> None:
-        # The queue takes only a full object name; a short one must not reach it.
-        self.branches = {"feature/X-1": HEAD[:12]}
-        self.assertIn("not a full commit hash", self.refused("--key", "X-1"))
+    def test_a_name_a_branch_under_another_case_of_the_prefix_answers_to_is_refused(self) -> None:
+        self.branches = {"feature/X-1": HEAD, "Feature/X-1": OTHER}
+        self.assertIn("bitbucket: 2 branches on ws/repo answer to feature/X-1 (Feature/X-1, feature/X-1), not one; "
+                      "not resolved", self.refused("--key", "X-1"))
+
+    def test_every_page_of_the_listing_is_read(self) -> None:
+        # The name's longer neighbours fill the first pages; the branch, or its twin, is only on a later one.
+        neighbours = {f"feature/X-1{n}": OTHER for n in range(5)}
+        self.page_size = 2
+        self.branches = {**neighbours, "feature/X-1": HEAD}
+        self.assertEqual(self.candidate("--key", "X-1"), {"branch": "feature/X-1", "head": HEAD})
+        self.assertGreater(len(self.calls), 1)
+        self.branches = {"feature/X-1": HEAD, **neighbours, "feature/x-1": OTHER}
+        self.assertIn("2 branches on ws/repo answer to feature/X-1", self.refused("--key", "X-1"))
+
+    def test_only_a_full_hash_is_a_tip(self) -> None:
+        # The queue takes only a full object name; a short or overlong one must not reach it.
+        sha256 = HEAD + HEAD[:24]
+        self.branches = {"feature/X-1": sha256}
+        self.assertEqual(self.candidate("--key", "X-1"), {"branch": "feature/X-1", "head": sha256})
+        for tip in (HEAD[:12], HEAD + "0"):
+            with self.subTest(tip=tip):
+                self.branches = {"feature/X-1": tip}
+                self.assertIn("not a full commit hash", self.refused("--key", "X-1"))
 
 
 if __name__ == "__main__":

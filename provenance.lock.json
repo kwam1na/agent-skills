@@ -1026,7 +1026,7 @@
         },
         {
           "path": "skills/run-delivery/adapters/forge_github.py",
-          "sha256": "171282f119f0acb0ef6fb1dc434316a50f5ad35d2a3af15bfd5d34ea1a11f15f"
+          "sha256": "a81b5d380e78bc8ac32b1b5c028dce3369500fdda21dce050d0fa19a35054601"
         },
         {
           "path": "skills/run-delivery/adapters/tracker_jira.py",
