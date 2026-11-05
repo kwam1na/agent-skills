@@ -469,6 +469,17 @@
           "text": "handoff --run refuses with run_bound when another planned or queued subject holds that run, and the bound subject's own hand-off still works"
         }
       ]
+    },
+    "V26-3192": {
+      "title": "Close the round-brief drift test's three remaining gaps",
+      "lane": "lane-3",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3192-done",
+          "text": "Fenced text in a compared section is compared, the four placeholder sections are compared after rendering or the test says why not, and each declared divergence is reconciled or kept with a reason"
+        }
+      ]
     }
   },
   "finish": [
