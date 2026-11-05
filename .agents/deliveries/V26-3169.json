@@ -444,6 +444,17 @@
           "text": "Two archives of one delivery in the same second no longer collide, and the supervisor posture test passes with two closes inside one second"
         }
       ]
+    },
+    "V26-3191": {
+      "title": "Retry run-delivery's lead writes when the record moved under them",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3191-done",
+          "text": "run-delivery's lead commands re-read and recompute on version_stale, a bounded number of times, and a forced write between read and patch no longer fails them"
+        }
+      ]
     }
   },
   "finish": [
