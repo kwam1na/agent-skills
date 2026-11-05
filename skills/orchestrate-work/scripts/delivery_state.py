@@ -1312,101 +1312,143 @@ def _review_json(data: bytes) -> object:
     return json.loads(data.decode("utf-8"), object_pairs_hook=unique)
 
 
+def _review_refusal(where: str, what: str) -> StateError:
+    """A refusal that names what was wrong and where: the round, the lens and the field."""
+    return StateError("review_artifact_invalid", f"native review outcome {where}: {what}" if where else
+                      f"native review outcome: {what}")
+
+
 def _review_outcomes(payload: dict, subject: str, candidate: str) -> list[dict]:
     """Validate identity and originating dispositions, without granting admission."""
-    def require(ok):
+    def require(ok, what):
         if not ok:
-            raise StateError("review_artifact_invalid", "native review outcome identity or report is invalid")
-    require(isinstance(payload, dict) and payload.get("spec") == "delivery-review-observation/1"
-            and payload.get("subjectRef") == subject and payload.get("candidateRef") == candidate)
+            raise _review_refusal("", what)
+    require(isinstance(payload, dict), "the capture is not a JSON object")
+    require(payload.get("spec") == "delivery-review-observation/1", "spec is not delivery-review-observation/1")
+    require(payload.get("subjectRef") == subject, f"subjectRef is not {subject}")
+    require(payload.get("candidateRef") == candidate, f"candidateRef is not {candidate}")
     sources = payload.get("outcomes")
-    require(isinstance(sources, list) and 1 <= len(sources) <= 32)
+    require(isinstance(sources, list) and 1 <= len(sources) <= 32, "outcomes is not a list of one to 32 rounds")
     outcomes = []
-    for encoded in sources:
-        require(isinstance(encoded, str) and len(encoded) <= REVIEW_SOURCE_LIMIT * 2)
+    for number, encoded in enumerate(sources, 1):
+        def require_round(ok, what, number=number):
+            if not ok:
+                raise _review_refusal(f"round {number}", what)
+        require_round(isinstance(encoded, str) and len(encoded) <= REVIEW_SOURCE_LIMIT * 2, "the outcome is not bounded base64 text")
         try:
             raw = base64.b64decode(encoded, validate=True)
-            require(len(raw) <= REVIEW_SOURCE_LIMIT)
+            require_round(len(raw) <= REVIEW_SOURCE_LIMIT, "the outcome file exceeds its byte limit")
             outcome = _review_json(raw)
             _require_unicode(outcome, "review_artifact_invalid")
         except (ValueError, UnicodeError, RecursionError) as error:
-            raise StateError("review_artifact_invalid", "native review outcome is not bounded JSON") from error
+            raise _review_refusal(f"round {number}", f"the outcome file is not bounded JSON ({error})") from error
         outcomes.append(outcome)
     validate_review_outcomes(outcomes, subject, candidate)
     return outcomes
 
 
 def validate_review_outcomes(outcomes: object, subject: str, candidate: str) -> None:
-    """Validate decoded reports at both the state reader and renderer boundary."""
-    def require(ok):
+    """Validate decoded reports at both the state reader and renderer boundary.
+
+    Every refusal names the round, and the lens and field where one is at fault, so a lane can mend its outcome files.
+    """
+    def require(ok, what, where=""):
         if not ok:
-            raise StateError("review_artifact_invalid", "native review outcome identity or report is invalid")
-    require(isinstance(outcomes, list) and 1 <= len(outcomes) <= 32
-            and isinstance(candidate, str) and 0 < len(candidate) <= 2048)
+            raise _review_refusal(where, what)
+    require(isinstance(outcomes, list) and 1 <= len(outcomes) <= 32, "outcomes is not a list of one to 32 rounds")
+    require(isinstance(candidate, str) and 0 < len(candidate) <= 2048, "the candidate is not a reference of 1 to 2048 characters")
     selected, origins, severities, open_findings = None, {}, {}, set()
     _require_unicode(outcomes, "review_artifact_invalid")
     for number, outcome in enumerate(outcomes, 1):
-        require(isinstance(outcome, dict) and type(outcome.get("round")) is int and outcome["round"] == number)
+        here = f"round {number}"
+        require(isinstance(outcome, dict), "the outcome is not a JSON object", here)
+        require(type(outcome.get("round")) is int and outcome["round"] == number,
+                f"round is {outcome.get('round')!r}, not {number}: outcomes go in round order from 1", here)
         entries = outcome.get("entries")
-        require(isinstance(entries, list) and 1 <= len(entries) <= 16)
+        require(isinstance(entries, list) and 1 <= len(entries) <= 16, "entries is not a list of one to 16 lenses", here)
         lenses, round_candidate = [], None
-        for entry in entries:
-            require(isinstance(entry, dict))
+        for index, entry in enumerate(entries, 1):
+            require(isinstance(entry, dict), f"entries[{index}] is not a JSON object", here)
             lens, binding = entry.get("lens"), entry.get("binding")
-            require(isinstance(lens, str) and 0 < len(lens) <= 200 and lens not in lenses and isinstance(binding, dict))
+            require(isinstance(lens, str) and 0 < len(lens) <= 200, f"entries[{index}].lens is not a name of 1 to 200 characters", here)
+            at = f"{here}, lens {lens}"
+            require(lens not in lenses, "the lens appears twice in the round", at)
+            require(isinstance(binding, dict), "binding is not a JSON object", at)
             lenses.append(lens)
             ref = binding.get("candidateRef")
-            require(binding.get("subjectRef") == subject and type(binding.get("round")) is int
-                    and binding["round"] == number and isinstance(ref, str) and 0 < len(ref) <= 2048)
-            require(round_candidate is None or round_candidate == ref)
+            require(binding.get("subjectRef") == subject, f"binding.subjectRef is {binding.get('subjectRef')!r}, not {subject!r}", at)
+            require(type(binding.get("round")) is int and binding["round"] == number,
+                    f"binding.round is {binding.get('round')!r}, not {number}", at)
+            require(isinstance(ref, str) and 0 < len(ref) <= 2048, "binding.candidateRef is not a reference of 1 to 2048 characters", at)
+            require(round_candidate is None or round_candidate == ref,
+                    f"binding.candidateRef {ref!r} differs from the round's other lenses ({round_candidate!r})", at)
             round_candidate = ref
             if entry.get("state") != "obtained":
-                require(entry.get("state") in ("failed", "missing", "indeterminate") and "result" not in entry)
+                require(entry.get("state") in ("failed", "missing", "indeterminate"),
+                        f"state is {entry.get('state')!r}, not obtained, failed, missing or indeterminate", at)
+                require("result" not in entry, f"a {entry['state']} lens carries a result", at)
                 continue
             result = entry.get("result")
-            require(isinstance(result, dict) and result.get("schemaVersion") == "review-lens-result/1"
-                    and result.get("lensId") == lens and result.get("subjectRef") == subject
-                    and result.get("candidateRef") == ref and type(result.get("round")) is int
-                    and result["round"] == number and result.get("outcome") in ("aligned", "changes-requested")
-                    and bool(result.get("evidence")))
-            require(not ("resolvedFindings" in result and "resolutions" in result))
+            require(isinstance(result, dict), "result is not a JSON object", at)
+            require(result.get("schemaVersion") == "review-lens-result/1", "result.schemaVersion is not review-lens-result/1", at)
+            require(result.get("lensId") == lens, f"result.lensId is {result.get('lensId')!r}, not the entry's lens", at)
+            require(result.get("subjectRef") == subject, f"result.subjectRef is {result.get('subjectRef')!r}, not {subject!r}", at)
+            require(result.get("candidateRef") == ref, f"result.candidateRef is {result.get('candidateRef')!r}, not binding.candidateRef {ref!r}", at)
+            require(type(result.get("round")) is int and result["round"] == number, f"result.round is {result.get('round')!r}, not {number}", at)
+            require(result.get("outcome") in ("aligned", "changes-requested"),
+                    f"result.outcome is {result.get('outcome')!r}, not aligned or changes-requested", at)
+            require(bool(result.get("evidence")), "result.evidence is empty", at)
+            require(not ("resolvedFindings" in result and "resolutions" in result),
+                    "result carries both resolvedFindings and resolutions", at)
             findings = result.get("findings")
             closures = result.get("resolvedFindings", result.get("resolutions", []))
-            require(isinstance(findings, list) and isinstance(closures, list) and len(findings) <= 200 and len(closures) <= 200)
+            require(isinstance(findings, list) and len(findings) <= 200, "result.findings is not a list of at most 200", at)
+            require(isinstance(closures, list) and len(closures) <= 200, "result.resolvedFindings is not a list of at most 200", at)
             for finding in findings:
-                require(isinstance(finding, dict) and isinstance(finding.get("id"), str) and bool(finding["id"])
-                        and finding.get("severity") in SEVERITIES and isinstance(finding.get("summary"), str)
-                        and bool(finding["summary"]))
+                require(isinstance(finding, dict) and isinstance(finding.get("id"), str) and bool(finding["id"]),
+                        "a finding has no id", at)
                 identifier = finding["id"]
-                require(identifier not in origins or origins[identifier] == lens)
+                about = f"{at}, finding {identifier}"
+                require(finding.get("severity") in SEVERITIES, f"severity is {finding.get('severity')!r}, not one of {', '.join(SEVERITIES)}", about)
+                require(isinstance(finding.get("summary"), str) and bool(finding["summary"]), "summary is empty", about)
+                require(identifier not in origins or origins[identifier] == lens,
+                        f"the id was raised by {origins.get(identifier)!r}, another lens", about)
                 origins[identifier] = lens
                 severities[identifier] = min(severities.get(identifier, finding["severity"]), finding["severity"])
                 if finding.get("state") == "deferred":
-                    require(severities[identifier] in ("P2", "P3") and isinstance(finding.get("deferredIssue"), str)
-                            and bool(finding["deferredIssue"].strip()))
+                    require(severities[identifier] in ("P2", "P3"), "only a P2 or P3 finding may be deferred", about)
+                    require(isinstance(finding.get("deferredIssue"), str) and bool(finding["deferredIssue"].strip()),
+                            "a deferred finding names no deferredIssue", about)
                     open_findings.discard(identifier)
                 else:
                     open_findings.add(identifier)
             for closure in closures:
-                require(isinstance(closure, dict) and isinstance(closure.get("id"), str) and origins.get(closure["id"]) == lens
-                        and closure.get("originatingLens", lens) == lens
-                        and closure.get("state") in ("closed", "fixed", "withdrawn", "dropped", "deferred", "open")
-                        and isinstance(closure.get("resolution", closure.get("reason")), str)
-                        and bool(closure.get("resolution", closure.get("reason")).strip()))
+                require(isinstance(closure, dict) and isinstance(closure.get("id"), str), "a resolved finding has no id", at)
+                about = f"{at}, resolved finding {closure['id']}"
+                require(origins.get(closure["id"]) == lens, "no finding with this id was raised by this lens in an earlier or this round", about)
+                require(closure.get("originatingLens", lens) == lens, "originatingLens is not this lens", about)
+                require(closure.get("state") in ("closed", "fixed", "withdrawn", "dropped", "deferred", "open"),
+                        f"state is {closure.get('state')!r}, not closed, fixed, withdrawn, dropped, deferred or open", about)
+                require(isinstance(closure.get("resolution", closure.get("reason")), str)
+                        and bool(closure.get("resolution", closure.get("reason")).strip()), "resolution is empty", about)
                 if closure["state"] == "deferred":
-                    require(severities[closure["id"]] in ("P2", "P3") and isinstance(closure.get("deferredIssue"), str)
-                            and bool(closure["deferredIssue"].strip()))
+                    require(severities[closure["id"]] in ("P2", "P3"), "only a P2 or P3 finding may be deferred", about)
+                    require(isinstance(closure.get("deferredIssue"), str) and bool(closure["deferredIssue"].strip()),
+                            "a deferred finding names no deferredIssue", about)
                 if closure["state"] in ("closed", "fixed", "withdrawn", "dropped", "deferred"):
                     open_findings.discard(closure["id"])
                 else:
                     open_findings.add(closure["id"])
         if outcome.get("outcome") == "aligned":
-            require(not open_findings and all(entry.get("state") == "obtained"
-                    and entry["result"]["outcome"] == "aligned" for entry in entries))
-        require(selected is None or set(selected) == set(lenses))
+            require(not open_findings, f"the round is aligned with findings still open: {', '.join(sorted(open_findings))}", here)
+            require(all(entry.get("state") == "obtained" and entry["result"]["outcome"] == "aligned" for entry in entries),
+                    "the round is aligned but a lens is missing or asked for changes", here)
+        require(selected is None or set(selected) == set(lenses),
+                f"the lenses are {sorted(lenses)}, not the earlier rounds' {sorted(selected or [])}", here)
         selected = lenses
         if number == len(outcomes):
-            require(round_candidate == candidate)
+            require(round_candidate == candidate,
+                    f"the last round reviewed {round_candidate!r}, not the captured candidate {candidate!r}", here)
 
 
 def _review_artifact_path(directory: Path, digest: str) -> Path:

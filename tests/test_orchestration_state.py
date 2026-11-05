@@ -5214,6 +5214,105 @@ ADOPTER_FILES = frozenset({".agents/orchestration.json", ".agents/delivery-postu
                            "published.json", "recovery.json", "changes.jsonl", "plan.json"})
 
 
+def review_round(number: int, candidate: str, *, finding: bool = False, resolved: bool = False) -> dict:
+    """One native review outcome file for work-a, as review-reduce writes it, with two lenses."""
+    entries = []
+    for lens in ("lens.outcome-correctness", "lens.adversarial-testing"):
+        raised = ([{"id": "F1", "severity": "P1", "summary": "A real problem.", "state": "open"}]
+                  if finding and lens.endswith("correctness") else [])
+        closures = ([{"id": "F1", "state": "fixed", "resolution": "Fixed and confirmed."}]
+                    if resolved and lens.endswith("correctness") else [])
+        binding = {"subjectRef": "work-a", "candidateRef": candidate, "round": number}
+        entries.append({"lens": lens, "state": "obtained", "binding": binding, "result": {
+            "schemaVersion": "review-lens-result/1", "lensId": lens, **binding,
+            "outcome": "changes-requested" if raised else "aligned", "findings": raised,
+            "resolvedFindings": closures, "evidence": ["observed"]}})
+    return {"round": number, "outcome": "unresolved" if finding else "aligned", "entries": entries}
+
+
+class ReviewRefusalTests(unittest.TestCase):
+    """A refused capture says which round, lens and field were wrong, so a lane can mend its files before hand-off."""
+
+    def rounds(self) -> list[dict]:
+        return [review_round(1, HEAD_A, finding=True), review_round(2, HEAD_B, resolved=True)]
+
+    def refusal(self, outcomes: list[dict], candidate: str = HEAD_B) -> str:
+        with self.assertRaises(state_tool.StateError) as caught:
+            state_tool.validate_review_outcomes(outcomes, "work-a", candidate)
+        self.assertEqual(caught.exception.code, "review_artifact_invalid")
+        return str(caught.exception)
+
+    def test_the_valid_rounds_pass(self) -> None:
+        state_tool.validate_review_outcomes(self.rounds(), "work-a", HEAD_B)
+
+    def test_each_refusal_names_its_round_lens_and_field(self) -> None:
+        def change(edit):
+            outcomes = self.rounds()
+            edit(outcomes)
+            return outcomes
+
+        def result(outcomes, number=2, lens=0):
+            return outcomes[number - 1]["entries"][lens]["result"]
+
+        cases = {
+            "a round out of order": (lambda o: o[1].update(round=3), "round 2: round is 3, not 2"),
+            "a binding for another subject": (lambda o: o[0]["entries"][1]["binding"].update(subjectRef="work-b"),
+                                              "round 1, lens lens.adversarial-testing: binding.subjectRef is 'work-b'"),
+            "a binding round that disagrees": (lambda o: o[1]["entries"][0]["binding"].update(round=1),
+                                               "round 2, lens lens.outcome-correctness: binding.round is 1, not 2"),
+            "lenses that reviewed different heads": (lambda o: o[1]["entries"][1]["binding"].update(candidateRef=HEAD_A),
+                                                     "round 2, lens lens.adversarial-testing: binding.candidateRef"),
+            "a result for another head": (lambda o: result(o).update(candidateRef=HEAD_A),
+                                          "round 2, lens lens.outcome-correctness: result.candidateRef is"),
+            "a result for another lens": (lambda o: result(o).update(lensId="lens.other"),
+                                          "round 2, lens lens.outcome-correctness: result.lensId is 'lens.other'"),
+            "an unknown outcome": (lambda o: result(o, 1).update(outcome="maybe"),
+                                   "round 1, lens lens.outcome-correctness: result.outcome is 'maybe'"),
+            "no evidence": (lambda o: result(o, 1, 1).update(evidence=[]),
+                            "round 1, lens lens.adversarial-testing: result.evidence is empty"),
+            "a finding with an unknown severity": (lambda o: result(o, 1)["findings"][0].update(severity="P9"),
+                                                   "round 1, lens lens.outcome-correctness, finding F1: severity is 'P9'"),
+            "a P1 deferred": (lambda o: result(o, 1)["findings"][0].update(state="deferred", deferredIssue="later"),
+                              "round 1, lens lens.outcome-correctness, finding F1: only a P2 or P3 finding may be deferred"),
+            "a closure by another lens": (lambda o: o[1]["entries"][1]["result"].update(
+                                              resolvedFindings=[{"id": "F1", "state": "fixed", "resolution": "x"}]),
+                                          "round 2, lens lens.adversarial-testing, resolved finding F1: no finding with this id"),
+            "a closure with no resolution": (lambda o: result(o)["resolvedFindings"][0].update(resolution=" "),
+                                             "round 2, lens lens.outcome-correctness, resolved finding F1: resolution is empty"),
+            "an aligned round with an open finding": (lambda o: result(o).update(resolvedFindings=[]),
+                                                      "round 2: the round is aligned with findings still open: F1"),
+            "a lens dropped in a later round": (lambda o: o[1]["entries"].pop(),
+                                                "round 2: the lenses are ['lens.outcome-correctness']"),
+        }
+        for name, (edit, message) in cases.items():
+            with self.subTest(name):
+                self.assertIn(message, self.refusal(change(edit)))
+        self.assertIn("round 2: the last round reviewed", self.refusal(self.rounds(), candidate="c" * 40))
+
+    def test_capture_review_says_what_it_refused(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        directory = root / "state"
+        state_tool.init(directory, "Epic underway")
+        state_tool.patch(directory, writer="lead", version=1, changes={"queue": [queue_item("work-a", head=HEAD_B)]})
+        rounds = self.rounds()
+        rounds[1]["entries"][0]["result"]["round"] = 1
+        paths = []
+        for number, data in enumerate(rounds, 1):
+            paths.append(root / f"round-{number}.json")
+            paths[-1].write_text(json.dumps(data), encoding="utf-8")
+        code, refused = run_tool(directory, "capture-review", "--subject", "work-a", "--candidate", HEAD_B,
+                                 *[part for path in paths for part in ("--outcome", str(path))])
+        self.assertEqual((code, refused["code"]), (1, "review_artifact_invalid"))
+        self.assertIn("round 2, lens lens.outcome-correctness: result.round is 1, not 2", refused["error"])
+        paths[0].write_text("{not json", encoding="utf-8")
+        code, refused = run_tool(directory, "capture-review", "--subject", "work-a", "--candidate", HEAD_B,
+                                 *[part for path in paths for part in ("--outcome", str(path))])
+        self.assertIn("round 1: the outcome file is not bounded JSON", refused["error"])
+        self.assertEqual(state_tool.read_journal(directory), [])
+
+
 class SkillTextTests(unittest.TestCase):
     def test_every_file_the_skill_text_names_exists(self) -> None:
         shipped = {path.relative_to(SKILL).as_posix() for path in SKILL.rglob("*") if path.is_file()}
