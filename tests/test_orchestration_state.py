@@ -3401,8 +3401,12 @@ class LaneWriterTests(unittest.TestCase):
         self.assertEqual(self.refused(lambda: state_tool.handoff(
             self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr", run="run-r")), "run_bound")
         self.assertEqual(self.planned_entry("work-b")["subject"], "work-b", "work-b is still planned")
-        # A queued subject holds its run too.
+        # A queued subject holds its run too, and so does one the queue has merged, as for bind-run.
         state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr")
+        self.assertEqual(self.refused(lambda: state_tool.handoff(
+            self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr", run="run-r")), "run_bound")
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-a]",
+                         assignments={"/stage": "merged"})
         self.assertEqual(self.refused(lambda: state_tool.handoff(
             self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr", run="run-r")), "run_bound")
         # A queued subject handed off again at a new head, naming another subject's run, is refused the same way.
@@ -5555,7 +5559,8 @@ class SkillTextTests(unittest.TestCase):
         for phrase in ("A lane whose work a product run builds binds that run at start, with"
                        " `delivery_state.py bind-run --lane <lane> --subject <subject> --run <id>`",
                        "is refused with `run_bound` for a run another subject holds",
-                       "The hand-off keeps the bound run unless it names another."):
+                       "The hand-off keeps the bound run unless it names another.",
+                       "A hand-off naming a run another subject holds is refused with `run_bound` too."):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill)
         brief = normal(PRODUCT_ROOT / "skills/run-delivery/templates/lane-brief.md")
