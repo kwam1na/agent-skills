@@ -19,7 +19,8 @@
         "skills/orchestrate-work/references/schemas.json",
         "skills/orchestrate-work/SKILL.md",
         "tests/test_orchestration_state.py",
-        "tests/test_registry.py"
+        "tests/test_registry.py",
+        "provenance.lock.json"
       ]
     },
     "lane-2": {
