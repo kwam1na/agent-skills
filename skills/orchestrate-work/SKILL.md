@@ -695,3 +695,26 @@ capture and evidence path. This optional display path does not qualify a release
 A later journal review makes an earlier capture unavailable until its extended
 outcomes are captured. Originating reopenings remain unresolved; deferrals need
 a tracked follow-up and cannot discharge a carried P0 or P1.
+
+A refused capture names the round, the lens and the field at fault, so the lane
+can mend its outcome files before it hands off.
+
+A capture binds to the head its last round reviewed. When a commit after that
+round needs no new round, such as a fixture-only change, only the lead may
+carry the evidence to the queued head:
+
+```bash
+python3 -B scripts/delivery_state.py --dir <state directory> carry-review --writer lead \
+  --subject <subject> --from <head the evidence covers> --to <queued head> --reason "<why no new round>"
+```
+
+Before carrying, the lead reads the diff between the two heads and judges that
+nothing in it needs review; the tool does no git work. The carry journals a
+`decision.recorded` entry with `reviewCarry` naming both heads and the capture's
+digest, and the views then show the capture at the queued head with that
+decision, never as a review of the new head. A carry never changes what the
+evidence says: a capture whose last round is not aligned, or that leaves a P0 or
+P1 open, is refused. Each later head needs its own carry, from the head the last
+carry reached, and a later review round or capture ends a carry. Like a capture,
+a carry is display and acceptance evidence only: it creates no run, is no review
+round in the stats, and is no product admission evidence.

@@ -26,19 +26,22 @@
         "tests/delivery_views_fixtures.py",
         "skills/run-delivery/templates/lane-brief.md",
         "agent_skills/generations.py",
-        "tests/test_lifecycle.py"
+        "tests/test_lifecycle.py",
+        "provenance.lock.json",
+        "tests/test_merge_queue.py",
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "scripts/update-provenance.py",
+        "tests/test_update_provenance.py"
       ]
     },
     "lane-2": {
       "owns": [
         "skills/run-delivery/scripts/run_delivery.py",
-        "tests/test_run_delivery.py",
-        "provenance.lock.json"
+        "tests/test_run_delivery.py"
       ]
     },
     "lane-3": {
       "owns": [
-        "tests/test_merge_queue.py",
         "scripts/run-tests.py",
         "tests/test_run_tests.py",
         "docs/solutions/architecture-patterns/inherited-channels-preserve-native-command-ownership-2026-10-23.md",
@@ -431,11 +434,12 @@
     {
       "id": "local-suite",
       "label": "Local suite",
-      "text": "The full local suite passes on macOS with Python 3.11 at the integration branch's last merged commit",
+      "text": "The full local suite passes on macOS with Python 3.11 and Node 22 at the head of the integration change request into main, where base.ref is back to main",
       "covers": {
         "criteria": [],
         "proofs": []
-      }
+      },
+      "at": "2026-11-05T03:45:48.239711Z"
     },
     {
       "id": "integration-ci",
