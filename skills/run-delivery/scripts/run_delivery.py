@@ -3622,13 +3622,11 @@ def lead_plan(args) -> None:
         entry = record_plan_change(c, change)
         git("commit", "-q", "-m", f"{c.delivery}: plan change {entry['id']} ({args.kind} "
             f"{', '.join(change['subjects']) or change.get('finish', '')})".rstrip(), cwd=root)
-        if planned_after is not None:
-            doc = load_state()  # as it stands now: a story registered since the check above stays planned
-            patch({"planned": [p for p in doc["state"].get("planned", []) if p["subject"] not in change["subjects"]]},
-                  doc["state"]["version"])
+        if planned_after is not None:  # as it stands now: a story registered since the check above stays planned
+            patch_from(lambda doc: {"planned": [p for p in doc["state"].get("planned", [])
+                                                if p["subject"] not in change["subjects"]]}, "the plan change's planned work")
         if record_finish is not None:
-            doc = load_state()
-            patch({"finish": [*doc["state"]["finish"], record_finish]}, doc["state"]["version"])
+            patch_from(lambda doc: {"finish": [*doc["state"]["finish"], record_finish]}, "the new finish line")
         rebuild_plan(c, mark=True)
     print(f"recorded {entry['id']}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
     print(f"committed the delivery file; push it so lanes see it: git push {c.remote} HEAD:{c.base_branch}")
@@ -3881,8 +3879,35 @@ def setup_problems(c) -> list[str]:
 
 # -- lead ----------------------------------------------------------------------------------
 
-def patch(body: dict, version: int) -> None:
-    state_tool("patch", "--writer", "lead", "--version", str(version), "--patch", json.dumps(body))
+# How many times a write computed from a read is tried before it gives up: each try reads the record afresh.
+PATCH_ATTEMPTS = 5
+
+
+def patch_from(compute, what: str, writer: str = "lead", attempts: int = PATCH_ATTEMPTS):
+    """Read the record, compute a patch from that read, and write it pinned to the version read. When another writer
+    (the supervisor, the queue, a lane) moved the record in between, the state tool refuses it as version_stale. Then
+    read again and compute again, so no patch is ever written from a stale read, up to `attempts` times. `compute`
+    takes the record and returns the patch body, a list of the state tool's own patch arguments (an element patch),
+    or None for nothing to write; it may raise Stop when the fresh record no longer allows the write. Returns what was
+    written, or None."""
+    for _ in range(attempts):
+        doc = load_state()
+        body = compute(doc)
+        if body is None:
+            return None
+        given = body if isinstance(body, list) else ["--patch", json.dumps(body)]
+        done = state_tool("patch", "--writer", writer, "--version", str(doc["state"]["version"]), *given, check=False)
+        if done.returncode == 0:
+            return body
+        try:  # the state tool answers with one JSON document, pretty-printed
+            answer = json.loads(done.stdout)
+        except ValueError:
+            answer = {}
+        answer = answer if isinstance(answer, dict) else {}
+        if answer.get("code") != "version_stale":
+            raise Stop(f"the state tool refused {what}: {(answer.get('error') or done.stderr or done.stdout).strip()[-600:]}")
+    raise Stop(f"version_stale: the record kept changing while {what} was written; tried {attempts} times, reading "
+               "it afresh each time. Run it again once the other writer settles")
 
 
 LANE_GRANTS = ("push", "draftPullRequests")
@@ -4107,12 +4132,11 @@ def lead_init(args) -> None:
     for line in replace_record(c) if args.replace else []:
         print(line)
     state_tool("init", "--headline", c.raw.get("headline", c.delivery))
-    doc = load_state()
     planned = [planned_entry(c, key) for key in c.stories]
     # The record's finish items take no other keys: covers, label and at are the plan's.
     finish = [{"id": f["id"], "text": f["text"], "met": False} for f in c.finish]
-    patch({"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True}, "planned": planned, "finish": finish},
-          doc["state"]["version"])
+    patch_from(lambda doc: {"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True}, "planned": planned,
+                            "finish": finish}, "the delivery's planned work and finish lines")
     lease = (f" The {c.in_app.get('lease', 'in-app')} lease is granted on demand through run-delivery app-check's OS lock,"
              " held only for a lane's own in-app checks.") if c.in_app else ""
     shipping = (f" The tooling never ships: the product branch is built from {', '.join(c.ship['paths'])} of the "
@@ -4145,17 +4169,21 @@ def register_stories(c) -> list[str]:
     Returns the keys added; a delivery not yet initialized is left to lead-init."""
     if not (c.state / "state.json").exists():
         return []
-    doc = load_state()
-    state = doc["state"]
-    if not state.get("planned") and not state.get("queue"):
+    added: list[str] = []
+
+    def compute(doc: dict) -> dict | None:
+        state = doc["state"]
+        added.clear()
+        if not state.get("planned") and not state.get("queue"):
+            return None
+        held = {item["subject"] for item in [*state["queue"], *state.get("planned", [])]}
+        added.extend(key for key in c.stories if key not in held)
+        if not added:
+            return None
+        followups = [f for f in state["followups"] if f["id"] not in added and f.get("reference") not in added]
+        return {"planned": [*state.get("planned", []), *(planned_entry(c, key) for key in added)], "followups": followups}
+    if patch_from(compute, "the stories added to the delivery") is None:
         return []
-    held = {item["subject"] for item in [*state["queue"], *state.get("planned", [])]}
-    added = [key for key in c.stories if key not in held]
-    if not added:
-        return []
-    followups = [f for f in state["followups"] if f["id"] not in added and f.get("reference") not in added]
-    patch({"planned": [*state.get("planned", []), *(planned_entry(c, key) for key in added)], "followups": followups},
-          state["version"])
     for key in added:
         state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                    f"{key} added to the delivery as planned work for {c.lane_of(key)}")
@@ -4219,11 +4247,10 @@ def lead_assign(args) -> None:
         raise Stop("; ".join(problems))
     register_stories(c)
     rebuild_plan(c)
-    doc = load_state()
-    lanes = [entry for entry in doc["state"]["lanes"] if entry["id"] != args.lane]
-    lanes.append({"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
-                  "waitingOn": None, "since": now()})
-    patch({"lanes": lanes}, doc["state"]["version"])
+    row = {"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
+           "waitingOn": None, "since": now()}
+    patch_from(lambda doc: {"lanes": [*(entry for entry in doc["state"]["lanes"] if entry["id"] != args.lane), row]},
+               f"{args.lane}'s assignment")
     # One entry per story, so each ticket's start is its own, made when its lane begins it.
     for key in keys:
         state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", key, "--summary",
@@ -5008,9 +5035,9 @@ def journal_finish_met(c, doc: dict) -> list[str]:
         journalled = any(e["kind"] == "finish.met" and (e.get("subject") == line["id"] or re.search(
             rf"(?<![\w-]){re.escape(line['id'])}(?![\w-])", e.get("summary", ""))) for e in doc["journal"])
         if not line.get("met"):
-            fresh = load_state()
-            finish = [{**entry, "met": True} if entry["id"] == line["id"] else entry for entry in fresh["state"]["finish"]]
-            patch({"finish": finish}, fresh["state"]["version"])
+            patch_from(lambda fresh, line=line: {"finish": [{**entry, "met": True} if entry["id"] == line["id"] else entry
+                                                            for entry in fresh["state"]["finish"]]},
+                       f"finish line {line['id']} met")
         if not journalled:
             state_tool("journal", "--kind", "finish.met", "--subject", line["id"], "--summary",
                        f"{line['id']}: {line['text']} Every criterion it covers has its proofs done.")
@@ -5338,10 +5365,10 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
             written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--subject",
                                                  finding["story"], "--summary", FOLLOWUP.format(**finding))))
     if missing:
-        fresh = load_state()
-        followups = [*fresh["state"]["followups"], *({"id": f"{f['story']}-{f['finding']}", "title": f["title"],
-                                                      "reference": None} for f in missing)]
-        patch({"followups": followups}, fresh["state"]["version"])
+        patch_from(lambda fresh: {"followups": [*fresh["state"]["followups"],
+                                                *({"id": f"{f['story']}-{f['finding']}", "title": f["title"],
+                                                   "reference": None} for f in missing)]},
+                   "the deferred findings' follow-ups")
         render_views(c)
         doc = load_state()
     if tracker_conf(c)["mode"] != "publisher":
@@ -5423,12 +5450,14 @@ def archive_step(c) -> tuple[Path, list[str]]:
     kept = load_json(marker)
     if kept:
         return Path(kept["archive"]), kept["said"]
-    doc = load_state()
-    leases = doc["state"]["leases"]
-    held = [lease for lease in leases if lease.get("holder") == "lead"]
+    held: list[dict] = []
+
+    def release(doc: dict) -> dict | None:
+        leases = doc["state"]["leases"]
+        held[:] = [lease for lease in leases if lease.get("holder") == "lead"]
+        return {"leases": [lease for lease in leases if lease.get("holder") != "lead"]} if held else None
     said = []
-    if held:
-        patch({"leases": [lease for lease in leases if lease.get("holder") != "lead"]}, doc["state"]["version"])
+    if patch_from(release, "the lead's released leases") is not None:
         said.append(f"released the lead's leases: {', '.join(str(lease.get('id')) for lease in held)}")
     archive, archived = archive_delivery(c)
     said += archived
@@ -5738,19 +5767,24 @@ def lead_resolve(args) -> None:
 def requeue(c, key: str) -> None:
     """Put a stopped candidate the lead has resolved back to queued at its handed head, with no new hand-off. The
     stage is the runner's, so the write is the runner's, exactly as the queue puts back what it takes again."""
-    doc = load_state()
-    item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
-    if item is None or item["stage"] != "stopped":
-        raise Stop(f"{key} isn't stopped ({item['stage'] if item else 'not queued'}); --requeue takes back a "
-                   "stopped candidate")
-    if item.get("pending"):
-        raise Stop(f"{key}'s hand-off still waits for acceptance; accept it instead")
-    if remote_head(c.branch(key)) not in (item["head"], item.get("syncedHead")):
-        raise Stop(f"{c.remote}/{c.branch(key)} moved from the handed head {item['head'][:10]}"
-                   + (f" and the queue's synced head {item['syncedHead'][:10]}" if item.get("syncedHead") else "")
-                   + ": the lane hands it off again")
-    state_tool("patch", "--writer", "runner", "--version", str(doc["state"]["version"]), "--element",
-               f"queue[subject={key}]", "--set", json.dumps({"/stage": "queued", "/checks": []}))
+    found: list[dict] = []
+
+    def back_to_queued(doc: dict) -> list[str]:
+        # Checked against each fresh read: a write in between may have taken the candidate past stopped.
+        item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
+        if item is None or item["stage"] != "stopped":
+            raise Stop(f"{key} isn't stopped ({item['stage'] if item else 'not queued'}); --requeue takes back a "
+                       "stopped candidate")
+        if item.get("pending"):
+            raise Stop(f"{key}'s hand-off still waits for acceptance; accept it instead")
+        if remote_head(c.branch(key)) not in (item["head"], item.get("syncedHead")):
+            raise Stop(f"{c.remote}/{c.branch(key)} moved from the handed head {item['head'][:10]}"
+                       + (f" and the queue's synced head {item['syncedHead'][:10]}" if item.get("syncedHead") else "")
+                       + ": the lane hands it off again")
+        found[:] = [item]
+        return ["--element", f"queue[subject={key}]", "--set", json.dumps({"/stage": "queued", "/checks": []})]
+    patch_from(back_to_queued, f"{key}'s re-queue", writer="runner")
+    item = found[0]
     state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                f"{key} re-queued at {item['head'][:10]} once its stop was resolved, with no new hand-off")
     print(f"re-queued {key}; the runner takes it again")
