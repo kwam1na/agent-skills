@@ -3248,11 +3248,16 @@ class LaneWriterTests(unittest.TestCase):
         self.runner_stops_as_the_queue_does()
         self.lead({"focus": "the lead says: see the failing check"}, selector="lanes[id=lane-1]")
         self.assertNotIn("focusBy", self.row())
+        # Another lane the queue stopped, whose words and wait a hand-off in lane-1 must leave alone.
+        self.queue_stops("lane-2")
+        other = self.row("lane-2")
+        self.assertEqual((other["focusBy"], other["waitingBy"]), ("runner", "runner"))
         state_tool.handoff(self.directory, lane="lane-1", subject="work-q", head="b" * 40, change_request="cr")
         row = self.row()
         self.assertEqual((row["focus"], row["state"], row["waitingOn"]),
                          ("the lead says: see the failing check", "handed", None))
         self.assertNotIn("waitingBy", row)
+        self.assertEqual(self.row("lane-2"), other)
 
     def test_a_put_back_leaves_the_queues_wait_once_the_lead_rewrote_its_words(self) -> None:
         self.runner_stops_as_the_queue_does()
