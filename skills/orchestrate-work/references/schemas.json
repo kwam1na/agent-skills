@@ -523,6 +523,10 @@
             "changeRequest": {
               "$ref": "#/$defs/name"
             },
+            "trackerStarted": {
+              "description": "Carried from the planned element by a hand-off, and by a reconcile that queues planned work it finds merged: true when reconcile had seen the work's ticket started. A rejected hand-off hands it back to the planned element. Absent otherwise.",
+              "const": true
+            },
             "pending": {
               "description": "Set by a lane's hand-off when the binding needs the lead to accept it; the runner takes the candidate once the lead accepts. A reconcile sets it too on planned work it finds merged under that policy, until it records the merge. Recording the candidate's merge clears it. An item merged under an earlier version may still carry it, which means nothing, until a reconcile with a forge snapshot clears it. Absent otherwise.",
               "const": true
