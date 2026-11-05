@@ -20,7 +20,6 @@
         "skills/orchestrate-work/SKILL.md",
         "tests/test_orchestration_state.py",
         "tests/test_registry.py",
-        "provenance.lock.json",
         "skills/delivery-views/*",
         "tests/test_delivery_views*",
         "tests/delivery_views_page/*",
@@ -33,7 +32,8 @@
     "lane-2": {
       "owns": [
         "skills/run-delivery/scripts/run_delivery.py",
-        "tests/test_run_delivery.py"
+        "tests/test_run_delivery.py",
+        "provenance.lock.json"
       ]
     },
     "lane-3": {
