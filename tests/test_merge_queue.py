@@ -253,6 +253,12 @@ with open(os.environ["MQ_LOG"], "a") as log:
 if sys.argv[1] == "ready":
     sys.exit(1 if os.environ.get("MQ_READY") == "refuse" else 0)
 branch, expected = sys.argv[2], sys.argv[3]
+if os.environ.get("MQ_MERGE") == "loud":
+    # A refusal that says why, and echoes what a careless helper might: secrets among the reason.
+    sys.stderr.write("POST /repos/acme/shop/pulls/7/merge\\n" + "x" * int(os.environ.get("MQ_MERGE_PAD", "0"))
+                     + "token=ghx_keyedvalue123 Authorization: Bearer abc.def.ghi " + os.environ.get("MQ_FORGE_TOKEN", "")
+                     + " ghp_" + "A" * 36 + "\\nmerge refused: Head branch was modified. Review and try the merge again.\\n")
+    sys.exit(1)
 if os.environ.get("MQ_MERGE") == "refuse" or tip(branch) != expected:
     sys.exit(1)
 onto = sys.argv[sys.argv.index("--onto") + 1] if "--onto" in sys.argv else "main"
@@ -1329,6 +1335,73 @@ class ReviewGateTests(MergeQueueTestCase):
                 self.assertEqual(queue.binding_errors({**binding, "reviewGate": {"argv": [PY, "gate.py", head]}}), [])
         self.assertEqual(queue.binding_errors({**binding, "reviewGate": {**GATE, "timeoutSeconds": 60}}), [],
                          "a gate may take the whole ceiling")
+
+
+class MergeRefusalDetailTests(MergeQueueTestCase):
+    """A refused merge says why in the stop detail, bounded and scrubbed, and keeps its whole output in a log."""
+
+    SECRET = "s3cr3t-forge-value-from-the-environment"
+
+    def refused(self, pad: int = 0) -> tuple[Adopter, dict]:
+        adopter = self.environment_adopter({"MQ_MERGE": "loud", "MQ_MERGE_PAD": str(pad), "MQ_FORGE_TOKEN": self.SECRET})
+        self.candidate(adopter)
+        before = adopter.tip("main")
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "merge_refused")
+        Draft202012Validator(schema("merge-queue-result")).validate(document)
+        self.assertEqual(adopter.tip("main"), before)
+        return adopter, document
+
+    def test_the_merge_commands_reason_reaches_the_stop_detail_and_its_secrets_do_not(self) -> None:
+        adopter, document = self.refused()
+        detail = document["stop"]["detail"]
+        self.assertIn("merge refused: Head branch was modified. Review and try the merge again.", detail)
+        self.assertIn(document["syncedHead"], detail)
+        for secret in (self.SECRET, "ghx_keyedvalue123", "abc.def.ghi", "ghp_" + "A" * 36):
+            with self.subTest(secret=secret):
+                self.assertNotIn(secret, detail)
+                for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
+                    self.assertNotIn(secret, (adopter.state / name).read_text(encoding="utf-8"))
+                self.assertNotIn(secret, json.dumps(document))
+        self.assertIn("[redacted]", detail)
+        # The whole output, secrets and all, stays in the log the detail names, under the state directory.
+        log = re.search(r"logs/\S+\.log", detail).group(0)
+        kept = (adopter.state / log).read_text(encoding="utf-8")
+        self.assertIn(self.SECRET, kept)
+        self.assertIn("Head branch was modified", kept)
+
+    def test_a_long_refusal_keeps_only_its_bounded_tail(self) -> None:
+        _, document = self.refused(pad=5000)
+        detail = document["stop"]["detail"]
+        self.assertIn("Head branch was modified", detail, "the end of the output is what's kept")
+        self.assertNotIn("x" * (queue.TAIL_LIMIT + 1), detail)
+        self.assertLess(len(detail), queue.TAIL_LIMIT + 400)
+
+    def test_a_silent_refusal_says_so_and_still_names_its_log(self) -> None:
+        adopter = self.environment_adopter({"MQ_MERGE": "refuse"})
+        self.candidate(adopter)
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "merge_refused")
+        self.assertIn("printed nothing", document["stop"]["detail"])
+        self.assertTrue((adopter.state / re.search(r"logs/\S+\.log", document["stop"]["detail"]).group(0)).is_file())
+
+    def test_the_scrub_redacts_before_it_cuts(self) -> None:
+        environment = {"FORGE_TOKEN": "value-of-the-token", "API_KEY": "abcd1234", "PATH": "/usr/bin", "SHORT_SECRET": "ab"}
+        cases = {
+            "an environment secret": ("failed with value-of-the-token", "failed with [redacted]"),
+            "a keyed value": ("password: hunter22 then", "password: [redacted] then"),
+            "an authorization header, to the end of its line": ("Authorization: Bearer xyz.abc\nnext", "Authorization: [redacted]\nnext"),
+            "a bearer value": ("sent Bearer xyz.abc", "sent Bearer [redacted]"),
+            "a token shape": ("saw github_pat_" + "B" * 30 + " there", "saw [redacted] there"),
+            "a variable not named secret": ("in /usr/bin", "in /usr/bin"),
+            "a secret too short to match safely": ("ab cd", "ab cd"),
+        }
+        for name, (text, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(queue.scrubbed_tail(text, environment), expected)
+        # A secret straddling the cut is redacted whole before the tail is taken, so no part of it survives.
+        straddling = "value-of-the-token" + "y" * 20
+        tail = queue.scrubbed_tail(straddling, environment, limit=25)
+        self.assertEqual(tail, ("[redacted]" + "y" * 20)[-25:])
+        self.assertFalse(any(part in tail for part in ("value", "the-token", "of-the")))
 
 
 class SelectionTests(MergeQueueTestCase):

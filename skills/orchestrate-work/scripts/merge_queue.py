@@ -146,6 +146,30 @@ IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
 WINDOWS = os.name == "nt"
 
 
+# What a stop detail never carries from a command's output: the command's own secret-looking environment values,
+# common token shapes, and whatever follows a keyword that introduces one. Redacted before the tail is cut.
+SECRET_NAME = re.compile(r"token|secret|passw|api[-_]?key|credent\w*|auth|private[-_]?key", re.IGNORECASE)
+TOKEN_SHAPE = re.compile(
+    r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|glpat-[A-Za-z0-9_-]{16,}|xox[abprs]-[A-Za-z0-9-]{10,}"
+    r"|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,})")
+# An authorization header is redacted to the end of its line, whatever scheme and value follow.
+HEADER_VALUE = re.compile(r"(?im)\b(authorization|proxy-authorization)(\s*:\s*)[^\r\n]+")
+KEYED_VALUE = re.compile(
+    r"(?i)\b(bearer|token|password|passwd|secret|api[-_]?key)(\s*[:=]\s*|\s+)(?!\[redacted\])(\S+)")
+TAIL_LIMIT = 400
+
+
+def scrubbed_tail(text: str, environment: dict[str, str], limit: int = TAIL_LIMIT) -> str:
+    """The last ``limit`` characters of a command's output, with anything that looks secret redacted first."""
+    for name, value in environment.items():
+        if SECRET_NAME.search(name) and len(value) >= 4:
+            text = text.replace(value, "[redacted]")
+    text = TOKEN_SHAPE.sub("[redacted]", text)
+    text = HEADER_VALUE.sub(lambda match: f"{match[1]}{match[2]}[redacted]", text)
+    text = KEYED_VALUE.sub(lambda match: f"{match[1]}{match[2]}[redacted]", text)
+    return text.strip()[-limit:]
+
+
 def environment_name(name: str) -> str:
     """The name as the platform compares it."""
     return name.upper() if WINDOWS else name
@@ -2042,8 +2066,13 @@ class Runner:
         if self.run_argv(self.binding["ready"], anchor, context, timeout).returncode != 0:
             raise Stop("ready_refused", f"ready refused {subject}")
         self.review_gate(subject, synced, anchor, context)
-        if self.run_argv(self.binding["merge"], anchor, context, timeout).returncode != 0:
-            raise Stop("merge_refused", f"merge refused {subject} at {synced}")
+        merging = self.run_argv(self.binding["merge"], anchor, context, timeout)
+        if merging.returncode != 0:
+            # Why it refused, from the command itself: its whole output in a log, a bounded and scrubbed tail here.
+            log = self.save_log("merge", merging)
+            said = "timed out" if merging.timed_out else (scrubbed_tail(merging.stderr, self.environment()) or "printed nothing")
+            raise Stop("merge_refused", f"merge refused {subject} at {synced}: {said}; "
+                                        f"its whole output is in {log} under the state directory")
         merged = self.fetch(self.base, "base")
         result.mergedHead = merged
         parent = self.git("rev-parse", "--verify", "-q", f"{merged}^1", check=False).stdout.strip()
