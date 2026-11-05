@@ -965,6 +965,18 @@ if how == "empty":
 if how == "garbage":
     print("not a listing")
     sys.exit(0)
+if how == "deep":
+    print("[" * 100000 + "]" * 100000)
+    sys.exit(0)
+if how == "object":
+    print(json.dumps({"outputs": []}))
+    sys.exit(0)
+if how == "numbers":
+    print(json.dumps([1, 2]))
+    sys.exit(0)
+# A listing given an argument checks it is the head the runner placed there, so a missing placeholder value shows.
+if len(sys.argv) > 1 and len(sys.argv[1]) != 40:
+    sys.exit(f"expected a head, not {sys.argv[1]!r}")
 print(json.dumps(sorted(output["path"] for entry in lock["entries"] for output in entry["outputs"])))
 """
 
@@ -1061,7 +1073,10 @@ class RegenerableListingTests(MergeQueueTestCase):
         self.assertEqual(digests["src/app.txt"], hashlib.sha256(b"app two\n").hexdigest())
 
     def test_a_listing_that_fails_at_any_version_stops_and_never_regenerates(self) -> None:
-        for how, says in (("fails", "exited"), ("empty", "printed nothing"), ("garbage", "printed something other than a JSON array")):
+        for how, says in (("fails", "exited"), ("empty", "printed nothing"), ("garbage", "printed something other than a JSON array"),
+                          ("deep", "printed something other than a JSON array"),
+                          ("object", "printed something other than a JSON array of strings"),
+                          ("numbers", "printed something other than a JSON array of strings")):
             for version in ("merge base", "base", "candidate"):
                 with self.subTest(listing=how, version=version):
                     self.fresh()
@@ -1136,7 +1151,7 @@ class RegenerableListingTests(MergeQueueTestCase):
                                self.side({"src/app.txt": "app two\n"}))
             self.assertEqual(got["document"]["outcome"], "merged", got["document"].get("stop"))
             self.assertEqual(self.listed(adopter), sorted([*self.START, "src/b.txt"]))
-        for how in ("fails", "empty", "garbage"):
+        for how in ("fails", "empty", "garbage", "deep", "object", "numbers"):
             for version in ("merge base", "base", "candidate"):
                 with self.subTest(listing=how, version=version):
                     self.fresh()
@@ -1158,6 +1173,18 @@ class RegenerableListingTests(MergeQueueTestCase):
             got = self.batched(adopter, self.side({"src/lib.txt": "lib two\n"}), self.side({"src/app.txt": "app two\n"}))
             self.assertEqual(got["document"]["stop"]["reason"], "source_conflict")
             self.assertIn("absent at the merge base", got["document"]["stop"]["detail"])
+
+    def test_a_listing_gets_the_placeholder_values_of_its_step(self) -> None:
+        argv = [PY, "tools/listing.py", "{head}"]
+        adopter = self.lock_adopter(argv)
+        self.candidate(adopter, self.side({"src/app.txt": "app two\n"}))
+        adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document().get("stop"))
+        self.fresh()
+        adopter = self.lock_adopter(argv)
+        got = self.batched(adopter, self.side({"src/lib.txt": "lib two\n"}), self.side({"src/app.txt": "app two\n"}))
+        self.assertEqual(got["document"]["outcome"], "merged", got["document"].get("stop"))
 
     def test_a_listing_must_name_one_regenerable_file(self) -> None:
         binding = Adopter.default_binding(type("Fixture", (), {"work": Path("/work"), "state": Path("/state"),

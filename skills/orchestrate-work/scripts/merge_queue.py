@@ -1443,7 +1443,7 @@ class Runner:
         else:
             try:
                 listed = json.loads(completed.stdout)
-            except ValueError:
+            except (ValueError, RecursionError):
                 listed = None
             if not isinstance(listed, list) or not all(isinstance(entry, str) for entry in listed):
                 why = "printed something other than a JSON array of strings"

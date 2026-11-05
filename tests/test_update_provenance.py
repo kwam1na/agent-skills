@@ -314,9 +314,14 @@ class UpdateProvenanceTests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 2, completed.stdout)
                 self.assertEqual(completed.stdout, b"")
                 self.assertNotIn(b"Traceback", completed.stderr)
-        mixed = subprocess.run([sys.executable, "-B", str(WRITER), "--list-outputs", "--check"], input=b"{}",
-                               capture_output=True, check=False)
-        self.assertEqual(mixed.returncode, 2)
+        # A well-formed lock, so only the option guard can refuse it.
+        skill = json.loads((self.root / "catalog.json").read_text(encoding="utf-8"))["skills"][0]["id"]
+        for extra in (("--check",), ("--skill", skill)):
+            with self.subTest(extra=extra):
+                mixed = subprocess.run([sys.executable, "-B", str(WRITER), "--list-outputs", *extra],
+                                       input=(self.root / LOCK).read_bytes(), capture_output=True, check=False)
+                self.assertEqual((mixed.returncode, mixed.stdout), (2, b""))
+                self.assertIn(b"takes no other option", mixed.stderr)
 
     def test_an_output_outside_the_corpus_is_never_read(self) -> None:
         outside = self.directory / "outside.md"
