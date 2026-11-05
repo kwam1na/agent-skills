@@ -26,14 +26,14 @@
         "tests/delivery_views_fixtures.py",
         "skills/run-delivery/templates/lane-brief.md",
         "agent_skills/generations.py",
-        "tests/test_lifecycle.py"
+        "tests/test_lifecycle.py",
+        "provenance.lock.json"
       ]
     },
     "lane-2": {
       "owns": [
         "skills/run-delivery/scripts/run_delivery.py",
-        "tests/test_run_delivery.py",
-        "provenance.lock.json"
+        "tests/test_run_delivery.py"
       ]
     },
     "lane-3": {
