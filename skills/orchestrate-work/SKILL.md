@@ -72,8 +72,9 @@ file that is malformed or can't be read runs `fullHealth` and holds the close on
   saying it stopped, since no later queue write will. The tool alone keeps a
   row's `focusAt`, `focusBy`, which says the queue wrote its words, and
   `waitingBy`, which says who set its `waitingOn`. A lane writes only its own
-  lane's `focus`, `state` and `waitingOn`, its own review rounds, and its own
-  hand-off, which the tool turns into a queue element, with any suite evidence
+  lane's `focus`, `state` and `waitingOn`, its own review rounds, the run
+  building its own planned work, and its own hand-off, which the tool turns
+  into a queue element, with any suite evidence
   it gives in `queue[i].evidence`, which only a hand-off writes. Every write goes
   through the state tool, which checks the declared writer against this
   ownership and refuses anything else with `writer_not_owned` for a lane.
@@ -134,6 +135,14 @@ Every lane works to one named profile, not a posture:
    `$review-work`'s bound; at the bound, stop and report the blocker.
 4. Run the repository's compounding check.
 5. Open a draft change request.
+
+A lane whose work a product run builds binds that run at start, with
+`delivery_state.py bind-run --lane <lane> --subject <subject> --run <id>`, so
+the views show the run's rounds while the work is still planned. It binds only
+its own lane's planned element, never replaces a bound run (binding the same
+one again changes nothing), and is refused with `run_bound` for a run another
+subject holds; another lane's or a queued element is refused with
+`writer_not_owned`. The hand-off keeps the bound run unless it names another.
 
 The lane hands off the candidate reference, the reviewed head, the review
 rounds, the validation, the run id or `none`, every declared lead input the

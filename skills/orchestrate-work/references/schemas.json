@@ -674,7 +674,7 @@
               "$ref": "#/$defs/name"
             },
             "runId": {
-              "description": "The run that is building the work, as in the queue. Optional; the lead's patch writes it and reconcile keeps it.",
+              "description": "The run that is building the work, as in the queue. Optional; the lane binds it at start with bind-run, which never replaces a bound run nor binds one another subject holds, the lead's patch may write it, reconcile keeps it, and the hand-off carries it unless it names another.",
               "$ref": "#/$defs/name"
             },
             "trackerStarted": {
