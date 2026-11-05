@@ -367,12 +367,15 @@ class LifecycleTests(LifecycleFixture, unittest.TestCase):
         )
         for name, operation in operations:
             with self.subTest(operation=name):
+                # An inspection this process made earlier of the same bytes would answer without verifying.
+                generations._INSPECTED.clear()
                 metadata.write_bytes(verified_metadata)
                 with mock.patch(
                     "agent_skills.generations.verify_release",
                     side_effect=verify_then_replace,
-                ):
+                ) as verify:
                     version = operation()
+                self.assertEqual(verify.call_count, 1)
                 self.assertEqual(
                     version["release"]["metadataSha256"],
                     expected_digest,
@@ -834,6 +837,9 @@ class InspectionCacheTests(LifecycleFixture, unittest.TestCase):
         self.assertTrue(again["files"], "a caller's change never reaches the cache")
         self.assertEqual(again, adopted)
         self.assertEqual(again, inspect_release(*self.v1))
+        # Nor does a change to what a cache hit returned.
+        again["files"].clear()
+        self.assertTrue(inspect_release(self.archive, self.metadata)["files"])
 
     def test_replacing_the_archive_at_one_path_is_refused_or_read_as_the_new_release(self) -> None:
         first = inspect_release(self.archive, self.metadata)
@@ -891,6 +897,32 @@ class InspectionCacheTests(LifecycleFixture, unittest.TestCase):
             inspect_release(self.archive, self.metadata)
         self.assertEqual(len(generations._INSPECTED), 0)
         self.assertEqual(inspect_release(self.archive, self.metadata)["release"]["releaseId"], "core-v2")
+
+    def test_metadata_replaced_while_it_is_inspected_is_refused(self) -> None:
+        # The same archive with other valid metadata bytes: only the metadata half of the check can refuse it.
+        changed = self.v1[1].read_bytes() + b"\n"
+
+        def replace_metadata_then_verify(archive: Path, metadata: Path, *, extract_to: Path):
+            self.metadata.write_bytes(changed)
+            return verify_release(archive, metadata, extract_to=extract_to)
+
+        with self.counted(replace_metadata_then_verify), self.assertRaisesRegex(GenerationError, "source-changed"):
+            inspect_release(self.archive, self.metadata)
+        self.assertEqual(len(generations._INSPECTED), 0)
+
+    def test_an_entry_used_again_outlives_a_newer_one(self) -> None:
+        core_v3 = build_version(self.base, "core-v3")
+        with mock.patch.object(generations, "INSPECTED_LIMIT", 2):
+            inspect_release(*self.v1)
+            inspect_release(*self.v2)
+            inspect_release(*self.v1)
+            inspect_release(*core_v3)
+            with self.counted() as verify:
+                inspect_release(*self.v1)
+            self.assertEqual(verify.call_count, 0, "the entry used last is kept")
+            with self.counted() as verify:
+                inspect_release(*self.v2)
+            self.assertEqual(verify.call_count, 1, "the entry used least recently went first")
 
     def test_the_cache_keeps_only_its_newest_entries(self) -> None:
         with mock.patch.object(generations, "INSPECTED_LIMIT", 1):
