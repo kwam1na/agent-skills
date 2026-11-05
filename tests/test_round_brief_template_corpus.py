@@ -333,6 +333,12 @@ DIVERGENCES = {
     ),
 }
 
+# Sections only run-delivery's brief has, each filled whole from one placeholder by run_delivery.py.
+RUN_DELIVERY_ONLY_SECTIONS = (
+    "In-app evidence so far",
+    "Context refs (caller-retained material: ticket contract and plan unit)",
+)
+
 
 def _brief_sections(text: str) -> dict[str, str]:
     parts = re.split(r"(?m)^## (.+)$", text)
@@ -440,7 +446,16 @@ class RoundBriefDriftTests(unittest.TestCase):
     """obtain-review's template and run-delivery's brief are two copies of one contract: neither drifts alone."""
 
     def test_the_briefs_differ_only_where_declared(self) -> None:
-        found = _divergence(_read(TEMPLATE), _read(RUN_DELIVERY_BRIEF))
+        template, brief = _read(TEMPLATE), _read(RUN_DELIVERY_BRIEF)
+        # run-delivery's brief carries every template section and only its declared extras, each just a placeholder,
+        # so no rule can sit in a section the comparison doesn't walk.
+        extras = set(_brief_sections(brief)) - set(_brief_sections(template))
+        self.assertEqual(set(_brief_sections(template)) - set(_brief_sections(brief)), set())
+        self.assertEqual(extras, set(RUN_DELIVERY_ONLY_SECTIONS))
+        for heading in RUN_DELIVERY_ONLY_SECTIONS:
+            with self.subTest(extra=heading):
+                self.assertRegex(" ".join(_sentences(_brief_sections(brief)[heading])), r"^\{\{\w+\}\}$")
+        found = _divergence(template, brief)
         self.assertEqual(set(found), set(DIVERGENCES), "a compared section appeared or went")
         for heading, (only_template, only_brief) in DIVERGENCES.items():
             with self.subTest(section=heading):
@@ -470,12 +485,16 @@ class RoundBriefDriftTests(unittest.TestCase):
                 for side in ("template", "brief"):
                     with self.subTest(section=heading, side=side, sentence=sentence[:60]):
                         body = ours if side == "template" else theirs
-                        cut = " ".join(body.split()).replace(sentence, "", 1)
+                        # Cut the sentence alone, leaving the section's lists and paragraphs as they were.
+                        cut = re.sub(r"\s+".join(map(re.escape, sentence.split())), "", body, count=1)
+                        self.assertNotEqual(cut, body)
                         if side == "template":
-                            changed = _divergence(template.replace(ours, "\n" + cut + "\n"), brief)
+                            changed = _divergence(template.replace(ours, cut), brief)
                         else:
-                            changed = _divergence(template, brief.replace(theirs, "\n" + cut + "\n"))
+                            changed = _divergence(template, brief.replace(theirs, cut))
                         self.assertNotEqual(changed, baseline)
+                        # It is now the uncut brief's alone, and named as such.
+                        self.assertIn(sentence, changed[heading][1 if side == "template" else 0])
                         checked += 1
         self.assertGreater(checked, 0)
 
