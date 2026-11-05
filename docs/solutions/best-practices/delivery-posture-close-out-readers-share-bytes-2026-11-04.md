@@ -45,11 +45,6 @@ Three smaller things the close-out taught:
 - `json.loads` accepts `NaN`, which `JSON.parse` refuses.
 - `json.loads` raises on a very long integer, which `JSON.parse` takes as a number.
 
-## Related
-
-- [Read a merge gate's off switch from the base, and try to fake the base](delivery-posture-harness-read-from-the-base-2026-11-04.md),
-  the harness's other reader of the same declaration.
-
 ### What a broad run would have caught on the two deliveries that ran without one
 
 The proposal-rails epic and the in-store onboarding readiness epic both ran with no close-out run. Nothing can be shown
@@ -61,3 +56,8 @@ either way, because neither ran one: the owner removed it on 2026-10-31 and 2026
 
 The ticket's question, whether `focused` should skip the run outright, was settled by the owner's ruling and not by this
 evidence. To answer it from evidence, run `fullHealth` once on one such delivery's final base and compare.
+
+## Related
+
+- [Read a merge gate's off switch from the base, and try to fake the base](delivery-posture-harness-read-from-the-base-2026-11-04.md),
+  the harness's other reader of the same declaration.
