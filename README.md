@@ -328,8 +328,8 @@ job cannot verify:
 
 ```bash
 uv python install 3.11
-uv run --no-project --python 3.11 python scripts/bootstrap-test-environment.py --environment .venv-3.11
-.venv-3.11/bin/python scripts/run-tests.py
+python3 scripts/bootstrap-test-environment.py
+.venv/bin/python scripts/run-tests.py
 ```
 
 Windows is not validated: CI does not run it, and the fixes made for it are unproven.
