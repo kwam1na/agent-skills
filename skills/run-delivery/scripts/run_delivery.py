@@ -2356,7 +2356,7 @@ def lead_evidence(args) -> None:
         clips = {f.name: digest(f) for f in sorted((out / "videos").glob("*.mp4"))}
         if not (out / "index.html").exists() or not clips:
             raise Stop(f"{out} has no built page with clips: run lead-evidence page first")
-        words = c.state.parent / "evidence-notes.json"
+        words = out / "evidence-notes.json"  # the words this folder's page was built with, not the latest kept ones
         kept = json.loads(words.read_text()) if words.exists() else {}
         record = {"url": args.url, "at": now(), "clips": clips,
                   **{k: kept.get(k, {} if k == "notes" else None) for k in ("title", "intro", "notes")}}
@@ -2416,6 +2416,7 @@ def lead_evidence(args) -> None:
     }
     page = re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], (TOOL / "templates/evidence.html").read_text())
     (out / "index.html").write_text(page)
+    (out / "evidence-notes.json").write_text(json.dumps(words, indent=2) + "\n")
     print(f"wrote {out / 'index.html'} with {count} clip(s); publish the folder (index.html plus videos/)")
 
 

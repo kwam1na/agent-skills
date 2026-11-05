@@ -1290,22 +1290,35 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         first = (page / "index.html").read_text()
         for text in ("FX-1 proof", "What each story shows.", "Covered by its hold check", "Nothing visible changes: the copy is server-side"):
             self.assertIn(text, first)
+        kept = record.parent / "evidence-notes.json"
+        before = kept.read_bytes()
         # After a compaction the lead has none of it in mind: the same page, rebuilt from the record alone.
         code, out = fx.flow("lead-evidence", "page", "FX-2", "FX-3", "--out", again, cwd=m)
         self.assertEqual(code, 0, out)
         self.assertEqual((again / "index.html").read_text(), first, "a rebuild without the notes lost some")
-        self.assertIn("recorded", out)
-        # A new note replaces its story's, an empty one removes it, and the others stand.
-        code, out = fx.flow("lead-evidence", "page", "FX-2", "FX-3", "--out", again, "--note", "FX-3=Server-side only",
-                            "--note", "FX-2=", cwd=m)
+        self.assertIn("reused the recorded note(s) for FX-2, FX-3", out)
+        self.assertNotIn("recorded the page's words", out)
+        self.assertEqual(kept.read_bytes(), before, "a rebuild that changed nothing rewrote the kept words")
+        # A new note replaces its story's, and the other story's kept note stands.
+        code, out = fx.flow("lead-evidence", "page", "FX-2", "FX-3", "--out", again, "--note", "FX-3=Server-side only", cwd=m)
         self.assertEqual(code, 0, out)
         html = (again / "index.html").read_text()
         self.assertIn("Server-side only", html)
         self.assertNotIn("the copy is server-side", html)
+        self.assertIn("Covered by its hold check", html, "a note for one story dropped another story's kept note")
+        # An empty note removes its story's, and the rest stands.
+        code, out = fx.flow("lead-evidence", "page", "FX-2", "FX-3", "--out", again, "--note", "FX-2=", cwd=m)
+        self.assertEqual(code, 0, out)
+        html = (again / "index.html").read_text()
         self.assertNotIn("Covered by its hold check", html)
         self.assertIn("No recording: this story has no visible loading or failure state to show.", html)
+        self.assertIn("Server-side only", html, "removing one note dropped another")
         self.assertIn("FX-1 proof", html, "a note change dropped the recorded title")
-        # What's published carries the notes it was built with.
+        # What's published carries the words the published folder was built with, even after a later draft changed
+        # the kept ones.
+        draft = fx.tmp / "page-draft"
+        code, out = fx.flow("lead-evidence", "page", "FX-3", "--out", draft, "--note", "FX-3=Trying other wording", cwd=m)
+        self.assertEqual(code, 0, out)
         (again / "videos/FX-9-clip.mp4").write_bytes(b"a clip, as far as published can tell")
         code, out = fx.flow("lead-evidence", "published", "--url", "https://pages.test/e", "--out", again, cwd=m)
         self.assertEqual(code, 0, out)
@@ -1314,7 +1327,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                          {"notes": {"FX-3": "Server-side only"}, "title": "FX-1 proof", "intro": "What each story shows."})
         # A note that isn't KEY=TEXT, or names no story of the delivery, is refused and records nothing.
         before = (record.parent / "evidence-notes.json").read_text()
-        for bad in ("FX-3 has no equals sign", "FX-99=not a story"):
+        for bad in ("FX-3", "FX-3 has no equals sign", "FX-99=not a story"):
             with self.subTest(note=bad):
                 code, out = fx.flow("lead-evidence", "page", "FX-3", "--out", again, "--note", bad, cwd=m)
                 self.assertEqual(code, 2, out)
