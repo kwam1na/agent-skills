@@ -22,6 +22,7 @@ import types
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 from tests.test_run_delivery import (POSIX_ONLY, Fixture, commit, doctor_binding, installed_release, setup_delivery,
                                      sh, stop_supervisors, write_results)
@@ -298,6 +299,53 @@ class ProofStateTests(unittest.TestCase):
         self.assertEqual(handed({"stage": "queued", "pending": True}), "open")
         self.assertEqual(handed({"stage": "stopped"}), "open")
         self.assertEqual(handed({"stage": "queued"}), "done")
+
+
+class ArchiveNameTests(unittest.TestCase):
+    """Two close-outs' archives in one second: each gets its own folder, and the folders sort in the order made."""
+
+    def setUp(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
+        spec = importlib.util.spec_from_file_location("run_delivery_for_archive_names", path)
+        self.module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = self.module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(self.module)
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        (self.root / "record").mkdir()
+        (self.root / "record/state.json").write_text("{}\n")
+        (self.root / "flow-log").mkdir()
+        self.c = types.SimpleNamespace(state=self.root / "record", flow_log=self.root / "flow-log")
+        for name, value in (("archive_root", lambda c: self.root / "archive"), ("archive_plan_review", lambda archive: None)):
+            patcher = mock.patch.object(self.module, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def archive_at(self, *instants: datetime.datetime) -> list[Path]:
+        """Archive once per instant, with the clock reading that instant."""
+        made = []
+        for instant in instants:
+            clock = types.SimpleNamespace(datetime=types.SimpleNamespace(now=lambda instant=instant: instant))
+            with mock.patch.object(self.module, "datetime", clock):
+                made.append(self.module.archive_delivery(self.c)[0])
+        return made
+
+    def test_two_archives_in_one_second_each_get_their_own_folder(self) -> None:
+        second = datetime.datetime(2026, 11, 4, 23, 47, 25)
+        made = self.archive_at(second.replace(microsecond=1000), second.replace(microsecond=2000))
+        self.assertEqual(len(set(made)), 2, made)
+        self.assertTrue(all((path / "record/state.json").is_file() for path in made), made)
+        self.assertEqual(sorted(made), made, "the archives don't sort in the order they were made")
+
+    def test_the_same_instant_twice_still_gets_two_folders_in_order(self) -> None:
+        instant = datetime.datetime(2026, 11, 4, 23, 47, 25, 1000)
+        made = self.archive_at(instant, instant, instant)
+        self.assertEqual(len(set(made)), 3, made)
+        self.assertTrue(all((path / "record/state.json").is_file() for path in made), made)
+        self.assertEqual(sorted(made), made, "the archives don't sort in the order they were made")
+        self.assertTrue(all(path.name.startswith("20261104T234725") for path in made), made)
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
