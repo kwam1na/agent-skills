@@ -63,7 +63,10 @@
         "skills/run-delivery/references/config.md",
         "provenance.lock.json",
         "catalog.json",
-        "profiles/*"
+        "profiles/*",
+        "skills/run-delivery/templates/round-brief.md",
+        "skills/obtain-review/references/round-brief-template.md",
+        "tests/test_round_brief_template_corpus.py"
       ]
     }
   },
@@ -279,7 +282,7 @@
     },
     "V26-3085": {
       "title": "Keep the two round briefs from drifting apart",
-      "lane": "lane-2",
+      "lane": "lane-3",
       "inApp": "none",
       "criteria": [
         {
