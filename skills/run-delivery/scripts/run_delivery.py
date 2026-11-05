@@ -5770,6 +5770,13 @@ def ship(args) -> None:
                                            for p in s["paths"])]
     print(f"{branch} at {path}, from {s['from']} ({git('rev-parse', '--short', s['from'])})")
     print(f"  left out the delivery's tooling: {', '.join(tooling[:10])}" + (f" and {len(tooling) - 10} more" if len(tooling) > 10 else ""))
+    # A tooling file the delivery changed again later is left out too: name every one, so a product change to a file
+    # the tooling commit also touched can't go missing unnoticed.
+    committed = set(git("diff", "--name-only", git("merge-base", s["from"], s["toolingCommit"]), s["toolingCommit"]).splitlines())
+    later = sorted(f for f in git("diff", "--name-only", s["toolingCommit"], c.base_ref, "--", *s["paths"]).splitlines()
+                   if f in committed and not f.startswith((".agents/", ".agent-skills/")))
+    if later:
+        print(f"  changed after the tooling commit and left out: {', '.join(later)}; a product change there doesn't ship")
     print(f"  {len(files)} file(s) staged; outside {s['paths']}: {outside or 'none'}")
     if applied.returncode == 0 and not files:  # a clean apply that changed nothing is no product branch
         git("worktree", "remove", "--force", str(path))

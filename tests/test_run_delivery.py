@@ -1068,24 +1068,44 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         return names, {n: sh("git", "show", f":{n}", cwd=path).stdout for n in names}
 
     def test_ship_leaves_out_tooling_changed_after_the_tooling_commit(self) -> None:
-        fx, main = self.ship_fixture(paths=["."])
-        m = fx.main
-        # The lead's tooling spans two commits, and the second is the one ship names.
-        tooling = self.on(m, "feature/FX-1", {"tools/lead.sh": "echo lead\n"}, "FX-1: more tooling")
-        d = json.loads((m / ".agents/deliveries/FX-1.json").read_text())
-        d["ship"]["toolingCommit"] = tooling[:12]
-        (m / ".agents/deliveries/FX-1.json").write_text(json.dumps(d, indent=2))
-        # Later, a product change, and tooling changed again: the run-delivery config, the tooling commits' own files,
-        # and a generation applied on the base.
-        conf = json.loads((m / ".agents/run-delivery.json").read_text())
-        conf["gates"].append({"id": "later", "argv": ["true"]})
-        self.on(m, "feature/FX-1", {"src/one.txt": "one\n", "tools/lead.sh": "echo lead, changed\n",
-                                    ".agents/run-delivery.json": json.dumps(conf, indent=2),
-                                    ".agent-skills/active.json": "{}\n"}, "FX-1: product and tooling")
-        code, out = fx.flow("ship", "--no-gates", cwd=m)
-        self.assertEqual(code, 0, out)
-        names, _ = self.shipped(fx)
-        self.assertEqual(names, ["src/one.txt"], out)
+        for whole in (".", "./"):
+            with self.subTest(paths=whole):
+                fx, main = self.ship_fixture(paths=[whole], gateTooling=["tools/gate-extra.sh"])
+                m = fx.main
+                # The lead's tooling spans three commits, and the last is the one ship names.
+                self.on(m, "feature/FX-1", {"tools/first.sh": "echo first\n"}, "FX-1: first tooling")
+                tooling = self.on(m, "feature/FX-1", {"tools/lead.sh": "echo lead\n"}, "FX-1: more tooling")
+                d = json.loads((m / ".agents/deliveries/FX-1.json").read_text())
+                d["ship"]["toolingCommit"] = tooling[:12]
+                (m / ".agents/deliveries/FX-1.json").write_text(json.dumps(d, indent=2))
+                # Later, a product change, and tooling changed again: the run-delivery config, a settings file no
+                # tooling commit touched, both tooling commits' own files, a declared gate tool, and a generation.
+                conf = json.loads((m / ".agents/run-delivery.json").read_text())
+                conf["gates"].append({"id": "later", "argv": ["true"]})
+                self.on(m, "feature/FX-1", {"src/one.txt": "one\n", "tools/lead.sh": "echo lead, changed\n",
+                                            "tools/first.sh": "echo first, changed\n", "tools/gate-extra.sh": "true\n",
+                                            ".agents/run-delivery.json": json.dumps(conf, indent=2),
+                                            ".agents/later.json": "{}\n", ".agent-skills/active.json": "{}\n"},
+                        "FX-1: product and tooling")
+                code, out = fx.flow("ship", "--no-gates", cwd=m)
+                self.assertEqual(code, 0, out)
+                names, _ = self.shipped(fx)
+                self.assertEqual(names, ["src/one.txt"], out)
+                self.assertIn("left out the delivery's tooling: ", out)
+                self.assertIn("tools/lead.sh", out.split("left out the delivery's tooling: ", 1)[1].splitlines()[0])
+                self.assertIn("changed after the tooling commit and left out: tools/first.sh, tools/lead.sh; "
+                              "a product change there doesn't ship", out)
+
+    def test_ship_reports_a_failed_apply_that_staged_nothing(self) -> None:
+        fx, main = self.ship_fixture()
+        sh("git", "rm", "-q", "src/app.txt", cwd=main)
+        self.on(main, "main", {}, "the default branch drops the file the delivery changes")
+        self.on(fx.main, "feature/FX-1", {"src/app.txt": "app, changed by the delivery\n"}, "FX-2: app")
+        code, out = fx.flow("ship", "--no-gates", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("git apply failed", out)
+        self.assertNotIn("nothing to ship", out)
+        self.assertTrue((fx.main / "lanes/ship-FX-1").exists(), "a failed apply's checkout was removed before it was seen")
 
     def test_ship_refuses_a_branch_with_nothing_staged(self) -> None:
         fx, main = self.ship_fixture()
