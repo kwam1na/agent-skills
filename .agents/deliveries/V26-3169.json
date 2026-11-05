@@ -27,7 +27,6 @@
         "skills/run-delivery/templates/lane-brief.md",
         "agent_skills/generations.py",
         "tests/test_lifecycle.py",
-        "provenance.lock.json",
         "tests/test_merge_queue.py",
         "skills/orchestrate-work/scripts/merge_queue.py",
         "scripts/update-provenance.py",
@@ -37,6 +36,9 @@
     "lane-2": {
       "owns": [
         "skills/run-delivery/scripts/run_delivery.py",
+        "docs/solutions/best-practices/stopping-a-recorded-pid-2026-11-03.md",
+        "docs/solutions/best-practices/prove-each-gate-condition-alone-2026-11-03.md",
+        "tests/test_run_delivery_supervisor.py",
         "tests/test_run_delivery.py"
       ]
     },
@@ -51,11 +53,17 @@
         "tests/test_compound_learning_corpus.py",
         ".agents/orchestration.json",
         "docs/solutions/best-practices/fake-trackers-list-moves-as-the-tracker-does-2026-11-03.md",
-        "docs/solutions/best-practices/prove-each-gate-condition-alone-2026-11-03.md",
-        "docs/solutions/best-practices/stopping-a-recorded-pid-2026-11-03.md",
         "docs/solutions/design-patterns/show-a-derived-list-without-storing-it-2026-11-03.md",
         "docs/solutions/best-practices/delivery-posture-close-out-readers-share-bytes-2026-11-04.md",
-        "docs/solutions/best-practices/delivery-posture-harness-read-from-the-base-2026-11-04.md"
+        "docs/solutions/best-practices/delivery-posture-harness-read-from-the-base-2026-11-04.md",
+        "skills/run-delivery/adapters/*",
+        "skills/run-delivery/references/adopting.md",
+        "skills/run-delivery/SKILL.md",
+        "tests/test_forge_adapters.py",
+        "skills/run-delivery/references/config.md",
+        "provenance.lock.json",
+        "catalog.json",
+        "profiles/*"
       ]
     }
   },
@@ -420,6 +428,17 @@
         {
           "id": "v26-3171-done",
           "text": "The timeout test asserts on the pids of the group it started, passes with an unrelated sleep 30 alive, and still fails when the timed-out group's own process survives"
+        }
+      ]
+    },
+    "V26-3181": {
+      "title": "Find why a SupervisorPostureTests case failed once in a loaded full run",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3181-done",
+          "text": "Two archives of one delivery in the same second no longer collide, and the supervisor posture test passes with two closes inside one second"
         }
       ]
     }

@@ -1875,6 +1875,27 @@
             "items": {
               "$ref": "#/$defs/argv"
             }
+          },
+          "listings": {
+            "description": "Optional. For a regenerable path, a command that reads one version of the file on stdin and prints the outputs that version lists, as a JSON array of strings. When the path conflicts, the runner lists it at the merge base, the base and the candidate. If the candidate's listing changed it stops with source_conflict naming the path, since regeneration can't restore what the candidate added or removed; if only the base's changed it takes the base side and regenerates. A listing that fails, prints nothing or prints anything else, or a version without the path, stops with source_conflict and never regenerates. A regenerable path with no listing regenerates as before.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "argv"
+              ],
+              "properties": {
+                "path": {
+                  "description": "One regenerable file, named exactly.",
+                  "$ref": "#/$defs/path"
+                },
+                "argv": {
+                  "$ref": "#/$defs/argv"
+                }
+              }
+            }
           }
         }
       },

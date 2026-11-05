@@ -9,14 +9,15 @@
                                                               "reviews": [{"author", "at", "body"}]}
   ready --url URL                                         -> {"url", "draft": false}
   merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
-  merge --source BRANCH --head SHA --strategy merge|squash -> {"url", "state": "merged"}
+  merge --source BRANCH --head SHA --strategy merge|squash [--destination D] -> {"url", "state": "merged"}
 
 Environment: FLOW_FORGE_REPOSITORY (owner/name). Prints JSON on stdout; exits 1 with a message on stderr otherwise.
 It writes three ways: it opens a pull request as a draft (a lane's open-pr), marks one ready (the lead's acceptance,
 under the delivery's readyPullRequests grant), and merges one (the binding's merge step), refusing a head that moved
 when --head is given. `merge --source` merges the branch's one open pull request at exactly `--head`, so a binding's
 merge step, which knows the branch and the checked head but not the pull request, can call it; it refuses a branch
-with no open pull request or with more than one. A token gh reads from the environment is never printed.
+with no open pull request or with more than one. With the optional `--destination`, which a binding serving several
+bases passes as `{base}`, it also refuses unless that pull request targets that branch, so a pull request retargeted to another base is never merged. A token gh reads from the environment is never printed.
 """
 
 import argparse
@@ -73,6 +74,7 @@ def main():
     p = sub.add_parser("ready"); p.add_argument("--url", required=True)
     p = sub.add_parser("merge"); target = p.add_mutually_exclusive_group(required=True)
     target.add_argument("--url"); target.add_argument("--source")
+    p.add_argument("--destination", help="with --source: the branch the pull request must target")
     p.add_argument("--strategy", choices=("merge", "squash"), required=True); p.add_argument("--head")
     args = parser.parse_args()
     if args.command == "find":
@@ -97,13 +99,18 @@ def main():
         print(json.dumps({"url": args.url, "draft": False}))
     elif args.command == "merge":
         url = args.url
+        if args.destination is not None and not args.source:
+            fail("github: merge --destination applies only with --source; not merged")
         if args.source:
             if not args.head:
                 fail("github: merge --source needs --head, the head the merge is pinned to")
-            found = json.loads(gh("pr", "list", "--head", args.source, "--state", "open", "--json", "url"))
+            found = json.loads(gh("pr", "list", "--head", args.source, "--state", "open", "--json", "url,baseRefName"))
             if len(found) != 1:
                 fail(f"github: {args.source} has {'no' if not found else len(found)} open pull requests, not one; "
                      "not merged")
+            target = found[0].get("baseRefName")
+            if args.destination is not None and target != args.destination:
+                fail(f"github: {args.source}'s open pull request targets {target}, not {args.destination}; not merged")
             url = found[0]["url"]
         guard = ["--match-head-commit", args.head] if args.head else []
         gh("pr", "merge", pull_request(url), f"--{args.strategy}", *guard)
