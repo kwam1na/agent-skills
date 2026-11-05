@@ -256,6 +256,8 @@ def binding_errors(binding: object) -> list[str]:
         ("/fullHealth", binding["fullHealth"]),
     ]
     commands += [(f"/prepare/{i}", argv) for i, argv in enumerate(binding["prepare"])]
+    if binding.get("reviewGate") is not None:
+        commands.append(("/reviewGate", binding["reviewGate"]["argv"]))
     commands += [(f"/regenerable/regenerators/{i}", argv) for i, argv in enumerate(binding["regenerable"]["regenerators"])]
     listings = binding["regenerable"].get("listings", [])
     commands += [(f"/regenerable/listings/{i}", entry["argv"]) for i, entry in enumerate(listings)]
@@ -288,6 +290,12 @@ def binding_errors(binding: object) -> list[str]:
             errors.append(f"/environment: {variable} changes how git reads a pathspec and must not be set")
     if "{expectedHead}" not in binding["merge"]:
         errors.append("/merge: the merge argv must use {expectedHead} as a whole element")
+    gate = binding.get("reviewGate")
+    if gate is not None:
+        if not {"{expectedHead}", "{head}"} & set(gate["argv"]):
+            errors.append("/reviewGate: the gate's argv must name the head, {expectedHead} or {head}, as a whole element")
+        if gate.get("timeoutSeconds", 0) > binding["checkTimeoutCeiling"]:
+            errors.append("/reviewGate/timeoutSeconds: above checkTimeoutCeiling")
     if binding["checkTimeoutSeconds"] > binding["checkTimeoutCeiling"]:
         errors.append("/checkTimeoutSeconds: above checkTimeoutCeiling")
     for name in ("alwaysRun", "fallback"):
@@ -2033,6 +2041,7 @@ class Runner:
         timeout = self.binding["checkTimeoutSeconds"]
         if self.run_argv(self.binding["ready"], anchor, context, timeout).returncode != 0:
             raise Stop("ready_refused", f"ready refused {subject}")
+        self.review_gate(subject, synced, anchor, context)
         if self.run_argv(self.binding["merge"], anchor, context, timeout).returncode != 0:
             raise Stop("merge_refused", f"merge refused {subject} at {synced}")
         merged = self.fetch(self.base, "base")
@@ -2044,6 +2053,19 @@ class Runner:
         self.write(assignments={"/meta/baseHead": merged})
         self.journal("candidate.merged", f"Merged {item['title']} at {synced}", subject)
         result.outcome = "merged"
+
+    def review_gate(self, subject: str, synced: str, anchor: Path, context: Context) -> None:
+        """Merge only with a review current at the synced head, when the binding declares a gate that says so."""
+        gate = self.binding.get("reviewGate")
+        if gate is None:
+            return
+        completed = self.run_argv(gate["argv"], anchor, context, gate.get("timeoutSeconds", self.binding["checkTimeoutSeconds"]))
+        if completed.timed_out or completed.returncode != 0:
+            # Its output may carry what the forge said, credentials included: it stays in a log, as a failed check's does.
+            log = self.save_log("review-gate", completed)
+            how = "timed out" if completed.timed_out else f"exited {completed.returncode}"
+            raise Stop("review_not_current", f"the review gate {how}: {subject} has no current review at {synced}; "
+                                             f"its output is in {log} under the state directory")
 
     # -- batch -------------------------------------------------------------
 
