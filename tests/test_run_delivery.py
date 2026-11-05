@@ -1075,11 +1075,13 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         d = json.loads((m / ".agents/deliveries/FX-1.json").read_text())
         d["ship"]["toolingCommit"] = tooling[:12]
         (m / ".agents/deliveries/FX-1.json").write_text(json.dumps(d, indent=2))
-        # Later, a product change, and tooling changed again: the run-delivery config, the tooling commits' own files.
+        # Later, a product change, and tooling changed again: the run-delivery config, the tooling commits' own files,
+        # and a generation applied on the base.
         conf = json.loads((m / ".agents/run-delivery.json").read_text())
         conf["gates"].append({"id": "later", "argv": ["true"]})
         self.on(m, "feature/FX-1", {"src/one.txt": "one\n", "tools/lead.sh": "echo lead, changed\n",
-                                    ".agents/run-delivery.json": json.dumps(conf, indent=2)}, "FX-1: product and tooling")
+                                    ".agents/run-delivery.json": json.dumps(conf, indent=2),
+                                    ".agent-skills/active.json": "{}\n"}, "FX-1: product and tooling")
         code, out = fx.flow("ship", "--no-gates", cwd=m)
         self.assertEqual(code, 0, out)
         names, _ = self.shipped(fx)
@@ -1093,6 +1095,9 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("nothing to ship", out)
         self.assertNotIn("next:", out)
+        # Nothing is left to remove by hand before it runs again.
+        self.assertFalse((fx.main / "lanes/ship-FX-1").exists(), "the empty ship checkout was left behind")
+        self.assertEqual(sh("git", "branch", "--list", "ship/FX-1", cwd=fx.main).stdout.strip(), "")
 
     def test_ship_builds_from_a_base_that_merged_the_default_branch(self) -> None:
         fx, main = self.ship_fixture()
