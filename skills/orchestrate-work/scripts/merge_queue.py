@@ -149,7 +149,7 @@ WINDOWS = os.name == "nt"
 # What a stop detail never carries from a command's output: the command's own secret-looking environment values,
 # common token shapes, and whatever follows a keyword that introduces one. Redacted before the tail is cut.
 # "auth" counts only as a whole name segment, so the runner's own GIT_AUTHOR_* identity is not taken for a secret.
-SECRET_NAME = re.compile(r"token|secret|passw|api[-_]?key|credent\w*|private[-_]?key|(?:^|[_-])o?auth(?:[_-]|$)",
+SECRET_NAME = re.compile(r"token|secret|passw|api[-_]?key|credent\w*|private[-_]?key|(?:^|[_-])o?auth(?:[_-]|$|orization|key)",
                          re.IGNORECASE)
 TOKEN_SHAPE = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|glpat-[A-Za-z0-9_-]{16,}|xox[abprs]-[A-Za-z0-9-]{10,}"

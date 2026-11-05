@@ -1432,7 +1432,7 @@ class MergeRefusalDetailTests(MergeQueueTestCase):
         # The runner's own identity is not a secret, though its variable names hold "AUTH"; an auth segment is.
         self.assertEqual(queue.scrubbed_tail("refused by merge-queue rule", {"GIT_AUTHOR_NAME": "merge-queue"}),
                          "refused by merge-queue rule")
-        for name in ("HTTP_AUTH", "AUTH_HEADER", "FORGE_OAUTH_KEY"):
+        for name in ("HTTP_AUTH", "AUTH_HEADER", "FORGE_OAUTH_KEY", "FORGE_AUTHORIZATION", "AUTHKEY", "NPM_AUTHKEY"):
             with self.subTest(name=name):
                 self.assertEqual(queue.scrubbed_tail("sent hidden-value-1", {name: "hidden-value-1"}), "sent [redacted]")
         # A secret straddling the cut is redacted whole before the tail is taken, so no part of it survives.
