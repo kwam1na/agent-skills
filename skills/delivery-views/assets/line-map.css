@@ -347,6 +347,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .detail .d-batch { font-size: 13px; color: var(--soft); }
 .stop-label .pr-num { display: block; font-size: 10px; line-height: 12px; color: var(--faint); }
 .detail .d-run-none { font-size: 13px; color: var(--faint); }
+.detail .d-run-carried { font-size: 13px; color: var(--faint); margin-bottom: 6px; }
 .d-run { margin-top: 24px; }
 .issue-card { position: fixed; z-index: 30; max-width: 320px; padding: 14px 16px; border-radius: 10px; background: var(--lift); color: var(--ink);
   box-shadow: 0 2px 6px rgba(20, 23, 25, .06), 0 24px 48px -16px rgba(20, 23, 25, .22), 0 0 0 1px color-mix(in oklab, var(--edge) 18%, transparent);
