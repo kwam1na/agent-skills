@@ -750,18 +750,227 @@ DIVERGENCES = (
             'test files in scope for this round:',
         ),
         (
-            '<scoped checks for <merge base>..<candidate>>',
-            '<scoped checks for <prior candidate>..<candidate>>',
+            '`tests/test_example.py`.',
             'scoped sensor commands: none; a plan review runs no checks, since the plan is the whole subject.',
+            'scoped sensor commands: the sensors the plan unit names, in the context refs below.',
             'test files in scope for this round: none.',
+            (
+                'test files in scope for this round: the tests among the files `git diff <merge base>..<candidate>` '
+                'changes, and the tests that cover the rest:'
+            ),
+            (
+                'test files in scope for this round: the tests among the files `git diff <prior '
+                'candidate>..<candidate>` changes, and the tests that cover the rest:'
+            ),
         ),
         (
-            "The template's placeholders, filled per round: the repository's scoped checks, stood in for here, or "
-            'none for a plan review.'
+            "The template's placeholders, filled per round: the plan unit's sensors and the files the diff changes, "
+            'or none for a plan review.'
         ),
     ),
 )
 
+
+# What only one kind of review renders, with why: (kind, section, its items, the reason). Taken together the two kinds
+# could stand in for each other, so each kind's renders must match this exactly: a line run_delivery.py drops from one
+# kind while the other still renders it shows here.
+KIND_ONLY = (
+    (
+        'story review',
+        'Binding tuple',
+        (
+            '`5`',
+            '`EX-1`',
+        ),
+        "A story is keyed by its ticket, and only a story's review reaches a grace round.",
+    ),
+    (
+        'plan review',
+        'Binding tuple',
+        (
+            '`EX-1.plan`',
+        ),
+        "A plan review is keyed by its delivery's plan.",
+    ),
+    (
+        'story review',
+        'Round and bound',
+        (
+            '`grace`: round 5 with declared bound 4, outside the count.',
+            '`ordinary counted`: round 1 of 4, counted against the declared bound.',
+            '`ordinary counted`: round 2 of 4, counted against the declared bound.',
+        ),
+        "A story's review is bounded, so its rounds are counted, then grace.",
+    ),
+    (
+        'plan review',
+        'Round and bound',
+        (
+            '`unbounded`: unbounded round 1, with no bound supplied or invented.',
+            '`unbounded`: unbounded round 2, with no bound supplied or invented.',
+        ),
+        'A plan review is unbounded.',
+    ),
+    (
+        'story review',
+        'Round kind and scope',
+        (
+            (
+                "`assessment round`: this lens's first result-carrying round; review the whole subject, the "
+                'delivered diff `git diff <merge base>..<candidate>` in your checkout, and carry no prior entries '
+                'or candidate resolution pairs.'
+            ),
+            (
+                '`verification round`: re-check every carried finding and its approval condition against the delta '
+                'you derive yourself (`git diff <prior candidate>..<candidate>`), then review that delta.'
+            ),
+        ),
+        "A story's subject is its delivered diff.",
+    ),
+    (
+        'plan review',
+        'Round kind and scope',
+        (
+            (
+                "`assessment round`: this lens's first result-carrying round; review the whole plan, "
+                '`docs/plans/example.md` in your checkout, and carry no prior entries or candidate resolution '
+                'pairs.'
+            ),
+            (
+                "`verification round`: re-check every carried finding and its approval condition against the plan's "
+                'revision, the delta you derive yourself (`git diff <prior candidate>..<candidate>`), then review '
+                'that delta.'
+            ),
+        ),
+        "A plan review's subject is the plan.",
+    ),
+    (
+        'story review',
+        'Result shape',
+        (
+            "A deferred finding doesn't block `aligned`.",
+            'Every carried finding must appear; a deferral (P2/P3 only) also carries `deferredIssue`.',
+            (
+                'One entry for every finding this lens raised in an earlier round, `{"id", "state": '
+                '"closed|fixed|withdrawn|deferred|open", "resolution": "..."}`.'
+            ),
+            'P0 and P1 are actionable and never deferred.',
+            (
+                'P2 and P3 are deferrable: file each with `"state": "deferred"` and `"deferredIssue": "<what its '
+                'follow-up item must say>"`.'
+            ),
+            (
+                '```json {"schemaVersion": "review-lens-result/1", "lensId": "lens.example", "subjectRef": "EX-1", '
+                '"candidateRef": "<candidate>", "round": 1, "outcome": "aligned | changes-requested", "findings": '
+                '[{"id": "example-r1-1", "severity": "P0|P1|P2|P3", "summary": "...", "location": "path:line", '
+                '"failureScenario": "...", "proposedChange": "..."}], "evidence": ["..."]}```'
+            ),
+            (
+                '```json {"schemaVersion": "review-lens-result/1", "lensId": "lens.example", "subjectRef": "EX-1", '
+                '"candidateRef": "<candidate>", "round": 2, "outcome": "aligned | changes-requested", "findings": '
+                '[{"id": "example-r2-1", "severity": "P0|P1|P2|P3", "summary": "...", "location": "path:line", '
+                '"failureScenario": "...", "proposedChange": "..."}], "evidence": ["..."]}```'
+            ),
+            (
+                '```json {"schemaVersion": "review-lens-result/1", "lensId": "lens.example", "subjectRef": "EX-1", '
+                '"candidateRef": "<candidate>", "round": 5, "outcome": "aligned | changes-requested", "findings": '
+                '[{"id": "example-r5-1", "severity": "P0|P1|P2|P3", "summary": "...", "location": "path:line", '
+                '"failureScenario": "...", "proposedChange": "..."}], "evidence": ["..."]}```'
+            ),
+            '`findings`: every finding, with a unique id starting `example-r5-` and one severity, P0 to P3.',
+        ),
+        "A story's review defers P2 and P3 and keys its result by the ticket, up to a grace round.",
+    ),
+    (
+        'plan review',
+        'Result shape',
+        (
+            'Every carried finding must appear; a plan review defers none.',
+            (
+                'One entry for every finding this lens raised in an earlier round and has not closed, `{"id", '
+                '"state": "closed|fixed|withdrawn|open", "resolution": "..."}`.'
+            ),
+            'P0 and P1 are actionable, and a plan review never defers them.',
+            (
+                'P2 and P3 notes belong in `evidence`, never in `findings`: a plan review has no deferral path, so '
+                'a result carries no `state` or `deferredIssue` on any finding.'
+            ),
+            (
+                '```json {"schemaVersion": "review-lens-result/1", "lensId": "lens.example", "subjectRef": '
+                '"EX-1.plan", "candidateRef": "<candidate>", "round": 1, "outcome": "aligned | changes-requested", '
+                '"findings": [{"id": "example-r1-1", "severity": "P0|P1|P2|P3", "summary": "...", "location": '
+                '"path:line", "failureScenario": "...", "proposedChange": "..."}], "evidence": ["..."]}```'
+            ),
+            (
+                '```json {"schemaVersion": "review-lens-result/1", "lensId": "lens.example", "subjectRef": '
+                '"EX-1.plan", "candidateRef": "<candidate>", "round": 2, "outcome": "aligned | changes-requested", '
+                '"findings": [{"id": "example-r2-1", "severity": "P0|P1|P2|P3", "summary": "...", "location": '
+                '"path:line", "failureScenario": "...", "proposedChange": "..."}], "evidence": ["..."]}```'
+            ),
+        ),
+        "A plan review defers nothing and keys its result by the delivery's plan.",
+    ),
+    (
+        'story review',
+        'Observation binding and selected output',
+        (
+            (
+                'Run ID: none (the repository declares no run-event command). activityId `review-EX-1`, attemptId '
+                '`1`, roundId `EX-1-r1`, round `1`, lensId `lens.example`.'
+            ),
+            (
+                'Run ID: none (the repository declares no run-event command). activityId `review-EX-1`, attemptId '
+                '`1`, roundId `EX-1-r2`, round `2`, lensId `lens.example`.'
+            ),
+            (
+                'Run ID: none (the repository declares no run-event command). activityId `review-EX-1`, attemptId '
+                '`1`, roundId `EX-1-r5`, round `5`, lensId `lens.example`.'
+            ),
+        ),
+        "Each kind's Run ID line names its own subject and rounds.",
+    ),
+    (
+        'plan review',
+        'Observation binding and selected output',
+        (
+            (
+                'Run ID: none (the repository declares no run-event command). activityId `review-EX-1.plan`, '
+                'attemptId `1`, roundId `EX-1.plan-r1`, round `1`, lensId `lens.example`.'
+            ),
+            (
+                'Run ID: none (the repository declares no run-event command). activityId `review-EX-1.plan`, '
+                'attemptId `1`, roundId `EX-1.plan-r2`, round `2`, lensId `lens.example`.'
+            ),
+        ),
+        "Each kind's Run ID line names its own subject and rounds.",
+    ),
+    (
+        'story review',
+        'Checks this lens runs',
+        (
+            '`tests/test_example.py`.',
+            'scoped sensor commands: the sensors the plan unit names, in the context refs below.',
+            (
+                'test files in scope for this round: the tests among the files `git diff <merge base>..<candidate>` '
+                'changes, and the tests that cover the rest:'
+            ),
+            (
+                'test files in scope for this round: the tests among the files `git diff <prior '
+                'candidate>..<candidate>` changes, and the tests that cover the rest:'
+            ),
+        ),
+        "A story's lens runs the plan unit's sensors over the files its diff changes.",
+    ),
+    (
+        'plan review',
+        'Checks this lens runs',
+        (
+            'scoped sensor commands: none; a plan review runs no checks, since the plan is the whole subject.',
+            'test files in scope for this round: none.',
+        ),
+        'A plan review runs no checks, since the plan is the whole subject.',
+    ),
+)
 
 # Sections only run-delivery's brief has, each filled whole from one placeholder by run_delivery.py.
 RUN_DELIVERY_ONLY_SECTIONS = (
@@ -820,7 +1029,7 @@ def _tool():
 def _render(brief_template: str) -> list[str]:
     """run-delivery's brief as run_delivery.py renders it from `brief_template`, for every round it writes: a story's
     assessment, verification and grace rounds, and a plan review's assessment and verification rounds. Only what a
-    delivery would read from its release, settings and review folder is stood in for."""
+    delivery would read from its release, settings, review folder and git is stood in for."""
     tool = _tool()
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)
@@ -836,7 +1045,7 @@ def _render(brief_template: str) -> list[str]:
         with mock.patch.multiple(tool, TOOL=root, cfg=lambda: config, release_tuple=lambda: release,
                                  graph_digest=lambda: "<graph>", review_dir=lambda key, root=None: Path(folder),
                                  in_app_summary=lambda key: "<in-app evidence>",
-                                 scoped_checks=lambda span: f"<scoped checks for {span}>",
+                                 git=lambda *args, **kwargs: "tests/test_example.py",
                                  plan_review_subject=lambda c: "EX-1.plan"):
             key, lens, candidate, tree, merge_base, checkout = story
             return [
@@ -961,6 +1170,10 @@ class RoundBriefDriftTests(unittest.TestCase):
 
     def test_run_delivery_carries_every_template_section_and_only_its_declared_extras(self) -> None:
         # Raw template bodies, fences included, so no rule can sit in a section the comparison doesn't walk.
+        # Above the first section run-delivery's brief carries only its title, so no rule sits outside every section.
+        preamble = self.brief[:self.brief.index("\n## ")]
+        self.assertRegex(preamble, r"^# Round brief: [^\n]*\n*$")
+        self.assertEqual(re.sub(r"\{\{\w+\}\}", "", preamble.splitlines()[0]), "# Round brief: ,  round ")
         extras = set(_brief_sections(self.brief)) - set(_brief_sections(self.template))
         self.assertEqual(set(_brief_sections(self.template)) - set(_brief_sections(self.brief)), set())
         self.assertEqual(extras, set(RUN_DELIVERY_ONLY_SECTIONS))
@@ -974,16 +1187,23 @@ class RoundBriefDriftTests(unittest.TestCase):
         self.assertEqual(set(self.declared()) - set(found), set(), "a declared section isn't in the template")
         self.assertDeclared(found)
 
-    def test_each_kind_of_review_renders_every_shared_rule(self) -> None:
-        # Taken together, one kind of review could stand in for the other: a rule run_delivery.py drops from a story's
-        # brief would still be found in a plan review's. So each kind must carry every rule the two briefs share.
-        for heading, body in _brief_sections(self.template).items():
-            rendered = {item for render in self.renders for item in _items(_brief_sections(render)[heading])}
-            shared = set(_items(body)) & rendered
-            for kind, renders in (("story review", self.renders[:3]), ("plan review", self.renders[3:])):
+    def test_each_kind_of_review_renders_what_it_shares_with_the_other(self) -> None:
+        # Taken together, one kind of review could stand in for the other: a line run_delivery.py drops from a story's
+        # brief would still be found in a plan review's. So what each kind renders alone is declared, exactly.
+        declared = {(kind, heading): set(items) for kind, heading, items, _ in KIND_ONLY}
+        kinds = {"story review": self.renders[:3], "plan review": self.renders[3:]}
+        for heading in _brief_sections(self.template):
+            carried = {kind: {item for render in renders for item in _items(_brief_sections(render)[heading])}
+                       for kind, renders in kinds.items()}
+            for kind, other in (("story review", "plan review"), ("plan review", "story review")):
                 with self.subTest(section=heading, kind=kind):
-                    carried = {item for render in renders for item in _items(_brief_sections(render)[heading])}
-                    self.assertEqual(shared - carried, set(), f"a {kind}'s brief lacks a rule the briefs share")
+                    self.assertEqual(carried[kind] - carried[other], declared.get((kind, heading), set()),
+                                     f"a {kind} renders, or no longer renders, a line the other kind does")
+        for kind, heading, items, reason in KIND_ONLY:
+            with self.subTest(kind=kind, section=heading):
+                self.assertIn(kind, kinds)
+                self.assertTrue(items)
+                self.assertRegex(reason, r"^[A-Za-z`].{19,199}$")
 
     def test_every_difference_says_why(self) -> None:
         seen: set[tuple[str, str, str]] = set()
