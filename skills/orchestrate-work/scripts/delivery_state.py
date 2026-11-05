@@ -894,6 +894,9 @@ def handoff(
                 "syncedHead": None, "leadInputs": [], "reportedRounds": None, "runId": planned.get("runId"),
                 "checks": [], "changeRequest": change_request,
             }
+            # A ticket reconcile saw started stays so in the queue, so a rejection can hand the flag back.
+            if planned.get("trackerStarted"):
+                item["trackerStarted"] = True
             state["queue"].append(item)
         if rounds is not None:
             item["reportedRounds"] = rounds
@@ -956,6 +959,8 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
             back["changeRequest"] = item["changeRequest"]
         if item.get("runId") is not None:
             back["runId"] = item["runId"]
+        if item.get("trackerStarted"):
+            back["trackerStarted"] = True
         state.setdefault("planned", []).append(back)
         if item["lane"] is not None:
             _set_lane_state(state, item["lane"], "working")
@@ -2041,6 +2046,8 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                     }
                     if entry.get("changeRequest"):
                         element["changeRequest"] = entry["changeRequest"]
+                    if entry.get("trackerStarted"):
+                        element["trackerStarted"] = True
                     # Under the lead's policy it waits like any hand-off, so its recovery can say the wait was skipped.
                     if state["meta"].get("handoffsNeedAcceptance"):
                         element["pending"] = True
