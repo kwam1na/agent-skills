@@ -3215,12 +3215,54 @@ class LaneWriterTests(unittest.TestCase):
         state_tool.set_focus(self.directory, "lane-1", "fixing the check")
         self.assertEqual(self.row()["waitingOn"], None)
 
+    def runner_stops_as_the_queue_does(self, subject: str = "work-q") -> None:
+        """The queue's stop as the runner writes it: the whole lanes list from lane_rows_after, with no selector."""
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="runner", version=state["version"],
+                         changes={"lanes": state_tool.lane_rows_after(self.directory, state, subject,
+                                                                      stopped="check_failed")})
+
     def test_the_queue_rewriting_a_rows_words_owns_its_wait_even_at_the_same_value(self) -> None:
-        state_tool.set_focus(self.directory, "lane-1", "asking", state="blocked", waiting_on="lead")
+        state_tool.set_focus(self.directory, "lane-1", "work-q: asking the lead", waiting_on="lead")
         self.assertEqual(self.row()["waitingBy"], "lane")
-        self.queue_stops()
-        self.assertEqual(self.row()["waitingBy"], "runner")
+        self.runner_stops_as_the_queue_does()
+        row = self.row()
+        self.assertEqual((row["focus"], row["waitingOn"], row["waitingBy"], row["focusBy"]),
+                         ("work-q stopped: check_failed", "lead", "runner", "runner"))
         state_tool.set_focus(self.directory, "lane-1", "fixing the check")
+        self.assertEqual(self.row()["waitingOn"], None)
+
+    def test_a_wait_the_lead_changes_in_a_whole_lanes_list_is_the_leads(self) -> None:
+        self.runner_stops_as_the_queue_does()
+        self.assertEqual(self.row()["waitingBy"], "runner")
+        lanes = [{**entry, "waitingOn": "the lead's ruling"} if entry["id"] == "lane-1" else entry
+                 for entry in state_tool.read_state(self.directory)["lanes"]]
+        self.lead({"lanes": lanes})
+        self.assertEqual((self.row()["waitingOn"], self.row()["waitingBy"]), ("the lead's ruling", "lead"))
+        state_tool.set_focus(self.directory, "lane-1", "working on it")
+        self.assertEqual((self.row()["waitingOn"], self.row()["waitingBy"]), ("the lead's ruling", "lead"))
+
+    def test_a_hand_off_ends_the_queues_wait_after_the_lead_rewrote_its_words(self) -> None:
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-q]",
+                         assignments={"/stage": "stopped"})
+        self.runner_stops_as_the_queue_does()
+        self.lead({"focus": "the lead says: see the failing check"}, selector="lanes[id=lane-1]")
+        self.assertNotIn("focusBy", self.row())
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-q", head="b" * 40, change_request="cr")
+        row = self.row()
+        self.assertEqual((row["focus"], row["state"], row["waitingOn"]),
+                         ("the lead says: see the failing check", "handed", None))
+        self.assertNotIn("waitingBy", row)
+
+    def test_a_put_back_leaves_the_queues_wait_once_the_lead_rewrote_its_words(self) -> None:
+        self.runner_stops_as_the_queue_does()
+        self.lead({"focus": "the lead says: retrying it"}, selector="lanes[id=lane-1]")
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="runner", version=state["version"],
+                         changes={"lanes": state_tool.lane_rows_put_back(state, "work-q")})
+        row = self.row()
+        self.assertEqual((row["focus"], row["waitingOn"], row["waitingBy"]), ("the lead says: retrying it", "lead", "runner"))
+        state_tool.set_focus(self.directory, "lane-1", "back on it")
         self.assertEqual(self.row()["waitingOn"], None)
 
     def test_a_hand_off_and_a_put_back_end_only_the_queues_wait(self) -> None:

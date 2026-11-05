@@ -959,10 +959,13 @@ def handoff(
         _set_lane_state(state, lane, "handed")
         for entry in state["lanes"]:
             # A new hand-off ends what the queue said: the record's derived words read from the line again.
-            if entry["id"] == lane and entry.get("focusBy") == "runner":
-                _end_queue_wait(entry)
-                if not entry["waitingOn"]:
-                    entry.pop("waitingBy", None)
+            if entry["id"] != lane:
+                continue
+            # A wait the queue set ends whoever said the row's words last; the queue's words end only while they stand.
+            _end_queue_wait(entry)
+            if not entry["waitingOn"]:
+                entry.pop("waitingBy", None)
+            if entry.get("focusBy") == "runner":
                 entry["focus"] = ""
                 del entry["focusBy"]
                 entry.pop("focusAt", None)
