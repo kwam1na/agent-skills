@@ -11,15 +11,21 @@ applies_when: "A Python reader and a JavaScript reader must give the same answer
 
 # Two readers of one declaration agree only where a shared vector forces them to
 
-`run_delivery.py` and the harness each read `.agents/delivery-posture.json`, one in Python and one in TypeScript. Obvious
-code in each disagrees on valid-looking input:
+## Problem
 
-- `str.strip` removes U+0085 and U+001C and `String.trim` doesn't, while `trim` removes U+FEFF and `strip` doesn't. A
-  blank check built on either one alone says a different thing from the other reader.
-- `json.loads` accepts `NaN`, which `JSON.parse` refuses.
-- `json.loads` raises on a very long integer, which `JSON.parse` takes as a number.
+`run_delivery.py` and the harness each read `.agents/delivery-posture.json`, one in Python and one in TypeScript. Obvious
+code in each disagrees on valid-looking input.
+
+## Solution
 
 Spell the rule out, here as an explicit character class, and put each disagreement in the shared vector file.
+
+## Why This Matters
+
+Obvious code in each language reads the same file differently, so the two readers can reach different verdicts on
+one declaration unless a shared vector holds each disagreement.
+
+## Prevention
 
 Three smaller things the close-out taught:
 
@@ -32,7 +38,19 @@ Three smaller things the close-out taught:
 - **A skip needs its own entry, not a state that reads like a result.** The skip has no `result` member, so nothing
   that reads results can count it. The plan chapter gets its own `closeOut` member rather than reusing `done`.
 
-## What a broad run would have caught on the two deliveries that ran without one
+## Examples
+
+- `str.strip` removes U+0085 and U+001C and `String.trim` doesn't, while `trim` removes U+FEFF and `strip` doesn't. A
+  blank check built on either one alone says a different thing from the other reader.
+- `json.loads` accepts `NaN`, which `JSON.parse` refuses.
+- `json.loads` raises on a very long integer, which `JSON.parse` takes as a number.
+
+## Related
+
+- [Read a merge gate's off switch from the base, and try to fake the base](delivery-posture-harness-read-from-the-base-2026-11-04.md),
+  the harness's other reader of the same declaration.
+
+### What a broad run would have caught on the two deliveries that ran without one
 
 The proposal-rails epic and the in-store onboarding readiness epic both ran with no close-out run. Nothing can be shown
 either way, because neither ran one: the owner removed it on 2026-10-31 and 2026-11-04. So this is no evidence that `focused` is safe, only that the record has no defect traced to the missing run.

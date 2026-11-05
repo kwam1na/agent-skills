@@ -37,15 +37,6 @@ BUG_FIELDS = ("symptoms", "root_cause", "resolution_type")
 KNOWLEDGE_FIELDS = ("applies_when",)
 BUG_SECTIONS = "Problem, Symptoms, What Didn't Work, Solution, Why This Works, Prevention, Related Issues"
 KNOWLEDGE_SECTIONS = "Problem, Solution, Why This Matters, Prevention, Examples, Related"
-# Notes written before their sections were checked, each owed its sections by an open follow-up item.
-AWAITING_SECTIONS = frozenset({
-    "delivery-posture-close-out-readers-share-bytes-2026-11-04.md",
-    "delivery-posture-harness-read-from-the-base-2026-11-04.md",
-    "fake-trackers-list-moves-as-the-tracker-does-2026-11-03.md",
-    "prove-each-gate-condition-alone-2026-11-03.md",
-    "stopping-a-recorded-pid-2026-11-03.md",
-    "show-a-derived-list-without-storing-it-2026-11-03.md",
-})
 # The contract this workflow gave up, in the words it used and in others for the same thing.
 OLD_CONTRACT = re.compile(
     r"storage path|document schema|knowledge format|writes? none|writes? nothing|writing durable state"
@@ -113,18 +104,8 @@ class CompoundLearningCorpusTests(unittest.TestCase):
                 bug = category in BUG_CATEGORIES
                 for field in BUG_FIELDS if bug else KNOWLEDGE_FIELDS:
                     self.assertRegex(head, rf"(?m)^{field}:")
-                if note.name in AWAITING_SECTIONS:
-                    continue
                 self.assertEqual(_headings(text), (BUG_SECTIONS if bug else KNOWLEDGE_SECTIONS).split(", "))
 
-    def test_a_note_awaiting_its_sections_is_still_here_and_still_lacks_them(self) -> None:
-        """The list only shrinks: a note brought up to format leaves it, so the sections check covers it again."""
-        notes = {note.name: note for note in (ROOT / "docs/solutions").rglob("*.md")}
-        for name in sorted(AWAITING_SECTIONS):
-            with self.subTest(note=name):
-                self.assertIn(name, notes)
-                expected = BUG_SECTIONS if notes[name].parent.name in BUG_CATEGORIES else KNOWLEDGE_SECTIONS
-                self.assertNotEqual(_headings(notes[name].read_text(encoding="utf-8")), expected.split(", "))
 
     def test_each_track_lists_exactly_its_categories(self) -> None:
         section = _section("Solution Notes")
