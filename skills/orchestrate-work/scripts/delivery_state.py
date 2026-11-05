@@ -910,7 +910,8 @@ def handoff(
     ``evidence`` records the lane's own runs of the binding's reusable checks,
     each with the head and tree it ran on; a hand-off without it keeps none.
     ``run`` names the run that built the work; a hand-off without it keeps the
-    run already stored, from an earlier hand-off or the lead's plan.
+    run already stored, from an earlier hand-off or the lead's plan. A run another
+    planned or queued subject holds is refused with ``run_bound``.
     """
     problems = evidence_errors(evidence or [])
     if problems:
@@ -919,6 +920,12 @@ def handoff(
     def change(state: dict) -> dict:
         if lane not in [entry["id"] for entry in state["lanes"]]:
             raise StateError("writer_not_owned", f"there is no lane {lane}")
+        if run is not None:
+            # A run builds one subject: as bind-run refuses, a hand-off can't name a run another subject holds.
+            holder = next((entry["subject"] for entry in [*state.get("planned", []), *state["queue"]]
+                           if entry["subject"] != subject and entry.get("runId") == run), None)
+            if holder is not None:
+                raise StateError("run_bound", f"run {run} is already bound to {holder}")
         queued = next((item for item in state["queue"] if item["subject"] == subject), None)
         if queued is not None:
             if queued["lane"] != lane:
