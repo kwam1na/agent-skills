@@ -14,6 +14,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENVIRONMENT = ".venv"
+PYTHON_PIN = ".python-version"
+PYTHON_MISSING = (
+    "Python {version} is required for this checkout's {environment}, as {pin} says; "
+    "install it with uv python install {version} and rerun python3 scripts/bootstrap-test-environment.py."
+)
 NODE_MINIMUM = 20
 NODE_MISSING = (
     "Node.js 20 or newer, with npm, is required for the page-test lane; "
@@ -27,11 +32,45 @@ def environment_python(environment: Path) -> Path:
     return environment / "bin" / "python"
 
 
+def pinned_version(root: Path, name: str) -> str | None:
+    # Only the default environment follows the pin, so a named one can still try a second Python.
+    pin = root / PYTHON_PIN
+    if name != DEFAULT_ENVIRONMENT or not pin.is_file():
+        return None
+    return pin.read_text(encoding="utf-8").strip()
+
+
+def find_python(version: str) -> str:
+    if version == f"{sys.version_info.major}.{sys.version_info.minor}":
+        return sys.executable
+    found = shutil.which(f"python{version}")
+    if found is not None:
+        return found
+    uv = shutil.which("uv")
+    if uv is not None:
+        answer = subprocess.run([uv, "python", "find", version], capture_output=True, text=True, check=False)
+        if answer.returncode == 0 and answer.stdout.strip():
+            return answer.stdout.strip()
+    raise SystemExit(PYTHON_MISSING.format(version=version, environment=DEFAULT_ENVIRONMENT, pin=PYTHON_PIN))
+
+
+def built_on_another_python(environment: Path, version: str) -> bool:
+    settings = environment / "pyvenv.cfg"
+    if not settings.is_file():
+        return environment.exists()
+    built = re.search(r"^version(?:_info)?\s*=\s*(\d+\.\d+)", settings.read_text(encoding="utf-8"), re.MULTILINE)
+    return built is None or built.group(1) != version
+
+
 def create_environment(root: Path, name: str = DEFAULT_ENVIRONMENT) -> Path:
     root = root.resolve(strict=True)
     environment = root / name
+    version = pinned_version(root, name)
+    python = sys.executable if version is None else find_python(version)
+    # Building over another Python's environment would leave its packages behind.
+    clear = ["--clear"] if version is not None and built_on_another_python(environment, version) else []
     subprocess.run(
-        [sys.executable, "-m", "venv", str(environment)],
+        [python, "-m", "venv", *clear, str(environment)],
         cwd=root,
         check=True,
     )
@@ -85,7 +124,7 @@ def main(argv: list[str] | None = None) -> None:
         "--environment",
         type=environment_name,
         default=DEFAULT_ENVIRONMENT,
-        help="the environment's folder in the checkout, so a second Python leaves .venv alone",
+        help="the environment's folder in the checkout, built with the Python running this script rather than the pinned one",
     )
     print(bootstrap(environment=parser.parse_args(argv).environment))
 

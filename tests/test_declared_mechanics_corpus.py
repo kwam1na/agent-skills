@@ -128,7 +128,7 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "The default branch is unprotected, and CI on it informs rather than blocks",
         "the release workflow publishes only on CI's success for the exact tagged commit",
         "`runtimeVersion` does not identify runtime bytes",
-        "A green local run does not prove the declared minimum Python or another operating system",
+        "A green local run does not prove another operating system",
         "clear the local environment's variables first",
         "Never point `TMPDIR` under a checkout",
         "`scripts/cut-release.py` prints nothing on success",
