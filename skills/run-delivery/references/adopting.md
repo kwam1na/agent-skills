@@ -514,6 +514,10 @@ run_delivery.py lead-evidence published --url <address> --out <folder>
 run_delivery.py ship
 ```
 
+`lead-evidence page` keeps its `--title`, `--intro` and `--note KEY=TEXT` words in the record, in
+`evidence-notes.json`, and reuses them each time the page is rebuilt, so a later rebuild says what the first one did.
+A flag given again replaces what was kept, and `--note KEY=` with no text removes that story's note.
+
 ## 7. A worked adopter
 
 A repository on Bitbucket, with Jira as its tracker, a pipeline that reviews each pull request, a default branch,
@@ -523,6 +527,7 @@ one this repository changes from the walk-through above; everything else stays a
 | Setting | Default | This repository |
 | --- | --- | --- |
 | `base.ref`, `bases` | `main`, none | `main`, `["main", "integration-*"]` |
+| The binding's `candidate` | a script of your own | the forge adapter's `candidate`, by key |
 | The binding's `merge` | a git-only script | the forge adapter's `merge`, by branch |
 | `environment` | `{}` | the adapter's repository and token variable |
 | `forge` | `github` | `bitbucket`, with `mergeNeedsReady` |
@@ -533,15 +538,18 @@ one this repository changes from the walk-through above; everything else stays a
 | `reviewWhen` | none: lanes make the review move by hand | `pipeline-green` |
 | `authority` | `push`, `draftPullRequests` | adds `readyPullRequests` |
 
-The binding merges through the forge adapter, by branch and checked head, so no merge script of its own is needed and
-nothing pushes to `main`:
+The binding finds each story's `feature/<key>` branch and merges it through the forge adapter, by branch and checked
+head, so neither a candidate script nor a merge script of its own is needed and nothing pushes to `main`. Because it serves several bases, it passes `--destination {base}` too, so a pull request
+retargeted to another base in the forge is refused rather than merged there:
 
 ```json example outline
 {
   "base": {"remote": "origin", "ref": "main"},
   "bases": ["main", "integration-*"],
+  "candidate": ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "candidate",
+                "--key", "{candidate}"],
   "merge": ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge", "--source", "{branch}",
-            "--head", "{expectedHead}", "--strategy", "merge"],
+            "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"],
   "environment": {"FLOW_FORGE_REPOSITORY": "<workspace>/<repository>", "FLOW_FORGE_TOKEN_ENV": "BITBUCKET_TOKEN"},
   "state": {"directory": ".orchestration/state", "renderers": [],
             "forgeSnapshot": {"argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",

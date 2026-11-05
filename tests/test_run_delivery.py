@@ -4617,7 +4617,9 @@ GUIDE_NAMES = {
 # The worked adopter's binding: its bases, and a merge step that calls the forge adapter, pinned to the checked head.
 WORKED_BASES = ["main", "integration-*"]
 WORKED_MERGE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge",
-                "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge"]
+                "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"]
+WORKED_CANDIDATE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py",
+                    "candidate", "--key", "{candidate}"]
 # Every push in an example is labelled, on the line just above it, for an unprotected base.
 UNPROTECTED = "unprotected base"
 PUSH = re.compile(r"\bgit\b(?:\s+-[Cc]\s+\S+)*\s+push\b|git\(\"push\"")
@@ -4892,6 +4894,7 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
         binding = next(document for document in worked if "merge" in document)
         self.assertEqual(binding["bases"], WORKED_BASES)
         self.assertEqual(binding["merge"], WORKED_MERGE)
+        self.assertEqual(binding["candidate"], WORKED_CANDIDATE)
         self.assertEqual(set(binding["environment"]), {"FLOW_FORGE_REPOSITORY", "FLOW_FORGE_TOKEN_ENV"})
         self.assertTrue(any("tracker_publisher.py" in part for entry in binding["state"]["publishers"]
                             for part in entry["argv"]))
@@ -5109,7 +5112,7 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         record = lambda args: seen.append(self.tool.DELIVERY_ARG)
         with mock.patch.object(self.tool, "lead_init", record), mock.patch.object(self.tool, "plan_review_prepare", record), \
                 mock.patch.object(self.tool, "lead_plan", record), mock.patch.object(self.tool, "lead_assign", record), \
-                mock.patch.object(self.tool.signal, "signal"):
+                mock.patch.object(self.tool, "view", record), mock.patch.object(self.tool.signal, "signal"):
             self.tool.main(list(argv))
         return seen[0]
 
@@ -5117,7 +5120,8 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         for argv in (["--delivery", "K", "lead-init"], ["lead-init", "--delivery", "K"], ["--delivery=K", "lead-init"],
                      ["lead-init", "--delivery=K"], ["--delivery", "K", "lead-init", "--delivery", "K"],
                      ["plan-review", "prepare", "--delivery", "K"], ["lead-plan", "why", "c1", "--why", "x", "--delivery", "K"],
-                     ["lead-assign", "FX-1", "--delivery", "K", "--lane", "l", "--title", "t"]):
+                     ["lead-assign", "FX-1", "--delivery", "K", "--lane", "l", "--title", "t"],
+                     ["view", "--delivery", "K"], ["--delivery", "K", "view"], ["view", "--archive", "a", "--delivery=K"]):
             with self.subTest(argv=argv):
                 self.assertEqual(self.delivery_of(*argv), "K")
         self.assertIsNone(self.delivery_of("lead-init"))

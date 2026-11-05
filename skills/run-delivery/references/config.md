@@ -174,7 +174,7 @@ checks may need no file at all.
   },
   "ship": {                                   // optional
     "from": "origin/main",                    // the product branch's base
-    "toolingCommit": "abc1234",               // the delivery-only commit; what follows it under `paths` ships
+    "toolingCommit": "abc1234",               // the last delivery-only commit: its files never ship, see below
     "paths": ["src/"],
     "branch": "ship/{delivery}",
     "checkout": ".orchestration/lanes/{branch}", // default: beside the lane checkouts
@@ -182,6 +182,12 @@ checks may need no file at all.
   }
 }
 ```
+
+`ship` builds the product-only branch from the delivery's changes under `paths` since the base and `ship.from` last
+met, so changes the base merged from the default branch aren't shipped again. The tooling never ships, whenever it
+changed: every file the tooling commits touched (from that meeting point to `toolingCommit`), `.agents`,
+`.agent-skills` and `gateTooling` are left out. A file the tooling commits touched that changed again after
+`toolingCommit` is left out too, and `ship` names each one, since a product change there doesn't ship.
 
 `ship` runs the prepare steps and the gates in the ship checkout, with `{base}` as `ship.from`. The ship tree carries
 only the ship paths, so a gate script that lives with the delivery's tooling isn't there. `ship` lends it for the run:
@@ -223,13 +229,21 @@ The command is called with one of:
   pending.
 - `merge --url URL --strategy merge|squash [--head SHA]` merges the PR through the forge and prints `{"url", "state":
   "merged"}`, refusing a PR whose head moved from `--head`.
-- `merge --source BRANCH --head SHA --strategy merge|squash` merges the branch's one open PR, at exactly `--head`. It
-  refuses a branch with no open PR or with more than one, and a PR whose head isn't `--head`. A binding's `merge` step,
-  which knows the branch and the checked head but not the PR, calls it directly:
-  `["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge", "--source",
-  "{branch}", "--head", "{expectedHead}", "--strategy", "merge"]`, with `FLOW_FORGE_REPOSITORY` and
+- `merge --source BRANCH --head SHA --strategy merge|squash [--destination D]` merges the branch's one open PR, at
+  exactly `--head`. It refuses a branch with no open PR or with more than one, and a PR whose head isn't `--head`. With
+  `--destination`, it also refuses a PR that doesn't target `D`, naming the base it does target. `--destination` is
+  optional, but a binding that serves several bases should pass it as `{base}`, or a PR retargeted in the forge merges
+  into another base. A binding's `merge` step, which knows the branch and the checked head but not the PR, calls it
+  directly: `["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge",
+  "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"]`, with `FLOW_FORGE_REPOSITORY` and
   `FLOW_FORGE_TOKEN_ENV` in the binding's `environment`. A repository that merges through its forge needs no merge
   script of its own.
+- `candidate --key KEY [--prefix P]` prints `{"branch", "head"}` for the branch named `P` + `KEY` (`P` is `feature/`
+  unless given) and its tip, a full commit hash, read from the forge. It refuses when no branch has that name, and when
+  several answer to it, differing only in case. A binding's `candidate` step can call it directly, so a repository
+  whose story branches follow the convention needs no candidate script of its own:
+  `["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "candidate", "--key",
+  "{candidate}"]`.
 
 `FLOW_FORGE_REPOSITORY` and `FLOW_FORGE_TOKEN_ENV` carry the `forge` settings. Both shipped adapters answer every
 command. With `forge.mergeNeedsReady` set, `doctor` reports a delivery without the `readyPullRequests` grant, and

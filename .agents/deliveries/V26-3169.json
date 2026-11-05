@@ -37,10 +37,10 @@
     "lane-2": {
       "owns": [
         "skills/run-delivery/scripts/run_delivery.py",
-        "tests/test_run_delivery.py",
         "docs/solutions/best-practices/stopping-a-recorded-pid-2026-11-03.md",
         "docs/solutions/best-practices/prove-each-gate-condition-alone-2026-11-03.md",
-        "tests/test_run_delivery_supervisor.py"
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_run_delivery.py"
       ]
     },
     "lane-3": {
@@ -61,7 +61,12 @@
         "skills/run-delivery/references/adopting.md",
         "skills/run-delivery/SKILL.md",
         "tests/test_forge_adapters.py",
-        "skills/run-delivery/references/config.md"
+        "skills/run-delivery/references/config.md",
+        "catalog.json",
+        "profiles/*",
+        "skills/run-delivery/templates/round-brief.md",
+        "skills/obtain-review/references/round-brief-template.md",
+        "tests/test_round_brief_template_corpus.py"
       ]
     }
   },
@@ -277,7 +282,7 @@
     },
     "V26-3085": {
       "title": "Keep the two round briefs from drifting apart",
-      "lane": "lane-2",
+      "lane": "lane-3",
       "inApp": "none",
       "criteria": [
         {
@@ -437,6 +442,28 @@
         {
           "id": "v26-3181-done",
           "text": "Two archives of one delivery in the same second no longer collide, and the supervisor posture test passes with two closes inside one second"
+        }
+      ]
+    },
+    "V26-3191": {
+      "title": "Retry run-delivery's lead writes when the record moved under them",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3191-done",
+          "text": "run-delivery's lead commands re-read and recompute on version_stale, a bounded number of times, and a forced write between read and patch no longer fails them"
+        }
+      ]
+    },
+    "V26-3178": {
+      "title": "Refuse a hand-off whose --run another subject already holds",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3178-done",
+          "text": "handoff --run refuses with run_bound when another planned or queued subject holds that run, and the bound subject's own hand-off still works"
         }
       ]
     }
