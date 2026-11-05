@@ -465,7 +465,8 @@
     {
       "id": "approval-2",
       "text": "Filing the follow-ups: Athena's side of V26-2986 and V26-2807, this repository adopting V26-3094's key, and any the Bounded flake work decision produces.",
-      "state": "waiting"
+      "state": "done",
+      "who": "the operator"
     },
     {
       "id": "approval-3",
