@@ -1807,6 +1807,45 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                     orphan.kill()
                 orphan.wait()
 
+    def test_the_port_holder_is_named_by_its_listening_pid(self) -> None:
+        with socket.socket() as listener:  # a real listener this case owns, on an ephemeral port
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            holders = self.call("port_holders", port)
+            self.assertEqual([pid for pid, _ in holders], [os.getpid()], holders)
+            self.assertTrue(holders[0][1], "the holder's command line is empty")
+            with tempfile.TemporaryDirectory() as empty:  # no lsof or ps on PATH: nothing named, nothing raised
+                self.assertEqual(call(self.tool, "port_holders", port, cwd=Path(empty),
+                                      env={**clean_environment(), "PATH": empty}), [])
+        self.assertEqual(self.call("port_holders", port), [], "a closed port still named a holder")
+
+    def test_a_check_refused_by_a_busy_port_names_the_listener_and_how_to_release_it(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        fx.flow("lead-init", cwd=fx.main)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        fx.flow("build", "FX-2", cwd=wt)
+        # A build served for someone to look at, on the in-app port but outside the lease.
+        listener = subprocess.Popen([sys.executable, "-c", "import socket,sys,time; s=socket.socket(); "
+                                     "s.bind(('127.0.0.1', int(sys.argv[1]))); s.listen(); print('listening', flush=True); "
+                                     "time.sleep(60)", str(fx.port)], stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(listener.stdout.readline().strip(), "listening")
+            code, out = fx.flow("app-check", "FX-2", "page", "--mode", "loaded", "--path", "/one", "--eval", "true", cwd=wt)
+            self.assertEqual(code, 2, out)
+            self.assertIn(f"something else is listening on {fx.port}, outside the in-app lease: pid {listener.pid} (", out)
+            self.assertIn(f"stop it (kill {listener.pid}) and run again", out)
+            self.assertIsNone(listener.poll(), "app-check stopped a process it didn't start")
+            self.assertFalse((wt / ".orchestration/review/FX-2/app-checks/page.json").exists(), "a refused check became evidence")
+        finally:
+            if listener.poll() is None:  # started here, stopped by the pid recorded here
+                listener.kill()
+            listener.wait()
+            listener.stdout.close()
+
     def test_an_interrupted_check_releases_the_lease_and_its_server(self) -> None:
         fx = self.fixture()
         flow_run = fx.flow
@@ -4122,6 +4161,25 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             holder.kill()
             holder.wait()
             holder.stdout.close()
+
+    def test_a_busy_port_outside_the_lease_names_its_listener_in_the_adapter_run(self) -> None:
+        fx = self.fixture()
+        listener = subprocess.Popen([sys.executable, "-c", "import socket,sys,time; s=socket.socket(); "
+                                     "s.bind(('127.0.0.1', int(sys.argv[1]))); s.listen(); print('listening', flush=True); "
+                                     "time.sleep(60)", str(fx.port)], stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(listener.stdout.readline().strip(), "listening")
+            out = self.doctor(fx, "--run-adapters")
+            status, detail = doctor_lines(out)["in-app adapter contract"]
+            self.assertEqual(status, "wrong", out)
+            self.assertIn(f"outside the in-app lease: pid {listener.pid} (", detail)
+            self.assertIn(f"kill {listener.pid}", detail)
+            self.assertIsNone(listener.poll(), "doctor stopped a process it didn't start")
+        finally:
+            if listener.poll() is None:  # started here, stopped by the pid recorded here
+                listener.kill()
+            listener.wait()
+            listener.stdout.close()
 
     def test_by_default_doctor_leaves_nothing_behind(self) -> None:
         fx = self.fixture()
