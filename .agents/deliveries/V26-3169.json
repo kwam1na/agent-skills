@@ -55,7 +55,11 @@
         "docs/solutions/best-practices/stopping-a-recorded-pid-2026-11-03.md",
         "docs/solutions/design-patterns/show-a-derived-list-without-storing-it-2026-11-03.md",
         "docs/solutions/best-practices/delivery-posture-close-out-readers-share-bytes-2026-11-04.md",
-        "docs/solutions/best-practices/delivery-posture-harness-read-from-the-base-2026-11-04.md"
+        "docs/solutions/best-practices/delivery-posture-harness-read-from-the-base-2026-11-04.md",
+        "skills/run-delivery/adapters/*",
+        "skills/run-delivery/references/adopting.md",
+        "skills/run-delivery/SKILL.md",
+        "tests/test_forge_adapters.py"
       ]
     }
   },
