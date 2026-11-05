@@ -174,7 +174,7 @@
     },
     "V26-3103": {
       "title": "Make capture-review say what it refused, and keep cards across a fixture commit",
-      "lane": "lane-2",
+      "lane": "lane-1",
       "inApp": "none",
       "criteria": [
         {
