@@ -392,6 +392,14 @@
               "enum": [
                 "runner"
               ]
+            },
+            "waitingBy": {
+              "description": "Kept by the tool alone: which writer set the row's waitingOn, present while waitingOn is set. Only a wait the queue (runner) set ends when the lane next writes its focus without setting one, or at a new hand-off or put-back; a wait the lane or the lead set stays until they change it. A row written before the tool kept it reads as the queue's when focusBy is runner.",
+              "enum": [
+                "runner",
+                "lane",
+                "lead"
+              ]
             }
           }
         }
@@ -666,7 +674,7 @@
               "$ref": "#/$defs/name"
             },
             "runId": {
-              "description": "The run that is building the work, as in the queue. Optional; the lead's patch writes it and reconcile keeps it.",
+              "description": "The run that is building the work, as in the queue. Optional; the lane binds it at start with bind-run, which never replaces a bound run nor binds one another subject holds, the lead's patch may write it, reconcile keeps it, and the hand-off carries it unless it names another.",
               "$ref": "#/$defs/name"
             },
             "trackerStarted": {

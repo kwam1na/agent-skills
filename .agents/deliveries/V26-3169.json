@@ -20,13 +20,20 @@
         "skills/orchestrate-work/SKILL.md",
         "tests/test_orchestration_state.py",
         "tests/test_registry.py",
-        "provenance.lock.json"
+        "skills/delivery-views/*",
+        "tests/test_delivery_views*",
+        "tests/delivery_views_page/*",
+        "tests/delivery_views_fixtures.py",
+        "skills/run-delivery/templates/lane-brief.md",
+        "agent_skills/generations.py",
+        "tests/test_lifecycle.py"
       ]
     },
     "lane-2": {
       "owns": [
         "skills/run-delivery/scripts/run_delivery.py",
-        "tests/test_run_delivery.py"
+        "tests/test_run_delivery.py",
+        "provenance.lock.json"
       ]
     },
     "lane-3": {
@@ -299,7 +306,7 @@
     },
     "V26-3100": {
       "title": "Keep the suite's temp churn from creeping back",
-      "lane": "lane-3",
+      "lane": "lane-1",
       "inApp": "none",
       "criteria": [
         {
@@ -393,6 +400,17 @@
         {
           "id": "v26-3105-done",
           "text": "This delivery's real ready, merge, tracker snapshot, forge snapshot and online doctor results are recorded on the ticket, and both small gaps are fixed or declined"
+        }
+      ]
+    },
+    "V26-3171": {
+      "title": "Check only the timed-out group's own pids in run-delivery's timeout test",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3171-done",
+          "text": "The timeout test asserts on the pids of the group it started, passes with an unrelated sleep 30 alive, and still fails when the timed-out group's own process survives"
         }
       ]
     }

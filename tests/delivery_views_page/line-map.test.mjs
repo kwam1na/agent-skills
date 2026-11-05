@@ -1001,3 +1001,23 @@ test("prints the page for a document on stdin, and nothing for anything else", a
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("shows a planned story's bound run's rounds before its hand-off", async () => {
+  // The record a lane leaves once it binds its run with bind-run: the planned element carries the run, nothing is queued.
+  const planned = (runId) => ({ state: { lanes: [], queue: [], planned: [{ subject: "PAY-2370", title: "Work in flight", lane: "storefront",
+    stage: "review", ...(runId ? { runId } : {}) }] }, journal: [] });
+  const round = { round: 1, at: "2026-10-22T04:40:00Z", outcome: "changes", findings: { P0: 0, P1: 1, P2: 0, P3: 0 },
+    raised: [{ id: "F1", lens: "lens.adversarial-testing", severity: "P1", summary: "A row reaches the wait by the wrong path", state: "open",
+      deferredIssue: null }], settled: [] };
+  const summary = { runId: "run-9", ticket: null, open: true, status: null, startedAt: null, lastAt: null, durationSeconds: null, rounds: 1,
+    findings: null, roundDetail: [round] };
+  const [bound] = await open(planned("run-9"), {}, render(planned("run-9"), { "run-9": summary }));
+  expect(bound.app.querySelector("#detail .d-run-none")).toBeNull();
+  expect(bound.app.querySelector("#detail .run-card .run-card-head b")?.textContent).toBe("Round 1");
+  expect(bound.app.querySelector("#detail .run-finding-text")?.textContent).toBe("A row reaches the wait by the wrong path.");
+  // Without a bound run the same stop has nothing to show until the lane reduces a round.
+  const [unbound] = await open(planned(null), {}, render(planned(null), { "run-9": summary }));
+  expect(unbound.app.querySelector("#detail .run-card")).toBeNull();
+  expect(unbound.app.querySelector("#detail .d-run-none")?.textContent)
+    .toBe("No review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off.");
+});
