@@ -2,7 +2,7 @@
   "schemaVersion": "delivery-runtime/1",
   "runtimeVersion": "0.7.7",
   "nodeMinimum": "22.6.0",
-  "workflowContentSha256": "10301dcc0de13bb2eaa376d628713a01fa56146931d1e714e84bcda38e5d39a2",
+  "workflowContentSha256": "ac252b29b5bbe534e71a506a8927fe76b461d0c12a37ff751421e1953de981c7",
   "files": [
     {
       "path": "LICENSE",

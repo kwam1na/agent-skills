@@ -4074,11 +4074,18 @@ def lead_accept(args) -> None:
     if not item:
         raise Stop(f"{key} is not in the queue; the lane has not handed it off")
     problems, decisions = [], []
-    if not item.get("pending"):
+    # Work merged outside the queue skipped the lead's acceptance; its decisions can still be recorded, once.
+    merged = item["stage"] == "merged"
+    if merged and item.get("reportedRounds") is None:
+        raise Stop(f"{key} merged with no hand-off, so there are no claims to check: journal your decision on it")
+    if merged:
+        if any(entry["head"] == item["head"] for entry in read_log("acceptance", key)):
+            problems.append("the hand-off was already accepted")
+    elif not item.get("pending"):
         problems.append("the hand-off is not waiting for acceptance")
     head = item["head"]
     branch = c.branch(key)
-    if remote_head(branch) != head:
+    if not merged and remote_head(branch) != head:
         problems.append(f"{c.remote}/{branch} is not at the handed head {head[:10]}")
     rounds = [e for e in doc["journal"] if e.get("kind") == "review.round" and e.get("subject") == key]
     numbers = [e["review"]["round"] for e in rounds]
@@ -4093,7 +4100,7 @@ def lead_accept(args) -> None:
     if not evidence or evidence[-1]["reviewArtifact"]["candidateRef"] != head:
         problems.append("the latest captured review evidence is not for the handed head")
     pr = forge("get", "--url", item.get("changeRequest") or "")
-    if pr.get("state") != "open":
+    if pr.get("state") != ("merged" if merged else "open"):
         problems.append(f"the PR is {pr.get('state')}")
     if not same_commit(pr.get("head"), head):
         problems.append(f"the PR is at {str(pr.get('head'))[:10]}, not the handed head")
@@ -4116,7 +4123,8 @@ def lead_accept(args) -> None:
             decisions.append(f"PR review by {review['author']} at {review['at'][:16]} triaged: {recorded['triage']}")
     git("fetch", "-q", c.remote, c.base_branch)
     base = git("merge-base", c.base_ref, head)
-    changed = git("diff", "--name-only", f"{base}..{head}").splitlines()
+    # Once merged, the base holds the head or a squash of it, so a diff against it no longer says what the work changed.
+    changed = [] if merged else git("diff", "--name-only", f"{base}..{head}").splitlines()
     owns = c.lanes[c.lane_of(key)]["owns"]
     outside = [f for f in changed if not any(fnmatch.fnmatch(f, g) for g in owns)]
     if outside:
@@ -4161,7 +4169,7 @@ def lead_accept(args) -> None:
     else:
         problems.append(f"can't read the lane's gate, in-app and review evidence: no checkout at {lane_root}")
     ready = bool(authority().get("readyPullRequests"))
-    if ready and not problems and pr.get("draft") is not False:
+    if ready and not merged and not problems and pr.get("draft") is not False:
         # Before the hand-off is released, so the runner never takes a draft the merge step would refuse.
         try:
             forge("ready", "--url", item.get("changeRequest") or "")
@@ -4174,17 +4182,22 @@ def lead_accept(args) -> None:
         for p in problems:
             print(f"  - {p}")
         sys.exit(1)
-    state_tool("handoff", "--accept", key)
+    if not merged:
+        state_tool("handoff", "--accept", key)
     # What the plan's producer proofs are judged by: the accepted head and the in-app items accepted as blocked.
     append_log("acceptance", key, {"head": head, "ready": ready, "blocked": {label: reason for label, reason in
                                                                            blocked.items() if label in accepted_blocked}})
     state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
-               f"Hand-off checked as a claim: {c.remote}/{branch} at {head[:10]}, its PR open at that head into "
-               f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, review evidence "
-               f"captured at that head, files within {c.lane_of(key)}'s, gates and in-app evidence current."
+               (f"Hand-off checked as a claim after its merge: its PR merged at {head[:10]} into {c.base_branch}, "
+                f"{len(set(numbers))} round(s) journaled, last approved by every lens, review evidence captured at "
+                f"that head, gates and in-app evidence current; its files could not be checked against "
+                f"{c.lane_of(key)}'s." if merged else
+                f"Hand-off checked as a claim: {c.remote}/{branch} at {head[:10]}, its PR open at that head into "
+                f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, review evidence "
+                f"captured at that head, files within {c.lane_of(key)}'s, gates and in-app evidence current.")
                + (" " + "; ".join(decisions) + "." if decisions else ""))
     rebuild_plan(c)
-    print(f"accepted {key}; the runner may take it")
+    print(f"accepted {key} after its merge" if merged else f"accepted {key}; the runner may take it")
     if needs_video(key):
         print("  once it merges: lead-evidence page, republish the page (same address), lead-evidence published --url, "
               "and link its section from the story in the tracker")
@@ -4276,7 +4289,14 @@ def lead_cleanup(args) -> None:
     c = cfg()
     keys = [c.require(k) for k in args.keys] if args.keys else list(c.stories)
     failed = False
+    doc = load_state()
     for key in keys:
+        # As the supervisor's cleanup does: lead-accept reads the checkout, and cleaning up journals a decision of its own.
+        item = next((entry for entry in doc["state"]["queue"] if entry["subject"] == key), None)
+        if item and unaccepted_merge(doc, item):
+            print(f"{key}: waits for the lead's decision on its merge")
+            failed |= bool(args.keys)
+            continue
         status, done, left = clean_story(key)
         if status == "nothing":
             print(f"{key}: nothing to clean")
@@ -4402,9 +4422,19 @@ def reconcile_once() -> list[str]:
         done = state_tool("reconcile", "--snapshot", str(snapshot), "--binding", str(binding), check=False)
         summary = re.search(r'"summary":\s*"([^"]*)"', done.stdout or "")
         lines.append(f"{name}: " + (summary.group(1) if summary else (done.stderr or done.stdout).strip()[-200:]))
+        lines += [f"{name}: {line}" for line in reconcile_report_lines(done.stdout)]
     if plan_declared(c) or plan_log_path(c).exists():
         lines.append(rebuild_plan_quietly(c))
     return lines
+
+
+def reconcile_report_lines(output: str | None) -> list[str]:
+    """What a reconcile reported, from its output; output that isn't its answer reports nothing."""
+    try:
+        reports = json.loads(output or "").get("reports", [])
+    except (ValueError, AttributeError):
+        return []
+    return [f"{report.get('subject') or 'the record'}: {report['note']}" for report in reports]
 
 
 def lead_reconcile(args) -> None:
@@ -4507,6 +4537,8 @@ CHILD_FLAPS, CHILD_FLAP_SECONDS = 3, 600
 SUPERVISOR_WAIT_SECONDS = 120
 # The runner's own blocker, which the hold clearing or base.repaired resolves (merge_queue.py writes it).
 RUNNER_HELD = "Serving is held:"
+# How the state tool's journal entry ends for a merge recovered before the lead accepted it.
+MERGE_SKIPPED_ACCEPTANCE = " before the lead accepted it"
 LANE_DONE = ("idle", "done")
 
 
@@ -4687,6 +4719,19 @@ def lane_moved_off(doc: dict, item: dict, words: dict | None = None) -> bool:
     return bool(later)
 
 
+def unaccepted_merge(doc: dict, item: dict) -> dict | None:
+    """The merge entry of a story recovered from the forge before the lead accepted it, while no decision follows it."""
+    subject = item["subject"]
+    if item["stage"] != "merged":
+        return None
+    merges = [e for e in doc["journal"] if e["kind"] == "candidate.merged" and e.get("subject") == subject]
+    if not merges or not merges[-1].get("summary", "").endswith(MERGE_SKIPPED_ACCEPTANCE):
+        return None
+    if any(e["kind"] == "decision.recorded" and e.get("subject") == subject and e["id"] > merges[-1]["id"] for e in doc["journal"]):
+        return None
+    return None if any(entry.get("head") == item["head"] for entry in read_log("acceptance", subject)) else merges[-1]
+
+
 def cleanup_merged(c, doc: dict, words: dict | None = None) -> list[str]:
     """What lead-cleanup does, for each merged story whose lane has moved off it. A story already cleaned up, by hand
     or by an earlier pass, has nothing left to clean and journals nothing."""
@@ -4696,6 +4741,10 @@ def cleanup_merged(c, doc: dict, words: dict | None = None) -> list[str]:
             continue
         if not lane_moved_off(doc, item, words):
             said.append(f"{item['subject']}: waits for {item['lane']} to move off it")
+            continue
+        # lead-accept reads the lane's evidence from its checkout, so the checkout stays until the lead has decided.
+        if unaccepted_merge(doc, item):
+            said.append(f"{item['subject']}: waits for the lead's decision on its merge")
             continue
         status, done, left = clean_story(item["subject"])
         if status not in ("nothing", "waiting"):
@@ -4780,8 +4829,11 @@ def render_views(c, only: str | None = None) -> str:
     config = binding_state(c)
     if config is None:
         return "no binding: nothing to render"
-    if only is not None:
-        config = {**config, "renderers" if only == "publishers" else "publishers": []}
+    if only == "publishers":
+        # `liveHome` names a renderer, and this half declares none; the renderers half still answers to it.
+        config = {**{key: value for key, value in config.items() if key != "liveHome"}, "renderers": []}
+    elif only == "renderers":
+        config = {**config, "publishers": []}
     script = c.release / "skills/orchestrate-work/scripts/render_state.py"
     done = run([sys.executable, "-B", str(script), "--dir", str(c.state), "--state-config", json.dumps(config)],
                cwd=c.root, check=False, timeout=300)
@@ -4869,6 +4921,13 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
         elif lane.get("waitingOn") == "lead":
             items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane no longer waiting on you",
                           "text": f"{lane['id']} waits on you: {lane.get('focus', '')}"})
+    for item in doc["state"]["queue"]:
+        merge = unaccepted_merge(doc, item)
+        if merge:
+            items.append({"holding": True, "source": f"journal entry {merge['id']} (candidate.merged)",
+                          "text": f"{item['subject']} merged before you accepted it, and its checkout is kept until you decide",
+                          "clears": f"{flow_command()} lead-accept {item['subject']}, or journalling decision.recorded "
+                          "for it if lead-accept can't take it"})
     resolutions = {entry.get("journal") for entry in read_log("resolutions", c.delivery)}
     for entry in doc["journal"]:
         if entry["kind"] == "blocker.recorded" and not blocker_resolved(c, doc, entry, resolutions):
