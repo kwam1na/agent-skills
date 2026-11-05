@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import copy
+import hashlib
+import io
 import json
 import os
 import re
 import shutil
 import stat
 import tempfile
+import zipfile
+from collections import OrderedDict
 from pathlib import Path
 from typing import Callable
 
 from .fs import FileSafetyError, atomic_write, checked_files, contained_path
 from .receipt import DIGEST, OWNERSHIP, validate_version
-from .release import VerifiedRelease, verify_release
+from .release import MAX_METADATA_BYTES, VerifiedRelease, _archive_bytes, _bounded_bytes, verify_release
 from .validate import canonical_json
 
 
@@ -49,16 +54,54 @@ def _version_from_release(verified: VerifiedRelease, extracted: Path) -> dict:
     return version
 
 
-def inspect_release(archive: Path, metadata: Path) -> dict:
+# Inspections this process has already verified, keyed on the sha256 of the archive bytes and of the metadata bytes
+# the inspection read. Only what a verification that passed computed is kept, in memory: never a path, a time or an
+# extraction, so nothing on disk is trusted on a later inspection.
+_INSPECTED: OrderedDict[tuple[str, str], tuple[dict, bytes]] = OrderedDict()
+INSPECTED_LIMIT = 16
+
+
+def _inspected(archive: Path, metadata: Path) -> tuple[dict, bytes]:
+    """The version and catalog bytes of a verified release, extracted once per content in this process."""
     try:
-        with tempfile.TemporaryDirectory() as temporary:
-            extracted = Path(temporary) / "release"
-            verified = verify_release(archive, metadata, extract_to=extracted)
-            return _version_from_release(verified, extracted)
+        archive_bytes = _archive_bytes(archive)
+        metadata_bytes = _bounded_bytes(metadata, MAX_METADATA_BYTES, "release.metadata_limit")
     except FileNotFoundError as error:
         raise GenerationError(
             "source-unavailable: release archive or metadata is unavailable"
         ) from error
+    key = (hashlib.sha256(archive_bytes).hexdigest(), hashlib.sha256(metadata_bytes).hexdigest())
+    if key in _INSPECTED:
+        _INSPECTED.move_to_end(key)
+        version, catalog = _INSPECTED[key]
+        return copy.deepcopy(version), catalog
+    try:
+        with tempfile.TemporaryDirectory() as temporary:
+            extracted = Path(temporary) / "release"
+            verified = verify_release(archive, metadata, extract_to=extracted)
+            if (verified.archive_sha256, verified.metadata_sha256) != key:
+                raise GenerationError("source-changed: the release changed while it was inspected")
+            version = _version_from_release(verified, extracted)
+    except FileNotFoundError as error:
+        raise GenerationError(
+            "source-unavailable: release archive or metadata is unavailable"
+        ) from error
+    # The extraction is only trusted where it holds exactly the archive's own bytes.
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as source:
+        contents = {info.filename: source.read(info) for info in source.infolist()}
+    if {record["path"]: record["sha256"] for record in version["files"]} != {
+        path: hashlib.sha256(data).hexdigest() for path, data in contents.items()
+    }:
+        raise GenerationError("generation.invalid: the extracted release differs from its archive")
+    catalog = contents.get("catalog.json", b"")
+    _INSPECTED[key] = (copy.deepcopy(version), catalog)
+    while len(_INSPECTED) > INSPECTED_LIMIT:
+        _INSPECTED.popitem(last=False)
+    return version, catalog
+
+
+def inspect_release(archive: Path, metadata: Path) -> dict:
+    return _inspected(archive, metadata)[0]
 
 
 def inspect_adoption_release(
@@ -66,16 +109,8 @@ def inspect_adoption_release(
     metadata: Path,
     skill: str,
 ) -> dict:
-    try:
-        with tempfile.TemporaryDirectory() as temporary:
-            extracted = Path(temporary) / "release"
-            verified = verify_release(archive, metadata, extract_to=extracted)
-            version = _version_from_release(verified, extracted)
-            catalog = json.loads((extracted / "catalog.json").read_text(encoding="utf-8"))
-    except FileNotFoundError as error:
-        raise GenerationError(
-            "source-unavailable: release archive or metadata is unavailable"
-        ) from error
+    version, catalog_bytes = _inspected(archive, metadata)
+    catalog = json.loads(catalog_bytes.decode("utf-8"))
     members = {
         record["id"]: record
         for record in catalog["skills"]

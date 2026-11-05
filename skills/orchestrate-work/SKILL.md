@@ -59,14 +59,22 @@ file that is malformed or can't be read runs `fullHealth` and holds the close on
   `waitingOn` and `since`. A lane with nothing else open rests. A row that doesn't
   name the candidate stays if its lane has another assignment open, or is
   active and has spoken since its hand-off. So does a blocked lane's row while it
-  has other work open. Any later `focus` wins, and ends a `waitingOn` the queue
-  wrote unless it sets its own; a new hand-off, or the queue putting the candidate
-  back, ends the queue's words. A lead who drops a stopped candidate from the
-  queue also clears a row still saying it stopped, since no later queue write
-  will. The tool alone keeps a row's `focusAt` and
-  `focusBy`, which says the queue wrote its words. A lane writes only its own
-  lane's `focus`, `state` and `waitingOn`, its own review rounds, and its own
-  hand-off, which the tool turns into a queue element, with any suite evidence
+  has other work open. Any later `focus` wins: the lane's next write of its
+  own focus, by `focus` or by `patch` with `--patch` or `--set`, ends a
+  `waitingOn` the queue set unless it sets its own. A `waitingOn` the lane or
+  the lead set stays until they change it, even under the queue's words, and
+  a lead rewriting only the focus leaves the queue's `waitingOn` for the lane
+  to end. A new hand-off ends the queue's words and a `waitingOn` the queue
+  set. The queue putting the candidate back ends its words saying the
+  candidate stopped, and a `waitingOn` the queue set, while those words
+  stand; once anyone else rewrote them, the wait stays for the lane to end.
+  A lead who drops a stopped candidate from the queue also clears a row still
+  saying it stopped, since no later queue write will. The tool alone keeps a
+  row's `focusAt`, `focusBy`, which says the queue wrote its words, and
+  `waitingBy`, which says who set its `waitingOn`. A lane writes only its own
+  lane's `focus`, `state` and `waitingOn`, its own review rounds, the run
+  building its own planned work, and its own hand-off, which the tool turns
+  into a queue element, with any suite evidence
   it gives in `queue[i].evidence`, which only a hand-off writes. Every write goes
   through the state tool, which checks the declared writer against this
   ownership and refuses anything else with `writer_not_owned` for a lane.
@@ -127,6 +135,14 @@ Every lane works to one named profile, not a posture:
    `$review-work`'s bound; at the bound, stop and report the blocker.
 4. Run the repository's compounding check.
 5. Open a draft change request.
+
+A lane whose work a product run builds binds that run at start, with
+`delivery_state.py bind-run --lane <lane> --subject <subject> --run <id>`, so
+the views show the run's rounds while the work is still planned. It binds only
+its own lane's planned element, never replaces a bound run (binding the same
+one again changes nothing), and is refused with `run_bound` for a run another
+subject holds; another lane's or a queued element is refused with
+`writer_not_owned`. The hand-off keeps the bound run unless it names another.
 
 The lane hands off the candidate reference, the reviewed head, the review
 rounds, the validation, the run id or `none`, every declared lead input the
@@ -462,10 +478,12 @@ run the sync loop in this order:
    - Planned work at `planned` whose ticket the tracker shows `started` moves
      to `building`, so a lane starting its ticket moves its stop with no lead
      step. The first time reconcile sees a planned item's ticket `started`, it
-     sets the item's `trackerStarted`. Work at `building` or in review whose
-     ticket was started and that the tracker shows back in `backlog` is
-     reported for the lead, never moved back. Work a draft change request
-     moved while its ticket was never started is not reported.
+     sets the item's `trackerStarted`, which a hand-off carries onto the
+     queue element and a rejected hand-off hands back. Work at `building` or
+     in review whose ticket was started and that the tracker shows back in
+     `backlog` is reported for the lead, never moved back. Work a draft
+     change request moved while its ticket was never started is not
+     reported.
    - A change request is linked to its queue or planned item. A draft one
      moves planned work at `planned` to `building`, so a delivery with no
      tracker snapshot sees the stop move once the lane's draft opens; an open

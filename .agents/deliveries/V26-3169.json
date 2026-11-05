@@ -19,13 +19,21 @@
         "skills/orchestrate-work/references/schemas.json",
         "skills/orchestrate-work/SKILL.md",
         "tests/test_orchestration_state.py",
-        "tests/test_registry.py"
+        "tests/test_registry.py",
+        "skills/delivery-views/*",
+        "tests/test_delivery_views*",
+        "tests/delivery_views_page/*",
+        "tests/delivery_views_fixtures.py",
+        "skills/run-delivery/templates/lane-brief.md",
+        "agent_skills/generations.py",
+        "tests/test_lifecycle.py"
       ]
     },
     "lane-2": {
       "owns": [
         "skills/run-delivery/scripts/run_delivery.py",
-        "tests/test_run_delivery.py"
+        "tests/test_run_delivery.py",
+        "provenance.lock.json"
       ]
     },
     "lane-3": {
@@ -62,17 +70,6 @@
         {
           "id": "v26-3099-done",
           "text": "The queue's waitingOn ends by who set it: a lane's --set /focus counts as speaking, and each listed case has a test"
-        }
-      ]
-    },
-    "V26-3086": {
-      "title": "Keep run-delivery tests' cached release alive across test modules",
-      "lane": "lane-2",
-      "inApp": "none",
-      "criteria": [
-        {
-          "id": "v26-3086-done",
-          "text": "The two run-delivery test modules pass in one process in either order, and the cached build is still removed"
         }
       ]
     },
@@ -177,7 +174,7 @@
     },
     "V26-3103": {
       "title": "Make capture-review say what it refused, and keep cards across a fixture commit",
-      "lane": "lane-2",
+      "lane": "lane-1",
       "inApp": "none",
       "criteria": [
         {
@@ -309,7 +306,7 @@
     },
     "V26-3100": {
       "title": "Keep the suite's temp churn from creeping back",
-      "lane": "lane-3",
+      "lane": "lane-1",
       "inApp": "none",
       "criteria": [
         {
@@ -405,6 +402,17 @@
           "text": "This delivery's real ready, merge, tracker snapshot, forge snapshot and online doctor results are recorded on the ticket, and both small gaps are fixed or declined"
         }
       ]
+    },
+    "V26-3171": {
+      "title": "Check only the timed-out group's own pids in run-delivery's timeout test",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3171-done",
+          "text": "The timeout test asserts on the pids of the group it started, passes with an unrelated sleep 30 alive, and still fails when the timed-out group's own process survives"
+        }
+      ]
     }
   },
   "finish": [
@@ -459,12 +467,14 @@
     {
       "id": "approval-1",
       "text": "`LINEAR_API_KEY` and `GITHUB_TOKEN` exported in the lead's shell, for the views' snapshots throughout and V26-3105's online `doctor`.",
-      "state": "waiting"
+      "state": "done",
+      "who": "the operator"
     },
     {
       "id": "approval-2",
       "text": "Filing the follow-ups: Athena's side of V26-2986 and V26-2807, this repository adopting V26-3094's key, and any the Bounded flake work decision produces.",
-      "state": "waiting"
+      "state": "done",
+      "who": "the operator"
     },
     {
       "id": "approval-3",

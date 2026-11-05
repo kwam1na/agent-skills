@@ -215,6 +215,18 @@ else:
     print(json.dumps({**pr, "url": args.url, "head": pr.get("head") or head(pr["source"])}))
 '''
 
+# A real listener: argv is the port, a mark that names it in its command line, and "reuse" to share the port.
+LISTENER = r'''
+import socket, sys, time
+s = socket.socket()
+if sys.argv[3] == "reuse":
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+s.bind(("127.0.0.1", int(sys.argv[1])))
+s.listen()
+print("listening", flush=True)
+time.sleep(60)
+'''
+
 FAKE_CHECK = r'''
 import datetime, json, sys, time, urllib.request
 spec = json.load(open(sys.argv[1])); port = sys.argv[2]
@@ -373,7 +385,23 @@ class Fixture:
 
     def close(self):
         stop_supervisors(self.tmp)
+        self.stop_in_app()
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def stop_in_app(self) -> None:
+        """Stop what a killed in-app holder left running. Its lease still names the groups it started, and taking the
+        lease, as lead-close does, has the tool stop them. A lease released cleanly names none, so this costs a run only
+        after a kill. The wait is defensive: the tool only signals the groups, and the folder they serve is removed next.
+        The fixture's own serve and check exit on SIGTERM well inside the tool's one-second port wait, so no case pins it."""
+        lock = self.tmp / "app.lock"
+        groups = [int(g) for g in re.findall(r"pgid (\d+)", lock.read_text())] if lock.exists() else []
+        if not groups:
+            return
+        with contextlib.suppress(Stopped):  # still held: its live holder stops its own groups
+            self.call("Lease", lock, self.port, "fixture-close", 0, then="close", cwd=Path(tempfile.gettempdir()))
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and any(group_alive(g) for g in groups):
+            time.sleep(0.1)
 
 
 def stop_supervisors(root: Path) -> None:
@@ -400,6 +428,26 @@ def stop_supervisors(root: Path) -> None:
         if held or any(in_group(child) for child in recorded.get("children") or []):
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)
+
+
+def group_alive(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # the group exists, but isn't ours to signal
+        return True
+
+
+def process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # the pid exists, but isn't ours to signal
+        return True
 
 
 def report(**over):
@@ -1275,6 +1323,65 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         code, out = flow_run("lead-evidence", "status", cwd=wt)
         expect(code == 1 and "aren't on the published page" in out, f"a new clip didn't make the page stale: {out}")
 
+    def test_the_evidence_pages_notes_are_recorded_so_a_rebuild_keeps_them(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        record = fx.tmp / "record"
+        page, again = fx.tmp / "page", fx.tmp / "page-again"
+        code, out = fx.flow("lead-evidence", "page", "FX-2", "FX-3", "--out", page, "--title", "FX-1 proof",
+                            "--intro", "What each story shows.", "--note", "FX-2=Covered by its hold check",
+                            "--note", "FX-3=Nothing visible changes: the copy is server-side", cwd=m)
+        self.assertEqual(code, 0, out)
+        first = (page / "index.html").read_text()
+        for text in ("FX-1 proof", "What each story shows.", "Covered by its hold check", "Nothing visible changes: the copy is server-side"):
+            self.assertIn(text, first)
+        kept = record.parent / "evidence-notes.json"
+        before = kept.read_bytes()
+        # After a compaction the lead has none of it in mind: the same page, rebuilt from the record alone.
+        code, out = fx.flow("lead-evidence", "page", "FX-2", "FX-3", "--out", again, cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertEqual((again / "index.html").read_text(), first, "a rebuild without the notes lost some")
+        self.assertIn("reused the recorded note(s) for FX-2, FX-3", out)
+        self.assertNotIn("recorded the page's words", out)
+        self.assertEqual(kept.read_bytes(), before, "a rebuild that changed nothing rewrote the kept words")
+        # A new note replaces its story's, and the other story's kept note stands.
+        code, out = fx.flow("lead-evidence", "page", "FX-2", "FX-3", "--out", again, "--note", "FX-3=Server-side only", cwd=m)
+        self.assertEqual(code, 0, out)
+        html = (again / "index.html").read_text()
+        self.assertIn("Server-side only", html)
+        self.assertNotIn("the copy is server-side", html)
+        self.assertIn("Covered by its hold check", html, "a note for one story dropped another story's kept note")
+        # An empty note removes its story's, and the rest stands.
+        code, out = fx.flow("lead-evidence", "page", "FX-2", "FX-3", "--out", again, "--note", "FX-2=", cwd=m)
+        self.assertEqual(code, 0, out)
+        html = (again / "index.html").read_text()
+        self.assertNotIn("Covered by its hold check", html)
+        self.assertIn("No recording: this story has no visible loading or failure state to show.", html)
+        self.assertIn("Server-side only", html, "removing one note dropped another")
+        self.assertIn("FX-1 proof", html, "a note change dropped the recorded title")
+        # What's published carries the words the published folder was built with, even after a later draft changed
+        # the kept ones.
+        draft = fx.tmp / "page-draft"
+        code, out = fx.flow("lead-evidence", "page", "FX-3", "--out", draft, "--note", "FX-3=Trying other wording", cwd=m)
+        self.assertEqual(code, 0, out)
+        (again / "videos/FX-9-clip.mp4").write_bytes(b"a clip, as far as published can tell")
+        code, out = fx.flow("lead-evidence", "published", "--url", "https://pages.test/e", "--out", again, cwd=m)
+        self.assertEqual(code, 0, out)
+        published = json.loads((record.parent / "evidence-page.json").read_text())
+        self.assertEqual({k: published.get(k) for k in ("notes", "title", "intro")},
+                         {"notes": {"FX-3": "Server-side only"}, "title": "FX-1 proof", "intro": "What each story shows."})
+        # A note that isn't KEY=TEXT, or names no story of the delivery, is refused and records nothing.
+        before = (record.parent / "evidence-notes.json").read_text()
+        for bad in ("FX-3", "FX-3 has no equals sign", "FX-99=not a story"):
+            with self.subTest(note=bad):
+                code, out = fx.flow("lead-evidence", "page", "FX-3", "--out", again, "--note", bad, cwd=m)
+                self.assertEqual(code, 2, out)
+                self.assertIn("--note", out)
+                self.assertEqual((record.parent / "evidence-notes.json").read_text(), before)
+
     def test_one_run_cant_meet_two_requirements_and_stale_heads_fail_closed(self) -> None:
         fx = self.fixture()
         m = fx.main
@@ -1786,14 +1893,38 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect(code == 2 and "no hand-off" in out and "journal your decision" in out, f"no claims, yet checked: {out}")
 
     def test_timeouts_and_interruptions_stop_their_processes(self) -> None:
-        started = time.time()
-        try:
-            self.call("run_group", ["sh", "-c", "sleep 30 & sleep 30"], Path(tempfile.gettempdir()), 1)
-            raise AssertionError("a timed-out command didn't stop")
-        except Stopped as error:
-            expect("took longer" in str(error) and time.time() - started < 15, str(error))
-        leftover = sh("pgrep", "-f", "sleep 30", check=False).stdout.split()
-        expect(not leftover, f"the timed-out group left processes behind: {leftover}")
+        # Another `sleep 30` on the machine, outside the timed-out group: the check must not count it.
+        unrelated = subprocess.Popen(["sleep", "30"], start_new_session=True)
+        recorded: list[int] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            pids = Path(tmp) / "pids"
+            try:
+                started = time.time()
+                # The group records its own pids as it starts: the background sleep's, then its leader's, which the
+                # exec'd sleep keeps. Those, and only those, are the group the timeout must stop.
+                try:
+                    self.call("run_group", ["sh", "-c", 'sleep 30 & echo $! > "$0"; echo $$ >> "$0"; exec sleep 30', str(pids)],
+                              Path(tempfile.gettempdir()), 1)
+                    raise AssertionError("a timed-out command didn't stop")
+                except Stopped as error:
+                    expect("took longer" in str(error) and time.time() - started < 15, str(error))
+                recorded = [int(line) for line in pids.read_text().split()]
+                self.assertEqual(len(set(recorded)), 2, f"the group didn't record both its processes: {recorded}")
+                self.assertNotIn(unrelated.pid, recorded)
+                deadline = time.monotonic() + 5  # an orphaned child is reaped by init, a moment after its signal
+                while time.monotonic() < deadline and any(process_alive(pid) for pid in recorded):
+                    time.sleep(0.1)
+                leftover = [pid for pid in recorded if process_alive(pid)]
+                expect(not leftover, f"the timed-out group left processes behind: {leftover}")
+                self.assertIsNone(unrelated.poll(), "stopping the timed-out group stopped a process outside it")
+            finally:
+                if unrelated.poll() is None:  # started here, stopped by the pid recorded here
+                    unrelated.kill()
+                unrelated.wait()
+                for pid in recorded:  # a group that outlived its timeout: stopped by the pids it recorded
+                    if process_alive(pid):
+                        with contextlib.suppress(ProcessLookupError, PermissionError):
+                            os.kill(pid, signal.SIGKILL)
         with tempfile.TemporaryDirectory() as tmp:
             lock = Path(tmp) / "lock"
             orphan = subprocess.Popen(["sleep", "60"], start_new_session=True)
@@ -1806,6 +1937,83 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                 if orphan.poll() is None:
                     orphan.kill()
                 orphan.wait()
+
+    def listener(self, port: int, mark: str, reuse: bool = False) -> subprocess.Popen:
+        """A real listener on `port`, started here and stopped at cleanup by the pid recorded here. `mark` rides in its
+        argv, so its command line can be told from any other's."""
+        proc = subprocess.Popen([sys.executable, "-c", LISTENER, str(port), mark, "reuse" if reuse else "plain"],
+                                stdout=subprocess.PIPE, text=True)
+
+        def stop():
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            proc.stdout.close()
+        self.addCleanup(stop)
+        self.assertEqual(proc.stdout.readline().strip(), "listening", f"the {mark} listener didn't start")
+        return proc
+
+    def test_the_port_holder_is_named_by_its_listening_pid(self) -> None:
+        port = free_port()  # an ephemeral port this case owns
+        listener = self.listener(port, "holder-mark-one")
+        # A client connected to the port (a browser looking at the build, say) isn't a holder, and isn't to be killed.
+        client = subprocess.Popen([sys.executable, "-c", "import socket,sys,time; c=socket.create_connection(('127.0.0.1', "
+                                   "int(sys.argv[1]))); print('connected', flush=True); time.sleep(60)", str(port)],
+                                  stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(client.stdout.readline().strip(), "connected")
+            holders = self.call("port_holders", port)
+            self.assertEqual([pid for pid, _ in holders], [listener.pid], holders)
+            self.assertIn("holder-mark-one", holders[0][1], "the named command line isn't the listener's")
+            busy = self.call("port_busy", port)
+            self.assertIn(f"outside the in-app lease: pid {listener.pid} (", busy)
+            self.assertIn(f"stop it (kill {listener.pid}) and run again", busy)
+            self.assertNotIn(str(client.pid), busy, "the kill hint named a connected client")
+        finally:
+            if client.poll() is None:  # started here, stopped by the pid recorded here
+                client.kill()
+            client.wait()
+            client.stdout.close()
+        with tempfile.TemporaryDirectory() as empty:  # no lsof or ps on PATH: nothing named, nothing raised
+            unseen = dict(cwd=Path(empty), env={**clean_environment(), "PATH": empty})
+            self.assertEqual(call(self.tool, "port_holders", port, **unseen), [])
+            busy = call(self.tool, "port_busy", port, **unseen)
+            self.assertIn(f"something else is listening on {port}, outside the in-app lease (its process isn't visible here)", busy)
+            self.assertNotIn("kill", busy, "an unseen holder got a kill hint")
+        listener.kill()
+        listener.wait()
+        self.assertEqual(self.call("port_holders", port), [], "a closed port still named a holder")
+
+    def test_every_holder_of_a_shared_port_is_named_once(self) -> None:
+        if not hasattr(socket, "SO_REUSEPORT"):
+            self.skipTest("no SO_REUSEPORT here, so two listeners can't share a port")
+        port = free_port()
+        first, second = self.listener(port, "holder-mark-a", reuse=True), self.listener(port, "holder-mark-b", reuse=True)
+        holders = self.call("port_holders", port)
+        self.assertEqual([pid for pid, _ in holders], sorted([first.pid, second.pid]), holders)
+        self.assertEqual({pid: "holder-mark-a" in command or "holder-mark-b" in command for pid, command in holders},
+                         {first.pid: True, second.pid: True})
+        busy = self.call("port_busy", port)
+        hint = re.search(r"stop it \(kill ([\d ]+)\)", busy)
+        self.assertIsNotNone(hint, busy)
+        self.assertEqual(hint.group(1).split(), [str(pid) for pid in sorted([first.pid, second.pid])], busy)
+
+    def test_a_check_refused_by_a_busy_port_names_the_listener_and_how_to_release_it(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        fx.flow("lead-init", cwd=fx.main)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        fx.flow("build", "FX-2", cwd=wt)
+        listener = self.listener(fx.port, "served-by-hand")  # a build served on the in-app port, outside the lease
+        code, out = fx.flow("app-check", "FX-2", "page", "--mode", "loaded", "--path", "/one", "--eval", "true", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"something else is listening on {fx.port}, outside the in-app lease: pid {listener.pid} (", out)
+        self.assertIn("served-by-hand", out)
+        self.assertIn(f"stop it (kill {listener.pid}) and run again", out)
+        self.assertIsNone(listener.poll(), "app-check stopped a process it didn't start")
+        self.assertFalse((wt / ".orchestration/review/FX-2/app-checks/page.json").exists(), "a refused check became evidence")
 
     def test_an_interrupted_check_releases_the_lease_and_its_server(self) -> None:
         fx = self.fixture()
@@ -1842,6 +2050,64 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             time.sleep(0.5)
             expect(not port_open(), f"the server outlived a check interrupted by {sent.name}")
             fx.call("Lease", fx.tmp / "app.lock", fx.port, "selftest", 2, then="close", cwd=fx.tmp)
+
+    def test_a_killed_check_leaves_nothing_running_once_its_fixture_closes(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        fx.flow("lead-init", cwd=fx.main)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        fx.flow("build", "FX-2", cwd=wt)
+        lock = fx.tmp / "app.lock"
+        recorded = lambda: [int(g) for g in re.findall(r"pgid (\d+)", lock.read_text())] if lock.exists() else []
+        groups: list[int] = []
+        proc = subprocess.Popen([sys.executable, "-B", str(fx.tool), "app-check", "FX-2", "slow", "--mode", "loaded",
+                                 "--path", "/slow", "--eval", "true"], cwd=wt, env=fx.env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and len(recorded()) < 2:  # the server's group, then the check's
+                time.sleep(0.1)
+            groups = recorded()
+            self.assertEqual(len(groups), 2, f"the lease didn't record the server and the check: {lock.read_text()}")
+            self.assertTrue(fx.call("port_open", fx.port, cwd=fx.tmp), "the check's server never came up")
+            # A SIGKILL can't be caught, so app-check never stops what it started: the lease's record is what's left.
+            proc.kill()
+            proc.wait(timeout=20)
+            time.sleep(0.5)
+            self.assertTrue(all(group_alive(g) for g in groups), "the kill didn't leave the check's groups running")
+            fx.close()
+            self.assertEqual([g for g in groups if group_alive(g)], [], "the fixture closed with the check's groups running")
+            self.assertFalse(fx.call("port_open", fx.port, cwd=Path(tempfile.gettempdir())), "the server outlived its fixture")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            for group in groups:  # the groups this case's own check started, by the pids its lease recorded
+                if group_alive(group):
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        os.killpg(group, signal.SIGKILL)
+
+    def test_closing_a_fixture_leaves_a_live_holders_lease_and_groups_alone(self) -> None:
+        fx = self.fixture()
+        lock = fx.tmp / "app.lock"
+        served = subprocess.Popen(["sleep", "60"], start_new_session=True)
+        holder = subprocess.Popen([sys.executable, "-c", "import fcntl,sys,time; f=open(sys.argv[1],'a+'); "
+                                   "fcntl.flock(f, fcntl.LOCK_EX); f.write('lane-1 FX-2 hold pid 1 pgid %s\\n' % sys.argv[2]); "
+                                   "f.flush(); print('held', flush=True); time.sleep(60)", str(lock), str(served.pid)],
+                                  stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(holder.stdout.readline().strip(), "held")
+            fx.stop_in_app()  # raises if a held lease isn't left to its holder
+            self.assertIsNone(served.poll(), "closing the fixture stopped a live holder's group")
+            self.assertIn(f"pgid {served.pid}", lock.read_text(), "closing the fixture rewrote a live holder's lease")
+        finally:
+            for proc in (holder, served):  # both started here, stopped by the pids recorded here
+                if proc.poll() is None:
+                    proc.kill()
+                proc.wait()
+            holder.stdout.close()
 
 # The fallbacks to the tool's earlier names, pinned: removing one takes a later approved change to this list.
 LEGACY_NAMES = (
@@ -4122,6 +4388,24 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             holder.kill()
             holder.wait()
             holder.stdout.close()
+
+    def test_a_busy_port_outside_the_lease_names_its_listener_in_the_adapter_run(self) -> None:
+        fx = self.fixture()
+        listener = subprocess.Popen([sys.executable, "-c", LISTENER, str(fx.port), "served-by-hand", "plain"],
+                                    stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(listener.stdout.readline().strip(), "listening")
+            out = self.doctor(fx, "--run-adapters")
+            status, detail = doctor_lines(out)["in-app adapter contract"]
+            self.assertEqual(status, "wrong", out)
+            self.assertIn(f"outside the in-app lease: pid {listener.pid} (", detail)
+            self.assertIn(f"kill {listener.pid}", detail)
+            self.assertIsNone(listener.poll(), "doctor stopped a process it didn't start")
+        finally:
+            if listener.poll() is None:  # started here, stopped by the pid recorded here
+                listener.kill()
+            listener.wait()
+            listener.stdout.close()
 
     def test_by_default_doctor_leaves_nothing_behind(self) -> None:
         fx = self.fixture()

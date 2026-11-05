@@ -1882,6 +1882,35 @@ def port_open(port: int) -> bool:
     return False
 
 
+def port_holders(port: int) -> list[tuple[int, str]]:
+    """The processes listening on `port`, as (pid, command line); empty when none can be seen (or lsof is missing)."""
+    try:
+        listing = run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"], check=False).stdout
+    except OSError:
+        return []
+    holders = []
+    for pid in sorted({int(line) for line in listing.split() if line.isdigit()}):
+        try:
+            command = run(["ps", "-o", "command=", "-p", str(pid)], check=False).stdout.strip()
+        except OSError:
+            command = ""
+        holders.append((pid, command or "command unknown"))
+    return holders
+
+
+def port_busy(port: int) -> str:
+    """Why the in-app port can't be used: who listens on it, outside the lease, and how to release it."""
+    holders = port_holders(port)
+    if not holders:
+        return f"something else is listening on {port}, outside the in-app lease (its process isn't visible here); stop it first"
+    # A long command keeps its head (the program) and its tail (the arguments, which tell one server from another).
+    short = lambda command: command if len(command) <= 160 else f"{command[:40]} ... {command[-110:]}"
+    named = ", ".join(f"pid {pid} ({short(command)})" for pid, command in holders)
+    pids = " ".join(str(pid) for pid, _ in holders)
+    return (f"something else is listening on {port}, outside the in-app lease: {named}. A build served by hand doesn't "
+            f"hold the lease, so app-check can't use the port: stop it (kill {pids}) and run again")
+
+
 class Lease:
     """An in-app lease: an OS lock held for the whole check (released if we die). It records the process groups it
     starts, so the next holder can stop a server or browser that a killed holder left behind."""
@@ -1991,7 +2020,7 @@ def run_in_app(dist: Path, spec: dict, passthrough: list[str], owner: str, lock_
     try:
         spec_file.write_text(json.dumps(spec))
         if port_open(port):
-            raise Stop(f"something else is listening on {port} (a dev server?); stop it first")
+            raise Stop(port_busy(port))
         server = subprocess.Popen(expand_argv(ia["serve"]["argv"], dir=str(dist), port=str(port)),
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         lease.track(server.pid)
@@ -2282,6 +2311,38 @@ def evidence_status(keys: list[str]) -> tuple[list[str], list[str]]:
     return current, problems
 
 
+def evidence_inputs(c, args, keys: list[str]) -> dict:
+    """The evidence page's words, its title, intro and per-story notes, kept in the record beside the published page's
+    record, so a page rebuilt after the lead's context is gone says what it said. A flag given now replaces what's
+    kept; `--note KEY=` with no text removes that story's note."""
+    path = c.state.parent / "evidence-notes.json"
+    kept = json.loads(path.read_text()) if path.exists() else {}
+    notes = dict(kept.get("notes") or {})
+    given = {}
+    for note in args.note or []:
+        key, sep, text = note.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            raise Stop(f"--note takes KEY=TEXT, not {note!r}")
+        if key not in c.stories:
+            raise Stop(f"--note names {key}, which isn't a story of {c.delivery}")
+        given[key] = text.strip()
+    for key, text in given.items():
+        if text:
+            notes[key] = text
+        else:
+            notes.pop(key, None)
+    inputs = {"title": args.title if args.title is not None else kept.get("title"),
+              "intro": args.intro if args.intro is not None else kept.get("intro"), "notes": notes}
+    if inputs != {k: kept.get(k, {} if k == "notes" else None) for k in ("title", "intro", "notes")}:
+        path.write_text(json.dumps({**inputs, "at": now()}, indent=2) + "\n")
+        print(f"recorded the page's words in {path}")
+    reused = sorted(k for k in keys if k in notes and k not in given)
+    if reused:
+        print(f"reused the recorded note(s) for {', '.join(reused)}")
+    return inputs
+
+
 def lead_evidence(args) -> None:
     c = cfg()
     keys = [c.require(k) for k in args.keys] if args.keys else [k for k in c.stories if needs_video(k)]
@@ -2324,7 +2385,10 @@ def lead_evidence(args) -> None:
         clips = {f.name: digest(f) for f in sorted((out / "videos").glob("*.mp4"))}
         if not (out / "index.html").exists() or not clips:
             raise Stop(f"{out} has no built page with clips: run lead-evidence page first")
-        record = {"url": args.url, "at": now(), "clips": clips}
+        words = out / "evidence-notes.json"  # the words this folder's page was built with, not the latest kept ones
+        kept = json.loads(words.read_text()) if words.exists() else {}
+        record = {"url": args.url, "at": now(), "clips": clips,
+                  **{k: kept.get(k, {} if k == "notes" else None) for k in ("title", "intro", "notes")}}
         (c.state.parent / "evidence-page.json").write_text(json.dumps(record, indent=2) + "\n")
         state_tool("journal", "--kind", "decision.recorded", "--summary",
                    f"Evidence page published at {args.url} with {len(clips)} before/after clip(s).", check=False)
@@ -2340,6 +2404,7 @@ def lead_evidence(args) -> None:
             sys.exit(1)
         print("the evidence page is current")
         return
+    words = evidence_inputs(c, args, keys)
     out = Path(expand(args.out))
     (out / "videos").mkdir(parents=True, exist_ok=True)
     doc = load_state()
@@ -2360,7 +2425,7 @@ def lead_evidence(args) -> None:
         links = [f'<a href="{html_escape(c.issue_url.format(key=key))}">Ticket</a>']
         if prs.get(key):
             links.append(f'<a href="{html_escape(prs[key])}">Pull request</a>')
-        notes = dict(n.split("=", 1) for n in (args.note or []))
+        notes = words["notes"]
         body = "\n".join(figures) or (f'    <p class="none">{html_escape(notes[key])}</p>' if key in notes else
                                        '    <p class="none">No recording: this story has no visible loading or failure state to show.</p>')
         sections.append(f"""  <section class="story" id="{key.lower()}">
@@ -2368,10 +2433,10 @@ def lead_evidence(args) -> None:
 {body}
   </section>""")
     values = {
-        "title": html_escape(args.title or f"{c.delivery} Evidence"),
+        "title": html_escape(words["title"] or f"{c.delivery} Evidence"),
         "eyebrow": html_escape(f"{c.delivery} · delivery evidence"),
         "heading": html_escape(c.raw.get("headline", c.delivery)),
-        "intro": html_escape(args.intro or "Each clip runs the same steps twice: on the base before this delivery (left) and "
+        "intro": html_escape(words["intro"] or "Each clip runs the same steps twice: on the base before this delivery (left) and "
                              "on the delivered code (right). Loading clips hold the page's request for a few seconds; "
                              "failure clips make it fail."),
         "before": html_escape(", ".join(sorted(befores)) or "-"), "after": html_escape(", ".join(sorted(afters)) or "-"),
@@ -2380,6 +2445,7 @@ def lead_evidence(args) -> None:
     }
     page = re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], (TOOL / "templates/evidence.html").read_text())
     (out / "index.html").write_text(page)
+    (out / "evidence-notes.json").write_text(json.dumps(words, indent=2) + "\n")
     print(f"wrote {out / 'index.html'} with {count} clip(s); publish the folder (index.html plus videos/)")
 
 
@@ -4642,10 +4708,11 @@ def lead_close(args) -> None:
         try:
             Lease(lock, port, "lead-close", 0).close()  # stops whatever a dead holder left running
             done.append(f"the in-app lease {lock} is free")
-        except Stop as held:
+        except Stop as held:  # a live check's: its server is inside the lease, and isn't the operator's to kill
             left.append(str(held))
-        if port_open(port):
-            left.append(f"something still listens on port {port}")
+        else:
+            if port_open(port):
+                left.append(port_busy(port))
     print(f"{c.delivery}: closed out")
     for line in done:
         print(f"  done: {line}")
@@ -5832,7 +5899,7 @@ def adapter_contract(ia: dict, lease: "Lease", say) -> list[str]:
         failures = []
         try:
             if port_open(ia["port"]):
-                raise Stop(f"something else is listening on {ia['port']}; stop it first")
+                raise Stop(port_busy(ia["port"]))
             server = subprocess.Popen(expand_argv(ia["serve"]["argv"], dir=str(site), port=str(ia["port"])),
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             lease.track(server.pid)
@@ -6549,7 +6616,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--url", help="published: the page's address")
     p.add_argument("keys", nargs="*"); p.add_argument("--after-build"); p.add_argument("--out", default="evidence-page")
     p.add_argument("--title"); p.add_argument("--intro")
-    p.add_argument("--note", action="append", help="KEY=TEXT: what to say for a story without clips")
+    p.add_argument("--note", action="append", help="KEY=TEXT: what to say for a story without clips; kept in the record "
+                   "for later rebuilds, and KEY= removes it")
     p.set_defaults(fn=lead_evidence)
     p = command(sub, "lead-plan", help="record a change to the approved plan, or a reason for one")
     plan_commands = p.add_subparsers(dest="action", required=True)
