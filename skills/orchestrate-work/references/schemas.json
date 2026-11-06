@@ -400,6 +400,31 @@
                 "lane",
                 "lead"
               ]
+            },
+            "restedFrom": {
+              "description": "Kept by the tool alone: the lane's own last word, its state and when it said it, kept when the queue (runner) speaks over the row, as it does when it rests a lane whose candidate merged. It carries forward while the queue's words stand, and ends at the lane's or the lead's next word or a new hand-off.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state",
+                "at"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "idle",
+                    "assigned",
+                    "working",
+                    "reviewing",
+                    "handed",
+                    "blocked",
+                    "done"
+                  ]
+                },
+                "at": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
             }
           }
         }

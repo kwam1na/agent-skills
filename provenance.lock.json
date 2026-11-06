@@ -477,11 +477,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "fad731034748998c67d6b5b40b8896ea743159c5e907cdbf2d6e80ef4720ad54"
+          "sha256": "4ece3f84a1894d15e1ad06efea18d292cc9bae2373ef5230b545c5137cd2c691"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "b90361e66c6ecf1ba858bcb57e5a63ed392da1c04f06e1bb67b592a4a425edef"
+          "sha256": "e86aa57580e590888aaa2d76be9a3b41e633d4ee1b9fadae9d851cefec58dc6f"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
@@ -1046,7 +1046,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "d2878a41651a502dc7f2fcfa8b560d7f062c5fe759475e5fef44402b9501768b"
+          "sha256": "186a0aa3f974422067e9d0de306fcb1592f4f87746a600b245197905e3b81503"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
