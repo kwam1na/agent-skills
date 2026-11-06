@@ -97,8 +97,10 @@ test("draws the run as a line map, chapter by chapter", async () => {
   const checking = now.querySelector(".checking").textContent;
   expect(checking).toContain("Being checked now");
   expect(checking).toContain("Retry card payments once on a dropped connection");
+  // Up to twelve checks read in groups: the running one in its own row, then those waiting, then those completed.
+  expect(now.querySelector(".ck-run .sr")?.textContent).toContain("Running storefront build");
   expect([...now.querySelectorAll(".ck-step")].map((step) => step.className.replace("ck-step ", ""))).toEqual(
-    ["passed", "passed", "reused", "running", "pending", "pending"]);
+    ["pending", "pending", "passed", "passed", "reused"]);
   expect(checking).toContain("Running storefront build · 2m 30s of about 4m");
   expect(checking).not.toContain("longer than usual");
   expect(checking).toContain("3 of 6 checks done · started 6m ago");
@@ -255,11 +257,10 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   const checking = app.querySelector(".checking");
   // The verdict comes from the check states alone.
   expect(checking.querySelector(".ck-verdict")?.textContent).toBe("Won't merge from this run. 2 failed · 8 still to run");
-  // The run on the clock: a stretch and a stem per started check, failed stops numbered as the list,
+  // The run on the clock: a capsule per started check, failed stops numbered as the list,
   // the running one at now with its time so far, and the waiting ones trailing off.
   const line = checking.querySelector("svg.run-line");
   expect(line.querySelectorAll(".rl-seg")).toHaveLength(13);
-  expect(line.querySelectorAll(".rl-stem")).toHaveLength(13);
   expect([...line.querySelectorAll(".rl-num")].map((number) => number.textContent)).toEqual(["1", "2"]);
   // Clock skew: an end before its start, and a running check that seems to start after now, draw as points.
   const skewed = JSON.parse(JSON.stringify(document));
@@ -268,21 +269,24 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   const [{ app: skewedApp }] = await open(skewed);
   const values = [...skewedApp.querySelectorAll(".run-line *")].flatMap((node) => [...node.attributes].map((attribute) => attribute.value));
   expect(values.filter((value) => /NaN|Infinity/.test(value))).toEqual([]);
-  expect(skewedApp.querySelectorAll(".run-line .rl-stem")).toHaveLength(13);
+  expect(skewedApp.querySelectorAll(".run-line .rl-seg")).toHaveLength(13);
   // A run that has not started by the viewer's clock has no line to draw.
   const ahead = JSON.parse(JSON.stringify(document));
   ahead.state.meta.checking.now.startedAt = "2026-10-22T05:10:00Z";
   const [{ app: aheadApp }] = await open(ahead);
   expect(aheadApp.querySelector(".run-line")).toBeNull();
   expect(aheadApp.querySelector(".ck-bar")).not.toBeNull();
-  // A failed check with no time keeps its number in the list; the drawn ones keep theirs.
+  // A started check with no time can't be placed, so the run falls back to the strip rather than leave it out, and the
+  // failed checks keep their numbers in the list.
   const untimed = JSON.parse(JSON.stringify(document));
   delete untimed.state.meta.checking.now.steps[3].startedAt;
   delete untimed.state.meta.checking.now.steps[3].finishedAt;
   const [{ app: untimedApp }] = await open(untimed);
-  expect([...untimedApp.querySelectorAll(".run-line .rl-num")].map((number) => number.textContent)).toEqual(["2"]);
+  expect(untimedApp.querySelector(".run-line")).toBeNull();
+  expect(untimedApp.querySelectorAll(".ck-bar span")).toHaveLength(20);
+  expect([...untimedApp.querySelectorAll(".ck-fails .g.num")].map((number) => number.textContent)).toEqual(["1", "2"]);
   expect([...checking.querySelectorAll(".ck-fails .g.num")].map((number) => number.textContent)).toEqual(["1", "2"]);
-  expect(line.querySelector(".rl-time.running")?.textContent).toBe("20m so far");
+  expect(line.querySelector(".rl-time.running")?.textContent).toBe("20m 00s so far");
   expect([...line.querySelectorAll(".rl-tick")].map((tick) => tick.textContent)).toContain("7 waiting");
   expect(line.getAttribute("aria-label")).toContain("2 failed, 7 waiting");
   // Failed first, each with its log, its failing tests and the lead's note on it; the rest are counts.
@@ -304,7 +308,7 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   expect(checking.textContent).toContain("9 passed, 1 reused, 2 failed, 1 running, 7 waiting");
   // A running check with no usual time shows its time so far, without alarm.
   const running = checking.querySelector(".ck-run");
-  expect(running.textContent).toBe(`Running ${ids[12]} · 20m so far`);
+  expect(running.querySelector(".sr").textContent).toBe(`Running ${ids[12]} · 20m so far`);
   expect(running.className).toBe("ck-run");
 });
 
@@ -329,7 +333,9 @@ test("says when a running check has gone past its usual time", async () => {
   document.state.meta.checking.now.steps[4].startedAt = "2026-10-22T05:00:00Z";
   const [{ app }] = await open(document);
   const running = app.querySelector(".ck-run");
-  expect(running.textContent).toBe("Running storefront build · 10m of about 4m, longer than usual");
+  // The sentence a screen reader hears; on screen the name and a clock, past the usual time.
+  expect(running.querySelector(".sr").textContent).toBe("Running storefront build · 10m of about 4m, longer than usual");
+  expect(running.querySelector(".ck-run-time b").textContent).toBe("10m 00s");
   expect(running.className).toContain("over");
 });
 
@@ -683,7 +689,7 @@ test("shows pieces checked as one batch together, each with its change request",
   };
   const [{ app }] = await open(batch());
   const checking = app.querySelector(".checking");
-  expect(checking.querySelector(".ck-h")?.textContent).toBe("Being checked together · 2 pieces");
+  expect(checking.querySelector(".ck-h")?.childNodes[1]?.textContent).toBe("Being checked together · 2 pieces");
   expect([...checking.querySelectorAll(".ck-members li a")].map((link) => link.getAttribute("href"))).toEqual([
     "https://github.com/acme/shop/pull/1106", "https://github.com/acme/shop/pull/1107"]);
   expect(checking.textContent).toContain("One test run for all of them; each lands only if it matches what was tested");
@@ -694,14 +700,14 @@ test("shows pieces checked as one batch together, each with its change request",
   landing.state.queue[2].stage = "merged";
   landing.state.meta.checking.now.subject = "PAY-2362";
   const [{ app: landingApp }] = await open(landing);
-  expect(landingApp.querySelector(".ck-h")?.textContent).toBe("Landing together · 1 of 2 in");
+  expect(landingApp.querySelector(".ck-h")?.childNodes[1]?.textContent).toBe("Landing together · 1 of 2 in");
   expect(landingApp.querySelector(".ck-members li.in")?.textContent).toContain("landed");
 
   // A member sent back to the queue leaves one piece in checks: that is a solo check, not the old batch.
   const split = batch();
   split.state.queue[3].stage = "queued";
   const [{ app: splitApp }] = await open(split);
-  expect(splitApp.querySelector(".ck-h")?.textContent).toBe("Being checked now");
+  expect(splitApp.querySelector(".ck-h")?.childNodes[1]?.textContent).toBe("Being checked now");
   // A failed batch still lands the pieces ahead of the one that broke it; the failures carry every member's logs.
   const failing = batch();
   failing.state.meta.checking.now.steps = [{ label: "shop.check.aa", state: "failed" }, { label: "shop.check.bb", state: "running" }];
@@ -719,7 +725,7 @@ test("shows pieces checked as one batch together, each with its change request",
   carried.state.meta.checking.now = { subject: "PAY-2362", title: "Keep the order number on the receipt page", startedAt: "2026-10-22T05:09:00Z", steps: [] };
   carried.journal.push({ at: "2026-10-22T05:09:00.004211Z", id: 13, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary: "Checking Keep the order number on the receipt page" });
   const [{ app: carriedApp }] = await open(carried);
-  expect(carriedApp.querySelector(".ck-h")?.textContent).toBe("Being checked now");
+  expect(carriedApp.querySelector(".ck-h")?.childNodes[1]?.textContent).toBe("Being checked now");
   expect(carriedApp.querySelector("#detail .d-batch")).toBeNull();
   // The same batch started twice in a row counts each member once, and a lane's note between the starts
   // does not split the batch.
@@ -728,10 +734,10 @@ test("shows pieces checked as one batch together, each with its change request",
   twice.journal.splice(twice.journal.length - 1, 0, { at: "2026-10-22T05:05:00.150000Z", id: 30, kind: "decision.recorded", lane: "ops", subject: null, summary: "A note" });
   twice.journal.push({ ...first, id: 31 }, { ...second, id: 32 });
   const [{ app: twiceApp }] = await open(twice);
-  expect(twiceApp.querySelector(".ck-h")?.textContent).toBe("Being checked together · 2 pieces");
+  expect(twiceApp.querySelector(".ck-h")?.childNodes[1]?.textContent).toBe("Being checked together · 2 pieces");
   // Pieces in checks that the latest batch start does not cover are not a batch either.
   const [{ app: solo }] = await open(fixtureDocument());
-  expect(solo.querySelector(".ck-h")?.textContent).toBe("Being checked now");
+  expect(solo.querySelector(".ck-h")?.childNodes[1]?.textContent).toBe("Being checked now");
 });
 
 test("keeps a hand-over the lead has not accepted apart from the work ready to check", async () => {
@@ -922,7 +928,7 @@ test("reads unreadable times as unknown, never as the start of time", async () =
   document.state.leases[0].since = null;
   const [{ app }] = await open(document);
   expect(app.querySelector(".since")?.textContent).toBe("Saved view · base aaaaaaa");
-  expect(app.querySelector(".ck-run")?.textContent).toBe("Running storefront build");
+  expect(app.querySelector(".ck-run .sr")?.textContent).toBe("Running storefront build");
   expect(app.querySelector(".leases")?.textContent).toBe("dev-backend held by lead");
   expect(app.querySelectorAll(".person")[3]?.querySelector(".on")).toBeNull();
   expect(app.querySelector(".checking")?.textContent).not.toMatch(/started|[0-9]{3,}d/);

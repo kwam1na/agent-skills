@@ -76,21 +76,17 @@ function runSummaryNode(summary, options) {
     made.setAttribute("datetime", date.toISOString());
     return made;
   }
-  // The shipped icons, drawn from SVG elements (never markup) as Tabler's outline icons (MIT) draw them. The
-  // configuration names a lens's icon and name; a lens with no icon gets a round badge with its initial.
+  // The shipped lens icons: the Line Map persona set's instruments, on its 24px grid in round 1.75 strokes. Each part is a
+  // path (d) or a circle (c: cx, cy, r), built as SVG elements (never markup); a core part is filled rather than stroked.
+  // The configuration names a lens's icon and name; a lens with no icon gets a round badge with its initial.
   var ICONS = {
-    bullseye: ["M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0", "M12 12m-5 0a5 5 0 1 0 10 0a5 5 0 1 0 -10 0",
-      "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"],
-    spy: ["M3 11h18", "M5 11v-4a3 3 0 0 1 3 -3h8a3 3 0 0 1 3 3v4", "M7 17m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
-      "M17 17m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0", "M10 17h4"],
-    shield: ["M12 3a12 12 0 0 0 8.5 3a12 12 0 0 1 -8.5 15a12 12 0 0 1 -8.5 -15a12 12 0 0 0 8.5 -3"],
-    bug: ["M9 9v-1a3 3 0 0 1 6 0v1", "M8 9h8a6 6 0 0 1 1 3v3a5 5 0 0 1 -10 0v-3a6 6 0 0 1 1 -3", "M3 13l4 0", "M17 13l4 0",
-      "M12 20l0 -6", "M4 19l3.35 -2", "M20 19l-3.35 -2", "M4 7l3.75 2.4", "M20 7l-3.75 2.4"],
-    gauge: ["M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0", "M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0", "M13.41 10.59l2.59 -2.59",
-      "M7 12a5 5 0 0 1 5 -5"],
-    lock: ["M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6z", "M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0",
-      "M8 11v-4a4 4 0 1 1 8 0v4"],
-    book: ["M3 19a9 9 0 0 1 9 0a9 9 0 0 1 9 0", "M3 6a9 9 0 0 1 9 0a9 9 0 0 1 9 0", "M3 6l0 13", "M12 6l0 13", "M21 6l0 13"]
+    bullseye: [{ c: [12, 12, 8.5] }, { c: [12, 12, 4.6] }, { c: [12, 12, 1.4], core: true }],
+    spy: [{ d: "M2.5 9.3C4.6 7.3 8.1 7 12 8.5C15.9 7 19.4 7.3 21.5 9.3C21.8 13.4 19.5 16.1 16.2 15.9C14.3 15.8 13.3 14.2 12 14.2C10.7 14.2 9.7 15.8 7.8 15.9C4.5 16.1 2.2 13.4 2.5 9.3Z" }, { d: "M5.6 10.9C6.9 10.4 8.4 10.7 9.7 11.8C8.3 12.6 6.5 12.4 5.6 10.9Z" }, { d: "M18.4 10.9C17.1 10.4 15.6 10.7 14.3 11.8C15.7 12.6 17.5 12.4 18.4 10.9Z" }],
+    shield: [{ d: "M12 3C14.8 4.6 17.6 5.3 20 5.3C20 12.6 16.8 18.4 12 21C7.2 18.4 4 12.6 4 5.3C6.4 5.3 9.2 4.6 12 3Z" }, { d: "M12 8V16" }],
+    bug: [{ d: "M8 10.5C8 8.3 9.8 6.5 12 6.5C14.2 6.5 16 8.3 16 10.5V14.5C16 16.7 14.2 18.5 12 18.5C9.8 18.5 8 16.7 8 14.5Z" }, { d: "M12 10.5V18.5" }, { d: "M10 6.9L8.6 4.6" }, { d: "M14 6.9L15.4 4.6" }, { d: "M8 11.5H4.5" }, { d: "M16 11.5H19.5" }, { d: "M8.3 15.5L5 17.5" }, { d: "M15.7 15.5L19 17.5" }],
+    gauge: [{ d: "M5.6 18.4A9 9 0 1 1 18.4 18.4" }, { d: "M12 13L15.8 8.6" }, { c: [12, 13.5, 1.6], core: true }, { d: "M8.5 18.5H15.5" }],
+    lock: [{ d: "M6 12.2C6 11.5 6.5 11 7.2 11H16.8C17.5 11 18 11.5 18 12.2V19.3C18 20 17.5 20.5 16.8 20.5H7.2C6.5 20.5 6 20 6 19.3Z" }, { d: "M8.5 11V7.8C8.5 5.9 10.1 4.3 12 4.3C13.9 4.3 15.5 5.9 15.5 7.8V11" }, { d: "M12 14.8V16.8" }],
+    book: [{ d: "M12 6.8C10 5.3 7 4.8 3.5 5.3V18.3C7 17.8 10 18.3 12 19.8" }, { d: "M12 6.8C14 5.3 17 4.8 20.5 5.3V18.3C17 17.8 14 18.3 12 19.8" }, { d: "M12 6.8V19.8" }]
   };
   var LENSES = options && options.lenses && typeof options.lenses === "object" ? options.lenses : {};
   function configured(lens) {
@@ -116,9 +112,14 @@ function runSummaryNode(summary, options) {
       svg.appendChild(letter);
       return svg;
     }
-    parts.forEach(function (d) {
-      var shape = document.createElementNS(svgNs, "path");
-      shape.setAttribute("d", d);
+    parts.forEach(function (part) {
+      var shape = document.createElementNS(svgNs, part.c ? "circle" : "path");
+      if (part.c) {
+        shape.setAttribute("cx", String(part.c[0])); shape.setAttribute("cy", String(part.c[1])); shape.setAttribute("r", String(part.c[2]));
+      } else {
+        shape.setAttribute("d", part.d);
+      }
+      if (part.core) { shape.setAttribute("fill", "currentColor"); shape.setAttribute("stroke", "none"); }
       svg.appendChild(shape);
     });
     return svg;

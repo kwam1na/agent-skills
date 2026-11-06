@@ -41,7 +41,8 @@
   var feedFilter = "all";
   var feedAll = false;
   // What the page last showed, so a change can be animated rather than just swapped in.
-  var prev = { stages: null, feed: null, progress: null, lanes: null, open: null, byLane: null, parked: null, dots: null, selected: null };
+  var prev = { stages: null, feed: null, progress: null, lanes: null, open: null, byLane: null, parked: null, dots: null, selected: null, lineScroll: null,
+    checkingHeight: null };
   var lastGood = null;
   var nativeReviews = {};
   try { nativeReviews = JSON.parse(document.getElementById("delivery-reviews").textContent); } catch (error) { nativeReviews = {}; }
@@ -191,13 +192,17 @@
     return Object.prototype.hasOwnProperty.call(entry, "occurredAt") ? entry.occurredAt : entry.at;
   }
   function clock(at) {
+    var parts = clockParts(at);
+    return !parts ? "" : parts.day ? parts.day + ", " + parts.time : parts.time;
+  }
+  /** A time as its clock time and, for another day than today, its day: { time, day }, or null when unreadable. */
+  function clockParts(at) {
     var t = typeof at === "string" ? Date.parse(at) : NaN;
-    if (isNaN(t)) { return ""; }
+    if (isNaN(t)) { return null; }
     var date = new Date(t);
     var time = ((date.getHours() + 11) % 12 + 1) + ":" + (date.getMinutes() < 10 ? "0" : "") + date.getMinutes() + (date.getHours() < 12 ? " am" : " pm");
     // An entry from another day says which day, so a run that spans days reads in order.
-    if (new Date(Date.now()).toDateString() === date.toDateString()) { return time; }
-    return MONTHS[date.getMonth()] + " " + date.getDate() + ", " + time;
+    return { time: time, day: new Date(Date.now()).toDateString() === date.toDateString() ? "" : MONTHS[date.getMonth()] + " " + date.getDate() };
   }
 
   var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -224,6 +229,38 @@
     wait: '<path d="M7 2.2 11.8 7 7 11.8 2.2 7z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>',
     note: '<path d="M3 7h8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
   });
+  // The agents' icons, from the Line Map persona set: marks on lines, on a 24px grid in round 1.75 strokes. Each part is a
+  // path (d) or a circle (c: cx, cy, r), built as SVG elements; a core part, the agent itself, is filled.
+  var PERSONAS = table({
+    lead: [{ c: [4.6, 12, 2.6], core: true }, { d: "M7.2 12H16.6" }, { d: "M9.5 12V9.5Q9.5 6 13 6H16.6" }, { d: "M9.5 12V14.5Q9.5 18 13 18H16.6" }, { c: [18.9, 6, 1.9] }, { c: [18.9, 12, 1.9] }, { c: [18.9, 18, 1.9] }],
+    lane: [{ d: "M2.5 12H4.6" }, { c: [7, 12, 2.4] }, { d: "M9.4 12H12.1" }, { c: [15.5, 12, 3.4], core: true }, { d: "M18.9 12H21.5" }],
+    runner: [{ c: [4.1, 6, 1.9] }, { c: [4.1, 18, 1.9] }, { d: "M6.4 6H8.5Q12 6 12 9.5V12" }, { d: "M6.4 18H8.5Q12 18 12 14.5V12" }, { d: "M12 12H13.4" }, { c: [16, 12, 2.6], core: true }, { d: "M18.6 12H21.5" }],
+    supervisor: [{ d: "M4 10.5C7 5.8 17 5.8 20 10.5C17 15.2 7 15.2 4 10.5Z" }, { c: [12, 10.5, 2.4], core: true }, { d: "M3 19.5H21" }, { c: [7.5, 19.5, 1.2], core: true }, { c: [16.5, 19.5, 1.2], core: true }]
+  });
+  // Hidden from assistive technology: the agent's name always sits beside it.
+  // Marks drawn on the persona grid that are not personas: a landed piece takes the familiar git merge, a branch
+  // curving into the trunk.
+  var GRID_MARKS = {
+    merge: [{ c: [6.5, 5.5, 2.25] }, { c: [6.5, 18.5, 2.25] }, { c: [17.5, 12, 2.25] }, { d: "M6.5 7.75V16.25" }, { d: "M6.5 7.75Q6.5 12 15.25 12" }]
+  };
+  function persona(name, className) {
+    var svgNs = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(svgNs, "svg");
+    svg.setAttribute("class", "persona " + (className || "is-" + name));
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    (PERSONAS[name] || GRID_MARKS[name]).forEach(function (part) {
+      var shape = document.createElementNS(svgNs, part.c ? "circle" : "path");
+      if (part.c) {
+        shape.setAttribute("cx", String(part.c[0])); shape.setAttribute("cy", String(part.c[1])); shape.setAttribute("r", String(part.c[2]));
+      } else {
+        shape.setAttribute("d", part.d);
+      }
+      if (part.core) { shape.setAttribute("fill", "currentColor"); shape.setAttribute("stroke", "none"); }
+      svg.appendChild(shape);
+    });
+    return svg;
+  }
   function glyph(tone) {
     var node = el("span", "g " + (tone === "note" ? "" : tone));
     node.innerHTML = '<svg viewBox="0 0 14 14" aria-hidden="true">' + MARKS[tone] + "</svg>";
@@ -249,6 +286,8 @@
   // The plan sits after the work ahead and before the history, and only when the renderer embedded one.
   if (PLAN) { CHAPTERS.splice(4, 0, ["plan", "The plan"]); }
   var parts = Object.create(null);
+  // The lead's check choices the reader has opened, by subject.
+  var chosenOpen = Object.create(null);
   var rail = el("nav", "rail");
   rail.setAttribute("aria-label", "Chapters");
   app.replaceChildren(rail);
@@ -319,10 +358,16 @@
     card.replaceChildren(el("b", null, id));
     if (found.title) { card.appendChild(el("div", "ic-t", found.title)); }
     if (found.summary) { card.appendChild(el("div", "ic-s", found.summary)); }
+    placeCard(target);
+  }
+  /** Shows the card beside what is pointed at: below it, or above when there is no room below. */
+  var cardTarget = null;
+  function placeCard(target) {
+    cardTarget = target;
     card.hidden = false;
     if (typeof target.getBoundingClientRect !== "function" || typeof innerWidth !== "number") { return; }
     var box = target.getBoundingClientRect();
-    var width = Math.min(300, innerWidth - 32);
+    var width = card.offsetWidth || Math.min(300, innerWidth - 32);
     card.style.left = Math.max(16, Math.min(box.left + box.width / 2 - width / 2, innerWidth - width - 16)) + "px";
     var below = box.bottom + 8, height = card.offsetHeight || 0;
     card.style.top = (below + height > innerHeight - 8 ? box.top - height - 8 : below) + "px";
@@ -398,65 +443,19 @@
   function stageWords(item) { return STAGE_WORDS[stageKey(item)] || "Stage not recognised"; }
   /** A piece that hadn't landed when its delivery closed isn't in any stage any more. */
   function unlandedAtClose(doc, piece) { return Boolean(closedEntry(doc)) && (piece.planned || piece.item.stage !== "merged"); }
-  // Each stage's icon, drawn from SVG elements: a pair of meshed gears that turn while the piece is being built, and for
-  // every other stage a still icon as Tabler's outline icons (MIT) draw it. A stage the page does not know gets none.
-  var CIRCLE = "M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0";
-  var MERGE = ["M7 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0", "M7 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0", "M17 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0", "M7 8l0 8", "M7 8a4 4 0 0 0 4 4h4"];
-  var CHECKING = ["M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0", "M21 21l-6 -6"];
-  var STAGE_ICONS = table({
-    planned: ["M8.56 3.69a9 9 0 0 0 -2.92 1.95", "M3.69 8.56a9 9 0 0 0 -.69 3.44", "M3.69 15.44a9 9 0 0 0 1.95 2.92", "M8.56 20.31a9 9 0 0 0 3.44 .69",
-      "M15.44 20.31a9 9 0 0 0 2.92 -1.95", "M20.31 15.44a9 9 0 0 0 .69 -3.44", "M20.31 8.56a9 9 0 0 0 -1.95 -2.92", "M15.44 3.69a9 9 0 0 0 -3.44 -.69"],
-    review: ["M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0", "M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6"],
-    pending: ["M10 14l11 -11", "M21 3l-6.5 18a.55 .55 0 0 1 -1 0l-3.5 -7l-7 -3.5a.55 .55 0 0 1 0 -1l18 -6.5"],
-    queued: [CIRCLE, "M12 7v5l3 3"],
-    syncing: CHECKING, synced: CHECKING, checking: CHECKING,
-    checked: [CIRCLE, "M9 12l2 2l4 -4"],
-    merging: MERGE, merged: MERGE,
-    stopped: [CIRCLE, "M12 8v4", "M12 16h.01"]
-  });
-  // A gear: a dashed ring for its teeth around a solid rim and an axle hole, so its own group can turn about its centre.
-  var GEARS = [
-    { className: "gear-big", cx: 9, cy: 9, teeth: 12, outer: 6, rim: 4.6, hole: 1.6 },
-    { className: "gear-small", cx: 17.2, cy: 17.2, teeth: 8, outer: 3.9, rim: 2.7, hole: 0.9 },
-  ];
-  function gears(svg, svgNs) {
-    GEARS.forEach(function (gear) {
-      var group = document.createElementNS(svgNs, "g");
-      group.setAttribute("class", gear.className);
-      [[gear.outer, 2.2, 2 * Math.PI * gear.outer / gear.teeth / 2], [gear.rim, 1.6, 0], [gear.hole, 1.4, 0]].forEach(function (ring) {
-        var circle = document.createElementNS(svgNs, "circle");
-        circle.setAttribute("cx", String(gear.cx));
-        circle.setAttribute("cy", String(gear.cy));
-        circle.setAttribute("r", String(ring[0]));
-        circle.setAttribute("stroke-width", String(ring[1]));
-        if (ring[2]) { circle.setAttribute("stroke-dasharray", ring[2].toFixed(3) + " " + ring[2].toFixed(3)); circle.setAttribute("stroke-linecap", "butt"); }
-        group.appendChild(circle);
-      });
-      svg.appendChild(group);
-    });
-  }
-  // An outline icon from its paths, hidden from assistive technology since the words beside it say the same.
-  function icon(className, paths) {
-    var svgNs = "http://www.w3.org/2000/svg";
-    var svg = document.createElementNS(svgNs, "svg");
-    svg.setAttribute("class", className);
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("aria-hidden", "true");
-    paths.forEach(function (d) {
-      var path = document.createElementNS(svgNs, "path");
-      path.setAttribute("d", d);
-      svg.appendChild(path);
-    });
-    return svg;
-  }
+  // Each stage's mark, in the page's one grammar: circles for how far a piece has got, a hollow diamond for a hand-over
+  // waiting on the lead, a triangle for a stop. The stylesheet draws the shape; a stage the page does not know gets none.
+  var STAGE_MARKS = table({ planned: true, building: true, review: true, pending: true, queued: true, syncing: true, synced: true,
+    checking: true, checked: true, merging: true, merged: true, stopped: true });
   function stageIcon(item) {
     var key = stageKey(item);
-    if (key === "building") {
-      var svg = icon("d-stage-icon is-building", []);
-      gears(svg, "http://www.w3.org/2000/svg");
-      return svg;
-    }
-    return Array.isArray(STAGE_ICONS[key]) ? icon("d-stage-icon is-" + key, STAGE_ICONS[key]) : null;
+    if (!STAGE_MARKS[key]) { return null; }
+    // A landed piece has merged into the main line, so it takes the merge's own drawing: two lanes turning into one.
+    if (key === "merged") { return persona("merge", "d-stage-icon is-merged"); }
+    // Hidden from assistive technology, since the words beside it say the same.
+    var mark = el("span", "d-stage-icon is-" + key);
+    mark.setAttribute("aria-hidden", "true");
+    return mark;
   }
 
   /** The pieces handed over and waiting their turn, in landing order: the record's own next list when it has one. */
@@ -522,6 +521,8 @@
 
   /* 1. Now */
   function drawNow(doc, all) {
+    // A redraw can remove what the card describes without a mouseleave; such a card hides.
+    if (!card.hidden && cardTarget && !cardTarget.isConnected) { hideCard(); }
     var inner = parts.now;
     var meta = isObject(doc.state.meta) ? doc.state.meta : {};
     var landed = all.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
@@ -550,7 +551,11 @@
     if (supervisor) { nodes.push(supervisor); }
     nodes.push(journey(doc, all, closed ? tally.landed : landed));
     nodes.push(since(meta, closed));
+    var was = prev.checkingHeight;
     inner.replaceChildren.apply(inner, nodes);
+    // A live update that changes the sheet's height, a check starting or a failure listed, eases it there instead of jumping.
+    prev.checkingHeight = panel ? panel.offsetHeight : null;
+    if (panel && was && was !== prev.checkingHeight) { easeSheet(panel, was); }
   }
 
   /**
@@ -571,6 +576,132 @@
     return all.length ? "Nothing has landed yet." : "";
   }
 
+  /** A check's row in the checking sheet: its mark (a ring whose arc turns while it runs) and what it is doing. */
+  function runRow(step) {
+    var row = el("div", "ck-run");
+    var mark = document.createElementNS(SVG, "svg");
+    mark.setAttribute("class", "ck-run-mark");
+    mark.setAttribute("viewBox", "0 0 16 16");
+    mark.setAttribute("aria-hidden", "true");
+    shape(mark, "circle", { class: "rm-track", cx: 8, cy: 8, r: 6.25 });
+    shape(mark, "circle", { class: "rm-arc", cx: 8, cy: 8, r: 6.25, pathLength: 100 });
+    shape(mark, "path", { class: "rm-check", d: "M5.1 8.4 7.1 10.4 11 6.2", pathLength: 100 });
+    shape(mark, "path", { class: "rm-cross", d: "M5.9 5.9 10.1 10.1M10.1 5.9 5.9 10.1", pathLength: 100 });
+    // At a handoff only the words turn over; the mark stays and opens from its result back into a turning arc.
+    add(row, mark, el("span", "ck-run-words"));
+    if (step.state === "running") { runWords(row, step); } else { doneWords(row, step); }
+    return row;
+  }
+  /** A duration as a running clock with its units: 45s, 4m 08s, 1h 02m 05s; seconds keep two digits past a minute so it holds still as it ticks. */
+  function clockTime(spent) {
+    var total = Math.max(0, Math.floor(spent)), h = Math.floor(total / 3600), m = Math.floor(total / 60) % 60, sec = total % 60;
+    var pad = function (n) { return (n < 10 ? "0" : "") + n; };
+    return h ? h + "h " + pad(m) + "m " + pad(sec) + "s" : m ? m + "m " + pad(sec) + "s" : sec + "s";
+  }
+  /**
+   * The running check's words: its name, and at the right its time so far as a clock that ticks each second, with the
+   * usual time after it. Past the usual time the clock turns wait. A screen reader hears the whole as one sentence.
+   */
+  function runWords(row, step) {
+    var began = seconds(step.startedAt);
+    var expected = typeof step.expectedSeconds === "number" ? step.expectedSeconds : null;
+    var words = row.querySelector(".ck-run-words");
+    var said = el("span", "sr");
+    var name = el("span", "ck-run-name", text(step.label));
+    var clock = el("b");
+    var time = add(el("span", "ck-run-time"), clock, expected !== null ? el("i", null, " / ~" + clockTime(expected)) : null);
+    name.setAttribute("aria-hidden", "true");
+    time.setAttribute("aria-hidden", "true");
+    words.replaceChildren(said, name, time);
+    // The spoken sentence is set when drawn and again only when the clock passes the usual time, so a screen reader is
+    // not read a new time every second; the clock itself ticks each second.
+    var wasOver = null;
+    function tick() {
+      var spent = began === null ? null : Date.now() / 1000 - began;
+      var over = spent !== null && expected !== null && spent > expected;
+      row.className = "ck-run" + (over ? " over" : "");
+      clock.textContent = spent !== null && spent >= 0 ? clockTime(spent) : "";
+      // The run line's label for the running check keeps the same time as the clock beside its name.
+      var sheet = row.closest ? row.closest(".checking") : null;
+      var label = sheet ? [].filter.call(sheet.querySelectorAll(".rl-time.running"), function (node) { return node.getAttribute("data-check") === text(step.label); })[0] : null;
+      if (label && clock.textContent) { label.textContent = clock.textContent + " so far"; }
+      if (over === wasOver) { return; }
+      wasOver = over;
+      said.textContent = "Running " + text(step.label) + (spent !== null && spent >= 0
+        ? " · " + duration(spent) + (expected !== null ? " of about " + duration(expected) : " so far") : "") + (over ? ", longer than usual" : "");
+    }
+    tick();
+    if (began !== null && typeof setInterval === "function") {
+      // Ticks while the row is on the page and still shows this check; a redraw or a handoff stops it.
+      var ticking = setInterval(function () {
+        if (!row.isConnected || name.parentNode !== words) { clearInterval(ticking); return; }
+        tick();
+      }, 1000);
+    }
+  }
+  function doneWords(row, step) {
+    var from = seconds(step.startedAt), to = seconds(step.finishedAt);
+    var took = from !== null && to !== null && to >= from ? to - from : null;
+    var failedIt = step.state === "failed" || step.state === "timed_out";
+    row.className = "ck-run settled " + (failedIt ? "is-failed" : "is-passed");
+    // A pass needs no word beside its tick (it stays for a screen reader); a failure or a timeout says which it was. The
+    // time it took sits where its clock ran, at the right.
+    var word = STEP_WORDS[step.state] || "finished";
+    var words = row.querySelector(".ck-run-words");
+    // A check with no readable start or finish shows no time at all, rather than a gap or a placeholder.
+    var parts = [add(el("span", "ck-run-name"), text(step.label), failedIt ? " " + word : el("span", "sr", " " + word))];
+    if (took !== null) { parts.push(add(el("span", "ck-run-time"), el("span", "sr", " · " + duration(took)), add(el("b"), clockTime(took)))); }
+    words.replaceChildren.apply(words, parts);
+    var shown = words.querySelector(".ck-run-time b");
+    if (shown) { shown.setAttribute("aria-hidden", "true"); }
+  }
+  /**
+   * The handoff when a check finishes: its spinning arc settles into a full ring, its result draws inside it (a check, or a
+   * cross for a failure), it holds there a beat, then the row turns over on its horizontal axis and the next running check
+   * arrives on the back. Each part is timed to land before the next starts. Without motion the row simply shows the next.
+   */
+  function handOff(row, finished, next) {
+    if (!runMotionWanted(row)) { if (!next) { doneWords(row, finished); } return; }
+    // The row is first drawn as the finished check was last seen: running, its arc still turning.
+    row.className = "ck-run";
+    row.querySelector(".ck-run-words").replaceChildren(el("span", "sr", "Running "), text(finished.label));
+    later(function () {
+      row.classList.add("settling");
+      setTimeout(function () {
+        doneWords(row, finished);
+        row.classList.add("landing");
+        if (!next) { return; }
+        setTimeout(function () {
+          // The words roll over: up and away as they fade, the next rolling in from below. The turn stops short of edge-on
+          // and the words are gone before it, so they never flatten into a line; the way in eases out with no overshoot.
+          var face = row.querySelector(".ck-run-words");
+          var out = face.animate([
+            { transform: "perspective(400px) translateY(0) rotateX(0deg)", opacity: 1 },
+            { transform: "perspective(400px) translateY(-4px) rotateX(70deg)", opacity: 0 }],
+            { duration: 200, easing: "cubic-bezier(.4, 0, .7, .4)", fill: "forwards" });
+          out.onfinish = function () {
+            runWords(row, next);
+            face.animate([
+              { transform: "perspective(400px) translateY(4px) rotateX(-70deg)", opacity: 0 },
+              { transform: "perspective(400px) translateY(0) rotateX(0deg)", opacity: 1 }],
+              { duration: 300, easing: "cubic-bezier(.2, .6, .3, 1)" });
+            out.cancel();
+          };
+        }, 900);
+      }, 480);
+    });
+  }
+  /**
+   * Eases the checking sheet from a height to the one it has now, after a live update. While it moves it is clipped at
+   * its bottom edge only, so nothing shows below the sheet and the glow around its other sides stays.
+   */
+  function easeSheet(sheet, from) {
+    var to = sheet.offsetHeight;
+    if (from === to || !runMotionWanted(sheet)) { return; }
+    sheet.style.clipPath = "inset(-48px -48px 0 -48px round 24px)";
+    var easing = sheet.animate([{ height: from + "px" }, { height: to + "px" }], { id: "sheet-height", duration: runEaseDuration(from, to), easing: RUN_EASING });
+    easing.onfinish = easing.oncancel = function () { sheet.style.clipPath = ""; };
+  }
   function checkingPanel(doc, all) {
     var current = checkingNow(doc);
     var byId = Object.create(null);
@@ -581,14 +712,19 @@
     if (!current) {
       var waiting = all.filter(function (piece) { return !piece.planned && piece.item.stage === "queued" && piece.item.pending === true; }).length;
       if (!nextNames.length && !waiting) { return null; }
+      box.classList.add("ready");
       if (nextNames.length) {
-        add(box, add(el("div", "ck-h"), el("span", "ck-dot"), nextNames.length === 1 ? "Ready to be checked" : nextNames.length + " pieces ready to be checked"));
-        add(box, el("div", "ck-t", nextNames.join(" · ")));
+        add(box, add(el("div", "ck-h"), el("span", "ck-dot is-ready"), nextNames.length === 1 ? "Ready to be checked" : nextNames.length + " pieces ready to be checked"));
+        // Titles are sentences, so more than one reads as a numbered list in the order they go, not a run-on line.
+        if (nextNames.length === 1) { add(box, el("div", "ck-t", nextNames[0])); }
+        else { add(box, nextNames.reduce(function (ol, name) { return add(ol, el("li", null, name)); }, el("ol", "ck-members"))); }
         add(box, el("div", "ck-s", "Handed over; each is checked and merged in turn, in this order."));
       }
       if (waiting) { add(box, el("div", "ck-s", waiting + (waiting === 1 ? " more is" : " more are") + " waiting for the lead to accept the hand-over.")); }
       return box;
     }
+    // Work an agent is doing right now glows; a failed run loses the glow below.
+    box.classList.add("live");
     var batch = batchNow(doc, all);
     if (batch) {
       var landedIn = batch.filter(function (item) { return item.stage === "merged"; }).length;
@@ -600,70 +736,163 @@
         members.appendChild(li);
       });
       add(box, members);
+      add(box, el("div", "ck-batch-note", "One test run for all of them; each lands only if it matches what was tested."));
     } else {
       add(box, add(el("div", "ck-h"), el("span", "ck-dot"), "Being checked now"));
       add(box, el("div", "ck-t", byId[current.subject] ? titleOf(doc, byId[current.subject]) : text(current.title) || text(current.subject)));
     }
-    // Checks the lead chose never pass for the provider's answer: each member's reason is said beside the run.
-    (batch || (byId[current.subject] ? [byId[current.subject]] : [])).forEach(function (item) {
-      var chosen = isObject(item.checkSelection) && item.checkSelection.by === "lead" ? item.checkSelection : null;
-      if (chosen) {
-        add(box, el("div", "ck-s", "Checks chosen by the lead, not the usual selection" + (batch ? " · " + titleOf(doc, item) : "") +
-          (text(chosen.reason) ? ": " + text(chosen.reason) : "")));
-      }
+    // Checks the lead chose never pass for the provider's answer: each member's reason is said beside the run, one
+    // line each until opened, after the run's progress, which is what the panel is for.
+    var chosenNotes = [];
+    // One note says which checks the lead chose by hand; in a batch, one note covers every piece the lead chose for.
+    function chosenFold(key, words, body) {
+      var fold = add(el("details", "ck-chosen"), el("summary", null, words), body);
+      // A redraw keeps a note open that the reader opened. The note slides open and closed itself, clipping its own
+      // words, and the sheet follows its height; closing stays open until the slide ends, so nothing vanishes first.
+      fold.open = chosenOpen[key] === true;
+      var summary = fold.querySelector("summary");
+      summary.addEventListener("click", function (event) {
+        event.preventDefault();
+        var open = !fold.open;
+        chosenOpen[key] = open;
+        var from = runHeldHeight(fold);
+        if (open) {
+          fold.open = true;
+          runEaseHeight(fold, from);
+          // Measured once the slide ends, so a live redraw does not replay it from the closed height.
+          var opening = typeof fold.getAnimations === "function" ? fold.getAnimations()[0] : null;
+          if (opening && opening.finished) { opening.finished.then(function () { prev.checkingHeight = box.offsetHeight; }, function () {}); }
+        } else if (!runMotionWanted(fold)) {
+          fold.open = false;
+        } else {
+          // Closed, the note is its summary alone, one line, so the slide ends at that one line's height.
+          var line = parseFloat(getComputedStyle(summary).lineHeight) || 18;
+          fold.style.overflow = "hidden";
+          var closing = fold.animate([{ height: from + "px" }, { height: line + "px" }],
+            { id: "run-height", duration: runEaseDuration(from, line), easing: RUN_EASING });
+          closing.onfinish = function () { fold.style.overflow = ""; fold.open = false; prev.checkingHeight = box.offsetHeight; };
+          closing.oncancel = function () { fold.style.overflow = ""; };
+        }
+        prev.checkingHeight = box.offsetHeight;
+      });
+      return fold;
+    }
+    var chosenItems = (batch || (byId[current.subject] ? [byId[current.subject]] : [])).filter(function (item) {
+      return isObject(item.checkSelection) && item.checkSelection.by === "lead";
     });
+    if (batch && chosenItems.length) {
+      var reasons = el("ul", "ck-chosen-list");
+      chosenItems.forEach(function (item) {
+        var reason = text(item.checkSelection.reason);
+        add(reasons, add(el("li"), add(el("b"), titleOf(doc, item)), reason || null));
+      });
+      chosenNotes.push(chosenFold("batch:" + chosenItems.map(subjectOf).join(","), "Checks chosen by the lead, not the usual selection · for " +
+        (chosenItems.length === batch.length ? (batch.length === 2 ? "both pieces" : "all " + batch.length + " pieces") : chosenItems.length + " of " + batch.length + " pieces"), reasons));
+    } else {
+      chosenItems.forEach(function (item) {
+        var reason = text(item.checkSelection.reason);
+        chosenNotes.push(chosenFold(subjectOf(item), "Checks chosen by the lead, not the usual selection" + (reason ? ": " + reason : "")));
+      });
+    }
     var steps = list(current.steps).filter(function (step) { return isObject(step) && step.label !== "selecting checks"; });
     if (steps.length) {
       var done = steps.filter(function (step) { return DONE[step.state]; }).length;
+      // The count at a glance; the sentence below says it in words, so this one is not read out twice.
+      var count = add(el("span", "ck-count"), String(done), el("i", null, "/" + steps.length));
+      count.setAttribute("aria-hidden", "true");
+      var head = box.querySelector(".ck-h");
+      head.appendChild(count);
+      // Once every check has finished and none failed, nothing is being checked any more: the mark settles into a ring
+      // with a tick and the header says so, while the piece waits to land. A batch already landing keeps its own words.
+      var allPassed = done === steps.length && !steps.some(function (step) { return step.state === "failed" || step.state === "timed_out"; });
+      if (allPassed && !(batch && batch.some(function (item) { return item.stage === "merged"; }))) {
+        head.querySelector(".ck-dot").className = "ck-dot is-done";
+        head.childNodes[1].textContent = batch ? "All checks passed · " + batch.length + " pieces" : "All checks passed";
+      }
       var failedSteps = steps.filter(function (step) { return step.state === "failed" || step.state === "timed_out"; });
       var failed = failedSteps.length;
       // Once a check fails, the piece cannot merge from this run, whatever is still to run.
       if (failed) {
+        box.classList.add("failed");
         var left = steps.length - done;
         // A failed batch still lands the pieces ahead of the one that broke it, so it only won't land as one.
         add(box, add(el("div", "ck-verdict"), el("b", null, batch ? "The batch won't land as one." : "Won't merge from this run."),
           el("span", null, " " + failed + " failed" + (left ? " · " + left + " still to run" : "") + (batch ? " · the pieces ahead of the one that broke it can still land" : ""))));
       }
       var line = null;
+      // Up to twelve checks read in three groups: in progress (the running row below), then waiting, then completed.
+      var groups = null;
       if (steps.length <= 12 && !failed) {
-        var row = el("div", "ck-steps");
-        steps.forEach(function (step) {
-          var mark = step.state === "passed" || step.state === "reused" ? "✓ " : step.state === "failed" || step.state === "timed_out" ? "✕ " : "";
-          row.appendChild(el("span", "ck-step " + (STEP_WORDS[step.state] ? step.state : "pending"), mark + text(step.label)));
-        });
-        add(box, row);
+        var group = function (title, members) {
+          var row = el("div", "ck-steps");
+          members.forEach(function (step) {
+            // Each check's mark draws its state; the state's word is there for a screen reader.
+            var state = STEP_WORDS[step.state] ? step.state : "pending";
+            row.appendChild(add(el("span", "ck-step " + state), el("span", "sr", STEP_WORDS[state] + ": "), text(step.label)));
+          });
+          return add(el("div", "ck-group"), add(el("div", "ck-group-h"), title, el("span", "ck-group-n", String(members.length))), row);
+        };
+        var waitingSteps = steps.filter(function (step) { return !DONE[step.state] && step.state !== "running"; });
+        var doneSteps = steps.filter(function (step) { return DONE[step.state]; });
+        groups = [waitingSteps.length ? group("Waiting", waitingSteps) : null, doneSteps.length ? group("Completed", doneSteps) : null].filter(Boolean);
       } else if ((line = runLine(current, steps))) {
         add(box, line);
       } else {
+        // With no check times to place, each check takes an equal stretch, in the same well and marks as the run line.
+        // The record's order is not the order they ran, so the strip reads as progress instead: what is done from the
+        // left, then what is running (named in its row below), then what is still to run.
         var bar = el("div", "ck-bar");
-        steps.forEach(function (step) { bar.appendChild(el("span", STEP_WORDS[step.state] ? step.state : "pending")); });
-        add(box, bar);
+        var ranked = steps.filter(function (step) { return DONE[step.state]; })
+          .concat(steps.filter(function (step) { return step.state === "running"; }))
+          .concat(steps.filter(function (step) { return !DONE[step.state] && step.state !== "running"; }));
+        ranked.forEach(function (step) { bar.appendChild(el("span", STEP_WORDS[step.state] ? step.state : "pending")); });
+        var toRun = ranked.length - done - ranked.filter(function (step) { return step.state === "running"; }).length;
+        var foot = add(el("div", "ck-bar-foot"), el("span", null, "no times recorded"), toRun ? el("span", null, toRun + " waiting") : null);
+        foot.setAttribute("aria-hidden", "true");
+        bar.setAttribute("aria-hidden", "true");
+        add(box, add(el("div", "ck-bar-well"), bar, foot));
       }
       if (failed) { add(box, failedChecks(doc, batch ? batch.map(subjectOf) : [current.subject === undefined || current.subject === null ? "" : String(current.subject)], current, failedSteps)); }
-      steps.filter(function (step) { return step.state === "running"; }).forEach(function (step) {
-        var began = seconds(step.startedAt);
-        var spent = began === null ? null : Date.now() / 1000 - began;
-        var words = "Running " + text(step.label);
-        var over = false;
-        if (spent !== null && spent >= 0) {
-          // Without a usual time to compare against, the time so far is only a time, never an alarm.
-          words += " · " + duration(spent) + (typeof step.expectedSeconds === "number" ? " of about " + duration(step.expectedSeconds) : " so far");
-          over = typeof step.expectedSeconds === "number" && spent > step.expectedSeconds;
-        }
-        add(box, el("div", "ck-run" + (over ? " over" : ""), words + (over ? ", longer than usual" : "")));
+      // The check shown running at the last draw: when it has finished since, its row settles, marks its result and flips
+      // over to the check now running, or rests on its result when none is.
+      var runId = text(current.startedAt) + "|" + text(current.subject);
+      var runningSteps = steps.filter(function (step) { return step.state === "running"; });
+      var shownBefore = prev.runningCheck && prev.runningCheck.run === runId ? prev.runningCheck.label : null;
+      var finished = shownBefore && !runningSteps.some(function (step) { return text(step.label) === shownBefore; })
+        ? steps.filter(function (step) { return text(step.label) === shownBefore && DONE[step.state]; })[0] : null;
+      prev.runningCheck = runningSteps.length ? { run: runId, label: text(runningSteps[0].label) } : null;
+      if (groups && runningSteps.length) { add(box, add(el("div", "ck-group-h"), "In progress", el("span", "ck-group-n", String(runningSteps.length)))); }
+      runningSteps.forEach(function (step, i) {
+        var row = runRow(step);
+        box.appendChild(row);
+        if (i === 0 && finished) { handOff(row, finished, step); }
       });
+      // A check that has just failed is told once at a time: its row marks the cross and turns over to the next check,
+      // and only then does its entry arrive in the failures above. With no next check its entry alone tells it.
+      var justFailed = finished && (finished.state === "failed" || finished.state === "timed_out");
+      if (justFailed && runningSteps.length && runMotionWanted(box)) {
+        var arriving = [].filter.call(box.querySelectorAll(".ck-fails li"), function (entry) { return entry.getAttribute("data-check") === text(finished.label); })[0];
+        if (arriving) { arriving.classList.add("arriving"); }
+      }
+      if (finished && !runningSteps.length && !justFailed) {
+        var rest = runRow(finished);
+        box.appendChild(rest);
+        handOff(rest, finished, null);
+      }
+      if (groups) { groups.forEach(function (node) { box.appendChild(node); }); }
       var running = steps.filter(function (step) { return step.state === "running"; }).length;
       var tally = function (state) { return steps.filter(function (step) { return step.state === state; }).length; };
       var counts = failed
         ? [tally("passed") + " passed", tally("reused") ? tally("reused") + " reused" : "", tally("skipped") ? tally("skipped") + " skipped" : "", failed + " failed",
           running ? running + " running" : "", steps.length - done - running ? steps.length - done - running + " waiting" : ""].filter(Boolean).join(", ")
         : done + " of " + steps.length + " checks done";
-      add(box, el("div", "ck-s", (batch ? "One test run for all of them; each lands only if it matches what was tested · " : "") + counts +
+      add(box, el("div", "ck-s", counts +
         (ago(current.startedAt) ? " · started " + ago(current.startedAt) : "")));
     } else if (ago(current.startedAt)) {
       add(box, el("div", "ck-s", "Started " + ago(current.startedAt)));
     }
-    if (nextNames.length) { add(box, el("div", "ck-s", "Up next: " + nextNames.join(" · "))); }
+    chosenNotes.forEach(function (fold) { add(box, fold); });
+    if (nextNames.length) { add(box, el("div", "ck-s ck-next", "Up next: " + nextNames.join(" · "))); }
     return box;
   }
 
@@ -679,84 +908,102 @@
    * The check run as a stretch of line on the clock: each check runs from where it started to where it
    * finished, so a long one is a long stretch, and a stem above its stop rises with its time. Failed stops
    * are numbered as the list below them; the running one sits at now, and the waiting ones trail off dotted.
-   * Null when the record has no check times to place.
+   * Null when the record has no check times to place, or lacks one for a check that has started.
    */
   function runLine(current, steps) {
     var start = seconds(current.startedAt);
     var now = Date.now() / 1000;
     var timed = steps.filter(function (step) { return seconds(step.startedAt) !== null; });
-    if (start === null || now <= start || !timed.length) { return null; }
+    // Every check that has started needs a time to place it: with only some timed, the line would show those few
+    // crowded at now and leave the rest out, so the strip below, in order of progress, is drawn instead.
+    var begun = steps.filter(function (step) { return DONE[step.state] || step.state === "running"; });
+    if (start === null || now <= start || !timed.length || timed.length < begun.length) { return null; }
     var waiting = steps.filter(function (step) { return !DONE[step.state] && step.state !== "running"; }).length;
     // Drawn at the width it is shown at, so its words stay their size on a phone.
     var width = Math.round(Math.max(300, Math.min(560, typeof innerWidth === "number" && innerWidth > 0 ? innerWidth - 80 : 560)));
-    var left = 8, right = width - (waiting ? Math.min(110, Math.round(width * 0.3)) : 16), y = 52;
+    var left = 6, right = width - (waiting ? Math.min(92, Math.round(width * 0.22)) : 6);
     var x = function (t) { return left + Math.max(0, Math.min(1, (t - start) / (now - start))) * (right - left); };
     var kind = function (step) { return step.state === "failed" || step.state === "timed_out" ? "failed" : step.state === "running" ? "running" : "passed"; };
-    var svg = document.createElementNS(SVG, "svg");
-    svg.setAttribute("class", "run-line");
-    svg.setAttribute("viewBox", "0 0 " + width + " 92");
-    svg.setAttribute("role", "img");
-    var first = Math.min.apply(null, timed.map(function (step) { return seconds(step.startedAt); }));
-    shape(svg, "line", { class: "rl-lead", x1: left, x2: x(first), y1: y, y2: y });
     var spans = timed.map(function (step) {
       var from = seconds(step.startedAt), to = step.state === "running" ? now : seconds(step.finishedAt);
       // A clock behind the runner's can put an end before its start, or a start after now: such a check is a point.
+      // An end past now is clamped the same way, so checks the runner stamped ahead of this clock sit together at now
+      // instead of each taking a row of its own.
       from = Math.min(from, now);
-      return { step: step, kind: kind(step), from: from, to: to === null ? from : Math.max(from, to) };
+      return { step: step, kind: kind(step), from: from, to: to === null ? from : Math.min(now, Math.max(from, to)) };
     });
+    // Each check is a capsule on the run's clock. Checks that overlap stack into rows, each taking the first row free
+    // when it starts, so a long check running beside short ones never hides them.
+    var rowEnds = [];
+    spans.slice().sort(function (a, b) { return a.from - b.from; }).forEach(function (span) {
+      var row = rowEnds.findIndex(function (end) { return end <= span.from; });
+      if (row < 0) { row = rowEnds.length; rowEnds.push(span.to); } else { rowEnds[row] = span.to; }
+      span.row = row;
+    });
+    var ROW = 10, TOP = 24, axis = TOP + rowEnds.length * ROW + 18;
+    var svg = document.createElementNS(SVG, "svg");
+    svg.setAttribute("class", "run-line");
+    svg.setAttribute("viewBox", "0 0 " + width + " " + (axis + 4));
+    svg.setAttribute("role", "img");
+    // Where now is on the clock: a hairline down through the rows.
+    shape(svg, "line", { class: "rl-now", x1: right, x2: right, y1: TOP - 6, y2: TOP + rowEnds.length * ROW });
     var longest = Math.max.apply(null, spans.map(function (span) { return span.to - span.from; }).concat([1]));
-    spans.forEach(function (span) { shape(svg, "line", { class: "rl-seg " + span.kind, x1: x(span.from), x2: Math.max(x(span.from), x(span.to)), y1: y, y2: y }); });
-    // Stems and their times: tallest for the longest check; a time is written only where it has room.
-    var lastLabel = -100;
-    spans.slice().sort(function (a, b) { return a.to - b.to; }).forEach(function (span) {
-      var took = span.to - span.from;
-      var height = 4 + 26 * Math.sqrt(took / longest);
-      var at = x(span.to);
-      shape(svg, "line", { class: "rl-stem " + span.kind, x1: at, x2: at, y1: y - 8, y2: y - 8 - height });
-      var worth = span.kind !== "passed" || took >= 300;
-      if (worth && at - lastLabel > 46) {
-        shape(svg, "text", { class: "rl-time " + span.kind, x: at, y: y - 12 - height, "text-anchor": "middle" }, duration(took) + (span.kind === "running" ? " so far" : ""));
-        lastLabel = at;
-      }
-    });
-    // Numbered by place among all the failed checks, as the list below is, even if one has no time to draw.
     var failures = steps.filter(function (step) { return kind(step) === "failed"; });
-    var lastNumber = -100;
+    // Failures close together keep their numbers apart: each sits above its capsule's end, or just after the number before
+    // it on the same row, and never past the drawing's edge.
+    var numbered = spans.filter(function (span) { return span.kind === "failed"; }).sort(function (a, b) { return a.to - b.to; });
+    var lastNumber = {};
+    numbered.forEach(function (span) {
+      var at = Math.max(x(span.from), x(span.to)) - 3;
+      span.numberAt = Math.max(at, left + 4, lastNumber[span.row] === undefined ? -Infinity : lastNumber[span.row] + 10);
+      lastNumber[span.row] = span.numberAt;
+    });
+    // Then back from the edge: a number pushed past it moves left, and pushes the ones before it left in turn.
+    var nextNumber = {};
+    numbered.slice().reverse().forEach(function (span) {
+      span.numberAt = Math.min(span.numberAt, width - 4, nextNumber[span.row] === undefined ? Infinity : nextNumber[span.row] - 10);
+      nextNumber[span.row] = span.numberAt;
+    });
     spans.forEach(function (span) {
-      var at = x(span.to);
-      if (span.kind === "failed") {
+      var from = x(span.from), to = Math.max(x(span.from), x(span.to)), y = TOP + span.row * ROW;
+      var took = span.to - span.from;
+      // Passed checks are quiet, the long ones a little less so; the running one is solid and glows; a failure is held.
+      var long = span.kind === "passed" && took >= Math.max(60, longest * 0.25);
+      // A hair of space between checks that follow one another, so each reads as its own capsule.
+      var inset = to - from > 8 ? 1 : 0;
+      var seg = shape(svg, "rect", { class: "rl-seg " + span.kind + (long ? " long" : ""), x: from + inset, y: y, width: Math.max(4, to - from - 2 * inset), height: 6, rx: 3 });
+      // Pointing at a capsule shows the page's card with its check, its time and how it ended; one on a lower row also
+      // names the longest check it ran alongside, which is why it sits below.
+      var beside = span.row ? spans.filter(function (other) { return other.row < span.row && other.from < span.to && other.to > span.from; })
+        .sort(function (a, b) { return (b.to - b.from) - (a.to - a.from); })[0] : null;
+      seg.addEventListener("mouseenter", function () {
+        card.replaceChildren(el("b", null, text(span.step.label)),
+          el("div", "ic-s", clockTime(span.kind === "running" ? Date.now() / 1000 - span.from : took) + (span.kind === "running" ? " so far · running" :
+            " · " + (STEP_WORDS[span.step.state] || "finished"))));
+        if (beside) { card.appendChild(el("div", "ic-s", "Ran alongside " + text(beside.step.label))); }
+        placeCard(seg);
+      });
+      seg.addEventListener("mouseleave", hideCard);
+      if (span.kind === "running") {
+        shape(svg, "text", { class: "rl-time running", x: Math.max(left + 44, to), y: TOP - 10, "text-anchor": "end", "data-check": text(span.step.label) }, clockTime(took) + " so far");
+      } else if (span.kind === "failed") {
+        // Numbered by place among all the failed checks, as the list below is, even if one has no time to draw.
         var number = failures.indexOf(span.step) + 1;
-        shape(svg, "circle", { class: "rl-stop failed", cx: at, cy: y, r: 5.5 });
-        // Failures close together keep their numbers apart, each still under or just after its stop.
-        var place = Math.min(Math.max(at, lastNumber + 11), width - 6);
-        shape(svg, "text", { class: "rl-num", x: place, y: y + 20, "text-anchor": "middle" }, String(number));
-        lastNumber = place;
-      } else if (span.kind === "running") {
-        shape(svg, "circle", { class: "rl-ring", cx: at, cy: y, r: 9 });
-        shape(svg, "circle", { class: "rl-stop running", cx: at, cy: y, r: 5 });
-      } else {
-        shape(svg, "circle", { class: "rl-stop passed", cx: at, cy: y, r: 2.5 });
+        shape(svg, "text", { class: "rl-num", x: span.numberAt, y: y - 3, "text-anchor": "middle" }, String(number));
       }
     });
     if (waiting) {
-      shape(svg, "line", { class: "rl-tail", x1: right + 16, x2: width - 6, y1: y, y2: y });
-      var dots = Math.min(4, waiting), gap = (width - 6 - (right + 24)) / Math.max(1, dots);
-      for (var i = 0; i < dots; i += 1) { shape(svg, "circle", { class: "rl-wait", cx: right + 24 + i * gap, cy: y, r: 2.5 }); }
-      shape(svg, "text", { class: "rl-tick", x: (right + width) / 2 + 4, y: y - 14, "text-anchor": "middle" }, waiting + " waiting");
+      var dots = Math.min(4, waiting), gap = (width - 10 - (right + 14)) / Math.max(1, dots - 1 || 1);
+      for (var i = 0; i < dots; i += 1) { shape(svg, "circle", { class: "rl-wait", cx: right + 14 + i * gap, cy: TOP + 3, r: 2.5 }); }
+      shape(svg, "text", { class: "rl-tick", x: width - 4, y: axis, "text-anchor": "end" }, waiting + " waiting");
     }
-    shape(svg, "text", { class: "rl-tick", x: left, y: 89 }, clock(current.startedAt));
-    shape(svg, "text", { class: "rl-tick", x: right, y: 89, "text-anchor": "end" }, "now");
+    shape(svg, "text", { class: "rl-tick", x: left, y: axis }, clock(current.startedAt));
+    shape(svg, "text", { class: "rl-tick", x: right, y: axis, "text-anchor": waiting ? "middle" : "end" }, "now");
     var failedCount = spans.filter(function (span) { return span.kind === "failed"; }).length;
     svg.setAttribute("aria-label", "Check run from " + clock(current.startedAt) + " to now: " + timed.length + " started" +
       (failedCount ? ", " + failedCount + " failed" : "") + (waiting ? ", " + waiting + " waiting" : ""));
     return svg;
   }
-
-  /**
-   * The failed checks of the piece being checked, first and apart from the rest: each with its log and the
-   * failing tests the record names, and the lead's notes on it beside it. Notes on the piece that name no
-   * failed check follow the list.
-   */
   function failedChecks(doc, subjects, current, failedSteps) {
     var records = Object.create(null);
     list(doc.state.queue).filter(function (entry) { return isObject(entry) && subjects.indexOf(subjectOf(entry)) >= 0; }).forEach(function (item) {
@@ -776,9 +1023,12 @@
       // Each word as written and without the punctuation around it, so a label that itself ends in punctuation still matches.
       return words.concat(words.map(function (word) { return word.replace(/^[("'\x60\[]+/, "").replace(/[)"'\x60\],;:.!?]+$/, ""); }));
     }
-    function note(entry) {
+    function note(entry, label) {
       used.push(entry);
-      return add(el("div", "ck-note"), glyph(entry.kind === "blocker.recorded" ? "stop" : "decide"), text(entry.summary));
+      // Under its own check a note need not name the check again, so a leading "check: " is dropped.
+      var words = text(entry.summary);
+      if (label && words.indexOf(label + ": ") === 0) { words = words.slice(label.length + 2); }
+      return add(el("div", "ck-note"), glyph(entry.kind === "blocker.recorded" ? "stop" : "decide"), add(el("span"), words));
     }
     var ul = el("ul", "ck-fails");
     failedSteps.forEach(function (step) {
@@ -788,16 +1038,17 @@
       // Numbered as its stop on the run line above.
       var mark = el("span", "g num", String(failedSteps.indexOf(step) + 1));
       mark.setAttribute("aria-hidden", "true");
-      var body = add(el("div"), add(el("div", "ck-f"), el("span", "sr", step.state === "timed_out" ? "Timed out: " : "Failed: "), label));
+      // What failed and how much, on one line; then which tests; then what the lane found; the log last, quietest.
+      var head = add(el("div", "ck-fh"), add(el("div", "ck-f"), el("span", "sr", step.state === "timed_out" ? "Timed out: " : "Failed: "), label));
+      if (text(record.detail)) { head.appendChild(el("div", "ck-d", text(record.detail))); }
+      var body = add(el("div", "ck-fb"), head);
       var tests = list(record.failures).map(text).filter(Boolean);
-      if (tests.length) { body.appendChild(el("div", "ck-d", "Failing: " + tests.join(", "))); }
-      if (text(record.detail)) { body.appendChild(el("div", "ck-d", text(record.detail))); }
-      notes.filter(function (entry) { return label && names(entry.summary).indexOf(label) >= 0; }).forEach(function (entry) { body.appendChild(note(entry)); });
-      if (text(record.log)) {
-        var log = el("div", "ck-log", "Log: " + text(record.log));
-        body.appendChild(log);
-      }
-      ul.appendChild(add(el("li", step.state === "timed_out" ? "timed_out" : "failed"), mark, body));
+      if (tests.length) { body.appendChild(add(el("div", "ck-tests"), el("span", "ck-k", "Failing: "), tests.join(", "))); }
+      notes.filter(function (entry) { return label && names(entry.summary).indexOf(label) >= 0; }).forEach(function (entry) { body.appendChild(note(entry, label)); });
+      if (text(record.log)) { body.appendChild(add(el("div", "ck-log"), el("span", "ck-k", "Log: "), text(record.log))); }
+      var entry = add(el("li", step.state === "timed_out" ? "timed_out" : "failed"), mark, body);
+      entry.setAttribute("data-check", label);
+      ul.appendChild(entry);
     });
     var box = add(el("div", "ck-failures"), ul);
     var general = notes.filter(function (entry) { return used.indexOf(entry) < 0; });
@@ -864,7 +1115,7 @@
         && list(NEEDS.items).filter(isObject).some(function (item) { return item.holding === true; });
       if (!holding) { return null; }
     }
-    var box = add(el("div", "attention needs-you"), el("div", "ah", "Needs you"));
+    var box = add(el("div", "attention needs-you"), add(el("div", "ah"), persona("supervisor"), "Needs you"));
     function none(words) { return add(box, el("p", "needs-none", words)); }
     if (NEEDS.unreadable === true) { return none("Unavailable: the supervisor's list can't be read, so it isn't shown."); }
     if (NEEDS.running !== true) {
@@ -946,6 +1197,42 @@
   }
 
   /* 2. The line */
+  // The lanes' row geometry, matched by the stylesheet: each row's stops centre this far below its top, rows this far apart.
+  var LINE_STOP_Y = 23, LINE_PITCH = 84, MERGE_WIDTH = 176;
+  /**
+   * Beside the lanes, each lane's line turns into one main line that runs to the finish line. A lane's turn is solid
+   * once it has landed everything; the main line is solid once every piece is in. Drawn to the rows' fixed geometry.
+   */
+  function mergeDrawing(doc, all, ends) {
+    var height = (ends.length - 1) * LINE_PITCH + LINE_STOP_Y * 2;
+    var trunkY = LINE_STOP_Y + (ends.length - 1) * LINE_PITCH / 2;
+    var joinX = 100, finishX = MERGE_WIDTH - 14;
+    var svg = document.createElementNS(SVG, "svg");
+    svg.setAttribute("class", "line-merge");
+    svg.setAttribute("viewBox", "0 0 " + MERGE_WIDTH + " " + height);
+    svg.setAttribute("width", String(MERGE_WIDTH));
+    svg.setAttribute("height", String(height));
+    var landed = all.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
+    var finish = list(doc.state.finish).filter(isObject);
+    var met = finish.filter(function (line) { return line.met === true; }).length;
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "Every lane merges into one main line: " + landed + " of " + all.length + " pieces landed" +
+      (finish.length ? ", " + met + " of " + finish.length + " finish lines met" : ""));
+    shape(svg, "path", { class: "mg-trunk" + (landed === all.length ? "" : " open"), d: "M" + joinX + " " + trunkY + "H" + finishX });
+    ends.forEach(function (end, i) {
+      var y = LINE_STOP_Y + i * LINE_PITCH;
+      var turn = shape(svg, "path", { class: "mg-turn" + (end.done ? "" : " open"),
+        d: "M0 " + y + "H12C" + (12 + 52) + " " + y + " " + (joinX - 52) + " " + trunkY + " " + joinX + " " + trunkY });
+      turn.style.setProperty("--c", end.colour);
+    });
+    shape(svg, "circle", { class: "mg-join", cx: joinX, cy: trunkY, r: 4 });
+    shape(svg, "path", { class: "mg-post", d: "M" + finishX + " " + (trunkY - 20) + "V" + (trunkY + 20) });
+    shape(svg, "text", { class: "mg-label", x: finishX + 3, y: trunkY - 30, "text-anchor": "end" }, "Finish line");
+    // The totals stack under the post, short enough to stay clear of the lanes turning in.
+    shape(svg, "text", { class: "mg-count", x: finishX + 3, y: trunkY + 38, "text-anchor": "end" }, landed + "/" + all.length + " landed");
+    if (finish.length) { shape(svg, "text", { class: "mg-count", x: finishX + 3, y: trunkY + 52, "text-anchor": "end" }, met + "/" + finish.length + " met"); }
+    return svg;
+  }
   function drawLine(doc, all) {
     var inner = parts.line;
     var names = laneNames(doc);
@@ -961,14 +1248,30 @@
     }
     var lanes = [];
     all.forEach(function (piece) { var lane = piece.item.lane || ""; if (lanes.indexOf(lane) < 0) { lanes.push(lane); } });
+    // Every lane's stops sit on one pitch, set by the longest lane, and end together where the lane turns into the main line.
+    var most = Math.max.apply(null, lanes.map(function (lane) { return all.filter(function (piece) { return (piece.item.lane || "") === lane; }).length; }));
     var box = el("div", "lines");
+    var track = el("div", "lines-track");
+    track.style.setProperty("--most", String(most));
+    box.appendChild(track);
     var stages = Object.create(null);
     var buttons = [];
+    var ends = [];
+    // Keys that all share a prefix such as "V26-" show without it on the line, so a lane's stops fit beside the merge; the
+    // full key stays the link's accessible name and its data.
+    var keys = all.map(function (piece) { return subjectOf(piece.item); });
+    var shared = /^(.*-)[^-]+$/.exec(keys[0] || "");
+    var prefix = shared && keys.length > 1 && keys.every(function (key) { return key.indexOf(shared[1]) === 0 && key.length > shared[1].length; }) ? shared[1] : "";
     lanes.forEach(function (lane) {
       var items = all.filter(function (piece) { return (piece.item.lane || "") === lane; });
       var row = el("div", "line");
       row.style.setProperty("--c", colours[lane]);
       var landedHere = items.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
+      // The lane's rule is solid up to its last landed stop and faint after it; a lane that landed everything is solid to the turn.
+      var lastLanded = -1;
+      items.forEach(function (piece, i) { if (!piece.planned && piece.item.stage === "merged") { lastLanded = i; } });
+      var solid = landedHere === items.length ? 100 : lastLanded < 0 ? 0 : 100 - (items.length - 1 - lastLanded + 0.5) * 100 / most;
+      ends.push({ colour: colours[lane], done: landedHere === items.length });
       add(row, add(el("div", "name"), el("b", null, lane ? names[lane] || lane : "Not yet assigned"), landedHere + " of " + items.length + " landed"));
       var stops = el("div", "stops");
       var merged = function (k) { return k >= 0 && k < items.length && !items[k].planned && items[k].item.stage === "merged"; };
@@ -992,12 +1295,16 @@
         button.addEventListener("focus", show);
         buttons.push(button);
         // The change request sits under the ticket once one is open, and opens it.
-        add(seg, button, add(el("div", "stop-label"), issue(key), piece.item.changeRequest ? changeLink(piece.item.changeRequest) : null));
+        var ticket = issue(key, prefix ? key.slice(prefix.length) : key);
+        if (prefix) { ticket.setAttribute("aria-label", key); }
+        add(seg, button, add(el("div", "stop-label"), ticket, piece.item.changeRequest ? changeLink(piece.item.changeRequest) : null));
         stops.appendChild(seg);
       });
+      stops.style.setProperty("--solid", solid + "%");
       add(row, stops);
-      box.appendChild(row);
+      track.appendChild(row);
     });
+    track.appendChild(mergeDrawing(doc, all, ends));
     var detail = el("div", "detail");
     detail.id = "detail";
     detail.setAttribute("aria-live", "polite");
@@ -1008,6 +1315,11 @@
     });
     nodes.push(box, detail, legend);
     inner.replaceChildren.apply(inner, nodes);
+    // Where the line scrolls sideways, as on a phone, it opens at its end, where the lanes merge and the newest work is,
+    // and keeps the reader's own place on later redraws.
+    // Kept as the distance from the right edge, where the newest work is, so a change of width still shows it.
+    if (box.scrollWidth > box.clientWidth) { box.scrollLeft = box.scrollWidth - box.clientWidth - (prev.lineScroll || 0); }
+    box.addEventListener("scroll", function () { prev.lineScroll = Math.max(0, box.scrollWidth - box.clientWidth - box.scrollLeft); });
     prev.stages = stages;
     var pick = all.filter(function (piece) { return subjectOf(piece.item) === selected; })[0] ||
       all.filter(function (piece) { return stopKind(piece, nowSubject) === "now"; })[0] ||
@@ -1070,6 +1382,7 @@
     // it would name another piece. Under the title, the piece's ticket and change request, then where it is and when it landed.
     var lane = text(item.lane);
     var owner = el("div", "d-owner" + (lane ? "" : " is-none"), lane ? (lane === "lead" ? "Lead" : lane.replace(/^lane-/, "").replace(/^./, function (first) { return first.toUpperCase(); })) + " lane" : "Not yet assigned");
+    if (lane) { owner.insertBefore(persona(lane === "lead" ? "lead" : "lane"), owner.firstChild); }
     var line = el("div", "d2 d-meta");
     add(line, issue(subject));
     if (item.changeRequest) { add(line, " · ", changeLink(item.changeRequest)); }
@@ -1169,9 +1482,23 @@
     journalFor(doc, item.subject, { "review.round": true }).forEach(function (entry) {
       if (isObject(entry.review) && isObject(entry.review.verdicts)) { journaled[entry.review.round] = entry.review.verdicts; }
     });
+    // The run's own verdicts stand. A lens the run gives no verdict for, or calls unknown, takes the one the record's
+    // review.round entry journaled for that round, and a round the run gives no outcome for takes one from those verdicts.
     var rounds = list(summary.roundDetail).map(function (round) {
-      if (!isObject(round) || (isObject(round.verdicts) && Object.keys(round.verdicts).length) || !journaled[round.round]) { return round; }
-      return Object.assign({}, round, { verdicts: journaled[round.round] });
+      if (!isObject(round) || !isObject(journaled[round.round])) { return round; }
+      var given = isObject(round.verdicts) ? round.verdicts : {};
+      var recorded = journaled[round.round];
+      var verdicts = {};
+      Object.keys(given).concat(Object.keys(recorded)).forEach(function (lens) {
+        if (Object.prototype.hasOwnProperty.call(verdicts, lens)) { return; }
+        var own = given[lens];
+        verdicts[lens] = own !== undefined && own !== null && own !== "unknown" ? own : recorded[lens] !== undefined ? recorded[lens] : own;
+      });
+      var said = Object.keys(verdicts).map(function (lens) { return verdicts[lens]; });
+      var outcome = round.outcome !== undefined && round.outcome !== null ? round.outcome
+        : !said.length ? round.outcome : said.every(function (verdict) { return verdict === "approve"; }) ? "approve"
+        : said.indexOf("changes") >= 0 ? "changes" : round.outcome;
+      return Object.assign({}, round, { verdicts: verdicts, outcome: outcome });
     });
     var box = el("div", "d-run");
     box.appendChild(runSummaryNode(Object.assign({}, summary, { roundDetail: rounds }), { commitHref: commitHref, lenses: VIEW.lenses }));
@@ -1273,7 +1600,7 @@
     var delta = at === null ? -1 : Date.now() / 1000 - at;
     if (delta < 0) { return el("p", "said", "No time recorded"); }
     var old = delta > ROW_OLD_SECONDS && lane.state !== "idle" && lane.state !== "done";
-    return el("p", "said" + (old ? " old" : ""), (delta < 45 ? "Said just now" : "Said " + duration(delta) + " ago") + (old ? "; may be out of date" : ""));
+    return el("p", "said" + (old ? " old" : ""), (delta < 45 ? "Updated just now" : "Updated " + duration(delta) + " ago") + (old ? "; may be out of date" : ""));
   }
   function drawWho(doc, all) {
     var inner = parts.who;
@@ -1305,7 +1632,7 @@
         if (closed) { /* what a lane last waited on or how long it has held is over */ }
         else if (lane.waitingOn) { st.appendChild(el("span", "on waiting", "waiting on " + text(lane.waitingOn))); }
         else if (heldFor(lane.since)) { st.appendChild(el("span", "on", heldFor(lane.since))); }
-        add(row, el("span", "swatch"), who, st);
+        add(row, add(el("span", "swatch"), persona("lane")), who, st);
         people.appendChild(row);
       });
       nodes.push(people);
@@ -1636,10 +1963,10 @@
     var flags = [];
     var changes = list(plan.changes).filter(isObject);
     var events = list(doc.journal).filter(function (entry) { return isObject(entry) && (entry.kind === "base.broken" || entry.kind === "base.repaired"); });
-    if (baseBroken(doc)) { flags.push({ title: "The base is broken", why: text(events[events.length - 1].summary) || "No reason recorded." }); }
+    if (baseBroken(doc)) { flags.push({ title: "The base is broken", why: text(events[events.length - 1].summary) || "No reason recorded.", fix: "Repair the base; nothing lands until it is." }); }
     // Only an approval the lead marked blocking needs the engineer; one that is merely ahead stays in its fold.
     var blocking = list(plan.approvals).filter(function (entry) { return isObject(entry) && entry.blocking === true && entry.state === "waiting"; });
-    if (blocking.length) { flags.push({ title: "Approvals are blocking work", why: blocking.map(function (entry) { return text(entry.text); }).join("; ") }); }
+    if (blocking.length) { flags.push({ title: "Approvals are blocking work", why: blocking.map(function (entry) { return text(entry.text); }).join("; "), fix: blocking.length === 1 ? "Give or refuse this approval." : "Give or refuse each approval." }); }
     var known = Object.create(null);
     planUnits(plan.units).forEach(function (unit) { known[text(unit.subject)] = true; });
     var stray = [];
@@ -1647,14 +1974,14 @@
       var subject = subjectOf(item);
       if (subject && !known[subject] && stray.indexOf(subject) < 0) { stray.push(subject); }
     });
-    if (stray.length) { flags.push({ title: "Work in the record isn't in the plan", why: stray.join(", ") }); }
+    if (stray.length) { flags.push({ title: "Work in the record isn't in the plan", why: stray.join(", "), fix: stray.length === 1 ? "Add it to the plan as a unit." : "Add each to the plan as a unit." }); }
     var planIds = list(plan.finish).filter(isObject).map(function (line) { return text(line.id); });
     var recordIds = list(doc.state.finish).filter(isObject).map(function (line) { return text(line.id); });
     var onlyPlan = planIds.filter(function (id) { return recordIds.indexOf(id) < 0; });
     var onlyRecord = recordIds.filter(function (id) { return planIds.indexOf(id) < 0; });
     if (onlyPlan.length || onlyRecord.length) {
       flags.push({ title: "The plan and the record disagree on finish lines", why: [onlyPlan.length ? "Only in the plan: " + onlyPlan.join(", ") : "",
-        onlyRecord.length ? "Only in the record: " + onlyRecord.join(", ") : ""].filter(Boolean).join(". ") });
+        onlyRecord.length ? "Only in the record: " + onlyRecord.join(", ") : ""].filter(Boolean).join(". "), fix: "Make the plan's finish lines match the record's." });
     }
     var live = Object.create(null);
     counts.units.forEach(function (unit) { list(unit.criteria).filter(isObject).forEach(function (criterion) { live[criterion.id] = true; }); });
@@ -1666,7 +1993,7 @@
         .forEach(function (change) {
           touchedCriteria(change).forEach(function (id) { if (live[id] && named.indexOf(id) < 0 && missed.indexOf(id) < 0) { missed.push(id); } });
         });
-      if (missed.length) { flags.push({ title: "A finish line no longer covers the plan", why: (text(line.label) || text(line.id)) + " omits " + missed.join(", ") }); }
+      if (missed.length) { flags.push({ title: "A finish line no longer covers the plan", why: (text(line.label) || text(line.id)) + " omits " + missed.join(", "), fix: "Add the missing criteria to the line's covers, or have it cover all." }); }
     });
     var touched = [];
     changes.filter(function (change) { return change.kind === "relaxed" || change.kind === "changed" || change.kind === "removed"; }).forEach(function (change) {
@@ -1677,25 +2004,28 @@
         touched.push(subject);
       });
     });
-    if (touched.length) { flags.push({ title: "A change touches open work", why: touched.join(", ") }); }
+    if (touched.length) { flags.push({ title: "A change touches open work", why: touched.join(", "), fix: (touched.length === 1 ? "Have it reviewed again" : "Have each reviewed again") + "; the flag clears once a review approves after the change." }); }
     // Clipping empties a reason that was there; a change that never had one still has none.
     var unexplained = changes.filter(function (change) { return own(change, "why") === undefined || (change.clipped !== true && !text(change.why)); });
     if (unexplained.length) {
       flags.push({ title: unexplained.length === 1 ? "A change has no reason" : unexplained.length + " changes have no reason",
-        why: unexplained.map(function (change) { return text(change.title) || text(change.id); }).join(", ") });
+        why: unexplained.map(function (change) { return text(change.title) || text(change.id); }).join(", "), fix: unexplained.length === 1 ? "Give the change a why." : "Give each change a why." });
     }
     var waivedOpen = counts.units.filter(function (unit) { var proof = counts.proofs[text(unit.subject)]; return !proof.proven && list(unit.proofs).some(function (kind) { return proof.states[kind].state === "waived"; }); });
-    if (waivedOpen.length) { flags.push({ title: "A waived proof on a unit not yet proven", why: waivedOpen.map(unitName).join(", ") }); }
+    if (waivedOpen.length) { flags.push({ title: "A waived proof on a unit not yet proven", why: waivedOpen.map(unitName).join(", "), fix: "Finish the unit's other proofs, or check the waiver was meant." }); }
     return flags;
   }
   function flagList(flags, closed) {
     var box = el("div", "plan-needs");
-    if (!flags.length) { return closed ? null : add(box, el("p", "plan-calm", "Nothing in the plan needs you right now.")); }
+    if (!flags.length) { return closed ? null : add(box, el("p", "plan-calm", "Nothing in the plan needs attention right now.")); }
     var ul = el("ul");
     flags.forEach(function (flag) {
-      ul.appendChild(add(el("li"), glyph("stop"), add(el("div"), el("div", "a1", flag.title), flag.why ? el("div", "a2", flag.why) : null)));
+      // What is wrong, what it names, then what settles it. Nobody asked the reader for these: the page found the plan and
+      // the record out of step, so the heading says so rather than "Needs you", which is the supervisor's request.
+      ul.appendChild(add(el("li"), glyph("stop"), add(el("div"), el("div", "a1", flag.title), flag.why ? el("div", "a2", flag.why) : null,
+        flag.fix && !closed ? el("div", "a3", flag.fix) : null)));
     });
-    return add(box, el("div", "ah", closed ? "Left open at close" : "Needs you"), ul);
+    return add(box, el("div", "ah", closed ? "Left open at close" : "The plan needs attention"), ul);
   }
 
   /** A proof as its label and state; a finished one shows its label alone. */
@@ -1766,33 +2096,69 @@
     return criteria + "; proofs: " + (list(covers.proofs).length ? list(covers.proofs).map(kindLabel).join(", ") : "none");
   }
   var CHANGE_WORDS = table({ added: "Added", removed: "Removed", relaxed: "Relaxed", changed: "Changed", finish: "Finish line" });
-  /** The scope over time: units in the plan from approval through each change. */
+  /**
+   * The scope over time: units in the plan from approval through each change. The clock runs from approval to the last
+   * change, so the changes get the width; the quiet stretch since then is a short dotted tail to now. Changes too close to
+   * tell apart share one mark, drawn as the weightiest of them. The counts sit at each end and the dates beneath.
+   */
+  var SCOPE_WEIGHT = { added: 1, finish: 2, relaxed: 2, changed: 2, removed: 3 };
   function scopeChart(changes) {
     var svgNs = "http://www.w3.org/2000/svg";
     var start = seconds(isObject(plan.approved) ? plan.approved.at : null);
     var times = changes.map(function (change) { return seconds(change.at); }).filter(function (t) { return t !== null; });
-    var end = Math.max.apply(null, times.concat([start || 0, Date.now() / 1000]));
-    var begin = start === null ? Math.min.apply(null, times.concat([end])) : start;
+    var last = times.length ? Math.max.apply(null, times) : null;
+    var begin = start === null ? (times.length ? Math.min.apply(null, times) : Date.now() / 1000) : start;
     var size = planUnits(isObject(plan.approved) && isObject(plan.approved.snapshot) ? plan.approved.snapshot.units : []).length;
+    var first = size;
     var points = [[begin, size]];
     changes.slice().sort(function (p, q) { return (seconds(p.at) || 0) - (seconds(q.at) || 0); }).forEach(function (change) {
       if (change.kind === "added") { size += list(change.subjects).length; }
       if (change.kind === "removed") { size -= list(change.subjects).length; }
       points.push([seconds(change.at) || begin, size, change.kind]);
     });
-    points.push([end, size]);
-    var top = Math.max.apply(null, points.map(function (point) { return point[1]; }).concat([1]));
-    var x = function (t) { return 8 + (end > begin ? (t - begin) / (end - begin) : 0) * 584; };
-    var y = function (n) { return 72 - n / top * 60; };
+    var end = last !== null && last > begin ? last : begin + 1;
+    var W = 600, LEFT = 8, TAIL = 64, RIGHT = W - 8 - TAIL, TOP = 22, BOTTOM = 64;
+    var lowest = Math.min.apply(null, points.map(function (point) { return point[1]; }));
+    var highest = Math.max.apply(null, points.map(function (point) { return point[1]; }).concat([lowest + 1]));
+    var x = function (t) { return LEFT + Math.max(0, Math.min(1, (t - begin) / (end - begin))) * (RIGHT - LEFT); };
+    var y = function (n) { return BOTTOM - (n - lowest) / (highest - lowest) * (BOTTOM - TOP); };
     var svg = document.createElementNS(svgNs, "svg");
     svg.setAttribute("class", "plan-scope");
-    svg.setAttribute("viewBox", "0 0 600 80");
+    svg.setAttribute("viewBox", "0 0 " + W + " 92");
     svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", "Units in scope: " + points[0][1] + " at approval, " + size + " now, over " + changes.length + " changes");
-    var path = "";
-    points.forEach(function (point, index) { path += (index ? " H" + x(point[0]).toFixed(1) + " V" : "M" + x(point[0]).toFixed(1) + " ") + y(point[1]).toFixed(1); });
+    svg.setAttribute("aria-label", "Units in scope: " + first + " at approval, " + size + " now, over " + changes.length + " changes");
+    var path = "M" + x(points[0][0]).toFixed(1) + " " + y(points[0][1]).toFixed(1);
+    points.slice(1).forEach(function (point) { path += " H" + x(point[0]).toFixed(1) + " V" + y(point[1]).toFixed(1); });
+    path += " H" + RIGHT;
     shape(svg, "path", { class: "ps-line", d: path });
-    points.slice(1, -1).forEach(function (point) { shape(svg, "circle", { class: "ps-dot " + point[2], cx: x(point[0]).toFixed(1), cy: y(point[1]).toFixed(1), r: 3.5 }); });
+    shape(svg, "line", { class: "ps-tail", x1: RIGHT, x2: W - 8, y1: y(size).toFixed(1), y2: y(size).toFixed(1) });
+    // Marks a few pixels apart merge: the group keeps the weightiest kind and sits at its last step.
+    var marks = [];
+    points.slice(1).forEach(function (point) {
+      var at = x(point[0]), held = marks[marks.length - 1];
+      if (held && at - held.x < 6) {
+        held.y = y(point[1]); held.count += 1;
+        if ((SCOPE_WEIGHT[point[2]] || 0) > (SCOPE_WEIGHT[held.kind] || 0)) { held.kind = point[2]; }
+      } else {
+        marks.push({ x: at, y: y(point[1]), kind: point[2], count: 1 });
+      }
+    });
+    marks.forEach(function (mark) { shape(svg, "circle", { class: "ps-dot " + mark.kind, cx: mark.x.toFixed(1), cy: mark.y.toFixed(1), r: mark.count > 1 ? 3.5 : 2.5 }); });
+    // Dates beneath: approval at the left, the last change where the tail begins. Both on one day, they give the hour.
+    var sameDay = last !== null && new Date(begin * 1000).toDateString() === new Date(last * 1000).toDateString();
+    var when = function (t) {
+      var date = new Date(t * 1000);
+      return sameDay ? ((date.getHours() + 11) % 12 + 1) + ":" + (date.getMinutes() < 10 ? "0" : "") + date.getMinutes() + (date.getHours() < 12 ? " am" : " pm")
+        : MONTHS[date.getMonth()] + " " + date.getDate();
+    };
+    // The counts: where scope began, above its start, and where it stands, above now.
+    // With no approval there is no count before the changes, so the label starts from the first change's.
+    var opening = start === null && points.length > 1 ? points[1][1] : first;
+    shape(svg, "text", { class: "ps-count", x: LEFT, y: y(opening) - 8 }, opening + (start === null ? " after the first change" : " at approval"));
+    shape(svg, "text", { class: "ps-count now", x: W - 8, y: y(size) - 8, "text-anchor": "end" }, size + " now");
+    shape(svg, "text", { class: "ps-tick", x: LEFT, y: 88 }, when(begin));
+    if (last !== null && RIGHT - LEFT > 120) { shape(svg, "text", { class: "ps-tick", x: RIGHT, y: 88, "text-anchor": "end" }, when(last)); }
+    shape(svg, "text", { class: "ps-tick", x: W - 8, y: 88, "text-anchor": "end" }, "now");
     return svg;
   }
   function changeRef(ref) {
@@ -1960,8 +2326,8 @@
     if (!plan) {
       var reason = PLAN && text(PLAN.unreadable) ? PLAN.unreadable : "";
       nodes.push(flagList([PLAN && typeof PLAN.absent === "string"
-        ? { title: "The plan chapter is missing", why: PLAN.absent + " is the plan on file, and nothing has written plan.json for this page." }
-        : { title: "The plan couldn't be read", why: reason }], false));
+        ? { title: "The plan chapter is missing", why: PLAN.absent + " is the plan on file, and nothing has written plan.json for this page.", fix: "Write plan.json for this delivery." }
+        : { title: "The plan couldn't be read", why: reason, fix: "Correct plan.json so the renderer accepts it." }], false));
       inner.replaceChildren.apply(inner, nodes);
       return;
     }
@@ -2124,8 +2490,11 @@
     visible.forEach(function (entry) {
       var key = text(entry.at) + "|" + String(entry.id);
       var li = el("li", prev.feed && !prev.feed[key] && !reduced() ? "fresh" : "");
-      var time = el("time", null, clock(entry.at));
+      // The clock time first, and under it, quieter, the day when it is not today; read out whole.
+      var parts = clockParts(entry.at);
+      var time = parts ? add(el("time"), el("span", "t-clock", parts.time), parts.day ? el("span", "t-day", parts.day) : null) : el("time");
       time.setAttribute("datetime", text(entry.at));
+      if (parts) { time.setAttribute("aria-label", clock(entry.at)); }
       var who = el("span", "who", [KIND_WORDS[entry.kind] || text(entry.kind), entry.lane ? names[entry.lane] || text(entry.lane) : ""].filter(Boolean).join(" · "));
       if (text(entry.subject)) { add(who, " · ", issue(text(entry.subject))); }
       add(li, time, glyph(GLYPH[entry.kind] || "note"), add(el("p", null, text(entry.summary)), who));

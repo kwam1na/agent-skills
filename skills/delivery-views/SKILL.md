@@ -78,7 +78,7 @@ happened, parked), and a seventh, the plan, when the delivery has one (see
 "The plan chapter" below), with a detail panel for each piece of work. Its style and
 program are the skill's `assets/line-map.css`, `assets/line-map.js`,
 `assets/run-summary.css` and `assets/run-summary.js`, inlined into the page, and
-it loads only its two typefaces from Google Fonts. It
+it loads only its three typefaces from Google Fonts. It
 opts in to the live stream, so `live` serves it at `/view/<output>` and the
 page follows every record write; opened as a file, it shows the record as it
 was rendered. A history renderer declared in the same binding (`render.py
@@ -294,8 +294,11 @@ counts at face value, and the unit's open row says "before hand-off".
 
 ### What needs the engineer
 
-The chapter's attention area shows these flags, in this order, and with none it
-reads "Nothing in the plan needs you right now."
+The chapter's attention area, headed "The plan needs attention", shows these
+flags, each with what settles it, in this order, and with none it reads "Nothing
+in the plan needs attention right now." Nobody asked for them: the page found the
+plan and the record out of step, so the heading is not the supervisor's "Needs
+you".
 
 1. **The plan couldn't be read.**
 2. **The base is broken**: the last base event in the record is `base.broken`.

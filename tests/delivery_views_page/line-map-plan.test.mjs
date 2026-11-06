@@ -121,7 +121,7 @@ test("the title says every criterion is proven only when each is and the base is
   let app = await first(all.document, all.plan);
   expect(title(app)).toBe("Every criterion is proven.");
   expect(app.querySelector("#plan .plan-open")).toBeNull();
-  expect(app.querySelector("#plan .plan-calm").textContent).toBe("Nothing in the plan needs you right now.");
+  expect(app.querySelector("#plan .plan-calm").textContent).toBe("Nothing in the plan needs attention right now.");
 
   const waived = proven(["A", "B"], { kinds: [...RECORD_KINDS, APP_KIND],
     evidence: { A: { app: { state: "waived", head: headOf("A"), reason: "No device." } }, B: { app: { state: "done", head: headOf("B") } } } });
@@ -207,7 +207,7 @@ test("each of the eight flags shows on its own, in order when several hold, and 
   const page = render(calm.document, calm.plan);
   let app = (await open(page))[0].app;
   expect(flags(app)).toEqual([]);
-  expect(app.querySelector("#plan .plan-calm").textContent).toBe("Nothing in the plan needs you right now.");
+  expect(app.querySelector("#plan .plan-calm").textContent).toBe("Nothing in the plan needs attention right now.");
   const clipped = structuredClone(block(page, "delivery-plan"));
   Object.assign(clipped.plan.changes[0], { why: "", title: "", clipped: true });
   clipped.clipped = { changes: 1, texts: 0 };
@@ -1084,7 +1084,7 @@ test("a closed delivery's bar, dots, stops, legend and attention all agree with 
 
   // A plan the page can't read is about the page today, not what the close left.
   const [missing] = await open(render(record({ queue: [item("A", "merged")], journal: journal([...landed, close]) }), undefined, { planBlock: { absent: "docs/plans/pay.md" } }));
-  expect(missing.app.querySelector("#plan .plan-needs .ah").textContent).toBe("Needs you");
+  expect(missing.app.querySelector("#plan .plan-needs .ah").textContent).toBe("The plan needs attention");
 
   // Plan units with nothing on the line still show as dots, and The line doesn't promise any.
   const nothing = await first(record({ queue: [], journal: journal([close]) }), planFor([unit("A"), unit("B")], { finish: [] }));
