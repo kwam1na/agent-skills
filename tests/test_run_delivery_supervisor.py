@@ -8,6 +8,7 @@ process they start; the pass cases run `lead-run --once`, one pass at a time, so
 from __future__ import annotations
 
 import datetime
+import fcntl
 import importlib.util
 import json
 import os
@@ -2160,13 +2161,18 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified"])
 
     def test_a_run_killed_with_its_supervisor_is_started_again_once(self) -> None:
-        fx = self.slow_run_under_a_supervisor("4")
+        fx = self.slow_run_under_a_supervisor("20")
+        wait_for(lambda: health_runs(fx) == 1 and self.run_lock(fx).get("command"), "the run's command to start", 30)
         run = self.run_lock(fx)
         os.killpg(settled_lock(fx)["pid"], signal.SIGKILL)
         os.killpg(run["pid"], signal.SIGKILL)
         wait_for(lambda: not self.run_lock(fx)["held"], "the killed run to let its lock go", 15)
+        # Its command, in a group of its own, outlived it; the restarted run stops it before running its own.
+        self.assertTrue(alive(run["command"]))
+        fx.env["FX_HEALTH_SECONDS"] = "2"
         code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
         self.assertEqual(code, 0, out)
+        wait_for(lambda: not alive(run["command"]), "the killed run's command to be stopped", 30)
         wait_for(lambda: self.results(fx), "the restarted run's result", 60)
         seen = len(passes(fx))
         wait_for(lambda: len(passes(fx)) >= seen + 2, "two passes after it", 30)

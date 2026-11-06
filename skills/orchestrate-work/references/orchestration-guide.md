@@ -378,9 +378,13 @@ merge. A `base.broken` it journals stops the queue as any other does, and its
 `base.repaired` reopens it; a pass never repairs a break the queue found, which
 the lead confirms. If the base turns `focused` while such a break stands, the
 break holds nothing at the close, since no run comes to clear it, but it stays
-listed in "Needs you" and serve still waits for `base.repaired`. A pass that
-runs `fullHealth` lasts as long as the run: the views it draws wait for it, and
-a stop asked meanwhile is taken once it ends. Once nothing holds the close, the supervisor runs
+listed in "Needs you" and serve still waits for `base.repaired`. The run is a
+child of its own, so the supervisor keeps passing beside it: it keeps `serve`
+and the live view up and "Needs you" current, where the run holds the close
+until it ends. One run at a time holds its lock, so two passes never start two
+for one head, and a run that outlives a killed supervisor is adopted by the next
+one rather than started again; `lead-close` stops it, and it records no result.
+Once nothing holds the close, the supervisor runs
 `fullHealth` at the final head only when no run at that head has happened, as
 in a delivery that merged nothing, then files a follow-up for each deferred
 finding, journals `delivery.closed` and waits until the tracker has every
