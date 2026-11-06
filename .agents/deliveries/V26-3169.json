@@ -26,7 +26,12 @@
         "tests/test_merge_queue.py",
         "skills/orchestrate-work/scripts/merge_queue.py",
         "scripts/update-provenance.py",
-        "tests/test_update_provenance.py"
+        "tests/test_update_provenance.py",
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "skills/orchestrate-work/references/schemas.json",
+        "tests/test_orchestration_state.py",
+        "skills/run-delivery/scripts/tracker_publisher.py",
+        "tests/test_lead_wait.py"
       ]
     },
     "lane-2": {
@@ -36,12 +41,10 @@
         "docs/solutions/best-practices/prove-each-gate-condition-alone-2026-11-03.md",
         "tests/test_run_delivery_supervisor.py",
         "tests/test_run_delivery.py",
-        "skills/orchestrate-work/scripts/delivery_state.py",
-        "skills/orchestrate-work/references/schemas.json",
-        "tests/test_orchestration_state.py",
         "tests/test_registry.py",
         "tests/test_lane_rows.py",
-        "provenance.lock.json"
+        "provenance.lock.json",
+        "tests/test_run_delivery_tracker.py"
       ]
     },
     "lane-3": {
