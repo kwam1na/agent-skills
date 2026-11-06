@@ -5061,7 +5061,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
         # A break fullHealth found clears with its next pass; the queue's own break waits for the lead. Under focused no
         # run comes to clear fullHealth's, so, like its failed run, it holds nothing, but it stays listed: serve still
         # waits for base.repaired whatever the posture.
-        found = full_health_break(events[-1])
+        found = only_full_health_breaks(doc["journal"])
         posture = delivery_posture(c) if found else None
         source = f"journal entry {events[-1]['id']} (base.broken)"
         if posture and posture["posture"] == "focused":
@@ -5230,6 +5230,13 @@ def full_health_break(entry: dict) -> bool:
     return entry["kind"] == "base.broken" and entry.get("summary", "").startswith("fullHealth failed")
 
 
+def only_full_health_breaks(journal: list[dict]) -> bool:
+    """Whether every base.broken since the latest base.repaired is fullHealth's own: a pass may repair those, never a
+    break the queue found, which the lead confirms however many breaks of fullHealth's follow it."""
+    repaired = max((e["id"] for e in journal if e["kind"] == "base.repaired"), default=0)
+    return all(full_health_break(e) for e in journal if e["kind"] == "base.broken" and e["id"] > repaired)
+
+
 def merge_words(c, doc: dict, head: str, since: int) -> tuple[dict | None, str]:
     """The merge a run at this head follows, as {subject, journal} and in words: the latest candidate.merged, with any
     others since the run before it (a batch), and whether the head moved past the queue's last merge outside it."""
@@ -5273,8 +5280,7 @@ def run_full_health(c, binding: dict, head: str, posture: dict, named: str) -> t
         kind, words = "base.broken", f"fullHealth failed at {head[:10]} {after}: {out.strip()[-300:] or 'no output'}"
     else:
         # A repair only of a break fullHealth found: a pass never confirms a break the queue found, which the lead does.
-        breaks = [e for e in doc["journal"] if e["kind"] == "base.broken"]
-        repairs = before and before[-1]["result"] == "failed" and breaks and full_health_break(breaks[-1])
+        repairs = before and before[-1]["result"] == "failed" and only_full_health_breaks(doc["journal"])
         kind = "base.repaired" if repairs else "base.verified"
         words = f"fullHealth passed at {head[:10]} {after}"
     state_tool("journal", "--kind", kind, "--summary", words,

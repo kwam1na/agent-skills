@@ -1950,6 +1950,24 @@ class SupervisorPostMergeTests(unittest.TestCase):
         needs = [item for item in last["needsYou"] if "(base.broken)" in item["source"]]
         self.assertEqual((needs[0]["holding"], needs[0]["clears"]), (True, "journalling base.repaired"), needs)
 
+    def test_a_pass_never_repairs_a_queue_break_that_fullHealth_s_own_break_followed(self) -> None:
+        fx = self.fixture()
+        self.merged(fx, "FX-2", "lane-1")
+        self.once(fx)
+        # The queue finds a break; a fix landed by hand fails fullHealth on top of it; the next fix passes.
+        state_tool(fx, "journal", "--kind", "base.broken", "--summary", "base_broken: lint also fails on the base")
+        (fx.tmp / "health").write_text("fail")
+        declare(fx, "first fix\n", path="src/landed.txt")
+        held = self.once(fx)
+        needs = [item for item in held["needsYou"] if "(base.broken)" in item["source"]]
+        self.assertEqual(needs[0]["clears"], "journalling base.repaired", needs)
+        (fx.tmp / "health").write_text("pass")
+        declare(fx, "second fix\n", path="src/landed.txt")
+        self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)],
+                         ["base.verified", "base.broken", "base.broken", "base.verified"])
+        self.assertTrue(self.serving_waits(fx), "a fullHealth pass confirmed the queue's break")
+
     def test_a_break_yields_the_close_under_focused_stays_listed_and_holds_again_under_gate(self) -> None:
         fx = self.fixture()
         (fx.tmp / "health").write_text("fail")
