@@ -486,7 +486,8 @@ python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.
 
 When every story is merged or removed, every finish line is met, every lane is idle or done, and nothing in "Needs
 you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head (skipped when the
-base declares the `focused` posture), a follow-up for
+base declares the `focused` posture, and already run at that head when the delivery merged anything, since the
+supervisor runs it after each merge or batch), a follow-up for
 each deferred finding, `delivery.closed` and then a wait until the tracker has every update, the archive, a friction
 note stub beside
 it for your `compound-learning` pass, and then it stops. There is nothing to run for the close. `lead-close` is for

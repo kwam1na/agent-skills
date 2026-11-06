@@ -597,7 +597,7 @@
               }
             },
             "checkSelection": {
-              "description": "Written by the runner when it selects checks: whether its latest checks came from the lead's selection or the provider's answer. For the lead's, the reviewed head it was recorded at and the lead's reason. A hand-off at a new head drops it. Absent until the runner first selects.",
+              "description": "Written by the runner when it selects checks: whether its latest checks came from the lead's selection or the provider's answer. For the lead's, the reviewed head it was recorded at and the lead's reason. For a provider refusal under selection.refusalStops, outcome provider_refused and the provider's own words in detail. A hand-off at a new head drops it. Absent until the runner first selects.",
               "type": "object",
               "additionalProperties": false,
               "required": [
@@ -614,6 +614,15 @@
                   "$ref": "#/$defs/commit"
                 },
                 "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "outcome": {
+                  "enum": [
+                    "provider_refused"
+                  ]
+                },
+                "detail": {
                   "type": "string",
                   "minLength": 1
                 }
@@ -895,6 +904,7 @@
           "check.reused",
           "candidate.merged",
           "candidate.stopped",
+          "base.verified",
           "base.broken",
           "base.repaired",
           "lease.granted",
@@ -906,7 +916,8 @@
           "blocker.recorded",
           "delivery.closed",
           "review.evidence",
-          "check.selected"
+          "check.selected",
+          "selection.refused"
         ]
       },
       "lane": {
@@ -1718,6 +1729,7 @@
           "no_checks",
           "profile_unknown",
           "selection_invalid",
+          "provider_refused",
           "check_failed",
           "base_broken",
           "base_moved",
@@ -1945,7 +1957,7 @@
         }
       },
       "selection": {
-        "description": "Optional. lead: true lets the lead choose a candidate's checks from its diff with the state tool's select command; the runner then runs the lead's selection and alwaysRun instead of the provider's answer and fallback, while the selection is for the candidate's reviewed head. A candidate without one is checked as before. Off when absent.",
+        "description": "Optional. lead: true lets the lead choose a candidate's checks from its diff with the state tool's select command; the runner then runs the lead's selection and alwaysRun instead of the provider's answer and fallback, while the selection is for the candidate's reviewed head. A candidate without one is checked as before. Off when absent. refusalStops: true, which needs lead: true, makes a provider that exits non-zero stop the candidate as provider_refused instead of widening to fallback: no check runs, and the candidate is held, never merged, until the lead's selection for its reviewed head lets it be checked. Off when absent.",
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -1953,6 +1965,9 @@
         ],
         "properties": {
           "lead": {
+            "type": "boolean"
+          },
+          "refusalStops": {
             "type": "boolean"
           }
         }
@@ -2008,6 +2023,11 @@
       },
       "fullHealth": {
         "$ref": "#/$defs/argv"
+      },
+      "fullHealthTimeoutSeconds": {
+        "description": "Optional. The seconds a fullHealth run may take, after each merge and at close-out: a positive integer, not bound by checkTimeoutCeiling, which bounds the queue's checks. checkTimeoutSeconds when absent.",
+        "type": "integer",
+        "minimum": 1
       },
       "leases": {
         "type": "array",

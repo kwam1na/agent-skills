@@ -4689,9 +4689,10 @@ VALID_FIXTURES = {
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
-    "check.failed", "check.retried", "check.reused", "candidate.merged", "candidate.stopped", "base.broken", "base.repaired",
-    "lease.granted", "lease.released", "release.started", "release.finished",
+    "check.failed", "check.retried", "check.reused", "candidate.merged", "candidate.stopped", "base.verified", "base.broken",
+    "base.repaired", "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
+    "selection.refused",
 ]
 
 

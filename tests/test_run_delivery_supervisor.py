@@ -96,7 +96,8 @@ json.dump(prs, open(state, "w"))
 
 # The check every candidate runs records the signal dispositions it started with, and where it ran.
 CHECK = r'''
-import json, os, signal
+import json, os, signal, time
+time.sleep(float(os.environ.get("FX_CHECK_SECONDS", "0")))
 out = os.environ.get("FX_SIGNALS")
 if out:
     ignored = [name for name in ("SIGINT", "SIGHUP", "SIGQUIT") if signal.getsignal(getattr(signal, name)) == signal.SIG_IGN]
@@ -105,11 +106,16 @@ if out:
 '''
 
 FULL_HEALTH = r'''
-import os, pathlib, sys
+import os, pathlib, sys, time
 verdict = pathlib.Path(os.environ["FX_HEALTH"])
 with open(str(verdict) + ".runs", "a") as runs:
     runs.write("run\n")
-sys.exit(1 if verdict.exists() and verdict.read_text().strip() == "fail" else 0)
+said = verdict.read_text().strip() if verdict.exists() else ""
+if said == "slow":
+    time.sleep(30)
+if said == "fail":
+    print("fullHealth: test_parser failed")
+sys.exit(1 if said == "fail" else 0)
 '''
 
 # Holds a lock as a supervisor would, recording what it is given.
@@ -1775,17 +1781,190 @@ class SupervisorPostMergeTests(unittest.TestCase):
 
     run_serially = True
     setUpClass = classmethod(SupervisorPassTests.setUpClass.__func__)
-    fixture = SupervisorPassTests.fixture
     merged = SupervisorPassTests.merged
     once = SupervisorPassTests.once
 
-    def test_a_merge_with_the_close_still_held_runs_no_full_health(self) -> None:
+    def fixture(self, **binding) -> Fixture:
+        """The supervised delivery with no finish lines, so what holds the close is what each case leaves open."""
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        path = supervised(fx)
+        d = json.loads(path.read_text())
+        d["finish"] = []
+        path.write_text(json.dumps(d, indent=2))
+        if binding:
+            bound = fx.main / ".agents/orchestration.json"
+            bound.write_text(json.dumps({**json.loads(bound.read_text()), **binding}, indent=2))
+        commit(fx.main, "FX-1: no finish lines")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        return fx
+
+    def done(self, fx: Fixture, *lanes: str) -> None:
+        for lane in lanes:
+            state_tool(fx, "focus", "--lane", lane, "--text", "done", "--state", "done")
+
+    def base_events(self, fx: Fixture) -> list[dict]:
+        return [e for e in record(fx)["journal"] if e["kind"] in ("base.verified", "base.broken", "base.repaired")]
+
+    def results(self, fx: Fixture) -> list[dict]:
+        log = fx.tmp / "flow-log/FX-1.full-health.jsonl"
+        return [e for e in map(json.loads, log.read_text().splitlines()) if e.get("result")] if log.exists() else []
+
+    def base_tip(self, fx: Fixture) -> str:
+        return sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=fx.main).stdout.split()[0]
+
+    def test_a_merge_runs_full_health_with_the_close_still_held_and_once_at_its_head(self) -> None:
         fx = self.fixture()
         self.merged(fx, "FX-2", "lane-1")
         for _ in range(3):
             self.assertTrue(self.once(fx)["closeHeldBy"])
-        self.assertEqual(health_runs(fx), 0, "fullHealth ran before close-out")
+        self.assertEqual(health_runs(fx), 1, "fullHealth didn't run after the merge, or ran again at its head")
+        head = self.base_tip(fx)
+        [result] = self.results(fx)
+        self.assertEqual((result["head"], result["result"], result["merge"]["subject"]), (head, "passed", "FX-2"))
+        self.assertEqual(passes(fx)[-1]["fullHealth"], f"fullHealth passed at {head[:10]}", passes(fx)[-1])
 
+    def test_two_merges_a_pass_names_the_first_and_a_break_names_the_second(self) -> None:
+        fx = self.fixture()
+        self.merged(fx, "FX-2", "lane-1")
+        self.once(fx)
+        [verified] = self.base_events(fx)
+        self.assertEqual(verified["kind"], "base.verified", verified)
+        self.assertIn("after FX-2's merge", verified["summary"])
+        (fx.tmp / "health").write_text("fail")
+        self.merged(fx, "FX-3", "lane-2")
+        self.done(fx, "lane-1", "lane-2")
+        held = self.once(fx)["closeHeldBy"]
+        self.assertEqual(health_runs(fx), 2)
+        broken = self.base_events(fx)[-1]
+        self.assertEqual(broken["kind"], "base.broken", broken)
+        self.assertIn("after FX-3's merge", broken["summary"])
+        self.assertNotIn("FX-2", broken["summary"])
+        self.assertIn("test_parser failed", broken["summary"])
+        self.assertTrue(any(h.startswith("fullHealth failed at") for h in held), held)
+        self.assertTrue(any(h.startswith("The delivery base is broken: fullHealth failed") for h in held), held)
+        needs = [item for item in passes(fx)[-1]["needsYou"] if "(base.broken)" in item["source"]]
+        self.assertTrue(needs[0]["clears"].startswith("a fullHealth pass at a later base head"), needs)
+        # Nothing else holds the close, and no pass runs it again at B's head: no third run until another merge.
+        for _ in range(2):
+            held = self.once(fx)["closeHeldBy"]
+            self.assertEqual(len(held), 2, held)
+        self.assertEqual(health_runs(fx), 2, "fullHealth ran again at the broken head")
+        self.assertEqual(kinds(fx, "delivery.closed"), [])
+        # The break stops serving, as any base.broken does.
+        self.assertTrue(self.serving_waits(fx))
+
+    def serving_waits(self, fx: Fixture) -> bool:
+        """Whether serve waits for base.repaired, as the installed queue reads the journal."""
+        said = sh(sys.executable, "-B", "-c", "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import delivery_state; "
+                  "print(delivery_state.base_awaits_repair(delivery_state.read_journal(pathlib.Path(sys.argv[2]))))",
+                  fx.release / "skills/orchestrate-work/scripts", fx.tmp / "record").stdout.strip()
+        return said == "True"
+
+    def test_a_hand_repair_to_let_the_fix_through_is_followed_by_the_run_s_own_repair(self) -> None:
+        fx = self.fixture()
+        (fx.tmp / "health").write_text("fail")
+        self.merged(fx, "FX-2", "lane-1")
+        self.once(fx)
+        # The lead reopens the queue by hand so the fix, C, can go through it.
+        state_tool(fx, "journal", "--kind", "base.repaired", "--summary", "reopened to let the fix through")
+        self.assertFalse(self.serving_waits(fx))
+        (fx.tmp / "health").write_text("pass")
+        self.merged(fx, "FX-3", "lane-2")
+        self.done(fx, "lane-1", "lane-2")
+        last = self.once(fx)
+        events = self.base_events(fx)
+        self.assertEqual([e["kind"] for e in events], ["base.broken", "base.repaired", "base.repaired"])
+        self.assertIn("after FX-3's merge", events[-1]["summary"])
+        self.assertNotIn("FX-2", events[-1]["summary"])
+        # The second repair reopens nothing that was closed, holds nothing, and the run isn't counted twice.
+        self.assertFalse(self.serving_waits(fx))
+        self.assertFalse([item for item in last["needsYou"] if "base.broken" in item["source"]], last["needsYou"])
+        self.assertEqual(health_runs(fx), 2)
+        self.assertEqual([e["result"] for e in self.results(fx)], ["failed", "passed"])
+        self.assertEqual(last["closeHeldBy"], [], last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1)
+        self.once(fx)
+        self.assertEqual(len(self.base_events(fx)), 3, "a later pass journalled the base again")
+
+    def test_the_first_pass_after_a_break_repairs_it_and_close_out_runs_nothing_more(self) -> None:
+        fx = self.fixture()
+        (fx.tmp / "health").write_text("fail")
+        self.merged(fx, "FX-2", "lane-1")
+        self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.broken"])
+        (fx.tmp / "health").write_text("pass")
+        # The fix, C, lands through the queue run by hand, as the lead fixes forward on a broken base.
+        self.merged(fx, "FX-3", "lane-2")
+        self.done(fx, "lane-1", "lane-2")
+        last = self.once(fx)
+        events = self.base_events(fx)
+        self.assertEqual([e["kind"] for e in events], ["base.broken", "base.repaired"])
+        self.assertIn("after FX-3's merge", events[-1]["summary"])
+        self.assertNotIn("FX-2", events[-1]["summary"])
+        self.assertEqual(health_runs(fx), 2, "close-out ran fullHealth again at the repaired head")
+        head = self.base_tip(fx)
+        self.assertEqual(last["closeHeldBy"], [], last)
+        self.assertEqual(last["closeOut"][0], f"fullHealth passed at {head[:10]}", last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1)
+        self.assertEqual(self.results(fx)[-1]["merge"]["subject"], "FX-3")
+
+    def test_a_pass_after_a_pass_verifies_and_never_repairs_a_break_the_queue_journalled(self) -> None:
+        fx = self.fixture()
+        self.merged(fx, "FX-2", "lane-1")
+        self.once(fx)
+        state_tool(fx, "journal", "--kind", "base.broken", "--summary", "base_broken: lint also fails on the base")
+        self.merged(fx, "FX-3", "lane-2")
+        self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified", "base.broken", "base.verified"])
+        needs = [item for item in passes(fx)[-1]["needsYou"] if "(base.broken)" in item["source"]]
+        self.assertEqual(needs[0]["clears"], "journalling base.repaired", needs)
+
+    def test_its_own_timeout_bounds_it_and_not_the_queue_s_checks(self) -> None:
+        fx = self.fixture(fullHealthTimeoutSeconds=1)
+        # The queue's check takes longer than fullHealth may, and still passes under checkTimeoutSeconds.
+        fx.env["FX_CHECK_SECONDS"] = "2"
+        self.merged(fx, "FX-2", "lane-1")
+        (fx.tmp / "health").write_text("slow")
+        started = time.monotonic()
+        self.once(fx)
+        self.assertLess(time.monotonic() - started, 25, "fullHealth wasn't stopped at its own timeout")
+        [result] = self.results(fx)
+        self.assertEqual(result["result"], "failed")
+        self.assertIn("took longer than 1s", result["output"])
+        self.assertEqual(self.base_events(fx)[-1]["kind"], "base.broken")
+        binding = {"checkTimeoutSeconds": 600, "checkTimeoutCeiling": 1200, "fullHealth": ["true"]}
+        timeout = lambda **more: fx.call("full_health_timeout", {**binding, **more}, cwd=fx.main)
+        self.assertEqual((timeout(), timeout(fullHealthTimeoutSeconds=60), timeout(fullHealthTimeoutSeconds=5400)),
+                         (600, 60, 5400))
+
+    def test_a_delivery_that_merged_nothing_runs_it_once_at_close_out(self) -> None:
+        fx = self.fixture()
+        (fx.tmp / "flow-log").mkdir(parents=True, exist_ok=True)
+        with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
+            changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-2", "FX-3"],
+                                      "by": "lead", "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
+        last = self.once(fx)
+        self.assertEqual(last["fullHealth"], "fullHealth: nothing merged yet", last)
+        self.assertEqual(health_runs(fx), 1)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+        [event] = self.base_events(fx)
+        self.assertEqual(event["kind"], "base.verified")
+        self.assertIn("with nothing merged", event["summary"])
+        self.once(fx)
+        self.assertEqual(health_runs(fx), 1)
+
+    def test_nothing_runs_after_a_merge_under_focused(self) -> None:
+        fx = self.fixture()
+        declare(fx, declaration())
+        self.merged(fx, "FX-2", "lane-1")
+        last = self.once(fx)
+        self.assertEqual(last["fullHealth"], "fullHealth: not run after merges under the focused posture", last)
+        self.assertEqual(health_runs(fx), 0)
+        self.assertEqual(self.base_events(fx), [])
 
 if __name__ == "__main__":
     unittest.main()
