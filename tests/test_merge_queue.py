@@ -187,6 +187,9 @@ def check(cid, *args, **more):
     return item
 if mode == "fail":
     sys.exit(2)
+if mode == "refuse":
+    sys.stderr.write("over the budget: unit (400s), e2e (700s)\n")
+    sys.exit(3)
 if mode == "malformed":
     print("not json")
     sys.exit(0)
@@ -4810,3 +4813,28 @@ class LeadSelectionTests(MergeQueueTestCase):
         reasons = {result.document()["stop"]["reason"] for result in results if result.document()["stop"]}
         self.assertIn("selection_invalid", reasons)
         self.assertNotEqual(adopter.item("first")["stage"], "merged")
+
+
+class ProviderRefusalTests(MergeQueueTestCase):
+    """A provider that exits non-zero widens to fallback, unless the binding's selection.refusalStops makes it a stop."""
+
+    STOPS = {"selection": {"lead": True, "refusalStops": True}}
+
+    def kinds(self, adopter: Adopter) -> list[dict]:
+        return state_tool.read_journal(adopter.state)
+
+    def test_without_the_flag_a_refusing_provider_widens_to_fallback_as_before(self) -> None:
+        for name, changes in (("unset", None), ("lead only", {"selection": {"lead": True}})):
+            with self.subTest(binding=name):
+                self.fresh()
+                adopter = self.adopter(changes, mode="refuse")
+                self.candidate(adopter)
+                results = self.run_queue(adopter, "feature")
+                check = results[1].document()
+                self.assertEqual(check["selection"]["fallbackReasons"], ["provider_failed"])
+                self.assertEqual(check["selection"]["providers"][0]["outcome"], "failed")
+                self.assertIn("over the budget: unit (400s)", check["selection"]["providers"][0]["detail"])
+                self.assertIn("fallback", check["selection"]["checks"])
+                self.assertTrue(check["selection"]["widened"])
+                self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+                self.assertNotIn("selection.refused", [entry["kind"] for entry in self.kinds(adopter)])

@@ -1768,5 +1768,24 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
         self.assert_closed_on_a_pass(fx)
 
 
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class SupervisorPostMergeTests(unittest.TestCase):
+    """The post-merge tier: under `gate`, the binding's fullHealth runs after each merge, not only at close-out."""
+
+    run_serially = True
+    setUpClass = classmethod(SupervisorPassTests.setUpClass.__func__)
+    fixture = SupervisorPassTests.fixture
+    merged = SupervisorPassTests.merged
+    once = SupervisorPassTests.once
+
+    def test_a_merge_with_the_close_still_held_runs_no_full_health(self) -> None:
+        fx = self.fixture()
+        self.merged(fx, "FX-2", "lane-1")
+        for _ in range(3):
+            self.assertTrue(self.once(fx)["closeHeldBy"])
+        self.assertEqual(health_runs(fx), 0, "fullHealth ran before close-out")
+
+
 if __name__ == "__main__":
     unittest.main()
