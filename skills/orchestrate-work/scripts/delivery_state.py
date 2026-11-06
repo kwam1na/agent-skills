@@ -79,7 +79,7 @@ STATE_VERSION = "delivery-state/1"
 WRITERS = ("lead", "runner", "lane")
 # What a lane writes about itself, through the tool.
 LANE_FIELDS = ("focus", "state", "waitingOn", "since")
-# The runner writes a row only to say what became of a candidate; focusAt, focusBy and waitingBy are the tool's alone, for every writer.
+# The runner writes a row only to say what became of a candidate; focusAt, focusBy, waitingBy and restedFrom are the tool's alone, for every writer.
 RUNNER_LANE = ("focus", "state", "waitingOn", "since")
 # A review round is the lead's or a lane's record of its own review; the runner
 # never reviews, so it never writes one.
@@ -709,8 +709,22 @@ def _stamp_lane(before: dict, after: dict, lane: str) -> None:
         new["since"] = now() if new["state"] != old.get("state") else old.get("since")
 
 
+def _own_word(row: dict | None) -> dict | None:
+    """A row's last word from its own lane: the row itself when the lane or the lead wrote it, else what the queue kept of
+    it when it spoke over it."""
+    if row is None:
+        return None
+    if row.get("focusBy") == "runner":
+        return row.get("restedFrom")
+    at = row.get("focusAt") or row.get("since")
+    return {"state": row["state"], "at": at} if row.get("state") and at else None
+
+
 def _stamp_focus(before: dict, after: dict, writer: str, spoke: str | None) -> None:
-    """The tool keeps focusAt and focusBy: when a row's words last changed or its lane said them again, and whether the queue said them."""
+    """The tool keeps focusAt and focusBy: when a row's words last changed or its lane said them again, and whether the
+    queue said them. It keeps restedFrom too: when the queue speaks over a row, the lane's own last word, its state and
+    when it said it, so the record carries that word past a merge whether or not anything read it in between. The
+    lane's or the lead's next word ends it."""
     rows = after.get("lanes")
     if not isinstance(rows, list):
         return
@@ -721,13 +735,17 @@ def _stamp_focus(before: dict, after: dict, writer: str, spoke: str | None) -> N
         previous = old.get(entry["id"])
         entry.pop("focusAt", None)
         entry.pop("focusBy", None)
+        entry.pop("restedFrom", None)
         if previous is None or previous.get("focus") != entry.get("focus") or entry["id"] == spoke:
             if entry.get("focus"):
                 entry["focusAt"] = now()
                 if writer == "runner":
                     entry["focusBy"] = "runner"
+                    kept = _own_word(previous)
+                    if kept:
+                        entry["restedFrom"] = kept
         else:
-            entry.update({key: previous[key] for key in ("focusAt", "focusBy") if key in previous})
+            entry.update({key: previous[key] for key in ("focusAt", "focusBy", "restedFrom") if key in previous})
 
 
 def _waiting_by(row: dict) -> str | None:
@@ -974,6 +992,7 @@ def handoff(
             _end_queue_wait(entry)
             if not entry["waitingOn"]:
                 entry.pop("waitingBy", None)
+            entry.pop("restedFrom", None)  # the hand-off is the lane's newer word
             if entry.get("focusBy") == "runner":
                 entry["focus"] = ""
                 del entry["focusBy"]

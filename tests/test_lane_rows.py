@@ -501,3 +501,80 @@ class FieldOwnership(LaneRowCase):
         self.assertNotIn("focusAt", self.row())
         self.run_queue(self.record, "feature")
         self.assertIn("focusAt", self.row())
+
+
+class TheLanesKeptWord(LaneRowCase):
+    """The queue resting a row keeps the lane's own last word on it, as restedFrom, so the record carries that word
+    past the merge whether or not a supervisor pass saw it."""
+
+    def spoke(self, focus: str = "feature: building", state: str = "working") -> dict:
+        self.lanes(lane_entry())
+        state_tool.set_focus(self.record.state, "lane-1", focus, state=state)
+        return self.row()
+
+    def test_a_merge_keeps_the_lanes_own_word_on_the_row_it_rests(self) -> None:
+        said = self.spoke()
+        self.candidate(self.record)
+        self.run_queue(self.record, "feature")
+        row = self.row()
+        self.assertEqual((row["focus"], row["state"], row.get("focusBy")), ("feature merged", "idle", "runner"))
+        self.assertEqual(row["restedFrom"], {"state": "working", "at": said["focusAt"]})
+
+    def test_a_row_without_focus_at_keeps_its_since(self) -> None:
+        self.lanes(lane_entry(focus="", state="assigned"))  # no words, so no focusAt: since says when it was set
+        self.candidate(self.record)
+        self.run_queue(self.record, "feature")
+        self.assertEqual(self.row()["restedFrom"], {"state": "assigned", "at": "2026-11-03T00:00:00Z"})
+
+    def test_the_queues_next_word_carries_the_lanes_word_forward(self) -> None:
+        said = self.spoke()
+        self.candidate(self.record)
+        self.candidate(self.record, {"src/lib.txt": "lib two\n"}, name="second")
+        self.run_queue(self.record, "feature")
+        self.assertEqual(self.row()["focus"], "feature merged")
+        self.run_queue(self.record, "second")
+        row = self.row()
+        self.assertEqual((row["focus"], row["state"]), ("second merged", "idle"))
+        self.assertEqual(row["restedFrom"], {"state": "working", "at": said["focusAt"]}, "the queue's own word replaced the lane's")
+
+    def test_the_lanes_next_word_ends_it(self) -> None:
+        self.spoke()
+        self.candidate(self.record)
+        self.run_queue(self.record, "feature")
+        state_tool.set_focus(self.record.state, "lane-1", "next: reading the ticket", state="working")
+        self.assertNotIn("restedFrom", self.row())
+
+    def test_a_stop_keeps_it_and_a_new_hand_off_ends_it(self) -> None:
+        said = self.spoke()
+        self.candidate(self.record, {"tests/test_new.txt": "FAIL\n"})
+        self.run_queue(self.record, "feature")
+        row = self.row()
+        self.assertEqual((row["focus"], row["restedFrom"]), ("feature stopped: check_failed", {"state": "working", "at": said["focusAt"]}))
+        head = self.record.lane_commit("feature", {"tests/test_new.txt": "ok\n"})
+        state_tool.handoff(self.record.state, lane="lane-1", subject="feature", head=head, change_request="c1", rounds=1)
+        self.assertNotIn("restedFrom", self.row())
+
+    def test_no_writer_sets_it_by_hand(self) -> None:
+        self.spoke()
+        self.candidate(self.record)
+        self.run_queue(self.record, "feature")
+        kept = self.row()["restedFrom"]
+        forged = {"state": "working", "at": "2099-01-01T00:00:00Z"}
+        for writer in ("runner", "lane"):
+            with self.subTest(writer=writer):
+                state = state_tool.read_state(self.record.state)
+                with self.assertRaises(state_tool.StateError):
+                    state_tool.patch(self.record.state, writer=writer, lane="lane-1" if writer == "lane" else None,
+                                     version=state["version"], selector="lanes[id=lane-1]", assignments={"/restedFrom": forged})
+                self.assertEqual(self.row()["restedFrom"], kept)
+        # The lead may rewrite rows, but the tool keeps this field: a forged value doesn't stand.
+        self.record.lead_write(lambda state: state_tool.patch(
+            self.record.state, writer="lead", version=state["version"], selector="lanes[id=lane-1]",
+            assignments={"/restedFrom": forged}))
+        self.assertEqual(self.row()["restedFrom"], kept)
+
+    def test_another_lanes_row_has_none(self) -> None:
+        self.lanes(lane_entry(), lane_entry("lane-2", focus="other: building"))
+        self.candidate(self.record)
+        self.run_queue(self.record, "feature")
+        self.assertNotIn("restedFrom", self.row("lane-2"))
