@@ -112,7 +112,7 @@ with open(str(verdict) + ".runs", "a") as runs:
     runs.write("run\n")
 said = verdict.read_text().strip() if verdict.exists() else ""
 if said == "slow":
-    time.sleep(30)
+    time.sleep(float(os.environ.get("FX_HEALTH_SECONDS", "30")))
 if said == "fail":
     print("fullHealth: test_parser failed")
 sys.exit(1 if said == "fail" else 0)
@@ -2071,6 +2071,121 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertEqual(last["fullHealth"], "fullHealth: not run after merges under the focused posture", last)
         self.assertEqual(health_runs(fx), 0)
         self.assertEqual(self.base_events(fx), [])
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class SupervisorBackgroundHealthTests(unittest.TestCase):
+    """A running supervisor starts the post-merge fullHealth as a child of its own and keeps passing while it runs."""
+
+    run_serially = True
+    setUpClass = classmethod(SupervisorPassTests.setUpClass.__func__)
+    merged = SupervisorPassTests.merged
+    fixture = SupervisorPostMergeTests.fixture
+    base_events = SupervisorPostMergeTests.base_events
+    results = SupervisorPostMergeTests.results
+
+    def run_lock(self, fx: Fixture) -> dict:
+        """What the fullHealth run's lock records, and whether a process holds it."""
+        lock = fx.tmp / "flow-log/FX-1.full-health.lock"
+        if not lock.exists():
+            return {"held": False}
+        with open(lock, "a+") as probe:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(probe, fcntl.LOCK_UN)
+                held = False
+            except BlockingIOError:
+                held = True
+        try:
+            recorded = json.loads(lock.read_text() or "{}")
+        except ValueError:
+            recorded = {}
+        return {**recorded, "held": held}
+
+    def slow_run_under_a_supervisor(self, seconds: str = "60") -> Fixture:
+        """FX-2 merged by hand, then a running supervisor whose first pass starts a slow fullHealth after it."""
+        fx = self.fixture()
+        self.merged(fx, "FX-2", "lane-1")
+        (fx.tmp / "health").write_text("slow")
+        fx.env["FX_HEALTH_SECONDS"] = seconds
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        wait_for(lambda: self.run_lock(fx)["held"], "the fullHealth run to start", 60)
+        return fx
+
+    def test_a_supervisor_keeps_passing_restarts_serve_and_keeps_needs_you_fresh_while_it_runs(self) -> None:
+        fx = self.slow_run_under_a_supervisor()
+        run = self.run_lock(fx)
+        seen = len(passes(fx))
+        wait_for(lambda: len(passes(fx)) >= seen + 2, "two passes while fullHealth runs", 30)
+        self.assertTrue(self.run_lock(fx)["held"], "the run ended before the passes it should run beside")
+        running_pass = passes(fx)[-1]
+        self.assertTrue(running_pass["fullHealth"].startswith("fullHealth running at "), running_pass)
+        self.assertTrue(any(item["source"] == "fullHealth" and item["holding"] and "running" in item["text"]
+                            for item in running_pass["needsYou"]), running_pass["needsYou"])
+        needs = json.loads((fx.tmp / "record/needs-you.json").read_text())
+        stale = datetime.datetime.strptime(needs["staleAfter"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=datetime.timezone.utc)
+        self.assertGreater(stale, datetime.datetime.now(datetime.timezone.utc), needs)
+        serve = lambda: next(child["pid"] for child in settled_lock(fx)["children"] if child["name"] == "serve")
+        before = serve()
+        os.kill(before, signal.SIGKILL)
+        wait_for(lambda: serve() != before and alive(serve()), "serve to be restarted while fullHealth runs", 30)
+        self.assertEqual(self.run_lock(fx).get("pid"), run["pid"], "the run was started again")
+        self.assertEqual(health_runs(fx), 1)
+
+    def test_passes_beside_a_run_and_a_second_start_never_run_it_twice(self) -> None:
+        fx = self.slow_run_under_a_supervisor("8")
+        head = self.run_lock(fx)["head"]
+        # A second start for the same head, as a racing pass would make, leaves the first run alone and runs nothing.
+        code, out = fx.flow("full-health-run", "--head", head, cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("already runs", out)
+        wait_for(lambda: self.results(fx), "the run's result", 60)
+        seen = len(passes(fx))
+        wait_for(lambda: len(passes(fx)) >= seen + 2, "two more passes", 30)
+        self.assertEqual(health_runs(fx), 1, "fullHealth ran twice for one merge")
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified"])
+
+    def test_a_supervisor_killed_mid_run_leaves_a_run_the_next_one_adopts(self) -> None:
+        fx = self.slow_run_under_a_supervisor("10")
+        run = self.run_lock(fx)
+        os.killpg(settled_lock(fx)["pid"], signal.SIGKILL)
+        self.assertTrue(alive(run["pid"]), "the run died with its supervisor")
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        wait_for(lambda: self.results(fx), "the adopted run's result", 60)
+        seen = len(passes(fx))
+        wait_for(lambda: len(passes(fx)) >= seen + 2, "two passes after it", 30)
+        self.assertEqual(health_runs(fx), 1, "the resumed supervisor started a second run")
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified"])
+
+    def test_a_run_killed_with_its_supervisor_is_started_again_once(self) -> None:
+        fx = self.slow_run_under_a_supervisor("4")
+        run = self.run_lock(fx)
+        os.killpg(settled_lock(fx)["pid"], signal.SIGKILL)
+        os.killpg(run["pid"], signal.SIGKILL)
+        wait_for(lambda: not self.run_lock(fx)["held"], "the killed run to let its lock go", 15)
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        wait_for(lambda: self.results(fx), "the restarted run's result", 60)
+        seen = len(passes(fx))
+        wait_for(lambda: len(passes(fx)) >= seen + 2, "two passes after it", 30)
+        self.assertEqual(health_runs(fx), 2)
+        self.assertEqual(len(self.results(fx)), 1)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified"])
+
+    def test_lead_close_stops_a_run_and_records_no_result(self) -> None:
+        fx = self.slow_run_under_a_supervisor()
+        run = self.run_lock(fx)
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
+        code, out = fx.flow("lead-close", cwd=fx.main)
+        self.assertIn(code, (0, 1), out)
+        self.assertIn(f"stopped the fullHealth run at {run['head'][:10]} (pid {run['pid']})", out)
+        self.assertFalse(self.run_lock(fx)["held"])
+        wait_for(lambda: not alive(run["pid"]), "the run to be gone", 15)
+        self.assertEqual(self.results(fx), [])
+        self.assertEqual(self.base_events(fx), [])
+
 
 if __name__ == "__main__":
     unittest.main()
