@@ -291,6 +291,19 @@ if mode == "timeout":
 pathlib.Path("gen-api").mkdir(exist_ok=True)
 (pathlib.Path("gen-api") / "api.txt").write_text("api for " + "".join(sorted(p.name for p in pathlib.Path("src").glob("*.txt"))) + "\\n")
 """,
+    "hold.py": """
+import os, pathlib, sys, time
+# Fails at once on a tree carrying the candidate's file; on the base, runs until the test says how it ended.
+if pathlib.Path("src/candidate.txt").exists():
+    print("FAIL: test_held boom")
+    sys.exit(1)
+ended = pathlib.Path(os.environ["MQ_LOG"] + ".ended")
+for _ in range(1500):
+    if ended.exists():
+        sys.exit(int(ended.read_text()))
+    time.sleep(0.02)
+sys.exit(70)
+""",
     "release.py": """
 import os, sys
 with open(os.environ["MQ_LOG"], "a") as log:
@@ -2700,6 +2713,109 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertIn("test_beta", stopped["summary"])
         self.assertIn(entry["log"], stopped["summary"])
         self.assertEqual(self.journal(adopter, "check.retried"), [])
+
+    def test_a_failing_check_journals_its_failing_tests_and_log_before_the_stop(self) -> None:
+        adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha", "test_beta")])
+        self.candidate(adopter)
+        results = self.run_queue(adopter, "feature")
+        entry = self.check_entry_of(results, "suite")
+        [failed] = self.journal(adopter, "check.failed")
+        self.assertEqual(failed["subject"], "feature")
+        self.assertIn("suite", failed["summary"])
+        self.assertIn("test_alpha", failed["summary"])
+        self.assertIn("test_beta", failed["summary"])
+        self.assertIn(entry["log"], failed["summary"])
+        [stopped] = self.journal(adopter, "candidate.stopped")
+        self.assertLess(failed["id"], stopped["id"])
+
+    def test_a_timed_out_check_says_so_in_its_entry(self) -> None:
+        adopter = self.adopter(mode="slow-child")
+        self.candidate(adopter)
+        results = self.run_queue(adopter, "feature")
+        self.assertStopped(results, "check_failed")
+        [failed] = self.journal(adopter, "check.failed")
+        self.assertIn("timed out", failed["summary"])
+        self.assertIn(self.check_entry_of(results, "slow")["log"], failed["summary"])
+
+    def test_a_passing_check_journals_no_failure(self) -> None:
+        adopter = self.visible_adopter([check_entry("always")])
+        self.candidate(adopter)
+        self.run_queue(adopter, "feature")
+        self.assertEqual(self.journal(adopter, "check.failed"), [])
+
+    def test_a_flake_a_retry_clears_never_wakes_the_lead(self) -> None:
+        flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
+        adopter = self.visible_adopter([check_entry("suite", "--flaky-once", "test_launcher_cancel")], flakes=flakes)
+        self.candidate(adopter)
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(self.journal(adopter, "check.failed"), [])
+
+    def test_a_declared_flake_failing_again_journals_one_failure_after_its_retry(self) -> None:
+        flakes = [{"check": "suite", "ref": "FLAKE-7"}]
+        adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha")], flakes=flakes)
+        self.candidate(adopter)
+        self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        [failed] = self.journal(adopter, "check.failed")
+        [retried] = self.journal(adopter, "check.retried")
+        self.assertLess(retried["id"], failed["id"])
+
+    def test_a_batch_journals_a_failure_once_for_each_member_and_not_again_while_it_finds_the_culprit(self) -> None:
+        adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha")])
+        for name, changes in (("first", {"src/lib.txt": "lib two\n"}), ("second", {"src/app.txt": "app two\n"}),
+                              ("third", {"src/extra.txt": "extra\n"})):
+            self.candidate(adopter, changes, name=name)
+        adopter.runner().run_command("batch", ["first", "second", "third"])
+        self.assertEqual([entry["subject"] for entry in self.journal(adopter, "check.failed")],
+                         ["first", "second", "third"])
+
+    def wait_through_a_held_base_rerun(self, ended: int) -> tuple[list, Adopter]:
+        """Hold a queue turn on the base re-run, wait as the lead does, and only then let the re-run end."""
+        adopter = self.visible_adopter([{"id": "held", "argv": [PY, "tools/hold.py"], "cwd": ".", "reasons": ["held"],
+                                         "prerequisites": []}])
+        self.candidate(adopter, {"src/candidate.txt": "candidate\n"})
+        through = max((entry["id"] for entry in state_tool.read_journal(adopter.state)), default=0)
+        marker = Path(str(adopter.log) + ".ended")
+        results: list = []
+        turn = threading.Thread(target=lambda: results.extend(self.run_queue(adopter, "feature")))
+        turn.start()
+        try:
+            waited = subprocess.run(
+                [PY, "-B", str(SCRIPTS / "delivery_state.py"), "--dir", str(adopter.state), "wait", "--after", str(through),
+                 "--timeout", "60", "--poll", "0.05", "--load-multiple", "1000000", "--min-free-bytes", "0",
+                 "--swap-growth-bytes", str(2**60)],
+                capture_output=True, text=True, check=False)
+            row = next(check for check in adopter.item("feature")["checks"] if check["id"] == "held")
+            kinds = [entry["kind"] for entry in state_tool.read_journal(adopter.state)]
+            self.assertEqual(waited.returncode, 0, waited.stdout + waited.stderr)
+            woke = json.loads(waited.stdout)
+            self.assertEqual([event["kind"] for event in woke["events"]], ["check.failed"])
+            self.assertIn("test_held", woke["events"][0]["summary"])
+            self.assertIn(row["log"], woke["events"][0]["summary"])
+            self.assertEqual(row["failures"], ["test_held"])
+            self.assertNotIn("candidate.stopped", kinds)
+            self.assertNotIn("base.broken", kinds)
+            self.assertEqual(adopter.item("feature")["stage"], "checking")
+        finally:
+            marker.write_text(str(ended))
+            turn.join(60)
+        self.assertFalse(turn.is_alive())
+        return results, adopter
+
+    def test_the_wait_returns_on_the_failure_while_the_base_rerun_holds_and_the_base_passes(self) -> None:
+        results, adopter = self.wait_through_a_held_base_rerun(0)
+        document = self.assertStopped(results, "check_failed")
+        self.assertFalse(document["stop"]["queueStopped"])
+        self.assertIn("test_held", document["stop"]["detail"])
+        self.assertEqual(self.journal(adopter, "base.broken"), [])
+        self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
+
+    def test_the_wait_returns_on_the_failure_while_the_base_rerun_holds_and_the_base_fails(self) -> None:
+        results, adopter = self.wait_through_a_held_base_rerun(1)
+        document = self.assertStopped(results, "base_broken")
+        self.assertTrue(document["stop"]["queueStopped"])
+        self.assertEqual(len(self.journal(adopter, "base.broken")), 1)
+        self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
 
     def test_a_failure_matching_only_a_declared_flake_is_retried_once_and_journaled(self) -> None:
         flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]

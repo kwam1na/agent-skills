@@ -243,6 +243,32 @@ class PlanContractTests(unittest.TestCase):
         criteria["evidence"] = {}
         self.assertIn("criteria", refusal(criteria))
 
+    def test_a_skipped_close_out_is_optional_and_its_shape_is_held(self) -> None:
+        import jsonschema
+
+        skipped = {"fullHealth": "skipped", "posture": "focused", "source": "origin/main", "reason": "The gate is off."}
+        validator = jsonschema.Draft202012Validator(json.loads(SCHEMA.read_text(encoding="utf-8")))
+        document = {**plan(), "closeOut": skipped}
+        self.assertEqual(views.validate_plan(copy.deepcopy(document)), document)
+        self.assertEqual(list(validator.iter_errors(document)), [])
+        refused = {
+            "not an object": "skipped",
+            "a pass": {**skipped, "fullHealth": "passed"},
+            "a skip under gate": {**skipped, "posture": "gate"},
+            "no source": {key: value for key, value in skipped.items() if key != "source"},
+            "no reason": {key: value for key, value in skipped.items() if key != "reason"},
+            "an empty reason": {**skipped, "reason": ""},
+            "a long reason": {**skipped, "reason": "x" * 601},
+            "a long source": {**skipped, "source": "x" * 201},
+            "an extra member": {**skipped, "extra": 1},
+        }
+        for name, value in refused.items():
+            with self.subTest(case=name):
+                candidate = {**plan(), "closeOut": value}
+                with self.assertRaisesRegex(views.ConfigError, r"^closeOut"):
+                    views.validate_plan(candidate)
+                self.assertTrue(list(validator.iter_errors(candidate)), name)
+
     def test_the_schema_names_the_validators_fields(self) -> None:
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
         self.assertEqual(schema["$id"], "https://agent-skills.dev/schemas/delivery-plan/1")

@@ -925,6 +925,14 @@ test("filters the story by tab and shows all of it on request, keeping focus on 
   expect(back.focused).toBe("all");
 });
 
+test("names a failed check among the problems while its stop is still being worked out", async () => {
+  const document = fixtureDocument();
+  document.journal.push({ id: 99, at: "2026-10-22T07:00:00Z", kind: "check.failed", lane: null, subject: null, summary: "Check failed: suite (failing test_alpha; log logs/suite.log)" });
+  const [, problems] = await open(document, { steps: [{ click: '#happened [data-tab="problems"]' }] });
+  const entry = [...problems.app.querySelectorAll("#happened .feed li")].find((row) => row.textContent.includes("test_alpha"));
+  expect(entry?.textContent).toContain("Check failed");
+});
+
 test("finds nothing for record values that name built-in properties, and keeps them out of class names", async () => {
   const document = fixtureDocument();
   document.state.lanes[0].id = "constructor";

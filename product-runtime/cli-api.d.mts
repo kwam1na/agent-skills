@@ -22,6 +22,8 @@ type CommandResult = {
     readonly summary?: string;
     readonly digest?: string;
     readonly preparation?: RunPreparationObservation;
+    /** The command did not do its work, so no completion of it goes in the run's journal. */
+    readonly unobserved?: true;
 } | {
     readonly kind: "blocked";
     readonly blockers: readonly Blocker[];
@@ -71,6 +73,8 @@ interface CommandContext {
     }) => Promise<ProviderRailInvocationResult | undefined>;
     /** Emits one line of operator-facing output to stdout. */
     readonly write: (text: string) => void;
+    /** Emits one line of operator-facing output to stderr, leaving stdout as it is. */
+    readonly writeError: (text: string) => void;
     /** Classifies the execution context from this invocation's env + TTY. */
     classifyContext(): ExecutionContext;
 }

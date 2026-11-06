@@ -750,7 +750,7 @@ ${USAGE(commands)}
   const code = await runConfiguredCommand(descriptor, args, runtime, (value2) => {
     completed = value2;
   }, observation);
-  await observation?.finish(code, Date.now() - startedAt, completed?.digest, completed?.preparation);
+  if (!completed?.unobserved) await observation?.finish(code, Date.now() - startedAt, completed?.digest, completed?.preparation);
   return code;
 }
 async function runConfigFreeCommand(descriptor, args, runtime) {
@@ -889,6 +889,8 @@ async function runConfiguredCommand(descriptor, args, runtime, observeSuccess, o
         }
       },
       write: (text2) => runtime.stdout(`${text2}
+`),
+      writeError: (text2) => runtime.stderr(`${text2}
 `),
       classifyContext: () => classifyExecutionContext({
         config,
@@ -2188,6 +2190,34 @@ ${result.stderr}`.slice(-4e3)}`);
 
 // packages/cli/src/commands/gate.ts
 import { computeDeliverableIdentity as computeDeliverableIdentity2, runAdmission } from "./kernel.mjs";
+
+// packages/cli/src/delivery-posture.ts
+import { resolveDeliveryPosture } from "./kernel.mjs";
+async function focusedOutcome(context) {
+  const resolved = await resolveDeliveryPosture({
+    rootDir: context.rootDir,
+    baseRef: context.config.baseRef,
+    ...context.signal === void 0 ? {} : { signal: context.signal }
+  });
+  if (context.signal?.aborted) throw new CliInterruption();
+  if (resolved.posture === "focused") {
+    return {
+      kind: "ok",
+      unobserved: true,
+      summary: [
+        "outcome: focused",
+        `posture: ${resolved.posture}`,
+        `reason: ${oneLine(resolved.reason, 512)}`,
+        `source: ${oneLine(resolved.source, 256)}`,
+        `base tip: ${resolved.baseTipSha ?? "(none)"}`
+      ].join("\n")
+    };
+  }
+  if (resolved.code === "posture_malformed") context.writeError(`${resolved.code}: ${oneLine(resolved.reason, 512)}`);
+  return void 0;
+}
+
+// packages/cli/src/commands/gate.ts
 var scopedCheckBlocker = (error) => commandBlocker({ code: error.code, sourceId: "delivery-harness.cli.gate", summary: error.message, remediations: [{ id: "repair-scoped-check", kind: "manual_action", summary: "Repair the declared scoped check or its execution profile and run the gate again." }] });
 async function providerAdmission(context, options, session) {
   const admit = async (input2, options2) => runAdmission(input2, { ...options2, ...session ? { scopedPlan: await session.plan(), readOutput: session.readOutput, resourceBindings: await session.resourceBindings() } : {} });
@@ -2306,6 +2336,26 @@ async function runProviderBackedAdmission(context, options) {
     await session?.cleanup();
   }
 }
+async function runGate(context) {
+  const result = await runProviderBackedAdmission(context, { allowPrompt: true, includeInjectedLiveResults: true });
+  if (result.admitted) {
+    const waiverNote = result.waiver === "accepted" ? ` (waived: ${result.waivedObligationIds.join(", ")})` : "";
+    const kinds = (result.decision?.resolutions ?? []).map((resolution) => `${resolution.obligationId}=${resolution.kind}`);
+    let digest;
+    if (result.candidate !== void 0) {
+      try {
+        digest = await computeDeliverableIdentity2({
+          rootDir: context.rootDir,
+          treeSha: result.candidate.treeSha,
+          config: { ...context.config, computingIdentityVersion: "validation-tree/v1", reviewNeutral: context.config.recordNeutral }
+        });
+      } catch {
+      }
+    }
+    return { kind: "ok", summary: `admitted${waiverNote}: ${kinds.join(", ")}`, ...digest === void 0 ? {} : { digest } };
+  }
+  return { kind: "blocked", blockers: [...result.blockers] };
+}
 var gateCommand = {
   capturesCandidate: true,
   name: "gate",
@@ -2318,24 +2368,9 @@ var gateCommand = {
       return { kind: "usage", message: `gate takes no arguments, and ${oneLine(unexpected, 64)} is one.
 ${gateCommand.usage}` };
     }
-    const result = await runProviderBackedAdmission(context, { allowPrompt: true, includeInjectedLiveResults: true });
-    if (result.admitted) {
-      const waiverNote = result.waiver === "accepted" ? ` (waived: ${result.waivedObligationIds.join(", ")})` : "";
-      const kinds = (result.decision?.resolutions ?? []).map((resolution) => `${resolution.obligationId}=${resolution.kind}`);
-      let digest;
-      if (result.candidate !== void 0) {
-        try {
-          digest = await computeDeliverableIdentity2({
-            rootDir: context.rootDir,
-            treeSha: result.candidate.treeSha,
-            config: { ...context.config, computingIdentityVersion: "validation-tree/v1", reviewNeutral: context.config.recordNeutral }
-          });
-        } catch {
-        }
-      }
-      return { kind: "ok", summary: `admitted${waiverNote}: ${kinds.join(", ")}`, ...digest === void 0 ? {} : { digest } };
-    }
-    return { kind: "blocked", blockers: [...result.blockers] };
+    const focused = await focusedOutcome(context);
+    if (focused !== void 0) return focused;
+    return runGate(context);
   }
 };
 
@@ -2796,6 +2831,122 @@ function parseRetentionOptions(args) {
   }
   return { scope, keepSuperseded };
 }
+async function writeRecord(context, retention) {
+  const observedAt = `${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19)}Z`;
+  const wiring = await context.wire();
+  const admission = await runProviderBackedAdmission(context, { allowPrompt: false, includeInjectedLiveResults: false });
+  if (!admission.admitted || admission.decision === void 0) {
+    return { kind: "blocked", blockers: [...admission.blockers] };
+  }
+  const decision = admission.decision;
+  const recheck = await wiring.captureCandidate();
+  if (!recheck.ok) {
+    return { kind: "blocked", blockers: [...recheck.blockers] };
+  }
+  if (recheck.candidate.deliverable.digest !== decision.candidate.deliverable.digest) {
+    return {
+      kind: "blocked",
+      blockers: [
+        commandBlocker({
+          code: "record_identity_changed",
+          sourceId: "delivery-harness.cli.record",
+          summary: "The deliverable identity changed after the gate; nothing was recorded.",
+          details: `gate ${decision.candidate.deliverable.digest} but current ${recheck.candidate.deliverable.digest}`,
+          remediations: [
+            {
+              id: "reprepare-and-record",
+              kind: "command",
+              command: ["delivery-harness", "prepare"],
+              summary: "Re-prepare the candidate and re-run the gate before recording."
+            }
+          ]
+        })
+      ]
+    };
+  }
+  const evidenceRecords = [];
+  for (const obligation of context.config.obligations) {
+    const discovery = await discoverRecords2(context.rootDir, {
+      gateId: context.config.gateId,
+      obligationId: obligation.id,
+      ...wiring.storageOptions
+    });
+    evidenceRecords.push(...discovery.records);
+  }
+  const evidenceReader = repositoryEvidenceReader2(context.rootDir, context.artifacts);
+  const evidenceContext = await capturePortableEvidenceContext2(
+    context.config,
+    evidenceReader,
+    await computePreparationFingerprint2(context.rootDir, context.config),
+    recheck.candidate.deliverable.digest
+  );
+  const compiledPolicy = context.policyBinding?.compiledPolicy ?? await readCompiledRepositoryPolicy(await candidateTreeEvidenceReader2(context.rootDir, recheck.candidate.treeSha));
+  const runSpan = await resolveRunSpan({ cwd: context.rootDir, treeSha: recheck.candidate.treeSha, allowCurrentRun: true });
+  const built = buildDeliveryRecord({
+    config: context.config,
+    decision,
+    evidenceRecords,
+    context: evidenceContext,
+    ...runSpan === void 0 ? {} : { runSpan: { startedAt: runSpan.startedAt, endedAt: runSpan.endedAt } },
+    ...compiledPolicy === null ? {} : { compiledPolicy, observedAt }
+  });
+  if (!built.ok) {
+    return { kind: "blocked", blockers: [...built.blockers] };
+  }
+  const verificationInputs = await capturePortableVerificationInputs(context.rootDir, context.config, recheck.candidate, built.record);
+  const checked = verifyDeliveryRecord(
+    context.config,
+    built.record,
+    { deliverableDigest: recheck.candidate.deliverable.digest, identityToken: recheck.candidate.deliverable.identity },
+    recheck.candidate.base,
+    { ...verificationInputs, observedAt, liveResults: admission.observedLiveResults ?? [], executionContext: context.classifyContext() }
+  );
+  if (!checked.ok) return { kind: "blocked", blockers: [...checked.blockers] };
+  const relativePath = deliveryRecordPathFor2(context.config, decision.candidate.deliverable.digest);
+  const absolutePath = path11.join(context.rootDir, relativePath);
+  const bytes = deliveryRecordBytes(built.record);
+  if (retention === void 0) {
+    await context.artifacts.writeTextFile(absolutePath, bytes);
+    return { kind: "ok", summary: `recorded ${relativePath}` };
+  }
+  const retained = await applyDeliveryRecordRetention({
+    rootDir: context.rootDir,
+    storageNamespace: context.config.storageNamespace,
+    scope: retention.scope,
+    keepSuperseded: retention.keepSuperseded,
+    recordBasePath: context.config.deliveryRecordPath,
+    current: {
+      relativePath,
+      deliverableDigest: decision.candidate.deliverable.digest,
+      bytes
+    },
+    writeCurrent: () => context.artifacts.writeTextFile(absolutePath, bytes)
+  });
+  if (!retained.ok) {
+    return {
+      kind: "blocked",
+      blockers: [
+        commandBlocker({
+          code: retained.code,
+          sourceId: "delivery-harness.cli.record",
+          summary: "Tracked delivery-record retention did not complete.",
+          details: retained.detail,
+          remediations: [
+            {
+              id: "repair-record-retention",
+              kind: "manual_action",
+              summary: "Preserve the exact owned record bytes in Git, repair the named ownership conflict, then retry record with the same scope and bound."
+            }
+          ]
+        })
+      ]
+    };
+  }
+  return {
+    kind: "ok",
+    summary: `recorded ${relativePath}${retained.pruned.length === 0 ? "" : `; pruned Git-preserved ${retained.pruned.join(", ")}`}`
+  };
+}
 var recordCommand = {
   capturesCandidate: true,
   name: "record",
@@ -2803,125 +2954,14 @@ var recordCommand = {
   summary: "Write the tracked delivery record for an admitted gate.",
   usage: "Usage: delivery-harness record [--retention-scope <delivery-key> --keep-superseded <0-100>]\nRetention is opt-in; run gate first if a waiver is needed.",
   async run(context) {
-    const observedAt = `${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19)}Z`;
     const retention = parseRetentionOptions(context.args);
     if (typeof retention === "string") {
       return { kind: "usage", message: `${retention}.
 ${recordCommand.usage}` };
     }
-    const wiring = await context.wire();
-    const admission = await runProviderBackedAdmission(context, { allowPrompt: false, includeInjectedLiveResults: false });
-    if (!admission.admitted || admission.decision === void 0) {
-      return { kind: "blocked", blockers: [...admission.blockers] };
-    }
-    const decision = admission.decision;
-    const recheck = await wiring.captureCandidate();
-    if (!recheck.ok) {
-      return { kind: "blocked", blockers: [...recheck.blockers] };
-    }
-    if (recheck.candidate.deliverable.digest !== decision.candidate.deliverable.digest) {
-      return {
-        kind: "blocked",
-        blockers: [
-          commandBlocker({
-            code: "record_identity_changed",
-            sourceId: "delivery-harness.cli.record",
-            summary: "The deliverable identity changed after the gate; nothing was recorded.",
-            details: `gate ${decision.candidate.deliverable.digest} but current ${recheck.candidate.deliverable.digest}`,
-            remediations: [
-              {
-                id: "reprepare-and-record",
-                kind: "command",
-                command: ["delivery-harness", "prepare"],
-                summary: "Re-prepare the candidate and re-run the gate before recording."
-              }
-            ]
-          })
-        ]
-      };
-    }
-    const evidenceRecords = [];
-    for (const obligation of context.config.obligations) {
-      const discovery = await discoverRecords2(context.rootDir, {
-        gateId: context.config.gateId,
-        obligationId: obligation.id,
-        ...wiring.storageOptions
-      });
-      evidenceRecords.push(...discovery.records);
-    }
-    const evidenceReader = repositoryEvidenceReader2(context.rootDir, context.artifacts);
-    const evidenceContext = await capturePortableEvidenceContext2(
-      context.config,
-      evidenceReader,
-      await computePreparationFingerprint2(context.rootDir, context.config),
-      recheck.candidate.deliverable.digest
-    );
-    const compiledPolicy = context.policyBinding?.compiledPolicy ?? await readCompiledRepositoryPolicy(await candidateTreeEvidenceReader2(context.rootDir, recheck.candidate.treeSha));
-    const runSpan = await resolveRunSpan({ cwd: context.rootDir, treeSha: recheck.candidate.treeSha, allowCurrentRun: true });
-    const built = buildDeliveryRecord({
-      config: context.config,
-      decision,
-      evidenceRecords,
-      context: evidenceContext,
-      ...runSpan === void 0 ? {} : { runSpan: { startedAt: runSpan.startedAt, endedAt: runSpan.endedAt } },
-      ...compiledPolicy === null ? {} : { compiledPolicy, observedAt }
-    });
-    if (!built.ok) {
-      return { kind: "blocked", blockers: [...built.blockers] };
-    }
-    const verificationInputs = await capturePortableVerificationInputs(context.rootDir, context.config, recheck.candidate, built.record);
-    const checked = verifyDeliveryRecord(
-      context.config,
-      built.record,
-      { deliverableDigest: recheck.candidate.deliverable.digest, identityToken: recheck.candidate.deliverable.identity },
-      recheck.candidate.base,
-      { ...verificationInputs, observedAt, liveResults: admission.observedLiveResults ?? [], executionContext: context.classifyContext() }
-    );
-    if (!checked.ok) return { kind: "blocked", blockers: [...checked.blockers] };
-    const relativePath = deliveryRecordPathFor2(context.config, decision.candidate.deliverable.digest);
-    const absolutePath = path11.join(context.rootDir, relativePath);
-    const bytes = deliveryRecordBytes(built.record);
-    if (retention === void 0) {
-      await context.artifacts.writeTextFile(absolutePath, bytes);
-      return { kind: "ok", summary: `recorded ${relativePath}` };
-    }
-    const retained = await applyDeliveryRecordRetention({
-      rootDir: context.rootDir,
-      storageNamespace: context.config.storageNamespace,
-      scope: retention.scope,
-      keepSuperseded: retention.keepSuperseded,
-      recordBasePath: context.config.deliveryRecordPath,
-      current: {
-        relativePath,
-        deliverableDigest: decision.candidate.deliverable.digest,
-        bytes
-      },
-      writeCurrent: () => context.artifacts.writeTextFile(absolutePath, bytes)
-    });
-    if (!retained.ok) {
-      return {
-        kind: "blocked",
-        blockers: [
-          commandBlocker({
-            code: retained.code,
-            sourceId: "delivery-harness.cli.record",
-            summary: "Tracked delivery-record retention did not complete.",
-            details: retained.detail,
-            remediations: [
-              {
-                id: "repair-record-retention",
-                kind: "manual_action",
-                summary: "Preserve the exact owned record bytes in Git, repair the named ownership conflict, then retry record with the same scope and bound."
-              }
-            ]
-          })
-        ]
-      };
-    }
-    return {
-      kind: "ok",
-      summary: `recorded ${relativePath}${retained.pruned.length === 0 ? "" : `; pruned Git-preserved ${retained.pruned.join(", ")}`}`
-    };
+    const focused = await focusedOutcome(context);
+    if (focused !== void 0) return focused;
+    return writeRecord(context, retention);
   }
 };
 
@@ -3152,10 +3192,10 @@ ${USAGE4}` };
     const submitted = await submitEvidenceCommand.run(withArgs(context, ["--manifest", manifestPath]));
     const stoppedAfterSubmission = report(context, "submitted", submitted);
     if (stoppedAfterSubmission !== void 0) return stoppedAfterSubmission;
-    const gated = await gateCommand.run(withArgs(context, []));
+    const gated = await runGate(withArgs(context, []));
     const stoppedAfterGate = report(context, "gate", gated);
     if (stoppedAfterGate !== void 0) return stoppedAfterGate;
-    return recordCommand.run(withArgs(context, []));
+    return writeRecord(withArgs(context, []));
   }
 };
 
@@ -6623,6 +6663,8 @@ var verifyCommand = {
     const observedAt = `${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19)}Z`;
     const parsedArgs = parseArgs2(context.args);
     if (!parsedArgs.ok) return { kind: "usage", message: parsedArgs.message };
+    const focused = await focusedOutcome(context);
+    if (focused !== void 0) return focused;
     const wiring = await context.wire();
     const capture2 = await wiring.captureCandidate();
     if (!capture2.ok) {
@@ -6863,6 +6905,8 @@ var resumeCommand = {
   usage: USAGE9,
   async run(context) {
     if (context.args.length !== 0 && (context.args.length !== 2 || context.args[0] !== "--run")) return { kind: "usage", message: USAGE9 };
+    const focused = await focusedOutcome(context);
+    if (focused !== void 0) return focused;
     const run = await recoveryRun(context.rootDir, context.args[1]);
     if (!run.ok) return { kind: "blocked", blockers: [run.blocker] };
     const saved = [...run.events].reverse().find((event) => event.kind === "context.saved");

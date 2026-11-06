@@ -1,0 +1,185 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3126",
+  "headline": "V26-3126: one declaration on the base sets a repository's delivery posture",
+  "plan": "docs/plans/2026-11-04-delivery-posture.md",
+  "laneBrief": "docs/plans/2026-11-04-delivery-posture.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-04-delivery-posture.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "product-runtime/*",
+        "docs/product-generation.md",
+        "README.md",
+        "tests/test_product_release.py",
+        "tests/test_product_descriptors.py",
+        "tests/test_product_launcher.py",
+        "tests/test_cut_release.py",
+        "tests/test_readme.py",
+        "tests/built_product.py",
+        "tests/test_delivery_posture_vectors.py",
+        "docs/solutions/*delivery-posture-harness*"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/*",
+        "skills/orchestrate-work/*",
+        "skills/delivery-views/*",
+        "provenance.lock.json",
+        "catalog.json",
+        "profiles/*",
+        "validation-inventory.json",
+        "tests/fixtures/delivery-posture-vectors.json",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_run_delivery_tracker.py",
+        "tests/test_delivery_views*",
+        "tests/delivery_views_fixtures.py",
+        "tests/delivery_views_page/*",
+        "tests/test_registry.py",
+        "tests/test_orchestration*",
+        "docs/solutions/*delivery-posture-close-out*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3124": {
+      "title": "Let a repository declare its delivery posture, focused or gate, in the harness",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "focused-verify",
+          "text": "With focused declared on the base, verify passes a candidate with no gate record, reporting the posture and its source; gate, record and resume report the same outcome"
+        },
+        {
+          "id": "candidate-no-benefit",
+          "text": "A candidate changing the posture, or pointing baseRef elsewhere, gets no benefit until that change is on the base"
+        },
+        {
+          "id": "fallback-gate",
+          "text": "A missing, malformed or unreadable declaration behaves as gate"
+        },
+        {
+          "id": "undeclared-unchanged",
+          "text": "Repositories that declare nothing behave exactly as they do today"
+        },
+        {
+          "id": "athena-can-remove",
+          "text": "Adoption notes map every Athena site to what replaces it, and the built runtime exports the resolver those sites need"
+        }
+      ]
+    },
+    "V26-3125": {
+      "title": "Make run-delivery's supervisor honour the focused posture at close-out",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "focused-closes",
+          "text": "With focused declared on the base, a delivery closes with no fullHealth run, and the record names the posture and its source"
+        },
+        {
+          "id": "gate-unchanged",
+          "text": "With gate declared, or nothing declared, close-out behaviour is unchanged"
+        },
+        {
+          "id": "checkout-no-benefit",
+          "text": "A candidate or lead checkout declaring focused gets no benefit until the declaration is on the base"
+        },
+        {
+          "id": "malformed-runs",
+          "text": "A malformed or unreadable declaration behaves as gate, with a named reason"
+        },
+        {
+          "id": "binding-unchanged",
+          "text": "orchestration-binding/1 is unchanged and fullHealth stays required"
+        },
+        {
+          "id": "skip-not-pass",
+          "text": "The views and close-out summary say the run was skipped under the posture, not that it passed"
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "close-out",
+      "label": "Close-out",
+      "text": "V26-3125 merged to main through the queue",
+      "covers": {
+        "criteria": [
+          "focused-closes",
+          "gate-unchanged",
+          "checkout-no-benefit",
+          "malformed-runs",
+          "binding-unchanged",
+          "skip-not-pass"
+        ],
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "harness-posture",
+      "label": "Harness posture",
+      "text": "V26-3124's source merged to the harness's main, and its built runtime merged to main through the queue",
+      "covers": {
+        "criteria": [
+          "focused-verify",
+          "candidate-no-benefit",
+          "fallback-gate",
+          "undeclared-unchanged",
+          "athena-can-remove"
+        ],
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "CI's Ubuntu job and cut-release pass on the last merged commit of main, with the run linked",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "grantedBy": "the operator",
+    "grantedOn": "2026-11-04",
+    "readyPullRequests": true
+  },
+  "outOfScope": [
+    "Cutting a release, which waits for the operator's word. The tickets' release scope and Athena's removal of its local version follow as one tracked item, filed at close-out.",
+    "Which checks a repository runs under `focused`, and a per-delivery waiver.",
+    "`admit`, `check` and `prepare`, which keep their behaviour under either posture.",
+    "The hosted action in the harness's `packages/action`, which calls the record check directly. The tickets name four commands, and the action stays as it is.",
+    "The two commits on the harness's `main` after `fa63884`, which belong to V26-2347, still in progress."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "outcome": {
+    "summary": "One declaration on the base sets a repository's delivery posture.",
+    "text": "A repository declares gate or focused in one file on its protected base, and the harness's verify, gate, record and resume and run-delivery's close-out all honour it, so a focused delivery reports its own outcome and closes with no full-health run, while a branch can't declare itself focused."
+  }
+}

@@ -48,13 +48,13 @@ is waited for, within the bound, and then refused.
 
 Before tagging, run the full suite locally on macOS with Python 3.11. The release job
 cannot verify this, so it rests on whoever tags. A newer Python can hide what the
-declared minimum shows, so a run on one doesn't count. The separate environment
-leaves `.venv` alone:
+declared minimum shows, so a run on one doesn't count. `.python-version` pins `.venv`
+to it, the version CI runs:
 
 ```bash
 uv python install 3.11
-uv run --no-project --python 3.11 python scripts/bootstrap-test-environment.py --environment .venv-3.11
-.venv-3.11/bin/python scripts/run-tests.py
+python3 scripts/bootstrap-test-environment.py
+.venv/bin/python scripts/run-tests.py
 ```
 
 Windows is not validated. Its code fixes and guards stay, unproven, and CI does not
@@ -64,8 +64,7 @@ run it.
 the same version, so compare digests. `scripts/cut-release.py` prints nothing on
 success, so read its exit code and its output directory.
 
-A green local run does not prove the declared minimum Python or another operating
-system. Reproducing a CI failure has to clear the local environment's variables
+A green local run does not prove another operating system. Reproducing a CI failure has to clear the local environment's variables
 first, keeping the runner's baseline, such as `PATH`, `HOME` and the git identity CI
 configures, and setting what the workflow's own `env` block sets, because a variable
 left in the session's shell can hide the failure. Never point `TMPDIR` under a checkout: every test's folders
@@ -98,7 +97,10 @@ delivery only once a release holding it is applied.
 Keep JSON serialized as two-space-indented UTF-8 with a final newline. Bootstrap
 the worktree-private test environment before running the sensors; a shared
 editable install stores one checkout path in site-packages, so concurrent
-worktrees would otherwise replace each other's imported source:
+worktrees would otherwise replace each other's imported source. Whichever `python3`
+runs it, `.venv` is built with the version `.python-version` names, and rebuilt when
+it was built on another. `--environment .venv-<name>` builds with the Python running
+the script instead, to try a second one:
 
 ```bash
 python3 scripts/bootstrap-test-environment.py

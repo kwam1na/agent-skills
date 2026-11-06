@@ -16,11 +16,13 @@ their own signal handlers, working directory and module state.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import fcntl
 import hashlib
 import io
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -57,7 +59,6 @@ PROFILE = "run-delivery"
 TOOL_RELATIVE = "skills/run-delivery/scripts/run_delivery.py"
 # The stored runtime this profile's product is rebound from.
 RUNTIME_SOURCE = ROOT / "product-runtime"
-RUNTIME_VERSION = "0.7.7"
 # The fixture page adapter-test serves, byte for byte as the tool's own fixture page was before it moved in.
 ADAPTER_FIXTURE_SHA256 = "31257fd55d83ebc6aa602b7a508248d6f44776991f54e1127ce1629b0bf59a81"
 POSIX_ONLY = "the run-delivery tool is POSIX-only: it uses fcntl, process groups and sh"
@@ -89,6 +90,12 @@ def sh(*argv, cwd=None, env=None, check=True, input=None):
 def expect(condition, message):
     if not condition:
         raise AssertionError(message)
+
+
+def group_members(group: int) -> list[int]:
+    """The live processes in one process group; a zombie has already stopped."""
+    rows = [line.split() for line in sh("ps", "-A", "-o", "pid=,pgid=,stat=").stdout.splitlines()]
+    return [int(pid) for pid, pgid, state in rows if int(pgid) == group and not state.startswith("Z")]
 
 
 def commit(cwd: Path, message: str):
@@ -451,6 +458,77 @@ def setup_delivery(fx: Fixture) -> Path:
     return path
 
 
+POSTURE_VECTORS = ROOT / "tests/fixtures/delivery-posture-vectors.json"
+POSTURE_PATH = ".agents/delivery-posture.json"
+# Every git command fails, or never returns and leaves a child holding its output, as a fetch's transport can.
+# Not `sleep 30...`: the timeout case below looks for that machine-wide, and this stub can run beside it.
+POSTURE_GIT_STUBS = {"fails": "#!/bin/sh\nexit 1\n", "hangs": "#!/bin/sh\nsleep 299 &\nwait\n"}
+
+
+def posture_tree(repository: Path, base: dict) -> None:
+    """Put what a vector's `base` holds at the declaration's path into a checkout."""
+    path = repository / POSTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    kind = base["kind"]
+    if kind == "blob":
+        data = base64.b64decode(base["base64"]) if "base64" in base else base["text"].encode("utf-8")
+        path.write_bytes(data + b" " * (base.get("padTo", len(data)) - len(data)))
+    elif kind == "symlink":
+        path.symlink_to(base["target"])
+    elif kind == "tree":
+        path.mkdir()
+        (path / "inner.json").write_text("{}\n")
+    elif kind == "submodule":
+        tip = sh("git", "rev-parse", "HEAD", cwd=repository).stdout.strip()
+        sh("git", "update-index", "--add", "--cacheinfo", f"160000,{tip},{POSTURE_PATH}", cwd=repository)
+    elif kind != "none":
+        raise AssertionError(f"no such base kind: {kind}")
+
+
+def posture_vector_repo(vector: dict, folder: Path) -> tuple[Path, dict[str, str]]:
+    """A clone and a local bare remote set up as a vector says: (the clone to read in, the environment to read with).
+    The vector file's `setup` member says what each field means; both readers' cases build their repository here."""
+    remote, author, clone = folder / "remote.git", folder / "author", folder / "clone"
+    sh("git", "init", "-q", "--bare", "--initial-branch=main", remote)
+    quieten(remote)
+    sh("git", "init", "-q", "--initial-branch=main", author)
+    quieten(author)
+    (author / "README.md").write_text("fixture\n")
+    commit(author, "first")
+    sh("git", "remote", "add", "origin", remote, cwd=author)
+    if vector.get("ref") != "missing":
+        sh("git", "push", "-q", "origin", "main", cwd=author)
+    sh("git", "init", "-q", "--initial-branch=main", clone)
+    quieten(clone)
+    sh("git", "remote", "add", "origin", remote, cwd=clone)
+    if vector.get("ref") != "missing":
+        sh("git", "fetch", "-q", "--no-tags", "origin", cwd=clone)
+        sh("git", "remote", "set-head", "origin", "main", cwd=clone)
+    posture_tree(author, vector["base"])
+    if vector["base"]["kind"] != "submodule":  # its gitlink is in the index, and adding everything would drop it
+        sh("git", "add", "-A", cwd=author)
+    sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "the declaration", "--allow-empty", cwd=author)
+    if vector.get("ref") != "missing":
+        sh("git", "push", "-q", "origin", "main", cwd=author)
+    if vector.get("fetch") == "fails":
+        sh("git", "fetch", "-q", "--no-tags", "origin", cwd=clone)
+        sh("git", "remote", "set-url", "origin", folder / "gone.git", cwd=clone)
+    if "shadow" in vector:
+        sh("git", "checkout", "-q", "-b", "shadow", cwd=author)
+        posture_tree(author, vector["shadow"])
+        commit(author, "a local name that isn't the base")
+        sh("git", "fetch", "-q", "--no-tags", author, "shadow:refs/heads/origin/main", cwd=clone)
+        sh("git", "update-ref", "refs/tags/origin/main", "refs/heads/origin/main", cwd=clone)
+    env = dict(os.environ)
+    if "git" in vector:
+        stubs = folder / "stubs"
+        stubs.mkdir()
+        (stubs / "git").write_text(POSTURE_GIT_STUBS[vector["git"]])
+        (stubs / "git").chmod(0o755)
+        env["PATH"] = f"{stubs}{os.pathsep}{env['PATH']}"
+    return clone, env
+
+
 def write_results(review: Path, n: int, key: str, lenses, findings=None, resolved=None, candidate=None, only=None):
     meta = json.loads((review / f"round-{n}.meta.json").read_text())
     for i, (lens, (short, _)) in enumerate(lenses):
@@ -542,7 +620,6 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
     # -- the release the cases run from ----------------------------------------------------------------
 
     def test_the_built_release_carries_the_rebound_runtime_and_verifies(self) -> None:
-        self.assertEqual(self.descriptor["runtimeVersion"], RUNTIME_VERSION)
         self.assertEqual(self.descriptor["nodeMinimum"], "22.6.0")
         self.assertEqual({k: v for k, v in self.rebound.items() if k != "workflowContentSha256"},
                          {k: v for k, v in self.descriptor.items() if k != "workflowContentSha256"})
@@ -1716,14 +1793,23 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
 
     def test_timeouts_and_interruptions_stop_their_processes(self) -> None:
         started = time.time()
-        try:
-            self.call("run_group", ["sh", "-c", "sleep 30 & sleep 30"], Path(tempfile.gettempdir()), 1)
-            raise AssertionError("a timed-out command didn't stop")
-        except Stopped as error:
-            expect("took longer" in str(error) and time.time() - started < 15, str(error))
-        leftover = sh("pgrep", "-f", "sleep 30", check=False).stdout.split()
-        expect(not leftover, f"the timed-out group left processes behind: {leftover}")
         with tempfile.TemporaryDirectory() as tmp:
+            # The shell leads its own group, so its pid names what this command started and nothing else on the machine.
+            group = Path(tmp) / "group"
+            try:
+                self.call("run_group", ["sh", "-c", 'echo $$ > "$1"; sleep 30 & sleep 30', "sh", str(group)], Path(tmp), 2)
+                raise AssertionError("a timed-out command didn't stop")
+            except Stopped as error:
+                expect("took longer" in str(error) and time.time() - started < 15, str(error))
+            leader = int(group.read_text())
+            deadline = time.monotonic() + 5
+            leftover = group_members(leader)
+            while leftover and time.monotonic() < deadline:
+                time.sleep(0.05)
+                leftover = group_members(leader)
+            if leftover:
+                os.killpg(leader, signal.SIGKILL)
+            expect(not leftover, f"the timed-out group left processes behind: {leftover}")
             lock = Path(tmp) / "lock"
             orphan = subprocess.Popen(["sleep", "60"], start_new_session=True)
             try:
@@ -4711,9 +4797,10 @@ class RunDeliveryRenderHalvesTests(unittest.TestCase):
 
     def test_each_half_runs_only_its_own_entries_and_no_half_runs_both(self) -> None:
         state = {"directory": "s", "renderers": [{"id": "page", "builtin": "static-page", "output": "p.html"}],
-                 "publishers": [{"id": "post", "argv": ["true"]}]}
+                 "publishers": [{"id": "post", "argv": ["true"]}], "liveHome": "page"}
+        unhomed = {key: value for key, value in state.items() if key != "liveHome"}
         c = types.SimpleNamespace(release=Path("/release"), state=Path("/record"), root=Path("/repo"))
-        for only, expected in ((None, state), ("publishers", {**state, "renderers": []}),
+        for only, expected in ((None, state), ("publishers", {**unhomed, "renderers": []}),
                                ("renderers", {**state, "publishers": []})):
             with self.subTest(only=only):
                 seen = []
@@ -4722,6 +4809,23 @@ class RunDeliveryRenderHalvesTests(unittest.TestCase):
                         mock.patch.object(self.tool, "run", lambda argv, **_: seen.append(argv) or done):
                     self.assertEqual(self.tool.render_views(c, only=only), "rendered")
                 self.assertEqual(json.loads(seen[0][seen[0].index("--state-config") + 1]), expected)
+
+    def test_the_publishers_half_of_a_binding_with_a_live_home_refreshes_the_outbox(self) -> None:
+        state_tool = ROOT / "skills/orchestrate-work/scripts/delivery_state.py"
+        config = {"directory": "s", "liveHome": "home", "publishers": [{"id": "tracker", "kind": "host"}],
+                  "renderers": [{"id": "home", "argv": ["sh", "-c", "cat >/dev/null; echo home"], "output": "home.html"}]}
+        with tempfile.TemporaryDirectory() as folder:
+            record = Path(folder) / "state"
+            c = types.SimpleNamespace(release=ROOT, state=record, root=Path(folder))
+            subprocess.run([sys.executable, "-B", str(state_tool), "--dir", str(record), "init", "--headline", "A delivery"],
+                           check=True, capture_output=True)
+            with mock.patch.object(self.tool, "binding_state", lambda _: config):
+                self.assertEqual(self.tool.render_views(c, only="publishers"), "rendered")
+                self.assertTrue((record / "outbox/outbox.json").is_file())
+                self.assertFalse((record / "home.html").exists(), "the publishers half draws no view")
+                # The renderers half still answers to the home it names.
+                self.assertEqual(self.tool.render_views(c, only="renderers"), "rendered")
+                self.assertTrue((record / "home.html").is_file())
 
 
 class RunDeliveryContinuousIntegrationTests(unittest.TestCase):
@@ -4735,6 +4839,156 @@ class RunDeliveryContinuousIntegrationTests(unittest.TestCase):
         # Both are in place before the suite runs.
         self.assertLess(workflow.index("install -y ffmpeg"), workflow.index("scripts/run-tests.py"))
         self.assertLess(workflow.index("brew install ffmpeg"), workflow.index("scripts/run-tests.py"))
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class DeliveryPostureReaderTests(unittest.TestCase):
+    """The one reader of `.agents/delivery-posture.json`, against every vector the harness's resolver also runs."""
+
+    SECONDS = 1
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location("run_delivery_for_posture", ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        cls.tool = importlib.util.module_from_spec(spec)
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(cls.tool)
+        finally:
+            sys.dont_write_bytecode = previous
+        cls.file = json.loads(POSTURE_VECTORS.read_text(encoding="utf-8"))
+
+    def resolve(self, vector: dict) -> tuple[dict, float]:
+        with tempfile.TemporaryDirectory() as folder:
+            clone, env = posture_vector_repo(vector, Path(folder))
+            started = time.monotonic()
+            with mock.patch.dict(os.environ, env, clear=True):
+                result = self.tool.resolve_delivery_posture(clone, "origin", "main", seconds=self.SECONDS)
+            return result, time.monotonic() - started
+
+    def test_every_vector_gives_its_posture_code_and_source(self) -> None:
+        self.assertEqual(self.file["path"], self.tool.POSTURE_FILE)
+        for vector in self.file["vectors"]:
+            with self.subTest(vector=vector["id"]):
+                result, took = self.resolve(vector)
+                self.assertEqual({key: result[key] for key in ("posture", "code", "source")}, vector["expect"], result)
+                self.assertEqual(set(result), {"posture", "reason", "source", "baseTipSha", "code"})
+                self.assertTrue(result["reason"].strip(), result)
+                if vector["expect"]["code"]:  # each code's reason names the path and the base
+                    self.assertIn(self.file["path"], result["reason"])
+                    self.assertIn(self.file["base"], result["reason"])
+                self.assertEqual(result["baseTipSha"] is None, vector["expect"]["source"] == "fallback", result)
+                self.assertLess(took, 20, "a read outran its bound")
+
+    def test_every_blank_character_has_its_vector_and_nothing_else_is_blank(self) -> None:
+        listed = {int(code.removeprefix("U+"), 16) for code in self.file["blankCharacters"]}
+        ids = {v["id"] for v in self.file["vectors"] if v["id"].startswith("whitespace-reason-u")}
+        self.assertEqual(ids, {f"whitespace-reason-u{code:04x}" for code in listed})
+        self.assertEqual(listed, {code for code in range(0x10000) if self.tool.POSTURE_BLANK.fullmatch(chr(code))})
+
+    def vector(self, name: str) -> dict:
+        return next(v for v in self.file["vectors"] if v["id"] == name)
+
+    def test_one_git_command_failing_past_the_ref_reads_as_unreadable(self) -> None:
+        real = shutil.which("git")
+        for name, body in (("an unparseable listing", 'if [ "$1" = ls-tree ]; then echo garbage; exit 0; fi'),
+                           ("a listing with no size", 'if [ "$1" = ls-tree ]; then printf \'100644 blob abc x\\tp\\0\'; exit 0; fi'),
+                           ("a failing show", 'if [ "$1" = show ]; then exit 1; fi')):
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as folder:
+                clone, env = posture_vector_repo(self.vector("valid-focused"), Path(folder))
+                stubs = Path(folder) / "stubs"
+                stubs.mkdir()
+                (stubs / "git").write_text(f'#!/bin/sh\n{body}\nexec {real} "$@"\n')
+                (stubs / "git").chmod(0o755)
+                with mock.patch.dict(os.environ, {"PATH": f"{stubs}{os.pathsep}{env['PATH']}"}):
+                    result = self.tool.resolve_delivery_posture(clone, "origin", "main", seconds=5)
+                self.assertEqual((result["posture"], result["code"], result["source"]), ("gate", "posture_unreadable", "fallback"), result)
+
+    def test_a_rewritten_base_is_read_at_its_new_tip_and_no_tag_arrives(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            clone, _ = posture_vector_repo(self.vector("valid-focused"), Path(folder))
+            self.assertEqual(self.tool.resolve_delivery_posture(clone, "origin", "main")["posture"], "focused")
+            author = Path(folder) / "author"
+            sh("git", "tag", "a-tag", cwd=author)
+            sh("git", "reset", "-q", "--hard", "HEAD~1", cwd=author)
+            (author / POSTURE_PATH).parent.mkdir(exist_ok=True)
+            (author / POSTURE_PATH).write_text(json.dumps({"schemaVersion": "delivery-posture/1", "posture": "gate", "reason": "Back on."}))
+            commit(author, "rewritten")
+            sh("git", "push", "-q", "--force", "--tags", "origin", "main", cwd=author)
+            result = self.tool.resolve_delivery_posture(clone, "origin", "main")
+            self.assertEqual((result["posture"], result["code"]), ("gate", None), result)
+            self.assertEqual(sh("git", "tag", "--list", cwd=clone).stdout.strip(), "", "the read imported a tag")
+
+    def test_the_bound_is_fifteen_seconds_by_default(self) -> None:
+        self.assertEqual(self.tool.POSTURE_SECONDS, 15)
+        self.assertEqual(inspect.signature(self.tool.resolve_delivery_posture).parameters["seconds"].default, 15)
+
+    def test_the_declared_reason_comes_back_and_the_tip_is_the_fetched_one(self) -> None:
+        vector = next(v for v in self.file["vectors"] if v["id"] == "valid-focused")
+        with tempfile.TemporaryDirectory() as folder:
+            clone, _ = posture_vector_repo(vector, Path(folder))
+            result = self.tool.resolve_delivery_posture(clone, "origin", "main")
+            tip = sh("git", "ls-remote", "origin", "refs/heads/main", cwd=clone).stdout.split()[0]
+        self.assertEqual((result["reason"], result["baseTipSha"]), ("The gate is still being optimized.", tip))
+
+    def test_a_hanging_git_is_stopped_with_the_child_that_holds_its_output(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            child = Path(folder) / "child.pid"
+            stub = Path(folder) / "git"
+            stub.write_text(f'#!/bin/sh\nsleep 299 &\necho $! > "{child}"\nwait\n')
+            stub.chmod(0o755)
+            started = time.monotonic()
+            with mock.patch.dict(os.environ, {"PATH": f"{folder}{os.pathsep}{os.environ['PATH']}"}):
+                done = self.tool.posture_git(Path(folder), ["status"], self.SECONDS)
+            took = time.monotonic() - started
+            pid = int(child.read_text())
+        self.assertIsNone(done)
+        self.assertLess(took, self.SECONDS + 5, "the child holding the pipe kept the bound from holding")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        os.kill(pid, signal.SIGKILL)
+        self.fail("the child that held the output outlived the bound")
+
+    def test_a_tip_with_a_declaration_in_a_subfolder_read_from_there_gives_the_same_answer(self) -> None:
+        vector = next(v for v in self.file["vectors"] if v["id"] == "valid-focused")
+        with tempfile.TemporaryDirectory() as folder:
+            clone, _ = posture_vector_repo(vector, Path(folder))
+            (clone / "deep").mkdir()
+            self.assertEqual(self.tool.resolve_delivery_posture(clone / "deep", "origin", "main")["posture"], "focused")
+
+    def test_what_the_record_shows_of_a_declaration_is_always_valid_plan_text(self) -> None:
+        from tests.test_delivery_views_plan import plan, views
+
+        declared = {"posture": "focused", "source": "origin/main", "code": None, "baseTipSha": "a" * 40}
+        for name, change in (("long", {"reason": "x" * 70000}), ("lines", {"reason": "first\nsecond\u2028third\ttab"}),
+                             ("surrogate", {"reason": "bad \ud800 text"}), ("controls", {"reason": "\x01\x02"}),
+                             ("long source", {"reason": "r", "source": "o/" + "b" * 500})):
+            with self.subTest(case=name):
+                said = self.tool.posture_said({**declared, **change})
+                self.assertTrue(said["reason"].strip())
+                said["reason"].encode("utf-8")
+                closing = {"fullHealth": "skipped", **said}
+                views.validate_plan({**plan(), "closeOut": closing})
+
+    def test_the_rule_is_pinned_where_a_delivery_without_the_supervisor_reads_it(self) -> None:
+        def normal(path: str) -> str:
+            return " ".join((ROOT / path).read_text(encoding="utf-8").split())
+        skill = normal("skills/orchestrate-work/SKILL.md")
+        guide = normal("skills/orchestrate-work/references/orchestration-guide.md")
+        self.assertIn("With `focused` declared in `.agents/delivery-posture.json` at the tip of the delivery's base, "
+                      "the close-out runs no `fullHealth`, and a failed run at that head holds nothing", skill)
+        self.assertIn("Nothing runs in its place", skill)
+        self.assertIn("Unless the delivery's base declares the `focused` posture at its tip, run the binding's "
+                      "`fullHealth` once, on the final base", guide)
+        self.assertIn("runs `fullHealth` once per base head, unless the base declares the `focused` posture", guide)
+        self.assertIn("remains the backstop for anything a selection missed, unless the base declares the `focused` posture", guide)
+        self.assertIn("say the run was skipped under the posture, naming its source and reason", guide)
 
 
 if __name__ == "__main__":

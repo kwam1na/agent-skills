@@ -1,0 +1,773 @@
+{
+  "schemaVersion": "delivery-posture-vectors/1",
+  "path": ".agents/delivery-posture.json",
+  "base": "origin/main",
+  "blankCharacters": [
+    "U+0009",
+    "U+000A",
+    "U+000B",
+    "U+000C",
+    "U+000D",
+    "U+001C",
+    "U+001D",
+    "U+001E",
+    "U+001F",
+    "U+0020",
+    "U+0085",
+    "U+00A0",
+    "U+1680",
+    "U+2000",
+    "U+2001",
+    "U+2002",
+    "U+2003",
+    "U+2004",
+    "U+2005",
+    "U+2006",
+    "U+2007",
+    "U+2008",
+    "U+2009",
+    "U+200A",
+    "U+2028",
+    "U+2029",
+    "U+202F",
+    "U+205F",
+    "U+3000",
+    "U+FEFF"
+  ],
+  "setup": {
+    "base": "What the remote's main holds at the path: none, or a blob (text or base64, padded with trailing spaces to padTo bytes), a symlink, a tree or a submodule. Unless fetch or ref says otherwise, it reaches the remote after the reader's clone last fetched, so a reader that doesn't fetch reads a tip with no file.",
+    "fetch": "fails: the clone has fetched the tip, and the remote is then unreachable.",
+    "git": "fails or hangs: every git command the reader runs exits 1, or never returns and leaves a child holding its output.",
+    "ref": "missing: neither the remote nor the clone has the branch.",
+    "shadow": "A local branch and a tag, both named origin/main, hold this at the path."
+  },
+  "vectors": [
+    {
+      "id": "valid-focused",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\"}"
+      },
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "valid-gate",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"gate\", \"reason\": \"The gate is still being optimized.\"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "no-file",
+      "base": {
+        "kind": "none"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_undeclared",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "extra-members",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"setBy\": \"owner\", \"since\": \"2026-11-04\", \"anything\": {\"nested\": [1, 2]}}"
+      },
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "invalid-utf8",
+      "base": {
+        "kind": "blob",
+        "base64": "eyJzY2hlbWFWZXJzaW9uIjoiZGVsaXZlcnktcG9zdHVyZS8xIiwicG9zdHVyZSI6ImZvY3VzZWQiLCJyZWFzb24iOiL/In0="
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "byte-order-mark",
+      "base": {
+        "kind": "blob",
+        "base64": "77u/eyJzY2hlbWFWZXJzaW9uIjogImRlbGl2ZXJ5LXBvc3R1cmUvMSIsICJwb3N0dXJlIjogImZvY3VzZWQiLCAicmVhc29uIjogIlRoZSBnYXRlIGlzIHN0aWxsIGJlaW5nIG9wdGltaXplZC4ifQ=="
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "not-json",
+      "base": {
+        "kind": "blob",
+        "text": "focused\n"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "non-object-json",
+      "base": {
+        "kind": "blob",
+        "text": "[]\n"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "json-constant-member",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\":\"delivery-posture/1\",\"posture\":\"focused\",\"reason\":\"r\",\"extra\":NaN}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "huge-integer-member",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\":\"delivery-posture/1\",\"posture\":\"focused\",\"reason\":\"r\",\"extra\":11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111}"
+      },
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "missing-reason",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "non-string-reason",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": 7}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "blank-reason",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"\"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\t\\r\\n \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u0009",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\t\\t \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u000a",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\n\\n \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u000b",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u000b\\u000b \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u000c",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\f\\f \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u000d",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\r\\r \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u001c",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u001c\\u001c \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u001d",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u001d\\u001d \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u001e",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u001e\\u001e \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u001f",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u001f\\u001f \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u0020",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"    \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u0085",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u0085\\u0085 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u00a0",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u00a0\\u00a0 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u1680",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u1680\\u1680 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u2000",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u2000\\u2000 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u2001",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u2001\\u2001 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u2002",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u2002\\u2002 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u2003",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u2003\\u2003 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u2004",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u2004\\u2004 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u2005",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u2005\\u2005 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u2006",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u2006\\u2006 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u2007",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u2007\\u2007 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u2008",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u2008\\u2008 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u2009",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u2009\\u2009 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u200a",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u200a\\u200a \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u2028",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u2028\\u2028 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u2029",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u2029\\u2029 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u202f",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u202f\\u202f \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u205f",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u205f\\u205f \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-u3000",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\u3000\\u3000 \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "whitespace-reason-ufeff",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \" \\ufeff\\ufeff \"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "reason-with-a-word-among-whitespace",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"\\u0085 why \\ufeff\"}"
+      },
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "missing-schema-version",
+      "base": {
+        "kind": "blob",
+        "text": "{\"posture\": \"focused\", \"reason\": \"r\"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "wrong-schema-version",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/2\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "athena-schema-version",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"athena-delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "unknown-posture",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"relaxed\", \"reason\": \"The gate is still being optimized.\"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "non-string-posture",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": [\"focused\"], \"reason\": \"The gate is still being optimized.\"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "symlink",
+      "base": {
+        "kind": "symlink",
+        "target": "elsewhere.json"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "tree",
+      "base": {
+        "kind": "tree"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "submodule",
+      "base": {
+        "kind": "submodule"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "exactly-64-kib",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\"}",
+        "padTo": 65536
+      },
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "one-byte-over-64-kib",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\"}",
+        "padTo": 65537
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "unresolved-ref",
+      "base": {
+        "kind": "none"
+      },
+      "ref": "missing",
+      "expect": {
+        "posture": "gate",
+        "code": "posture_unreadable",
+        "source": "fallback"
+      }
+    },
+    {
+      "id": "failing-git",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\"}"
+      },
+      "git": "fails",
+      "expect": {
+        "posture": "gate",
+        "code": "posture_unreadable",
+        "source": "fallback"
+      }
+    },
+    {
+      "id": "hanging-git",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\"}"
+      },
+      "git": "hangs",
+      "expect": {
+        "posture": "gate",
+        "code": "posture_unreadable",
+        "source": "fallback"
+      }
+    },
+    {
+      "id": "local-branch-and-tag-named-as-the-base",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"gate\", \"reason\": \"The gate is still being optimized.\"}"
+      },
+      "shadow": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\"}"
+      },
+      "expect": {
+        "posture": "gate",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "failed-fetch-with-a-last-fetched-focused-tip",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\"}"
+      },
+      "fetch": "fails",
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    }
+  ],
+  "blankCharactersNote": "A reason is blank when it is empty or holds only these: what Python's strip and JavaScript's trim remove, together. Each has a whitespace-reason vector."
+}

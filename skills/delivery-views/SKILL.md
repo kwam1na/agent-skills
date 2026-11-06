@@ -166,6 +166,7 @@ any value.
 | `approvals` | Optional, ordered `{id?, text, state: done \| waiting, who?, blocking?}`. `id` is unique; `blocking` is false when absent. |
 | `outOfScope` | Optional list of texts. |
 | `planReview` | Optional: how the plan came to be approved. `{lenses, state, endedReason?, rounds}`, below. |
+| `closeOut` | Optional: `{fullHealth: "skipped", posture: "focused", source, reason}`, when the close-out's `fullHealth` run was skipped under the base's declared posture. It renders as skipped, and no approval state stands in for it. |
 
 Texts are capped at 600 characters, `outcome.text` at 2,000 and labels at 200;
 lists at 200 units, 1,000 criteria, 500 changes and 30 finish lines. Ids match

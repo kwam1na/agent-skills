@@ -261,7 +261,7 @@
   }
   var KIND_WORDS = table({
     "lane.assigned": "Assigned", "review.round": "Review round", "candidate.handed": "Handed over", "check.started": "Check started",
-    "check.finished": "Check finished", "check.retried": "Check retried", "check.reused": "Check reused", "candidate.merged": "Landed",
+    "check.finished": "Check finished", "check.failed": "Check failed", "check.retried": "Check retried", "check.reused": "Check reused", "candidate.merged": "Landed",
     "candidate.stopped": "Stopped", "base.broken": "Base broken", "base.repaired": "Base repaired", "lease.granted": "Lease granted",
     "lease.released": "Lease released", "release.started": "Release started", "release.finished": "Release finished",
     "finish.met": "Finish line met", "decision.recorded": "Decision", "blocker.recorded": "Blocker", "delivery.closed": "Delivery closed"
@@ -270,7 +270,7 @@
   function inTab(entry, tab) {
     if (tab === "decisions") { return entry.kind === "decision.recorded"; }
     if (tab === "landed") { return entry.kind === "candidate.merged"; }
-    if (tab === "problems") { return entry.kind === "blocker.recorded" || entry.kind === "candidate.stopped" || entry.kind === "base.broken"; }
+    if (tab === "problems") { return entry.kind === "blocker.recorded" || entry.kind === "check.failed" || entry.kind === "candidate.stopped" || entry.kind === "base.broken"; }
     return true;
   }
 
@@ -1560,7 +1560,7 @@
     return box;
   }
 
-  var HISTORY = table({ "candidate.handed": "Handed over", "check.started": "Check started", "check.finished": "Check finished", "check.retried": "Retried", "check.reused": "Reused", "candidate.stopped": "Stopped", "candidate.merged": "Landed" });
+  var HISTORY = table({ "candidate.handed": "Handed over", "check.started": "Check started", "check.finished": "Check finished", "check.failed": "Check failed", "check.retried": "Retried", "check.reused": "Reused", "candidate.stopped": "Stopped", "candidate.merged": "Landed" });
   var historyOpen = Object.create(null);
   function historyFor(doc, item) {
     var rows = journalFor(doc, item.subject, HISTORY);
@@ -2347,6 +2347,11 @@
     var review = planReview();
     nodes.push(title, el("p", "say plan-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")));
     if (review) { nodes.push(approvalLine(review)); }
+    var closeOut = isObject(plan.closeOut) && plan.closeOut.fullHealth === "skipped" ? plan.closeOut : null;
+    if (closeOut) {
+      nodes.push(el("p", "say plan-close-out", "The close-out's fullHealth run was skipped under the " + text(closeOut.posture)
+        + " posture declared on " + text(closeOut.source) + ": " + text(closeOut.reason)));
+    }
     var flagged = flagList(planFlags(doc, counts), Boolean(closedEntry(doc)));
     if (flagged) { nodes.push(flagged); }
     var open = counts.units.filter(function (unit) { return !counts.proofs[text(unit.subject)].proven; });

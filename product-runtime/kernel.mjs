@@ -2456,7 +2456,7 @@ __export(assertion_source_exports, {
   loadAssertionProviderConfig: () => loadAssertionProviderConfig,
   writeAssertionProviderConfig: () => writeAssertionProviderConfig
 });
-import { spawn as spawn2 } from "node:child_process";
+import { spawn as spawn3 } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod as chmod5, mkdir as mkdir5, readFile as readFile7, stat as stat3, writeFile as writeFile5 } from "node:fs/promises";
 import path9 from "node:path";
@@ -2621,7 +2621,7 @@ password for %u: `, "-v"]
     });
     runOnce = (command) => new Promise((resolve) => {
       const [executable, ...args] = command;
-      const child = spawn2(executable, args, { stdio: ["inherit", "ignore", "ignore"] });
+      const child = spawn3(executable, args, { stdio: ["inherit", "ignore", "ignore"] });
       child.on("error", () => resolve(-1));
       child.on("close", (code) => resolve(code ?? -1));
     });
@@ -5581,6 +5581,800 @@ function defineHarnessConfig(input) {
   throw new BlockedError(result2.blockers, "The harness config is not valid.");
 }
 
+// packages/kernel/src/delivery-posture.ts
+import { spawn as spawn2 } from "node:child_process";
+
+// packages/kernel/src/candidate.ts
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
+
+// packages/kernel/src/candidate.types.ts
+var CANDIDATE_VCS = "git";
+var CANDIDATE_MODES = ["clean", "staged-index"];
+var CANDIDATE_CAPTURE_CODES = [
+  "candidate_unprepared",
+  "candidate_merge_in_progress",
+  "candidate_ambiguous",
+  "candidate_base_missing",
+  "candidate_base_shallow",
+  "candidate_base_unrelated",
+  "candidate_repository_unreadable"
+];
+var CANDIDATE_DIFF_UNREADABLE = "candidate_diff_unreadable";
+var CANDIDATE_DRIFT_CLASSES = [
+  "deliverable_identity_changed",
+  "raw_tree_changed",
+  "base_tip_moved",
+  "merge_base_moved",
+  "workspace_changed"
+];
+function classifyCandidateDrift(expected, observed) {
+  const classes = [];
+  if (expected.deliverable.digest !== observed.deliverable.digest) classes.push("deliverable_identity_changed");
+  if (expected.treeSha !== observed.treeSha) classes.push("raw_tree_changed");
+  if (expected.base.tipSha !== observed.base.tipSha) classes.push("base_tip_moved");
+  if (expected.base.mergeBaseSha !== observed.base.mergeBaseSha) classes.push("merge_base_moved");
+  if (expected.workspaceId !== observed.workspaceId) classes.push("workspace_changed");
+  return classes;
+}
+var CANDIDATE_PATH_CLASSES = ["relevant", "test", "generated", "lockfile"];
+function globToRegExp(pattern) {
+  let source = "";
+  for (let index2 = 0; index2 < pattern.length; index2 += 1) {
+    const character = pattern[index2];
+    if (character === "*") {
+      if (pattern[index2 + 1] === "*") {
+        if (pattern[index2 + 2] === "/") {
+          source += "(?:.*/)?";
+          index2 += 2;
+        } else {
+          source += ".*";
+          index2 += 1;
+        }
+      } else {
+        source += "[^/]*";
+      }
+      continue;
+    }
+    if (character === "?") {
+      source += "[^/]";
+      continue;
+    }
+    source += character.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${source}$`);
+}
+var GLOB_CACHE = /* @__PURE__ */ new Map();
+function globMatches(pattern, repoPath) {
+  let compiled = GLOB_CACHE.get(pattern);
+  if (compiled === void 0) {
+    compiled = globToRegExp(pattern);
+    GLOB_CACHE.set(pattern, compiled);
+  }
+  return compiled.test(repoPath);
+}
+function matchesPathMatcher(matcher, repoPath) {
+  if (matcher.kind === "glob") return globMatches(matcher.value, repoPath);
+  const prefix = matcher.value.endsWith("/") ? matcher.value.slice(0, -1) : matcher.value;
+  return repoPath === prefix || repoPath.startsWith(`${prefix}/`);
+}
+function matchesAny(matchers, repoPath) {
+  return matchers.some((matcher) => matchesPathMatcher(matcher, repoPath));
+}
+function classifyCandidatePath(classification, repoPath) {
+  if (matchesAny(classification.lockfile, repoPath)) return "lockfile";
+  if (matchesAny(classification.generated, repoPath)) return "generated";
+  if (matchesAny(classification.test, repoPath)) return "test";
+  return "relevant";
+}
+function sensitiveGroupsFor(groups, repoPath) {
+  return groups.filter((group) => matchesAny(group.patterns, repoPath)).map((group) => group.id);
+}
+function entryPaths(entry3) {
+  return entry3.oldPath === void 0 ? [entry3.path] : [entry3.oldPath, entry3.path];
+}
+function projectReviewActivation(entries, config) {
+  let relevantLineCount = 0;
+  let hasRelevantBinaryChange = false;
+  let hasRelevantZeroLineChange = false;
+  const relevantPaths = /* @__PURE__ */ new Set();
+  const excludedPaths = /* @__PURE__ */ new Set();
+  const binaryPaths = /* @__PURE__ */ new Set();
+  const sensitivePathIds = /* @__PURE__ */ new Set();
+  for (const entry3 of entries) {
+    const paths = entryPaths(entry3);
+    for (const repoPath of paths) {
+      for (const id of sensitiveGroupsFor(config.sensitivePaths, repoPath)) sensitivePathIds.add(id);
+    }
+    if (paths.every((repoPath) => matchesNeutralSet(config.reviewNeutral, repoPath))) {
+      for (const repoPath of paths) excludedPaths.add(repoPath);
+      continue;
+    }
+    const relevant = paths.some((repoPath) => classifyCandidatePath(config.pathClassification, repoPath) === "relevant");
+    if (!relevant) {
+      for (const repoPath of paths) excludedPaths.add(repoPath);
+      continue;
+    }
+    for (const repoPath of paths) relevantPaths.add(repoPath);
+    if (entry3.binary || entry3.additions === null || entry3.deletions === null) {
+      for (const repoPath of paths) binaryPaths.add(repoPath);
+      hasRelevantBinaryChange = true;
+      continue;
+    }
+    if (entry3.additions + entry3.deletions === 0) hasRelevantZeroLineChange = true;
+    relevantLineCount += entry3.additions + entry3.deletions;
+  }
+  return {
+    relevantLineCount,
+    relevantPaths: [...relevantPaths].sort(),
+    excludedPaths: [...excludedPaths].sort(),
+    binaryPaths: [...binaryPaths].sort(),
+    sensitivePathIds: [...sensitivePathIds].sort(),
+    hasRelevantBinaryChange,
+    hasRelevantZeroLineChange,
+    changedEntryCount: entries.length
+  };
+}
+function isObligationActive(activation, projection, activationThreshold) {
+  if (activation.kind === "always") return true;
+  if (projection.relevantLineCount >= activationThreshold) return true;
+  if ((activation.relevantBinaryChangeActivates ?? true) && projection.hasRelevantBinaryChange) return true;
+  if ((activation.relevantZeroLineChangeActivates ?? true) && projection.hasRelevantZeroLineChange) return true;
+  const binding2 = activation.sensitiveGroupIds;
+  if (binding2 === void 0) return projection.sensitivePathIds.length > 0;
+  return projection.sensitivePathIds.some((id) => binding2.includes(id));
+}
+
+// packages/kernel/src/candidate.ts
+var DEFAULT_CAPTURE_ATTEMPTS = 3;
+var GIT_ENVIRONMENT_PREFIX = "GIT_";
+var GIT_ENVIRONMENT_OVERRIDES = {
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_OPTIONAL_LOCKS: "0"
+};
+function scrubbedEnvironment() {
+  const environment = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (name.startsWith(GIT_ENVIRONMENT_PREFIX) || value === void 0) continue;
+    environment[name] = value;
+  }
+  return { ...environment, ...GIT_ENVIRONMENT_OVERRIDES };
+}
+var runGitCommand = (command, options) => collectGitCommand(command, options, false);
+function runGitCommandBytes(command, options) {
+  return collectGitCommand(command, { ...options, captureBytes: true }, true);
+}
+function collectGitCommand(command, options, rawBytes) {
+  return new Promise((resolve) => {
+    const [executable, ...args] = command;
+    if (executable === void 0) {
+      resolve(rawBytes ? { exitCode: -1, stdout: Buffer.alloc(0), stderr: "no command was given" } : { exitCode: -1, stdout: "", stderr: "no command was given" });
+      return;
+    }
+    const child = spawn(executable, args, {
+      cwd: options.cwd,
+      env: scrubbedEnvironment(),
+      stdio: [options.stdin === void 0 ? "ignore" : "pipe", "pipe", "pipe"],
+      windowsHide: true
+    });
+    let stdout = "";
+    let stderr = "";
+    let inputError;
+    const chunks = [];
+    if (!options.captureBytes) child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      if (options.captureBytes) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      else stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.once("error", (error) => {
+      resolve(rawBytes ? { exitCode: -1, stdout: Buffer.alloc(0), stderr: error.message } : { exitCode: -1, stdout, stderr: error.message });
+    });
+    if (options.stdin !== void 0) {
+      child.stdin.once("error", (error) => {
+        inputError = error.message;
+        child.kill("SIGKILL");
+      });
+      child.stdin.end(options.stdin);
+    }
+    child.once("close", (code) => {
+      const bytes = options.captureBytes ? Buffer.concat(chunks) : void 0;
+      if (rawBytes) {
+        resolve({ exitCode: inputError === void 0 ? code ?? -1 : -1, stdout: bytes, stderr: inputError ?? stderr });
+        return;
+      }
+      resolve({ exitCode: inputError === void 0 ? code ?? -1 : -1, stdout: bytes?.toString("utf8") ?? stdout, stderr: inputError ?? stderr, ...bytes === void 0 ? {} : { stdoutBase64: bytes.toString("base64") } });
+    });
+  });
+}
+function candidateBlocker(config, code, summary, details, remediations) {
+  return createBlocker({
+    code,
+    source: { kind: "candidate", id: config.gateId },
+    summary,
+    ...details === void 0 || details.trim() === "" ? {} : { details },
+    remediations
+  });
+}
+var INSPECT_STATUS = {
+  id: "inspect-worktree-status",
+  kind: "command",
+  command: ["git", "status", "--short", "--untracked-files=all"],
+  summary: "Inspect what the worktree currently carries."
+};
+function blocked(config, code, summary, details, remediations) {
+  return { ok: false, code, blockers: [candidateBlocker(config, code, summary, details, remediations)] };
+}
+var OBSERVATION_FIELDS = [
+  "headSha",
+  "headTreeSha",
+  "indexTreeSha",
+  "baseTipSha",
+  "mergeBaseSha",
+  "status",
+  "untracked",
+  "worktreeDirty"
+];
+function movedFields(before, after) {
+  return OBSERVATION_FIELDS.filter((field) => before[field] !== after[field]);
+}
+var IN_PROGRESS_STATES = [
+  { gitPath: "rebase-merge", operation: "rebase" },
+  { gitPath: "rebase-apply", operation: "rebase" },
+  { gitPath: "MERGE_HEAD", operation: "merge" },
+  { gitPath: "CHERRY_PICK_HEAD", operation: "cherry-pick" },
+  { gitPath: "REVERT_HEAD", operation: "revert" }
+];
+async function observe(run, rootDir, config) {
+  const git = (args) => run(["git", ...args], { cwd: rootDir });
+  const head = await git(["rev-parse", "--verify", "HEAD"]);
+  if (head.exitCode !== 0) {
+    return blocked(
+      config,
+      "candidate_repository_unreadable",
+      `${JSON.stringify(rootDir)} does not resolve a HEAD commit`,
+      head.stderr,
+      [
+        {
+          id: "run-inside-a-repository",
+          kind: "manual_action",
+          summary: "Run the harness inside a git repository that has at least one commit."
+        }
+      ]
+    );
+  }
+  const headTree = await git(["rev-parse", "--verify", "HEAD^{tree}"]);
+  if (headTree.exitCode !== 0) {
+    return blocked(config, "candidate_repository_unreadable", "HEAD names no tree", headTree.stderr, [
+      {
+        id: "repair-repository",
+        kind: "manual_action",
+        summary: "Repair the repository: HEAD resolves to a commit whose tree cannot be read."
+      }
+    ]);
+  }
+  const statePaths = await git(["rev-parse", ...IN_PROGRESS_STATES.flatMap((state) => ["--git-path", state.gitPath])]);
+  if (statePaths.exitCode !== 0) {
+    return blocked(
+      config,
+      "candidate_repository_unreadable",
+      "the repository would not say whether an operation is in progress",
+      statePaths.stderr,
+      [
+        {
+          id: "repair-repository",
+          kind: "manual_action",
+          summary: "Repair the repository: its git directory could not be located."
+        }
+      ]
+    );
+  }
+  const stateLines = statePaths.stdout.split("\n").map((line) => line.trim());
+  const inProgress = IN_PROGRESS_STATES.find((state, index2) => {
+    const line = stateLines[index2];
+    return line !== void 0 && line !== "" && existsSync(path.resolve(rootDir, line));
+  });
+  if (inProgress !== void 0) {
+    return blocked(
+      config,
+      "candidate_merge_in_progress",
+      `a ${inProgress.operation} is in progress, so the index does not yet describe a finished change`,
+      `state left by the ${inProgress.operation}: ${inProgress.gitPath}`,
+      [
+        {
+          id: "conclude-in-progress-operation",
+          kind: "manual_action",
+          summary: `Conclude the ${inProgress.operation} \u2014 finish it or abandon it \u2014 before preparing a candidate.`
+        },
+        INSPECT_STATUS
+      ]
+    );
+  }
+  const indexTree = await git(["write-tree"]);
+  if (indexTree.exitCode !== 0) {
+    if (/index\.lock['"]?: File exists/i.test(indexTree.stderr)) {
+      return blocked(config, "candidate_repository_unreadable", "Git could not acquire the index lock", indexTree.stderr, [
+        {
+          id: "retry-index-lock",
+          kind: "manual_action",
+          summary: "Retry after the other Git operation finishes. If the lock persists, inspect the owning process before removing a stale lock."
+        },
+        INSPECT_STATUS
+      ]);
+    }
+    return blocked(config, "candidate_repository_unreadable", "the index does not define a tree", indexTree.stderr, [
+      {
+        id: "repair-index",
+        kind: "manual_action",
+        summary: "Repair the index: it could not be written out as a tree."
+      },
+      INSPECT_STATUS
+    ]);
+  }
+  const baseTip = await git(["rev-parse", "--verify", `${config.baseRef}^{commit}`]);
+  if (baseTip.exitCode !== 0) {
+    return blocked(
+      config,
+      "candidate_base_missing",
+      `the configured base ref ${JSON.stringify(config.baseRef)} does not resolve to a commit`,
+      baseTip.stderr,
+      [
+        {
+          id: "fetch-base-ref",
+          kind: "command",
+          command: ["git", "fetch"],
+          summary: "Fetch the remote so the configured base ref resolves."
+        },
+        {
+          id: "declare-a-resolvable-base-ref",
+          kind: "code_change",
+          summary: "Declare a base ref this repository has, in the harness config."
+        }
+      ]
+    );
+  }
+  const mergeBase = await git(["merge-base", config.baseRef, "HEAD"]);
+  if (mergeBase.exitCode === 1) {
+    const shallow = await git(["rev-parse", "--is-shallow-repository"]);
+    if (shallow.exitCode !== 0) {
+      return blocked(config, "candidate_repository_unreadable", "the repository would not say whether it is shallow", shallow.stderr, [
+        {
+          id: "repair-repository",
+          kind: "manual_action",
+          summary: "Repair the repository: whether it is a shallow clone could not be determined."
+        }
+      ]);
+    }
+    if (shallow.stdout.trim() === "true") {
+      return blocked(
+        config,
+        "candidate_base_shallow",
+        `this is a shallow clone, and any history HEAD shares with ${JSON.stringify(config.baseRef)} lies beyond its boundary`,
+        mergeBase.stderr,
+        [
+          {
+            id: "deepen-the-clone",
+            kind: "command",
+            command: ["git", "fetch", "--unshallow"],
+            summary: "Deepen the clone so the merge base with the configured base ref is present."
+          },
+          {
+            id: "check-out-with-full-history",
+            kind: "manual_action",
+            summary: "Check the repository out with full history \u2014 in CI, the checkout step's fetch depth."
+          }
+        ]
+      );
+    }
+    return blocked(
+      config,
+      "candidate_base_unrelated",
+      `HEAD shares no history with the configured base ref ${JSON.stringify(config.baseRef)}`,
+      mergeBase.stderr,
+      [
+        {
+          id: "rebase-onto-the-base",
+          kind: "manual_action",
+          summary: "Base this branch on the configured base ref, or configure the base ref this branch descends from."
+        }
+      ]
+    );
+  }
+  if (mergeBase.exitCode !== 0) {
+    return blocked(config, "candidate_repository_unreadable", "the merge base could not be computed", mergeBase.stderr, [
+      {
+        id: "repair-repository",
+        kind: "manual_action",
+        summary: "Repair the repository: the merge base between HEAD and the base ref could not be computed."
+      }
+    ]);
+  }
+  const status = await git(["status", "--porcelain", "-z", "--untracked-files=all"]);
+  if (status.exitCode !== 0) {
+    return blocked(config, "candidate_repository_unreadable", "the worktree status could not be read", status.stderr, [
+      { id: "repair-repository", kind: "manual_action", summary: "Repair the repository: its status could not be read." }
+    ]);
+  }
+  const untracked = await git(["ls-files", "--others", "--exclude-standard", "-z"]);
+  if (untracked.exitCode !== 0) {
+    return blocked(config, "candidate_repository_unreadable", "untracked files could not be listed", untracked.stderr, [
+      { id: "repair-repository", kind: "manual_action", summary: "Repair the repository: untracked files could not be listed." }
+    ]);
+  }
+  const unstaged = await git(["diff", "--quiet"]);
+  if (unstaged.exitCode > 1 || unstaged.exitCode < 0) {
+    return blocked(config, "candidate_repository_unreadable", "unstaged changes could not be determined", unstaged.stderr, [
+      { id: "repair-repository", kind: "manual_action", summary: "Repair the repository: its unstaged changes could not be determined." }
+    ]);
+  }
+  return {
+    ok: true,
+    observation: {
+      headSha: head.stdout.trim(),
+      headTreeSha: headTree.stdout.trim(),
+      indexTreeSha: indexTree.stdout.trim(),
+      baseTipSha: baseTip.stdout.trim(),
+      mergeBaseSha: mergeBase.stdout.trim(),
+      status: status.stdout,
+      untracked: untracked.stdout,
+      worktreeDirty: unstaged.exitCode !== 0
+    }
+  };
+}
+function splitNulStream(output) {
+  return output.split("\0").filter((entry3) => entry3 !== "");
+}
+function parseStatusEntries(output) {
+  const records = output.split("\0");
+  const entries = [];
+  for (let index2 = 0; index2 < records.length; index2 += 1) {
+    const record2 = records[index2];
+    if (record2 === void 0 || record2 === "") continue;
+    const code = record2.slice(0, 2);
+    entries.push({ code, path: record2.slice(3) });
+    if (code.startsWith("R") || code.startsWith("C")) index2 += 1;
+  }
+  return entries;
+}
+var DECIMAL_COUNT = /^\d+$/;
+function parseCandidateNumstat(output) {
+  const records = output.split("\0");
+  const entries = [];
+  for (let index2 = 0; index2 < records.length; index2 += 1) {
+    const record2 = records[index2];
+    if (record2 === void 0 || record2 === "") continue;
+    const firstTab = record2.indexOf("	");
+    const secondTab = firstTab < 0 ? -1 : record2.indexOf("	", firstTab + 1);
+    if (firstTab < 0 || secondTab < 0) {
+      throw new Error(`numstat record ${JSON.stringify(record2)} carries no counts`);
+    }
+    const additionsText = record2.slice(0, firstTab);
+    const deletionsText = record2.slice(firstTab + 1, secondTab);
+    const inlinePath = record2.slice(secondTab + 1);
+    let repoPath = inlinePath;
+    let oldPath;
+    if (inlinePath === "") {
+      const origin = records[index2 + 1];
+      const destination = records[index2 + 2];
+      if (origin === void 0 || origin === "" || destination === void 0 || destination === "") {
+        throw new Error(`numstat record ${JSON.stringify(record2)} announces a rename whose paths are missing`);
+      }
+      oldPath = origin;
+      repoPath = destination;
+      index2 += 2;
+    }
+    const binary = additionsText === "-" || deletionsText === "-";
+    if (!binary && !(DECIMAL_COUNT.test(additionsText) && DECIMAL_COUNT.test(deletionsText))) {
+      throw new Error(`numstat record ${JSON.stringify(record2)} carries counts that are not plain decimal integers`);
+    }
+    const additions = binary ? null : Number(additionsText);
+    const deletions = binary ? null : Number(deletionsText);
+    entries.push({ path: repoPath, ...oldPath === void 0 ? {} : { oldPath }, additions, deletions, binary });
+  }
+  return entries;
+}
+function preparedCandidate(observation, config) {
+  const untrackedFiles = splitNulStream(observation.untracked);
+  if (observation.worktreeDirty || untrackedFiles.length > 0) {
+    const detail = observation.worktreeDirty ? untrackedFiles.length > 0 ? `unstaged changes to tracked files, and untracked files: ${untrackedFiles.slice(0, 20).join(", ")}` : "unstaged changes to tracked files" : `untracked files: ${untrackedFiles.slice(0, 20).join(", ")}`;
+    return blocked(
+      config,
+      "candidate_unprepared",
+      "the worktree carries content that is not part of any prepared candidate",
+      detail,
+      [
+        {
+          id: "stage-the-intended-change",
+          kind: "manual_action",
+          summary: "Stage the files this change is meant to deliver, then prepare the candidate again."
+        },
+        INSPECT_STATUS
+      ]
+    );
+  }
+  const statusEntries = parseStatusEntries(observation.status);
+  if (statusEntries.length > 0 && observation.indexTreeSha === observation.headTreeSha) {
+    return blocked(
+      config,
+      "candidate_unprepared",
+      "the worktree is not clean, yet the index defines no distinct tree to review",
+      `status: ${statusEntries.map((entry3) => `${entry3.code} ${entry3.path}`).slice(0, 20).join("; ")}`,
+      [
+        {
+          id: "stage-the-intended-change",
+          kind: "manual_action",
+          summary: "Stage the files this change is meant to deliver, then prepare the candidate again."
+        },
+        INSPECT_STATUS
+      ]
+    );
+  }
+  const mode = statusEntries.length > 0 ? "staged-index" : "clean";
+  return { ok: true, mode, treeSha: mode === "staged-index" ? observation.indexTreeSha : observation.headTreeSha, statusEntries };
+}
+async function captureGitCandidate(options) {
+  const run = options.run ?? runGitCommand;
+  const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_CAPTURE_ATTEMPTS);
+  let moved = [];
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const before = await observe(run, options.rootDir, options.config);
+    if (!before.ok) return before;
+    const after = await observe(run, options.rootDir, options.config);
+    if (!after.ok) return after;
+    moved = movedFields(before.observation, after.observation);
+    if (moved.length > 0) continue;
+    const prepared = preparedCandidate(after.observation, options.config);
+    if (!prepared.ok) return prepared;
+    const digest2 = await options.computeIdentity({
+      rootDir: options.rootDir,
+      treeSha: prepared.treeSha,
+      config: options.config
+    });
+    const candidate2 = {
+      vcs: CANDIDATE_VCS,
+      headSha: after.observation.headSha,
+      treeSha: prepared.treeSha,
+      mode: prepared.mode,
+      deliverable: { digest: digest2, identity: options.config.computingIdentityVersion },
+      base: {
+        ref: options.config.baseRef,
+        tipSha: after.observation.baseTipSha,
+        mergeBaseSha: after.observation.mergeBaseSha
+      },
+      workspaceId: options.workspaceId,
+      statusEntries: prepared.statusEntries,
+      untrackedFiles: []
+    };
+    return { ok: true, candidate: candidate2 };
+  }
+  return blocked(
+    options.config,
+    "candidate_ambiguous",
+    `the repository did not hold still across ${maxAttempts} consecutive observations`,
+    `moved between observations: ${moved.join(", ")}`,
+    [
+      {
+        id: "capture-a-quiescent-repository",
+        kind: "retry",
+        summary: "Stop whatever is writing to the repository \u2014 a watcher, a build, a rebase \u2014 and capture again."
+      }
+    ]
+  );
+}
+function createCandidateCapture(options) {
+  return () => captureGitCandidate(options);
+}
+async function evaluateCandidateActivation(options) {
+  const run = options.run ?? runGitCommand;
+  const result2 = await run(
+    ["git", "diff", "--numstat", "--find-renames", "-z", options.candidate.base.mergeBaseSha, options.candidate.treeSha],
+    { cwd: options.rootDir }
+  );
+  const failure = (details) => {
+    throw new BlockedError(
+      [
+        candidateBlocker(
+          options.config,
+          CANDIDATE_DIFF_UNREADABLE,
+          "the diff between the candidate and its base could not be read",
+          details,
+          [
+            {
+              id: "recapture-the-candidate",
+              kind: "retry",
+              summary: "Capture the candidate again; the base or the prepared tree it names is no longer readable."
+            }
+          ]
+        )
+      ],
+      "The candidate's diff could not be read."
+    );
+  };
+  if (result2.exitCode !== 0) failure(result2.stderr || result2.stdout);
+  try {
+    return projectReviewActivation(parseCandidateNumstat(result2.stdout), options.config);
+  } catch (error) {
+    return failure(error instanceof Error ? error.message : String(error));
+  }
+}
+
+// packages/kernel/src/delivery-posture.ts
+var DELIVERY_POSTURE_PATH = ".agents/delivery-posture.json";
+var DELIVERY_POSTURE_SCHEMA = "delivery-posture/1";
+var DELIVERY_POSTURE_FALLBACK_SOURCE = "fallback";
+var DELIVERY_POSTURE_NETWORK_TIMEOUT_MS = 15e3;
+var DELIVERY_POSTURE_MAX_BYTES = 64 * 1024;
+var LOCAL_TIMEOUT_MS = DELIVERY_POSTURE_NETWORK_TIMEOUT_MS;
+var NO_REPLACE = { GIT_NO_REPLACE_OBJECTS: "1" };
+var localEnvironment = () => ({ ...scrubbedEnvironment(), ...NO_REPLACE });
+var REPOSITORY_SELECTING = /* @__PURE__ */ new Set([
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_COMMON_DIR",
+  "GIT_CONFIG",
+  "GIT_DIR",
+  "GIT_GRAFT_FILE",
+  "GIT_IMPLICIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_NAMESPACE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_PREFIX",
+  "GIT_QUARANTINE_PATH",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_SHALLOW_FILE",
+  "GIT_WORK_TREE"
+]);
+function networkEnvironment() {
+  const environment = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== void 0 && !REPOSITORY_SELECTING.has(name)) environment[name] = value;
+  }
+  return { ...environment, ...localEnvironment() };
+}
+function boundedGit(args, cwd, env, timeoutMs, signal) {
+  return new Promise((resolve) => {
+    const failed2 = { exitCode: -1, stdout: Buffer.alloc(0) };
+    if (signal?.aborted) {
+      resolve(failed2);
+      return;
+    }
+    let child;
+    try {
+      child = spawn2("git", ["-c", "safe.bareRepository=explicit", ...args], { cwd, env, stdio: ["ignore", "pipe", "ignore"], detached: true, windowsHide: true });
+    } catch {
+      resolve(failed2);
+      return;
+    }
+    const chunks = [];
+    let settled = false;
+    const settle = (result2) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", stop);
+      resolve(result2);
+    };
+    const stop = () => {
+      try {
+        if (child.pid !== void 0) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+      child.stdout?.destroy();
+      child.unref();
+      settle(failed2);
+    };
+    const timer = setTimeout(stop, timeoutMs);
+    signal?.addEventListener("abort", stop, { once: true });
+    child.stdout?.on("data", (chunk) => {
+      chunks.push(chunk);
+    });
+    child.once("error", () => settle(failed2));
+    child.once("close", (code) => settle({ exitCode: code ?? -1, stdout: Buffer.concat(chunks) }));
+  });
+}
+var BLANK = /^[\s\x1c-\x1f\x85]*$/;
+function parseDeclaration(bytes) {
+  let parsed;
+  try {
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes));
+  } catch {
+    return { malformed: "it is not valid UTF-8 JSON" };
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return { malformed: "it is not a JSON object" };
+  const declared = parsed;
+  if (declared["schemaVersion"] !== DELIVERY_POSTURE_SCHEMA) return { malformed: `its schemaVersion is not ${DELIVERY_POSTURE_SCHEMA}` };
+  const posture = declared["posture"];
+  if (posture !== "gate" && posture !== "focused") return { malformed: "its posture is not gate or focused" };
+  const reason = declared["reason"];
+  if (typeof reason !== "string" || BLANK.test(reason)) return { malformed: "its reason is missing or blank" };
+  return { posture, reason };
+}
+var unreadable = (baseRef, why) => ({
+  posture: "gate",
+  reason: `${DELIVERY_POSTURE_PATH} on ${baseRef} could not be read: ${why}; treating the base as gate.`,
+  source: DELIVERY_POSTURE_FALLBACK_SOURCE,
+  baseTipSha: null,
+  code: "posture_unreadable"
+});
+async function exactRef(fullRef, git) {
+  const listed = await git(["for-each-ref", "--format=%(refname) %(objectname)", fullRef], LOCAL_TIMEOUT_MS);
+  if (listed.exitCode !== 0) return void 0;
+  for (const line of listed.stdout.toString("utf8").split("\n")) {
+    const [name, sha] = line.split(" ");
+    if (name === fullRef && sha !== void 0) return { sha };
+  }
+  return { sha: null };
+}
+async function readAtRef(fullRef, baseRef, git) {
+  const held = await exactRef(fullRef, git);
+  if (held === void 0 || held.sha === null) return unreadable(baseRef, `${fullRef} did not resolve`);
+  const tip = await git(["rev-parse", "--verify", "--quiet", `${held.sha}^{commit}`], LOCAL_TIMEOUT_MS);
+  const baseTipSha = tip.stdout.toString("utf8").trim();
+  if (tip.exitCode !== 0 || baseTipSha === "") return unreadable(baseRef, `${fullRef} did not resolve`);
+  const malformed4 = (why) => ({
+    posture: "gate",
+    reason: `${DELIVERY_POSTURE_PATH} on ${baseRef} is malformed: ${why}; treating the base as gate.`,
+    source: baseRef,
+    baseTipSha,
+    code: "posture_malformed"
+  });
+  const listing = await git(["ls-tree", "-z", "--full-tree", baseTipSha, "--", DELIVERY_POSTURE_PATH], LOCAL_TIMEOUT_MS);
+  if (listing.exitCode !== 0) return unreadable(baseRef, `${fullRef}'s tree did not read`);
+  const entry3 = listing.stdout.toString("utf8").split("\0")[0] ?? "";
+  if (entry3 === "") {
+    return { posture: "gate", reason: `No ${DELIVERY_POSTURE_PATH} on ${baseRef}; treating the base as gate.`, source: baseRef, baseTipSha, code: "posture_undeclared" };
+  }
+  const [mode, type, objectSha] = entry3.split("	")[0].split(" ");
+  if (type !== "blob" || mode !== "100644" && mode !== "100755" || objectSha === void 0) return malformed4("it is not a regular file");
+  const size = await git(["cat-file", "-s", objectSha], LOCAL_TIMEOUT_MS);
+  if (size.exitCode !== 0) return unreadable(baseRef, "its size did not read");
+  if (Number(size.stdout.toString("utf8").trim()) > DELIVERY_POSTURE_MAX_BYTES) return malformed4(`it is over ${DELIVERY_POSTURE_MAX_BYTES} bytes`);
+  const blob = await git(["cat-file", "blob", objectSha], LOCAL_TIMEOUT_MS);
+  if (blob.exitCode !== 0) return unreadable(baseRef, "its content did not read");
+  const declaration = parseDeclaration(blob.stdout);
+  if ("malformed" in declaration) return malformed4(declaration.malformed);
+  return { posture: declaration.posture, reason: declaration.reason, source: baseRef, baseTipSha, code: null };
+}
+async function defaultBranch(git, network, networkTimeoutMs) {
+  const remote = await network(["ls-remote", "--symref", "origin", "HEAD"], networkTimeoutMs);
+  if (remote.exitCode === 0) return /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(remote.stdout.toString("utf8"))?.[1];
+  const recorded = await git(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], LOCAL_TIMEOUT_MS);
+  if (recorded.exitCode !== 0) return void 0;
+  return /^refs\/remotes\/origin\/(\S+)$/.exec(recorded.stdout.toString("utf8").trim())?.[1];
+}
+async function resolveDeliveryPosture(input) {
+  const { baseRef, rootDir, signal } = input;
+  const networkTimeoutMs = input.networkTimeoutMs ?? DELIVERY_POSTURE_NETWORK_TIMEOUT_MS;
+  const git = (args, timeoutMs) => boundedGit(args, rootDir, localEnvironment(), timeoutMs, signal);
+  const network = (args, timeoutMs) => boundedGit(args, rootDir, networkEnvironment(), timeoutMs, signal);
+  try {
+    const named = /^origin\/(.+)$/.exec(baseRef)?.[1];
+    if (named === void 0) return unreadable(baseRef, "the base does not name origin/<branch>");
+    const url = await network(["config", "--get", "remote.origin.url"], LOCAL_TIMEOUT_MS);
+    if (url.exitCode !== 0 || url.stdout.toString("utf8").trim() === "") return unreadable(baseRef, "origin is not a configured remote");
+    const branch = await defaultBranch(git, network, networkTimeoutMs);
+    if (branch === void 0) return unreadable(baseRef, "origin's default branch could not be determined");
+    if (branch !== named) return unreadable(baseRef, `the base is not origin's default branch, ${branch}`);
+    const privateRef = `refs/delivery/posture/${branch}`;
+    const trackingRef = `refs/remotes/origin/${branch}`;
+    const fetched = await network(["fetch", "--no-tags", "--refmap=", "--no-write-fetch-head", "--no-auto-maintenance", "--no-recurse-submodules", "origin", `+refs/heads/${branch}:${privateRef}`], networkTimeoutMs);
+    if (fetched.exitCode === 0) return await readAtRef(privateRef, baseRef, git);
+    const tracking = await readAtRef(trackingRef, baseRef, git);
+    if (tracking.posture !== "focused") return tracking;
+    const held = await exactRef(privateRef, git);
+    if (held === void 0) return unreadable(baseRef, `${privateRef} did not read`);
+    if (held.sha === null) return tracking;
+    const earlier = await readAtRef(privateRef, baseRef, git);
+    return earlier.posture === "focused" ? tracking : earlier;
+  } catch {
+    return unreadable(baseRef, "git failed");
+  }
+}
+
 // packages/kernel/src/installed-data-evidence.ts
 init_digest();
 var fields = ["version", "candidateDigest", "definitionDigest", "declarationDigest", "sourceApplicabilityDigest", "captureDigest", "originDigest"];
@@ -5624,7 +6418,7 @@ function computeRecordId(workspaceId, input) {
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { chmod, link, mkdir, open, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
+import path2 from "node:path";
 import { promisify } from "node:util";
 init_digest();
 
@@ -5648,7 +6442,7 @@ function storeBlocker(code, summary, details, remediation) {
     remediations: [remediation]
   });
 }
-function blocked(blocker) {
+function blocked2(blocker) {
   return new BlockedError([blocker], blocker.summary);
 }
 function normalizeNamespace(namespace) {
@@ -5656,25 +6450,25 @@ function normalizeNamespace(namespace) {
   return trimmed === "" ? DEFAULT_STORAGE_NAMESPACE.replace(/\/+$/, "") : trimmed;
 }
 async function physicalPath(target) {
-  const absolute = path.resolve(target);
+  const absolute = path2.resolve(target);
   const trailing = [];
   let cursor = absolute;
   for (; ; ) {
     try {
-      return path.join(await realpath(cursor), ...[...trailing].reverse());
+      return path2.join(await realpath(cursor), ...[...trailing].reverse());
     } catch (error) {
-      const parent = path.dirname(cursor);
+      const parent = path2.dirname(cursor);
       if (errorCode(error) !== "ENOENT" || parent === cursor) return absolute;
-      trailing.push(path.basename(cursor));
+      trailing.push(path2.basename(cursor));
       cursor = parent;
     }
   }
 }
 function isInside(child, parent) {
-  return child !== parent && child.startsWith(parent + path.sep);
+  return child !== parent && child.startsWith(parent + path2.sep);
 }
 function unresolved(details) {
-  return blocked(
+  return blocked2(
     storeBlocker(
       "record_store_unresolved",
       "The evidence store could not be located inside this worktree's git directory.",
@@ -5706,8 +6500,8 @@ async function resolveStorageRoot(rootDir, options) {
   if (gitDirLine === void 0 || gitDirLine === "" || storageLine === void 0 || storageLine === "") {
     throw unresolved(`git rev-parse --git-dir --git-path ${namespace} printed no path in ${cwd}`);
   }
-  const gitDir = await physicalPath(path.resolve(cwd, gitDirLine));
-  const storageRoot = await physicalPath(path.resolve(cwd, storageLine));
+  const gitDir = await physicalPath(path2.resolve(cwd, gitDirLine));
+  const storageRoot = await physicalPath(path2.resolve(cwd, storageLine));
   if (!isInside(storageRoot, gitDir)) {
     throw unresolved(
       `storageNamespace ${JSON.stringify(namespace)} resolves to ${storageRoot}, which is outside this worktree's git directory ${gitDir}`
@@ -5719,7 +6513,7 @@ async function resolveRecordStorage(rootDir, options = {}) {
   const storageRoot = await resolveStorageRoot(rootDir, options);
   return {
     storageRoot,
-    storageDir: path.join(storageRoot, options.leaf ?? RECORDS_LEAF),
+    storageDir: path2.join(storageRoot, options.leaf ?? RECORDS_LEAF),
     workspaceId: digestCanonical(storageRoot)
   };
 }
@@ -5899,7 +6693,7 @@ async function syncPath(target, required) {
   }
 }
 function unwritable(target, error) {
-  return blocked(
+  return blocked2(
     storeBlocker(
       "record_store_unwritable",
       "The evidence store could not be written.",
@@ -5913,7 +6707,7 @@ function unwritable(target, error) {
   );
 }
 function unreadableStore(target, error) {
-  return blocked(
+  return blocked2(
     storeBlocker(
       "record_store_unreadable",
       "The evidence store could not be read.",
@@ -5930,7 +6724,7 @@ function quarantineDetail(text5) {
   return sanitizedDetail(text5, "Quarantine detail");
 }
 function conflict(destination, reason) {
-  return blocked(
+  return blocked2(
     storeBlocker(
       "record_conflict",
       "A different record is already stored under this identity.",
@@ -5957,7 +6751,7 @@ function prepareRecord(workspaceId, input) {
     parseRecord(JSON.parse(JSON.stringify(record2)));
     return record2;
   } catch (error) {
-    throw blocked(
+    throw blocked2(
       storeBlocker(
         "record_input_invalid",
         "The record to publish is not a well-formed evidence record.",
@@ -5971,7 +6765,7 @@ async function publishRecord(rootDir, input, options = {}) {
   const { storageDir, workspaceId } = await resolveRecordStorage(rootDir, options);
   const record2 = prepareRecord(workspaceId, input);
   const recordId = record2.recordId;
-  const destination = path.join(storageDir, recordFileName(record2.gateId, record2.obligationId, recordId));
+  const destination = path2.join(storageDir, recordFileName(record2.gateId, record2.obligationId, recordId));
   const rendered = renderRecord(record2);
   try {
     await mkdir(storageDir, { recursive: true, mode: DIRECTORY_MODE });
@@ -5979,7 +6773,7 @@ async function publishRecord(rootDir, input, options = {}) {
   } catch (error) {
     throw unwritable(storageDir, error);
   }
-  const temporary = path.join(storageDir, `.${recordId}.${process.pid}.${randomUUID()}.tmp`);
+  const temporary = path2.join(storageDir, `.${recordId}.${process.pid}.${randomUUID()}.tmp`);
   try {
     try {
       await writeFile(temporary, rendered, { mode: RECORD_MODE, flag: "wx" });
@@ -6037,7 +6831,7 @@ async function discoverRecords(rootDir, selector) {
   }
   const prefix = slotPrefix(selector.gateId, selector.obligationId);
   for (const entry3 of entries) {
-    const filePath = path.join(storageDir, entry3);
+    const filePath = path2.join(storageDir, entry3);
     if (entry3.startsWith(".") && entry3.endsWith(".tmp")) {
       ignored.push({ path: filePath, reason: "in_progress" });
       continue;
@@ -7040,622 +7834,6 @@ function checkPreparation(context, collector) {
   }
 }
 
-// packages/kernel/src/candidate.types.ts
-var CANDIDATE_VCS = "git";
-var CANDIDATE_MODES = ["clean", "staged-index"];
-var CANDIDATE_CAPTURE_CODES = [
-  "candidate_unprepared",
-  "candidate_merge_in_progress",
-  "candidate_ambiguous",
-  "candidate_base_missing",
-  "candidate_base_shallow",
-  "candidate_base_unrelated",
-  "candidate_repository_unreadable"
-];
-var CANDIDATE_DIFF_UNREADABLE = "candidate_diff_unreadable";
-var CANDIDATE_DRIFT_CLASSES = [
-  "deliverable_identity_changed",
-  "raw_tree_changed",
-  "base_tip_moved",
-  "merge_base_moved",
-  "workspace_changed"
-];
-function classifyCandidateDrift(expected, observed) {
-  const classes = [];
-  if (expected.deliverable.digest !== observed.deliverable.digest) classes.push("deliverable_identity_changed");
-  if (expected.treeSha !== observed.treeSha) classes.push("raw_tree_changed");
-  if (expected.base.tipSha !== observed.base.tipSha) classes.push("base_tip_moved");
-  if (expected.base.mergeBaseSha !== observed.base.mergeBaseSha) classes.push("merge_base_moved");
-  if (expected.workspaceId !== observed.workspaceId) classes.push("workspace_changed");
-  return classes;
-}
-var CANDIDATE_PATH_CLASSES = ["relevant", "test", "generated", "lockfile"];
-function globToRegExp(pattern) {
-  let source = "";
-  for (let index2 = 0; index2 < pattern.length; index2 += 1) {
-    const character = pattern[index2];
-    if (character === "*") {
-      if (pattern[index2 + 1] === "*") {
-        if (pattern[index2 + 2] === "/") {
-          source += "(?:.*/)?";
-          index2 += 2;
-        } else {
-          source += ".*";
-          index2 += 1;
-        }
-      } else {
-        source += "[^/]*";
-      }
-      continue;
-    }
-    if (character === "?") {
-      source += "[^/]";
-      continue;
-    }
-    source += character.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  }
-  return new RegExp(`^${source}$`);
-}
-var GLOB_CACHE = /* @__PURE__ */ new Map();
-function globMatches(pattern, repoPath) {
-  let compiled = GLOB_CACHE.get(pattern);
-  if (compiled === void 0) {
-    compiled = globToRegExp(pattern);
-    GLOB_CACHE.set(pattern, compiled);
-  }
-  return compiled.test(repoPath);
-}
-function matchesPathMatcher(matcher, repoPath) {
-  if (matcher.kind === "glob") return globMatches(matcher.value, repoPath);
-  const prefix = matcher.value.endsWith("/") ? matcher.value.slice(0, -1) : matcher.value;
-  return repoPath === prefix || repoPath.startsWith(`${prefix}/`);
-}
-function matchesAny(matchers, repoPath) {
-  return matchers.some((matcher) => matchesPathMatcher(matcher, repoPath));
-}
-function classifyCandidatePath(classification, repoPath) {
-  if (matchesAny(classification.lockfile, repoPath)) return "lockfile";
-  if (matchesAny(classification.generated, repoPath)) return "generated";
-  if (matchesAny(classification.test, repoPath)) return "test";
-  return "relevant";
-}
-function sensitiveGroupsFor(groups, repoPath) {
-  return groups.filter((group) => matchesAny(group.patterns, repoPath)).map((group) => group.id);
-}
-function entryPaths(entry3) {
-  return entry3.oldPath === void 0 ? [entry3.path] : [entry3.oldPath, entry3.path];
-}
-function projectReviewActivation(entries, config) {
-  let relevantLineCount = 0;
-  let hasRelevantBinaryChange = false;
-  let hasRelevantZeroLineChange = false;
-  const relevantPaths = /* @__PURE__ */ new Set();
-  const excludedPaths = /* @__PURE__ */ new Set();
-  const binaryPaths = /* @__PURE__ */ new Set();
-  const sensitivePathIds = /* @__PURE__ */ new Set();
-  for (const entry3 of entries) {
-    const paths = entryPaths(entry3);
-    for (const repoPath of paths) {
-      for (const id of sensitiveGroupsFor(config.sensitivePaths, repoPath)) sensitivePathIds.add(id);
-    }
-    if (paths.every((repoPath) => matchesNeutralSet(config.reviewNeutral, repoPath))) {
-      for (const repoPath of paths) excludedPaths.add(repoPath);
-      continue;
-    }
-    const relevant = paths.some((repoPath) => classifyCandidatePath(config.pathClassification, repoPath) === "relevant");
-    if (!relevant) {
-      for (const repoPath of paths) excludedPaths.add(repoPath);
-      continue;
-    }
-    for (const repoPath of paths) relevantPaths.add(repoPath);
-    if (entry3.binary || entry3.additions === null || entry3.deletions === null) {
-      for (const repoPath of paths) binaryPaths.add(repoPath);
-      hasRelevantBinaryChange = true;
-      continue;
-    }
-    if (entry3.additions + entry3.deletions === 0) hasRelevantZeroLineChange = true;
-    relevantLineCount += entry3.additions + entry3.deletions;
-  }
-  return {
-    relevantLineCount,
-    relevantPaths: [...relevantPaths].sort(),
-    excludedPaths: [...excludedPaths].sort(),
-    binaryPaths: [...binaryPaths].sort(),
-    sensitivePathIds: [...sensitivePathIds].sort(),
-    hasRelevantBinaryChange,
-    hasRelevantZeroLineChange,
-    changedEntryCount: entries.length
-  };
-}
-function isObligationActive(activation, projection, activationThreshold) {
-  if (activation.kind === "always") return true;
-  if (projection.relevantLineCount >= activationThreshold) return true;
-  if ((activation.relevantBinaryChangeActivates ?? true) && projection.hasRelevantBinaryChange) return true;
-  if ((activation.relevantZeroLineChangeActivates ?? true) && projection.hasRelevantZeroLineChange) return true;
-  const binding2 = activation.sensitiveGroupIds;
-  if (binding2 === void 0) return projection.sensitivePathIds.length > 0;
-  return projection.sensitivePathIds.some((id) => binding2.includes(id));
-}
-
-// packages/kernel/src/candidate.ts
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import path2 from "node:path";
-var DEFAULT_CAPTURE_ATTEMPTS = 3;
-var GIT_ENVIRONMENT_PREFIX = "GIT_";
-var GIT_ENVIRONMENT_OVERRIDES = {
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_OPTIONAL_LOCKS: "0"
-};
-function scrubbedEnvironment() {
-  const environment = {};
-  for (const [name, value] of Object.entries(process.env)) {
-    if (name.startsWith(GIT_ENVIRONMENT_PREFIX) || value === void 0) continue;
-    environment[name] = value;
-  }
-  return { ...environment, ...GIT_ENVIRONMENT_OVERRIDES };
-}
-var runGitCommand = (command, options) => collectGitCommand(command, options, false);
-function runGitCommandBytes(command, options) {
-  return collectGitCommand(command, { ...options, captureBytes: true }, true);
-}
-function collectGitCommand(command, options, rawBytes) {
-  return new Promise((resolve) => {
-    const [executable, ...args] = command;
-    if (executable === void 0) {
-      resolve(rawBytes ? { exitCode: -1, stdout: Buffer.alloc(0), stderr: "no command was given" } : { exitCode: -1, stdout: "", stderr: "no command was given" });
-      return;
-    }
-    const child = spawn(executable, args, {
-      cwd: options.cwd,
-      env: scrubbedEnvironment(),
-      stdio: [options.stdin === void 0 ? "ignore" : "pipe", "pipe", "pipe"],
-      windowsHide: true
-    });
-    let stdout = "";
-    let stderr = "";
-    let inputError;
-    const chunks = [];
-    if (!options.captureBytes) child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      if (options.captureBytes) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      else stdout += chunk;
-    });
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.once("error", (error) => {
-      resolve(rawBytes ? { exitCode: -1, stdout: Buffer.alloc(0), stderr: error.message } : { exitCode: -1, stdout, stderr: error.message });
-    });
-    if (options.stdin !== void 0) {
-      child.stdin.once("error", (error) => {
-        inputError = error.message;
-        child.kill("SIGKILL");
-      });
-      child.stdin.end(options.stdin);
-    }
-    child.once("close", (code) => {
-      const bytes = options.captureBytes ? Buffer.concat(chunks) : void 0;
-      if (rawBytes) {
-        resolve({ exitCode: inputError === void 0 ? code ?? -1 : -1, stdout: bytes, stderr: inputError ?? stderr });
-        return;
-      }
-      resolve({ exitCode: inputError === void 0 ? code ?? -1 : -1, stdout: bytes?.toString("utf8") ?? stdout, stderr: inputError ?? stderr, ...bytes === void 0 ? {} : { stdoutBase64: bytes.toString("base64") } });
-    });
-  });
-}
-function candidateBlocker(config, code, summary, details, remediations) {
-  return createBlocker({
-    code,
-    source: { kind: "candidate", id: config.gateId },
-    summary,
-    ...details === void 0 || details.trim() === "" ? {} : { details },
-    remediations
-  });
-}
-var INSPECT_STATUS = {
-  id: "inspect-worktree-status",
-  kind: "command",
-  command: ["git", "status", "--short", "--untracked-files=all"],
-  summary: "Inspect what the worktree currently carries."
-};
-function blocked2(config, code, summary, details, remediations) {
-  return { ok: false, code, blockers: [candidateBlocker(config, code, summary, details, remediations)] };
-}
-var OBSERVATION_FIELDS = [
-  "headSha",
-  "headTreeSha",
-  "indexTreeSha",
-  "baseTipSha",
-  "mergeBaseSha",
-  "status",
-  "untracked",
-  "worktreeDirty"
-];
-function movedFields(before, after) {
-  return OBSERVATION_FIELDS.filter((field) => before[field] !== after[field]);
-}
-var IN_PROGRESS_STATES = [
-  { gitPath: "rebase-merge", operation: "rebase" },
-  { gitPath: "rebase-apply", operation: "rebase" },
-  { gitPath: "MERGE_HEAD", operation: "merge" },
-  { gitPath: "CHERRY_PICK_HEAD", operation: "cherry-pick" },
-  { gitPath: "REVERT_HEAD", operation: "revert" }
-];
-async function observe(run, rootDir, config) {
-  const git = (args) => run(["git", ...args], { cwd: rootDir });
-  const head = await git(["rev-parse", "--verify", "HEAD"]);
-  if (head.exitCode !== 0) {
-    return blocked2(
-      config,
-      "candidate_repository_unreadable",
-      `${JSON.stringify(rootDir)} does not resolve a HEAD commit`,
-      head.stderr,
-      [
-        {
-          id: "run-inside-a-repository",
-          kind: "manual_action",
-          summary: "Run the harness inside a git repository that has at least one commit."
-        }
-      ]
-    );
-  }
-  const headTree = await git(["rev-parse", "--verify", "HEAD^{tree}"]);
-  if (headTree.exitCode !== 0) {
-    return blocked2(config, "candidate_repository_unreadable", "HEAD names no tree", headTree.stderr, [
-      {
-        id: "repair-repository",
-        kind: "manual_action",
-        summary: "Repair the repository: HEAD resolves to a commit whose tree cannot be read."
-      }
-    ]);
-  }
-  const statePaths = await git(["rev-parse", ...IN_PROGRESS_STATES.flatMap((state) => ["--git-path", state.gitPath])]);
-  if (statePaths.exitCode !== 0) {
-    return blocked2(
-      config,
-      "candidate_repository_unreadable",
-      "the repository would not say whether an operation is in progress",
-      statePaths.stderr,
-      [
-        {
-          id: "repair-repository",
-          kind: "manual_action",
-          summary: "Repair the repository: its git directory could not be located."
-        }
-      ]
-    );
-  }
-  const stateLines = statePaths.stdout.split("\n").map((line) => line.trim());
-  const inProgress = IN_PROGRESS_STATES.find((state, index2) => {
-    const line = stateLines[index2];
-    return line !== void 0 && line !== "" && existsSync(path2.resolve(rootDir, line));
-  });
-  if (inProgress !== void 0) {
-    return blocked2(
-      config,
-      "candidate_merge_in_progress",
-      `a ${inProgress.operation} is in progress, so the index does not yet describe a finished change`,
-      `state left by the ${inProgress.operation}: ${inProgress.gitPath}`,
-      [
-        {
-          id: "conclude-in-progress-operation",
-          kind: "manual_action",
-          summary: `Conclude the ${inProgress.operation} \u2014 finish it or abandon it \u2014 before preparing a candidate.`
-        },
-        INSPECT_STATUS
-      ]
-    );
-  }
-  const indexTree = await git(["write-tree"]);
-  if (indexTree.exitCode !== 0) {
-    if (/index\.lock['"]?: File exists/i.test(indexTree.stderr)) {
-      return blocked2(config, "candidate_repository_unreadable", "Git could not acquire the index lock", indexTree.stderr, [
-        {
-          id: "retry-index-lock",
-          kind: "manual_action",
-          summary: "Retry after the other Git operation finishes. If the lock persists, inspect the owning process before removing a stale lock."
-        },
-        INSPECT_STATUS
-      ]);
-    }
-    return blocked2(config, "candidate_repository_unreadable", "the index does not define a tree", indexTree.stderr, [
-      {
-        id: "repair-index",
-        kind: "manual_action",
-        summary: "Repair the index: it could not be written out as a tree."
-      },
-      INSPECT_STATUS
-    ]);
-  }
-  const baseTip = await git(["rev-parse", "--verify", `${config.baseRef}^{commit}`]);
-  if (baseTip.exitCode !== 0) {
-    return blocked2(
-      config,
-      "candidate_base_missing",
-      `the configured base ref ${JSON.stringify(config.baseRef)} does not resolve to a commit`,
-      baseTip.stderr,
-      [
-        {
-          id: "fetch-base-ref",
-          kind: "command",
-          command: ["git", "fetch"],
-          summary: "Fetch the remote so the configured base ref resolves."
-        },
-        {
-          id: "declare-a-resolvable-base-ref",
-          kind: "code_change",
-          summary: "Declare a base ref this repository has, in the harness config."
-        }
-      ]
-    );
-  }
-  const mergeBase = await git(["merge-base", config.baseRef, "HEAD"]);
-  if (mergeBase.exitCode === 1) {
-    const shallow = await git(["rev-parse", "--is-shallow-repository"]);
-    if (shallow.exitCode !== 0) {
-      return blocked2(config, "candidate_repository_unreadable", "the repository would not say whether it is shallow", shallow.stderr, [
-        {
-          id: "repair-repository",
-          kind: "manual_action",
-          summary: "Repair the repository: whether it is a shallow clone could not be determined."
-        }
-      ]);
-    }
-    if (shallow.stdout.trim() === "true") {
-      return blocked2(
-        config,
-        "candidate_base_shallow",
-        `this is a shallow clone, and any history HEAD shares with ${JSON.stringify(config.baseRef)} lies beyond its boundary`,
-        mergeBase.stderr,
-        [
-          {
-            id: "deepen-the-clone",
-            kind: "command",
-            command: ["git", "fetch", "--unshallow"],
-            summary: "Deepen the clone so the merge base with the configured base ref is present."
-          },
-          {
-            id: "check-out-with-full-history",
-            kind: "manual_action",
-            summary: "Check the repository out with full history \u2014 in CI, the checkout step's fetch depth."
-          }
-        ]
-      );
-    }
-    return blocked2(
-      config,
-      "candidate_base_unrelated",
-      `HEAD shares no history with the configured base ref ${JSON.stringify(config.baseRef)}`,
-      mergeBase.stderr,
-      [
-        {
-          id: "rebase-onto-the-base",
-          kind: "manual_action",
-          summary: "Base this branch on the configured base ref, or configure the base ref this branch descends from."
-        }
-      ]
-    );
-  }
-  if (mergeBase.exitCode !== 0) {
-    return blocked2(config, "candidate_repository_unreadable", "the merge base could not be computed", mergeBase.stderr, [
-      {
-        id: "repair-repository",
-        kind: "manual_action",
-        summary: "Repair the repository: the merge base between HEAD and the base ref could not be computed."
-      }
-    ]);
-  }
-  const status = await git(["status", "--porcelain", "-z", "--untracked-files=all"]);
-  if (status.exitCode !== 0) {
-    return blocked2(config, "candidate_repository_unreadable", "the worktree status could not be read", status.stderr, [
-      { id: "repair-repository", kind: "manual_action", summary: "Repair the repository: its status could not be read." }
-    ]);
-  }
-  const untracked = await git(["ls-files", "--others", "--exclude-standard", "-z"]);
-  if (untracked.exitCode !== 0) {
-    return blocked2(config, "candidate_repository_unreadable", "untracked files could not be listed", untracked.stderr, [
-      { id: "repair-repository", kind: "manual_action", summary: "Repair the repository: untracked files could not be listed." }
-    ]);
-  }
-  const unstaged = await git(["diff", "--quiet"]);
-  if (unstaged.exitCode > 1 || unstaged.exitCode < 0) {
-    return blocked2(config, "candidate_repository_unreadable", "unstaged changes could not be determined", unstaged.stderr, [
-      { id: "repair-repository", kind: "manual_action", summary: "Repair the repository: its unstaged changes could not be determined." }
-    ]);
-  }
-  return {
-    ok: true,
-    observation: {
-      headSha: head.stdout.trim(),
-      headTreeSha: headTree.stdout.trim(),
-      indexTreeSha: indexTree.stdout.trim(),
-      baseTipSha: baseTip.stdout.trim(),
-      mergeBaseSha: mergeBase.stdout.trim(),
-      status: status.stdout,
-      untracked: untracked.stdout,
-      worktreeDirty: unstaged.exitCode !== 0
-    }
-  };
-}
-function splitNulStream(output) {
-  return output.split("\0").filter((entry3) => entry3 !== "");
-}
-function parseStatusEntries(output) {
-  const records = output.split("\0");
-  const entries = [];
-  for (let index2 = 0; index2 < records.length; index2 += 1) {
-    const record2 = records[index2];
-    if (record2 === void 0 || record2 === "") continue;
-    const code = record2.slice(0, 2);
-    entries.push({ code, path: record2.slice(3) });
-    if (code.startsWith("R") || code.startsWith("C")) index2 += 1;
-  }
-  return entries;
-}
-var DECIMAL_COUNT = /^\d+$/;
-function parseCandidateNumstat(output) {
-  const records = output.split("\0");
-  const entries = [];
-  for (let index2 = 0; index2 < records.length; index2 += 1) {
-    const record2 = records[index2];
-    if (record2 === void 0 || record2 === "") continue;
-    const firstTab = record2.indexOf("	");
-    const secondTab = firstTab < 0 ? -1 : record2.indexOf("	", firstTab + 1);
-    if (firstTab < 0 || secondTab < 0) {
-      throw new Error(`numstat record ${JSON.stringify(record2)} carries no counts`);
-    }
-    const additionsText = record2.slice(0, firstTab);
-    const deletionsText = record2.slice(firstTab + 1, secondTab);
-    const inlinePath = record2.slice(secondTab + 1);
-    let repoPath = inlinePath;
-    let oldPath;
-    if (inlinePath === "") {
-      const origin = records[index2 + 1];
-      const destination = records[index2 + 2];
-      if (origin === void 0 || origin === "" || destination === void 0 || destination === "") {
-        throw new Error(`numstat record ${JSON.stringify(record2)} announces a rename whose paths are missing`);
-      }
-      oldPath = origin;
-      repoPath = destination;
-      index2 += 2;
-    }
-    const binary = additionsText === "-" || deletionsText === "-";
-    if (!binary && !(DECIMAL_COUNT.test(additionsText) && DECIMAL_COUNT.test(deletionsText))) {
-      throw new Error(`numstat record ${JSON.stringify(record2)} carries counts that are not plain decimal integers`);
-    }
-    const additions = binary ? null : Number(additionsText);
-    const deletions = binary ? null : Number(deletionsText);
-    entries.push({ path: repoPath, ...oldPath === void 0 ? {} : { oldPath }, additions, deletions, binary });
-  }
-  return entries;
-}
-function preparedCandidate(observation, config) {
-  const untrackedFiles = splitNulStream(observation.untracked);
-  if (observation.worktreeDirty || untrackedFiles.length > 0) {
-    const detail = observation.worktreeDirty ? untrackedFiles.length > 0 ? `unstaged changes to tracked files, and untracked files: ${untrackedFiles.slice(0, 20).join(", ")}` : "unstaged changes to tracked files" : `untracked files: ${untrackedFiles.slice(0, 20).join(", ")}`;
-    return blocked2(
-      config,
-      "candidate_unprepared",
-      "the worktree carries content that is not part of any prepared candidate",
-      detail,
-      [
-        {
-          id: "stage-the-intended-change",
-          kind: "manual_action",
-          summary: "Stage the files this change is meant to deliver, then prepare the candidate again."
-        },
-        INSPECT_STATUS
-      ]
-    );
-  }
-  const statusEntries = parseStatusEntries(observation.status);
-  if (statusEntries.length > 0 && observation.indexTreeSha === observation.headTreeSha) {
-    return blocked2(
-      config,
-      "candidate_unprepared",
-      "the worktree is not clean, yet the index defines no distinct tree to review",
-      `status: ${statusEntries.map((entry3) => `${entry3.code} ${entry3.path}`).slice(0, 20).join("; ")}`,
-      [
-        {
-          id: "stage-the-intended-change",
-          kind: "manual_action",
-          summary: "Stage the files this change is meant to deliver, then prepare the candidate again."
-        },
-        INSPECT_STATUS
-      ]
-    );
-  }
-  const mode = statusEntries.length > 0 ? "staged-index" : "clean";
-  return { ok: true, mode, treeSha: mode === "staged-index" ? observation.indexTreeSha : observation.headTreeSha, statusEntries };
-}
-async function captureGitCandidate(options) {
-  const run = options.run ?? runGitCommand;
-  const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_CAPTURE_ATTEMPTS);
-  let moved = [];
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const before = await observe(run, options.rootDir, options.config);
-    if (!before.ok) return before;
-    const after = await observe(run, options.rootDir, options.config);
-    if (!after.ok) return after;
-    moved = movedFields(before.observation, after.observation);
-    if (moved.length > 0) continue;
-    const prepared = preparedCandidate(after.observation, options.config);
-    if (!prepared.ok) return prepared;
-    const digest2 = await options.computeIdentity({
-      rootDir: options.rootDir,
-      treeSha: prepared.treeSha,
-      config: options.config
-    });
-    const candidate2 = {
-      vcs: CANDIDATE_VCS,
-      headSha: after.observation.headSha,
-      treeSha: prepared.treeSha,
-      mode: prepared.mode,
-      deliverable: { digest: digest2, identity: options.config.computingIdentityVersion },
-      base: {
-        ref: options.config.baseRef,
-        tipSha: after.observation.baseTipSha,
-        mergeBaseSha: after.observation.mergeBaseSha
-      },
-      workspaceId: options.workspaceId,
-      statusEntries: prepared.statusEntries,
-      untrackedFiles: []
-    };
-    return { ok: true, candidate: candidate2 };
-  }
-  return blocked2(
-    options.config,
-    "candidate_ambiguous",
-    `the repository did not hold still across ${maxAttempts} consecutive observations`,
-    `moved between observations: ${moved.join(", ")}`,
-    [
-      {
-        id: "capture-a-quiescent-repository",
-        kind: "retry",
-        summary: "Stop whatever is writing to the repository \u2014 a watcher, a build, a rebase \u2014 and capture again."
-      }
-    ]
-  );
-}
-function createCandidateCapture(options) {
-  return () => captureGitCandidate(options);
-}
-async function evaluateCandidateActivation(options) {
-  const run = options.run ?? runGitCommand;
-  const result2 = await run(
-    ["git", "diff", "--numstat", "--find-renames", "-z", options.candidate.base.mergeBaseSha, options.candidate.treeSha],
-    { cwd: options.rootDir }
-  );
-  const failure = (details) => {
-    throw new BlockedError(
-      [
-        candidateBlocker(
-          options.config,
-          CANDIDATE_DIFF_UNREADABLE,
-          "the diff between the candidate and its base could not be read",
-          details,
-          [
-            {
-              id: "recapture-the-candidate",
-              kind: "retry",
-              summary: "Capture the candidate again; the base or the prepared tree it names is no longer readable."
-            }
-          ]
-        )
-      ],
-      "The candidate's diff could not be read."
-    );
-  };
-  if (result2.exitCode !== 0) failure(result2.stderr || result2.stdout);
-  try {
-    return projectReviewActivation(parseCandidateNumstat(result2.stdout), options.config);
-  } catch (error) {
-    return failure(error instanceof Error ? error.message : String(error));
-  }
-}
-
 // packages/kernel/src/identity.ts
 import { createHash as createHash2 } from "node:crypto";
 init_canonical();
@@ -7761,7 +7939,7 @@ function recordOutputConfiguration(config, deliverableDigest) {
 // packages/kernel/src/preparation.ts
 var PREPARATION_RECEIPT_SCHEMA_VERSION = 1;
 var PREPARATION_RECEIPT_LEAF = "preparation";
-var HARNESS_VERSION = "0.7.7";
+var HARNESS_VERSION = "0.7.8";
 var PREPARATION_FAILURE_CLASSES = ["missing", "invalid", "wiring_mismatch", "base_changed", "stale"];
 var DIRECTORY_MODE2 = 448;
 var RECEIPT_MODE = 384;
@@ -10957,7 +11135,7 @@ function blocked3(partial) {
 async function mapStore(input, options, candidate2) {
   const discover = options.discoverRecords ?? ((rootDir, gateId, obligationId) => discoverRecords(rootDir, { ...storageOptions2(options), gateId, obligationId }));
   const records = [];
-  const unreadable = [];
+  const unreadable2 = [];
   for (const obligation of input.config.obligations) {
     if (obligation.freshness === "live") continue;
     const discovery = await discover(input.rootDir, input.config.gateId, obligation.id);
@@ -10968,10 +11146,10 @@ async function mapStore(input, options, candidate2) {
       if (appliesToCandidate) records.push(record2);
     }
     for (const quarantined of discovery.quarantined) {
-      unreadable.push({ gateId: input.config.gateId, obligationId: obligation.id, appliesToCandidate: true, quarantined });
+      unreadable2.push({ gateId: input.config.gateId, obligationId: obligation.id, appliesToCandidate: true, quarantined });
     }
   }
-  return { records, unreadable, ...options.resourceBindings === void 0 ? {} : { resourceBindings: options.resourceBindings }, checkBindings: await captureCheckBindings(input.rootDir, input.config, candidate2, options) };
+  return { records, unreadable: unreadable2, ...options.resourceBindings === void 0 ? {} : { resourceBindings: options.resourceBindings }, checkBindings: await captureCheckBindings(input.rootDir, input.config, candidate2, options) };
 }
 function gateInput(input, candidate2, projection, store, extraRecords, invocationWaiverRecordIds) {
   const records = dedupeRecords([...store.records, ...extraRecords]);
@@ -15114,7 +15292,7 @@ function analyze(events, treeSha2, mandatedLensIds, reviewedTreeShas) {
 
 // packages/kernel/src/checkpoint/run-namespace.ts
 init_digest();
-import { spawn as spawn3 } from "node:child_process";
+import { spawn as spawn4 } from "node:child_process";
 import path14 from "node:path";
 var MANAGED_DELIVERY_NAMESPACE = "managed-delivery";
 var RUN_STORE_DIRECTORY = "runs";
@@ -15161,7 +15339,7 @@ function gitNamespaceClearedEnvironment() {
   return { ...environment, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" };
 }
 var runGitDirect = (launch) => new Promise((resolve) => {
-  const child = spawn3("git", [...launch.args], {
+  const child = spawn4("git", [...launch.args], {
     cwd: launch.cwd,
     ...launch.env === void 0 ? {} : { env: launch.env },
     stdio: ["ignore", "pipe", "ignore"],
@@ -15973,7 +16151,7 @@ import { existsSync as existsSync3 } from "node:fs";
 import path20 from "node:path";
 
 // packages/kernel/src/host/exec-port.ts
-import { execFile as execFile3, spawn as spawn4 } from "node:child_process";
+import { execFile as execFile3, spawn as spawn5 } from "node:child_process";
 function createExecPort() {
   return {
     run(invocation) {
@@ -16007,7 +16185,7 @@ function createExecPort() {
 function runProcessGroup(invocation) {
   if (invocation.signal?.aborted) return Promise.resolve({ code: 1, stdout: "", stderr: "", errorCode: "ABORT_ERR" });
   return new Promise((resolve) => {
-    const child = spawn4(invocation.command, [...invocation.args], {
+    const child = spawn5(invocation.command, [...invocation.args], {
       cwd: invocation.cwd,
       ...invocation.env === void 0 ? {} : { env: { ...invocation.env } },
       detached: true,
@@ -20768,23 +20946,23 @@ function createManagedDeliveryFacade(input) {
         return { ok: true, deliveries: [], unreadable: [] };
       }
       const listed = [];
-      const unreadable = [];
+      const unreadable2 = [];
       for (const deliveryId of ids) {
         const dir = path23.join(root, deliveryId);
         const meta = await readJson(path23.join(dir, "delivery.json"));
         if (meta === void 0) {
-          unreadable.push(deliveryId);
+          unreadable2.push(deliveryId);
           continue;
         }
         const store = await journalStoreFor(deliveryId);
         const reduced = await store.state();
         const read = await store.read();
         if (!reduced.ok || !read.ok) {
-          unreadable.push(deliveryId);
+          unreadable2.push(deliveryId);
           continue;
         }
         if (meta.policyBindingDigest !== policyBindingDigest || reduced.state.policyBindingDigest !== policyBindingDigest || meta.policyBindingDigest !== reduced.state.policyBindingDigest) {
-          unreadable.push(deliveryId);
+          unreadable2.push(deliveryId);
           continue;
         }
         const views = viewsOf(read.entries);
@@ -20822,7 +21000,7 @@ function createManagedDeliveryFacade(input) {
           pendingDecision: waiverLedgerOf(views).pending[0]
         });
       }
-      return { ok: true, deliveries: listed, unreadable };
+      return { ok: true, deliveries: listed, unreadable: unreadable2 };
     },
     async nextCheckpoint({ deliveryId }) {
       const guarded = await guard(deliveryId);
@@ -22690,7 +22868,7 @@ async function captureFor(rootDir, config, run, runGit) {
 
 // packages/kernel/src/provider-rails.ts
 init_canonical();
-import { spawn as spawn5 } from "node:child_process";
+import { spawn as spawn6 } from "node:child_process";
 import { createInterface } from "node:readline";
 var DELIVERY_PROVIDER_RAILS_VERSION = "delivery-provider-rails/1";
 function isObject(value) {
@@ -22886,7 +23064,7 @@ async function settlesWithin(operation, milliseconds) {
 }
 function openProviderRailProcess(input) {
   const [executable, ...args] = input.command;
-  const child = spawn5(executable, args, {
+  const child = spawn6(executable, args, {
     cwd: input.cwd,
     env: input.env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -23596,6 +23774,11 @@ export {
   DELIVERY_BLOCKER_REMEDIATIONS,
   DELIVERY_EVIDENCE_1,
   DELIVERY_OWNED_TREE_PREFIXES,
+  DELIVERY_POSTURE_FALLBACK_SOURCE,
+  DELIVERY_POSTURE_MAX_BYTES,
+  DELIVERY_POSTURE_NETWORK_TIMEOUT_MS,
+  DELIVERY_POSTURE_PATH,
+  DELIVERY_POSTURE_SCHEMA,
   DELIVERY_PROVIDER_RAILS_VERSION,
   DELIVERY_RECORD_DRIFT_CLASSES,
   DELIVERY_RECORD_VERSION,
@@ -24013,6 +24196,7 @@ export {
   repositoryEvidenceReader,
   resolveActiveGeneration,
   resolveCommonDirectoryNamespace,
+  resolveDeliveryPosture,
   resolveObservationLifetimeSeconds,
   resolveReceiptStorage,
   resolveRecordStorage,
