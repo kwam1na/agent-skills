@@ -5057,14 +5057,26 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                       "full-health --why TEXT",
                       "clears": f"a pass at a later base head, or {flow_command()} lead-resolve full-health --why TEXT"})
     events = [e for e in doc["journal"] if e["kind"] in ("base.broken", "base.repaired")]
-    # A break fullHealth found clears with its next pass, and, like its failed run, holds nothing under focused; the
-    # queue's own break waits for the lead.
-    passing = bool(events) and events[-1].get("summary", "").startswith("fullHealth failed")
-    if events and events[-1]["kind"] == "base.broken" and not (passing and delivery_posture(c)["posture"] == "focused"):
-        items.append({"holding": True, "source": f"journal entry {events[-1]['id']} (base.broken)",
-                      "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. "
-                      "Repair it, then journal base.repaired", "clears": ("a fullHealth pass at a later base head, or "
-                                                                          if passing else "") + "journalling base.repaired"})
+    if events and events[-1]["kind"] == "base.broken":
+        # A break fullHealth found clears with its next pass; the queue's own break waits for the lead. Under focused no
+        # run comes to clear fullHealth's, so, like its failed run, it holds nothing, but it stays listed: serve still
+        # waits for base.repaired whatever the posture.
+        found = full_health_break(events[-1])
+        posture = delivery_posture(c) if found else None
+        source = f"journal entry {events[-1]['id']} (base.broken)"
+        if posture and posture["posture"] == "focused":
+            said = posture_said(posture)
+            items.append({"holding": False, "source": source,
+                          "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. It holds nothing "
+                          f"while the base declares the focused posture on {said['source']} ({said['reason'][:200]}), "
+                          "and serve still waits for base.repaired",
+                          "clears": "journalling base.repaired, or a fullHealth pass once the base returns to gate"})
+        else:
+            items.append({"holding": True, "source": source,
+                          "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. "
+                          "Repair it, then journal base.repaired",
+                          "clears": ("a fullHealth pass at a later base head, or " if found else "")
+                          + "journalling base.repaired"})
     for lane in doc["state"]["lanes"]:
         if lane.get("state") == "blocked":
             items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane's state changing",
@@ -5213,6 +5225,11 @@ def full_health_timeout(binding: dict) -> int:
     return int(binding.get("fullHealthTimeoutSeconds", binding.get("checkTimeoutSeconds", 1800)))
 
 
+def full_health_break(entry: dict) -> bool:
+    """Whether a base.broken is the one a fullHealth run journalled, which a later pass of it repairs."""
+    return entry["kind"] == "base.broken" and entry.get("summary", "").startswith("fullHealth failed")
+
+
 def merge_words(c, doc: dict, head: str, since: int) -> tuple[dict | None, str]:
     """The merge a run at this head follows, as {subject, journal} and in words: the latest candidate.merged, with any
     others since the run before it (a batch), and whether the head moved past the queue's last merge outside it."""
@@ -5255,9 +5272,13 @@ def run_full_health(c, binding: dict, head: str, posture: dict, named: str) -> t
     if result == "failed":
         kind, words = "base.broken", f"fullHealth failed at {head[:10]} {after}: {out.strip()[-300:] or 'no output'}"
     else:
-        kind = "base.repaired" if before and before[-1]["result"] == "failed" else "base.verified"
+        # A repair only of a break fullHealth found: a pass never confirms a break the queue found, which the lead does.
+        breaks = [e for e in doc["journal"] if e["kind"] == "base.broken"]
+        repairs = before and before[-1]["result"] == "failed" and breaks and full_health_break(breaks[-1])
+        kind = "base.repaired" if repairs else "base.verified"
         words = f"fullHealth passed at {head[:10]} {after}"
-    state_tool("journal", "--kind", kind, "--summary", words)
+    state_tool("journal", "--kind", kind, "--summary", words,
+               *(["--subject", merge["subject"]] if merge and merge.get("subject") else []))
     return result == "passed", f"fullHealth {result} at {head[:10]}{named}"
 
 

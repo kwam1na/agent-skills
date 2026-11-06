@@ -1933,6 +1933,67 @@ class SupervisorPostMergeTests(unittest.TestCase):
         needs = [item for item in passes(fx)[-1]["needsYou"] if "(base.broken)" in item["source"]]
         self.assertEqual(needs[0]["clears"], "journalling base.repaired", needs)
 
+    def test_a_pass_never_repairs_a_break_the_queue_found_after_a_hand_repair(self) -> None:
+        fx = self.fixture()
+        (fx.tmp / "health").write_text("fail")
+        self.merged(fx, "FX-2", "lane-1")
+        self.once(fx)
+        state_tool(fx, "journal", "--kind", "base.repaired", "--summary", "reopened to let the fix through")
+        # The queue then finds a break of its own, and a fix lands by hand.
+        state_tool(fx, "journal", "--kind", "base.broken", "--summary", "base_broken: lint also fails on the base")
+        (fx.tmp / "health").write_text("pass")
+        declare(fx, "landed by hand\n", path="src/landed.txt")
+        last = self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)],
+                         ["base.broken", "base.repaired", "base.broken", "base.verified"])
+        self.assertTrue(self.serving_waits(fx), "a fullHealth pass reopened serve over the queue's break")
+        needs = [item for item in last["needsYou"] if "(base.broken)" in item["source"]]
+        self.assertEqual((needs[0]["holding"], needs[0]["clears"]), (True, "journalling base.repaired"), needs)
+
+    def test_a_break_yields_the_close_under_focused_stays_listed_and_holds_again_under_gate(self) -> None:
+        fx = self.fixture()
+        (fx.tmp / "health").write_text("fail")
+        self.merged(fx, "FX-2", "lane-1")
+        self.once(fx)
+        declare(fx, declaration())
+        last = self.once(fx)
+        [item] = [item for item in last["needsYou"] if "(base.broken)" in item["source"]]
+        self.assertFalse(item["holding"], item)
+        for words in ("focused posture on origin/feature/FX-1", FOCUSED_REASON[:40], "serve still waits for base.repaired"):
+            self.assertIn(words, item["text"])
+        self.assertFalse([h for h in last["closeHeldBy"] if "broken" in h or "fullHealth" in h], last["closeHeldBy"])
+        self.assertTrue(self.serving_waits(fx), "serve stopped waiting under focused")
+        self.assertEqual(health_runs(fx), 1)
+        # Back to gate with the break unrepaired: it holds again, and the run at the new head decides.
+        declare(fx, declaration("gate", "The gate is back."))
+        last = self.once(fx)
+        self.assertEqual(health_runs(fx), 2)
+        [item] = [item for item in last["needsYou"] if "(base.broken)" in item["source"]]
+        self.assertTrue(item["holding"], item)
+        self.assertTrue(any(h.startswith("The delivery base is broken: fullHealth failed") for h in last["closeHeldBy"]))
+        (fx.tmp / "health").write_text("pass")
+        code, out = fx.flow("lead-resolve", "full-health", "--why", "fixed", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.once(fx)
+        self.assertEqual(self.base_events(fx)[-1]["kind"], "base.repaired")
+        self.assertFalse(self.serving_waits(fx))
+
+    def test_a_batch_names_every_merge_and_a_head_past_the_queue_says_so(self) -> None:
+        fx = self.fixture()
+        self.merged(fx, "FX-2", "lane-1")
+        self.merged(fx, "FX-3", "lane-2")
+        self.once(fx)
+        [verified] = self.base_events(fx)
+        merges = {e["subject"]: e["id"] for e in kinds(fx, "candidate.merged")}
+        self.assertIn(f"after FX-3's merge (journal entry {merges['FX-3']}), which landed with FX-2", verified["summary"])
+        self.assertEqual(verified.get("subject"), "FX-3")
+        tip = declare(fx, "landed by hand\n", path="src/landed.txt")
+        self.once(fx)
+        latest = self.base_events(fx)[-1]
+        self.assertIn(f"after FX-3's merge (journal entry {merges['FX-3']}), and {tip[:10]}, which landed outside the queue",
+                      latest["summary"])
+        self.assertNotIn("landed with", latest["summary"])
+
     def test_its_own_timeout_bounds_it_and_not_the_queue_s_checks(self) -> None:
         fx = self.fixture(fullHealthTimeoutSeconds=1)
         # The queue's check takes longer than fullHealth may, and still passes under checkTimeoutSeconds.

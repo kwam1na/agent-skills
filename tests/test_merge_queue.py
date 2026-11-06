@@ -4884,6 +4884,17 @@ class ProviderRefusalTests(MergeQueueTestCase):
         self.assertEqual(self.ran(adopter), [])
         self.assertEqual(adopter.tip("main"), base)
 
+    def test_a_refusal_from_the_candidate_s_own_provider_stops_it_too(self) -> None:
+        adopter = self.adopter(self.STOPS)
+        base = adopter.tip("main")
+        # The base's provider selects; the candidate changes a provider input, so its own provider runs, and refuses.
+        self.candidate(adopter, {"src/app.txt": "app two\n", "tools/provider-mode.txt": "refuse\n"})
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "provider_refused")
+        self.assertIn("the candidate provider exited 3", document["stop"]["detail"])
+        self.assertNotIn("the base provider", document["stop"]["detail"])
+        self.refused(adopter)
+        self.assertEqual(adopter.tip("main"), base)
+
     def test_only_a_non_zero_exit_is_a_refusal(self) -> None:
         for mode, reason in (("malformed", "provider_malformed"), ("timeout", "provider_timed_out")):
             with self.subTest(mode=mode):
@@ -4936,13 +4947,16 @@ class ProviderRefusalTests(MergeQueueTestCase):
                     "selection": {"lead": True, "refusalStops": True}}
         self.assertEqual(queue.binding_errors(carrying), [])
         self.assertTrue(Draft202012Validator(schema("orchestration-binding")).is_valid(carrying))
-        for value in (0, -1, 1.5, "600", True, None):
+        # The most a process wait takes is accepted; one more would overflow it, so the binding refuses it.
+        self.assertEqual(queue.binding_errors({**binding, "fullHealthTimeoutSeconds": 2147483}), [])
+        for value in (0, -1, 1.5, "600", True, None, 2147484, 1e300):
             with self.subTest(fullHealthTimeoutSeconds=value):
                 errors = queue.binding_errors({**binding, "fullHealthTimeoutSeconds": value})
                 self.assertTrue(errors)
                 self.assertTrue(all("/fullHealthTimeoutSeconds" in error for error in errors), errors)
-                self.assertFalse(Draft202012Validator(schema("orchestration-binding")).is_valid(
-                    {**binding, "fullHealthTimeoutSeconds": value}))
+                if value not in (2147484, 1e300):  # the schema says integer; the runner checks the bound
+                    self.assertFalse(Draft202012Validator(schema("orchestration-binding")).is_valid(
+                        {**binding, "fullHealthTimeoutSeconds": value}))
         for value in (1, "true", None):
             with self.subTest(refusalStops=value):
                 errors = queue.binding_errors({**binding, "selection": {"lead": True, "refusalStops": value}})

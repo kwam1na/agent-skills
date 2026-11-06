@@ -375,7 +375,12 @@ run follows, and writes the result to the record. It runs `fullHealth` once per
 base head, unless the base declares the `focused` posture: a failed head runs
 again only on `lead-resolve full-health`, and the next run waits for another
 merge. A `base.broken` it journals stops the queue as any other does, and its
-`base.repaired` reopens it. Once nothing holds the close, the supervisor runs
+`base.repaired` reopens it; a pass never repairs a break the queue found, which
+the lead confirms. If the base turns `focused` while such a break stands, the
+break holds nothing at the close, since no run comes to clear it, but it stays
+listed in "Needs you" and serve still waits for `base.repaired`. A pass that
+runs `fullHealth` lasts as long as the run: the views it draws wait for it, and
+a stop asked meanwhile is taken once it ends. Once nothing holds the close, the supervisor runs
 `fullHealth` at the final head only when no run at that head has happened, as
 in a delivery that merged nothing, then files a follow-up for each deferred
 finding, journals `delivery.closed` and waits until the tracker has every
@@ -908,7 +913,7 @@ it is not a freshness proof or permission to skip any admission check.
 | `merge` | An argv that must use `{expectedHead}`. A binding whose `merge` lacks it is invalid. |
 | `release` | Ordered targets, each with an `id`, `argv`, `stopsOnFailure` and `requiresApproval`, and an optional `timeoutSeconds`. |
 | `fullHealth` | The argv for the post-merge tier: run by the supervisor after each merge or batch, and at close-out only when no run at the final head has happened. Required, and not run while the base declares the `focused` posture. |
-| `fullHealthTimeoutSeconds` | Optional. The seconds one `fullHealth` run may take, a positive integer; `checkTimeoutSeconds` when absent. `checkTimeoutCeiling` doesn't bound it, since it bounds the queue's checks and the post-merge tier is not one of them. |
+| `fullHealthTimeoutSeconds` | Optional. The seconds one `fullHealth` run may take, a positive integer of at most 2147483; `checkTimeoutSeconds` when absent. `checkTimeoutCeiling` doesn't bound it, since it bounds the queue's checks and the post-merge tier is not one of them. |
 | `leases` | Each lease's `id`, `description` and `defaultHolder`, plus optional `materialize` and `withdraw` argv. |
 | `state` | `{directory, renderers, publishers, snapshotMaxAgeSeconds?, trackerSnapshot?, forgeSnapshot?, refreshSeconds?, workHints?, liveHome?}`. `liveHome` is the id of a declared argv renderer whose HTML view the live server serves at its front page, with the live store injected as at `/view/<output>`; the view must carry `<meta name="delivery-state-live">`. Without it the front page is the built-in static page. A `liveHome` that names a built-in renderer, an unknown id, or a view whose output is not an HTML file is refused. `trackerSnapshot`, `{argv, timeoutSeconds?}`, is the repository's command that prints the delivery's `work-snapshot/1` tracker snapshot; `{parent}` in its argv is the record's `meta.trackerParent`, and `{stateDirectory}` in it, or in a renderer's, a publisher's or `workHints` argv, is the resolved state directory the command runs for, so a repository that keeps several records reads the one being served rather than the one its binding names; the command owns whatever access it needs. `forgeSnapshot`, the same shape, prints the forge snapshot of the delivery's change requests; this workflow ships no forge or tracker client, so both are the repository's own, or the ready-made commands described below. `serve` runs them from the repository's checkout every `refreshSeconds`, 180 when absent and at most 86400, and 0 turns that off; it does not start on a block or interval it cannot use. Each command's stdout is read until it exits, plus a two-second drain: output that a process it leaves behind writes later is not read, and output written during the drain can spoil the snapshot. Each runs in its own process group with a per-run marker in its environment; afterwards, interrupted or not, the state tool stops what is left in that group or carries the marker, never the caller or its parents, pid 1, another user's process or one that started before the run, and stops nothing when it cannot read the process table. A child that clears its environment, or whose environment the system hides, such as some system binaries on macOS, survives. On Windows only the command itself is stopped, and only when it overran or was interrupted. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`, or `{id, kind: "host"}`, which writes an outbox for the lead to publish; at most one publisher is a host publisher. `workHints`, `{argv, timeoutSeconds?}`, is the repository's command that prints a `work-hints/1` document of each item's files and priority for `next`, run the same way. `snapshotMaxAgeSeconds`, a whole number of seconds, is how old a forge or tracker snapshot may be before `reconcile` refuses it, 900 when absent. After each of its state writes the runner passes this member to the render wrapper; when it is valid and declares no renderer and no publisher, the runner starts no wrapper, and reads the record itself instead, noting a failure as the wrapper would. |
 
@@ -1051,7 +1056,9 @@ It is off unless the binding sets `selection: {"lead": true}`.
   your selection for its reviewed head is checked in place of the provider's
   answer. That selection is bounded by `checkTimeoutCeiling` alone, and its
   reason records why a run wider than the provider's budget goes through. A
-  provider that times out or answers malformed still widens.
+  provider that times out or answers malformed still widens. A refusal of a
+  batch's checks stops every member, since the provider answered for their
+  combined diff: select each, or re-queue them to run alone.
 
 ### Lead inputs and leases
 

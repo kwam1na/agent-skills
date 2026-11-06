@@ -53,6 +53,8 @@ PLACEHOLDERS = frozenset({
     "candidate", "branch", "head", "expectedHead", "base", "baseHead", "treeSha", "ref", "workRoot", "checkMode",
 })
 PLACEHOLDER = re.compile(r"^\{([A-Za-z]+)\}$")
+# The longest wait, in seconds, a process wait takes on every platform the runner supports.
+FULL_HEALTH_TIMEOUT_MOST = 2147483
 # Reasons that stop the whole queue rather than one candidate.
 QUEUE_STOPPING = frozenset({"base_broken", "merged_unverified", "batch_tree_mismatch"})
 # Reasons for which the runner attempted nothing and leaves the queue as it was.
@@ -281,6 +283,9 @@ def binding_errors(binding: object) -> list[str]:
     if binding["checkTimeoutSeconds"] > binding["checkTimeoutCeiling"]:
         errors.append("/checkTimeoutSeconds: above checkTimeoutCeiling")
     # fullHealthTimeoutSeconds is the post-merge run's own bound: checkTimeoutCeiling bounds the queue's checks, not it.
+    # A wait longer than the platform's process wait can take would overflow it rather than time out.
+    if binding.get("fullHealthTimeoutSeconds", 0) > FULL_HEALTH_TIMEOUT_MOST:
+        errors.append(f"/fullHealthTimeoutSeconds: above {FULL_HEALTH_TIMEOUT_MOST}, the most a process wait can take")
     selection = binding.get("selection") or {}
     if selection.get("refusalStops") and not selection.get("lead"):
         errors.append("/selection/refusalStops: needs selection.lead, since only the lead's selection releases a "

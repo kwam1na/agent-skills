@@ -2025,7 +2025,7 @@
         "$ref": "#/$defs/argv"
       },
       "fullHealthTimeoutSeconds": {
-        "description": "Optional. The seconds a fullHealth run may take, after each merge and at close-out: a positive integer, not bound by checkTimeoutCeiling, which bounds the queue's checks. checkTimeoutSeconds when absent.",
+        "description": "Optional. The seconds a fullHealth run may take, after each merge and at close-out: a positive integer of at most 2147483 (the most a process wait takes, which the runner checks), not bound by checkTimeoutCeiling, which bounds the queue's checks. checkTimeoutSeconds when absent.",
         "type": "integer",
         "minimum": 1
       },

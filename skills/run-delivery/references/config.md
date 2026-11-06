@@ -250,7 +250,9 @@ and every lead command repeats it. It keeps the merge queue's `serve` and the li
    in a fresh checkout of the head, under the binding's `fullHealthTimeoutSeconds` (`checkTimeoutSeconds` when
    absent; `checkTimeoutCeiling` doesn't bound it). Its result goes to the full-health log, and the journal gets
    `base.verified` on a pass, `base.broken` on a failure, or `base.repaired` on the first pass after a failed run,
-   each naming the merge the run follows. A `base.broken` stops the queue until a `base.repaired`;
+   each naming the merge the run follows. A `base.broken` stops the queue until a `base.repaired`, and a pass repairs
+   only a break `fullHealth` found. The pass lasts as long as the run, so its views and a stop asked meanwhile wait
+   for it;
 4. `finish.met`, once for each finish line whose covered criteria have every covered proof done;
 5. the binding's `state` publishers; then "Needs you", written over the last pass's list in the record's
    `needs-you.json`; then the binding's renderers, so the line map shows this pass's list;
