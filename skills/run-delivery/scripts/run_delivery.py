@@ -5898,6 +5898,9 @@ class Supervisor:
             holds = close_holds(c, doc, needs)
             entry["needsYou"], entry["closeHeldBy"] = needs, holds
             if not holds:
+                # A lane may have moved off its story since this pass's cleanup, as its last word: clean up again, so
+                # the close never outruns the checkout it leaves.
+                entry["cleanupBeforeClose"] = cleanup()
                 entry["closeOut"], closed = close_out(c, self.flapping(), self.once)
                 render_views(c)
         except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:

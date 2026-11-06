@@ -261,7 +261,7 @@ and every lead command repeats it. It keeps the merge queue's `serve` and the li
 5. the binding's `state` publishers; then "Needs you", written over the last pass's list in the record's
    `needs-you.json`; then the binding's renderers, so the line map shows this pass's list;
 6. a copy of the record and the flow log into `latest` at the archive location, under the state lock;
-7. the close-out, when the close condition holds.
+7. the close-out, when the close condition holds, after that cleanup once more, so a lane that moved off its story during the pass doesn't leave its checkout behind a closed delivery.
 
 The close condition: every planned and queued story merged or removed, every finish line met, every lane idle or
 done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,
