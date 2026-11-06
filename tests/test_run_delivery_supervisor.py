@@ -114,6 +114,11 @@ with open(str(verdict) + ".runs", "a") as runs:
 said = verdict.read_text().strip() if verdict.exists() else ""
 if said == "slow":
     time.sleep(float(os.environ.get("FX_HEALTH_SECONDS", "30")))
+if said == "lane-done":
+    # The lane's last word lands while the pass waits on fullHealth: after its cleanup, before it reads the close.
+    import subprocess
+    subprocess.run([sys.executable, "-B", os.environ["FX_STATE_TOOL"], "--dir", os.environ["FX_RECORD"], "focus",
+                    "--lane", "lane-1", "--text", "done", "--state", "done"], check=True, capture_output=True)
 if said == "fail":
     print("fullHealth: test_parser failed")
 sys.exit(1 if said == "fail" else 0)
@@ -2029,6 +2034,29 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertIn(f"after FX-3's merge (journal entry {merges['FX-3']}), and {tip[:10]}, which landed outside the queue",
                       latest["summary"])
         self.assertNotIn("landed with", latest["summary"])
+
+    def test_a_lane_that_says_done_during_the_pass_is_cleaned_up_before_the_close(self) -> None:
+        fx = self.fixture()
+        with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
+            changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"], "by": "lead",
+                                      "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
+        # The lane is still at work after its hand-off, so the pass's first cleanup leaves its checkout.
+        wt = hand_off(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing the docs", "--state", "working")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        (fx.tmp / "health").write_text("lane-done")
+        fx.env.update(FX_STATE_TOOL=str(fx.release / "skills/orchestrate-work/scripts/delivery_state.py"),
+                      FX_RECORD=str(fx.tmp / "record"))
+        last = self.once(fx)
+        self.assertIn("FX-2: waits for lane-1 to move off it", last["cleanup"])
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+        self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists())
+        self.assertFalse(wt.exists(), "the delivery closed with the lane's checkout left behind")
+        cleaned = [e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]
+        self.assertEqual(len(cleaned), 1)
+        self.assertLess(cleaned[0]["id"], kinds(fx, "delivery.closed")[0]["id"])
 
     def test_its_own_timeout_bounds_it_and_not_the_queue_s_checks(self) -> None:
         fx = self.fixture(fullHealthTimeoutSeconds=1)
