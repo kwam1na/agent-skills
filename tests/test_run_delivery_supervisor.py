@@ -1150,6 +1150,23 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertTrue(wt.exists(), "an assignment made before the merge counted as the lane moving off it")
         self.assertIn("FX-2: waits for lane-1 to move off it", passes(fx)[-1]["cleanup"])
 
+    def test_another_lanes_assignment_after_the_merge_isnt_this_lane_moving_off(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        code, out = fx.flow("lead-init", "--replace", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = hand_off(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing FX-2's docs", "--state", "working")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        # After the merge the lead gives lane-2, not lane-1, its story: lane-1 hasn't moved off FX-2.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "lane-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.once(fx)
+        self.assertTrue(wt.exists(), "another lane's assignment counted as lane-1 moving off its merged story")
+        self.assertIn("FX-2: waits for lane-1 to move off it", passes(fx)[-1]["cleanup"])
+
     def test_a_lane_assigned_other_work_after_its_story_merges_has_moved_off_it(self) -> None:
         fx = self.lane_with_two_stories()
         m = fx.main
