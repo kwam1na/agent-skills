@@ -1499,6 +1499,50 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
 
     # Hand-off.
 
+    def reviewed(self, fx, wt: Path) -> None:
+        """Everything a hand-off needs short of the hand-off itself: the gate and one approved review round."""
+        h = self.harness
+        (wt / ".orchestration/review/FX-3").mkdir(parents=True, exist_ok=True)
+        (wt / ".orchestration/review/FX-3/context.md").write_text("- evidence")
+        for argv in (("gate", "FX-3"), ("review-prepare", "FX-3", "--round", "1")):
+            code, out = fx.flow(*argv, cwd=wt)
+            self.assertEqual(code, 0, out)
+        h.write_results(wt / ".orchestration/review/FX-3", 1, "FX-3", fx.lenses(wt))
+        code, out = fx.flow("review-reduce", "FX-3", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+
+    def test_a_review_move_an_earlier_record_made_is_made_again_under_this_one(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pr-open"})
+        wt = self.started(fx)
+        self.publish(fx)
+        # The ledger beside this record holds a handled review move for FX-3 under an earlier record (another init).
+        tp.append_ledger(fx.tmp / "record", {"journal": tp.LANE_MOVE, "init": "an-earlier-record", "outcome": "handled",
+                                             "writer": "lane", "kind": "lane.review", "ticket": "FX-3", "move": "review",
+                                             "transitions": ["Submit for review"]})
+        out = self.opened(fx, wt)
+        self.assertNotIn("review move is already made", out, "an earlier record's ledger line counted for this one")
+        self.assertIn('Moved with "Submit for review".', out)
+        self.assertEqual(backend.read()["issues"]["FX-3"]["status"], "In Review")
+
+    def test_a_handoff_that_finds_its_post_already_on_the_ticket_posts_nothing_again(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"]})
+        wt = self.started(fx)
+        self.opened(fx, wt)
+        self.reviewed(fx, wt)
+        # The hand-off's own update is already on the ticket, as a post whose line was never written would leave it.
+        journal = sorted(self.record(fx)["journal"], key=lambda e: e["id"])
+        upcoming = journal[-1]["id"] + 1  # the entry the hand-off journals next
+        stamp = tp.marker("FX-1", tp.init_id(journal), upcoming, "comment")
+        with backend.edit() as store:
+            store["issues"]["FX-3"]["markers"].append(stamp)
+        code, out = fx.flow("handoff", "FX-3", "--pr", "https://forge.test/pr/1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        [entry] = [e for e in self.record(fx)["journal"] if e["kind"] == "candidate.handed"]
+        self.assertEqual(entry["id"], upcoming, "the marker wasn't the hand-off's own")
+        self.assertEqual([c for c in self.calls(backend, "comment")], [], "the hand-off posted its update again")
+        handed = [l for l in tp.read_ledger(fx.tmp / "record") if l.get("kind") == "candidate.handed"]
+        self.assertEqual([(l["outcome"], l.get("found")) for l in handed], [("comment", True)])
+
     def handed(self, fx, wt: Path) -> tuple[int, str]:
         h = self.harness
         (wt / ".orchestration/review/FX-3").mkdir(parents=True, exist_ok=True)

@@ -4044,6 +4044,24 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         code, out = fx.flow("lead-brief", cwd=m); expect(code == 0, out)
         self.assertIn("origin/integration-2", (m / "docs/lane-brief.md").read_text())
 
+        # lane-start serves a base the binding's bases match by pattern, and only by the pattern's own segment.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lane-start", "FX-3", "--base", "integration-9/sub", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("doesn't serve the base integration-9/sub", out)
+        code, out = fx.flow("lane-start", "FX-3", "--base", "integration-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        started = m / "lanes/FX-3"
+        self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=started).stdout.strip(),
+                         sh("git", "rev-parse", "origin/integration-2", cwd=m).stdout.strip())
+        # A lane command there reads the base it was started on, served by the pattern, with no variable to name it.
+        c = fx.call("Config", started, "FX-1", cwd=started, attrs=["base_branch", "delivery_where"])
+        self.assertEqual(c["base_branch"], "integration-2")
+        self.assertTrue(c["delivery_where"].startswith("origin/integration-2:"), c)
+        code, out = fx.flow("gate", "FX-3", cwd=started)
+        self.assertEqual(code, 0, out)
+
         # A lane reads the delivery's settings from origin/integration-2, with the base it was given.
         wt = m / "lanes/FX-2"
         sh("git", "worktree", "add", "-q", "--no-track", "-b", "feature/FX-2", wt, "origin/integration-2", cwd=m)
