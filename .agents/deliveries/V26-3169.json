@@ -31,7 +31,8 @@
         "skills/orchestrate-work/references/schemas.json",
         "tests/test_orchestration_state.py",
         "skills/run-delivery/scripts/tracker_publisher.py",
-        "tests/test_lead_wait.py"
+        "tests/test_lead_wait.py",
+        "tests/test_orchestration_adopter.py"
       ]
     },
     "lane-2": {
