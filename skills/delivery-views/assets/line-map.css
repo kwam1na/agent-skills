@@ -34,8 +34,8 @@
     color-scheme: dark;
 }
 .theme-switch { position: fixed; top: 14px; right: 14px; z-index: 20; display: flex; padding: 3px; gap: 2px;
-  border-radius: 999px; background: var(--lift); box-shadow: 0 2px 6px rgba(20, 23, 25, .06), 0 12px 28px -12px rgba(20, 23, 25, .2), 0 0 0 1px color-mix(in oklab, var(--edge) 18%, transparent); }
-.theme-switch button { width: 30px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 999px;
+  border-radius: 10px; background: var(--lift); box-shadow: 0 2px 6px rgba(20, 23, 25, .06), 0 12px 28px -12px rgba(20, 23, 25, .2), 0 0 0 1px color-mix(in oklab, var(--edge) 18%, transparent); }
+.theme-switch button { width: 30px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 7px;
   background: none; color: var(--faint); cursor: pointer; }
 .theme-switch button:hover { color: var(--ink); }
 .theme-switch button[aria-pressed="true"] { background: var(--well); color: var(--ink); box-shadow: var(--shadow-press); }
@@ -48,7 +48,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible, .issue-link:focus-
 a:focus-visible, summary:focus-visible, .issue-link:focus-visible { border-radius: 4px; }
 [tabindex="-1"]:focus { outline: none; }
 .plan-unit:focus, .plan-open li:focus, .feed li[data-revealed]:focus { position: relative; isolation: isolate; }
-.plan-unit:focus::before, .plan-open li:focus::before, .feed li[data-revealed]:focus::before { content: ""; position: absolute; inset: 4px -12px; z-index: -1; border-radius: 6px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.plan-unit:focus::before, .plan-open li:focus::before, .feed li[data-revealed]:focus::before { content: ""; position: absolute; inset: 4px -12px; z-index: -1; border-radius: 4px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--text); font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
 .chapter { padding: 64px max(64px, env(safe-area-inset-right, 0px)) 64px max(24px, env(safe-area-inset-left, 0px)); }
@@ -66,7 +66,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 
 /* Being checked now */
 /* The checking sheet: what is being checked now, floating on the ground. */
-.checking { position: relative; isolation: isolate; max-width: 640px; display: grid; gap: 12px; padding: 22px 24px; border-radius: 24px; }
+.checking { position: relative; isolation: isolate; max-width: 640px; display: grid; gap: 12px; padding: 22px 24px; border-radius: 14px; }
 /* The sheet's surface is its own layer, so anything drawn behind the sheet sits under it rather than over it. */
 .checking::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--lift); box-shadow: var(--shadow-sheet); }
 .checking > * { min-width: 0; }
@@ -112,7 +112,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 /* Past twelve checks with no times, the run is a row of capsules in a groove. */
 /* The checks without times: equal capsules in the run line's well, in its marks: done quiet, running solid,
    failed held, waiting as hollow outlines. */
-.ck-bar-well { padding: 14px 14px 8px; border-radius: 16px; background: var(--well); max-width: 592px; box-sizing: border-box; }
+.ck-bar-well { padding: 14px 14px 8px; border-radius: 10px; background: var(--well); max-width: 592px; box-sizing: border-box; }
 .ck-bar { display: flex; gap: 2px; height: 6px; }
 .ck-bar span { flex: 1; min-width: 2px; border-radius: 999px; box-shadow: inset 0 0 0 1.25px var(--edge); opacity: .55; }
 .ck-bar span.passed, .ck-bar span.reused, .ck-bar span.skipped { background: var(--ink); box-shadow: none; opacity: .2; }
@@ -122,7 +122,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 /* The check running now, as the highlighted row of the sheet. */
 /* The check running now, as the highlighted row of the sheet. Its mark is a ring whose arc turns while it runs; when it
    finishes the arc closes into the ring and its result draws inside, a check in ink or a cross in held. */
-.ck-run { display: flex; align-items: flex-start; gap: 9px; padding: 6px 10px; margin: 0 -10px; border-radius: 10px; background: var(--well); font-size: 14px;
+.ck-run { display: flex; align-items: flex-start; gap: 9px; padding: 6px 10px; margin: 0 -10px; border-radius: 6px; background: var(--well); font-size: 14px;
   line-height: 20px; font-weight: 500; overflow-wrap: anywhere; }
 .ck-run-words { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; flex: 1; min-width: 0; transform-origin: 50% 50%; backface-visibility: hidden; }
 .ck-run-name { min-width: 0; overflow-wrap: anywhere; }
@@ -232,7 +232,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .stop-btn:focus-visible { box-shadow: 0 0 0 3px var(--paper), 0 0 0 5px var(--ink); }
 .stop-label { position: absolute; top: 40px; font: 450 11px/14px var(--mono); color: var(--soft); white-space: nowrap; text-align: center; }
 /* What one stop carries, on its own sheet; its owner and timeline take the lane's hue. */
-.detail { min-height: 58px; padding: 22px 24px; border-radius: 24px; background: var(--lift); box-shadow: var(--shadow-sheet); display: grid; gap: 10px; }
+.detail { min-height: 58px; padding: 22px 24px; border-radius: 14px; background: var(--lift); box-shadow: var(--shadow-sheet); display: grid; gap: 10px; }
 .detail .d1 { font-size: 17px; line-height: 24px; font-weight: 550; }
 .detail .d-owner { margin-bottom: -6px; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--c, var(--soft)); }
 .detail .d-owner.is-none { color: var(--faint); }
@@ -267,7 +267,7 @@ svg.d-stage-icon.is-merged { width: 16px; height: 16px; border: 0; border-radius
 .mh[open] > summary::before { transform: rotate(45deg); margin-bottom: 3px; }
 .mh summary:hover, .mh summary:focus-visible { color: var(--ink); }
 .mh ol { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 2px; font-size: 13px; color: var(--soft); }
-.mh li { display: flex; gap: 12px; padding: 4px 10px; margin: 0 -10px; border-radius: 10px; }
+.mh li { display: flex; gap: 12px; padding: 4px 10px; margin: 0 -10px; border-radius: 6px; }
 .mh time { flex: none; min-width: 64px; font-family: var(--mono); font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mh li.in { color: var(--ink); background: var(--well); }
 .mh li.bad { color: var(--held); background: var(--held-wash); }
@@ -294,7 +294,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .ck-verdict { margin: 0; font-size: 15px; }
 .ck-verdict b { font-weight: 600; }
 .ck-verdict span { color: var(--soft); font-size: 14px; }
-.run-line { display: block; width: 100%; max-width: 592px; height: auto; overflow: visible; padding: 10px 14px 6px; box-sizing: border-box; border-radius: 16px; background: var(--well); }
+.run-line { display: block; width: 100%; max-width: 592px; height: auto; overflow: visible; padding: 10px 14px 6px; box-sizing: border-box; border-radius: 10px; background: var(--well); }
 /* A check run: each check a capsule on the run's clock, overlapping checks stacked in rows. Passed checks are quiet, the
    long ones a little less; the running one is solid ink with a soft glow; a failure is held and numbered. */
 /* A wide clear stroke makes each thin capsule easy to point at; the one pointed at darkens. */
@@ -313,7 +313,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .ck-fails .g.num { width: 16px; height: 16px; margin-left: -2px; border: 1.5px solid var(--held); border-radius: 50%; font-size: 10px; line-height: 13px; text-align: center; padding: 0; }
 .ck-failures { margin: 0; }
 .ck-fails { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.ck-fails li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 10px; margin: 0 -10px; border-radius: 10px; background: var(--held-wash); }
+.ck-fails li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 10px; margin: 0 -10px; border-radius: 6px; background: var(--held-wash); }
 .ck-fails .g { color: var(--held); }
 .ck-fb { min-width: 0; }
 .ck-fh { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0 12px; }
@@ -324,7 +324,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 /* What the lane found about the failure, set on the sheet's own surface so it reads as a finding, not more output. */
 .ck-note { display: flex; gap: 8px; align-items: baseline; color: var(--ink); font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
 .ck-note .g { flex: none; position: relative; top: 2px; }
-.ck-fails .ck-note { margin-top: 8px; padding: 7px 10px; border-radius: 8px; background: color-mix(in oklab, var(--lift) 72%, transparent); }
+.ck-fails .ck-note { margin-top: 8px; padding: 7px 10px; border-radius: 6px; background: color-mix(in oklab, var(--lift) 72%, transparent); }
 .ck-log { font: 400 11px/16px var(--mono); color: var(--faint); margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ck-batch-note { font-size: 13px; line-height: 18px; color: var(--faint); padding-left: 28px; margin-top: -6px; }
 .ck-more { margin: 14px 0 0 24px; padding-top: 10px; border-top: 1px solid var(--hair); }
@@ -341,14 +341,14 @@ a.issue-link { color: inherit; cursor: pointer; }
 .ck-members li.in { color: var(--soft); }
 .ck-members li.in::before { content: ""; box-shadow: none; background: var(--ink);
   -webkit-mask: radial-gradient(circle, #000 5px, transparent 5.5px); mask: radial-gradient(circle, #000 5px, transparent 5.5px); }
-.ck-in { margin-left: 8px; font-size: 12px; color: var(--faint); border-radius: 999px; padding: 1px 9px; box-shadow: inset 0 0 0 1px var(--hair); }
+.ck-in { margin-left: 8px; font-size: 12px; color: var(--faint); border-radius: 4px; padding: 1px 9px; box-shadow: inset 0 0 0 1px var(--hair); }
 .ck-chosen-list { list-style: none; margin: 8px 0 2px; padding: 0 0 0 16px; display: grid; gap: 6px; }
 .ck-chosen-list b { display: block; font-weight: 500; color: var(--soft); }
 .detail .d-batch { font-size: 13px; color: var(--soft); }
 .stop-label .pr-num { display: block; font-size: 10px; line-height: 12px; color: var(--faint); }
 .detail .d-run-none { font-size: 13px; color: var(--faint); }
 .d-run { margin-top: 24px; }
-.issue-card { position: fixed; z-index: 30; max-width: 320px; padding: 14px 16px; border-radius: 16px; background: var(--lift); color: var(--ink);
+.issue-card { position: fixed; z-index: 30; max-width: 320px; padding: 14px 16px; border-radius: 10px; background: var(--lift); color: var(--ink);
   box-shadow: 0 2px 6px rgba(20, 23, 25, .06), 0 24px 48px -16px rgba(20, 23, 25, .22), 0 0 0 1px color-mix(in oklab, var(--edge) 18%, transparent);
   font-size: 13px; line-height: 1.45; pointer-events: none; }
 .issue-card[hidden] { display: none; }
@@ -358,7 +358,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 
 /* Who: each lane session on its own card. */
 .people { display: grid; gap: 12px; }
-.person { display: grid; grid-template-columns: 20px minmax(0, 1fr) minmax(0, 220px); gap: 16px; padding: 16px 20px; border-radius: 16px;
+.person { display: grid; grid-template-columns: 20px minmax(0, 1fr) minmax(0, 220px); gap: 16px; padding: 16px 20px; border-radius: 10px;
   background: var(--lift); box-shadow: var(--shadow-sheet); align-items: center; }
 .person .swatch { display: grid; align-self: start; margin-top: 1px; width: 20px; height: 20px; color: var(--c); }
 .person .swatch .persona { width: 20px; height: 20px; }
@@ -368,7 +368,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .person .said.old { color: var(--wait); }
 .person .st { display: grid; justify-items: end; gap: 4px; min-width: 0; }
 /* A lane's state, said in a soft pill. Success stays ink; only a block is coloured. */
-.chip { display: inline-flex; align-items: center; height: 26px; padding: 0 12px; border-radius: 999px; background: var(--well); font-size: 12px; font-weight: 500;
+.chip { display: inline-flex; align-items: center; height: 26px; padding: 0 12px; border-radius: 6px; background: var(--well); font-size: 12px; font-weight: 500;
   color: var(--soft); white-space: nowrap; }
 .chip.assigned, .chip.working, .chip.reviewing, .chip.handed, .chip.done { color: var(--ink); }
 .chip.blocked { background: var(--held-wash); color: var(--held); }
@@ -397,8 +397,8 @@ a.issue-link { color: inherit; cursor: pointer; }
 .feed-legend .g { display: flex; }
 .feed-legend .g svg { vertical-align: top; }
 /* A choice of view: a soft track with the chosen segment raised. */
-.tabs { display: inline-flex; flex-wrap: wrap; justify-self: start; gap: 2px; padding: 3px; border-radius: 999px; background: color-mix(in oklab, var(--edge) 14%, transparent); font-size: 13px; }
-.tabs button { font: inherit; font-weight: 500; height: 28px; padding: 0 14px; border: 0; border-radius: 999px; background: none; color: var(--faint); cursor: pointer; }
+.tabs { display: inline-flex; flex-wrap: wrap; justify-self: start; gap: 2px; padding: 3px; border-radius: 8px; background: color-mix(in oklab, var(--edge) 14%, transparent); font-size: 13px; }
+.tabs button { font: inherit; font-weight: 500; height: 28px; padding: 0 14px; border: 0; border-radius: 6px; background: none; color: var(--faint); cursor: pointer; }
 .tabs button:hover { color: var(--ink); }
 .tabs button[aria-pressed="true"] { color: var(--ink); background: var(--lift); box-shadow: var(--shadow-press); }
 .feed { list-style: none; margin: 0; padding: 0; }
@@ -413,7 +413,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .feed p { margin: 0; max-width: 66ch; overflow-wrap: anywhere; }
 .feed .who { display: block; font-size: 12px; color: var(--faint); margin-top: 2px; }
 .more { justify-self: start; font: inherit; font-size: 13px; font-weight: 500; height: 34px; padding: 0 16px; color: var(--ink); background: var(--lift);
-  border: 0; border-radius: 999px; box-shadow: var(--shadow-press), 0 0 0 1px var(--hair); cursor: pointer; }
+  border: 0; border-radius: 6px; box-shadow: var(--shadow-press), 0 0 0 1px var(--hair); cursor: pointer; }
 
 /* Parked */
 .parked { list-style: none; margin: 0; padding: 0; columns: 2 300px; column-gap: 40px; }
@@ -489,13 +489,13 @@ a.issue-link { color: inherit; cursor: pointer; }
 @media (max-width: 640px) {
   .chapter { padding: 48px 20px; }
   .chapter-now { min-height: auto; }
-  .checking { padding: 18px 16px; border-radius: 20px; }
+  .checking { padding: 18px 16px; border-radius: 12px; }
   .ck-run, .ck-fails li { margin: 0 -6px; }
   .rail { display: none; }
   .lines-track { min-width: max(740px, calc(292px + var(--most, 1) * 46px)); }
   .line { grid-template-columns: 104px minmax(0, 1fr); gap: 12px; }
   .person { grid-template-columns: 20px minmax(0, 1fr); padding: 14px 16px; }
-  .detail { padding: 18px 16px; border-radius: 20px; }
+  .detail { padding: 18px 16px; border-radius: 12px; }
   .person .st { grid-column: 2; justify-items: start; }
   .person .on { text-align: left; }
   .feed li { grid-template-columns: 18px minmax(0, 1fr); }
@@ -509,7 +509,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .plan-now-link:hover, .plan-now-link:focus-visible { color: var(--ink); text-decoration-color: currentColor; }
 .plan-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; max-width: none; }
 .plan-reload { font-family: var(--text); font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--wait);
-  box-shadow: inset 0 0 0 1.5px var(--wait); border-radius: 999px; padding: 4px 12px; }
+  box-shadow: inset 0 0 0 1.5px var(--wait); border-radius: 6px; padding: 4px 12px; }
 .plan-needs { max-width: 62ch; display: grid; gap: 10px; }
 .plan-approval { margin: 0; max-width: 62ch; font-size: 14px; color: var(--soft); }
 .plan-needs .ah { font-size: 13px; font-weight: 600; color: var(--held); }
@@ -543,11 +543,11 @@ a.issue-link { color: inherit; cursor: pointer; }
   border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .15s ease; }
 .plan-fold[open] > summary::before { transform: rotate(45deg); margin-bottom: 3px; }
 .plan-fold > summary:hover, .plan-fold > summary:focus-visible { color: var(--ink); }
-.pf-count { font: 500 12px/18px var(--mono); color: var(--soft); background: var(--well); border-radius: 999px; padding: 0 8px; }
+.pf-count { font: 500 12px/18px var(--mono); color: var(--soft); background: var(--well); border-radius: 4px; padding: 0 8px; }
 .plan-fold > :not(summary) { margin-top: 12px; }
 .plan-fold .waiting { font-size: 14px; }
 .plan-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
-.plan-switch button { font: inherit; font-size: 12px; font-weight: 500; height: 26px; border: 0; border-radius: 999px; padding: 0 12px; background: color-mix(in oklab, var(--edge) 14%, transparent);
+.plan-switch button { font: inherit; font-size: 12px; font-weight: 500; height: 26px; border: 0; border-radius: 6px; padding: 0 12px; background: color-mix(in oklab, var(--edge) 14%, transparent);
   color: var(--faint); cursor: pointer; }
 .plan-switch button:hover { color: var(--ink); }
 .plan-switch button[aria-pressed="true"] { color: var(--ink); background: var(--lift); box-shadow: var(--shadow-press), 0 0 0 1px var(--hair); }

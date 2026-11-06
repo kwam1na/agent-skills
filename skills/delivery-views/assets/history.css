@@ -25,7 +25,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .head, .row > button { display: grid; grid-template-columns: minmax(0, 2.2fr) 0.8fr 1.3fr 1.3fr 0.8fr 0.6fr 1.4fr minmax(0, 2fr); gap: 12px; align-items: baseline; }
 .head { font-size: 12px; color: var(--faint); padding: 10px 8px; border-bottom: 1px solid var(--hair); }
 .row { border-bottom: 1px solid var(--hair); }
-.row > button { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; border-radius: 10px; padding: 12px 10px; cursor: pointer; }
+.row > button { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; border-radius: 6px; padding: 12px 10px; cursor: pointer; }
 .row > button:hover, .row > button[aria-expanded="true"] { background: var(--lift); box-shadow: var(--shadow-press); }
 .row > button:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 .who { overflow-wrap: anywhere; }
@@ -35,7 +35,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .when, .findings { font: 400 12px/18px var(--mono); color: var(--soft); font-variant-numeric: tabular-nums; }
 .delivery { font-size: 13px; overflow-wrap: anywhere; }
 .note { grid-column: 1 / -1; font-size: 13px; color: var(--held); }
-.detail { margin: 4px 0 12px; padding: 18px 20px; border-radius: 16px; background: var(--lift); }
+.detail { margin: 4px 0 12px; padding: 18px 20px; border-radius: 10px; background: var(--lift); }
 .label { display: none; }
 @media (max-width: 760px) {
   .head { display: none; }

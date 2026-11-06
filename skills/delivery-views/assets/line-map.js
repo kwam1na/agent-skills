@@ -694,7 +694,7 @@
   function easeSheet(sheet, from) {
     var to = sheet.offsetHeight;
     if (from === to || !runMotionWanted(sheet)) { return; }
-    sheet.style.clipPath = "inset(-48px -48px 0 -48px round 24px)";
+    sheet.style.clipPath = "inset(-48px -48px 0 -48px round 14px)";
     var easing = sheet.animate([{ height: from + "px" }, { height: to + "px" }], { id: "sheet-height", duration: runEaseDuration(from, to), easing: RUN_EASING });
     easing.onfinish = easing.oncancel = function () { sheet.style.clipPath = ""; };
   }
