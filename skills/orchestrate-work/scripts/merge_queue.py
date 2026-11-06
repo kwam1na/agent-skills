@@ -53,6 +53,8 @@ PLACEHOLDERS = frozenset({
     "candidate", "branch", "head", "expectedHead", "base", "baseHead", "treeSha", "ref", "workRoot", "checkMode",
 })
 PLACEHOLDER = re.compile(r"^\{([A-Za-z]+)\}$")
+# The longest wait, in seconds, a process wait takes on every platform the runner supports.
+FULL_HEALTH_TIMEOUT_MOST = 2147483
 # Reasons that stop the whole queue rather than one candidate.
 QUEUE_STOPPING = frozenset({"base_broken", "merged_unverified", "batch_tree_mismatch"})
 # Reasons for which the runner attempted nothing and leaves the queue as it was.
@@ -280,6 +282,14 @@ def binding_errors(binding: object) -> list[str]:
         errors.append("/merge: the merge argv must use {expectedHead} as a whole element")
     if binding["checkTimeoutSeconds"] > binding["checkTimeoutCeiling"]:
         errors.append("/checkTimeoutSeconds: above checkTimeoutCeiling")
+    # fullHealthTimeoutSeconds is the post-merge run's own bound: checkTimeoutCeiling bounds the queue's checks, not it.
+    # A wait longer than the platform's process wait can take would overflow it rather than time out.
+    if binding.get("fullHealthTimeoutSeconds", 0) > FULL_HEALTH_TIMEOUT_MOST:
+        errors.append(f"/fullHealthTimeoutSeconds: above {FULL_HEALTH_TIMEOUT_MOST}, the most a process wait can take")
+    selection = binding.get("selection") or {}
+    if selection.get("refusalStops") and not selection.get("lead"):
+        errors.append("/selection/refusalStops: needs selection.lead, since only the lead's selection releases a "
+                      "candidate the provider refused")
     for name in ("alwaysRun", "fallback"):
         problems = selection_errors(binding[name], binding, check_cwd=None)
         errors.extend(f"/{name}: {problem}" for problem in problems)
@@ -1656,7 +1666,7 @@ class Runner:
         if members is not None:
             selection, ordered = self.select_by_lead(members, checkout)
         else:
-            selection, ordered = self.select_by_provider(base_head, synced, changes, checkout, context)
+            selection, ordered = self.select_by_provider(base_head, synced, changes, checkout, context, subjects)
         if self.binding.get("selection", {}).get("lead"):
             self.record_selection(subjects, members)
         return selection, ordered
@@ -1688,6 +1698,7 @@ class Runner:
 
     def select_by_provider(
         self, base_head: str, synced: str, changes: list[dict], checkout: Path, context: Context,
+        subjects: list[str] | None = None,
     ) -> tuple[dict, list[dict]]:
         request = {"base": self.base, "baseHead": base_head, "head": synced, "changes": changes}
         providers = []
@@ -1716,6 +1727,9 @@ class Runner:
             for check in checks:
                 if check["id"] not in {item["id"] for item in selected}:
                     selected.append(check)
+        refused = [record for record in providers if record["outcome"] == "failed"]
+        if refused and self.binding.get("selection", {}).get("refusalStops"):
+            self.refuse_selection(subjects or [], refused)
         if uncovered:
             reasons.append("uncovered")
         final = list(selected)
@@ -1742,6 +1756,26 @@ class Runner:
             "checks": [check["id"] for check in ordered],
         }
         return selection, ordered
+
+    def refuse_selection(self, subjects: list[str], refused: list[dict]) -> None:
+        """Under selection.refusalStops, a provider that exited non-zero stops the candidate before any check runs.
+
+        Widening to fallback would run the slowest selection the binding has,
+        the opposite of a budget the provider refused to exceed. Each row says
+        so in checkSelection; the candidate stays unmerged until the lead's
+        selection for its reviewed head is checked in place of the provider's.
+        """
+        detail = "; ".join(f"the {record['source']} provider {record['detail']}" for record in refused)[:800]
+
+        def build(current: dict) -> tuple[dict, dict]:
+            queue = [dict(item) for item in current["queue"]]
+            for item in queue:
+                if item["subject"] in subjects:
+                    item["checkSelection"] = {"by": "provider", "outcome": "provider_refused", "detail": detail}
+            return {"queue": queue}, {}
+
+        self.write(build=build)
+        raise Stop("provider_refused", f"{detail}; selection.refusalStops holds it until the lead selects its checks")
 
     def run_one(self, check: dict, checkout: Path, context: Context) -> Completed | None:
         cwd = inside(checkout, check["cwd"])
@@ -2350,6 +2384,8 @@ class Runner:
             if queue_stopped:
                 # Every stop that stops the queue leaves the base to confirm by hand; serve waits for base.repaired.
                 self.journal("base.broken", f"{stop.reason}: {stop.detail}", subject)
+            if subject is not None and stop.reason == "provider_refused":
+                self.journal("selection.refused", f"The provider refused {subject}'s checks: {stop.detail}", subject)
             if subject is not None:
                 self.journal("candidate.stopped", f"{stop.reason}: {stop.detail}", subject)
 

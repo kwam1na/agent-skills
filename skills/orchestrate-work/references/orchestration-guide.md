@@ -124,8 +124,10 @@ posts as the publishing step says.
 | `check.retried` | On the flake's tracking reference: one more retry, naming the candidate and the failing tests, as evidence for fixing the flake. |
 | `check.reused` | None: the candidate's work item already says it was handed off and is being checked; the reused check shows in the record and the views. |
 | `check.selected` | None: the lead's selection and its reason show in the record and the views, and the checks it ran post with `candidate.merged` or `candidate.stopped`. |
+| `selection.refused` | None: the stop posts with `candidate.stopped`, and the provider's words show in the record and the views. |
 | `candidate.merged` | On the ticket: the merge commit, the checks run, and any check reported but not awaited; the ticket moves to its review or completed state. |
 | `candidate.stopped` | On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or pending a decision. |
+| `base.verified` | None: the post-merge `fullHealth` passed at the base head the named merge reached, and the result shows in the record and the views. |
 | `base.broken` | On the epic: the stop code and its detail (the failing check, an unverified merge, a base that moved under a batch, or a batch that landed in part), and that the queue is stopped; `base.repaired` reopens it. |
 | `base.repaired` | On the epic: the fix that landed and the gap it closed. |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. |
@@ -293,6 +295,7 @@ supervisor's.
   | `prepare_failed`, `dirty_checkout` | A checkout could not be prepared, or was not clean after preparing or checking. Fix `prepare` or the check that writes files. |
   | `no_checks`, `profile_unknown` | The selection was empty while files changed, or a check named an unknown profile. Fix the provider, `alwaysRun`, `fallback` or `profiles`. |
   | `selection_invalid` | Your check selection no longer fits the binding, or two batch members' selections define one check differently. Select again, or clear it, and re-queue. |
+  | `provider_refused` | Under `selection.refusalStops`, the provider exited non-zero, so no check ran and the candidate is held. Its words are in `checkSelection.detail` and in `selection.refused`. Select its checks for its reviewed head, then re-queue it. |
   | `check_failed` | Return the failing check's output to the lane. |
   | `base_broken` | Stop and follow the base-broken rules. |
   | `base_moved` | The base moved after the candidate was synced. `run` re-syncs and re-checks once and stops on a second move; a standalone `check` or `merge` stops at once. Re-queue. |
@@ -363,11 +366,26 @@ lead checks it as below, marks it met and journals it.
 ### 8. Close out
 
 With run-delivery's supervisor running, the lead does none of these by hand.
-Once nothing holds the close, the supervisor runs `fullHealth` once per base
-head, unless the base declares the `focused` posture, files a follow-up for each deferred finding, journals `delivery.closed`
-and waits until the tracker has every update, archives the record, aligns the operator's
-checkout when it is clean, and writes a friction note stub for
-`$compound-learning`, in that order. The lead's part is what holds the close,
+`fullHealth` is the post-merge tier, and under `gate` it doesn't wait for the
+close: after each merge or batch, the supervisor runs it at the new base head in
+a fresh checkout of that head, under the binding's `fullHealthTimeoutSeconds`.
+It journals `base.verified` on a pass, `base.broken` on a failure and
+`base.repaired` on the first pass after a failed run, each naming the merge the
+run follows, and writes the result to the record. It runs `fullHealth` once per
+base head, unless the base declares the `focused` posture: a failed head runs
+again only on `lead-resolve full-health`, and the next run waits for another
+merge. A `base.broken` it journals stops the queue as any other does, and its
+`base.repaired` reopens it; a pass never repairs a break the queue found, which
+the lead confirms. If the base turns `focused` while such a break stands, the
+break holds nothing at the close, since no run comes to clear it, but it stays
+listed in "Needs you" and serve still waits for `base.repaired`. A pass that
+runs `fullHealth` lasts as long as the run: the views it draws wait for it, and
+a stop asked meanwhile is taken once it ends. Once nothing holds the close, the supervisor runs
+`fullHealth` at the final head only when no run at that head has happened, as
+in a delivery that merged nothing, then files a follow-up for each deferred
+finding, journals `delivery.closed` and waits until the tracker has every
+update, archives the record, aligns the operator's checkout when it is clean,
+and writes a friction note stub for `$compound-learning`, in that order. The lead's part is what holds the close,
 which every lead command names from the supervisor's last pass, and the
 friction note. The steps below are for a delivery without it.
 
@@ -377,7 +395,7 @@ friction note. The steps below are for a delivery without it.
   the journal, the close-out summary and the plan chapter
   say the run was skipped under the posture, naming its source and reason. `gate`,
   no file, or a file that is malformed or unreadable is a gate.
-- Unless the delivery's base declares the `focused` posture at its tip, run the binding's `fullHealth` once, on the final base: in a fresh detached
+- Unless the delivery's base declares the `focused` posture at its tip, run the binding's `fullHealth` once, on the final base, unless a run at that head already stands from a merge: in a fresh detached
   checkout of the final base tip, after the binding's `prepare` steps, with
   the binding's `environment` set and its placeholders filled in. Never run
   it in the operator's own checkout. It is the backstop for every
@@ -887,14 +905,15 @@ it is not a freshness proof or permission to skip any admission check.
 | `checkOutput` | Optional. `{failurePattern}`: a regular expression with a named group `id` and an optional named group `message`, matched line by line against a failed check's output. Each match is a failing test or step, shown in the record, the journal and the views. |
 | `flakes` | Optional. Known flakes, each `{check, tests?, ref}`: the check's id, the regular expressions its flaky failure ids match in full (leave `tests` out when the whole check is flaky), and the reference that tracks the flake. See "Flakes and retries". |
 | `parallelChecks` | Optional. How many checks marked `parallelSafe` may run at once; 1 when absent. A check without `parallelSafe` always runs alone. |
-| `selection` | Optional. `{lead}`: `true` lets the lead choose a candidate's checks with the state tool's `select` command, in place of the provider's answer and `fallback`. Off when absent, so every candidate is checked as before. See "Lead-selected checks". |
+| `selection` | Optional. `{lead, refusalStops?}`: `lead: true` lets the lead choose a candidate's checks with the state tool's `select` command, in place of the provider's answer and `fallback`. `refusalStops: true`, which needs `lead: true`, makes a provider that exits non-zero stop the candidate with `provider_refused` instead of widening to `fallback`. Each is off when absent, so every candidate is checked as before. See "Lead-selected checks". |
 | `reusableChecks` | Optional. Ids of the binding's own checks (`alwaysRun` or `fallback`) the runner may reuse from a lane's hand-off evidence instead of running them again. Each may use no placeholder but `{treeSha}`, and no binding check may name it as a prerequisite. None when absent, so nothing is reused until you opt in. See "Reused checks". |
 | `batch` | Optional. `{culpritSearch}`: how `batch` finds the member that failed a batch's checks, `bisect` (the default, fewest check runs) or `serial` (each prefix in order). |
 | `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match; these names are matched without case. The runner drops an inherited setting of them before running git or any declared argv; a profile's environment may still set them for its checks. |
 | `ready` | An argv run before merging; a non-zero exit stops with `ready_refused`. |
 | `merge` | An argv that must use `{expectedHead}`. A binding whose `merge` lacks it is invalid. |
 | `release` | Ordered targets, each with an `id`, `argv`, `stopsOnFailure` and `requiresApproval`, and an optional `timeoutSeconds`. |
-| `fullHealth` | The argv for the close-out run. Required, and not run while the base declares the `focused` posture. |
+| `fullHealth` | The argv for the post-merge tier: run by the supervisor after each merge or batch, and at close-out only when no run at the final head has happened. Required, and not run while the base declares the `focused` posture. |
+| `fullHealthTimeoutSeconds` | Optional. The seconds one `fullHealth` run may take, a positive integer of at most 2147483; `checkTimeoutSeconds` when absent. `checkTimeoutCeiling` doesn't bound it, since it bounds the queue's checks and the post-merge tier is not one of them. |
 | `leases` | Each lease's `id`, `description` and `defaultHolder`, plus optional `materialize` and `withdraw` argv. |
 | `state` | `{directory, renderers, publishers, snapshotMaxAgeSeconds?, trackerSnapshot?, forgeSnapshot?, refreshSeconds?, workHints?, liveHome?}`. `liveHome` is the id of a declared argv renderer whose HTML view the live server serves at its front page, with the live store injected as at `/view/<output>`; the view must carry `<meta name="delivery-state-live">`. Without it the front page is the built-in static page. A `liveHome` that names a built-in renderer, an unknown id, or a view whose output is not an HTML file is refused. `trackerSnapshot`, `{argv, timeoutSeconds?}`, is the repository's command that prints the delivery's `work-snapshot/1` tracker snapshot; `{parent}` in its argv is the record's `meta.trackerParent`, and `{stateDirectory}` in it, or in a renderer's, a publisher's or `workHints` argv, is the resolved state directory the command runs for, so a repository that keeps several records reads the one being served rather than the one its binding names; the command owns whatever access it needs. `forgeSnapshot`, the same shape, prints the forge snapshot of the delivery's change requests; this workflow ships no forge or tracker client, so both are the repository's own, or the ready-made commands described below. `serve` runs them from the repository's checkout every `refreshSeconds`, 180 when absent and at most 86400, and 0 turns that off; it does not start on a block or interval it cannot use. Each command's stdout is read until it exits, plus a two-second drain: output that a process it leaves behind writes later is not read, and output written during the drain can spoil the snapshot. Each runs in its own process group with a per-run marker in its environment; afterwards, interrupted or not, the state tool stops what is left in that group or carries the marker, never the caller or its parents, pid 1, another user's process or one that started before the run, and stops nothing when it cannot read the process table. A child that clears its environment, or whose environment the system hides, such as some system binaries on macOS, survives. On Windows only the command itself is stopped, and only when it overran or was interrupted. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`, or `{id, kind: "host"}`, which writes an outbox for the lead to publish; at most one publisher is a host publisher. `workHints`, `{argv, timeoutSeconds?}`, is the repository's command that prints a `work-hints/1` document of each item's files and priority for `next`, run the same way. `snapshotMaxAgeSeconds`, a whole number of seconds, is how old a forge or tracker snapshot may be before `reconcile` refuses it, 900 when absent. After each of its state writes the runner passes this member to the render wrapper; when it is valid and declares no renderer and no publisher, the runner starts no wrapper, and reads the record itself instead, noting a failure as the wrapper would. |
 
@@ -1024,9 +1043,22 @@ It is off unless the binding sets `selection: {"lead": true}`.
 - **The trade-off.** A selection is the lead's judgment, not the repository's
   impact analysis: a check the lead leaves out does not run before the merge.
   Select only when you can name, from the diff, what the change can affect, and
-  say why in the reason. The close-out `fullHealth` run on the final base
+  say why in the reason. The post-merge `fullHealth` run after each merge
   remains the backstop for anything a selection missed, unless the base declares
   the `focused` posture.
+- **A provider's refusal.** Without `selection.refusalStops`, a provider that
+  exits non-zero widens the selection to `fallback`, the widest run the binding
+  has. With `refusalStops: true`, a provider exiting non-zero is a refusal,
+  such as a selection over its budget. The runner runs no check, records
+  `checkSelection: {by: "provider", outcome: "provider_refused", detail}` with
+  the provider's own words, journals `selection.refused` naming the candidate,
+  and stops it with `provider_refused`. The candidate is never merged until
+  your selection for its reviewed head is checked in place of the provider's
+  answer. That selection is bounded by `checkTimeoutCeiling` alone, and its
+  reason records why a run wider than the provider's budget goes through. A
+  provider that times out or answers malformed still widens. A refusal of a
+  batch's checks stops every member, since the provider answered for their
+  combined diff: select each, or re-queue them to run alone.
 
 ### Lead inputs and leases
 

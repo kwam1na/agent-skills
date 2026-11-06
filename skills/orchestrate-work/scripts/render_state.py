@@ -307,6 +307,8 @@ def _selection_texts(item: dict) -> list[str]:
     chosen = item.get("leadSelection")
     if isinstance(used, dict) and used.get("by") == "lead":
         texts.append(f"checks selected by the lead at {used.get('head')}, not the provider · why: {used.get('reason')}")
+    elif isinstance(used, dict) and used.get("by") == "provider" and used.get("outcome") == "provider_refused":
+        texts.append(f"the provider refused its checks, and it is held until the lead selects them · {used.get('detail')}")
     elif isinstance(used, dict) and used.get("by") == "provider":
         texts.append("checks selected by the provider")
     if isinstance(chosen, dict) and not (isinstance(used, dict) and used.get("by") == "lead"
@@ -627,6 +629,8 @@ _PAGE_PROGRAM = """
     var byLead = used !== null && used.by === "lead";
     if (byLead) {
       texts.push("checks selected by the lead at " + show(used.head) + ", not the provider \\u00b7 why: " + show(used.reason));
+    } else if (used !== null && used.by === "provider" && used.outcome === "provider_refused") {
+      texts.push("the provider refused its checks, and it is held until the lead selects them \\u00b7 " + show(used.detail));
     } else if (used !== null && used.by === "provider") {
       texts.push("checks selected by the provider");
     }

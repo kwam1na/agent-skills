@@ -187,6 +187,9 @@ def check(cid, *args, **more):
     return item
 if mode == "fail":
     sys.exit(2)
+if mode == "refuse":
+    sys.stderr.write("over the budget: unit (400s), e2e (700s)\\n")
+    sys.exit(3)
 if mode == "malformed":
     print("not json")
     sys.exit(0)
@@ -4810,3 +4813,155 @@ class LeadSelectionTests(MergeQueueTestCase):
         reasons = {result.document()["stop"]["reason"] for result in results if result.document()["stop"]}
         self.assertIn("selection_invalid", reasons)
         self.assertNotEqual(adopter.item("first")["stage"], "merged")
+
+
+class ProviderRefusalTests(MergeQueueTestCase):
+    """A provider that exits non-zero widens to fallback, unless the binding's selection.refusalStops makes it a stop."""
+
+    STOPS = {"selection": {"lead": True, "refusalStops": True}}
+
+    def kinds(self, adopter: Adopter) -> list[dict]:
+        return state_tool.read_journal(adopter.state)
+
+    def test_without_the_flag_a_refusing_provider_widens_to_fallback_as_before(self) -> None:
+        for name, changes in (("unset", None), ("lead only", {"selection": {"lead": True}}),
+                              ("false", {"selection": {"lead": True, "refusalStops": False}})):
+            with self.subTest(binding=name):
+                self.fresh()
+                adopter = self.adopter(changes, mode="refuse")
+                self.candidate(adopter)
+                results = self.run_queue(adopter, "feature")
+                check = results[1].document()
+                self.assertEqual(check["selection"]["fallbackReasons"], ["provider_failed"])
+                self.assertEqual(check["selection"]["providers"][0]["outcome"], "failed")
+                self.assertIn("over the budget: unit (400s)", check["selection"]["providers"][0]["detail"])
+                self.assertIn("fallback", check["selection"]["checks"])
+                self.assertTrue(check["selection"]["widened"])
+                self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+                self.assertNotIn("selection.refused", [entry["kind"] for entry in self.kinds(adopter)])
+
+    def ran(self, adopter: Adopter) -> list[str]:
+        return [line.split()[1] for line in adopter.log_lines() if line.startswith("check ")]
+
+    @staticmethod
+    def requeue(adopter: Adopter, subject: str) -> None:
+        """What run-delivery's lead-accept --requeue writes: the stage is the runner's."""
+        state = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="runner", version=state["version"], selector=f"queue[subject={subject}]",
+                         assignments={"/stage": "queued", "/checks": []})
+
+    def refused(self, adopter: Adopter, subject: str = "feature") -> None:
+        """What a refusal leaves: no check ran, the candidate stopped and unmerged, and the row and journal say why."""
+        self.assertEqual(self.ran(adopter), [], "a check ran for a refused candidate")
+        item = adopter.item(subject)
+        self.assertEqual(item["stage"], "stopped", item)
+        selection = item["checkSelection"]
+        self.assertEqual((selection["by"], selection["outcome"]), ("provider", "provider_refused"), selection)
+        self.assertIn("over the budget: unit (400s), e2e (700s)", selection["detail"])
+        mine = [entry for entry in self.kinds(adopter) if entry.get("subject") == subject]
+        refusals = [entry for entry in mine if entry["kind"] == "selection.refused"]
+        self.assertEqual(len(refusals), 1, mine)
+        self.assertIn(subject, refusals[0]["summary"])
+        self.assertIn("over the budget: unit (400s)", refusals[0]["summary"])
+        self.assertNotIn("candidate.merged", [entry["kind"] for entry in mine])
+        stops = [entry for entry in mine if entry["kind"] == "candidate.stopped"]
+        self.assertTrue(stops and stops[-1]["summary"].startswith("provider_refused: "), mine)
+        self.assertLess(refusals[0]["id"], stops[-1]["id"])
+
+    def test_with_the_flag_a_refusing_provider_stops_the_candidate_and_runs_no_check(self) -> None:
+        adopter = self.adopter(self.STOPS, mode="refuse")
+        base = adopter.tip("main")
+        self.candidate(adopter)
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "provider_refused")
+        self.assertFalse(document["stop"]["queueStopped"])
+        self.assertIn("over the budget: unit (400s), e2e (700s)", document["stop"]["detail"])
+        self.refused(adopter)
+        self.assertEqual(adopter.tip("main"), base, "a refused candidate landed")
+        self.assertEqual(state_tool.read_state(adopter.state)["meta"].get("hold"), None)
+        # Put back without a selection, it is refused again, never widened.
+        self.requeue(adopter, "feature")
+        self.assertStopped(self.run_queue(adopter, "feature"), "provider_refused")
+        self.assertEqual(self.ran(adopter), [])
+        self.assertEqual(adopter.tip("main"), base)
+
+    def test_a_refusal_from_the_candidate_s_own_provider_stops_it_too(self) -> None:
+        adopter = self.adopter(self.STOPS)
+        base = adopter.tip("main")
+        # The base's provider selects; the candidate changes a provider input, so its own provider runs, and refuses.
+        self.candidate(adopter, {"src/app.txt": "app two\n", "tools/provider-mode.txt": "refuse\n"})
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "provider_refused")
+        self.assertIn("the candidate provider exited 3", document["stop"]["detail"])
+        self.assertNotIn("the base provider", document["stop"]["detail"])
+        self.refused(adopter)
+        self.assertEqual(adopter.tip("main"), base)
+
+    def test_only_a_non_zero_exit_is_a_refusal(self) -> None:
+        for mode, reason in (("malformed", "provider_malformed"), ("timeout", "provider_timed_out")):
+            with self.subTest(mode=mode):
+                self.fresh()
+                provider = {"argv": [PY, "tools/provider.py"], "cwd": ".", "timeoutSeconds": 1,
+                            "providerInputs": ["tools/provider.py", "tools/provider-mode.txt"]}
+                adopter = self.adopter({**self.STOPS, **({"provider": provider} if mode == "timeout" else {})}, mode=mode)
+                self.candidate(adopter)
+                results = self.run_queue(adopter, "feature")
+                self.assertEqual(results[1].document()["selection"]["fallbackReasons"], [reason])
+                self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+
+    def test_the_lead_s_selection_releases_a_refused_candidate_and_is_what_runs(self) -> None:
+        adopter = self.adopter(self.STOPS, mode="refuse")
+        head = self.candidate(adopter)
+        self.assertStopped(self.run_queue(adopter, "feature"), "provider_refused")
+        # Wider than any budget the provider keeps: the lead's selection is bounded by checkTimeoutCeiling alone.
+        ceiling = adopter.binding["checkTimeoutCeiling"]
+        wide = [check_entry("focused", timeoutSeconds=ceiling), check_entry("wide", timeoutSeconds=ceiling)]
+        with self.assertRaises(state_tool.StateError):
+            state_tool.select_checks(adopter.state, "feature", binding=adopter.binding, head=head,
+                                     checks=[check_entry("focused", timeoutSeconds=ceiling + 1)], reason="too long")
+        state_tool.select_checks(adopter.state, "feature", binding=adopter.binding, head=head, checks=wide,
+                                 reason="the lead judged it worth the wide run")
+        self.requeue(adopter, "feature")
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(sorted(self.ran(adopter)), ["always", "focused", "wide"])
+        self.assertEqual(adopter.item("feature")["checkSelection"],
+                         {"by": "lead", "head": head, "reason": "the lead judged it worth the wide run"})
+
+    def test_a_refused_batch_stops_every_member_and_names_each(self) -> None:
+        adopter = self.adopter(self.STOPS, mode="refuse")
+        base = adopter.tip("main")
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        self.candidate(adopter, {"src/app.txt": "app two\n"}, name="second")
+        results = adopter.runner().run_command("batch", ["first", "second"])
+        self.assertEqual({result.document()["stop"]["reason"] for result in results}, {"provider_refused"})
+        for subject in ("first", "second"):
+            self.refused(adopter, subject)
+        self.assertEqual(adopter.tip("main"), base)
+
+    def test_the_binding_rows(self) -> None:
+        adopter = self.adopter()
+        binding = adopter.binding
+        # A binding without either key loads, as every binding before them did.
+        self.assertNotIn("fullHealthTimeoutSeconds", binding)
+        self.assertEqual(queue.binding_errors(binding), [])
+        carrying = {**binding, "fullHealthTimeoutSeconds": binding["checkTimeoutCeiling"] * 100,
+                    "selection": {"lead": True, "refusalStops": True}}
+        self.assertEqual(queue.binding_errors(carrying), [])
+        self.assertTrue(Draft202012Validator(schema("orchestration-binding")).is_valid(carrying))
+        # The most a process wait takes is accepted; one more would overflow it, so the binding refuses it.
+        self.assertEqual(queue.binding_errors({**binding, "fullHealthTimeoutSeconds": 2147483}), [])
+        for value in (0, -1, 1.5, "600", True, None, 2147484, 1e300):
+            with self.subTest(fullHealthTimeoutSeconds=value):
+                errors = queue.binding_errors({**binding, "fullHealthTimeoutSeconds": value})
+                self.assertTrue(errors)
+                self.assertTrue(all("/fullHealthTimeoutSeconds" in error for error in errors), errors)
+                if value not in (2147484, 1e300):  # the schema says integer; the runner checks the bound
+                    self.assertFalse(Draft202012Validator(schema("orchestration-binding")).is_valid(
+                        {**binding, "fullHealthTimeoutSeconds": value}))
+        for value in (1, "true", None):
+            with self.subTest(refusalStops=value):
+                errors = queue.binding_errors({**binding, "selection": {"lead": True, "refusalStops": value}})
+                self.assertTrue(errors)
+                self.assertTrue(all(error.startswith("/selection/refusalStops") for error in errors), errors)
+        self.assertEqual(queue.binding_errors({**binding, "selection": {"lead": False, "refusalStops": True}}),
+                         ["/selection/refusalStops: needs selection.lead, since only the lead's selection releases a "
+                          "candidate the provider refused"])

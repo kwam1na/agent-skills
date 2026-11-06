@@ -4987,6 +4987,12 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         self.assertIn("Unless the delivery's base declares the `focused` posture at its tip, run the binding's "
                       "`fullHealth` once, on the final base", guide)
         self.assertIn("runs `fullHealth` once per base head, unless the base declares the `focused` posture", guide)
+        # Under gate the post-merge tier runs after each merge; close-out starts a run only where none has happened.
+        self.assertIn("`fullHealth` is the post-merge tier, and under `gate` it doesn't wait for the close: after each "
+                      "merge or batch, the supervisor runs it at the new base head", guide)
+        self.assertIn("the supervisor runs `fullHealth` at the final head only when no run at that head has happened, as "
+                      "in a delivery that merged nothing", guide)
+        self.assertIn("Nothing runs in its place, and no `fullHealth` runs after a merge either", skill)
         self.assertIn("remains the backstop for anything a selection missed, unless the base declares the `focused` posture", guide)
         self.assertIn("say the run was skipped under the posture, naming its source and reason", guide)
 

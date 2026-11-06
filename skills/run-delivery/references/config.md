@@ -245,11 +245,19 @@ and every lead command repeats it. It keeps the merge queue's `serve` and the li
 
 1. the reconcile sweep, as `lead-reconcile` runs it;
 2. what `lead-cleanup` does, for each merged story whose lane has moved off it;
-3. `finish.met`, once for each finish line whose covered criteria have every covered proof done;
-4. the binding's `state` publishers; then "Needs you", written over the last pass's list in the record's
+3. the post-merge tier: once the delivery has merged anything, and unless the base declares the `focused` posture,
+   the binding's `fullHealth` at the base head when no run at that head has happened, or the lead asked for a rerun,
+   in a fresh checkout of the head, under the binding's `fullHealthTimeoutSeconds` (`checkTimeoutSeconds` when
+   absent; `checkTimeoutCeiling` doesn't bound it). Its result goes to the full-health log, and the journal gets
+   `base.verified` on a pass, `base.broken` on a failure, or `base.repaired` on the first pass after a failed run,
+   each naming the merge the run follows. A `base.broken` stops the queue until a `base.repaired`, and a pass repairs
+   only a break `fullHealth` found. The pass lasts as long as the run, so its views and a stop asked meanwhile wait
+   for it;
+4. `finish.met`, once for each finish line whose covered criteria have every covered proof done;
+5. the binding's `state` publishers; then "Needs you", written over the last pass's list in the record's
    `needs-you.json`; then the binding's renderers, so the line map shows this pass's list;
-5. a copy of the record and the flow log into `latest` at the archive location, under the state lock;
-6. the close-out, when the close condition holds.
+6. a copy of the record and the flow log into `latest` at the archive location, under the state lock;
+7. the close-out, when the close condition holds.
 
 The close condition: every planned and queued story merged or removed, every finish line met, every lane idle or
 done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,
@@ -263,7 +271,8 @@ shown, where it comes from and what clears it. The line map's Now chapter lists 
 from a supervisor that has stopped, or one more than a pass overdue, is shown as unavailable rather than stale.
 
 The close-out runs in order, each step succeeding before the next: `fullHealth`, once per base head, in a fresh
-checkout of the base, or skipped under the `focused` posture; a follow-up for each deferred finding, keyed `<story>-<finding id>`; `delivery.closed`, then
+checkout of the base, or skipped under the `focused` posture, which after a merge has already run at that head, so
+it starts a run only for a delivery that merged nothing or a head that moved since; a follow-up for each deferred finding, keyed `<story>-<finding id>`; `delivery.closed`, then
 waiting for the tracker to have it; releasing the lead's leases, archiving the record and fast-forwarding the
 operator's checkout if it is clean and on the base; a friction note stub beside the archive; then the supervisor
 stops. Each pass writes what it did to the flow log's `<delivery>.supervisor.jsonl`.
@@ -276,7 +285,7 @@ settings have uncommitted changes. `lead-init --no-supervisor`, or `RUN_DELIVERY
 ## The delivery posture
 
 `.agents/delivery-posture.json`, read from the tip of the delivery's own `<remote>/<base>` and nowhere else, decides
-whether the close-out runs `fullHealth`. It lives outside this file and the binding because a branch or a lead's
+whether the post-merge tier and the close-out run `fullHealth`. It lives outside this file and the binding because a branch or a lead's
 checkout mustn't be able to change it, and because `"harness": "ignore"` must still reach it:
 
 ```json

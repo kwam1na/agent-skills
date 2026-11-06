@@ -5058,9 +5058,25 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                       "clears": f"a pass at a later base head, or {flow_command()} lead-resolve full-health --why TEXT"})
     events = [e for e in doc["journal"] if e["kind"] in ("base.broken", "base.repaired")]
     if events and events[-1]["kind"] == "base.broken":
-        items.append({"holding": True, "source": f"journal entry {events[-1]['id']} (base.broken)",
-                      "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. "
-                      "Repair it, then journal base.repaired", "clears": "journalling base.repaired"})
+        # A break fullHealth found clears with its next pass; the queue's own break waits for the lead. Under focused no
+        # run comes to clear fullHealth's, so, like its failed run, it holds nothing, but it stays listed: serve still
+        # waits for base.repaired whatever the posture.
+        found = only_full_health_breaks(doc["journal"])
+        posture = delivery_posture(c) if found else None
+        source = f"journal entry {events[-1]['id']} (base.broken)"
+        if posture and posture["posture"] == "focused":
+            said = posture_said(posture)
+            items.append({"holding": False, "source": source,
+                          "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. It holds nothing "
+                          f"while the base declares the focused posture on {said['source']} ({said['reason'][:200]}), "
+                          "and serve still waits for base.repaired",
+                          "clears": "journalling base.repaired, or a fullHealth pass once the base returns to gate"})
+        else:
+            items.append({"holding": True, "source": source,
+                          "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. "
+                          "Repair it, then journal base.repaired",
+                          "clears": ("a fullHealth pass at a later base head, or " if found else "")
+                          + "journalling base.repaired"})
     for lane in doc["state"]["lanes"]:
         if lane.get("state") == "blocked":
             items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane's state changing",
@@ -5203,6 +5219,103 @@ def record_focused(c, posture: dict) -> str:
     return words + (f"; {rebuilt}" if "not rebuilt" in rebuilt else "")
 
 
+def full_health_timeout(binding: dict) -> int:
+    """The seconds one fullHealth run may take: the binding's fullHealthTimeoutSeconds, or its checkTimeoutSeconds when
+    it sets none. Never checkTimeoutCeiling, which bounds the queue's checks: the post-merge tier is not one of them."""
+    return int(binding.get("fullHealthTimeoutSeconds", binding.get("checkTimeoutSeconds", 1800)))
+
+
+def full_health_break(entry: dict) -> bool:
+    """Whether a base.broken is the one a fullHealth run journalled, which a later pass of it repairs."""
+    return entry["kind"] == "base.broken" and entry.get("summary", "").startswith("fullHealth failed")
+
+
+def only_full_health_breaks(journal: list[dict]) -> bool:
+    """Whether every base.broken since the latest base.repaired is fullHealth's own: a pass may repair those, never a
+    break the queue found, which the lead confirms however many breaks of fullHealth's follow it."""
+    repaired = max((e["id"] for e in journal if e["kind"] == "base.repaired"), default=0)
+    return all(full_health_break(e) for e in journal if e["kind"] == "base.broken" and e["id"] > repaired)
+
+
+def merge_words(c, doc: dict, head: str, since: int) -> tuple[dict | None, str]:
+    """The merge a run at this head follows, as {subject, journal} and in words: the latest candidate.merged, with any
+    others since the run before it (a batch), and whether the head moved past the queue's last merge outside it."""
+    merges = [e for e in doc["journal"] if e["kind"] == "candidate.merged"]
+    if not merges:
+        return None, "with nothing merged"
+    last = merges[-1]
+    words = f"after {last.get('subject') or 'a candidate'}'s merge (journal entry {last['id']})"
+    batch = [e.get("subject") for e in merges[:-1] if e["id"] > since and e.get("subject")]
+    if batch:
+        words += f", which landed with {', '.join(batch)}"
+    if doc["state"]["meta"].get("baseHead") not in (None, head):
+        words += f", and {head[:10]}, which landed outside the queue"
+    return {"subject": last.get("subject"), "journal": last["id"]}, words
+
+
+def run_full_health(c, binding: dict, head: str, posture: dict, named: str) -> tuple[bool, str]:
+    """One gate run of fullHealth at this base head, in a fresh checkout of it. Its result goes to the full-health log,
+    and the journal says what it means for the base, naming the merge it follows: base.verified on a pass,
+    base.broken on a failure, and base.repaired on the first pass after a failed run."""
+    doc = load_state()
+    before = [e for e in read_log("full-health", c.delivery) if e.get("result")]
+    merge, after = merge_words(c, doc, head, before[-1].get("journalThrough", 0) if before else 0)
+    checkout = Path(tempfile.mkdtemp(prefix="run-delivery-full-health-")) / "base"
+    try:
+        git("worktree", "add", "--detach", "-q", str(checkout), head, cwd=c.root)
+        for step in prepare_commands():
+            run(step, cwd=checkout)
+        code, out = run_group(list(binding["fullHealth"]), checkout, full_health_timeout(binding))
+    except Stop as error:
+        code, out = 1, str(error)
+    finally:
+        run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
+        shutil.rmtree(checkout.parent, ignore_errors=True)
+    result = "passed" if code == 0 else "failed"
+    through = max((e["id"] for e in doc["journal"]), default=0)
+    with plan_lock(c):
+        append_full_health(c, {"head": head, "result": result, "output": out[-2000:], "posture": "gate",
+                               "code": posture["code"], "merge": merge, "journalThrough": through})
+    if result == "failed":
+        kind, words = "base.broken", f"fullHealth failed at {head[:10]} {after}: {out.strip()[-300:] or 'no output'}"
+    else:
+        # A repair only of a break fullHealth found: a pass never confirms a break the queue found, which the lead does.
+        repairs = before and before[-1]["result"] == "failed" and only_full_health_breaks(doc["journal"])
+        kind = "base.repaired" if repairs else "base.verified"
+        words = f"fullHealth passed at {head[:10]} {after}"
+    state_tool("journal", "--kind", kind, "--summary", words,
+               *(["--subject", merge["subject"]] if merge and merge.get("subject") else []))
+    return result == "passed", f"fullHealth {result} at {head[:10]}{named}"
+
+
+def declared_words(posture: dict) -> str:
+    """What a gate run adds to its report: only a declaration that didn't take."""
+    return f" ({posture['code']}: {posture_said(posture)['reason']})" if posture["code"] in (
+        "posture_malformed", "posture_unreadable") else ""
+
+
+def post_merge_step(c) -> str:
+    """The post-merge tier: under gate, fullHealth runs at each base head the delivery's merges reach, once a merge has
+    landed, and not again at that head until lead-resolve asks. Close-out runs it only at a head with no run."""
+    binding = c.shelf.json(".agents/orchestration.json") or {}
+    if not binding.get("fullHealth"):
+        return "fullHealth: the binding declares none"
+    if not any(e["kind"] == "candidate.merged" for e in load_state()["journal"]):
+        return "fullHealth: nothing merged yet"
+    posture = delivery_posture(c)
+    if posture["posture"] == "focused":
+        return "fullHealth: not run after merges under the focused posture"
+    with plan_lock(c):
+        note_posture(c, posture)
+    named = declared_words(posture)
+    git("fetch", "-q", c.remote, c.base_branch, check=False)
+    head = base_head(c)
+    last, rerun = full_health_results(c, head)
+    if last and not rerun:
+        return f"fullHealth {last['result']} at {head[:10]}{named}"
+    return run_full_health(c, binding, head, posture, named)[1]
+
+
 def full_health_step(c) -> tuple[bool, str]:
     binding = c.shelf.json(".agents/orchestration.json") or {}
     argv = binding.get("fullHealth")
@@ -5213,9 +5326,7 @@ def full_health_step(c) -> tuple[bool, str]:
         return True, record_focused(c, posture)
     with plan_lock(c):
         note_posture(c, posture)
-    # Only a declaration that didn't take adds to what a gate run reports.
-    named = f" ({posture['code']}: {posture_said(posture)['reason']})" if posture["code"] in (
-        "posture_malformed", "posture_unreadable") else ""
+    named = declared_words(posture)
     git("fetch", "-q", c.remote, c.base_branch, check=False)
     head = base_head(c)
     last, rerun = full_health_results(c, head)
@@ -5223,21 +5334,8 @@ def full_health_step(c) -> tuple[bool, str]:
         return True, f"fullHealth passed at {head[:10]}{named}"
     if last and not rerun:
         return False, f"fullHealth failed at {head[:10]}{named}; it runs again at a later head, or on lead-resolve full-health"
-    checkout = Path(tempfile.mkdtemp(prefix="run-delivery-full-health-")) / "base"
-    try:
-        git("worktree", "add", "--detach", "-q", str(checkout), head, cwd=c.root)
-        for step in prepare_commands():
-            run(step, cwd=checkout)
-        code, out = run_group(list(argv), checkout, int(binding.get("checkTimeoutSeconds", 1800)))
-    except Stop as error:
-        code, out = 1, str(error)
-    finally:
-        run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
-        shutil.rmtree(checkout.parent, ignore_errors=True)
-    result = "passed" if code == 0 else "failed"
-    with plan_lock(c):
-        append_full_health(c, {"head": head, "result": result, "output": out[-2000:], "posture": "gate", "code": posture["code"]})
-    return result == "passed", f"fullHealth {result} at {head[:10]}{named}"
+    # No run at this head: after a merge the post-merge step has run, so this is a delivery that merged nothing.
+    return run_full_health(c, binding, head, posture, named)
 
 
 def deferred_findings(c) -> list[dict]:
@@ -5521,7 +5619,7 @@ class Supervisor:
             entry["laneWords"] = lane_words(doc, remembered)
             return cleanup_merged(c, doc, entry["laneWords"])
 
-        steps = (("reconcile", reconcile_once), ("cleanup", cleanup),
+        steps = (("reconcile", reconcile_once), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
