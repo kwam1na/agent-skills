@@ -86,9 +86,10 @@ test("the stage marks that turn do so only for a reader who has not asked for le
 test("each stage's mark in the detail panel is drawn as the legend draws the stop it stands for", () => {
   const page = pageWithRuns(record(), {}, { config: CONFIG });
   const dom = new JSDOM(page);
-  // Every declaration a selector receives from the stylesheet's top-level rules, the ones that draw the shape. Placement
-  // sets the mark beside its words, and the legend's own gap does that there, so it is left out unless asked for.
-  const drawn = (selector, placed = false) => {
+  // Every declaration a selector receives from the stylesheet's top-level rules, the ones that draw the shape. On the mark
+  // itself placement sets it beside its words, and the legend's own gap does that there, so it is left out unless asked
+  // for; on the ripple a margin would move it off centre, so it counts.
+  const drawn = (selector, placed = selector.endsWith("::after")) => {
     const found = {};
     for (const sheet of dom.window.document.styleSheets) {
       for (const rule of sheet.cssRules) {
@@ -102,16 +103,17 @@ test("each stage's mark in the detail panel is drawn as the legend draws the sto
     return found;
   };
   // The comparison holds only while the marks have no other source: no rule reaches them through an ancestor, and the
-  // one rule nested in a media query is the turn of the running stages.
+  // one rule nested in any block is the turn of the running stages.
   const strays = [];
   const walk = (rules, media) => {
     for (const rule of rules) {
-      if (rule.cssRules) { walk(rule.cssRules, rule.media ? rule.media.mediaText : media); continue; }
+      if (rule.cssRules) { walk(rule.cssRules, rule.media ? rule.media.mediaText : rule.conditionText || "nested"); continue; }
       if (!rule.selectorText || !/d-stage-icon/.test(rule.selectorText)) { continue; }
       const parts = rule.selectorText.split(",").map((part) => part.trim());
       const properties = Array.from({ length: rule.style.length }, (_, index) => rule.style[index]);
       if (parts.some((part) => !/^(svg)?\.d-stage-icon(\.is-[a-z]+)?(::after)?$/.test(part))
-        || (media !== null && properties.some((property) => !/^animation/.test(property)))) { strays.push(rule.selectorText); }
+        || (media !== null && (parts.some((part) => !/^\.d-stage-icon\.is-(syncing|checking|merging)$/.test(part))
+          || properties.some((property) => !/^animation/.test(property))))) { strays.push(rule.selectorText); }
     }
   };
   const LEGEND = { planned: "d", building: "a", review: "a", pending: "p", queued: "r", syncing: "n", synced: "n",
@@ -130,7 +132,7 @@ test("each stage's mark in the detail panel is drawn as the legend draws the sto
     const ripple = drawn(".d-stage-icon.is-building::after");
     expect([ripple.inset, Number(ripple.opacity)]).toEqual(["-5px", 0.3]);
     expect(Object.keys(drawn(".d-stage-icon.is-building")).filter((property) => property.startsWith("background"))).toEqual([]);
-    expect(drawn(".d-stage-icon.is-building", true).margin).toBe("0 11px 0 5px");
+    for (const stage of ["building", "review"]) { expect(drawn(`.d-stage-icon.is-${stage}`, true).margin).toBe("0 11px 0 5px"); }
   } finally { dom.window.close(); }
 });
 
