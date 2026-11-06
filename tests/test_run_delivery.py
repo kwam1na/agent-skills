@@ -770,7 +770,61 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         }.items():
             expect(check(r), f"{name} was accepted")
         expect(check(lens_result(round=2), carried={"l-r1-1"}, n=2), "a dropped carried finding was accepted")
+        # Only the still-open findings must appear; one closed in an earlier round may be listed again.
+        relisted = lens_result(round=2, resolvedFindings=[{"id": "l-r1-1", "state": "fixed", "resolution": "fixed"},
+                                                          {"id": "l-r1-2", "state": "fixed", "resolution": "fixed in round 1"}])
+        expect(check(relisted, carried={"l-r1-1"}, n=2) == [], check(relisted, carried={"l-r1-1"}, n=2))
         expect(check(lens_result(lateFindings=["l-r1-9"])), "a lateFindings id that isn't one of the result's own was accepted")
+
+    def test_each_round_reads_the_plan_from_the_base_and_a_ruled_round_needs_its_own_commit(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        review = wt / ".orchestration/review/FX-2"
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 2, out)
+        context = review / "context.md"
+        context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                            if line.startswith(CONTEXT_TODO)), "- the lane's own evidence"))
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        base = lambda: sh("git", "rev-parse", "origin/feature/FX-1", cwd=wt).stdout.strip()
+        first = base()
+        lenses = fx.lenses(wt)
+        self.assertIn(f"git show {first}:docs/plan.md", (review / f"brief-r1-{lenses[0][1][0]}.md").read_text())
+        # Between the rounds the lead changes the plan on the base, and rules on the round's finding without a lane fix.
+        plan = m / "docs/plan.md"
+        plan.write_text(plan.read_text().replace("- Scenarios: it loads; it fails.", "- Scenarios: it loads; it fails; NEW-SCENARIO."))
+        commit(m, "FX-1: the plan changes")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        sh("git", "fetch", "-q", "origin", cwd=wt)
+        short0 = lenses[0][1][0]
+        write_results(review, 1, "FX-2", lenses, findings=[{"id": f"{short0}-r1-1", "severity": "P1", "summary": "fix"}], only=0)
+        write_results(review, 1, "FX-2", lenses, only=1)
+        code, out = fx.flow("review-reduce", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "2", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("HEAD is the candidate of the previous round", out)
+        self.assertIn('git commit --allow-empty -m "FX-2: <the ruling>"', out)
+        self.assertIn("note the ruling in context.md's Evidence so far", out)
+        sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m",
+           "FX-2: the lead ruled the finding out of scope", cwd=wt)
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "2", cwd=wt)
+        self.assertEqual(code, 0, out)
+        seeded = context.read_text()
+        self.assertIn("NEW-SCENARIO", seeded, "round 2's context kept round 1's plan")
+        self.assertIn("- the lane's own evidence", seeded, "re-seeding the plan lost the lane's evidence")
+        self.assertNotEqual(base(), first)
+        brief = (review / f"brief-r2-{short0}.md").read_text()
+        self.assertIn(f"git show {base()}:docs/plan.md", brief)
+        self.assertIn("NEW-SCENARIO", brief)
+        self.assertIn("Every finding this lens raised in an earlier round that is still open must appear", brief)
 
     def test_patches_apply_unstripped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
