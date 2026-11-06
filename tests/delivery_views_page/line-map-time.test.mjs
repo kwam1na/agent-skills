@@ -113,22 +113,27 @@ test("building uses the current assignment after a rejected handoff, or reports 
   }
 });
 
-test("work the tracker showed started before the record knew of it names its stage with no time", async () => {
-  for (const [stage, words] of [["building", "Being built"], ["review", "In review"]]) {
+test("planned work the tracker moved to building names its stage with no time, and review keeps its unknown", async () => {
+  // Reconcile moves a planned piece, with a lane or without, to building when its ticket starts, and records no time.
+  for (const lane of [null, "lane-1"]) {
     for (const trackerStarted of [true, false]) {
-      const doc = { state: { lanes: [], queue: [], planned: [{ subject: "PAY-1", stage, title: "Payment", trackerStarted }] }, journal: [] };
+      const doc = { state: { lanes: [], queue: [], planned: [{ subject: "PAY-1", stage: "building", title: "Payment", lane, trackerStarted }] }, journal: [] };
       const [shown] = await openPage(pageWithRuns(doc, {}, { config: { spec: "delivery-views-config/1" } }), { now: "2026-10-22T07:10:00Z" });
       const meta = shown.app.querySelector("#detail .d-meta");
-      expect(meta.querySelector(".d-stage").textContent).toContain(words);
+      expect(meta.querySelector(".d-stage").textContent).toContain("Being built");
       if (trackerStarted) {
         expect(meta.querySelector(".d-stage-time")).toBeNull();
         expect(meta.textContent).not.toContain("unknown");
-      } else { expect(meta.textContent).toContain("time unknown"); }
+      } else { expect(meta.textContent).toContain("Started · time unknown"); }
     }
   }
+  // A review round the record lacks is missing whatever the tracker says.
+  const review = { state: { lanes: [], queue: [], planned: [{ subject: "PAY-1", stage: "review", title: "Payment", lane: "lane-1", trackerStarted: true }] }, journal: [] };
+  const [reviewing] = await openPage(pageWithRuns(review, {}, { config: { spec: "delivery-views-config/1" } }), { now: "2026-10-22T07:10:00Z" });
+  expect(reviewing.app.querySelector("#detail .d-meta").textContent).toContain("In review since · time unknown");
   // A start the record does hold still shows beside the same flag.
-  const doc = { state: { lanes: [], queue: [], planned: [{ subject: "PAY-1", stage: "building", title: "Payment", trackerStarted: true }] },
-    journal: [{ id: 1, kind: "lane.assigned", subject: "PAY-1", at: "2026-10-22T06:00:00Z" }] };
+  const doc = { state: { lanes: [], queue: [], planned: [{ subject: "PAY-1", stage: "building", title: "Payment", lane: "lane-1", trackerStarted: true }] },
+    journal: [{ id: 1, kind: "lane.assigned", lane: "lane-1", subject: "PAY-1", at: "2026-10-22T06:00:00Z" }] };
   const [shown] = await openPage(pageWithRuns(doc, {}, { config: { spec: "delivery-views-config/1" } }), { now: "2026-10-22T07:10:00Z" });
   expect(shown.app.querySelector("#detail .d-stage-time").getAttribute("aria-label")).toBe("Recorded work assignment: 2026-10-22T06:00:00Z");
 });
