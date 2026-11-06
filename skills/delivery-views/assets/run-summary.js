@@ -28,6 +28,22 @@ function runEaseHeight(node, from) {
   var easing = node.animate([{ height: from + "px" }, { height: to + "px" }], { id: "run-height", duration: runEaseDuration(from, to), easing: RUN_EASING });
   easing.onfinish = easing.oncancel = function () { node.style.overflow = ""; };
 }
+/**
+ * Draws icon parts on the 24px persona grid into an svg: { c: [cx, cy, r] } is a circle, { d } a path, and core: true
+ * fills it, as an agent's core. The persona set, the lens icons and the marks drawn on that grid all go through here.
+ */
+function runDrawParts(svg, parts) {
+  parts.forEach(function (part) {
+    var shape = document.createElementNS("http://www.w3.org/2000/svg", part.c ? "circle" : "path");
+    if (part.c) {
+      shape.setAttribute("cx", String(part.c[0])); shape.setAttribute("cy", String(part.c[1])); shape.setAttribute("r", String(part.c[2]));
+    } else {
+      shape.setAttribute("d", part.d);
+    }
+    if (part.core) { shape.setAttribute("fill", "currentColor"); shape.setAttribute("stroke", "none"); }
+    svg.appendChild(shape);
+  });
+}
 function runSummaryNode(summary, options) {
   var SEVERITIES = ["P0", "P1", "P2", "P3"];
   var WORDS = { P0: "critical", P1: "serious", P2: "moderate", P3: "minor" };
@@ -112,16 +128,7 @@ function runSummaryNode(summary, options) {
       svg.appendChild(letter);
       return svg;
     }
-    parts.forEach(function (part) {
-      var shape = document.createElementNS(svgNs, part.c ? "circle" : "path");
-      if (part.c) {
-        shape.setAttribute("cx", String(part.c[0])); shape.setAttribute("cy", String(part.c[1])); shape.setAttribute("r", String(part.c[2]));
-      } else {
-        shape.setAttribute("d", part.d);
-      }
-      if (part.core) { shape.setAttribute("fill", "currentColor"); shape.setAttribute("stroke", "none"); }
-      svg.appendChild(shape);
-    });
+    runDrawParts(svg, parts);
     return svg;
   }
   function lensName(lens) {

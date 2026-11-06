@@ -61,7 +61,7 @@ function open(document, scenario = {}, page = render(document)) {
   return openPage(page, { now: new Date(NOW).toISOString(), store: false, ...scenario });
 }
 
-test("opts in to the live server and loads nothing but its two faces", async () => {
+test("opts in to the live server and loads nothing but its three faces", async () => {
   const page = render(fixtureDocument());
   const head = page.slice(0, page.indexOf("</head>"));
   expect(head).toContain('<meta name="delivery-state-live">');
@@ -276,6 +276,16 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   const [{ app: aheadApp }] = await open(ahead);
   expect(aheadApp.querySelector(".run-line")).toBeNull();
   expect(aheadApp.querySelector(".ck-bar")).not.toBeNull();
+  // A reused or skipped check never ran here, so the runner gives it no time; the line is still drawn from the rest.
+  const reusedUntimed = JSON.parse(JSON.stringify(document));
+  delete reusedUntimed.state.meta.checking.now.steps[5].startedAt;
+  delete reusedUntimed.state.meta.checking.now.steps[5].finishedAt;
+  reusedUntimed.state.meta.checking.now.steps[11].state = "skipped";
+  delete reusedUntimed.state.meta.checking.now.steps[11].startedAt;
+  delete reusedUntimed.state.meta.checking.now.steps[11].finishedAt;
+  const [{ app: reusedApp }] = await open(reusedUntimed);
+  expect(reusedApp.querySelector(".run-line")).not.toBeNull();
+  expect(reusedApp.querySelector(".ck-bar")).toBeNull();
   // A started check with no time can't be placed, so the run falls back to the strip rather than leave it out, and the
   // failed checks keep their numbers in the list.
   const untimed = JSON.parse(JSON.stringify(document));
@@ -689,7 +699,7 @@ test("shows pieces checked as one batch together, each with its change request",
   };
   const [{ app }] = await open(batch());
   const checking = app.querySelector(".checking");
-  expect(checking.querySelector(".ck-h")?.childNodes[1]?.textContent).toBe("Being checked together · 2 pieces");
+  expect(checking.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
   expect([...checking.querySelectorAll(".ck-members li a")].map((link) => link.getAttribute("href"))).toEqual([
     "https://github.com/acme/shop/pull/1106", "https://github.com/acme/shop/pull/1107"]);
   expect(checking.textContent).toContain("One test run for all of them; each lands only if it matches what was tested");
@@ -700,14 +710,14 @@ test("shows pieces checked as one batch together, each with its change request",
   landing.state.queue[2].stage = "merged";
   landing.state.meta.checking.now.subject = "PAY-2362";
   const [{ app: landingApp }] = await open(landing);
-  expect(landingApp.querySelector(".ck-h")?.childNodes[1]?.textContent).toBe("Landing together · 1 of 2 in");
+  expect(landingApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Landing together · 1 of 2 in");
   expect(landingApp.querySelector(".ck-members li.in")?.textContent).toContain("landed");
 
   // A member sent back to the queue leaves one piece in checks: that is a solo check, not the old batch.
   const split = batch();
   split.state.queue[3].stage = "queued";
   const [{ app: splitApp }] = await open(split);
-  expect(splitApp.querySelector(".ck-h")?.childNodes[1]?.textContent).toBe("Being checked now");
+  expect(splitApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked now");
   // A failed batch still lands the pieces ahead of the one that broke it; the failures carry every member's logs.
   const failing = batch();
   failing.state.meta.checking.now.steps = [{ label: "shop.check.aa", state: "failed" }, { label: "shop.check.bb", state: "running" }];
@@ -725,7 +735,7 @@ test("shows pieces checked as one batch together, each with its change request",
   carried.state.meta.checking.now = { subject: "PAY-2362", title: "Keep the order number on the receipt page", startedAt: "2026-10-22T05:09:00Z", steps: [] };
   carried.journal.push({ at: "2026-10-22T05:09:00.004211Z", id: 13, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary: "Checking Keep the order number on the receipt page" });
   const [{ app: carriedApp }] = await open(carried);
-  expect(carriedApp.querySelector(".ck-h")?.childNodes[1]?.textContent).toBe("Being checked now");
+  expect(carriedApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked now");
   expect(carriedApp.querySelector("#detail .d-batch")).toBeNull();
   // The same batch started twice in a row counts each member once, and a lane's note between the starts
   // does not split the batch.
@@ -734,10 +744,10 @@ test("shows pieces checked as one batch together, each with its change request",
   twice.journal.splice(twice.journal.length - 1, 0, { at: "2026-10-22T05:05:00.150000Z", id: 30, kind: "decision.recorded", lane: "ops", subject: null, summary: "A note" });
   twice.journal.push({ ...first, id: 31 }, { ...second, id: 32 });
   const [{ app: twiceApp }] = await open(twice);
-  expect(twiceApp.querySelector(".ck-h")?.childNodes[1]?.textContent).toBe("Being checked together · 2 pieces");
+  expect(twiceApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
   // Pieces in checks that the latest batch start does not cover are not a batch either.
   const [{ app: solo }] = await open(fixtureDocument());
-  expect(solo.querySelector(".ck-h")?.childNodes[1]?.textContent).toBe("Being checked now");
+  expect(solo.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked now");
 });
 
 test("keeps a hand-over the lead has not accepted apart from the work ready to check", async () => {

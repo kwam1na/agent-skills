@@ -41,7 +41,7 @@
   var feedFilter = "all";
   var feedAll = false;
   // What the page last showed, so a change can be animated rather than just swapped in.
-  var prev = { stages: null, feed: null, progress: null, lanes: null, open: null, byLane: null, parked: null, dots: null, selected: null, lineScroll: null,
+  var prev = { runningCheck: null, stages: null, feed: null, progress: null, lanes: null, open: null, byLane: null, parked: null, dots: null, selected: null, lineScroll: null,
     checkingHeight: null };
   var lastGood = null;
   var nativeReviews = {};
@@ -214,6 +214,8 @@
     checked: "Checked, about to merge", merging: "Merging", planned: "Not started", building: "Being built", review: "In review"
   });
   var LANE_WORDS = table({ idle: "Standing by", assigned: "Assigned", working: "Building", reviewing: "In review", handed: "Handed over", blocked: "Blocked", done: "Done" });
+  // The states of a check that ran in this run, and so carries a start time.
+  var RAN = table({ running: true, passed: true, failed: true, timed_out: true });
   var STEP_WORDS = table({ pending: "waiting", running: "running", passed: "passed", failed: "failed", skipped: "skipped", timed_out: "timed out", reused: "reused" });
   var DONE = table({ passed: true, failed: true, skipped: true, timed_out: true, reused: true });
   var GLYPH = table({
@@ -237,7 +239,6 @@
     runner: [{ c: [4.1, 6, 1.9] }, { c: [4.1, 18, 1.9] }, { d: "M6.4 6H8.5Q12 6 12 9.5V12" }, { d: "M6.4 18H8.5Q12 18 12 14.5V12" }, { d: "M12 12H13.4" }, { c: [16, 12, 2.6], core: true }, { d: "M18.6 12H21.5" }],
     supervisor: [{ d: "M4 10.5C7 5.8 17 5.8 20 10.5C17 15.2 7 15.2 4 10.5Z" }, { c: [12, 10.5, 2.4], core: true }, { d: "M3 19.5H21" }, { c: [7.5, 19.5, 1.2], core: true }, { c: [16.5, 19.5, 1.2], core: true }]
   });
-  // Hidden from assistive technology: the agent's name always sits beside it.
   // Marks drawn on the persona grid that are not personas: a landed piece takes the familiar git merge, a branch
   // curving into the trunk.
   var GRID_MARKS = {
@@ -248,17 +249,9 @@
     var svg = document.createElementNS(svgNs, "svg");
     svg.setAttribute("class", "persona " + (className || "is-" + name));
     svg.setAttribute("viewBox", "0 0 24 24");
+    // Hidden from assistive technology: the words beside it always say the same.
     svg.setAttribute("aria-hidden", "true");
-    (PERSONAS[name] || GRID_MARKS[name]).forEach(function (part) {
-      var shape = document.createElementNS(svgNs, part.c ? "circle" : "path");
-      if (part.c) {
-        shape.setAttribute("cx", String(part.c[0])); shape.setAttribute("cy", String(part.c[1])); shape.setAttribute("r", String(part.c[2]));
-      } else {
-        shape.setAttribute("d", part.d);
-      }
-      if (part.core) { shape.setAttribute("fill", "currentColor"); shape.setAttribute("stroke", "none"); }
-      svg.appendChild(shape);
-    });
+    runDrawParts(svg, PERSONAS[name] || GRID_MARKS[name]);
     return svg;
   }
   function glyph(tone) {
@@ -658,8 +651,11 @@
   /**
    * The handoff when a check finishes: its spinning arc settles into a full ring, its result draws inside it (a check, or a
    * cross for a failure), it holds there a beat, then the row turns over on its horizontal axis and the next running check
-   * arrives on the back. Each part is timed to land before the next starts. Without motion the row simply shows the next.
+   * arrives on the back. The settle and the beat are SETTLE_MS and HOLD_MS; the turn itself is half a second, and a failed
+   * check's entry in the list (.ck-fails li.arriving in the stylesheet) waits for all three. Without motion the row simply
+   * shows the next.
    */
+  var SETTLE_MS = 480, HOLD_MS = 900;
   function handOff(row, finished, next) {
     if (!runMotionWanted(row)) { if (!next) { doneWords(row, finished); } return; }
     // The row is first drawn as the finished check was last seen: running, its arc still turning.
@@ -687,13 +683,13 @@
               { duration: 300, easing: "cubic-bezier(.2, .6, .3, 1)" });
             out.cancel();
           };
-        }, 900);
-      }, 480);
+        }, HOLD_MS);
+      }, SETTLE_MS);
     });
   }
   /**
    * Eases the checking sheet from a height to the one it has now, after a live update. While it moves it is clipped at
-   * its bottom edge only, so nothing shows below the sheet and the glow around its other sides stays.
+   * its bottom edge only, so nothing shows below the sheet and the shadow around its other sides stays.
    */
   function easeSheet(sheet, from) {
     var to = sheet.offsetHeight;
@@ -712,9 +708,8 @@
     if (!current) {
       var waiting = all.filter(function (piece) { return !piece.planned && piece.item.stage === "queued" && piece.item.pending === true; }).length;
       if (!nextNames.length && !waiting) { return null; }
-      box.classList.add("ready");
       if (nextNames.length) {
-        add(box, add(el("div", "ck-h"), el("span", "ck-dot is-ready"), nextNames.length === 1 ? "Ready to be checked" : nextNames.length + " pieces ready to be checked"));
+        add(box, add(el("div", "ck-h"), el("span", "ck-dot is-ready"), el("span", "ck-h-words", nextNames.length === 1 ? "Ready to be checked" : nextNames.length + " pieces ready to be checked")));
         // Titles are sentences, so more than one reads as a numbered list in the order they go, not a run-on line.
         if (nextNames.length === 1) { add(box, el("div", "ck-t", nextNames[0])); }
         else { add(box, nextNames.reduce(function (ol, name) { return add(ol, el("li", null, name)); }, el("ol", "ck-members"))); }
@@ -723,12 +718,12 @@
       if (waiting) { add(box, el("div", "ck-s", waiting + (waiting === 1 ? " more is" : " more are") + " waiting for the lead to accept the hand-over.")); }
       return box;
     }
-    // Work an agent is doing right now glows; a failed run loses the glow below.
+    // Work an agent is doing right now is live, and its marks turn; a failed run is marked failed below.
     box.classList.add("live");
     var batch = batchNow(doc, all);
     if (batch) {
       var landedIn = batch.filter(function (item) { return item.stage === "merged"; }).length;
-      add(box, add(el("div", "ck-h"), el("span", "ck-dot"), landedIn ? "Landing together · " + landedIn + " of " + batch.length + " in" : "Being checked together · " + batch.length + " pieces"));
+      add(box, add(el("div", "ck-h"), el("span", "ck-dot"), el("span", "ck-h-words", landedIn ? "Landing together · " + landedIn + " of " + batch.length + " in" : "Being checked together · " + batch.length + " pieces")));
       var members = el("ol", "ck-members");
       batch.forEach(function (item) {
         var li = add(el("li", item.stage === "merged" ? "in" : ""), item.changeRequest ? changeLink(item.changeRequest) : null, " " + titleOf(doc, item));
@@ -738,7 +733,7 @@
       add(box, members);
       add(box, el("div", "ck-batch-note", "One test run for all of them; each lands only if it matches what was tested."));
     } else {
-      add(box, add(el("div", "ck-h"), el("span", "ck-dot"), "Being checked now"));
+      add(box, add(el("div", "ck-h"), el("span", "ck-dot"), el("span", "ck-h-words", "Being checked now")));
       add(box, el("div", "ck-t", byId[current.subject] ? titleOf(doc, byId[current.subject]) : text(current.title) || text(current.subject)));
     }
     // Checks the lead chose never pass for the provider's answer: each member's reason is said beside the run, one
@@ -804,10 +799,12 @@
       head.appendChild(count);
       // Once every check has finished and none failed, nothing is being checked any more: the mark settles into a ring
       // with a tick and the header says so, while the piece waits to land. A batch already landing keeps its own words.
-      var allPassed = done === steps.length && !steps.some(function (step) { return step.state === "failed" || step.state === "timed_out"; });
+      // Done with no failure and at least one check that passed or was reused; a run of skips alone passed nothing.
+      var allPassed = done === steps.length && !steps.some(function (step) { return step.state === "failed" || step.state === "timed_out"; }) &&
+        steps.some(function (step) { return step.state === "passed" || step.state === "reused"; });
       if (allPassed && !(batch && batch.some(function (item) { return item.stage === "merged"; }))) {
         head.querySelector(".ck-dot").className = "ck-dot is-done";
-        head.childNodes[1].textContent = batch ? "All checks passed · " + batch.length + " pieces" : "All checks passed";
+        head.querySelector(".ck-h-words").textContent = batch ? "All checks passed · " + batch.length + " pieces" : "All checks passed";
       }
       var failedSteps = steps.filter(function (step) { return step.state === "failed" || step.state === "timed_out"; });
       var failed = failedSteps.length;
@@ -847,7 +844,7 @@
           .concat(steps.filter(function (step) { return !DONE[step.state] && step.state !== "running"; }));
         ranked.forEach(function (step) { bar.appendChild(el("span", STEP_WORDS[step.state] ? step.state : "pending")); });
         var toRun = ranked.length - done - ranked.filter(function (step) { return step.state === "running"; }).length;
-        var foot = add(el("div", "ck-bar-foot"), el("span", null, "no times recorded"), toRun ? el("span", null, toRun + " waiting") : null);
+        var foot = add(el("div", "ck-bar-foot"), el("span", null, steps.some(function (step) { return seconds(step.startedAt) !== null; }) ? "times missing for some checks" : "no times recorded"), toRun ? el("span", null, toRun + " waiting") : null);
         foot.setAttribute("aria-hidden", "true");
         bar.setAttribute("aria-hidden", "true");
         add(box, add(el("div", "ck-bar-well"), bar, foot));
@@ -905,19 +902,20 @@
     return node;
   }
   /**
-   * The check run as a stretch of line on the clock: each check runs from where it started to where it
-   * finished, so a long one is a long stretch, and a stem above its stop rises with its time. Failed stops
-   * are numbered as the list below them; the running one sits at now, and the waiting ones trail off dotted.
-   * Null when the record has no check times to place, or lacks one for a check that has started.
+   * The check run as capsules on the clock: each check runs from where it started to where it finished, so a long
+   * one is a long capsule, and checks that overlap stack into rows below. A hairline marks now; a failed capsule is
+   * numbered above its end as the list below it numbers it, and the waiting checks trail off as rings at the right.
+   * Null when the record has no check times to place, or lacks one for a check that ran.
    */
   function runLine(current, steps) {
     var start = seconds(current.startedAt);
     var now = Date.now() / 1000;
     var timed = steps.filter(function (step) { return seconds(step.startedAt) !== null; });
-    // Every check that has started needs a time to place it: with only some timed, the line would show those few
-    // crowded at now and leave the rest out, so the strip below, in order of progress, is drawn instead.
-    var begun = steps.filter(function (step) { return DONE[step.state] || step.state === "running"; });
-    if (start === null || now <= start || !timed.length || timed.length < begun.length) { return null; }
+    // Every check that ran needs a time to place it: with only some timed, the line would show those few crowded at now
+    // and leave the rest out, so the strip below, in order of progress, is drawn instead. A reused or skipped check
+    // never ran here, so the runner gives it no time and it needs none.
+    var untimed = steps.some(function (step) { return RAN[step.state] && !step.reusedFrom && seconds(step.startedAt) === null; });
+    if (start === null || now <= start || !timed.length || untimed) { return null; }
     var waiting = steps.filter(function (step) { return !DONE[step.state] && step.state !== "running"; }).length;
     // Drawn at the width it is shown at, so its words stay their size on a phone.
     var width = Math.round(Math.max(300, Math.min(560, typeof innerWidth === "number" && innerWidth > 0 ? innerWidth - 80 : 560)));
@@ -967,7 +965,7 @@
     spans.forEach(function (span) {
       var from = x(span.from), to = Math.max(x(span.from), x(span.to)), y = TOP + span.row * ROW;
       var took = span.to - span.from;
-      // Passed checks are quiet, the long ones a little less so; the running one is solid and glows; a failure is held.
+      // Passed checks are quiet, the long ones a little less so; the running one is solid; a failure is held.
       var long = span.kind === "passed" && took >= Math.max(60, longest * 0.25);
       // A hair of space between checks that follow one another, so each reads as its own capsule.
       var inset = to - from > 8 ? 1 : 0;
@@ -2148,8 +2146,7 @@
     var sameDay = last !== null && new Date(begin * 1000).toDateString() === new Date(last * 1000).toDateString();
     var when = function (t) {
       var date = new Date(t * 1000);
-      return sameDay ? ((date.getHours() + 11) % 12 + 1) + ":" + (date.getMinutes() < 10 ? "0" : "") + date.getMinutes() + (date.getHours() < 12 ? " am" : " pm")
-        : MONTHS[date.getMonth()] + " " + date.getDate();
+      return sameDay ? clockParts(date.toISOString()).time : MONTHS[date.getMonth()] + " " + date.getDate();
     };
     // The counts: where scope began, above its start, and where it stands, above now.
     // With no approval there is no count before the changes, so the label starts from the first change's.

@@ -1,9 +1,8 @@
 :root {
   /* Quiet Signal: work floats on sheets over the ground; the shape of a mark is its state; success is ink and
-     colour is spent only on trouble. The aura tokens stay for when a glow returns behind live work. */
+     colour is spent only on trouble. */
   --paper: #f9faf8; --ink: #141719; --soft: #4d545a; --faint: #646c71; --hair: #dfe2de; --lift: #ffffff;
   --well: #f6f7f5; --edge: #878f93; --on-ink: #ffffff; --held-wash: #fbebe6;
-  --aura-cool: #cfe0ff; --aura-warm: #f8d9e7; --aura-fresh: #d8f1e4;
   --shadow-sheet: 0 1px 2px rgba(20, 23, 25, .05), 0 14px 36px -14px rgba(20, 23, 25, .16);
   --shadow-press: 0 1px 1px rgba(20, 23, 25, .08);
   --l1: #2f6fb3; --l2: #2f7d4f; --l3: #b8395f; --l4: #7f52ad; --l5: #9a6a14; --l6: #227a7a;
@@ -18,7 +17,6 @@
   :root:not([data-theme="light"]) {
     --paper: #0d0f10; --ink: #eef1ee; --soft: #adb4b0; --faint: #868f94; --hair: #2a2f32; --lift: #17191b;
     --well: #1d2023; --edge: #5d6569; --on-ink: #141719; --held-wash: #2c1a15;
-    --aura-cool: #22385e; --aura-warm: #45253a; --aura-fresh: #1f3d33;
     --shadow-sheet: 0 0 0 1px rgba(255, 255, 255, .06), 0 14px 36px -14px rgba(0, 0, 0, .7);
     --shadow-press: 0 0 0 1px rgba(255, 255, 255, .08);
     --l1: #6ea6e6; --l2: #6cc28c; --l3: #ec7398; --l4: #b48ee0; --l5: #e0ad55; --l6: #5fc4c4;
@@ -29,7 +27,6 @@
 :root[data-theme="dark"] {
     --paper: #0d0f10; --ink: #eef1ee; --soft: #adb4b0; --faint: #868f94; --hair: #2a2f32; --lift: #17191b;
     --well: #1d2023; --edge: #5d6569; --on-ink: #141719; --held-wash: #2c1a15;
-    --aura-cool: #22385e; --aura-warm: #45253a; --aura-fresh: #1f3d33;
     --shadow-sheet: 0 0 0 1px rgba(255, 255, 255, .06), 0 14px 36px -14px rgba(0, 0, 0, .7);
     --shadow-press: 0 0 0 1px rgba(255, 255, 255, .08);
     --l1: #6ea6e6; --l2: #6cc28c; --l3: #ec7398; --l4: #b48ee0; --l5: #e0ad55; --l6: #5fc4c4;
@@ -192,7 +189,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .lines { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; margin-block: -16px; }
 /* The rows keep 16px of room above and below inside the scroll area, so a stop's glow and pulse and the last row's labels
    are never clipped; scrolling sideways (on a phone) never brings a vertical scroll with it. */
-.lines-track { position: relative; display: grid; gap: 20px; padding: 16px 176px 16px 0; min-width: 820px; }
+.lines-track { position: relative; display: grid; gap: 20px; padding: 16px 176px 16px 0; min-width: max(820px, calc(368px + var(--most, 1) * 46px)); }
 .line { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 24px; align-items: start; height: 64px; }
 /* The lane's name stays pinned at the left while its row scrolls, so a lane is named wherever the reader has scrolled to. */
 .line .name { position: sticky; left: 0; z-index: 2; align-self: stretch; padding: 3px 0 10px; margin-bottom: -10px; font-size: 13px; color: var(--faint); white-space: nowrap; overflow: hidden;
@@ -437,10 +434,11 @@ a.issue-link { color: inherit; cursor: pointer; }
 @media (prefers-reduced-motion: no-preference) {
   .checking.live:not(.failed) .ck-dot:not(.is-ready):not(.is-done), .ck-step.running::before, .ck-run .ck-run-mark { animation: spin 1.1s linear infinite; }
   .ck-bar span.running { animation: breathe 1.6s ease-in-out infinite; }
-  /* A failure's entry arrives once its row has turned over to the next check (the row's settle and beat, 1.38s). */
-  .ck-fails li.arriving { animation: fail-arrive 420ms cubic-bezier(.2, .7, .2, 1) 1.38s both; overflow: hidden; }
-  @keyframes fail-arrive { from { opacity: 0; max-height: 0; padding-block: 0; margin-bottom: -6px; transform: translateY(-4px); }
-    to { opacity: 1; max-height: 240px; transform: none; } }
+  /* A failure's entry arrives once its row has turned over to the next check: handOff's SETTLE_MS and HOLD_MS (1.38s),
+     then the 0.5s turn. It holds its collapsed start only until then; once arrived nothing clips it. */
+  .ck-fails li.arriving { animation: fail-arrive 420ms cubic-bezier(.2, .7, .2, 1) 1.9s backwards; }
+  @keyframes fail-arrive { from { opacity: 0; max-height: 0; padding-block: 0; margin-bottom: -6px; transform: translateY(-4px); overflow: hidden; }
+    to { opacity: 1; max-height: 240px; transform: none; overflow: hidden; } }
   .since.live i { animation: live 2.4s ease-in-out infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   /* The result lands with the faintest lift as its stroke finishes drawing, then settles. */
@@ -492,7 +490,7 @@ a.issue-link { color: inherit; cursor: pointer; }
   .checking { padding: 18px 16px; border-radius: 20px; }
   .ck-run, .ck-fails li { margin: 0 -6px; }
   .rail { display: none; }
-  .lines-track { min-width: 740px; }
+  .lines-track { min-width: max(740px, calc(288px + var(--most, 1) * 46px)); }
   .line { grid-template-columns: 104px minmax(0, 1fr); gap: 12px; }
   .person { grid-template-columns: 20px minmax(0, 1fr); padding: 14px 16px; }
   .detail { padding: 18px 16px; border-radius: 20px; }

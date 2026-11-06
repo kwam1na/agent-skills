@@ -5,7 +5,7 @@
     python3 -B render.py history --config .agents/delivery-views.json --binding .agents/orchestration.json
 
 ``line-map`` prints the live line map: one page whose style and program are
-inline, loading only its two typefaces from Google Fonts. The page carries the
+inline, loading only its three typefaces from Google Fonts. The page carries the
 live opt-in marker, so the state tool's live server serves it at
 ``/view/<output>`` and the page follows every record write by itself; opened
 as a file, it shows the record as it was rendered.

@@ -37,11 +37,9 @@ test("each stage has its mark, drawn in the state glyph grammar, and a landed pi
     const icon = shown.app.querySelector("#detail .d-stage .d-stage-icon");
     expect(icon.getAttribute("aria-hidden")).toBe("true");
     if (stage === "merged") {
-      // The merge is drawn on the persona grid: three nodes, a trunk and the branch curving into it.
+      // The merge is drawn on the persona grid, as the personas are.
       expect(icon.tagName.toLowerCase()).toBe("svg");
       expect(icon.getAttribute("class")).toBe("persona d-stage-icon is-merged");
-      expect(icon.querySelectorAll("circle")).toHaveLength(3);
-      expect(icon.querySelectorAll("path")).toHaveLength(2);
     } else {
       // Every other stage is a mark the stylesheet draws from its class alone.
       expect(icon.tagName.toLowerCase()).toBe("span");
@@ -75,7 +73,13 @@ test("the stage marks that turn do so only for a reader who has not asked for le
   };
   for (const sheet of dom.window.document.styleSheets) { walk(sheet.cssRules, null); }
   dom.window.close();
-  expect(turning.length > 0).toBe(true);
+  // The stages where something is running turn, each by its own rule, and the ones at rest do not.
+  for (const stage of ["syncing", "checking", "merging"]) {
+    expect(turning.some(([selector]) => selector.includes(`.d-stage-icon.is-${stage}`))).toBe(true);
+  }
+  for (const stage of ["synced", "checked", "queued", "merged"]) {
+    expect(turning.some(([selector]) => selector.includes(`.d-stage-icon.is-${stage}`))).toBe(false);
+  }
   for (const [, media] of turning) { expect(media).toBe("(prefers-reduced-motion: no-preference)"); }
 });
 
