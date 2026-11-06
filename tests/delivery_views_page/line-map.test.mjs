@@ -352,6 +352,36 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Rerun on the main line 3 minutes ago · /);
   expect([...history.querySelectorAll("li span")].map((row) => row.textContent).slice(-2))
     .toEqual(["Check failed: storefront build", "Rerunning storefront build on main"]);
+  // Its verdict reads as one in the feed and as the merge check's last step.
+  const verdict = JSON.parse(JSON.stringify(document));
+  verdict.journal.push({ at: "2026-10-22T05:09:00Z", id: 42, kind: "base.rerun.finished", lane: "payments", subject: "PAY-2361",
+    summary: "Base re-run on main after 120s: storefront build passed: the failure is the candidate's" });
+  const [, verdictShown] = await open(verdict, { steps });
+  expect([...verdictShown.app.querySelectorAll(".who")].map((who) => who.textContent)).toContain("Rerun verdict · Payments · PAY-2361");
+  expect(verdictShown.app.querySelector("#detail .mh summary .mh-sub").textContent).toMatch(/^ · Rerun verdict a minute ago · /);
+  // Rendered between the panel's write and the started entry, the wait's time comes from the panel.
+  const unjournaled = JSON.parse(JSON.stringify(document));
+  unjournaled.journal = unjournaled.journal.filter((entry) => entry.kind !== "base.rerun.started");
+  const [, unjournaledShown] = await open(unjournaled, { steps });
+  expect(unjournaledShown.app.querySelector("#detail .d-stage-time").getAttribute("aria-label")).toBe("Recorded base rerun start: 2026-10-22T05:07:00Z");
+  // A piece the panel names that is no longer being checked is not waiting on a rerun.
+  const settled = JSON.parse(JSON.stringify(document));
+  settled.state.queue[2].stage = "checked";
+  const [settledShown] = await open(settled);
+  expect(settledShown.app.querySelector('.stop-btn[data-subject="PAY-2361"]').getAttribute("aria-label"))
+    .toBe("Retry card payments once on a dropped connection, Checked, about to merge");
+  // A batch keeps its own header, and the rerun line still says the run is waiting on the main line.
+  const batch = JSON.parse(JSON.stringify(document));
+  const summary = "Checking Retry card payments once on a dropped connection, Keep the order number on the receipt page as one batch";
+  batch.state.queue[3].stage = "checking";
+  batch.journal.push(
+    { at: "2026-10-22T05:05:00Z", id: 43, kind: "check.started", lane: "payments", subject: "PAY-2361", summary },
+    { at: "2026-10-22T05:05:00Z", id: 44, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary },
+  );
+  const [batchShown] = await open(batch);
+  expect(batchShown.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
+  expect(batchShown.app.querySelector(".checking .ck-rerun")?.textContent)
+    .toBe("Rerunning storefront build on the main line, to tell whether it fails there too · started 3 minutes ago");
   // The same failure before the rerun starts, or once it is over, is a check that failed, not a wait on the main line.
   delete document.state.meta.checking.now.baseRerun;
   const [before] = await open(document);

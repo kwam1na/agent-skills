@@ -3419,6 +3419,74 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertIn("held also fails", finished["summary"])
         self.assertNotIn("the failure is the candidate's", finished["summary"])
 
+    def rerun_with(self, adopter: Adopter, *, judged: bool = True, starts: bool = True, raises: bool = False) -> tuple[list, list]:
+        """Run the queue with the base re-run bent as asked; returns the results and the panel at each re-run entry."""
+        real_journal, real_run_one, real_checkout = queue.Runner.journal, queue.Runner.run_one, queue.Runner.checkout
+        real_prerequisites = queue.Runner.base_prerequisites_pass
+        seen: list = []
+        rerunning = []
+
+        def journal(runner, kind, summary, subject=None):
+            if kind in ("base.rerun.started", "base.rerun.finished"):
+                seen.append((kind, copy.deepcopy(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])))
+            if kind == "base.rerun.started":
+                rerunning.append(True)
+            return real_journal(runner, kind, summary, subject)
+
+        def run_one(runner, check, checkout, context):
+            return None if rerunning and not starts else real_run_one(runner, check, checkout, context)
+
+        def prerequisites(runner, *args):
+            return real_prerequisites(runner, *args) if judged else False
+
+        def checkout(runner, commit, label, *args, **kwargs):
+            if raises and label == "base-rerun":
+                raise OSError("no room for the base checkout")
+            return real_checkout(runner, commit, label, *args, **kwargs)
+
+        with mock.patch.object(queue.Runner, "journal", journal), mock.patch.object(queue.Runner, "run_one", run_one), \
+                mock.patch.object(queue.Runner, "base_prerequisites_pass", prerequisites), \
+                mock.patch.object(queue.Runner, "checkout", checkout):
+            results = self.run_queue(adopter, "feature")
+        return results, seen
+
+    def test_the_panel_says_the_candidate_waits_on_the_rerun_until_its_verdict_and_no_longer(self) -> None:
+        adopter = self.adopter(mode="implicit")
+        self.candidate(adopter, {"src/app.txt": "FAIL here\n"})
+        results, seen = self.rerun_with(adopter)
+        self.assertStopped(results, "check_failed")
+        (started, at_start), (finished, at_verdict) = seen
+        self.assertEqual((started, finished), ("base.rerun.started", "base.rerun.finished"))
+        self.assertEqual(at_start["baseRerun"]["checks"], ["implicit"])
+        # The verdict is in: the panel still names the candidate until the stop, but no longer says it waits.
+        self.assertEqual(at_verdict["subject"], "feature")
+        self.assertNotIn("baseRerun", at_verdict)
+
+    def test_a_base_rerun_that_cannot_judge_or_start_the_check_says_so_and_leaves_the_failure_the_candidates(self) -> None:
+        for name, bent, words in (("unjudged", {"judged": False}, "implicit could not be judged there"),
+                                  ("unstarted", {"starts": False}, "implicit could not start there")):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.adopter(mode="implicit")
+                self.candidate(adopter, {"src/app.txt": "FAIL here\n"})
+                results, _ = self.rerun_with(adopter, **bent)
+                self.assertStopped(results, "check_failed")
+                [finished] = self.journal(adopter, "base.rerun.finished")
+                self.assertIn(words + ": the failure is the candidate's", finished["summary"])
+                self.assertNotIn("passed", finished["summary"])
+
+    def test_a_base_rerun_that_raises_partway_still_journals_its_end_and_the_error(self) -> None:
+        adopter = self.adopter(mode="implicit")
+        self.candidate(adopter, {"src/app.txt": "FAIL here\n"})
+        results, seen = self.rerun_with(adopter, raises=True)
+        last = results[-1].document()
+        self.assertEqual(last["outcome"], "stopped", last)
+        self.assertIn("no room for the base checkout", last["stop"]["detail"])
+        self.assertEqual([kind for kind, _ in seen], ["base.rerun.started", "base.rerun.finished"])
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertIn("ended without a verdict (OSError)", finished["summary"])
+        self.assertNotIn("baseRerun", seen[1][1])
+
     def test_a_failure_with_no_check_to_rerun_on_the_base_journals_no_rerun(self) -> None:
         adopter = self.adopter(mode="new-cwd")
         self.candidate(adopter, {"src/app.txt": "app two\n", "newdir/readme.txt": "new\n"})
