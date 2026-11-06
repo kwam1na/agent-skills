@@ -1056,14 +1056,18 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertIn(resolution["id"], [mark["journal"] for mark in marks])
         code, out = fx.flow("lead-resolve", str(blocker), "--why", "again", cwd=m)
         self.assertEqual(code, 2, out)
-        # A failing fullHealth holds it, and isn't run again at the same head until lead-resolve asks.
+        # FX-2's merge already ran fullHealth at its head, so a pass there finds nothing more to run.
+        runs = lambda: len((fx.tmp / "health.runs").read_text().splitlines())
+        self.assertEqual(runs(), 1, "fullHealth didn't run after FX-2's merge")
+        # A commit landed on the base is a new head: the post-merge tier runs there, fails and holds the close, and
+        # isn't run again at that head until lead-resolve asks.
         (fx.tmp / "health").write_text("fail")
-        self.assertEqual(self.holds(fx), [], "something besides fullHealth still holds the close")
+        declare(fx, "landed by hand\n", path="src/landed.txt")
         held = self.holds(fx)
         self.assertTrue(any(h.startswith("fullHealth failed at") for h in held), held)
+        self.assertTrue(all(h.startswith(("fullHealth failed at", "The delivery base is broken")) for h in held), held)
         self.holds(fx)
-        runs = lambda: len((fx.tmp / "health.runs").read_text().splitlines())
-        self.assertEqual(runs(), 1, "fullHealth ran again at the same head")
+        self.assertEqual(runs(), 2, "fullHealth ran again at the same head")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=m)
         self.assertEqual(code, 0, out)
         rerun = kinds(fx, "decision.recorded")[-1]
@@ -1074,14 +1078,15 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("already asked for", out)
         self.holds(fx)
-        self.assertEqual(runs(), 2)
+        self.assertEqual(runs(), 3)
         self.holds(fx)
-        self.assertEqual(runs(), 2, "a rerun that failed again ran a third time")
+        self.assertEqual(runs(), 3, "a rerun that failed again ran a third time")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky twice", cwd=m)
         self.assertEqual(code, 0, out)
         (fx.tmp / "health").write_text("pass")
         last = self.once(fx)
-        self.assertEqual(runs(), 3)
+        self.assertEqual(runs(), 4)
+        self.assertEqual(kinds(fx, "base.repaired")[-1]["summary"][:20], "fullHealth passed at")
         # Then it closes: delivery.closed, the archive, the friction note, and the supervisor's stop.
         self.assertEqual(last["closeHeldBy"], [], last)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
@@ -1221,15 +1226,18 @@ class SupervisorTrackerTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         pid = wait_for(lambda: lock_of(fx).get("pid"), "a running supervisor")
         self.addCleanup(lambda: alive(pid) and os.kill(pid, signal.SIGTERM))
-        wait_for(lambda: any("fullHealth failed" in json.dumps(p.get("closeOut")) for p in passes(fx)), "a failed fullHealth")
+        # FX-2's merge runs fullHealth on the pass that sees it, before any close-out.
+        wait_for(lambda: any(str(p.get("fullHealth", "")).startswith("fullHealth failed") for p in passes(fx)),
+                 "a failed fullHealth")
         with backend.edit() as store:
             store["token"] = "revoked"
         state_tool(fx, "journal", "--kind", "release.finished", "--summary", "Released for the tracker to hear about")
         page = fx.tmp / "record/line-map.html"
-        holding = lambda drawn: sorted(item["source"] for item in drawn["items"] if item["holding"])
-        # Both hold the close, and the line map the pass draws lists both, from the same list the close read.
-        drawn = wait_for(lambda: (lambda d: d if holding(d) == ["fullHealth", "tracker publisher"] else None)(
-            self.embedded_needs(page.read_text())), "both holding in the line map")
+        holding = lambda drawn: sorted("base.broken" if item["source"].endswith("(base.broken)") else item["source"]
+                                       for item in drawn["items"] if item["holding"])
+        # Each holds the close, and the line map the pass draws lists each, from the same list the close read.
+        drawn = wait_for(lambda: (lambda d: d if holding(d) == ["base.broken", "fullHealth", "tracker publisher"] else None)(
+            self.embedded_needs(page.read_text())), "each holding in the line map")
         self.assertTrue(drawn["running"], drawn)
         # Stale once a pass is overdue: the interval (1s here) and once more the longer of it and the pass's own time.
         moment = lambda text: datetime.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ")
@@ -1241,7 +1249,8 @@ class SupervisorTrackerTests(unittest.TestCase):
             if item["holding"]:
                 self.assertIn(item["text"], last["closeHeldBy"])
         self.assertEqual(kinds(fx, "delivery.closed"), [])
-        # Clearing one removes it on a following pass; the other still holds.
+        # Clearing one removes it on a following pass; the other still holds. The rerun passes, so it repairs the base.
+        (fx.tmp / "health").write_text("pass")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=fx.main)
         self.assertEqual(code, 0, out)
         wait_for(lambda: holding(self.embedded_needs(page.read_text())) == ["tracker publisher"], "fullHealth cleared")
@@ -1566,8 +1575,9 @@ class SupervisorPostureTests(unittest.TestCase):
         (fx.tmp / "health").write_text("fail")
         last = self.once(fx)
         self.assertEqual(health_runs(fx), 1)
-        self.assertIn("posture_malformed", last["closeOut"][0])
-        self.assertIn(".agents/delivery-posture.json", last["closeOut"][0])
+        # The post-merge run after FX-2's merge is the one that ran, and its line names the declaration that didn't take.
+        self.assertIn("posture_malformed", last["fullHealth"])
+        self.assertIn(".agents/delivery-posture.json", last["fullHealth"])
         self.once(fx)
         named = decisions(fx, "posture_malformed")
         self.assertEqual(len(named), 1, named)

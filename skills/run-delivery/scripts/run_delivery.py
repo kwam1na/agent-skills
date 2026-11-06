@@ -5057,9 +5057,10 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                       "full-health --why TEXT",
                       "clears": f"a pass at a later base head, or {flow_command()} lead-resolve full-health --why TEXT"})
     events = [e for e in doc["journal"] if e["kind"] in ("base.broken", "base.repaired")]
-    if events and events[-1]["kind"] == "base.broken":
-        # A break fullHealth found clears with the next pass the supervisor sees; the queue's waits for the lead.
-        passing = events[-1].get("summary", "").startswith("fullHealth failed")
+    # A break fullHealth found clears with its next pass, and, like its failed run, holds nothing under focused; the
+    # queue's own break waits for the lead.
+    passing = bool(events) and events[-1].get("summary", "").startswith("fullHealth failed")
+    if events and events[-1]["kind"] == "base.broken" and not (passing and delivery_posture(c)["posture"] == "focused"):
         items.append({"holding": True, "source": f"journal entry {events[-1]['id']} (base.broken)",
                       "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. "
                       "Repair it, then journal base.repaired", "clears": ("a fullHealth pass at a later base head, or "
@@ -5277,6 +5278,8 @@ def post_merge_step(c) -> str:
     posture = delivery_posture(c)
     if posture["posture"] == "focused":
         return "fullHealth: not run after merges under the focused posture"
+    with plan_lock(c):
+        note_posture(c, posture)
     named = declared_words(posture)
     git("fetch", "-q", c.remote, c.base_branch, check=False)
     head = base_head(c)
