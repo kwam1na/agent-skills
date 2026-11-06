@@ -1968,6 +1968,23 @@ class SupervisorPostMergeTests(unittest.TestCase):
                          ["base.verified", "base.broken", "base.broken", "base.verified"])
         self.assertTrue(self.serving_waits(fx), "a fullHealth pass confirmed the queue's break")
 
+    def test_a_queue_break_the_lead_confirmed_doesnt_keep_a_later_fullHealth_break_from_its_repair(self) -> None:
+        fx = self.fixture()
+        self.merged(fx, "FX-2", "lane-1")
+        self.once(fx)
+        # The queue's break, confirmed by the lead; then a merge that fails fullHealth, and a fix that passes it.
+        state_tool(fx, "journal", "--kind", "base.broken", "--summary", "base_broken: lint also fails on the base")
+        state_tool(fx, "journal", "--kind", "base.repaired", "--summary", "lint fixed on the base")
+        (fx.tmp / "health").write_text("fail")
+        self.merged(fx, "FX-3", "lane-2")
+        self.once(fx)
+        (fx.tmp / "health").write_text("pass")
+        declare(fx, "the fix\n", path="src/landed.txt")
+        self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)],
+                         ["base.verified", "base.broken", "base.repaired", "base.broken", "base.repaired"])
+        self.assertFalse(self.serving_waits(fx), "a fullHealth break fullHealth itself repaired left serve waiting")
+
     def test_a_break_yields_the_close_under_focused_stays_listed_and_holds_again_under_gate(self) -> None:
         fx = self.fixture()
         (fx.tmp / "health").write_text("fail")
