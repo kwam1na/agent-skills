@@ -276,6 +276,8 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   const [{ app: aheadApp }] = await open(ahead);
   expect(aheadApp.querySelector(".run-line")).toBeNull();
   expect(aheadApp.querySelector(".ck-bar")).not.toBeNull();
+  // Every check is timed there, so the strip's foot gives the run's clock as the reason, not missing times.
+  expect(aheadApp.querySelector(".ck-bar-foot span")?.textContent).toBe("the run's clock is ahead of this one");
   // A reused or skipped check never ran here, so the runner gives it no time; the line is still drawn from the rest.
   const reusedUntimed = JSON.parse(JSON.stringify(document));
   delete reusedUntimed.state.meta.checking.now.steps[5].startedAt;
@@ -293,6 +295,7 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   delete untimed.state.meta.checking.now.steps[3].finishedAt;
   const [{ app: untimedApp }] = await open(untimed);
   expect(untimedApp.querySelector(".run-line")).toBeNull();
+  expect(untimedApp.querySelector(".ck-bar-foot span")?.textContent).toBe("times missing for some checks");
   expect(untimedApp.querySelectorAll(".ck-bar span")).toHaveLength(20);
   expect([...untimedApp.querySelectorAll(".ck-fails .g.num")].map((number) => number.textContent)).toEqual(["1", "2"]);
   expect([...checking.querySelectorAll(".ck-fails .g.num")].map((number) => number.textContent)).toEqual(["1", "2"]);
@@ -580,6 +583,22 @@ test("takes a round's lens verdicts from the record's review.round entry only wh
   // The run's own verdicts stand over the record's.
   expect(reviewers(latest.app.querySelector("#detail"))).toEqual([["Correctness", null]]);
   expect(reviewers(first.app.querySelector("#detail"))).toEqual([["Testing", null], ["Correctness", "approved"]]);
+});
+
+test("fills a lens the run leaves out or calls unknown from the record, keeps the run's own, and reads a missing outcome from them", async () => {
+  const document = fixtureDocument();
+  document.journal.push({ at: "2026-10-22T04:59:00Z", id: 91, kind: "review.round", lane: "payments", subject: "PAY-2361",
+    summary: "payments review round 1 on PAY-2361",
+    review: { round: 1, verdicts: { "lens.outcome-correctness": "changes", "lens.adversarial-testing": "approve", "lens.perf": "approve" } } });
+  const summary = { runId: "run-7", ticket: null, open: true, status: null, startedAt: null, lastAt: null, durationSeconds: null, rounds: 1, findings: null,
+    roundDetail: [{ round: 1, at: "2026-10-22T04:40:00Z", outcome: null, findings: null,
+      verdicts: { "lens.outcome-correctness": "approve", "lens.adversarial-testing": "unknown" } }] };
+  const [shown] = await open(document, {}, render(document, { "run-7": summary }));
+  const detail = shown.app.querySelector("#detail");
+  // Correctness keeps the run's approve over the record's changes; Testing's unknown and the missing Perf take the
+  // record's approve; every lens approving, the round with no outcome reads as approved, so no chip differs from it.
+  expect(detail.querySelector(".run-card").textContent).toContain("Round 1Approved");
+  expect(reviewers(detail)).toEqual([["Testing", null], ["Correctness", null], ["Perf", null]]);
 });
 
 test("tells each round's time from the round before it, and colours each badge by its worst note", async () => {

@@ -651,11 +651,11 @@
   /**
    * The handoff when a check finishes: its spinning arc settles into a full ring, its result draws inside it (a check, or a
    * cross for a failure), it holds there a beat, then the row turns over on its horizontal axis and the next running check
-   * arrives on the back. The settle and the beat are SETTLE_MS and HOLD_MS; the turn itself is half a second, and a failed
+   * arrives on the back. The settle and the beat are SETTLE_MS and HOLD_MS, the turn TURN_OUT_MS then TURN_IN_MS; a failed
    * check's entry in the list (.ck-fails li.arriving in the stylesheet) waits for all three. Without motion the row simply
    * shows the next.
    */
-  var SETTLE_MS = 480, HOLD_MS = 900;
+  var SETTLE_MS = 480, HOLD_MS = 900, TURN_OUT_MS = 200, TURN_IN_MS = 300;
   function handOff(row, finished, next) {
     if (!runMotionWanted(row)) { if (!next) { doneWords(row, finished); } return; }
     // The row is first drawn as the finished check was last seen: running, its arc still turning.
@@ -674,13 +674,13 @@
           var out = face.animate([
             { transform: "perspective(400px) translateY(0) rotateX(0deg)", opacity: 1 },
             { transform: "perspective(400px) translateY(-4px) rotateX(70deg)", opacity: 0 }],
-            { duration: 200, easing: "cubic-bezier(.4, 0, .7, .4)", fill: "forwards" });
+            { duration: TURN_OUT_MS, easing: "cubic-bezier(.4, 0, .7, .4)", fill: "forwards" });
           out.onfinish = function () {
             runWords(row, next);
             face.animate([
               { transform: "perspective(400px) translateY(4px) rotateX(-70deg)", opacity: 0 },
               { transform: "perspective(400px) translateY(0) rotateX(0deg)", opacity: 1 }],
-              { duration: 300, easing: "cubic-bezier(.2, .6, .3, 1)" });
+              { duration: TURN_IN_MS, easing: "cubic-bezier(.2, .6, .3, 1)" });
             out.cancel();
           };
         }, HOLD_MS);
@@ -844,7 +844,7 @@
           .concat(steps.filter(function (step) { return !DONE[step.state] && step.state !== "running"; }));
         ranked.forEach(function (step) { bar.appendChild(el("span", STEP_WORDS[step.state] ? step.state : "pending")); });
         var toRun = ranked.length - done - ranked.filter(function (step) { return step.state === "running"; }).length;
-        var foot = add(el("div", "ck-bar-foot"), el("span", null, steps.some(function (step) { return seconds(step.startedAt) !== null; }) ? "times missing for some checks" : "no times recorded"), toRun ? el("span", null, toRun + " waiting") : null);
+        var foot = add(el("div", "ck-bar-foot"), el("span", null, stripReason(current, steps)), toRun ? el("span", null, toRun + " waiting") : null);
         foot.setAttribute("aria-hidden", "true");
         bar.setAttribute("aria-hidden", "true");
         add(box, add(el("div", "ck-bar-well"), bar, foot));
@@ -907,6 +907,15 @@
    * numbered above its end as the list below it numbers it, and the waiting checks trail off as rings at the right.
    * Null when the record has no check times to place, or lacks one for a check that ran.
    */
+  /** Why the strip stands in for the run line, in the words of its foot. */
+  function stripReason(current, steps) {
+    var start = seconds(current.startedAt);
+    if (start !== null && start >= Date.now() / 1000) { return "the run's clock is ahead of this one"; }
+    if (start === null && steps.every(function (step) { return !RAN[step.state] || seconds(step.startedAt) !== null; })) {
+      return "no start recorded for the run";
+    }
+    return steps.some(function (step) { return seconds(step.startedAt) !== null; }) ? "times missing for some checks" : "no times recorded";
+  }
   function runLine(current, steps) {
     var start = seconds(current.startedAt);
     var now = Date.now() / 1000;
@@ -914,7 +923,7 @@
     // Every check that ran needs a time to place it: with only some timed, the line would show those few crowded at now
     // and leave the rest out, so the strip below, in order of progress, is drawn instead. A reused or skipped check
     // never ran here, so the runner gives it no time and it needs none.
-    var untimed = steps.some(function (step) { return RAN[step.state] && !step.reusedFrom && seconds(step.startedAt) === null; });
+    var untimed = steps.some(function (step) { return RAN[step.state] && seconds(step.startedAt) === null; });
     if (start === null || now <= start || !timed.length || untimed) { return null; }
     var waiting = steps.filter(function (step) { return !DONE[step.state] && step.state !== "running"; }).length;
     // Drawn at the width it is shown at, so its words stay their size on a phone.

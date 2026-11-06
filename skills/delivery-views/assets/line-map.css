@@ -189,6 +189,8 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .lines { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; margin-block: -16px; }
 /* The rows keep 16px of room above and below inside the scroll area, so a stop's glow and pulse and the last row's labels
    are never clipped; scrolling sideways (on a phone) never brings a vertical scroll with it. */
+/* The track's least width: the lane-name column and its gap (168 + 24, or 104 + 12 on a phone) and the merge's 176
+   (MERGE_WIDTH in line-map.js), plus 46 for each stop of the longest lane, so stops never crowd under their keys. */
 .lines-track { position: relative; display: grid; gap: 20px; padding: 16px 176px 16px 0; min-width: max(820px, calc(368px + var(--most, 1) * 46px)); }
 .line { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 24px; align-items: start; height: 64px; }
 /* The lane's name stays pinned at the left while its row scrolls, so a lane is named wherever the reader has scrolled to. */
@@ -435,7 +437,7 @@ a.issue-link { color: inherit; cursor: pointer; }
   .checking.live:not(.failed) .ck-dot:not(.is-ready):not(.is-done), .ck-step.running::before, .ck-run .ck-run-mark { animation: spin 1.1s linear infinite; }
   .ck-bar span.running { animation: breathe 1.6s ease-in-out infinite; }
   /* A failure's entry arrives once its row has turned over to the next check: handOff's SETTLE_MS and HOLD_MS (1.38s),
-     then the 0.5s turn. It holds its collapsed start only until then; once arrived nothing clips it. */
+     then TURN_OUT_MS and TURN_IN_MS (1.88s in all). It holds its collapsed start only until then; once arrived nothing clips it. */
   .ck-fails li.arriving { animation: fail-arrive 420ms cubic-bezier(.2, .7, .2, 1) 1.9s backwards; }
   @keyframes fail-arrive { from { opacity: 0; max-height: 0; padding-block: 0; margin-bottom: -6px; transform: translateY(-4px); overflow: hidden; }
     to { opacity: 1; max-height: 240px; transform: none; overflow: hidden; } }
@@ -490,7 +492,7 @@ a.issue-link { color: inherit; cursor: pointer; }
   .checking { padding: 18px 16px; border-radius: 20px; }
   .ck-run, .ck-fails li { margin: 0 -6px; }
   .rail { display: none; }
-  .lines-track { min-width: max(740px, calc(288px + var(--most, 1) * 46px)); }
+  .lines-track { min-width: max(740px, calc(292px + var(--most, 1) * 46px)); }
   .line { grid-template-columns: 104px minmax(0, 1fr); gap: 12px; }
   .person { grid-template-columns: 20px minmax(0, 1fr); padding: 14px 16px; }
   .detail { padding: 18px 16px; border-radius: 20px; }
