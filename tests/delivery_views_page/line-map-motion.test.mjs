@@ -83,6 +83,39 @@ test("the stage marks that turn do so only for a reader who has not asked for le
   for (const [, media] of turning) { expect(media).toBe("(prefers-reduced-motion: no-preference)"); }
 });
 
+test("each stage's mark in the detail panel is drawn as the legend draws the stop it stands for", () => {
+  const page = pageWithRuns(record(), {}, { config: CONFIG });
+  const dom = new JSDOM(page);
+  // Every declaration a selector receives from the stylesheet's top-level rules, the ones that draw the shape.
+  const drawn = (selector) => {
+    const found = {};
+    for (const sheet of dom.window.document.styleSheets) {
+      for (const rule of sheet.cssRules) {
+        if (!rule.selectorText || !rule.selectorText.split(",").map((part) => part.trim()).includes(selector)) { continue; }
+        for (let index = 0; index < rule.style.length; index += 1) {
+          const property = rule.style[index];
+          // Spacing places the mark beside its words, and the legend's own gap does that there.
+          if (!/^margin/.test(property)) { found[property] = rule.style.getPropertyValue(property); }
+        }
+      }
+    }
+    return found;
+  };
+  const LEGEND = { planned: "d", building: "a", review: "a", pending: "p", queued: "r", syncing: "n", synced: "n",
+    checking: "n", checked: "n", merging: "n", stopped: "h" };
+  try {
+    for (const [stage, entry] of Object.entries(LEGEND)) {
+      for (const part of ["", "::after"]) {
+        expect([stage + part, drawn(`.d-stage-icon.is-${stage}${part}`)]).toEqual([stage + part, drawn(`.line-legend i.${entry}${part}`)]);
+      }
+    }
+    // In progress is the ring with its ripple partway out, never a ring around a centre dot.
+    const ripple = drawn(".d-stage-icon.is-building::after");
+    expect([ripple.inset, Number(ripple.opacity)]).toEqual(["-5px", 0.3]);
+    expect(Object.keys(drawn(".d-stage-icon.is-building")).filter((property) => property.startsWith("background"))).toEqual([]);
+  } finally { dom.window.close(); }
+});
+
 test("a newly picked piece's panel eases to its height, a live redraw of the same piece does not move, and nothing moves under reduced motion", async () => {
   const document = record();
   const page = pageWithRuns(document, {}, { config: CONFIG });

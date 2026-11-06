@@ -112,3 +112,23 @@ test("building uses the current assignment after a rejected handoff, or reports 
     expect(timing.getAttribute("aria-label")).toBe("Recorded work assignment: " + (assigned ? "2026-10-22T06:00:00Z" : "unknown"));
   }
 });
+
+test("work the tracker showed started before the record knew of it names its stage with no time", async () => {
+  for (const [stage, words] of [["building", "Being built"], ["review", "In review"]]) {
+    for (const trackerStarted of [true, false]) {
+      const doc = { state: { lanes: [], queue: [], planned: [{ subject: "PAY-1", stage, title: "Payment", trackerStarted }] }, journal: [] };
+      const [shown] = await openPage(pageWithRuns(doc, {}, { config: { spec: "delivery-views-config/1" } }), { now: "2026-10-22T07:10:00Z" });
+      const meta = shown.app.querySelector("#detail .d-meta");
+      expect(meta.querySelector(".d-stage").textContent).toContain(words);
+      if (trackerStarted) {
+        expect(meta.querySelector(".d-stage-time")).toBeNull();
+        expect(meta.textContent).not.toContain("unknown");
+      } else { expect(meta.textContent).toContain("time unknown"); }
+    }
+  }
+  // A start the record does hold still shows beside the same flag.
+  const doc = { state: { lanes: [], queue: [], planned: [{ subject: "PAY-1", stage: "building", title: "Payment", trackerStarted: true }] },
+    journal: [{ id: 1, kind: "lane.assigned", subject: "PAY-1", at: "2026-10-22T06:00:00Z" }] };
+  const [shown] = await openPage(pageWithRuns(doc, {}, { config: { spec: "delivery-views-config/1" } }), { now: "2026-10-22T07:10:00Z" });
+  expect(shown.app.querySelector("#detail .d-stage-time").getAttribute("aria-label")).toBe("Recorded work assignment: 2026-10-22T06:00:00Z");
+});
