@@ -4788,7 +4788,7 @@ def stop_orphans(c) -> list[str]:
 
 def ask_supervisor_to_stop(c, meanwhile: Callable[[], None] | None = None) -> str | None:
     """Ask a running supervisor to stop after its pass, and wait for it to release its lock. `meanwhile` runs once the
-    request is written, for what the pass may be waiting on."""
+    request is written, and again while the wait goes on, for what the pass may be waiting on or just starting."""
     lock = supervisor_lock_path(c)
     held, recorded = read_lock(lock)
     if not held:
@@ -4802,6 +4802,8 @@ def ask_supervisor_to_stop(c, meanwhile: Callable[[], None] | None = None) -> st
         if not read_lock(lock)[0]:
             request.unlink(missing_ok=True)
             return f"stopped the supervisor (pid {recorded.get('pid')}) after its pass"
+        if meanwhile:
+            meanwhile()
         time.sleep(0.2)
     raise Stop(f"the supervisor (pid {recorded.get('pid')}) didn't stop after its pass; see "
                f"{lead_file(c, 'supervisor.log')}")
@@ -5348,8 +5350,10 @@ def running_words(run: dict) -> str:
 
 
 def process_started(pid: int) -> str | None:
-    """When the process with this pid started, as ps says it, or None when none has it."""
-    done = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, check=False)
+    """When the process with this pid started, as ps says it, or None when none has it. In UTC and the C locale, so the
+    supervisor that records it and the lead's shell that checks it read the same words."""
+    done = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, check=False,
+                          env={**os.environ, "LC_ALL": "C", "TZ": "UTC"})
     return done.stdout.strip() or None
 
 
@@ -5517,9 +5521,7 @@ def full_health_run(args) -> None:
         left = earlier.get("checkout")
         if isinstance(left, str) and Path(left).name == "base" and Path(left).parent.name.startswith(
                 "run-delivery-full-health-"):
-            run(["git", "worktree", "remove", "--force", left], cwd=c.root, check=False)
-            shutil.rmtree(Path(left).parent, ignore_errors=True)
-        run(["git", "worktree", "prune"], cwd=c.root, check=False)
+            forget_checkout(c, Path(left))
         if record_identity(c) != args.record:
             print("the record was replaced since this run was started; it runs nothing")
             return
@@ -5547,6 +5549,18 @@ def full_health_run(args) -> None:
     finally:
         fcntl.flock(handle, fcntl.LOCK_UN)
         handle.close()
+
+
+def forget_checkout(c, checkout: Path) -> None:
+    """Remove a killed run's checkout and its entry in the repository's worktrees, and no other: a prune would also drop
+    any other checkout whose folder is away just then."""
+    run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
+    shutil.rmtree(checkout.parent, ignore_errors=True)
+    common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=c.root))
+    for entry in (common / "worktrees").glob("*/gitdir") if (common / "worktrees").is_dir() else []:
+        with contextlib.suppress(OSError):
+            if Path(entry.read_text().strip()).parent == checkout:
+                shutil.rmtree(entry.parent, ignore_errors=True)
 
 
 def stop_full_health_run(c) -> str | None:

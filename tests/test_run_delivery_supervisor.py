@@ -2259,6 +2259,20 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         self.assertEqual(once.wait(timeout=60), 0)
         self.assertEqual(self.results(fx), [])
 
+    def test_a_recorded_command_whose_start_time_differs_is_left_alone(self) -> None:
+        fx = self.fixture()
+        # A live group leader that reuses the recorded pid, as far as the lock can tell: its start time differs.
+        other = subprocess.Popen(["sleep", "120"], start_new_session=True)
+        self.addCleanup(lambda: other.poll() is None and os.killpg(other.pid, signal.SIGKILL))
+        lock = fx.tmp / "flow-log/FX-1.full-health.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text(json.dumps({"pid": 99999, "head": "e" * 40, "command": other.pid,
+                                    "commandStarted": "Thu Jan  1 00:00:00 1970"}))
+        code, out = fx.flow("full-health-run", "--head", "f" * 40, "--record", "2000-01-01T00:00:00Z", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("stopped the command", out)
+        self.assertIsNone(other.poll(), "a process that only shares the recorded pid was killed")
+
     def test_lead_close_stops_a_run_and_records_no_result(self) -> None:
         fx = self.slow_run_under_a_supervisor()
         wait_for(lambda: self.run_lock(fx).get("command"), "the run's command to start", 30)
