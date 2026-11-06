@@ -515,7 +515,7 @@ DIVERGENCES = (
             ),
         ),
         (
-            'Known conflict, V26-3194: obtain-review makes a story-review P1 a deferral with a follow-up and files '
+            'Known conflict, awaiting a ruling: obtain-review makes a story-review P1 a deferral with a follow-up and files '
             'a plan-review P1; run-delivery records both as dissent in evidence.'
         ),
     ),

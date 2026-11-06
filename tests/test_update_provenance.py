@@ -14,6 +14,7 @@ from pathlib import Path
 from agent_skills.validate import validate_corpus
 
 from corpus_copy import SharedCorpus, copy_corpus
+from quiet_git import quieten
 
 ROOT = Path(__file__).resolve().parents[1]
 WRITER = ROOT / "scripts" / "update-provenance.py"
@@ -115,6 +116,7 @@ class UpdateProvenanceTests(unittest.TestCase):
             self.assertEqual(git("commit", "-q", "-am", branch).returncode, 0)
 
         self.assertEqual(git("init", "-q", "--initial-branch=base").returncode, 0)
+        quieten(self.root)  # no maintenance writes into the folder while restored() removes it
         git("add", "-A")
         self.assertEqual(git("commit", "-q", "-m", "base").returncode, 0)
         lines = (self.root / guide).read_text(encoding="utf-8").split("\n")
