@@ -26,8 +26,7 @@
         "tests/test_merge_queue.py",
         "skills/orchestrate-work/scripts/merge_queue.py",
         "scripts/update-provenance.py",
-        "tests/test_update_provenance.py",
-        "provenance.lock.json"
+        "tests/test_update_provenance.py"
       ]
     },
     "lane-2": {
@@ -41,7 +40,8 @@
         "skills/orchestrate-work/references/schemas.json",
         "tests/test_orchestration_state.py",
         "tests/test_registry.py",
-        "tests/test_lane_rows.py"
+        "tests/test_lane_rows.py",
+        "provenance.lock.json"
       ]
     },
     "lane-3": {
