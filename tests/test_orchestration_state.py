@@ -5026,10 +5026,12 @@ VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
     "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
     "queued with its ticket started", "lane wait set by the queue", "a decision carrying a review",
+    "checking now awaiting the base rerun",
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
     "check.failed", "check.retried", "check.reused", "candidate.merged", "candidate.stopped", "base.broken", "base.repaired",
+    "base.rerun.started", "base.rerun.finished",
     "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
 ]
@@ -5067,6 +5069,15 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("checking now null", with_change(state, ("meta", "checking", "now"), None)),
                 ("step state unknown",
                  with_change(state, ("meta", "checking", "now", "steps"), [{"label": "x", "state": "?"}])),
+                ("checking now awaiting the base rerun", with_change(state, ("meta", "checking", "now", "baseRerun"),
+                                                                     {"startedAt": "2026-10-20T10:00:00Z", "checks": ["unit"]})),
+                ("base rerun naming a check by number", with_change(state, ("meta", "checking", "now", "baseRerun"),
+                                                                    {"startedAt": "2026-10-20T10:00:00Z", "checks": [3]})),
+                ("base rerun without its start", with_change(state, ("meta", "checking", "now", "baseRerun"),
+                                                             {"checks": ["unit"]})),
+                ("base rerun with an unknown field", with_change(state, ("meta", "checking", "now", "baseRerun"),
+                                                                 {"startedAt": "2026-10-20T10:00:00Z", "checks": ["unit"],
+                                                                  "verdict": "passed"})),
                 ("finish met as text", with_change(state, ("finish", 0, "met"), "no")),
                 ("lease without holder", with_change(state, ("leases", 0), {"id": "x", "since": "2026-10-20T08:00:00Z"})),
                 ("with tickets", with_change(state, ("tickets",), {"pr-1": {"title": "Candidate", "summary": "What it does."},

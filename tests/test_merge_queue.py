@@ -2890,6 +2890,13 @@ class BatchTests(MergeQueueTestCase):
         self.assertIn("base_broken", documents["third"]["stop"]["detail"])
         self.assertEqual(adopter.item("third")["stage"], "queued")
         self.assertEqual(adopter.item("first")["stage"], "stopped")
+        # The culprit's re-run on the base is journaled on the culprit, between its failure and the stop.
+        rerun = [(entry["kind"], entry["subject"]) for entry in state_tool.read_journal(adopter.state)
+                 if entry["kind"] in ("base.rerun.started", "base.rerun.finished", "base.broken")]
+        self.assertEqual(rerun, [("base.rerun.started", "first"), ("base.rerun.finished", "first"),
+                                 ("base.broken", "first")])
+        [finished] = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "base.rerun.finished"]
+        self.assertIn("also fails", finished["summary"])
 
     def test_members_a_failed_batch_requeues_are_journalled_so_the_stats_end_their_check(self) -> None:
         adopter = self.adopter()
@@ -3358,11 +3365,38 @@ class CheckVisibilityTests(MergeQueueTestCase):
             self.assertNotIn("candidate.stopped", kinds)
             self.assertNotIn("base.broken", kinds)
             self.assertEqual(adopter.item("feature")["stage"], "checking")
+            # Before the re-run starts, the record says the candidate failed and waits on it.
+            deadline = time.monotonic() + 30
+            while not self.journal(adopter, "base.rerun.started") and time.monotonic() < deadline:
+                time.sleep(0.02)
+            [started] = self.journal(adopter, "base.rerun.started")
+            self.assertEqual(started["subject"], "feature")
+            self.assertIn("held", started["summary"])
+            self.assertEqual(self.journal(adopter, "base.rerun.finished"), [])
+            now = state_tool.read_state(adopter.state)["meta"]["checking"]["now"]
+            self.assertEqual(now["subject"], "feature")
+            self.assertEqual(now["baseRerun"]["checks"], ["held"])
+            self.assertLessEqual(now["baseRerun"]["startedAt"], started["at"])
+            self.assertEqual(adopter.item("feature")["stage"], "checking")
         finally:
             marker.write_text(str(ended))
             turn.join(60)
         self.assertFalse(turn.is_alive())
         return results, adopter
+
+    def rerun_order(self, adopter: Adopter, stop: str) -> dict:
+        """The re-run's entries fall between the failure and the stop; returns its verdict entry."""
+        order = [entry["kind"] for entry in state_tool.read_journal(adopter.state)
+                 if entry["kind"] in ("check.failed", "base.rerun.started", "base.rerun.finished", stop)]
+        self.assertEqual(order, ["check.failed", "base.rerun.started", "base.rerun.finished", stop])
+        [started] = self.journal(adopter, "base.rerun.started")
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertEqual(finished["subject"], "feature")
+        self.assertLessEqual(started["at"], finished["at"])
+        self.assertRegex(finished["summary"], r"after [0-9]+s")
+        # The waiting state ends with the turn.
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])
+        return finished
 
     def test_the_wait_returns_on_the_failure_while_the_base_rerun_holds_and_the_base_passes(self) -> None:
         results, adopter = self.wait_through_a_held_base_rerun(0)
@@ -3371,6 +3405,9 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertIn("test_held", document["stop"]["detail"])
         self.assertEqual(self.journal(adopter, "base.broken"), [])
         self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
+        finished = self.rerun_order(adopter, "candidate.stopped")
+        self.assertIn("held passed", finished["summary"])
+        self.assertIn("the failure is the candidate's", finished["summary"])
 
     def test_the_wait_returns_on_the_failure_while_the_base_rerun_holds_and_the_base_fails(self) -> None:
         results, adopter = self.wait_through_a_held_base_rerun(1)
@@ -3378,6 +3415,17 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertTrue(document["stop"]["queueStopped"])
         self.assertEqual(len(self.journal(adopter, "base.broken")), 1)
         self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
+        finished = self.rerun_order(adopter, "base.broken")
+        self.assertIn("held also fails", finished["summary"])
+        self.assertNotIn("the failure is the candidate's", finished["summary"])
+
+    def test_a_failure_with_no_check_to_rerun_on_the_base_journals_no_rerun(self) -> None:
+        adopter = self.adopter(mode="new-cwd")
+        self.candidate(adopter, {"src/app.txt": "app two\n", "newdir/readme.txt": "new\n"})
+        self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
+        self.assertEqual(self.journal(adopter, "base.rerun.started"), [])
+        self.assertEqual(self.journal(adopter, "base.rerun.finished"), [])
 
     def test_a_failure_matching_only_a_declared_flake_is_retried_once_and_journaled(self) -> None:
         flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
