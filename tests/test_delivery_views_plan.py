@@ -675,7 +675,7 @@ class PlanSkillTextTests(unittest.TestCase):
         # Each numbered item, from its bold title to the next one: a rule is pinned under the flag it defines.
         items = text.split(". **")[1:]
         self.assertEqual([item.split("**")[0].rstrip(".") for item in items], [title for title, _ in FLAGS])
-        self.assertIn("in this order, and with none it reads \"Nothing in the plan needs you right now.\"", text)
+        self.assertIn("in this order, and with none it reads \"Nothing in the plan needs attention right now.\"", " ".join(text.split()))
         for item, (title, rules) in zip(items, FLAGS):
             with self.subTest(flag=title):
                 for rule in rules:
@@ -685,7 +685,7 @@ class PlanSkillTextTests(unittest.TestCase):
         for title, _ in FLAGS:
             with self.subTest(drawn=title):
                 self.assertIn(f'"{title}"', page)
-        self.assertIn('"Nothing in the plan needs you right now."', page)
+        self.assertIn('"Nothing in the plan needs attention right now."', page)
 
 
 class LivePlanTests(unittest.TestCase):

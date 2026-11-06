@@ -122,7 +122,7 @@ test("blocking approvals raise one flag naming each, after a broken base, until 
   plan.approvals[1].state = "done";
   app = await shown(document, plan);
   expect(flags(app)).toEqual([]);
-  expect(app.querySelector("#plan .plan-calm").textContent).toBe("Nothing in the plan needs you right now.");
+  expect(app.querySelector("#plan .plan-calm").textContent).toBe("Nothing in the plan needs attention right now.");
   expect(folds(app)[4]).toBe("Approvals ahead1");
 });
 
@@ -133,7 +133,7 @@ test("an approval that is waiting but not blocking raises nothing, and no review
     { id: "approval-2", text: "Copy review", state: "waiting", blocking: false }];
   const after = await shown(document, plan);
   expect(flags(after)).toEqual([]);
-  expect(after.querySelector("#plan .plan-calm").textContent).toBe("Nothing in the plan needs you right now.");
+  expect(after.querySelector("#plan .plan-calm").textContent).toBe("Nothing in the plan needs attention right now.");
   expect(after.querySelector("#plan .plan-approval")).toBeNull();
   expect(after.querySelector(FOLD)).toBeNull();
   expect([...after.querySelector("#plan .inner").children].map((node) => node.className)).toEqual(

@@ -27,70 +27,60 @@ function record() {
 
 const pick = (subject) => ({ click: `[data-subject="${subject}"]` });
 
-test("each stage has its icon, and only a piece being built shows the meshed gears", async () => {
+test("each stage has its mark, drawn in the state glyph grammar, and a landed piece the merge", async () => {
   const document = record();
   const pieces = [...document.state.queue, ...document.state.planned].map((item) => [item.subject, item.stage]);
   expect(pieces.map(([, stage]) => stage).sort()).toEqual(["building", "checking", "merged", "planned", "queued", "review", "stopped", "syncing"]);
   const page = pageWithRuns(document, {}, { config: CONFIG });
-  const drawn = {};
   for (const [subject, stage] of pieces) {
     const [, shown] = await openPage(page, { now: NOW, steps: [pick(subject)] });
-    const icon = shown.app.querySelector("#detail .d-stage svg");
-    expect(icon?.getAttribute("class")).toBe(`d-stage-icon is-${stage}`);
+    const icon = shown.app.querySelector("#detail .d-stage .d-stage-icon");
     expect(icon.getAttribute("aria-hidden")).toBe("true");
-    const gears = [...icon.children].filter((child) => child.tagName.toLowerCase() === "g");
-    if (stage === "building") {
-      // Two gears, each its own group to turn about its centre: a dashed ring of teeth, a rim and an axle hole.
-      expect(gears.map((gear) => gear.getAttribute("class"))).toEqual(["gear-big", "gear-small"]);
-      for (const gear of gears) {
-        const rings = [...gear.children];
-        expect(rings.map((ring) => ring.tagName.toLowerCase())).toEqual(["circle", "circle", "circle"]);
-        expect(rings.map((ring) => ring.hasAttribute("stroke-dasharray"))).toEqual([true, false, false]);
-      }
-      expect(icon.querySelectorAll("path")).toHaveLength(0);
+    if (stage === "merged") {
+      // The merge is drawn on the persona grid, as the personas are.
+      expect(icon.tagName.toLowerCase()).toBe("svg");
+      expect(icon.getAttribute("class")).toBe("persona d-stage-icon is-merged");
     } else {
-      expect(gears).toHaveLength(0);
-      expect(icon.querySelectorAll("path").length > 0).toBe(true);
-      drawn[stage] = JSON.stringify([...icon.querySelectorAll("path")].map((part) => part.getAttribute("d")));
+      // Every other stage is a mark the stylesheet draws from its class alone.
+      expect(icon.tagName.toLowerCase()).toBe("span");
+      expect(icon.getAttribute("class")).toBe(`d-stage-icon is-${stage}`);
+      expect(icon.childNodes).toHaveLength(0);
     }
   }
-  // Each stage draws its own icon; syncing and checking share the checking icon by design.
-  expect(drawn.syncing).toBe(drawn.checking);
-  const icons = Object.entries(drawn).filter(([stage]) => stage !== "syncing").map(([, paths]) => paths);
-  expect(new Set(icons).size).toBe(icons.length);
-  // A stage the page does not know gets no icon.
+  // A stage the page does not know gets no mark.
   const unknown = record();
   unknown.state.queue[2].stage = "mystery";
   const [, shown] = await openPage(pageWithRuns(unknown, {}, { config: CONFIG }), { now: NOW, steps: [pick(unknown.state.queue[2].subject)] });
-  expect(shown.app.querySelector("#detail .d-stage svg")).toBeNull();
-  // A stage the fixture does not hold still draws its own icon, not another's.
+  expect(shown.app.querySelector("#detail .d-stage .d-stage-icon")).toBeNull();
+  // A stage the fixture does not hold still draws its own mark.
   const checked = record();
   checked.state.queue[2].stage = "checked";
   const [, done] = await openPage(pageWithRuns(checked, {}, { config: CONFIG }), { now: NOW, steps: [pick(checked.state.queue[2].subject)] });
-  const icon = done.app.querySelector("#detail .d-stage svg");
-  expect(icon?.getAttribute("class")).toBe("d-stage-icon is-checked");
-  expect(JSON.stringify([...icon.querySelectorAll("path")].map((part) => part.getAttribute("d"))) === drawn.queued).toBe(false);
+  expect(done.app.querySelector("#detail .d-stage .d-stage-icon")?.getAttribute("class")).toBe("d-stage-icon is-checked");
 });
 
-test("the gears turn only for a reader who has not asked for less motion", () => {
+test("the stage marks that turn do so only for a reader who has not asked for less motion", () => {
   const page = pageWithRuns(record(), {}, { config: CONFIG });
   const dom = new JSDOM(page);
   const turning = [];
   const walk = (rules, media) => {
     for (const rule of rules) {
       if (rule.cssRules && rule.media) { walk(rule.cssRules, rule.media.mediaText); continue; }
-      if (rule.selectorText && /gear/.test(rule.selectorText) && (rule.style.getPropertyValue("animation") || rule.style.getPropertyValue("animation-name"))) {
-        turning.push([rule.selectorText, rule.style.getPropertyValue("animation"), media]);
+      if (rule.selectorText && /d-stage-icon/.test(rule.selectorText) && (rule.style.getPropertyValue("animation") || rule.style.getPropertyValue("animation-name"))) {
+        turning.push([rule.selectorText, media]);
       }
     }
   };
   for (const sheet of dom.window.document.styleSheets) { walk(sheet.cssRules, null); }
   dom.window.close();
-  // Meshed gears turn opposite ways, the small one faster, and only inside the no-preference query.
-  expect(turning).toEqual([
-    [".d-stage-icon .gear-big", "d-turn 6s linear infinite", "(prefers-reduced-motion: no-preference)"],
-    [".d-stage-icon .gear-small", "d-turn 4s linear infinite reverse", "(prefers-reduced-motion: no-preference)"],
-  ]);
+  // The stages where something is running turn, each by its own rule, and the ones at rest do not.
+  for (const stage of ["syncing", "checking", "merging"]) {
+    expect(turning.some(([selector]) => selector.includes(`.d-stage-icon.is-${stage}`))).toBe(true);
+  }
+  for (const stage of ["synced", "checked", "queued", "merged"]) {
+    expect(turning.some(([selector]) => selector.includes(`.d-stage-icon.is-${stage}`))).toBe(false);
+  }
+  for (const [, media] of turning) { expect(media).toBe("(prefers-reduced-motion: no-preference)"); }
 });
 
 test("a newly picked piece's panel eases to its height, a live redraw of the same piece does not move, and nothing moves under reduced motion", async () => {

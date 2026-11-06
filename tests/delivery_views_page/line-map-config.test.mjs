@@ -91,7 +91,7 @@ test("lens names and icons come from the configuration, and an unconfigured lens
   expect(names).toEqual(["Red team", HOSTILE.slice(0, 40), "Perf"]);
   expect(card(first).querySelector("img")).toBeNull();
   const icons = [...card(first).querySelectorAll(".run-reviewer-head .run-lens-icon")];
-  expect(icons[0].querySelector("path").getAttribute("d")).toMatch(/^M12 3a12 12/);
+  expect(icons[0].querySelector("path").getAttribute("d")).toMatch(/^M12 3C14.8 4.6/);
   expect(icons[2].querySelector(".run-lens-initial").textContent).toBe("P");
 });
 

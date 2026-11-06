@@ -19,17 +19,17 @@ const age = (app) => row(app).querySelector(".said");
 
 test("a fresh row says how old its words are, unmarked", async () => {
   const app = await first([lane({ focusAt: minutesAgo(12) })]);
-  expect(age(app).textContent).toBe("Said 12m ago");
+  expect(age(app).textContent).toBe("Updated 12m ago");
   expect(age(app).classList.contains("old")).toBe(false);
 });
 
 test("a row under a minute old says so", async () => {
-  expect(age(await first([lane({ focusAt: minutesAgo(0) })])).textContent).toBe("Said just now");
+  expect(age(await first([lane({ focusAt: minutesAgo(0) })])).textContent).toBe("Updated just now");
 });
 
 test("a row past the threshold is marked, and says what that means", async () => {
   const app = await first([lane({ focusAt: minutesAgo(61) })]);
-  expect(age(app).textContent).toBe("Said 1h 1m ago; may be out of date");
+  expect(age(app).textContent).toBe("Updated 1h 1m ago; may be out of date");
   expect(age(app).classList.contains("old")).toBe(true);
 });
 
@@ -52,7 +52,7 @@ test("a time that can't be read, or is in the future, says no time rather than a
 test("a resting lane shows its age but isn't marked: an old 'merged' is still true", async () => {
   for (const state of ["idle", "done"]) {
     const app = await first([lane({ state, focus: "WORK-1 merged", focusAt: minutesAgo(300) })]);
-    expect(age(app).textContent).toBe("Said 5h ago");
+    expect(age(app).textContent).toBe("Updated 5h ago");
     expect(age(app).classList.contains("old")).toBe(false);
   }
 });
@@ -78,6 +78,6 @@ test("a live page shows the same, and a push moves it", async () => {
   const page = pageWithRuns(document([lane({ focusAt: minutesAgo(90) })]), {}, { config: CONFIG });
   const snaps = await openPage(page, { now: NOW, steps: [{ push: document([lane({ focus: "Merged", state: "idle", focusAt: minutesAgo(0) })]) }] });
   expect(age(snaps[0].app).classList.contains("old")).toBe(true);
-  expect(age(snaps[1].app).textContent).toBe("Said just now");
+  expect(age(snaps[1].app).textContent).toBe("Updated just now");
   expect(age(snaps[1].app).classList.contains("old")).toBe(false);
 });

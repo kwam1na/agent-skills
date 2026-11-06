@@ -5,7 +5,7 @@
     python3 -B render.py history --config .agents/delivery-views.json --binding .agents/orchestration.json
 
 ``line-map`` prints the live line map: one page whose style and program are
-inline, loading only its two typefaces from Google Fonts. The page carries the
+inline, loading only its three typefaces from Google Fonts. The page carries the
 live opt-in marker, so the state tool's live server serves it at
 ``/view/<output>`` and the page follows every record write by itself; opened
 as a file, it shows the record as it was rendered.
@@ -1176,8 +1176,8 @@ def main(argv: list[str] | None = None) -> int:
 
 # Page assets
 
-# The pages' two faces are the only thing they load; offline, the type falls back to the system's.
-FONTS = "https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,500;12..96,700&family=Geist:wght@400;500;600&display=swap"
+# The pages' three faces are the only thing they load; offline, the type falls back to the system's.
+FONTS = "https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,400&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap"
 THEME_SWITCH = ("<div class=\"theme-switch\" role=\"group\" aria-label=\"Theme\"><button type=\"button\" data-theme-pick=\"light\" aria-label=\"Light\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0\"/><path d=\"M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7\"/></svg></button><button type=\"button\" data-theme-pick=\"dark\" aria-label=\"Dark\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z\"/></svg></button></div>")
 
 
