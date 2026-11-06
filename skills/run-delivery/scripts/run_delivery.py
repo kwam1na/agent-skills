@@ -4927,7 +4927,8 @@ def lane_moved_off(doc: dict, item: dict, words: dict | None = None) -> bool:
     if lane is None:
         return True
     rested = lane.get("focusBy") == "runner" and lane.get("focus") == f"{item['subject']} merged"
-    said = (words or {}).get(item["lane"]) or {}
+    # The lane's own word the record kept when the queue rested its row first; a pass's memory of it after that.
+    said = (lane.get("restedFrom") if rested else None) or (words or {}).get(item["lane"]) or {}
     handed = max((e["at"] for e in doc["journal"] if e["kind"] == "candidate.handed" and e.get("subject") == item["subject"]),
                  default=None)
     at_work = rested and said.get("state") in LANE_AT_WORK and bool(said.get("at")) and handed is not None \

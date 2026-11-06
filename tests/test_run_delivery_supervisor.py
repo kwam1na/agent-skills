@@ -1120,6 +1120,47 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(len([e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]), 1)
         self.assertFalse(any("lane-1" in h for h in held), held)
 
+    def test_a_lane_at_work_with_no_pass_before_the_merge_keeps_its_checkout(self) -> None:
+        fx = self.fixture()
+        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        # The lane says it is at work after its hand-off, and the story is accepted and merged before any pass runs:
+        # the record itself has to carry the lane's word past the queue resting its row.
+        wt = hand_off(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing FX-2's docs", "--state", "working")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        row = next(lane for lane in record(fx)["state"]["lanes"] if lane["id"] == "lane-1")
+        self.assertEqual((row["state"], row["focus"], row.get("focusBy")), ("idle", "FX-2 merged", "runner"), row)
+        self.assertEqual(row.get("restedFrom", {}).get("state"), "working", row)
+        self.once(fx)
+        self.assertTrue(wt.exists(), "the checkout of a lane still at work was removed after the merge")
+        self.assertIn("FX-2: waits for lane-1 to move off it", passes(fx)[-1]["cleanup"])
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        self.once(fx)
+        self.assertFalse(wt.exists(), "the merged story wasn't cleaned up once its lane moved off it")
+
+    def test_a_lanes_word_kept_on_its_row_outranks_an_older_one_a_pass_remembered(self) -> None:
+        fx = self.fixture()
+        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        # A pass sees the lane just handed off and remembers that; the lane then says it is at work, and the story
+        # merges before another pass. The record's kept word is newer than the pass log's and has to win.
+        wt = hand_off(fx, "FX-2", "lane-1")
+        self.once(fx)
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing FX-2's docs", "--state", "working")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        self.assertEqual(passes(fx)[-1]["laneWords"]["lane-1"]["state"], "handed", "the pass didn't remember the older word")
+        self.once(fx)
+        self.assertTrue(wt.exists(), "an older word the pass remembered outranked the lane's word kept on its row")
+        self.assertIn("FX-2: waits for lane-1 to move off it", passes(fx)[-1]["cleanup"])
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        self.once(fx)
+        self.assertFalse(wt.exists(), "the merged story wasn't cleaned up once its lane moved off it")
+
     def test_a_lane_that_says_it_is_done_after_its_hand_off_is_cleaned_up_when_its_story_merges(self) -> None:
         fx = self.fixture()
         code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
