@@ -2138,7 +2138,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         fx = self.slow_run_under_a_supervisor("8")
         head = self.run_lock(fx)["head"]
         # A second start for the same head, as a racing pass would make, leaves the first run alone and runs nothing.
-        code, out = fx.flow("full-health-run", "--head", head, cwd=fx.main)
+        code, out = fx.flow("full-health-run", "--head", head, "--record", self.identity(fx), cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertIn("already runs", out)
         wait_for(lambda: self.results(fx), "the run's result", 60)
@@ -2146,6 +2146,17 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         wait_for(lambda: len(passes(fx)) >= seen + 2, "two more passes", 30)
         self.assertEqual(health_runs(fx), 1, "fullHealth ran twice for one merge")
         self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified"])
+        # A start that takes the lock just after a run let it go finds the result standing, and runs nothing.
+        code, out = fx.flow("full-health-run", "--head", head, "--record", self.identity(fx), cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("already; this start runs nothing", out)
+        self.assertEqual(health_runs(fx), 1)
+        # One started for a record that was replaced since runs nothing either.
+        self.assertTrue(self.serving_lock_free(fx))
+        code, out = fx.flow("full-health-run", "--head", "f" * 40, "--record", "2000-01-01T00:00:00Z", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("the record was replaced since this run was started", out)
+        self.assertEqual(health_runs(fx), 1)
 
     def test_a_supervisor_killed_mid_run_leaves_a_run_the_next_one_adopts(self) -> None:
         fx = self.slow_run_under_a_supervisor("10")
@@ -2161,9 +2172,10 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified"])
 
     def test_a_run_killed_with_its_supervisor_is_started_again_once(self) -> None:
-        fx = self.slow_run_under_a_supervisor("20")
+        fx = self.slow_run_under_a_supervisor("300")
         wait_for(lambda: health_runs(fx) == 1 and self.run_lock(fx).get("command"), "the run's command to start", 30)
         run = self.run_lock(fx)
+        self.assertTrue(Path(run["checkout"]).exists())
         os.killpg(settled_lock(fx)["pid"], signal.SIGKILL)
         os.killpg(run["pid"], signal.SIGKILL)
         wait_for(lambda: not self.run_lock(fx)["held"], "the killed run to let its lock go", 15)
@@ -2173,24 +2185,96 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
         self.assertEqual(code, 0, out)
         wait_for(lambda: not alive(run["command"]), "the killed run's command to be stopped", 30)
+        self.assertIn(f"stopped the command (pid {run['command']})", (fx.tmp / "flow-log/FX-1.full-health.log").read_text())
+        wait_for(lambda: not Path(run["checkout"]).exists(), "the killed run's checkout to be removed", 30)
         wait_for(lambda: self.results(fx), "the restarted run's result", 60)
+        self.assertNotIn(run["checkout"], sh("git", "worktree", "list", cwd=fx.main).stdout)
         seen = len(passes(fx))
         wait_for(lambda: len(passes(fx)) >= seen + 2, "two passes after it", 30)
         self.assertEqual(health_runs(fx), 2)
         self.assertEqual(len(self.results(fx)), 1)
         self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified"])
 
+    def identity(self, fx: Fixture) -> str:
+        return record(fx)["journal"][0]["at"]
+
+    def serving_lock_free(self, fx: Fixture) -> bool:
+        return not self.run_lock(fx)["held"]
+
+    def test_the_close_waits_for_a_run_and_closes_on_its_result(self) -> None:
+        fx = self.fixture()
+        self.merged(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
+            changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"], "by": "lead",
+                                      "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
+        (fx.tmp / "health").write_text("slow")
+        fx.env["FX_HEALTH_SECONDS"] = "10"
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        wait_for(lambda: self.run_lock(fx)["held"], "the fullHealth run to start", 60)
+        seen = len(passes(fx))
+        wait_for(lambda: len(passes(fx)) >= seen + 2, "two passes while it runs", 30)
+        while_running = [p for p in passes(fx)[seen:] if self.run_lock(fx)["held"]]
+        self.assertTrue(while_running)
+        for held in (p["closeHeldBy"] for p in while_running):
+            self.assertTrue(any(h.startswith("fullHealth running at ") for h in held), held)
+        self.assertEqual(kinds(fx, "delivery.closed"), [], "the delivery closed while fullHealth ran")
+        wait_for(lambda: kinds(fx, "delivery.closed"), "the close once the run passed", 90)
+        self.assertEqual(health_runs(fx), 1)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified"])
+
+    def test_a_merge_during_a_run_is_checked_by_the_next_run_at_its_head(self) -> None:
+        fx = self.slow_run_under_a_supervisor("15")
+        first = self.run_lock(fx)["head"]
+        hand_off(fx, "FX-3", "lane-2")
+        code, out = fx.flow("lead-accept", "FX-3", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        wait_for(lambda: [e for e in kinds(fx, "candidate.merged") if e.get("subject") == "FX-3"], "serve merging FX-3", 90)
+        self.assertTrue(self.run_lock(fx)["held"], "the first run ended before FX-3 landed")
+        (fx.tmp / "health").write_text("pass")
+        wait_for(lambda: len(self.results(fx)) == 2, "a run at FX-3's head", 120)
+        second = self.results(fx)[-1]
+        self.assertNotEqual(second["head"], first)
+        self.assertEqual(second["merge"]["subject"], "FX-3")
+        self.assertEqual(health_runs(fx), 2)
+        self.assertIn("after FX-3's merge", self.base_events(fx)[-1]["summary"])
+
+    def test_lead_close_stops_a_run_a_once_pass_waits_on(self) -> None:
+        fx = self.fixture()
+        self.merged(fx, "FX-2", "lane-1")
+        (fx.tmp / "health").write_text("slow")
+        fx.env["FX_HEALTH_SECONDS"] = "300"
+        once = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-run", "--once"], cwd=fx.main, env=fx.env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(lambda: once.poll() is None and os.killpg(once.pid, signal.SIGKILL))
+        wait_for(lambda: self.run_lock(fx).get("command"), "the --once pass's run to start", 60)
+        run = self.run_lock(fx)
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
+        started = time.monotonic()
+        code, out = fx.flow("lead-close", cwd=fx.main)
+        self.assertIn(code, (0, 1), out)
+        self.assertLess(time.monotonic() - started, 120, "lead-close waited out the --once pass's run")
+        self.assertIn(f"stopped the fullHealth run at {run['head'][:10]} (pid {run['pid']})", out)
+        self.assertEqual(once.wait(timeout=60), 0)
+        self.assertEqual(self.results(fx), [])
+
     def test_lead_close_stops_a_run_and_records_no_result(self) -> None:
         fx = self.slow_run_under_a_supervisor()
+        wait_for(lambda: self.run_lock(fx).get("command"), "the run's command to start", 30)
         run = self.run_lock(fx)
         state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
         code, out = fx.flow("lead-close", cwd=fx.main)
         self.assertIn(code, (0, 1), out)
-        self.assertIn(f"stopped the fullHealth run at {run['head'][:10]} (pid {run['pid']})", out)
+        self.assertIn(f"stopped the fullHealth run at {run['head'][:10]} (pid {run['pid']}); it recorded no result", out)
         self.assertFalse(self.run_lock(fx)["held"])
         wait_for(lambda: not alive(run["pid"]), "the run to be gone", 15)
         self.assertEqual(self.results(fx), [])
         self.assertEqual(self.base_events(fx), [])
+        # Stopped by SIGTERM, it stopped its command and removed its checkout itself.
+        self.assertFalse(alive(run["command"]))
+        self.assertFalse(Path(run["checkout"]).exists(), "the stopped run's checkout was left behind")
+        self.assertNotIn("run-delivery-full-health-", sh("git", "worktree", "list", cwd=fx.main).stdout)
 
 
 if __name__ == "__main__":

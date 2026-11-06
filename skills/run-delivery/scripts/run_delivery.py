@@ -4579,9 +4579,13 @@ def lead_close(args) -> None:
     busy = [q["subject"] for q in state["queue"] if q.get("stage") not in ("merged", "stopped")]
     if busy or (state["meta"].get("checking") or {}).get("now"):
         raise Stop(f"the queue still holds work ({busy or 'a check is running'}); let it finish or stop it first")
-    for stopped in (ask_supervisor_to_stop(c), stop_full_health_run(c)):
-        if stopped:
-            print(stopped)
+    # The run is stopped while the supervisor finishes its pass, which under --once waits on it, and again once the
+    # supervisor has stopped, in case that pass started one.
+    runs: list[str | None] = []
+    stopped = ask_supervisor_to_stop(c, meanwhile=lambda: runs.append(stop_full_health_run(c)))
+    for line in (stopped, *runs, stop_full_health_run(c)):
+        if line:
+            print(line)
     lead = c.lane_checkout(c.delivery)
     done, left = [], []
     # Holds nothing: before the final render and the archive, so both carry it.
@@ -4782,14 +4786,17 @@ def stop_orphans(c) -> list[str]:
             for child in left]
 
 
-def ask_supervisor_to_stop(c) -> str | None:
-    """Ask a running supervisor to stop after its pass, and wait for it to release its lock."""
+def ask_supervisor_to_stop(c, meanwhile: Callable[[], None] | None = None) -> str | None:
+    """Ask a running supervisor to stop after its pass, and wait for it to release its lock. `meanwhile` runs once the
+    request is written, for what the pass may be waiting on."""
     lock = supervisor_lock_path(c)
     held, recorded = read_lock(lock)
     if not held:
         return None
     request = lead_file(c, "supervisor.stop")
     request.write_text(now() + "\n")
+    if meanwhile:
+        meanwhile()
     deadline = time.monotonic() + SUPERVISOR_WAIT_SECONDS + supervisor_pass_seconds(c)
     while time.monotonic() < deadline:
         if not read_lock(lock)[0]:
@@ -5263,14 +5270,15 @@ def merge_words(c, doc: dict, head: str, since: int) -> tuple[dict | None, str]:
 
 
 def run_full_health(c, binding: dict, head: str, posture: dict, named: str,
-                    started: Callable[[int], None] | None = None) -> tuple[bool, str]:
+                    started: Callable[[int], None] | None = None, checkout: Path | None = None) -> tuple[bool, str]:
     """One gate run of fullHealth at this base head, in a fresh checkout of it. Its result goes to the full-health log,
     and the journal says what it means for the base, naming the merge it follows: base.verified on a pass,
-    base.broken on a failure, and base.repaired on the first pass after a failed run."""
+    base.broken on a failure, and base.repaired on the first pass after a failed run. The result and its journal entry
+    are written with SIGTERM held off, so a stop never leaves one without the other."""
     doc = load_state()
     before = [e for e in read_log("full-health", c.delivery) if e.get("result")]
     merge, after = merge_words(c, doc, head, before[-1].get("journalThrough", 0) if before else 0)
-    checkout = Path(tempfile.mkdtemp(prefix="run-delivery-full-health-")) / "base"
+    checkout = checkout or Path(tempfile.mkdtemp(prefix="run-delivery-full-health-")) / "base"
     try:
         git("worktree", "add", "--detach", "-q", str(checkout), head, cwd=c.root)
         for step in prepare_commands():
@@ -5283,6 +5291,17 @@ def run_full_health(c, binding: dict, head: str, posture: dict, named: str,
         shutil.rmtree(checkout.parent, ignore_errors=True)
     result = "passed" if code == 0 else "failed"
     through = max((e["id"] for e in doc["journal"]), default=0)
+    # Held off through the journal entry, and in the state tool it starts, which inherits the mask.
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    try:
+        return record_full_health(c, head, result, out, posture, merge, after, through, before, doc, named)
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+
+
+def record_full_health(c, head: str, result: str, out: str, posture: dict, merge: dict | None, after: str,
+                       through: int, before: list[dict], doc: dict, named: str) -> tuple[bool, str]:
+    """A run's result in the full-health log, and the journal entry that says what it means for the base."""
     with plan_lock(c):
         append_full_health(c, {"head": head, "result": result, "output": out[-2000:], "posture": "gate",
                                "code": posture["code"], "merge": merge, "journalThrough": through})
@@ -5304,10 +5323,13 @@ def declared_words(posture: dict) -> str:
         "posture_malformed", "posture_unreadable") else ""
 
 
-# A fullHealth run leads a session of its own and holds its lock while it runs, recording {pid, head, startedAt}. A pass
-# starts one and polls it, so the supervisor keeps passing beside it; one killed with its supervisor alive is adopted by
-# the next, since the lock still says it runs; a start that finds the lock held runs nothing.
+# A fullHealth run leads a session of its own and holds its lock while it runs, recording its pid, head and start, its
+# checkout, and its command's pid, each pid with the time its process started. A pass starts one and polls it, so the
+# supervisor keeps passing beside it; one killed with its supervisor alive is adopted by the next, since the lock still
+# says it runs; a start that finds the lock held runs nothing. A pid is signalled only while its process is the one
+# recorded, by its start time, never a process that came to reuse it.
 FULL_HEALTH_STARTS: list[subprocess.Popen] = []  # the children this process started, reaped once they exit
+FULL_HEALTH_LOCK_SECONDS = 2  # how long a start retries the lock, which a pass's probe holds for an instant
 
 
 def full_health_lock_path(c) -> Path:
@@ -5325,14 +5347,36 @@ def running_words(run: dict) -> str:
             f"(pid {run.get('pid')})")
 
 
-def start_full_health(c, head: str, wait: bool) -> dict | None:
-    """Start a fullHealth run at this head in a session of its own. With wait, as lead-run --once does, return once it
-    has ended; otherwise once it holds its lock, returning what the lock records, or None when it ended first."""
+def process_started(pid: int) -> str | None:
+    """When the process with this pid started, as ps says it, or None when none has it."""
+    done = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, check=False)
+    return done.stdout.strip() or None
+
+
+def same_group(pid: object, started: object) -> bool:
+    """Whether pid still leads the group of the process recorded as started then."""
+    return valid_pid(pid) and isinstance(started, str) and group_of(pid) == pid and process_started(pid) == started
+
+
+def reap_full_health_starts() -> None:
     for proc in list(FULL_HEALTH_STARTS):
         if proc.poll() is not None:
             FULL_HEALTH_STARTS.remove(proc)
+
+
+def record_identity(c) -> str:
+    """What names this record to a run started for it: its first journal entry's time, which lead-init --replace
+    changes, so a run that starts after the record is replaced runs nothing."""
+    journal = load_state()["journal"]
+    return journal[0]["at"] if journal else ""
+
+
+def start_full_health(c, head: str, wait: bool) -> dict | None:
+    """Start a fullHealth run at this head in a session of its own. With wait, as lead-run --once does, return once it
+    has ended; otherwise once it holds its lock, returning what the lock records, or None when it ended first."""
+    reap_full_health_starts()
     argv = [sys.executable, "-B", str(Path(__file__).resolve()), "--delivery", c.delivery, "full-health-run",
-            "--head", head]
+            "--head", head, "--record", record_identity(c)]
     log = lead_file(c, "full-health.log")
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "a") as out:
@@ -5354,7 +5398,10 @@ def start_full_health(c, head: str, wait: bool) -> dict | None:
 
 
 def launch_full_health(c, head: str, named: str, wait: bool) -> str:
-    """Start a run at this head and say what it is doing, or, once it has ended, what it found."""
+    """Start a run at this head and say what it is doing, or, once it has ended, what it found. None starts once the
+    supervisor is asked to stop: lead-close stops the run it finds, and must not find another."""
+    if lead_file(c, "supervisor.stop").exists():
+        return f"fullHealth not started at {head[:10]}: the supervisor is asked to stop"
     started = start_full_health(c, head, wait)
     if started is not None:
         return running_words(started)
@@ -5379,6 +5426,7 @@ def post_merge_step(c, wait: bool = False) -> str:
     with plan_lock(c):
         note_posture(c, posture)
     named = declared_words(posture)
+    reap_full_health_starts()
     running = full_health_running(c)
     if running is not None:
         return running_words(running)
@@ -5418,35 +5466,39 @@ def full_health_step(c, wait: bool = False) -> tuple[bool, str]:
 
 
 def full_health_run(args) -> None:
-    """One fullHealth run at --head, as a pass starts it, in a session of its own. It holds the run's lock while it
-    runs, so a second start runs nothing, and checks again under the lock that no result stands at the head. Stopped,
-    it stops its own command's group, removes its checkout and records nothing."""
+    """One fullHealth run at --head, as a pass starts it, in a session of its own, for the record --record names. It
+    holds the run's lock while it runs, so a second start runs nothing, and checks again under the lock that no result
+    stands at the head. A run killed outright left its command running and its checkout behind: this start stops the
+    one and removes the other first. Stopped, it stops its own command's group, removes its checkout and records
+    nothing, unless it was writing its result, which it finishes."""
     c = cfg()
+    # Its log is a file: each line is flushed as it's said, so a reader sees it while the run goes on.
+    sys.stdout.reconfigure(line_buffering=True)
     path = full_health_lock_path(c)
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = open(path, "a+")
-    try:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        handle.close()
-        _, recorded = read_lock(path)
-        print(f"a fullHealth run already runs at {str(recorded.get('head', ''))[:10]} (pid {recorded.get('pid')}); "
-              "this start runs nothing")
-        return
+    deadline = time.monotonic() + FULL_HEALTH_LOCK_SECONDS
+    while True:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() < deadline:
+                time.sleep(0.05)
+                continue
+            handle.close()
+            _, recorded = read_lock(path)
+            print(f"a fullHealth run already runs at {str(recorded.get('head', ''))[:10]} (pid {recorded.get('pid')}); "
+                  "this start runs nothing")
+            return
     try:
         handle.seek(0)
         try:
             earlier = json.loads(handle.read() or "{}")
         except ValueError:
             earlier = {}
-        # A run killed outright leaves its command running in a group of its own: stop it, so a run is never doubled.
-        command = earlier.get("command") if isinstance(earlier, dict) else None
-        if valid_pid(command) and group_of(command) == command:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(command, signal.SIGKILL)
-            print(f"stopped the command (pid {command}) of a fullHealth run killed at "
-                  f"{str(earlier.get('head', ''))[:10]}")
-        said = {"pid": os.getpid(), "head": args.head, "startedAt": now()}
+        earlier = earlier if isinstance(earlier, dict) else {}
+        said = {"pid": os.getpid(), "pidStarted": process_started(os.getpid()), "head": args.head, "startedAt": now()}
 
         def record(fields: dict) -> None:
             said.update(fields)
@@ -5457,6 +5509,20 @@ def full_health_run(args) -> None:
 
         record({})
         signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(SystemExit(143)))
+        if same_group(earlier.get("command"), earlier.get("commandStarted")):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(earlier["command"], signal.SIGKILL)
+            print(f"stopped the command (pid {earlier['command']}) of a fullHealth run killed at "
+                  f"{str(earlier.get('head', ''))[:10]}")
+        left = earlier.get("checkout")
+        if isinstance(left, str) and Path(left).name == "base" and Path(left).parent.name.startswith(
+                "run-delivery-full-health-"):
+            run(["git", "worktree", "remove", "--force", left], cwd=c.root, check=False)
+            shutil.rmtree(Path(left).parent, ignore_errors=True)
+        run(["git", "worktree", "prune"], cwd=c.root, check=False)
+        if record_identity(c) != args.record:
+            print("the record was replaced since this run was started; it runs nothing")
+            return
         binding = c.shelf.json(".agents/orchestration.json") or {}
         if not binding.get("fullHealth"):
             print("fullHealth: the binding declares none")
@@ -5469,26 +5535,37 @@ def full_health_run(args) -> None:
         if last and not rerun:
             print(f"fullHealth {last['result']} at {args.head[:10]} already; this start runs nothing")
             return
+        checkout = Path(tempfile.mkdtemp(prefix="run-delivery-full-health-")) / "base"
+        record({"checkout": str(checkout)})
         try:
             print(run_full_health(c, binding, args.head, posture, declared_words(posture),
-                                  started=lambda pid: record({"command": pid}))[1])
+                                  started=lambda pid: record({"command": pid, "commandStarted": process_started(pid)}),
+                                  checkout=checkout)[1])
         finally:
-            # Stopped with its run, by run_group, so no later start mistakes a reused pid for it.
-            record({"command": None})
+            # Stopped with its run, by run_group, and its checkout removed by run_full_health.
+            record({"command": None, "commandStarted": None, "checkout": None})
     finally:
         fcntl.flock(handle, fcntl.LOCK_UN)
         handle.close()
 
 
 def stop_full_health_run(c) -> str | None:
-    """Stop the fullHealth run holding its lock, by the group its recorded pid leads, and confirm it let the lock go."""
+    """Stop the fullHealth run holding its lock, by the group its recorded pid leads, once the lock names the process
+    that holds it, and confirm it let the lock go. Says whether it recorded its result first."""
     path = full_health_lock_path(c)
-    held, recorded = read_lock(path)
-    if not held:
-        return None
-    pid = recorded.get("pid")
-    if not valid_pid(pid):
-        raise Stop(f"{path} is held, but records no pid to stop; stop the fullHealth run yourself, then run this again")
+    deadline = time.monotonic() + FULL_HEALTH_LOCK_SECONDS * 5
+    while True:
+        held, recorded = read_lock(path)
+        if not held:
+            return None
+        pid = recorded.get("pid")
+        if same_group(pid, recorded.get("pidStarted")):
+            break
+        # A start that has only just taken the lock still shows the last run's record: wait for its own.
+        if time.monotonic() > deadline:
+            raise Stop(f"{path} is held by a process its record doesn't name; stop the fullHealth run yourself, then "
+                       "run this again")
+        time.sleep(0.1)
     for sig, wait in ((signal.SIGTERM, 30), (signal.SIGKILL, 5)):
         with contextlib.suppress(ProcessLookupError):
             os.killpg(pid, sig)
@@ -5500,11 +5577,14 @@ def stop_full_health_run(c) -> str | None:
     else:
         raise Stop(f"the fullHealth run (pid {pid}) still holds {path} after SIGKILL; stop it, then run this again")
     # A run stopped by SIGKILL can't stop its command's group itself.
-    command = recorded.get("command")
-    if valid_pid(command) and group_of(command) == command:
+    if same_group(recorded.get("command"), recorded.get("commandStarted")):
         with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(command, signal.SIGKILL)
-    return f"stopped the fullHealth run at {str(recorded.get('head', ''))[:10]} (pid {pid}); it recorded no result"
+            os.killpg(recorded["command"], signal.SIGKILL)
+    head = str(recorded.get("head", ""))
+    recorded_first = any(e.get("result") and e.get("head") == head and e["at"] >= recorded.get("startedAt", "")
+                         for e in read_log("full-health", c.delivery))
+    return (f"stopped the fullHealth run at {head[:10]} (pid {pid}); "
+            + ("it had recorded its result" if recorded_first else "it recorded no result"))
 
 
 def deferred_findings(c) -> list[dict]:
@@ -6799,7 +6879,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--once", action="store_true", help="run one pass in the foreground, then stop")
     p.set_defaults(fn=lead_run)
     p = command(sub, "full-health-run", help="one post-merge fullHealth run at a base head, as the supervisor starts it")
-    p.add_argument("--head", required=True); p.set_defaults(fn=full_health_run)
+    p.add_argument("--head", required=True); p.add_argument("--record", required=True); p.set_defaults(fn=full_health_run)
     p = command(sub, "lead-brief"); p.set_defaults(fn=lead_brief)
     p = command(sub, "lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
     p.add_argument("--title", required=True); p.add_argument("--note"); p.set_defaults(fn=lead_assign)
