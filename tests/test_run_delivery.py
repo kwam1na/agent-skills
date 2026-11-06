@@ -446,16 +446,6 @@ def group_alive(group: int) -> bool:
         return True
 
 
-def process_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:  # the pid exists, but isn't ours to signal
-        return True
-
-
 def report(**over):
     base = {"ready": True, "build": {"head": "h"}, "pageErrors": [], "consoleErrors": [], "alertsSeen": [],
             "evals": [{"expr": "x", "result": True, "evalAt": "2026-01-01T00:00:02Z"}],

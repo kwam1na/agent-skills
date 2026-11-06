@@ -5,7 +5,7 @@ The lead's standing rulings for this delivery. The plan's Decisions section is b
 - **The base is `delivery/workflow-reliability`, not `main`.** By the operator's ruling the delivery lands on its own integration branch, so `main`
   is untouched until the operator says to integrate. Start each story from that base (`lane-start <key> --base delivery/workflow-reliability`) and open
   every change request against it. Where the plan says `main`, read the integration branch.
-- **The delivery runs on the installed generation, linear-v1.3.1.** A fix you make in `skills/` doesn't reach this delivery's own tools. Work around
+- **The delivery runs on the installed generation, linear-v1.5.0 since the base was rebased onto main on 2026-11-06.** A fix you make in `skills/` doesn't reach this delivery's own tools. Work around
   the gaps your own tickets name, and add no binding key the installed queue doesn't know.
 - **Ownership moves at each hand-over.** Your lane row in the delivery file lists what you own now. Ask the lead before touching anything else,
   except `provenance.lock.json`: refresh it with `scripts/update-provenance.py` and commit it on your branch whenever your gate needs it, and
