@@ -1120,6 +1120,75 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(len([e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]), 1)
         self.assertFalse(any("lane-1" in h for h in held), held)
 
+    def lane_with_two_stories(self) -> Fixture:
+        """lane-1 takes both stories, so the lead can give it the second around the first's merge."""
+        fx = self.fixture()
+        m = fx.main
+        path = m / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        d["stories"]["FX-3"]["lane"] = "lane-1"
+        d["lanes"]["lane-1"]["owns"] = [*d["lanes"]["lane-1"]["owns"], *d["lanes"]["lane-2"]["owns"]]
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: lane-1 takes FX-3 too")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", "--replace", cwd=m)
+        self.assertEqual(code, 0, out)
+        return fx
+
+    def test_an_assignment_before_the_merge_isnt_the_lane_moving_off(self) -> None:
+        fx = self.lane_with_two_stories()
+        m = fx.main
+        wt = hand_off(fx, "FX-2", "lane-1")
+        # The lead gives lane-1 its next story before FX-2 merges, and the lane is still at work on FX-2.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-1", "--title", "lane-1", cwd=m)
+        self.assertEqual(code, 0, out)
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing FX-2's docs", "--state", "working")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        self.once(fx)
+        self.assertTrue(wt.exists(), "an assignment made before the merge counted as the lane moving off it")
+        self.assertIn("FX-2: waits for lane-1 to move off it", passes(fx)[-1]["cleanup"])
+
+    def test_another_lanes_assignment_after_the_merge_isnt_this_lane_moving_off(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        code, out = fx.flow("lead-init", "--replace", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = hand_off(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing FX-2's docs", "--state", "working")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        # After the merge the lead gives lane-2, not lane-1, its story: lane-1 hasn't moved off FX-2.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "lane-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.once(fx)
+        self.assertTrue(wt.exists(), "another lane's assignment counted as lane-1 moving off its merged story")
+        self.assertIn("FX-2: waits for lane-1 to move off it", passes(fx)[-1]["cleanup"])
+
+    def test_a_lane_assigned_other_work_after_its_story_merges_has_moved_off_it(self) -> None:
+        fx = self.lane_with_two_stories()
+        m = fx.main
+        # The lane says it is still at work on FX-2 after handing it off, so the merge alone doesn't move it off.
+        wt = hand_off(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing FX-2's docs", "--state", "working")
+        self.once(fx)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        self.once(fx)
+        self.assertTrue(wt.exists())
+        self.assertIn("FX-2: waits for lane-1 to move off it", passes(fx)[-1]["cleanup"])
+        # The lead gives lane-1 its next story: an assignment after the merge is the lane moving off FX-2.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-1", "--title", "lane-1", cwd=m)
+        self.assertEqual(code, 0, out)
+        row = next(lane for lane in record(fx)["state"]["lanes"] if lane["id"] == "lane-1")
+        self.assertNotIn(row["state"], ("idle", "done"), "the row alone would read as moved off, so this proves nothing")
+        self.once(fx)
+        self.assertFalse(wt.exists(), "a lane assigned other work after its story merged kept that story's checkout")
+        self.assertEqual(len([e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]), 1)
+
     def test_a_lane_at_work_with_no_pass_before_the_merge_keeps_its_checkout(self) -> None:
         fx = self.fixture()
         code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
