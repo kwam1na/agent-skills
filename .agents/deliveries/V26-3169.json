@@ -38,18 +38,17 @@
         "tests/test_orchestration_render.py",
         "agent_skills/validate.py",
         "tests/test_validate.py",
-        "skills/run-delivery/scripts/run_delivery.py",
         "tests/test_run_delivery.py",
-        "provenance.lock.json",
         "skills/run-delivery/SKILL.md",
-        "skills/run-delivery/references/config.md"
+        "skills/run-delivery/references/config.md",
+        "scripts/release_channel.py",
+        "tests/test_release_channel.py"
       ]
     },
     "lane-2": {
       "owns": [
         "docs/solutions/best-practices/stopping-a-recorded-pid-2026-11-03.md",
         "docs/solutions/best-practices/prove-each-gate-condition-alone-2026-11-03.md",
-        "tests/test_run_delivery_supervisor.py",
         "tests/test_registry.py",
         "tests/test_lane_rows.py",
         "tests/test_run_delivery_tracker.py",
@@ -79,7 +78,11 @@
         "profiles/*",
         "skills/obtain-review/references/round-brief-template.md",
         ".agents/delivery/candidate.py",
-        "tests/test_own_deliveries.py"
+        "tests/test_own_deliveries.py",
+        "docs/solutions/design-patterns/closing-check-holds-on-earlier-steps-results-2026-11-06.md",
+        "provenance.lock.json",
+        "skills/run-delivery/scripts/run_delivery.py",
+        "tests/test_run_delivery_supervisor.py"
       ]
     }
   },
