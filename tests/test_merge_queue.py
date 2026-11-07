@@ -623,8 +623,9 @@ class FixtureMaintenanceTests(MergeQueueTestCase):
         adopter = self.adopter()
         lane = adopter.lane
         for repository in (adopter.remote, adopter.operator, lane):
-            with self.subTest(repository.name):
-                self.assertEqual(run("config", "--get", "maintenance.auto", cwd=repository), "false")
+            for name, value in (("maintenance.auto", "false"), ("receive.autoGc", "false"), ("gc.auto", "0")):
+                with self.subTest(repository.name, setting=name):
+                    self.assertEqual(run("config", "--get", name, cwd=repository), value)
 
 
 class LeadWriteTests(MergeQueueTestCase):
