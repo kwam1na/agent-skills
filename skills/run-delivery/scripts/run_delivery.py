@@ -5625,6 +5625,12 @@ def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
     busy = [lane["id"] for lane in state["lanes"] if lane.get("state") not in LANE_DONE]
     if busy:
         holds.append(f"lanes not idle or done: {', '.join(busy)}")
+    # A merge can land after the pass's cleanup read the record, and the close ends the passes: it waits for the next
+    # pass's cleanup, as it does for a checkout cleanup couldn't remove.
+    left = [q["subject"] for q in state["queue"] if q["stage"] == "merged" and q["subject"] in c.stories
+            and c.lane_checkout(q["subject"]).exists()]
+    if left:
+        holds.append(f"not cleaned up: {', '.join(left)}")
     holds += [item["text"] for item in needs if item["holding"]]
     return holds
 
