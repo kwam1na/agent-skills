@@ -487,6 +487,17 @@
           "text": "Fenced text in a compared section is compared, the four placeholder sections are compared after rendering or the test says why not, and each declared divergence is reconciled or kept with a reason"
         }
       ]
+    },
+    "V26-3215": {
+      "title": "Have the merge queue's base rerun honour flakes, keep its log, and name its failing tests",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3215-done",
+          "text": "The base rerun retries a declared flake once before base_broken, keeps its log beside the candidate's check log and links it from the stop, and base.broken names the rerun's failing tests in check.failed's shape"
+        }
+      ]
     }
   },
   "finish": [
