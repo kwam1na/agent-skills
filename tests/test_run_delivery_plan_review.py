@@ -927,7 +927,7 @@ class PlanReviewRecordTests(PlanReviewCase):
             raw = (folder / f"result-r2-{SHORT[lens]}.json").read_bytes()
             self.assertEqual((review["round"], review["result"], review["resultSha256"], review["findings"]),
                              (2, json.loads(raw), hashlib.sha256(raw).hexdigest(), []))
-        self.assertEqual(record["residualRisks"][0], "2 review rounds; findings open after each round: 2, 0.")
+        self.assertEqual(record["residualRisks"], ["2 review rounds; findings open after each round: 2, 0."])
         self.assertNotIn("ended", record)
         self.assertEqual(self.check(fx, fx.main / self.RECORD), (0, f"{fx.main / self.RECORD}: a valid plan-review-evidence/1 record\n"))
 
@@ -1079,7 +1079,11 @@ class PlanReviewRecordTests(PlanReviewCase):
             "ended at an earlier round": (broken(good, lambda r: r.update(
                 outcome="ended-without-alignment", ended={"round": 1, "reason": "x", "at": "t"},
                 rounds=[dict(x, outcome="unresolved") for x in r["rounds"]])), "ended.round"),
-            "a result from a round never run": (broken(good, lambda r: r["reviews"][0].update(round=3)), "round"),
+            "a review from a round never run": (broken(good, lambda r: (r["reviews"][0].update(round=3),
+                                                                         r["reviews"][0]["result"].update(round=3))),
+                                                "round must be one of the review's rounds"),
+            "a result from another round than its review's": (broken(good, lambda r: r["reviews"][0]["result"].update(round=1)),
+                                                              "lensId and round"),
             "a result whose findings differ": (broken(good, lambda r: r.update(
                 outcome="ended-without-alignment", ended={"round": 2, "reason": "x", "at": "t"},
                 rounds=[dict(x, outcome="unresolved") for x in r["rounds"]],
@@ -1094,6 +1098,12 @@ class PlanReviewRecordTests(PlanReviewCase):
                 self.assertEqual(code, 2, out)
                 self.assertIn(word, out)
         self.assertEqual(self.check(fx, fx.tmp / "missing.review.json")[0], 2)
+        # A broken record ahead of a good one still refuses the whole check.
+        bad = fx.tmp / "bad.review.json"
+        bad.write_text(json.dumps(broken(hand, lambda r: r.update(outcome="mostly-aligned"))))
+        code, out = self.check(fx, bad, fx.main / self.RECORD)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"{fx.main / self.RECORD}: a valid plan-review-evidence/1 record", out)
 
 
 if __name__ == "__main__":
