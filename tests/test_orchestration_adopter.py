@@ -498,7 +498,7 @@ class FixtureAdopterTests(unittest.TestCase):
             "check.started", "check.finished", "candidate.merged",
             "candidate.stopped",
             "candidate.handed",
-            "check.started", "check.failed", "base.broken", "candidate.stopped",
+            "check.started", "check.failed", "base.rerun.started", "base.rerun.finished", "base.broken", "candidate.stopped",
             "base.repaired", "decision.recorded",
             "check.started", "check.finished", "candidate.merged",
             "release.started", "release.finished",

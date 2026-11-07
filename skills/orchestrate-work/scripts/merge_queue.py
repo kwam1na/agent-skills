@@ -1612,7 +1612,7 @@ class Runner:
         self.assert_clean(checkout, "the checkout after the checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
         if failed:
-            self.classify(failed, checks, checkout, base_head, changes, context, result)
+            self.classify(subject, failed, checks, checkout, base_head, changes, context, result)
         self.set_item(subject, stage="checked")
         self.write(assignments={"/meta/baseHead": base_head})
         self.journal("check.finished", f"Checks passed for {item['title']}", subject)
@@ -1982,7 +1982,7 @@ class Runner:
         self.record_history(passed, flaked, int(round(time.monotonic() - began)) if whole else None)
         return outcomes
 
-    def classify(self, failed: list[dict], selected: list[dict], checkout: Path, base_head: str, changes: list[dict], context: Context, result: Result) -> None:
+    def classify(self, subject: str, failed: list[dict], selected: list[dict], checkout: Path, base_head: str, changes: list[dict], context: Context, result: Result) -> None:
         """A failure is the base's own only when the base fails the same check unchanged."""
         changed = {change["path"] for change in changes} | {change.get("oldPath") for change in changes}
         candidates = []
@@ -2002,19 +2002,68 @@ class Runner:
             if unchanged:
                 candidates.append(check)
         if candidates:
+            self.rerun_on_base(subject, candidates, selected, base_head, context)
+        raise Stop("check_failed", "failing checks: " + "; ".join(self.failure_text(check["id"], result) for check in failed))
+
+    def rerun_on_base(self, subject: str, candidates: list[dict], selected: list[dict], base_head: str, context: Context) -> None:
+        """Re-run the failing checks on the base, on the record: the wait is written before it starts, and its verdict journaled.
+
+        The candidate already failed, so the checking panel says it waits on the
+        re-run, and the journal reads failure, re-run start, verdict, stop.
+        Raises base_broken when a check also fails on the base.
+        """
+        names = ", ".join(check["id"] for check in candidates)
+        began = time.monotonic()
+        waiting = {"startedAt": now(), "checks": [check["id"] for check in candidates]}
+
+        def begin(current: dict) -> tuple[dict, dict]:
+            checking = current["meta"]["checking"]["now"]
+            return ({}, {}) if checking is None else ({}, {"/meta/checking/now/baseRerun": waiting})
+
+        self.write(build=begin)
+        self.journal("base.rerun.started",
+                     f"Rerunning {names} on {self.base} at {base_head}, to tell whether the failure is the base's own", subject)
+        verdicts: list[str] = []
+        broken: Stop | None = None
+        try:
             base_checkout = self.checkout(base_head, "base-rerun", context=context.with_values(treeSha=self.tree(base_head)))
             base_context = context.with_values(head=base_head, treeSha=self.tree(base_head))
             by_id = {check["id"]: check for check in selected}
             for check in candidates:
                 if not self.base_prerequisites_pass(check, by_id, base_checkout, base_context):
                     # The check cannot be judged on the base; the failure stays the candidate's.
+                    verdicts.append(f"{check['id']} could not be judged there")
                     continue
                 completed = self.run_one(check, base_checkout, base_context)
                 # A re-run that could not start says nothing about the base.
                 started = completed is not None and (completed.timed_out or completed.returncode is not None)
                 if started and (completed.timed_out or completed.returncode != 0):
-                    raise Stop("base_broken", f"{check['id']} also fails on {self.base} at {base_head}")
-        raise Stop("check_failed", "failing checks: " + "; ".join(self.failure_text(check["id"], result) for check in failed))
+                    verdicts.append(f"{check['id']} also fails")
+                    broken = Stop("base_broken", f"{check['id']} also fails on {self.base} at {base_head}")
+                    break
+                verdicts.append(f"{check['id']} passed" if started else f"{check['id']} could not start there")
+        except BaseException as error:
+            self.end_rerun(subject, base_head, began, f"ended without a verdict ({type(error).__name__})")
+            raise
+        verdict = "; ".join(verdicts)
+        if broken is not None:
+            self.end_rerun(subject, base_head, began, f"{verdict}: the base is broken")
+            raise broken
+        self.end_rerun(subject, base_head, began, f"{verdict}: the failure is the candidate's")
+
+    def end_rerun(self, subject: str, base_head: str, began: float, verdict: str) -> None:
+        """Journal the base re-run's verdict and how long the candidate waited on it, and end the waiting state."""
+
+        def build(current: dict) -> tuple[dict, dict]:
+            checking = current["meta"]["checking"]["now"]
+            if checking is None or "baseRerun" not in checking:
+                return {}, {}
+            return {}, {"/meta/checking/now": {key: value for key, value in checking.items() if key != "baseRerun"}}
+
+        with contextlib.suppress(Stop, delivery_state.StateError):
+            self.write(build=build)
+        self.journal("base.rerun.finished",
+                     f"Base re-run on {self.base} at {base_head} after {int(round(time.monotonic() - began))}s: {verdict}", subject)
 
     @staticmethod
     def failure_text(check_id: str, result: Result) -> str:
@@ -2300,7 +2349,7 @@ class Runner:
                 if found == 1:
                     # Alone on the base, the usual rule tells the base's own failures apart.
                     try:
-                        self.classify(failing.failed, failing.checks, failing.checkout, base_head, failing.changes,
+                        self.classify(culprit.subject, failing.failed, failing.checks, failing.checkout, base_head, failing.changes,
                                       self.context(culprit.subject, base_head), failing.result)
                     except Stop as classified:
                         if classified.reason == "base_broken":
