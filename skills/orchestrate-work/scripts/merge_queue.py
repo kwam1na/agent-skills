@@ -182,6 +182,8 @@ INTERPRETER = re.compile(r"^(?:python[\d.]*|pypy[\d.]*|py|node|bash|sh|zsh|dash|
 # An interpreter flag after which comes code or a module, not a script file, and flags whose value is a separate element.
 INLINE_CODE = frozenset({"-c", "-e", "-m", "-p", "--eval", "--print", "--command", "-Command"})
 FLAG_VALUE = frozenset({"-X", "-W", "-I", "-r", "--require", "--import", "--loader"})
+# Python's own -I is isolated mode, with no value: the script follows it.
+PYTHON = re.compile(r"^(?:python[\d.]*|pypy[\d.]*|py)(?:\.exe)?$", re.IGNORECASE)
 # An element with whitespace, quotes or shell and jq operators is an expression, never a path.
 EXPRESSION = re.compile(r"""[\s'"$|+();&<>`*]""")
 
@@ -206,12 +208,13 @@ def candidate_problems(argv: list[str], present: Callable[[str], bool], path: st
     elif shutil.which(program, path=path) is None:
         problems.append(f"its program {program} isn't on PATH")
     interpreter = INTERPRETER.match(os.path.basename(program)) is not None
+    value_flags = FLAG_VALUE - {"-I"} if PYTHON.match(os.path.basename(program)) else FLAG_VALUE
     operand_seen, skip = not interpreter, False
     for element in argv[1:]:
         if skip:
             skip = False
             continue
-        if element in INLINE_CODE or element in FLAG_VALUE:
+        if element in INLINE_CODE or element in value_flags:
             skip = True
             operand_seen = operand_seen or element in INLINE_CODE
             continue
