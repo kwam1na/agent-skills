@@ -1624,11 +1624,9 @@ class Runner:
         completed = self.run_argv(argv, checkout, context or Context(), self.binding["checkTimeoutSeconds"], stdin=shown.stdout)
         listed: object = None
         why = None
-        if completed.timed_out:
-            why = "timed out"
-        elif completed.returncode != 0:
+        if completed.returncode != 0:
             said, kept = self.refusal("listing", completed, CANDIDATE_OUT_LIMIT)
-            why = f"exited {completed.returncode}: {said}; {kept}"
+            why = f"{said if completed.timed_out else f'exited {completed.returncode}: {said}'}; {kept}"
         elif not completed.stdout.strip():
             why = "printed nothing"
         else:

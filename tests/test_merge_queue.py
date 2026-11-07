@@ -1009,12 +1009,16 @@ if lock_path.exists():
 
 # A listing that fails as the version it reads says to, so each of the three versions can be made the one that fails.
 FAILING_LISTING = """
-import json, sys
+import json, os, sys, time
 text = sys.stdin.read()
 lock = json.loads(text)
 how = lock.get("listingMode")
 if how == "fails":
-    sys.exit("cannot list")
+    # A long refusal whose last line carries a secret from the environment, when one is set.
+    sys.stderr.write("y" * 500 + "\\n")
+    sys.exit(("cannot list " + os.environ.get("MQ_STEP_TOKEN", "")).strip())
+if how == "slow":
+    time.sleep(30)
 if how == "empty":
     sys.exit(0)
 if how == "garbage":
@@ -1051,10 +1055,13 @@ class RegenerableListingTests(MergeQueueTestCase):
 
     START = {"src/app.txt": "app one\n", "src/lib.txt": "lib one\n", "gen/generated.txt": "app one\nlib one\n"}
 
-    def lock_adopter(self, listing: list[str] | None = None, **extra: object) -> Adopter:
-        adopter = self.adopter({"regenerable": {
+    def lock_adopter(self, listing: list[str] | None = None, environment: dict[str, str] | None = None,
+                     binding: dict | None = None, **extra: object) -> Adopter:
+        regenerable = {"regenerable": {
             "paths": ["gen/**"], "regenerators": [[PY, "tools/regen.py"], [PY, "tools/regen_lock.py"]],
-            "listings": [{"path": "gen/lock.json", "argv": listing or REAL_LISTING}]}})
+            "listings": [{"path": "gen/lock.json", "argv": listing or REAL_LISTING}]}, **(binding or {})}
+        adopter = (self.adopter(regenerable) if environment is None
+                   else self.environment_adopter(environment, regenerable))
         adopter.advance_base({"tools/regen_lock.py": REGEN_LOCK.lstrip(), "tools/listing.py": FAILING_LISTING.lstrip(),
                               "gen/lock.json": fixture_lock(self.START, **extra)})
         return adopter
@@ -1145,15 +1152,33 @@ class RegenerableListingTests(MergeQueueTestCase):
                     results = self.run_queue(adopter, "feature")
                     self.stopped_naming_the_lock(adopter, results, base, head, f"at the {version} {says}")
 
-    def test_a_failing_listing_says_why_scrubbed_and_names_its_log(self) -> None:
-        adopter = self.lock_adopter([PY, "tools/listing.py"])
+    def test_a_failing_listing_says_why_scrubbed_and_bounded_and_names_its_log(self) -> None:
+        secret = "s3cr3t-listing-value-from-the-environment"
+        adopter = self.lock_adopter([PY, "tools/listing.py"], {"MQ_STEP_TOKEN": secret})
         head = self.candidate(adopter, self.side({"src/app.txt": "app two\n"}))
         base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}, listingMode="fails"))
         results = self.run_queue(adopter, "feature")
-        self.stopped_naming_the_lock(adopter, results, base, head, "at the base exited 1: cannot list; its whole output is in logs/")
-        detail = results[-1].document()["stop"]["detail"]
+        self.stopped_naming_the_lock(adopter, results, base, head,
+                                     "at the base exited 1: " + "y" * (queue.CANDIDATE_OUT_LIMIT - len("cannot list [redacted]") - 1)
+                                     + "\ncannot list [redacted]; its whole output is in logs/")
+        document = results[-1].document()
+        detail = document["stop"]["detail"]
+        # The tail is the listing's bound, not a stop's: no more than CANDIDATE_OUT_LIMIT characters of the stderr.
+        self.assertNotIn("y" * queue.CANDIDATE_OUT_LIMIT, detail)
+        self.assertNotIn(secret, json.dumps(document))
+        for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
+            self.assertNotIn(secret, (adopter.state / name).read_text(encoding="utf-8"))
         log = re.search(r"its whole output is in (logs/\S+\.log) under the state directory", detail).group(1)
-        self.assertIn("cannot list", (adopter.state / log).read_text(encoding="utf-8"))
+        self.assertIn("y" * 500 + f"\ncannot list {secret}", (adopter.state / log).read_text(encoding="utf-8"))
+
+    def test_a_listing_that_times_out_says_so_and_names_its_log(self) -> None:
+        adopter = self.lock_adopter([PY, "tools/listing.py"], binding={"checkTimeoutSeconds": 2})
+        head = self.candidate(adopter, self.side({"src/app.txt": "app two\n"}))
+        base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}, listingMode="slow"))
+        results = self.run_queue(adopter, "feature")
+        self.stopped_naming_the_lock(adopter, results, base, head, "at the base timed out; its whole output is in logs/")
+        log = re.search(r"its whole output is in (logs/\S+\.log)", results[-1].document()["stop"]["detail"]).group(1)
+        self.assertTrue((adopter.state / log).is_file())
 
     def test_a_version_without_the_path_stops(self) -> None:
         adopter = self.adopter({"regenerable": {
@@ -1543,8 +1568,10 @@ class StepStderrTests(MergeQueueTestCase):
                 for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
                     self.assertNotIn(self.SECRET, (adopter.state / name).read_text(encoding="utf-8"))
 
-    def test_a_refused_push_says_why_and_names_its_log(self) -> None:
-        adopter = self.adopter()
+    def test_a_refused_push_says_why_scrubbed_and_names_its_log(self) -> None:
+        # Git names the remote it failed to push to; declared as a secret, that path must not reach the stop.
+        remote = str(self.directory / "remote.git")
+        adopter = self.environment_adopter({"MQ_PUSH_TOKEN": remote})
         head = self.candidate(adopter)
         adopter.advance_base({"src/lib.txt": "lib two\n"})
         # A held lock on the candidate's ref makes the remote refuse the synced head's push.
@@ -1554,9 +1581,16 @@ class StepStderrTests(MergeQueueTestCase):
         detail = self.assertStopped(self.run_queue(adopter, "feature"), "push_refused")["stop"]["detail"]
         self.assertEqual(adopter.tip("feature"), head)
         self.assertIn("pushing feature failed: ", detail)
-        self.assertIn("feature", detail.split("failed: ", 1)[1].split("; its whole output", 1)[0], "the tail carries git's words")
+        said = detail.split("failed: ", 1)[1].split("; its whole output", 1)[0]
+        self.assertIn("feature", said, "the tail carries git's words")
+        self.assertIn("[redacted]", said)
+        self.assertNotIn(remote, detail)
+        for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
+            self.assertNotIn(remote, (adopter.state / name).read_text(encoding="utf-8"))
         log = re.search(r"its whole output is in (logs/\S+\.log) under the state directory", detail).group(1)
-        self.assertIn("lock", (adopter.state / log).read_text(encoding="utf-8"))
+        kept = (adopter.state / log).read_text(encoding="utf-8")
+        self.assertIn("lock", kept)
+        self.assertIn(remote, kept)
 
     def test_the_guide_states_what_the_scrub_removes_and_that_it_removes_nothing_else(self) -> None:
         guide = " ".join((ROOT / "skills/orchestrate-work/references/orchestration-guide.md").read_text(encoding="utf-8").split())
@@ -6138,6 +6172,22 @@ class ProviderRefusalTests(MergeQueueTestCase):
         document = self.assertStopped(self.run_queue(adopter, "feature"), "provider_refused")
         self.assertIn("asked with [redacted]", document["stop"]["detail"])
         self.assertNotIn(secret, json.dumps(document))
+        for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
+            self.assertNotIn(secret, (adopter.state / name).read_text(encoding="utf-8"))
+
+    def test_a_provider_that_cannot_start_has_its_words_scrubbed_in_the_record(self) -> None:
+        # The runner's own words for a program it can't start name the program's path; declared secret, it is redacted.
+        secret = "s3cr3t-provider-path-from-the-environment"
+        provider = {"argv": [str(self.directory / secret / "provider")], "cwd": ".", "timeoutSeconds": 3,
+                    "providerInputs": ["tools/provider.py", "tools/provider-mode.txt"]}
+        adopter = self.environment_adopter({"MQ_STEP_TOKEN": secret}, {"provider": provider})
+        self.candidate(adopter)
+        documents = [result.document() for result in self.run_queue(adopter, "feature")]
+        missing = [record for document in documents if document.get("selection")
+                   for record in document["selection"]["providers"] if record["outcome"] == "missing"]
+        self.assertTrue(missing, documents)
+        self.assertTrue(all("[redacted]" in record["detail"] for record in missing), missing)
+        self.assertNotIn(secret, json.dumps(documents))
         for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
             self.assertNotIn(secret, (adopter.state / name).read_text(encoding="utf-8"))
 
