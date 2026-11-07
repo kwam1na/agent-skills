@@ -567,6 +567,8 @@
     if (needs) { nodes.push(needs); }
     var supervisor = needsYou(Boolean(closed));
     if (supervisor) { nodes.push(supervisor); }
+    var partway = closeStoppedPartway(doc, closed);
+    if (partway) { nodes.push(partway); }
     nodes.push(journey(doc, all, closed ? tally.landed : landed));
     nodes.push(since(meta, closed));
     var was = prev.checkingHeight;
@@ -1151,6 +1153,31 @@
    * stops, so a closed delivery shows the box only while a running, current list still holds it, and otherwise has none:
    * a stopped supervisor is what a finished close looks like, and asking to resume it would be wrong.
    */
+  /**
+   * A close that stopped partway: the record's started mark for the closing entry with no finished mark for it, and no
+   * supervisor running a current pass to finish it. It names what finishes it: a resumed supervisor when the record
+   * meets the close condition, and lead-close otherwise, since a resumed supervisor would hold on what is unmet. A
+   * record with no marks, or marks for an earlier close, closed as before.
+   */
+  function closeStoppedPartway(doc, closed) {
+    var meta = isObject(doc.state.meta) ? doc.state.meta : {};
+    var closing = isObject(meta.closing) ? meta.closing : null;
+    if (!closed || !closing || !isObject(closing.started) || closing.started.entry !== closed.id) { return null; }
+    if (isObject(closing.finished) && closing.finished.entry === closed.id) { return null; }
+    var current = NEEDS !== null ? seconds(NEEDS.staleAfter) : null;
+    if (NEEDS !== null && NEEDS.running === true && current !== null && Date.now() / 1000 <= current) { return null; }
+    var state = doc.state;
+    // As the close reads it: a piece the plan removed holds nothing.
+    var kept = function (entry) { return isObject(entry) && !removedFromPlan({ item: entry }); };
+    var met = !list(state.planned).some(kept)
+      && list(state.queue).filter(kept).every(function (item) { return item.stage === "merged"; })
+      && list(state.finish).filter(isObject).every(function (line) { return line.met === true; })
+      && list(state.lanes).filter(isObject).every(function (lane) { return lane.state === "idle" || lane.state === "done"; });
+    var box = add(el("div", "attention close-partway"), add(el("div", "ah"), persona("supervisor"), "The close stopped partway"));
+    return add(box, el("p", "needs-none", "The delivery was closed, but its close-out stopped before it finished. " + (met
+      ? "Finish it with lead-run --resume."
+      : "Finish it with lead-close, which doesn't wait for the tracker; a resumed supervisor would hold on what is still open.")));
+  }
   function needsYou(closed) {
     if (NEEDS === null) { return null; }
     if (closed) {

@@ -5045,7 +5045,8 @@ def lead_close(args) -> None:
         raise Stop(f"the lead's settings have uncommitted changes; commit or drop them first:\n{dirty[:600]}")
     # Everything that can refuse is checked before the supervisor, and the serve it keeps, is stopped.
     doc = load_state()
-    if not any(e.get("kind") == "delivery.closed" for e in doc["journal"]):
+    closed = latest_close(doc["journal"])
+    if closed is None:
         raise Stop("journal delivery.closed first (orchestrate-work's close-out): lead-close runs after it")
     state = doc["state"]
     busy = [q["subject"] for q in state["queue"] if q.get("stage") not in ("merged", "stopped")]
@@ -5072,17 +5073,31 @@ def lead_close(args) -> None:
         left += [f"{key}: {x}" for x in l]
     release = c.release / "skills/orchestrate-work/scripts/render_state.py"
     binding = c.root / ".agents/orchestration.json"
-    if binding.exists():
+
+    def render(what: str) -> None:
+        if not binding.exists():
+            return
         rendered = run([sys.executable, "-B", str(release), "--dir", str(c.state), "--binding", str(binding)], check=False)
         if rendered.returncode == 0:
-            done.append("rendered the views one last time")
+            done.append(what)
         else:
             left.append(f"the final render failed: {(rendered.stderr or rendered.stdout).strip()[-300:]}")
+    close_stop("lead-close render")
+    render("rendered the views one last time")
+    owed = tracker_owed(c, load_state(), closed)
+    if owed:
+        left.append(f"the tracker hasn't had every update: it is still waiting for {owed}. lead-close doesn't wait "
+                    "for the tracker; post them, or let the publisher run")
     archive, archived = archive_delivery(c)
     done += archived
+    close_stop("lead-close archive")
+    done += finish_close(c, closed, archive)
     c.flow_log.mkdir(parents=True, exist_ok=True)
     lead_file(c, "closed.json").write_text(json.dumps({"archive": str(archive), "said": archived, "by": "lead-close",
-                                                       "at": now(), **closed_full_health(c)}, indent=2) + "\n")
+                                                       "at": now(), "entry": closed["id"], **closed_full_health(c)},
+                                                      indent=2) + "\n")
+    close_stop("lead-close closed.json")
+    render("rendered the views again, with the close marked finished")
     for pid, command in delivery_processes(lead, c.state, c.delivery, c.main):
         try:
             os.kill(pid, signal.SIGTERM)
@@ -5189,10 +5204,45 @@ def supervisor_line(c) -> str | None:
     if held:
         return (f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
                 + waits_on(c))
-    closed = load_json(lead_file(c, "closed.json"))
-    if closed:
-        return "supervisor: stopped; the delivery is closed. " + closed_words(closed)
+    said = closed_status(c)
+    if said is not None:
+        return "supervisor: " + said
     return f"supervisor: down; restart it with {flow_command()} lead-run --resume" + waits_on(c)
+
+
+def close_progress(doc: dict) -> str | None:
+    """How far this close got, by the record's marks: "finished", "partway", or None when the record has no started
+    mark for it (an older record, or a delivery not closed)."""
+    closed = latest_close(doc["journal"])
+    closing = doc["state"]["meta"].get("closing") or {}
+    if closed is None or (closing.get("started") or {}).get("entry") != closed["id"]:
+        return None
+    return "finished" if (closing.get("finished") or {}).get("entry") == closed["id"] else "partway"
+
+
+def finishing_command(c, doc: dict) -> str:
+    """What finishes a close that stopped partway: a resumed supervisor when the record meets the close condition (no
+    planned story, nothing unmerged, every finish line met, no busy lane, as close_holds reads it); otherwise lead-close,
+    since a resumed supervisor would hold on what is unmet and never finish it."""
+    return "lead-run --resume" if not close_holds(c, doc, []) else "lead-close"
+
+
+def closed_status(c) -> str | None:
+    """What a stopped supervisor says of the close: finished, or stopped partway and what finishes it. A record with no
+    marks reads as before, by closed.json alone."""
+    tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    doc = json.loads(run([sys.executable, "-B", str(tool), "--dir", str(c.state), "show"]).stdout)
+    closed = kept_close(c, latest_close(doc["journal"]))
+    progress = close_progress(doc)
+    if progress == "partway":
+        command = finishing_command(c, doc)
+        return (f"stopped partway through the close; finish it with {flow_command()} {command}"
+                + ("; lead-close doesn't wait for the tracker" if command == "lead-close" else ""))
+    if progress == "finished":
+        return "stopped; the delivery is closed. " + (closed_words(closed) if closed else "")
+    if closed:
+        return "stopped; the delivery is closed. " + closed_words(closed)
+    return None
 
 
 def closed_words(closed: dict) -> str:
@@ -5768,10 +5818,54 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
     return True, f"follow-ups: {len(marks)} filed or refused"
 
 
+# New work after a close reopens the delivery, as the line map reads it.
+REOPENING = ("lane.assigned", "candidate.handed", "check.started")
+
+
+def latest_close(journal: list[dict]) -> dict | None:
+    """The delivery.closed entry that closes the delivery now: the latest one, unless work resumed after it."""
+    closed = None
+    for entry in sorted(journal, key=lambda e: e["id"]):
+        if entry["kind"] == "delivery.closed":
+            closed = entry
+        elif entry["kind"] in REOPENING:
+            closed = None
+    return closed
+
+
+def last_close(journal: list[dict]) -> dict | None:
+    """The latest delivery.closed entry, reopened since or not."""
+    return next((e for e in sorted(journal, key=lambda e: e["id"], reverse=True) if e["kind"] == "delivery.closed"), None)
+
+
+def tracker_owed(c, doc: dict, closed: dict) -> str | None:
+    """What the tracker hasn't had yet through the closing entry, or None when it has every update."""
+    mode = tracker_conf(c)["mode"]
+    if mode == "publisher":
+        journal = sorted(doc["journal"], key=lambda e: e["id"])
+        done = tracker_publisher.covered(tracker_publisher.read_ledger(c.state), tracker_publisher.init_id(journal))
+        owed = [e["id"] for e in journal if e["id"] <= closed["id"] and e["id"] not in done]
+        if owed:
+            return f"the tracker publisher to cover journal entries {', '.join(map(str, owed[:10]))}"
+    elif mode == "host":
+        through = (load_json(c.state / "published.json") or {}).get("journalThrough", 0)
+        if through < closed["id"]:
+            return f"the host outbox to be acked through journal entry {closed['id']}"
+    return None
+
+
+def close_stop(point: str) -> None:
+    """Where a test stops a close, as a kill at that point would leave it: RUN_DELIVERY_CLOSE_STOP names the point."""
+    if os.environ.get("RUN_DELIVERY_CLOSE_STOP") == point:
+        sys.stdout.flush()
+        os._exit(9)
+
+
 def closed_step(c) -> tuple[bool, str]:
-    """Journal delivery.closed once, render, then wait until the tracker has every entry through it."""
+    """Journal delivery.closed once for this close, render, then wait until the tracker has every entry through it.
+    A delivery closed, reopened by new work and closed again is closed by a new entry."""
     doc = load_state()
-    closed = next((e for e in doc["journal"] if e["kind"] == "delivery.closed"), None)
+    closed = latest_close(doc["journal"])
     if closed is None:
         skip = full_health_skip(c)
         skipped = (f" fullHealth was skipped under the {skip['posture']} posture declared on {skip['source']}: "
@@ -5780,18 +5874,10 @@ def closed_step(c) -> tuple[bool, str]:
                    f"{c.delivery} closed: every story merged or removed, every finish line met, and nothing holding.{skipped}")
         render_views(c)
         doc = load_state()
-        closed = next(e for e in doc["journal"] if e["kind"] == "delivery.closed")
-    mode = tracker_conf(c)["mode"]
-    if mode == "publisher":
-        journal = sorted(doc["journal"], key=lambda e: e["id"])
-        done = tracker_publisher.covered(tracker_publisher.read_ledger(c.state), tracker_publisher.init_id(journal))
-        owed = [e["id"] for e in journal if e["id"] <= closed["id"] and e["id"] not in done]
-        if owed:
-            return False, f"waiting for the tracker publisher to cover journal entries {', '.join(map(str, owed[:10]))}"
-    elif mode == "host":
-        through = (load_json(c.state / "published.json") or {}).get("journalThrough", 0)
-        if through < closed["id"]:
-            return False, f"waiting for the host outbox to be acked through journal entry {closed['id']}"
+        closed = latest_close(doc["journal"])
+    owed = tracker_owed(c, doc, closed)
+    if owed:
+        return False, f"waiting for {owed}"
     return True, f"delivery.closed is journal entry {closed['id']}"
 
 
@@ -5828,11 +5914,37 @@ def closed_full_health(c) -> dict:
     return {"fullHealth": {"state": "skipped", **{key: skip[key] for key in ("posture", "source", "reason", "head")}}} if skip else {}
 
 
-def archive_step(c) -> tuple[Path, list[str]]:
+def kept_close(c, closed: dict | None) -> dict | None:
+    """closed.json, when it is this close's: it names the closing entry, or is an older one that names none."""
+    kept = load_json(lead_file(c, "closed.json"))
+    if not kept:
+        return None
+    return kept if kept.get("entry") is None or (closed is not None and kept["entry"] == closed["id"]) else None
+
+
+def finish_close(c, closed: dict, archive: Path) -> list[str]:
+    """The close's finished mark, once its archive has landed: in the live record, and in the archived copy and its
+    views. Writing it again changes nothing."""
+    state_tool("close-finished", "--entry", str(closed["id"]))
+    copy = archive / c.state.name
+    if not (copy / "state.json").exists():
+        return ["marked the close finished in the record"]
+    tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    run([sys.executable, "-B", str(tool), "--dir", str(copy), "close-finished", "--entry", str(closed["id"])])
+    config = binding_state(c)
+    if config is not None:
+        script = c.release / "skills/orchestrate-work/scripts/render_state.py"
+        run([sys.executable, "-B", str(script), "--dir", str(copy), "--state-config",
+             json.dumps({**{key: value for key, value in config.items() if key != "liveHome"}, "publishers": []})],
+            cwd=c.root, check=False, timeout=300)
+    return ["marked the close finished in the record and its archive"]
+
+
+def archive_step(c, closed: dict) -> tuple[Path, list[str]]:
     """Release every lease the lead holds, archive the record, and fast-forward the operator's checkout when it is
-    clean and on the final base. Done once: a resumed close-out finds its archive."""
+    clean and on the final base. Done once for each close: a resumed close-out finds its archive."""
     marker = lead_file(c, "closed.json")
-    kept = load_json(marker)
+    kept = kept_close(c, closed)
     if kept:
         return Path(kept["archive"]), kept["said"]
     held: list[dict] = []
@@ -5846,6 +5958,7 @@ def archive_step(c) -> tuple[Path, list[str]]:
         said.append(f"released the lead's leases: {', '.join(str(lease.get('id')) for lease in held)}")
     archive, archived = archive_delivery(c)
     said += archived
+    close_stop("archive")
     operator = c.main
     branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=operator, check=False)
     dirty = git("status", "--porcelain", cwd=operator, check=False)
@@ -5855,7 +5968,9 @@ def archive_step(c) -> tuple[Path, list[str]]:
                     else f"left {operator} where it is: it can't fast-forward to {c.base_ref}")
     else:
         said.append(f"left {operator} where it is: " + ("it has uncommitted changes" if dirty else f"it is on {branch}"))
-    marker.write_text(json.dumps({"archive": str(archive), "said": said, "at": now(), **closed_full_health(c)}, indent=2) + "\n")
+    marker.write_text(json.dumps({"archive": str(archive), "said": said, "at": now(), "entry": closed["id"],
+                                  **closed_full_health(c)}, indent=2) + "\n")
+    close_stop("closed.json")
     return archive, said
 
 
@@ -5882,9 +5997,13 @@ def close_out(c, flapping: tuple[str, ...] = ()) -> tuple[list[str], bool]:
         ok, line = step(c)
         said.append(line)
         if not ok:
+            close_stop("tracker")
             return said, False
-    archive, archived = archive_step(c)
+    closed = latest_close(load_state()["journal"])
+    archive, archived = archive_step(c, closed)
     said += archived
+    said += finish_close(c, closed, archive)
+    close_stop("friction")
     # Read once the steps above ran, so a filing the publisher refused for good during them is listed.
     shown = [item["text"] for item in needs_you(c, load_state(), flapping, closing=True) if not item["holding"]]
     note = friction_step(c, archive, archived, shown)
@@ -6097,7 +6216,7 @@ def lead_run(args) -> None:
     c = cfg()
     if not (c.state / "state.json").exists():
         raise Stop(f"no record at {c.state}: lead-init starts it, and its supervisor")
-    closed = load_json(lead_file(c, "closed.json"))
+    closed = kept_close(c, latest_close(load_state()["journal"]))
     if closed and closed.get("by") == "lead-close":
         raise Stop("the delivery is closed: lead-close closed it. " + closed_words(closed))
     if args.resume:
@@ -6938,9 +7057,9 @@ class Doctor:
             return self.not_applicable("no record yet: lead-init starts it, and its supervisor")
         held, recorded = read_lock(supervisor_lock_path(d))
         if not held:
-            closed = load_json(lead_file(d, "closed.json"))
-            if closed:
-                return "ok", "stopped; the delivery is closed. " + closed_words(closed)
+            said = closed_status(d)
+            if said is not None:
+                return ("wrong" if said.startswith("stopped partway") else "ok"), said
             return "wrong", f"the supervisor is down; fix: {flow_command()} lead-run --resume"
         if not Path("/proc/self/status").exists():
             return "ok", (f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}. Its children's "

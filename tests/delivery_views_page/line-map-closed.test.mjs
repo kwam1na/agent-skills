@@ -3,7 +3,7 @@
 // wording that must not read as work still to come.
 import { test } from "node:test";
 
-import { REPLAYED_RUNS, expect, openPage, pageWithRuns } from "./support.mjs";
+import { REPLAYED_RUNS, expect, openPage, pageWithRuns, renderPage } from "./support.mjs";
 import { finishLine, item, journal, minute, planFor, record, unit } from "./plan-fixtures.mjs";
 
 const NOW = "2026-10-30T12:00:00Z";
@@ -108,4 +108,68 @@ test("a closed delivery names a piece with no lane as having none, and a stop na
   expect(names(closedLine)).toEqual(["Lane one", "No lane"]);
   expect(closedStop.app.querySelector("#detail .d-owner").textContent).toBe("No lane");
   expect(closedLine.text).not.toContain("Not yet assigned");
+});
+
+// A close that stopped partway: the record's started mark for the closing entry without its finished mark.
+const LIVE_NEEDS = (over = {}) => ({ spec: "delivery-needs-you/1", running: true, pass: 3, at: "2026-10-30T11:59:30Z",
+  staleAfter: "2026-10-30T12:01:30Z", items: [{ holding: true, source: "host outbox", text: "The host outbox hasn't been acked through journal entry 4",
+    clears: "the host posting its outbox" }], ...over });
+function closing({ finish = true, marks = "started", earlier = false, needs = null, reopened = false, removed = null } = {}) {
+  const steps = [...landed("A"), close];
+  if (reopened) steps.push([50, "candidate.handed", "A"], [55, "delivery.closed", null]);
+  const document = record({ queue: [item("A", "merged")], journal: journal(steps),
+    finish: [{ id: "line", text: "The line is met", met: finish }] });
+  document.state.lanes[0].state = "idle";
+  const closed = document.journal.filter((entry) => entry.kind === "delivery.closed").at(-1);
+  const entry = earlier ? closed.id - 1 : closed.id;
+  if (marks !== "none") {
+    document.state.meta.closing = { started: { entry, at: closed.at },
+      ...(marks === "finished" ? { finished: { entry, at: closed.at } } : {}) };
+  }
+  if (removed) document.state.planned = [{ subject: "R", title: "Work R", lane: "lane-1", stage: "planned" }];
+  const plan = removed ? planFor([unit("A"), unit("R", { removed: removed === "removed" })], { finish: [] }) : null;
+  return renderPage(document, { config: CONFIG, needs, plan });
+}
+const partway = async (page) => (await open(page))[0].app.querySelector("#now .close-partway");
+
+test("a close that stopped partway says so and names a resumed supervisor when the record meets the close condition", async () => {
+  const box = await partway(closing());
+  expect(box.querySelector(".ah").textContent).toBe("The close stopped partway");
+  expect(box.querySelector("p").textContent).toBe("The delivery was closed, but its close-out stopped before it finished. Finish it with lead-run --resume.");
+  // The title still says the delivery closed.
+  expect((await open(closing()))[0].app.querySelector("#now .title").textContent).toBe("Delivered.");
+});
+
+test("a planned piece the plan removed holds nothing, so the close still finishes with a resumed supervisor", async () => {
+  expect((await partway(closing({ removed: "removed" }))).querySelector("p").textContent).toContain("Finish it with lead-run --resume.");
+  expect((await partway(closing({ removed: "kept" }))).querySelector("p").textContent).toContain("Finish it with lead-close");
+});
+
+test("a close that stopped partway on a record short of its close condition names lead-close, which doesn't wait for the tracker", async () => {
+  const box = await partway(closing({ finish: false }));
+  expect(box.querySelector("p").textContent).toBe("The delivery was closed, but its close-out stopped before it finished. "
+    + "Finish it with lead-close, which doesn't wait for the tracker; a resumed supervisor would hold on what is still open.");
+});
+
+test("a finished close, a record with no marks, a mark for an earlier close and a close still running show no partway box", async () => {
+  expect(await partway(closing({ marks: "finished" }))).toBeNull();
+  // A finished close with a stopped supervisor's list shows neither: nothing is left for it to do.
+  const [stopped] = await open(closing({ marks: "finished", needs: LIVE_NEEDS({ running: false }) }));
+  expect(stopped.app.querySelector("#now .needs-you")).toBeNull();
+  expect(stopped.app.querySelector("#now .close-partway")).toBeNull();
+  expect(await partway(closing({ marks: "none" }))).toBeNull();
+  expect(await partway(closing({ earlier: true }))).toBeNull();
+  // A live supervisor still closing it: its own list shows what the close waits on, and nothing names a resume.
+  const [live] = await open(closing({ needs: LIVE_NEEDS() }));
+  expect(live.app.querySelector("#now .close-partway")).toBeNull();
+  expect(live.app.querySelector("#now .needs-you .needs-kind").textContent).toBe("Holds the close");
+  expect(live.text).not.toContain("lead-run --resume");
+  // Its list gone stale, or the supervisor stopped, it reads as stopped partway.
+  expect(await partway(closing({ needs: LIVE_NEEDS({ running: false }) }))).not.toBeNull();
+  expect(await partway(closing({ needs: LIVE_NEEDS({ staleAfter: "2026-10-30T11:00:00Z" }) }))).not.toBeNull();
+});
+
+test("a delivery closed, reopened, closed again and stopped is judged on its last close", async () => {
+  expect(await partway(closing({ reopened: true }))).not.toBeNull();
+  expect(await partway(closing({ reopened: true, earlier: true }))).toBeNull();
 });

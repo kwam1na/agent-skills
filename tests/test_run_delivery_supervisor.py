@@ -2035,5 +2035,211 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
         self.assert_closed_on_a_pass(fx)
 
 
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class CloseStoppedPartwayTests(unittest.TestCase):
+    """A close that stopped partway says so, by the record's two marks, and names what finishes it: each stop is made
+    by the real commands, stopped where a kill would have stopped them, and then finished by the command named."""
+
+    run_serially = True
+    setUpClass = classmethod(SupervisorTrackerTests.setUpClass.__func__)
+    fixture = SupervisorTrackerTests.fixture
+    once = SupervisorTrackerTests.once
+    closable = SupervisorTrackerTests.closable
+
+    def stopped_at(self, fx: Fixture, point: str, *command: str) -> str:
+        code, out = fx.flow(*(command or ("lead-run", "--once")), cwd=fx.main, env={**fx.env, "RUN_DELIVERY_CLOSE_STOP": point})
+        self.assertEqual(code, 9, out)
+        return out
+
+    def marks(self, directory: Path) -> dict:
+        return json.loads((directory / "state.json").read_text())["meta"].get("closing") or {}
+
+    def closing_entry(self, fx: Fixture) -> int:
+        return kinds(fx, "delivery.closed")[-1]["id"]
+
+    def status(self, fx: Fixture) -> str:
+        code, out = fx.flow("lead-brief", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        return next(line for line in out.splitlines() if line.startswith("supervisor:"))
+
+    def assert_partway(self, fx: Fixture, command: str) -> None:
+        entry = self.closing_entry(fx)
+        marks = self.marks(fx.tmp / "record")
+        self.assertEqual(marks["started"]["entry"], entry, marks)
+        self.assertNotEqual((marks.get("finished") or {}).get("entry"), entry, marks)
+        said = self.status(fx)
+        self.assertIn(f"stopped partway through the close; finish it with", said)
+        self.assertTrue(said.endswith(command) if command == "lead-run --resume" else command in said, said)
+        code, out = fx.flow("doctor", "--offline", cwd=fx.main)
+        self.assertIn("stopped partway through the close", out)
+
+    def assert_finished(self, fx: Fixture) -> Path:
+        entry = self.closing_entry(fx)
+        live = self.marks(fx.tmp / "record")
+        self.assertEqual((live["started"]["entry"], live["finished"]["entry"]), (entry, entry), live)
+        closed = closed_of(fx)
+        self.assertEqual(closed["entry"], entry, closed)
+        archive = Path(closed["archive"])
+        kept = self.marks(archive / "record")
+        self.assertEqual(kept["finished"]["entry"], entry, kept)
+        self.assertTrue(self.status(fx).startswith("supervisor: stopped; the delivery is closed."))
+        return archive
+
+    def finish_with_resume(self, fx: Fixture) -> Path:
+        """The command the record names, run: a resumed supervisor finishes the close with the tracker covered."""
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        wait_for(lambda: (self.marks(fx.tmp / "record").get("finished") or {}).get("entry") == self.closing_entry(fx),
+                 "the resumed supervisor to finish the close")
+        wait_for(lambda: not read_lock_held(fx), "the supervisor to stop once the delivery closed")
+        archive = self.assert_finished(fx)
+        self.assertEqual(len([text for text in epic_comments(self.backend) if "Delivery closed" in text]), 1)
+        return archive
+
+    def setUp(self) -> None:
+        self.backend = None
+
+    def closable_fixture(self) -> Fixture:
+        fx, self.backend = self.fixture()
+        self.closable(fx)
+        return fx
+
+    def test_a_supervisor_stopped_waiting_on_the_tracker_reads_unfinished_and_a_resume_finishes_it(self) -> None:
+        fx = self.closable_fixture()
+        with self.backend.edit() as store:
+            store["failures"].append({"op": "comment", "ticket": "FX-1", "status": 409, "times": 1})
+        self.stopped_at(fx, "tracker")
+        self.assertFalse((fx.tmp / "flow-log/FX-1.closed.json").exists())
+        self.assert_partway(fx, "lead-run --resume")
+        self.finish_with_resume(fx)
+
+    def test_a_supervisor_stopped_in_the_archive_or_before_its_mark_reads_unfinished_and_a_resume_finishes_it(self) -> None:
+        for point in ("archive", "closed.json"):
+            with self.subTest(point=point):
+                fx = self.closable_fixture()
+                self.stopped_at(fx, point)
+                self.assertEqual((fx.tmp / "flow-log/FX-1.closed.json").exists(), point == "closed.json")
+                self.assert_partway(fx, "lead-run --resume")
+                archive = self.finish_with_resume(fx)
+                if point == "closed.json":
+                    # The resume took the done-once return, and still wrote the mark in the kept archive.
+                    self.assertEqual(len(list(archive.parent.glob("2*"))), 1, list(archive.parent.iterdir()))
+
+    def test_a_supervisor_stopped_in_its_friction_step_reads_finished(self) -> None:
+        fx = self.closable_fixture()
+        self.stopped_at(fx, "friction")
+        self.assert_finished(fx)
+
+    def test_lead_close_stopped_before_its_mark_reads_unfinished_and_a_resume_finishes_it(self) -> None:
+        for point in ("lead-close render", "lead-close archive"):
+            with self.subTest(point=point):
+                fx = self.closable_fixture()
+                state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by hand")
+                self.stopped_at(fx, point, "lead-close")
+                self.assert_partway(fx, "lead-run --resume")
+                self.finish_with_resume(fx)
+
+    def test_lead_close_stopped_after_closed_json_reads_finished(self) -> None:
+        fx = self.closable_fixture()
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by hand")
+        self.stopped_at(fx, "lead-close closed.json", "lead-close")
+        self.assert_finished(fx)
+
+    def test_an_early_close_stopped_in_lead_close_names_lead_close_which_finishes_it_and_reports_what_is_unposted(self) -> None:
+        fx = self.closable_fixture()
+        path = fx.main / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        d["finish"] = [{"id": "unmet", "text": "Something left unmet"}]
+        path.write_text(json.dumps(d, indent=2))
+        commit(fx.main, "FX-1: a finish line")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.closable(fx)
+        with self.backend.edit() as store:
+            store["failures"].append({"op": "comment", "ticket": "FX-1", "status": 409, "times": 50})
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed early, by hand")
+        self.stopped_at(fx, "lead-close archive", "lead-close")
+        self.assert_partway(fx, "lead-close")
+        # A resumed supervisor holds on the unmet line and writes no mark.
+        self.once(fx)
+        self.assertNotIn("finished", self.marks(fx.tmp / "record"))
+        code, out = fx.flow("lead-close", cwd=fx.main)
+        self.assertIn(code, (0, 1), out)
+        self.assertIn("the tracker hasn't had every update", out)
+        self.assertIn("lead-close doesn't wait for the tracker", out)
+        self.assert_finished(fx)
+
+    def test_an_older_closed_json_without_an_entry_is_still_refused_and_still_returns_its_archive(self) -> None:
+        fx = self.closable_fixture()
+        self.once(fx)
+        closed = closed_of(fx)
+        older = {key: value for key, value in closed.items() if key != "entry"}
+        (fx.tmp / "flow-log/FX-1.closed.json").write_text(json.dumps({**older, "by": "lead-close"}, indent=2) + "\n")
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the delivery is closed: lead-close closed it", out)
+        (fx.tmp / "flow-log/FX-1.closed.json").write_text(json.dumps(older, indent=2) + "\n")
+        self.once(fx)
+        self.assertEqual(closed_of(fx)["archive"], closed["archive"])
+
+    def test_a_clean_close_and_a_clean_second_close_on_each_path(self) -> None:
+        for path in ("supervisor", "lead-close"):
+            with self.subTest(path=path):
+                fx = self.closable_fixture()
+                for turn in (1, 2):
+                    if turn == 2:
+                        # Reopened by new work, then closed again: a new entry, a new archive, its own marks.
+                        state_tool(fx, "journal", "--kind", "lane.assigned", "--summary", "more work", "--lane", "lane-1")
+                        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+                    if path == "supervisor":
+                        self.once(fx)
+                    else:
+                        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", f"closed by hand, turn {turn}")
+                        code, out = fx.flow("lead-close", cwd=fx.main)
+                        self.assertIn(code, (0, 1), out)
+                    self.assertEqual(len(kinds(fx, "delivery.closed")), turn)
+                    archive = self.assert_finished(fx)
+                    # The archived copy's page reads the same marks the record holds: a close finished, by this entry.
+                    shown = sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py",
+                               "--dir", archive / "record", "show").stdout
+                    page = sh(sys.executable, "-B", fx.release / "skills/delivery-views/scripts/render.py", "line-map",
+                              input=shown, cwd=fx.main).stdout
+                    embedded = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S)
+                    drawn = json.loads(embedded.group(1).replace("\\u003c", "<"))
+                    entry = self.closing_entry(fx)
+                    self.assertEqual(drawn["state"]["meta"]["closing"]["finished"]["entry"], entry)
+
+    def test_a_record_without_marks_reads_as_it_did(self) -> None:
+        fx = self.closable_fixture()
+        self.once(fx)
+        state = fx.tmp / "record"
+        written = json.loads((state / "state.json").read_text())
+        written["meta"].pop("closing")
+        (state / "state.json").write_text(json.dumps(written, indent=2) + "\n")
+        self.assertTrue(self.status(fx).startswith("supervisor: stopped; the delivery is closed."))
+
+    def test_a_delivery_closed_reopened_closed_again_and_stopped_is_judged_on_its_last_close(self) -> None:
+        fx = self.closable_fixture()
+        self.once(fx)
+        first = self.closing_entry(fx)
+        state_tool(fx, "journal", "--kind", "lane.assigned", "--summary", "more work", "--lane", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        self.stopped_at(fx, "archive")
+        self.assertGreater(self.closing_entry(fx), first)
+        self.assert_partway(fx, "lead-run --resume")
+        self.finish_with_resume(fx)
+
+
+def read_lock_held(fx: Fixture) -> bool:
+    lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
+    if not lock.exists():
+        return False
+    try:
+        return alive(json.loads(lock.read_text() or "{}").get("pid") or 0)
+    except ValueError:
+        return False
+
 if __name__ == "__main__":
     unittest.main()

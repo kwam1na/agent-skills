@@ -202,6 +202,55 @@ class StateToolTests(unittest.TestCase):
         self.assertEqual(shown["journal"][0]["lane"], "lane-1")
         self.assertIsNone(shown["journal"][0]["subject"])
 
+    def test_a_close_journaled_by_hand_carries_its_started_mark_and_finishes_once(self) -> None:
+        run_tool(self.directory, "journal", "--kind", "decision.recorded", "--summary", "Before")
+        code, closed = run_tool(self.directory, "journal", "--kind", "delivery.closed", "--summary", "Closed by hand")
+        self.assertEqual(code, 0, closed)
+        entry = closed["entry"]
+        closing = state_tool.read_state(self.directory)["meta"]["closing"]
+        self.assertEqual(closing, {"started": {"entry": entry["id"], "at": entry["at"]}})
+        # Only the latest close finishes, and only once.
+        code, refused = run_tool(self.directory, "close-finished", "--entry", "1")
+        self.assertEqual((code, refused["code"]), (1, "close_unknown"))
+        code, done = run_tool(self.directory, "close-finished", "--entry", str(entry["id"]))
+        self.assertEqual(code, 0, done)
+        finished = done["state"]["meta"]["closing"]["finished"]
+        self.assertEqual(finished["entry"], entry["id"])
+        before = self.state_bytes()
+        code, again = run_tool(self.directory, "close-finished", "--entry", str(entry["id"]))
+        self.assertEqual(code, 0, again)
+        self.assertEqual(self.state_bytes(), before)
+        # A later close starts afresh, its finished mark gone until its own archive lands.
+        later = state_tool.append_journal(self.directory, kind="delivery.closed", summary="Closed again")
+        self.assertEqual(state_tool.read_state(self.directory)["meta"]["closing"], {"started": {"entry": later["id"], "at": later["at"]}})
+        with self.assertRaises(state_tool.StateError) as stale:
+            state_tool.close_finished(self.directory, entry=entry["id"])
+        self.assertEqual(stale.exception.code, "close_unknown")
+
+    def test_only_the_latest_close_finishes_even_when_its_mark_names_an_earlier_one(self) -> None:
+        first = state_tool.append_journal(self.directory, kind="delivery.closed", summary="Closed")
+        later = state_tool.append_journal(self.directory, kind="delivery.closed", summary="Closed again")
+        # As an older tool would leave it: a later close appended with no mark of its own.
+        state = state_tool.read_state(self.directory)
+        state["meta"]["closing"] = {"started": {"entry": first["id"], "at": first["at"]}}
+        (self.directory / state_tool.STATE_FILE).write_text(state_tool.dumps(state), encoding="utf-8")
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.close_finished(self.directory, entry=first["id"])
+        self.assertEqual(refused.exception.code, "close_unknown")
+        self.assertNotIn("finished", state_tool.read_state(self.directory)["meta"]["closing"])
+        self.assertGreater(later["id"], first["id"])
+
+    def test_a_close_cannot_finish_without_its_started_mark(self) -> None:
+        state_tool.append_journal(self.directory, kind="delivery.closed", summary="Closed")
+        state = state_tool.read_state(self.directory)
+        del state["meta"]["closing"]
+        (self.directory / state_tool.STATE_FILE).write_text(state_tool.dumps(state), encoding="utf-8")
+        before = self.state_bytes()
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.close_finished(self.directory, entry=1)
+        self.assertEqual(refused.exception.code, "close_unknown")
+        self.assertEqual(self.state_bytes(), before)
+
     def test_unknown_journal_kind_is_refused(self) -> None:
         journal = self.directory / state_tool.JOURNAL_FILE
         before = journal.read_bytes()
@@ -5026,7 +5075,7 @@ VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
     "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
     "queued with its ticket started", "lane wait set by the queue", "a decision carrying a review",
-    "queue check with a title", "step with a title", "queue check with its base re-run",
+    "queue check with a title", "step with a title", "a close started", "a close finished", "queue check with its base re-run",
     "checking now awaiting the base rerun",
 }
 JOURNAL_KINDS = [
@@ -5087,6 +5136,12 @@ class SchemaAgreementTests(unittest.TestCase):
                                                   [{"label": "unit", "state": "running", "title": "Unit tests"}])),
                 ("step title over long", with_change(state, ("meta", "checking", "now", "steps"),
                                                      [{"label": "unit", "state": "running", "title": "t" * 201}])),
+                ("a close started", with_change(state, ("meta", "closing"), {"started": {"entry": 4, "at": "2026-10-20T10:00:00Z"}})),
+                ("a close finished", with_change(state, ("meta", "closing"), {"started": {"entry": 4, "at": "2026-10-20T10:00:00Z"},
+                                                                              "finished": {"entry": 4, "at": "2026-10-20T10:05:00Z"}})),
+                ("a close finished but never started", with_change(state, ("meta", "closing"),
+                                                                   {"finished": {"entry": 4, "at": "2026-10-20T10:05:00Z"}})),
+                ("a close mark for entry zero", with_change(state, ("meta", "closing"), {"started": {"entry": 0, "at": "2026-10-20T10:00:00Z"}})),
                 ("step state unknown",
                  with_change(state, ("meta", "checking", "now", "steps"), [{"label": "x", "state": "?"}])),
                 ("checking now awaiting the base rerun", with_change(state, ("meta", "checking", "now", "baseRerun"),
