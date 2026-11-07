@@ -133,6 +133,11 @@ test('a planned story whose latest round was not captured stays visibly stale', 
   expect(shown.app.querySelector('.d-run-none').textContent).toBe('Review evidence unavailable or stale for this candidate.'
     +" Its rounds show here again once the lane's review-reduce records its latest round.");
   expect(shown.app.querySelector('.run-card')).toBeNull();
+  // Closed, nothing will record a later round, so the sentence stops at what is true.
+  const closed=structuredClone(doc);
+  closed.journal.push({id:5, at:'2026-01-01T00:05:00Z', kind:'delivery.closed', subject:null, lane:null, summary:'closed'});
+  const [shut]=await openPage(renderPage(closed,{config}));
+  expect(shut.app.querySelector('.d-run-none').textContent).toBe('Review evidence unavailable or stale for this candidate.');
   const fresh=plannedDocument(),pushed=structuredClone(fresh);pushed.journal.push(doc.journal[3]);
   const [before,after]=await openPage(pageWithRuns(fresh,{}, {config}),{steps:[{push:pushed}]});
   expect(before.app.querySelector('.run-card-outcome').textContent).toBe('Approved');

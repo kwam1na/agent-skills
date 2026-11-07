@@ -128,6 +128,10 @@ export function planEnd(app) {
  * `planEnd`, and the result's `scrollY` says where the window ended. The result's `fetched` lists fetches of the page's
  * address and `fetchOptions` what each asked for.
  *
+ * `frames: true` gives the page `requestAnimationFrame` with frames held, not run: a `{ frame: <ms> }` step moves the page's
+ * `performance.now()` on by that many milliseconds and runs the frames then waiting, once each, so a count that eases
+ * from one number to another can be read where it starts, part way and where it ends.
+ *
  * `motion: { reduced? }` stands in for what jsdom lacks to move things: elements get a height that grows with what
  * they hold, `matchMedia` answers the reduced-motion query as `reduced` says, and each `animate` call is recorded, as
  * { target, keyframes, options }, in the result's `animations`.
@@ -138,6 +142,8 @@ export async function openPage(page, scenario = {}) {
   let answerRead = null;
   const animations = [];
   const intervals = [];
+  let frames = [];
+  let clock = 0;
   const fetched = [];
   const fetchOptions = [];
   const dom = new JSDOM(page, {
@@ -145,6 +151,10 @@ export async function openPage(page, scenario = {}) {
     runScripts: "dangerously",
     beforeParse(window) {
       if (scenario.now) window.Date.now = () => Date.parse(scenario.now);
+      if (scenario.frames) {
+        window.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
+        Object.defineProperty(window, "performance", { configurable: true, value: { now: () => clock } });
+      }
       // Held, not run: a `tick` step runs each one as the page's timer would.
       window.setInterval = (callback) => { intervals.push(callback); return 0; };
       if (scenario.quicker) {
@@ -252,6 +262,12 @@ export async function openPage(page, scenario = {}) {
     if ("click" in step) { const node = document.querySelectorAll(step.click)[step.index || 0]; node.focus(); node.click(); }
     if ("toggle" in step) { const node = document.querySelector(step.toggle); node.open = !node.open; }
     if ("tick" in step) intervals.forEach((callback) => callback());
+    if ("frame" in step) {
+      clock += step.frame;
+      const waiting = frames;
+      frames = [];
+      waiting.forEach((callback) => callback(clock));
+    }
     if ("run" in step) step.run();
     if ("asked" in step) {
       const deadline = Date.now() + 20000;

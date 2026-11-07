@@ -513,6 +513,15 @@
     });
     return closed;
   }
+  /** A piece with no lane: still to be assigned while the delivery is open, and simply without one once it closed. */
+  function noLane(doc) { return closedEntry(doc) ? "No lane" : "Not yet assigned"; }
+  /** A lane by its id, read as a name: lane-1 is Lane 1, never a count of lanes; lane-backend is the Backend lane. */
+  function laneLabel(lane) {
+    if (lane === "lead") { return "Lead"; }
+    var numbered = /^lane-(\d+)$/.exec(lane);
+    return numbered ? "Lane " + numbered[1]
+      : lane.replace(/^lane-/, "").replace(/^./, function (first) { return first.toUpperCase(); }) + " lane";
+  }
   /** Whether the plan took this piece out: it was no longer meant to land. */
   function removedFromPlan(piece) {
     return Boolean(plan) && planUnits(plan.units).some(function (unit) { return unit.removed === true && unit.subject === piece.item.subject; });
@@ -1307,7 +1316,7 @@
       items.forEach(function (piece, i) { if (!piece.planned && piece.item.stage === "merged") { lastLanded = i; } });
       var solid = landedHere === items.length ? 100 : lastLanded < 0 ? 0 : 100 - (items.length - 1 - lastLanded + 0.5) * 100 / most;
       ends.push({ colour: colours[lane], done: landedHere === items.length });
-      add(row, add(el("div", "name"), el("b", null, lane ? names[lane] || lane : "Not yet assigned"), landedHere + " of " + items.length + " landed"));
+      add(row, add(el("div", "name"), el("b", null, lane ? names[lane] || lane : noLane(doc)), landedHere + " of " + items.length + " landed"));
       var stops = el("div", "stops");
       var merged = function (k) { return k >= 0 && k < items.length && !items[k].planned && items[k].item.stage === "merged"; };
       items.forEach(function (piece, i) {
@@ -1419,7 +1428,7 @@
     // The lane that built the piece labels the panel, by the lane's own name: a lane's title follows its current work, so
     // it would name another piece. Under the title, the piece's ticket and change request, then where it is and when it landed.
     var lane = text(item.lane);
-    var owner = el("div", "d-owner" + (lane ? "" : " is-none"), lane ? (lane === "lead" ? "Lead" : lane.replace(/^lane-/, "").replace(/^./, function (first) { return first.toUpperCase(); })) + " lane" : "Not yet assigned");
+    var owner = el("div", "d-owner" + (lane ? "" : " is-none"), lane ? laneLabel(lane) : noLane(doc));
     if (lane) { owner.insertBefore(persona(lane === "lead" ? "lead" : "lane"), owner.firstChild); }
     var line = el("div", "d2 d-meta");
     add(line, issue(subject));
@@ -2397,7 +2406,7 @@
         var proof = counts.proofs[text(unit.subject)];
         var next = proof.next ? kindLabel(proof.next) + ": " + proof.states[proof.next].words : "";
         var li = add(el("li"), issue(text(unit.subject), unitName(unit)), el("span", "po-title", text(unit.title)),
-          el("span", "po-next", next + (proof.handed ? "" : " · before hand-off")));
+          el("span", "po-next", next + (proof.handed ? "" : closedEntry(doc) ? " · never handed off" : " · before hand-off")));
         li.setAttribute("tabindex", "-1");
         planRows[text(unit.subject)] = li;
         ul.appendChild(li);
