@@ -402,8 +402,10 @@ is journaled.
   resumed supervisor's own pass removes it. Otherwise `lead-close` finishes it,
   since a resumed supervisor would hold on what is still open; `lead-close`
   doesn't wait for the tracker and lists the updates it still owes. A resumed
-  supervisor finds the archive it already made, `lead-close` archives the
-  record afresh, and marking a close finished again changes nothing.
+  supervisor finds the archive it already made once `closed.json` names the
+  close, and archives afresh otherwise, leaving the earlier folder without the
+  `finished` mark; `lead-close` always archives the record afresh. Marking a
+  close finished again changes nothing.
 - **Unmarked:** no `started` mark names the closing entry, as in a record from
   before the marks or a `delivery.closed` journaled by a tool that writes none.
   The close still runs and archives, writes no mark, and reads as closed from
