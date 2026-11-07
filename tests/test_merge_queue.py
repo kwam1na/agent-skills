@@ -5699,3 +5699,164 @@ class LeadSelectionTests(MergeQueueTestCase):
         reasons = {result.document()["stop"]["reason"] for result in results if result.document()["stop"]}
         self.assertIn("selection_invalid", reasons)
         self.assertNotEqual(adopter.item("first")["stage"], "merged")
+
+
+class CandidateStepTests(MergeQueueTestCase):
+    """The candidate step says why it gave no branch and head, a binding must pass {candidate}, and serve holds,
+    taking nothing, when the step's program or script is missing."""
+
+    SECRET = "s3cr3t-candidate-value-from-the-environment"
+
+    def script(self, code: str) -> list[str]:
+        return [PY, "-c", code, "{candidate}"]
+
+    def stop(self, adopter: Adopter, reason: str = "candidate_unresolved") -> tuple[str, str]:
+        """The stop's detail and the journal's candidate.stopped summary."""
+        self.candidate(adopter)
+        document = self.assertStopped(self.run_queue(adopter, "feature"), reason)
+        Draft202012Validator(schema("merge-queue-result")).validate(document)
+        summary = next(entry["summary"] for entry in reversed(state_tool.read_journal(adopter.state))
+                       if entry["kind"] == "candidate.stopped")
+        self.assertIn(document["stop"]["detail"], summary)
+        return document["stop"]["detail"], summary
+
+    def test_a_missing_script_stops_with_the_interpreters_own_words(self) -> None:
+        detail, _ = self.stop(self.adopter({"candidate": [PY, "tools/missing.py", "{candidate}"]}))
+        self.assertTrue(detail.startswith("feature did not resolve to a branch and head: the candidate command exited 2; "
+                                          "stderr: "), detail)
+        self.assertIn("can't open file", detail)
+        self.assertIn("missing.py", detail)
+
+    def test_a_secret_in_stderr_never_reaches_the_record(self) -> None:
+        code = ("import os, sys; sys.stderr.write('auth failed with ' + os.environ['MQ_API_TOKEN'] + ' and ghp_' + 'A' * 36)"
+                "; sys.exit(1)")
+        adopter = self.environment_adopter({"MQ_API_TOKEN": self.SECRET}, {"candidate": self.script(code)})
+        detail, _ = self.stop(adopter)
+        self.assertIn("the candidate command exited 1; stderr: auth failed with [redacted] and [redacted]", detail)
+        for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
+            text = (adopter.state / name).read_text(encoding="utf-8")
+            self.assertNotIn(self.SECRET, text)
+            self.assertNotIn("ghp_" + "A" * 36, text)
+
+    def test_text_where_json_belongs_is_shown_bounded(self) -> None:
+        detail, _ = self.stop(self.adopter({"candidate": self.script("print('x' * 1000 + ' END')")}))
+        self.assertIn("the candidate command printed no JSON; stdout: ", detail)
+        self.assertTrue(detail.endswith("x END"), detail)
+        self.assertNotIn("x" * queue.CANDIDATE_OUT_LIMIT, detail)
+
+    def test_json_without_a_head_shows_the_answer(self) -> None:
+        detail, _ = self.stop(self.adopter({"candidate": self.script("import json; print(json.dumps({'branch': 'feature'}))")}))
+        self.assertIn('its JSON has no branch and full head; stdout: {"branch": "feature"}', detail)
+
+    def test_a_silent_failure_says_so(self) -> None:
+        detail, _ = self.stop(self.adopter({"candidate": self.script("import sys; sys.exit(4)")}))
+        self.assertTrue(detail.endswith("the candidate command exited 4; it printed nothing"), detail)
+
+    def test_a_candidate_command_that_runs_too_long_says_it_timed_out(self) -> None:
+        adopter = self.adopter({"candidate": self.script("import time; time.sleep(30)"), "checkTimeoutSeconds": 1})
+        detail, _ = self.stop(adopter)
+        self.assertIn("the candidate command timed out after 1s", detail)
+
+    def test_an_invalid_branch_is_named(self) -> None:
+        code = "import json; print(json.dumps({'branch': 'bad..name', 'head': '0' * 40}))"
+        detail, _ = self.stop(self.adopter({"candidate": self.script(code)}), "ref_invalid")
+        self.assertEqual(detail, 'feature resolved to an invalid branch name: "bad..name"')
+
+    def test_a_candidate_argv_without_the_placeholder_is_invalid(self) -> None:
+        adopter = self.adopter()
+        rule = "/candidate: the candidate argv must use {candidate} as a whole element"
+        self.assertEqual(queue.binding_errors({**adopter.binding, "candidate": [PY, "tools/candidate.py", "feature"]}), [rule])
+        self.assertEqual(queue.binding_errors(adopter.binding), [])
+        self.fresh()
+        adopter = self.adopter({"candidate": [PY, "tools/candidate.py", "feature"]})
+        self.candidate(adopter)
+        self.assertIn(rule, self.assertStopped(self.run_queue(adopter, "feature"), "binding_invalid")["stop"]["detail"])
+        served = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertIn(rule, self.assertStopped(served, "binding_invalid")["stop"]["detail"])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+
+    def held(self, adopter: Adopter) -> str:
+        hold = state_tool.read_state(adopter.state)["meta"]["hold"]
+        blockers = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "blocker.recorded"]
+        self.assertEqual(len(blockers), 1)
+        self.assertNotIn("candidate.stopped", [entry["kind"] for entry in state_tool.read_journal(adopter.state)])
+        return hold["reason"]
+
+    def test_serve_started_with_a_missing_script_holds_and_takes_nothing(self) -> None:
+        adopter = self.adopter({"candidate": [PY, "tools/missing.py", "{candidate}"]})
+        self.candidate(adopter)
+        results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertEqual(results, [])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertIn("serve cannot use its setup: the binding's candidate step can't run: its script tools/missing.py "
+                      "doesn't exist in the repository.", self.held(adopter))
+
+    def test_serve_started_on_an_empty_queue_with_a_missing_script_holds_at_once(self) -> None:
+        adopter = self.adopter({"candidate": [PY, "./tools/missing.py", "{candidate}"]})
+        self.assertEqual(queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True), [])
+        self.assertIn("its script ./tools/missing.py doesn't exist in the repository", self.held(adopter))
+
+    def test_a_present_script_named_from_the_top_level_holds_nothing(self) -> None:
+        adopter = self.adopter({"candidate": [PY, "./tools/candidate.py", "{candidate}"]})
+        self.candidate(adopter)
+        results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"].get("hold"))
+        self.assertEqual(adopter.item("feature")["stage"], "merged", [r.document()["stop"] for r in results])
+
+    def test_a_candidate_step_broken_after_serve_starts_holds_before_its_first_turn(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.recover
+        broken: list[bool] = []
+
+        def break_after_startup(runner) -> None:
+            # The startup check has passed; the candidate step breaks before the first turn takes anything.
+            if not broken:
+                broken.append(True)
+                adopter.advance_base({".agents/orchestration.json": json.dumps(
+                    {**adopter.binding, "candidate": [PY, "tools/missing.py", "{candidate}"]}, indent=2) + "\n"})
+            real(runner)
+
+        with mock.patch.object(queue.Runner, "recover", break_after_startup):
+            results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertEqual(results, [])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertIn("its script tools/missing.py doesn't exist in the repository", self.held(adopter))
+
+    def test_a_candidate_step_broken_during_a_turn_puts_its_candidate_back_and_holds(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.run_command
+        broken: list[bool] = []
+
+        def break_then_run(runner, *args, **kwargs):
+            if not broken:
+                broken.append(True)
+                adopter.advance_base({".agents/orchestration.json": json.dumps(
+                    {**adopter.binding, "candidate": [PY, "tools/missing.py", "{candidate}"]}, indent=2) + "\n"})
+            return real(runner, *args, **kwargs)
+
+        with mock.patch.object(queue.Runner, "run_command", break_then_run):
+            results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertEqual(results[-1].document()["stop"]["reason"], "candidate_unresolved")
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        hold = state_tool.read_state(adopter.state)["meta"]["hold"]
+        self.assertIn("its script tools/missing.py doesn't exist in the repository", hold["reason"])
+
+    def test_the_program_check_finds_each_missing_part(self) -> None:
+        present = {"tools/c.py", "run.py"}.__contains__
+        cases = [
+            ([PY, "tools/c.py", "{candidate}"], []),
+            ([PY, "-B", "./tools/c.py", "{candidate}"], []),
+            ([PY, "tools/missing.py", "{candidate}"], ["its script tools/missing.py doesn't exist in the repository"]),
+            ([PY, "/no/such/script.py", "{candidate}"], ["its script /no/such/script.py doesn't exist"]),
+            (["no-such-program-anywhere", "{candidate}"], ["its program no-such-program-anywhere isn't on PATH"]),
+            (["/no/such/program", "{candidate}"], ["its program /no/such/program doesn't exist"]),
+            (["tools/run.sh", "{candidate}"], ["its program tools/run.sh isn't in the repository"]),
+            ([PY, "-c", "print(1)", "--out=x/y.py", "https://example.test/a.py", "run.py", "{candidate}"], []),
+            ([PY, "lost.py", "{candidate}"], ["its script lost.py doesn't exist in the repository"]),
+        ]
+        for argv, expected in cases:
+            with self.subTest(argv=argv):
+                self.assertEqual(queue.candidate_problems(argv, lambda path: present(path.removeprefix("./")),
+                                                          os.environ.get("PATH")), expected)

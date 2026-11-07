@@ -160,6 +160,7 @@ HEADER_VALUE = re.compile(r"(?im)\b(authorization|proxy-authorization)(\s*:\s*)[
 KEYED_VALUE = re.compile(
     r'(?i)\b(bearer|token|password|passwd|secret|api[-_]?key)("?\s*[:=]\s*"?|\s+)(?!\[redacted\])([^\s"]+)')
 TAIL_LIMIT = 400
+CANDIDATE_OUT_LIMIT = 200
 
 
 def scrubbed_tail(text: str, environment: dict[str, str], limit: int = TAIL_LIMIT) -> str:
@@ -172,6 +173,38 @@ def scrubbed_tail(text: str, environment: dict[str, str], limit: int = TAIL_LIMI
     text = HEADER_VALUE.sub(lambda match: f"{match[1]}{match[2]}[redacted]", text)
     text = KEYED_VALUE.sub(lambda match: f"{match[1]}{match[2]}[redacted]", text)
     return text.strip()[-limit:]
+
+
+SCRIPT_SUFFIX = re.compile(r"\.(?:py|sh|bash|zsh|js|mjs|cjs|ts|rb|pl|php|ps1)$", re.IGNORECASE)
+
+
+def candidate_problems(argv: list[str], present: Callable[[str], bool], path: str | None) -> list[str]:
+    """What keeps the binding's candidate step from running, before any subject is resolved: its program not on
+    ``path`` or not where its path says, and a script argument (an absolute or repository-relative path) that
+    ``present`` doesn't find. ``present`` answers for a repository-relative path."""
+    if not argv:
+        return ["the candidate argv is empty"]
+    problems = []
+    program = argv[0]
+    if PLACEHOLDER.match(program) or "{" in program:
+        pass
+    elif os.path.isabs(program):
+        if not os.path.exists(program):
+            problems.append(f"its program {program} doesn't exist")
+    elif "/" in program or "\\" in program:
+        if not present(program):
+            problems.append(f"its program {program} isn't in the repository")
+    elif shutil.which(program, path=path) is None:
+        problems.append(f"its program {program} isn't on PATH")
+    for element in argv[1:]:
+        if "{" in element or element.startswith("-") or "=" in element or "://" in element:
+            continue
+        if not (os.path.isabs(element) or "/" in element or SCRIPT_SUFFIX.search(element)):
+            continue
+        found = os.path.exists(element) if os.path.isabs(element) else present(element)
+        if not found:
+            problems.append(f"its script {element} doesn't exist" + ("" if os.path.isabs(element) else " in the repository"))
+    return problems
 
 
 def environment_name(name: str) -> str:
@@ -318,6 +351,9 @@ def binding_errors(binding: object) -> list[str]:
             errors.append(f"/environment: {variable} changes how git reads a pathspec and must not be set")
     if "{expectedHead}" not in binding["merge"]:
         errors.append("/merge: the merge argv must use {expectedHead} as a whole element")
+    if "{candidate}" not in binding["candidate"]:
+        # Without it every subject resolves to the same answer, or none.
+        errors.append("/candidate: the candidate argv must use {candidate} as a whole element")
     gate = binding.get("reviewGate")
     if gate is not None:
         if not {"{expectedHead}", "{head}"} & set(gate["argv"]):
@@ -1353,24 +1389,55 @@ class Runner:
         return Context(values)
 
     def resolve(self, subject: str, context: Context, cwd: Path) -> tuple[str, str]:
-        completed = self.run_argv(self.binding["candidate"], cwd, context, self.binding["checkTimeoutSeconds"])
+        timeout = self.binding["checkTimeoutSeconds"]
+        completed = self.run_argv(self.binding["candidate"], cwd, context, timeout)
         try:
-            resolved = json.loads(completed.stdout) if completed.returncode == 0 else None
+            resolved = json.loads(completed.stdout)
         except json.JSONDecodeError:
             resolved = None
         if (
-            not isinstance(resolved, dict)
+            completed.returncode != 0
+            or not isinstance(resolved, dict)
             or not isinstance(resolved.get("branch"), str)
             or not isinstance(resolved.get("head"), str)
             or not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", resolved["head"])
         ):
-            raise Stop("candidate_unresolved", f"{subject} did not resolve to a branch and head")
+            raise Stop("candidate_unresolved", f"{subject} did not resolve to a branch and head: "
+                                               f"{self.candidate_said(completed, resolved, timeout)}")
         branch = resolved["branch"]
         if not self.valid_branch(branch):
-            raise Stop("ref_invalid", f"{subject} resolved to an invalid branch name")
+            raise Stop("ref_invalid", f"{subject} resolved to an invalid branch name: "
+                                      f"{scrubbed_tail(json.dumps(branch), self.environment(), CANDIDATE_OUT_LIMIT)}")
         if branch == self.base:
             raise Stop("ref_invalid", f"{subject} resolved to the base branch")
         return branch, resolved["head"]
+
+    def candidate_said(self, completed: Completed, resolved: object, timeout: float) -> str:
+        """Why the candidate step gave no branch and head, as a stop says it: its exit, the end of its stderr, and its
+        stdout when that isn't the JSON answer, each scrubbed and bounded like a failed check's words."""
+        env = self.environment()
+        if completed.timed_out:
+            parts = [f"the candidate command timed out after {timeout:g}s"]
+        elif completed.returncode != 0:
+            parts = [f"the candidate command exited {completed.returncode}"]
+        elif resolved is None:
+            parts = ["the candidate command printed no JSON"]
+        else:
+            parts = ["its JSON has no branch and full head"]
+        error = scrubbed_tail(completed.stderr, env)
+        if error:
+            parts.append(f"stderr: {error}")
+        if completed.stdout.strip() and (resolved is None or completed.returncode == 0):
+            parts.append(f"stdout: {scrubbed_tail(completed.stdout, env, CANDIDATE_OUT_LIMIT)}")
+        if len(parts) == 1 and not completed.timed_out:
+            parts.append("it printed nothing")
+        return "; ".join(parts)
+
+    def candidate_step_problems(self, base_head: str) -> list[str]:
+        """What keeps the binding's candidate step from running at this base: see candidate_problems."""
+        # A path git reads from the top level, where the runner's git runs, so ./tools/x.py is tools/x.py.
+        present = lambda relative: self.git("cat-file", "-e", f"{base_head}:{relative}", check=False).returncode == 0
+        return candidate_problems(self.binding["candidate"], present, self.environment().get("PATH"))
 
     # -- sync --------------------------------------------------------------
 
@@ -2704,9 +2771,11 @@ def _refused_stop(directory: Path, subject: str, head: str | None, reason: str) 
 
 
 def _setup_stop(repository: Path, state_directory: Path, *, remote: str, base: str,
-                lead: str) -> tuple[Result, dict | None]:
-    """Read the binding from the base and check the checkout once, under the queue lock, before serving anything."""
+                lead: str) -> tuple[Result, dict | None, list[str]]:
+    """Read the binding from the base and check the checkout once, under the queue lock, before serving anything.
+    Also returns what keeps the binding's candidate step from running, which holds serve rather than ending it."""
     runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead)
+    candidate: list[str] = []
 
     def check(result: Result) -> None:
         with runner.locked():
@@ -2720,12 +2789,19 @@ def _setup_stop(repository: Path, state_directory: Path, *, remote: str, base: s
                 delivery_state.snapshot_config(member, source)
         except delivery_state.StateError as error:
             raise Stop("binding_invalid", str(error)) from None
+        candidate.extend(runner.candidate_step_problems(result.baseHead))
 
     try:
         result = runner.invoke("serve", None, check)
     finally:
         shutil.rmtree(runner._bootstrap_hooks, ignore_errors=True)
-    return result, runner.binding
+    return result, runner.binding, candidate if result.stop is None else []
+
+
+def candidate_hold(problems: list[str]) -> str:
+    """The setup hold's detail for a candidate step that can't run."""
+    return (f"the binding's candidate step can't run: {'; '.join(problems)}. Correct its argv on the base, run it once "
+            "by hand with a branch that exists, then clear meta.hold")
 
 
 def _refresh(repository: Path, state_directory: Path, member: dict) -> None:
@@ -2842,7 +2918,9 @@ def serve(
     (meta.hold, set only where none is) and puts that turn's candidates back
     to queued, since none was at fault, except one whose merge had begun. A
     checkout or binding the runner cannot use ends serve before it takes
-    anything, with that one result. Each turn takes the queue lock afresh, so
+    anything, with that one result. A binding whose candidate step can't run,
+    its program or a script it names missing, holds serve instead, at start and
+    at each of those checks, taking nothing. Each turn takes the queue lock afresh, so
     a serve killed outright is cleared by the next one's recovery. Between
     turns, on the binding's state.refreshSeconds, serve reads the declared
     forge and tracker snapshots and reconciles them, whether or not it is
@@ -2854,8 +2932,11 @@ def serve(
     results: list[Result] = []
     while True:
         # A wrong checkout or binding would refuse every candidate in turn: find it once, before taking any.
-        setup, binding = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+        setup, binding, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
         if setup.stop is None:
+            if candidate:
+                # The binding validates but its candidate step can't run: hold, taking nothing, rather than stop each.
+                hold_for_setup(state_directory, candidate_hold(candidate))
             break
         if setup.stop["reason"] != "queue_locked":
             write_result(state_directory, setup)
@@ -2892,9 +2973,11 @@ def serve(
             pause()
             continue
         # A setup that broke since the last turn would refuse every candidate in turn: hold instead, taking none.
-        checked, _ = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
-        if checked.stop is not None:
-            if checked.stop["reason"] != "queue_locked":
+        checked, _, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+        if checked.stop is not None or candidate:
+            if candidate:
+                hold_for_setup(state_directory, candidate_hold(candidate))
+            elif checked.stop["reason"] != "queue_locked":
                 hold_for_setup(state_directory, checked.stop["detail"])
             if until_idle:
                 return results
@@ -2917,10 +3000,12 @@ def serve(
         cause_known, broken = True, None
         if troubled:
             # A stop or refusal names its code, not its cause: the setup check says whether the setup broke this turn.
-            again, _ = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+            again, _, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
             if again.stop is not None:
                 cause_known = again.stop["reason"] != "queue_locked"
-                broken = again if cause_known else None
+                broken = again.stop["detail"] if cause_known else None
+            elif candidate:
+                broken = candidate_hold(candidate)
         for result in taken:
             write_result(state_directory, result)
             if cause_known and broken is None and result in refused:
@@ -2930,7 +3015,7 @@ def serve(
         if broken is not None:
             # None of this turn's candidates was at fault: back to queued, so no lane hands anything off again.
             requeued, kept = _requeue_after_setup(runner, taken, heads)
-            hold_for_setup(state_directory, broken.stop["detail"], kept, requeued)
+            hold_for_setup(state_directory, broken, kept, requeued)
         for result in taken:
             # Reported only once every result is written and every refusal stopped, so a reader never loses them.
             if on_result is not None:
