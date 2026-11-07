@@ -585,15 +585,19 @@ DIVERGENCES = (
         'Result shape',
         (),
         (
-            'Every carried finding must appear; a deferral (P2/P3 only) also carries `deferredIssue`.',
+            (
+                "Every finding this lens raised in an earlier round that is still open must appear (one deferred "
+                "earlier needn't); one closed in an earlier round may be listed again or left out."
+            ),
+            'A deferral (P2/P3 only) also carries `deferredIssue`.',
             'Every carried finding must appear; a plan review defers none.',
             (
                 'One entry for every finding this lens raised in an earlier round and has not closed, `{"id", '
                 '"state": "closed|fixed|withdrawn|open", "resolution": "..."}`.'
             ),
             (
-                'One entry for every finding this lens raised in an earlier round, `{"id", "state": '
-                '"closed|fixed|withdrawn|deferred|open", "resolution": "..."}`.'
+                'One entry per finding, `{"id", "state": "closed|fixed|withdrawn|deferred|open", "resolution": '
+                '"..."}`.'
             ),
             '`resolvedFindings`: required.',
         ),
@@ -849,10 +853,14 @@ KIND_ONLY = (
         'Result shape',
         (
             "A deferred finding doesn't block `aligned`.",
-            'Every carried finding must appear; a deferral (P2/P3 only) also carries `deferredIssue`.',
             (
-                'One entry for every finding this lens raised in an earlier round, `{"id", "state": '
-                '"closed|fixed|withdrawn|deferred|open", "resolution": "..."}`.'
+                "Every finding this lens raised in an earlier round that is still open must appear (one deferred "
+                "earlier needn't); one closed in an earlier round may be listed again or left out."
+            ),
+            'A deferral (P2/P3 only) also carries `deferredIssue`.',
+            (
+                'One entry per finding, `{"id", "state": "closed|fixed|withdrawn|deferred|open", "resolution": '
+                '"..."}`.'
             ),
             'P0 and P1 are actionable and never deferred.',
             (
