@@ -794,8 +794,63 @@ def plan_context(key: str) -> str:
 
 # -- lane: review rounds -------------------------------------------------------------------
 
-def lens_checkout(key: str, round_no: int, short: str) -> Path:
-    return repo() / cfg().work / "lens" / f"{key}-r{round_no}-{short}"
+def lens_checkout(key: str, short: str) -> Path:
+    """A lens's one checkout for a story's review, kept across its rounds."""
+    return repo() / cfg().work / "lens" / f"{key}-{short}"
+
+
+def prepared_stamp(checkout: Path) -> Path:
+    """Beside the checkout, not in it: what the checkout was last prepared for."""
+    return checkout.with_name(checkout.name + ".prepared.json")
+
+
+# Files that decide what the prepare commands install, by name at any depth, besides the files those commands name.
+DEPENDENCY_FILES = {"package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+                    "bun.lockb", "pyproject.toml", "setup.py", "setup.cfg", "uv.lock", "poetry.lock", "Pipfile",
+                    "Pipfile.lock", "Gemfile", "Gemfile.lock", "go.mod", "go.sum", "Cargo.toml", "Cargo.lock",
+                    ".python-version", ".nvmrc", ".node-version", ".tool-versions"}
+
+
+def dependency_fingerprint(candidate: str, commands: list[list[str]]) -> str:
+    """The prepare commands and the candidate's blobs of every dependency file: a change in either re-prepares."""
+    named = {a.removeprefix("./") for argv in commands for a in argv}
+    picked = []
+    for line in filter(None, git("ls-tree", "-r", "-z", "--full-tree", candidate).split("\0")):
+        path = line.split("\t", 1)[1]
+        name = path.rsplit("/", 1)[-1]
+        if name in DEPENDENCY_FILES or re.fullmatch(r"requirements.*\.txt", name) or path in named:
+            picked.append(line)
+    return hashlib.sha256(json.dumps([commands, picked]).encode()).hexdigest()
+
+
+def ready_lens_checkout(checkout: Path, candidate: str) -> None:
+    """Bring a lens's checkout to exactly this round's candidate. One kept from an earlier round is reset: tracked
+    changes and untracked files go, while ignored files (the prepared environment) stay unless a dependency changed, in
+    which case they go too and the prepare commands run again. A missing or broken checkout is made afresh."""
+    commands = prepare_commands()
+    fingerprint = dependency_fingerprint(candidate, commands)
+    stamp = prepared_stamp(checkout)
+    top = run(["git", "rev-parse", "--show-toplevel"], cwd=checkout, check=False) if checkout.is_dir() else None
+    if top is not None and top.returncode == 0 and Path(top.stdout.strip()).resolve() == checkout.resolve():
+        git("checkout", "-q", "--force", "--detach", candidate, cwd=checkout)
+        git("clean", "-q", "-ffd", cwd=checkout)
+        prepared = json.loads(stamp.read_text()).get("dependencies") if stamp.exists() else None
+        if prepared == fingerprint:
+            return
+        git("clean", "-q", "-ffdx", cwd=checkout)
+    else:
+        remove_checkout(checkout)
+        checkout.parent.mkdir(parents=True, exist_ok=True)
+        git("worktree", "add", "--detach", "-q", str(checkout), candidate)
+    stamp.unlink(missing_ok=True)
+    for argv in commands:
+        run(argv, cwd=checkout)
+    stamp.write_text(json.dumps({"candidate": candidate, "dependencies": fingerprint}, indent=2) + "\n")
+
+
+def remove_lens_checkout(checkout: Path) -> None:
+    remove_checkout(checkout)
+    prepared_stamp(checkout).unlink(missing_ok=True)
 
 
 def remove_checkout(path: Path) -> None:
@@ -1015,12 +1070,8 @@ def review_prepare(args) -> None:
         restarts.append({"at": now(), "previousCandidate": previous["candidate"], "discardedResults": discarded})
     briefs = []
     for lens, (short, _) in c.lenses.items():
-        checkout = lens_checkout(key, n, short)
-        remove_checkout(checkout)
-        checkout.parent.mkdir(parents=True, exist_ok=True)
-        git("worktree", "add", "--detach", "-q", str(checkout), candidate)
-        for argv in prepare_commands():
-            run(argv, cwd=checkout)
+        checkout = lens_checkout(key, short)
+        ready_lens_checkout(checkout, candidate)
         if git("status", "--porcelain", cwd=checkout):
             raise Stop(f"preparing {checkout} left it dirty; the repository's prepare commands must not touch tracked files")
         prior = [next(e for e in r["entries"] if e["lens"] == lens) for r in prior_rounds]
@@ -1298,8 +1349,9 @@ def review_reduce(args) -> None:
     except Exception as error:
         refuse(set(c.lenses), f"the release's validator refuses the round: {error}")
     done_path.write_text(json.dumps(outcome, indent=1) + "\n")
-    for lens, (short, _) in c.lenses.items():
-        remove_checkout(lens_checkout(key, n, short))
+    if status != "unresolved":  # another round reuses each lens's checkout; an aligned or bounded review is done with it
+        for lens, (short, _) in c.lenses.items():
+            remove_lens_checkout(lens_checkout(key, short))
     ensure_recorded(key, outcome, lane, folder)
     summarize(key, outcome)
 

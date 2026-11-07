@@ -772,6 +772,162 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect(check(lens_result(round=2), carried={"l-r1-1"}, n=2), "a dropped carried finding was accepted")
         expect(check(lens_result(lateFindings=["l-r1-9"])), "a lateFindings id that isn't one of the result's own was accepted")
 
+    def test_a_lens_keeps_one_checkout_across_rounds_and_is_reprepared_only_when_a_dependency_changes(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        prepares = fx.tmp / "prepares.log"
+        config = m / ".agents/run-delivery.json"
+        settings = json.loads(config.read_text())
+        settings["review"]["prepare"] = [["sh", "-c", f"echo run >> {prepares} && mkdir -p out && echo env > out/env"]]
+        config.write_text(json.dumps(settings, indent=2))
+        commit(m, "FX-1: a prepare step")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        review = wt / ".orchestration/review/FX-2"
+        lenses = fx.lenses(wt)
+        short0 = lenses[0][1][0]
+        runs = lambda: prepares.read_text().count("run") if prepares.exists() else 0
+
+        def prepare(n: int, change: str) -> dict[str, Path]:
+            (wt / "src/one.txt").write_text(change)
+            commit(wt, f"FX-2: {change.strip()}")
+            code, out = fx.flow("review-prepare", "FX-2", "--round", str(n), cwd=wt)
+            if code == 2 and "Evidence so far" in out:
+                context = review / "context.md"
+                context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                                    if line.startswith(CONTEXT_TODO)), "- evidence"))
+                code, out = fx.flow("review-prepare", "FX-2", "--round", str(n), cwd=wt)
+            self.assertEqual(code, 0, out)
+            found = {}
+            for _, (short, _) in lenses:
+                brief = (review / f"brief-r{n}-{short}.md").read_text()
+                found[short] = Path(re.search(r"Your private checkout: `([^`]+)`", brief).group(1))
+            return found
+
+        def plant(checkouts: dict[str, Path]) -> None:
+            for checkout in checkouts.values():
+                (checkout / "src/probe.txt").write_text("a lens's untracked probe\n")
+                (checkout / "out/cache").write_text("kept with the environment\n")
+                (checkout / "src/app.txt").write_text("a lens's unreverted edit\n")
+
+        def reduce(n: int, open_p1: bool) -> None:
+            if open_p1:
+                write_results(review, n, "FX-2", lenses, findings=[{"id": f"{short0}-r{n}-1", "severity": "P1", "summary": "fix"}],
+                              resolved=[{"id": f"{short0}-r{n - 1}-1", "state": "fixed", "resolution": "x"}] if n > 1 else None)
+            else:
+                write_results(review, n, "FX-2", lenses, resolved=[{"id": f"{short0}-r{n - 1}-1", "state": "fixed", "resolution": "x"}])
+            code, out = fx.flow("review-reduce", "FX-2", "--round", str(n), cwd=wt)
+            self.assertEqual(code, 0, out)
+
+        first = prepare(1, "one\n")
+        self.assertEqual(runs(), len(lenses), "each lens's checkout wasn't prepared once")
+        self.assertEqual(len(set(first.values())), len(lenses), first)
+        plant(first)
+        reduce(1, open_p1=True)
+        for checkout in first.values():
+            self.assertTrue(checkout.is_dir(), f"{checkout} was removed while the review goes on")
+
+        # Round 2 changes no dependency: the same checkouts, at the new candidate, clean, with the environment kept.
+        second = prepare(2, "two\n")
+        self.assertEqual(second, first, "a lens got a new checkout for round 2")
+        head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        for checkout in second.values():
+            self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=checkout).stdout.strip(), head)
+            self.assertEqual(sh("git", "status", "--porcelain", cwd=checkout).stdout, "", f"{checkout} isn't clean")
+            self.assertFalse((checkout / "src/probe.txt").exists(), "the lens's untracked probe was kept")
+            self.assertEqual((checkout / "src/app.txt").read_text(), "app\n", "the lens's edit to a tracked file was kept")
+            self.assertEqual((checkout / "src/one.txt").read_text(), "two\n")
+            self.assertTrue((checkout / "out/cache").exists(), "the prepared environment was thrown away with no dependency change")
+        self.assertEqual(runs(), len(lenses), "a round with no dependency change prepared again")
+        plant(second)
+        reduce(2, open_p1=True)
+
+        # Round 3 adds a dependency manifest: the environment is cleared and prepared again, in the same checkouts.
+        (wt / "requirements.txt").write_text("example==1.0\n")
+        third = prepare(3, "three\n")
+        self.assertEqual(third, first, "a lens got a new checkout for round 3")
+        self.assertEqual(runs(), 2 * len(lenses), "a dependency change didn't prepare each checkout again")
+        for checkout in third.values():
+            self.assertFalse((checkout / "out/cache").exists(), "an ignored file outlived a dependency change")
+            self.assertTrue((checkout / "out/env").exists(), "the environment wasn't prepared again")
+            self.assertTrue((checkout / "requirements.txt").exists())
+            self.assertEqual(sh("git", "status", "--porcelain", cwd=checkout).stdout, "", f"{checkout} isn't clean")
+        reduce(3, open_p1=False)
+        for checkout in third.values():
+            self.assertFalse(checkout.exists(), f"{checkout} outlived the aligned round")
+        self.assertNotIn(str(third[short0]), sh("git", "worktree", "list", cwd=wt).stdout)
+
+    def test_a_lens_checkout_gone_between_rounds_is_made_and_prepared_afresh(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        prepares = fx.tmp / "prepares.log"
+        config = m / ".agents/run-delivery.json"
+        settings = json.loads(config.read_text())
+        fail = fx.tmp / "fail-once"
+        settings["review"]["prepare"] = [["sh", "-c", f"echo run >> {prepares}; test ! -f {fail} || {{ rm {fail}; exit 1; }}"]]
+        config.write_text(json.dumps(settings, indent=2))
+        commit(m, "FX-1: a prepare step")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        review = wt / ".orchestration/review/FX-2"
+        lenses = fx.lenses(wt)
+        short0 = lenses[0][1][0]
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        context = review / "context.md"
+        context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                            if line.startswith(CONTEXT_TODO)), "- evidence"))
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        checkout = Path(re.search(r"Your private checkout: `([^`]+)`", (review / f"brief-r1-{short0}.md").read_text()).group(1))
+        write_results(review, 1, "FX-2", lenses, findings=[{"id": f"{short0}-r1-1", "severity": "P1", "summary": "fix"}])
+        code, out = fx.flow("review-reduce", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        sh("git", "worktree", "remove", "--force", checkout, cwd=wt)
+        (wt / "src/one.txt").write_text("two\n")
+        commit(wt, "FX-2: two")
+        # The first prepare of the new checkout fails part-way; the retry must not take it as prepared.
+        fail.write_text("")
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "2", cwd=wt)
+        self.assertNotEqual(code, 0, out)
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "2", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=checkout).stdout.strip(),
+                         sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip())
+        self.assertEqual(prepares.read_text().count("run"), len(lenses) + 2,
+                         "the missing checkout wasn't prepared again after a failed prepare, or a kept one was")
+
+    def test_what_makes_a_lens_checkout_prepare_again(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            r = Path(tmp)
+            sh("git", "init", "-q", cwd=r)
+            (r / "src").mkdir()
+            (r / "src/app.txt").write_text("app\n")
+            (r / "tools").mkdir()
+            (r / "tools/setup.sh").write_text("true\n")
+            commit(r, "base")
+            commands = [["sh", "./tools/setup.sh"]]
+            fingerprint = lambda cmds=commands: self.call("dependency_fingerprint", "HEAD", cmds, cwd=r)
+            before = fingerprint()
+            (r / "src/app.txt").write_text("changed\n")
+            commit(r, "a source change")
+            self.assertEqual(fingerprint(), before, "a source change re-prepares")
+            self.assertNotEqual(fingerprint([["sh", "./tools/setup.sh", "--again"]]), fingerprint(),
+                                "changed prepare commands don't re-prepare")
+            for path in ("tools/setup.sh", "requirements-dev.txt", "web/package.json", "pyproject.toml"):
+                last = fingerprint()
+                (r / path).parent.mkdir(parents=True, exist_ok=True)
+                (r / path).write_text(f"{path} changed\n")
+                commit(r, f"change {path}")
+                self.assertNotEqual(fingerprint(), last, f"a change to {path} doesn't re-prepare")
+
     def test_patches_apply_unstripped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             r = Path(tmp)
