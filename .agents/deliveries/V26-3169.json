@@ -515,6 +515,17 @@
           "text": "The cause of 'the lane's checkout outlived its merge' is stated with evidence, the guide's end-to-end row passes 20 runs in a row under load, and V26-3108's supervisor rows still pass"
         }
       ]
+    },
+    "V26-3228": {
+      "title": "Tighten setup's interpreter-operand rule for Python's -I and Node's module-loading flags",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3228-done",
+          "text": "python3 -I tools/missing.py {candidate} is reported wrong at setup, perl and ruby -I still resolve their script, and node --import and --print rows pass"
+        }
+      ]
     }
   },
   "finish": [
