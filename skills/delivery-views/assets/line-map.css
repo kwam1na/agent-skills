@@ -327,6 +327,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .ck-fails .ck-note { margin-top: 8px; padding: 7px 10px; border-radius: 6px; background: color-mix(in oklab, var(--lift) 72%, transparent); }
 .ck-log { font: 400 11px/16px var(--mono); color: var(--faint); margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ck-batch-note { font-size: 13px; line-height: 18px; color: var(--faint); padding-left: 28px; margin-top: -6px; }
+.ck-rerun { font-size: 13px; line-height: 18px; color: var(--soft); padding-left: 28px; }
 .ck-more { margin: 14px 0 0 24px; padding-top: 10px; border-top: 1px solid var(--hair); }
 /* An agent's icon, from the persona set; it takes the colour of the words beside it. */
 .persona { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }

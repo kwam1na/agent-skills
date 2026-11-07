@@ -325,6 +325,78 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   expect(running.className).toBe("ck-run");
 });
 
+test("says a piece whose check failed is waiting on the main line's rerun, on the line, in its detail and in the now block", async () => {
+  const document = fixtureDocument();
+  const now = document.state.meta.checking.now;
+  const building = now.steps.find((step) => step.label === "storefront build");
+  Object.assign(building, { state: "failed", finishedAt: "2026-10-22T05:06:50Z" });
+  now.baseRerun = { startedAt: "2026-10-22T05:07:00Z", checks: ["storefront build"] };
+  document.journal.push(
+    { at: "2026-10-22T05:06:55Z", id: 40, kind: "check.failed", lane: "payments", subject: "PAY-2361", summary: "Check failed: storefront build" },
+    { at: "2026-10-22T05:07:00Z", id: 41, kind: "base.rerun.started", lane: "payments", subject: "PAY-2361", summary: "Rerunning storefront build on main" },
+  );
+  const steps = [{ click: '.stop-btn[data-subject="PAY-2361"]' }];
+  const [first, shown] = await open(document, { steps });
+  const checking = first.app.querySelector(".checking");
+  expect(checking.querySelector(".ck-h-words")?.textContent).toBe("Failed, waiting on the main line's rerun");
+  expect(checking.querySelector(".ck-rerun")?.textContent)
+    .toBe("Rerunning storefront build on the main line, to tell whether it fails there too · started 3 minutes ago");
+  expect(checking.querySelector(".ck-verdict")?.textContent).toMatch(/^Won't merge from this run\./);
+  const stop = first.app.querySelector('.stop-btn[data-subject="PAY-2361"]');
+  expect(stop.getAttribute("aria-label")).toBe("Retry card payments once on a dropped connection, Failed, waiting on the main line's rerun");
+  const meta = shown.app.querySelector("#detail .d-meta");
+  expect(meta.querySelector(".d-stage").textContent).toContain("Failed, waiting on the main line's rerun · Waiting on the rerun since 3 minutes ago");
+  expect(meta.querySelector(".d-stage-time").getAttribute("aria-label")).toBe("Recorded base rerun start: 2026-10-22T05:07:00Z");
+  // The piece's merge check lists the rerun after the failure, and names it as the last step.
+  const history = shown.app.querySelector("#detail .mh");
+  expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Rerun on the main line 3 minutes ago · /);
+  expect([...history.querySelectorAll("li span")].map((row) => row.textContent).slice(-2))
+    .toEqual(["Check failed: storefront build", "Rerunning storefront build on main"]);
+  // Its verdict reads as one in the feed and as the merge check's last step.
+  const verdict = JSON.parse(JSON.stringify(document));
+  verdict.journal.push({ at: "2026-10-22T05:09:00Z", id: 42, kind: "base.rerun.finished", lane: "payments", subject: "PAY-2361",
+    summary: "Base re-run on main after 120s: storefront build passed: the failure is the candidate's" });
+  const [, verdictShown] = await open(verdict, { steps });
+  expect([...verdictShown.app.querySelectorAll(".who")].map((who) => who.textContent)).toContain("Rerun verdict · Payments · PAY-2361");
+  expect(verdictShown.app.querySelector("#detail .mh summary .mh-sub").textContent).toMatch(/^ · Rerun verdict a minute ago · /);
+  // Rendered between the panel's write and the started entry, the wait's time comes from the panel.
+  const unjournaled = JSON.parse(JSON.stringify(document));
+  unjournaled.journal = unjournaled.journal.filter((entry) => entry.kind !== "base.rerun.started");
+  const [, unjournaledShown] = await open(unjournaled, { steps });
+  expect(unjournaledShown.app.querySelector("#detail .d-stage-time").getAttribute("aria-label")).toBe("Recorded base rerun start: 2026-10-22T05:07:00Z");
+  // A piece the panel names that is no longer being checked is not waiting on a rerun.
+  const settled = JSON.parse(JSON.stringify(document));
+  settled.state.queue[2].stage = "checked";
+  const [settledShown] = await open(settled);
+  expect(settledShown.app.querySelector('.stop-btn[data-subject="PAY-2361"]').getAttribute("aria-label"))
+    .toBe("Retry card payments once on a dropped connection, Checked, about to merge");
+  // A batch keeps its own header, and the rerun line still says the run is waiting on the main line.
+  const batch = JSON.parse(JSON.stringify(document));
+  const summary = "Checking Retry card payments once on a dropped connection, Keep the order number on the receipt page as one batch";
+  batch.state.queue[3].stage = "checking";
+  batch.journal.push(
+    { at: "2026-10-22T05:05:00Z", id: 43, kind: "check.started", lane: "payments", subject: "PAY-2361", summary },
+    { at: "2026-10-22T05:05:00Z", id: 44, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary },
+  );
+  const [batchShown] = await open(batch);
+  expect(batchShown.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
+  expect(batchShown.app.querySelector(".checking .ck-rerun")?.textContent)
+    .toBe("Rerunning storefront build on the main line, to tell whether it fails there too · started 3 minutes ago");
+  // The same failure before the rerun starts, or once it is over, is a check that failed, not a wait on the main line.
+  delete document.state.meta.checking.now.baseRerun;
+  const [before] = await open(document);
+  expect(before.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked now");
+  expect(before.app.querySelector(".checking .ck-rerun")).toBeNull();
+  expect(before.app.querySelector('.stop-btn[data-subject="PAY-2361"]').getAttribute("aria-label"))
+    .toBe("Retry card payments once on a dropped connection, Being checked before merge");
+  // A rerun the panel names for another piece says nothing about this one.
+  document.state.meta.checking.now.baseRerun = { startedAt: "2026-10-22T05:07:00Z", checks: ["storefront build"] };
+  document.state.meta.checking.now.subject = "PAY-2362";
+  const [other] = await open(document);
+  expect(other.app.querySelector('.stop-btn[data-subject="PAY-2361"]').getAttribute("aria-label"))
+    .toBe("Retry card payments once on a dropped connection, Being checked before merge");
+});
+
 test("matches a note to a check whose name ends in punctuation", async () => {
   const document = fixtureDocument();
   document.state.meta.checking.now.steps[1] = { label: "lint(webapp)", state: "failed" };

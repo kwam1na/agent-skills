@@ -5026,10 +5026,12 @@ VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
     "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
     "queued with its ticket started", "lane wait set by the queue", "a decision carrying a review",
+    "checking now awaiting the base rerun",
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
     "check.failed", "check.retried", "check.reused", "candidate.merged", "candidate.stopped", "base.broken", "base.repaired",
+    "base.rerun.started", "base.rerun.finished",
     "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
 ]
@@ -5067,6 +5069,15 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("checking now null", with_change(state, ("meta", "checking", "now"), None)),
                 ("step state unknown",
                  with_change(state, ("meta", "checking", "now", "steps"), [{"label": "x", "state": "?"}])),
+                ("checking now awaiting the base rerun", with_change(state, ("meta", "checking", "now", "baseRerun"),
+                                                                     {"startedAt": "2026-10-20T10:00:00Z", "checks": ["unit"]})),
+                ("base rerun naming a check by number", with_change(state, ("meta", "checking", "now", "baseRerun"),
+                                                                    {"startedAt": "2026-10-20T10:00:00Z", "checks": [3]})),
+                ("base rerun without its start", with_change(state, ("meta", "checking", "now", "baseRerun"),
+                                                             {"checks": ["unit"]})),
+                ("base rerun with an unknown field", with_change(state, ("meta", "checking", "now", "baseRerun"),
+                                                                 {"startedAt": "2026-10-20T10:00:00Z", "checks": ["unit"],
+                                                                  "verdict": "passed"})),
                 ("finish met as text", with_change(state, ("finish", 0, "met"), "no")),
                 ("lease without holder", with_change(state, ("leases", 0), {"id": "x", "since": "2026-10-20T08:00:00Z"})),
                 ("with tickets", with_change(state, ("tickets",), {"pr-1": {"title": "Candidate", "summary": "What it does."},
@@ -5595,6 +5606,23 @@ class SkillTextTests(unittest.TestCase):
                 # An update is never a gate: no instruction waits on, blocks or
                 # orders anything after itself.
                 self.assertIsNone(re.search(r"\b(?:wait(?:s|ing|ed)?|block(?:s|ing)?|until|till|before|after|gate[sd]?|hold(?:s|ing)?)\b", instruction), instruction)
+
+    def test_the_tracker_publisher_posts_nothing_for_exactly_the_kinds_the_guide_says_post_nothing(self) -> None:
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "tracker_publisher_for_the_guide", PRODUCT_ROOT / "skills/run-delivery/scripts/tracker_publisher.py")
+            publisher = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(publisher)
+        finally:
+            sys.dont_write_bytecode = previous
+        table = section(GUIDE.read_text(encoding="utf-8"), "### Tracker updates")
+        rows = {row.split("`")[1]: row.split("|")[2].strip() for row in table.splitlines() if row.startswith("| `")}
+        self.assertEqual(sorted(publisher.UPDATES), sorted(rows))
+        for kind, instruction in rows.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(publisher.UPDATES[kind] is None, instruction.startswith("None: "), instruction)
 
     def test_the_operator_escalation_list_is_closed_and_pinned(self) -> None:
         for path in (SKILL / "SKILL.md", GUIDE):
