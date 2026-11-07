@@ -771,9 +771,12 @@ def context_section(sections: list[tuple[int, str, str]], name: str) -> str | No
     return next((body for _, title, body in sections if title == name or title.startswith(name)), None)
 
 
-def plan_context(key: str) -> str:
+def plan_context(key: str, text: str | None = None) -> str:
+    """The plan's part for one story: its section, the table rows naming it and the delivery's context sections. From
+    `text` when given (the plan at a named commit), else as the settings shelf reads it."""
     c = cfg()
-    text = c.shelf.text(c.plan)
+    if text is None:
+        text = c.shelf.text(c.plan)
     if text is None:
         raise Stop(f"the plan {c.shelf.where(c.plan)} is missing")
     sections = plan_sections(text)
@@ -812,18 +815,37 @@ def prepare_commands() -> list[list[str]]:
     return (c.shelf.json(".agents/orchestration.json") or {}).get("prepare", [])
 
 
+EVIDENCE_HEADING = "## Evidence so far"
+
+
 def seed_context(key: str) -> Path:
+    """The review context: the plan's part, read from the delivery base as it stands now, and the lane's own evidence.
+    Every round seeds the plan's part again, so a lens never reviews against a plan the lead has since changed; the
+    lane's "Evidence so far" is kept as written. A context without that heading is the lane's own, left as it is."""
     path = review_dir(key) / "context.md"
-    if not path.exists():
-        c = cfg()
-        path.write_text(
-            f"# Review context: {key} ({c.label(key)}), part of {c.delivery}\n\n"
-            f"Repository: your private checkout; read its root instruction file. Delivery base `{c.base_ref}`; the plan "
-            f"is `{c.plan}` (approved, binding). Reference stories, once the lead names them, are in the assignment.\n\n"
-            f"## Ticket contract and plan unit\n\n{plan_context(key)}\n\n"
-            "## Evidence so far\n\n"
-            f"{CONTEXT_TODO}: the test-first or characterization runs (red then green), the gate results "
-            "(run_delivery.py gate), mutants tried, and known limits. The in-app check records are attached to each brief.\n")
+    c = cfg()
+    sha = git("rev-parse", "--verify", "--quiet", c.base_ref, check=False)
+    # The plan as the base has it now: a lane's own checkout, and so a shelf reading it, holds the copy its branch forked with.
+    shown = run(["git", "show", f"{sha}:{c.plan}"], check=False) if sha else None
+    plan = shown.stdout if shown is not None and shown.returncode == 0 else None
+    sha = sha if plan is not None else None
+    where = (f"Delivery base `{c.base_ref}` at `{sha}`; the plan is `{c.plan}` there (approved, binding). Read it as "
+             f"`git show {sha}:{c.plan}`, not your checkout's copy, which is only as new as your candidate's fork."
+             if sha else f"Delivery base `{c.base_ref}`; the plan is `{c.plan}` (approved, binding).")
+    head = (f"# Review context: {key} ({c.label(key)}), part of {c.delivery}\n\n"
+            f"Repository: your private checkout; read its root instruction file. {where} Reference stories, once the "
+            "lead names them, are in the assignment.\n\n"
+            f"## Ticket contract and plan unit\n\n{plan_context(key, plan)}\n\n")
+    if path.exists():
+        text = path.read_text()
+        # The lane's heading is a line of its own, and the last such line: the plan's part may mention it too.
+        found = list(re.finditer(rf"^{re.escape(EVIDENCE_HEADING)}[ \t]*$", text, re.M))
+        if found:
+            path.write_text(head + text[found[-1].start():])
+        return path
+    path.write_text(head + f"{EVIDENCE_HEADING}\n\n"
+                    f"{CONTEXT_TODO}: the test-first or characterization runs (red then green), the gate results "
+                    "(run_delivery.py gate), mutants tried, and known limits. The in-app check records are attached to each brief.\n")
     return path
 
 
@@ -944,9 +966,11 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
                        f"- `{candidate}` resolves to git commit `{candidate}`")
         later = ("- `lateFindings`: ids of this result's own findings you raised late (against lines unchanged since "
                  "your previous round); omit when none.\n"
-                 "- `resolvedFindings`: required. One entry for every finding this lens raised in an earlier round, "
-                 '`{"id", "state": "closed|fixed|withdrawn|deferred|open", "resolution": "..."}`. Every carried '
-                 "finding must appear; a deferral (P2/P3 only) also carries `deferredIssue`.")
+                 "- `resolvedFindings`: required. One entry per finding, "
+                 '`{"id", "state": "closed|fixed|withdrawn|deferred|open", "resolution": "..."}`. Every finding this '
+                 "lens raised in an earlier round that is still open must appear (one deferred earlier needn't); one "
+                 "closed in an earlier round may be listed again or left out. A deferral (P2/P3 only) also carries "
+                 "`deferredIssue`.")
     span = f"{merge_base}..{candidate}" if round_no == 1 else f"{prior_candidate}..{candidate}"
     if round_no <= c.bound:
         bound_text = f"`ordinary counted`: round {round_no} of {c.bound}, counted against the declared bound."
@@ -992,17 +1016,20 @@ def review_prepare(args) -> None:
     if previous and not args.restart:
         raise Stop(f"round {n} is already prepared (at {previous['candidate'][:10]}). Reduce it, or pass --restart to "
                    "discard it; a restart is recorded and the lead has to accept it")
+    git("fetch", "-q", c.remote, c.base_branch)  # before the context, which reads the plan from the base
     context = seed_context(key)
     if CONTEXT_TODO in context.read_text():
         raise Stop(f"fill in 'Evidence so far' in {context} first (the rest is seeded from the plan)")
     candidate = clean_head()
     tree = git("rev-parse", "HEAD^{tree}")
-    git("fetch", "-q", c.remote, c.base_branch)
     merge_base = git("merge-base", c.base_ref, "HEAD")
     prior_rounds = [json.loads(p.read_text()) for p in round_files(folder)]
     prior_candidate = prior_rounds[-1]["entries"][0]["binding"]["candidateRef"] if prior_rounds else None
     if prior_candidate == candidate:
-        raise Stop("HEAD is the candidate of the previous round; commit the fixes first")
+        raise Stop("HEAD is the candidate of the previous round; commit the fixes first. When the round's findings were "
+                   "settled without a change here (a ruling, or a fix on the base, which a lane doesn't merge), record "
+                   f'that as its own commit, `git commit --allow-empty -m "{key}: <the ruling>"`, and note the ruling in '
+                   "context.md's Evidence so far, so each round still has its own candidate")
     restarts = list(previous.get("restarts", [])) if previous else []
     attempts = previous.get("attempts", 0) if previous else 0
     if previous:
