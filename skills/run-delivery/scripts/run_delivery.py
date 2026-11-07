@@ -41,6 +41,7 @@ import argparse
 import contextlib
 import datetime
 import fcntl
+import collections
 import fnmatch
 import hashlib
 import json
@@ -2096,8 +2097,10 @@ def need_in_app() -> dict:
 
 
 def build(args) -> None:
+    """Build HEAD for the in-app checks: a story's build, or with no key the delivery's integration build."""
     c = cfg()
-    key = c.require(args.key)
+    # The integration build of the whole delivery goes by the delivery's own key, as the lead's checkout does.
+    key = c.require(args.key) if args.key is not None else c.delivery
     spec = need_in_app()["build"]
     head = clean_head()
     tree = git("rev-parse", "HEAD^{tree}")
@@ -4044,6 +4047,137 @@ def plan_problems(c, keys: list[str]) -> list[str]:
             f"correct its key in {c.delivery_where}"]
 
 
+# Ownership is the plan's: lead-accept refuses a hand-off that changes a file outside its lane's `owns`. These warn
+# before a lane starts of the files its story will need: the ones its plan names, and (for lead-assign) the ones that
+# have tended to change with them.
+
+PATH_TOKEN = re.compile(r"[A-Za-z0-9._*?\[\]-][A-Za-z0-9._/*?\[\]-]*")
+CO_CHANGE = {"commits": 200, "sweep": 40, "support": 3, "share": 0.25, "shown": 5}
+
+
+def owner_of(c, path: str) -> str | None:
+    return next((lane for lane, entry in c.lanes.items() if any(fnmatch.fnmatch(path, g) for g in entry["owns"])), None)
+
+
+def owned_by(c, lane: str, path: str) -> bool:
+    return any(fnmatch.fnmatch(path, g) for g in c.lanes[lane]["owns"])
+
+
+def owner_words(c, path: str) -> str:
+    owner = owner_of(c, path)
+    return f"{owner}'s" if owner else "no lane's"
+
+
+def files_ref(c) -> str:
+    return c.base_ref if run(["git", "rev-parse", "--verify", "--quiet", c.base_ref], check=False).returncode == 0 else "HEAD"
+
+
+def tracked_at_base(c) -> list[str]:
+    """The base's files a story can change: not the installed release, which no lane edits."""
+    installed = Path(RECEIPT).parent.as_posix() + "/"
+    return [f for f in git("ls-tree", "-r", "--name-only", files_ref(c), check=False).splitlines()
+            if not f.startswith(installed)]
+
+
+def story_named_files(c, key: str, tracked: list[str]) -> list[str]:
+    """The files a story's plan section, and the table rows naming it, name in backticks: a full path, a directory
+    (trailing /), a glob, or a bare file name, resolved against the base's files. A bare name that matches several takes
+    the lane's own match when there is one; a path not tracked yet is the new file it names. A row names the story when
+    a cell with no backticked text does, and its files come from its other cells, so a passing mention in a files cell
+    (such as "after" another story's key) doesn't hand that row's files to the story."""
+    text = c.shelf.text(c.plan) or ""
+    own = story_section(plan_sections(text), key) or ""
+    names = {key, c.label(key)}
+    naming = lambda cell: "`" not in cell and any(re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", cell) for n in names)
+    rows = []
+    for line in text.splitlines():
+        cells = line.strip().strip("|").split("|") if line.startswith("|") else []
+        if any(naming(cell) for cell in cells):
+            rows += [cell for cell in cells if not naming(cell)]
+    lane = c.lane_of(key)
+    found: set[str] = set()
+    for token in re.findall(r"`([^`\n]+)`", "\n".join([own, *rows])):
+        token = token.strip().removeprefix("./")
+        if not PATH_TOKEN.fullmatch(token) or not ("/" in token or re.search(r"\.[A-Za-z0-9]{1,8}$", token)):
+            continue
+        if token.endswith("/"):
+            found |= {f for f in tracked if f.startswith(token)}
+        elif "/" not in token:
+            matches = [f for f in tracked if fnmatch.fnmatch(f.rsplit("/", 1)[-1], token)]
+            mine = [f for f in matches if owned_by(c, lane, f)]
+            found |= set(mine or matches)
+        elif re.search(r"[*?\[]", token):
+            found |= {f for f in tracked if fnmatch.fnmatch(f, token)}
+        elif token in tracked or not (tail := [f for f in tracked if f.endswith("/" + token)]):
+            found.add(token)  # a tracked path, or the new file it names
+        else:  # the end of a tracked path, such as references/adopting.md
+            mine = [f for f in tail if owned_by(c, lane, f)]
+            found |= set(mine or tail)
+    return sorted(found)
+
+
+def outside_lane(c, key: str, tracked: list[str]) -> list[str]:
+    """The files a story names that its lane doesn't own."""
+    lane = c.lane_of(key)
+    return [f for f in story_named_files(c, key, tracked) if not owned_by(c, lane, f)]
+
+
+def named_outside(c, key: str, outside: list[str], shown: int | None = None) -> str:
+    """"FX-2 names a (lane-2's), b (no lane's)", to `shown` files and a count of the rest."""
+    listed = ", ".join(f"{f} ({owner_words(c, f)})" for f in outside[:shown])
+    rest = len(outside) - len(outside[:shown])
+    return f"{key} names {listed}" + (f" and {rest} more" if rest else "")
+
+
+def story_file_problems(c, keys: list[str], tracked: list[str]) -> list[str]:
+    """One phrase per story that names a file outside its lane, as doctor's one line has room for: three files a
+    story, five stories, and how many more."""
+    found = [(key, outside) for key in keys if (outside := outside_lane(c, key, tracked))]
+    phrases = [named_outside(c, f"{key} ({c.lane_of(key)})", outside, 3) for key, outside in found[:5]]
+    if len(found) > 5:
+        phrases.append(f"and {len(found) - 5} more stories (lead-assign lists each one's)")
+    return phrases
+
+
+def co_changed(c, path: str, ref: str) -> tuple[int, collections.Counter]:
+    """How many of the recent changes to `path` on `ref` count, and how often each other file changed with it. A
+    sweeping change (more than CO_CHANGE['sweep'] files) says nothing about coupling, so it isn't counted."""
+    out = git("log", "--no-merges", "--full-diff", f"-n{CO_CHANGE['commits']}", "--format=tformat:@", "--name-only", ref, "--",
+              path, check=False)
+    count, together = 0, collections.Counter()
+    for change in out.split("@")[1:]:
+        files = set(change.split())
+        if not files or len(files) > CO_CHANGE["sweep"]:
+            continue
+        count += 1
+        together.update(files - {path})
+    return count, together
+
+
+def co_change_warning(c, key: str, tracked: list[str]) -> str | None:
+    """The files outside a story's lane that changed with a file it names in at least CO_CHANGE['support'] and
+    CO_CHANGE['share'] of that file's changes: the CO_CHANGE['shown'] most coupled, each with the named file it
+    changes with most."""
+    lane = c.lane_of(key)
+    named = story_named_files(c, key, tracked)
+    ref, present = files_ref(c), set(tracked)
+    best: dict[str, tuple[float, int, int, str]] = {}
+    for path in named:
+        if path not in present:
+            continue
+        count, together = co_changed(c, path, ref)
+        for f, n in together.items():
+            if (n >= CO_CHANGE["support"] and n >= CO_CHANGE["share"] * count and f in present and f not in named
+                    and not owned_by(c, lane, f) and (n / count, n) > best.get(f, (0, 0))[:2]):
+                best[f] = (n / count, n, count, path)
+    if not best:
+        return None
+    often = sorted(best.items(), key=lambda item: (-item[1][0], -item[1][1], item[0]))[:CO_CHANGE["shown"]]
+    return (f"{key}'s files often change with "
+            + ", ".join(f"{f} ({owner_words(c, f)}; with {path} in {n} of {count} changes)"
+                        for f, (_, n, count, path) in often))
+
+
 def context_problems(c) -> list[str]:
     """Each context.sections heading the plan lacks, which every lane's review context would go without."""
     text = c.shelf.text(c.plan)
@@ -4489,6 +4623,14 @@ def lead_assign(args) -> None:
         raise Stop("; ".join(problems))
     register_stories(c)
     rebuild_plan(c)
+    tracked = tracked_at_base(c)
+    warnings = [*(named_outside(c, key, outside) for key in keys if (outside := outside_lane(c, key, tracked))),
+                *(line for key in keys if (line := co_change_warning(c, key, tracked)))]
+    if warnings:
+        print(f"Files outside {args.lane}'s owns, before it starts (lead-accept refuses a change to any of them):")
+        for line in warnings:
+            print(f"  {line}")
+        print(f"Move each to {args.lane}'s owns now, or plan the story on the lane that owns it.\n")
     row = {"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
            "waitingOn": None, "since": now()}
     patch_from(lambda doc: {"lanes": [*(entry for entry in doc["state"]["lanes"] if entry["id"] != args.lane), row]},
@@ -6380,6 +6522,7 @@ class Doctor:
             ("delivery", "delivery file", ("config", "binding"), self.check_delivery),
             ("plan", "plan chapter", ("delivery",), self.check_plan),
             ("plan-sections", "plan sections", ("delivery",), self.stories_planned),
+            ("story-files", "story files", ("plan-sections",), self.story_files),
             ("context-sections", "context sections", ("delivery",), self.context_planned),
             ("remote-base", "configuration on the remote base", ("delivery",), self.remote_base),
             ("ready", "pull requests marked ready", ("delivery",), self.ready),
@@ -6763,6 +6906,15 @@ class Doctor:
         problems = plan_problems(d, list(d.stories))
         return ("wrong", problems[0]) if problems else ("ok", f"each of the {len(d.stories)} stories has a section in {d.plan}")
 
+    def story_files(self):
+        d = self.delivery
+        problems = story_file_problems(d, list(d.stories), tracked_at_base(d))
+        if not problems:
+            return "ok", "every file a story's plan section names is its lane's"
+        # A warning, not a failure: a plan may move a file between lanes as its stories merge.
+        return "warn", ("; ".join(problems) + "; fix: move each to the story's lane's owns before it starts, or plan the "
+                        "story on the lane that owns it")
+
     def context_planned(self):
         d = self.delivery
         if not d.context_sections:
@@ -6873,7 +7025,7 @@ def main(argv: list[str] | None = None) -> None:
     q = command(review_commands, "check", help="validate plan-review-evidence/1 records, hand-written or written by a review")
     q.add_argument("records", nargs="+", metavar="RECORD"); q.set_defaults(fn=plan_review_check)
     p = command(sub, "gate"); p.add_argument("key"); p.set_defaults(fn=gate)
-    p = command(sub, "build"); p.add_argument("key"); p.set_defaults(fn=build)
+    p = command(sub, "build"); p.add_argument("key", nargs="?"); p.set_defaults(fn=build)
     p = command(sub, "app-check"); p.add_argument("key"); p.add_argument("name")
     p.add_argument("--mode", choices=("hold", "fail", "loaded"), required=True)
     p.add_argument("--path", required=True)
