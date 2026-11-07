@@ -2097,8 +2097,10 @@ def need_in_app() -> dict:
 
 
 def build(args) -> None:
+    """Build HEAD for the in-app checks: a story's build, or with no key the delivery's integration build."""
     c = cfg()
-    key = c.require(args.key)
+    # The integration build of the whole delivery goes by the delivery's own key, as the lead's checkout does.
+    key = c.require(args.key) if args.key is not None else c.delivery
     spec = need_in_app()["build"]
     head = clean_head()
     tree = git("rev-parse", "HEAD^{tree}")
@@ -7018,7 +7020,7 @@ def main(argv: list[str] | None = None) -> None:
     q = command(review_commands, "check", help="validate plan-review-evidence/1 records, hand-written or written by a review")
     q.add_argument("records", nargs="+", metavar="RECORD"); q.set_defaults(fn=plan_review_check)
     p = command(sub, "gate"); p.add_argument("key"); p.set_defaults(fn=gate)
-    p = command(sub, "build"); p.add_argument("key"); p.set_defaults(fn=build)
+    p = command(sub, "build"); p.add_argument("key", nargs="?"); p.set_defaults(fn=build)
     p = command(sub, "app-check"); p.add_argument("key"); p.add_argument("name")
     p.add_argument("--mode", choices=("hold", "fail", "loaded"), required=True)
     p.add_argument("--path", required=True)
