@@ -862,7 +862,75 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         reduce(3, open_p1=False)
         for checkout in third.values():
             self.assertFalse(checkout.exists(), f"{checkout} outlived the aligned round")
+            self.assertFalse(checkout.with_name(checkout.name + ".prepared.json").exists(), "a removed checkout's stamp was kept")
         self.assertNotIn(str(third[short0]), sh("git", "worktree", "list", cwd=wt).stdout)
+
+    def lens_round_one(self, bound: int = 3) -> tuple:
+        """FX-2 with a counting prepare step, through round 1's prepare: (fixture, lane, review folder, lenses,
+        prepares log, each lens's checkout by short name)."""
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        prepares = fx.tmp / "prepares.log"
+        config = m / ".agents/run-delivery.json"
+        settings = json.loads(config.read_text())
+        settings["review"].update(bound=bound, prepare=[["sh", "-c", f"echo run >> {prepares}"]])
+        config.write_text(json.dumps(settings, indent=2))
+        commit(m, "FX-1: a prepare step")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        review = wt / ".orchestration/review/FX-2"
+        lenses = fx.lenses(wt)
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        context = review / "context.md"
+        context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                            if line.startswith(CONTEXT_TODO)), "- evidence"))
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        checkouts = {short: Path(re.search(r"Your private checkout: `([^`]+)`",
+                                           (review / f"brief-r1-{short}.md").read_text()).group(1)) for _, (short, _) in lenses}
+        return fx, wt, review, lenses, prepares, checkouts
+
+    def test_a_review_that_reaches_its_bound_removes_the_lens_checkouts(self) -> None:
+        fx, wt, review, lenses, _, checkouts = self.lens_round_one(bound=1)
+        short0 = lenses[0][1][0]
+        write_results(review, 1, "FX-2", lenses, findings=[{"id": f"{short0}-r1-1", "severity": "P1", "summary": "fix"}])
+        code, out = fx.flow("review-reduce", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("Bound reached", out)
+        for checkout in checkouts.values():
+            self.assertFalse(checkout.exists(), f"{checkout} outlived a review at its bound")
+            self.assertFalse(checkout.with_name(checkout.name + ".prepared.json").exists(), "a removed checkout's stamp was kept")
+            self.assertNotIn(str(checkout), sh("git", "worktree", "list", cwd=wt).stdout)
+
+    def test_a_path_at_a_lens_checkout_that_isnt_its_own_worktree_is_made_afresh_and_the_lane_is_untouched(self) -> None:
+        fx, wt, review, lenses, prepares, checkouts = self.lens_round_one()
+        short0 = lenses[0][1][0]
+        write_results(review, 1, "FX-2", lenses, findings=[{"id": f"{short0}-r1-1", "severity": "P1", "summary": "fix"}])
+        code, out = fx.flow("review-reduce", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        # What a partial removal leaves: a plain folder, no .git, with its prepared stamp still beside it.
+        checkout = checkouts[short0]
+        sh("git", "worktree", "remove", "--force", checkout, cwd=wt)
+        checkout.mkdir()
+        (checkout / "leftover.txt").write_text("left\n")
+        (wt / "out").mkdir(exist_ok=True)
+        (wt / "out/lane-ignored").write_text("the lane's own\n")
+        (wt / "src/one.txt").write_text("two\n")
+        commit(wt, "FX-2: two")
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "2", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(Path(sh("git", "rev-parse", "--show-toplevel", cwd=checkout).stdout.strip()).resolve(), checkout.resolve(),
+                         "the plain folder wasn't made its own checkout")
+        self.assertFalse((checkout / "leftover.txt").exists())
+        self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=checkout).stdout.strip(), sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip())
+        self.assertEqual(sh("git", "symbolic-ref", "--short", "HEAD", cwd=wt).stdout.strip(), "feature/FX-2", "the lane was detached")
+        self.assertTrue((wt / "out/lane-ignored").exists(), "the lane's own ignored file was cleaned")
+        self.assertEqual(prepares.read_text().count("run"), len(lenses) + 1, "the made-afresh checkout wasn't prepared")
 
     def test_a_lens_checkout_gone_between_rounds_is_made_and_prepared_afresh(self) -> None:
         fx = self.fixture()
