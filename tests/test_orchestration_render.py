@@ -11,6 +11,7 @@ import ipaddress
 import json
 import os
 import re
+import select
 import shutil
 import signal
 import socket
@@ -1468,6 +1469,37 @@ class LiveTests(DeliveryStateFixture):
                 mock.patch.object(render_state, "_LiveServer", no_socket):
             code, result = render_state._live_from_args(["--dir", str(self.state_dir), "--host", "::ffff:0.0.0.0"])
         self.assertEqual((code, result["ok"], result["code"]), (2, False, "live_refused"))
+
+    @unittest.skipIf(os.name == "nt", "the stalled lookup is modelled through a POSIX sitecustomize")
+    def test_the_live_view_listens_at_once_when_name_lookups_stall(self) -> None:
+        """Where a reverse lookup of the loopback address goes unanswered, as on a macOS runner, a server that looks up
+        its own name before it listens announces nothing until the lookup gives up. The live view doesn't wait."""
+        stalled = Path(self.enterContext(tempfile.TemporaryDirectory())) / "stalled"
+        stalled.mkdir()
+        (stalled / "sitecustomize.py").write_text(
+            "import socket, time\n_getfqdn = socket.getfqdn\n"
+            "def getfqdn(name=''):\n"
+            "    if name in ('', 'localhost', '127.0.0.1', '::1', '0.0.0.0', '::'):\n        time.sleep(60)\n"
+            "    return _getfqdn(name)\n"
+            "socket.getfqdn = getfqdn\n")
+        env = {**os.environ, "PYTHONPATH": str(stalled)}
+
+        def first_line_within(argv: list[str], seconds: float) -> str | None:
+            process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+            try:
+                ready, _, _ = select.select([process.stdout], [], [], seconds)
+                return process.stdout.readline().decode() if ready else None
+            finally:  # started here, stopped by the pid recorded here
+                process.kill()
+                process.wait()
+                process.stdout.close()
+
+        stock = [sys.executable, "-B", "-c", "import http.server; s = http.server.ThreadingHTTPServer(('127.0.0.1', 0), "
+                 "http.server.BaseHTTPRequestHandler); print('bound', flush=True)"]
+        self.assertIsNone(first_line_within(stock, 3), "the stalled lookup didn't hold up the stock server")
+        line = first_line_within([sys.executable, "-B", str(WRAPPER), "live", "--dir", str(self.state_dir)], 10)
+        self.assertIsNotNone(line, "the live view waited for the stalled lookup")
+        self.assertTrue(json.loads(line)["ok"], line)
 
     @unittest.skipIf(os.name == "nt", "Windows has not been seen to take this bind")
     def test_the_mapped_any_address_really_listens_on_every_ipv4_address(self) -> None:
