@@ -3078,6 +3078,9 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
         self.assertEqual((m / "out/key.txt").read_text(), "FX-2")
         code, out = fx.flow("build", "FX-9", cwd=m)
         expect(code == 2 and "FX-9 is not a story of FX-1" in out, out)
+        # An empty key is a key, refused like any other that is not a story, never the integration build.
+        code, out = fx.flow("build", "", cwd=m)
+        expect(code == 2 and " is not a story of FX-1" in out, out)
 
     # -- sign-in values -------------------------------------------------------------------------------------
 
