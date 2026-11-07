@@ -205,5 +205,14 @@
     },
     "refreshSeconds": 180,
     "liveHome": "line-map"
-  }
+  },
+  "flakes": [
+    {
+      "check": "run-delivery",
+      "tests": [
+        "test_the_guide_takes_an_empty_repository_to_a_closed_delivery"
+      ],
+      "ref": "V26-3218"
+    }
+  ]
 }
