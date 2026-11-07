@@ -425,11 +425,16 @@
     if (item.stage !== "queued") { return "unknown"; }
     return item.pending === true ? "ready pending" : "ready";
   }
+  // A check's readable name: the title its provider or binding gave, cut short past a line's worth, or else its id. The
+  // id stays the check's name for everything that matches on it, such as a lane's notes and the rows being redrawn.
+  var TITLE_SHOWN = 80;
+  function checkTitle(title) { var words = text(title); return words.length > TITLE_SHOWN ? words.slice(0, TITLE_SHOWN - 1) + "…" : words; }
+  function stepName(step) { return checkTitle(step.title) || text(step.label); }
   function failures(item) {
     return list(item.checks).filter(function (check) { return isObject(check) && (check.state === "failed" || check.state === "timed_out"); })
       .map(function (check) {
         var tests = list(check.failures).map(text).filter(Boolean);
-        return text(check.id) + " " + (check.state === "timed_out" ? "timed out" : "failed") + (tests.length ? ": " + tests.join(", ") : "");
+        return (checkTitle(check.title) || text(check.id)) + " " + (check.state === "timed_out" ? "timed out" : "failed") + (tests.length ? ": " + tests.join(", ") : "");
       });
   }
   function stageKey(item) { return item.pending === true && item.stage === "queued" ? "pending" : text(item.stage); }
@@ -600,7 +605,7 @@
     var expected = typeof step.expectedSeconds === "number" ? step.expectedSeconds : null;
     var words = row.querySelector(".ck-run-words");
     var said = el("span", "sr");
-    var name = el("span", "ck-run-name", text(step.label));
+    var name = el("span", "ck-run-name", stepName(step));
     var clock = el("b");
     var time = add(el("span", "ck-run-time"), clock, expected !== null ? el("i", null, " / ~" + clockTime(expected)) : null);
     name.setAttribute("aria-hidden", "true");
@@ -620,7 +625,7 @@
       if (label && clock.textContent) { label.textContent = clock.textContent + " so far"; }
       if (over === wasOver) { return; }
       wasOver = over;
-      said.textContent = "Running " + text(step.label) + (spent !== null && spent >= 0
+      said.textContent = "Running " + stepName(step) + (spent !== null && spent >= 0
         ? " · " + duration(spent) + (expected !== null ? " of about " + duration(expected) : " so far") : "") + (over ? ", longer than usual" : "");
     }
     tick();
@@ -642,7 +647,7 @@
     var word = STEP_WORDS[step.state] || "finished";
     var words = row.querySelector(".ck-run-words");
     // A check with no readable start or finish shows no time at all, rather than a gap or a placeholder.
-    var parts = [add(el("span", "ck-run-name"), text(step.label), failedIt ? " " + word : el("span", "sr", " " + word))];
+    var parts = [add(el("span", "ck-run-name"), stepName(step), failedIt ? " " + word : el("span", "sr", " " + word))];
     if (took !== null) { parts.push(add(el("span", "ck-run-time"), el("span", "sr", " · " + duration(took)), add(el("b"), clockTime(took)))); }
     words.replaceChildren.apply(words, parts);
     var shown = words.querySelector(".ck-run-time b");
@@ -660,7 +665,7 @@
     if (!runMotionWanted(row)) { if (!next) { doneWords(row, finished); } return; }
     // The row is first drawn as the finished check was last seen: running, its arc still turning.
     row.className = "ck-run";
-    row.querySelector(".ck-run-words").replaceChildren(el("span", "sr", "Running "), text(finished.label));
+    row.querySelector(".ck-run-words").replaceChildren(el("span", "sr", "Running "), stepName(finished));
     later(function () {
       row.classList.add("settling");
       setTimeout(function () {
@@ -825,7 +830,10 @@
           members.forEach(function (step) {
             // Each check's mark draws its state; the state's word is there for a screen reader.
             var state = STEP_WORDS[step.state] ? step.state : "pending";
-            row.appendChild(add(el("span", "ck-step " + state), el("span", "sr", STEP_WORDS[state] + ": "), text(step.label)));
+            var chip = add(el("span", "ck-step " + state), el("span", "sr", STEP_WORDS[state] + ": "), stepName(step));
+            // A title cut short is there whole to read on pointing at it.
+            if (text(step.title).length > TITLE_SHOWN) { chip.setAttribute("title", text(step.title)); }
+            row.appendChild(chip);
           });
           return add(el("div", "ck-group"), add(el("div", "ck-group-h"), title, el("span", "ck-group-n", String(members.length))), row);
         };
@@ -984,10 +992,10 @@
       var beside = span.row ? spans.filter(function (other) { return other.row < span.row && other.from < span.to && other.to > span.from; })
         .sort(function (a, b) { return (b.to - b.from) - (a.to - a.from); })[0] : null;
       seg.addEventListener("mouseenter", function () {
-        card.replaceChildren(el("b", null, text(span.step.label)),
+        card.replaceChildren(el("b", null, stepName(span.step)),
           el("div", "ic-s", clockTime(span.kind === "running" ? Date.now() / 1000 - span.from : took) + (span.kind === "running" ? " so far · running" :
             " · " + (STEP_WORDS[span.step.state] || "finished"))));
-        if (beside) { card.appendChild(el("div", "ic-s", "Ran alongside " + text(beside.step.label))); }
+        if (beside) { card.appendChild(el("div", "ic-s", "Ran alongside " + stepName(beside.step))); }
         placeCard(seg);
       });
       seg.addEventListener("mouseleave", hideCard);
@@ -1046,7 +1054,8 @@
       var mark = el("span", "g num", String(failedSteps.indexOf(step) + 1));
       mark.setAttribute("aria-hidden", "true");
       // What failed and how much, on one line; then which tests; then what the lane found; the log last, quietest.
-      var head = add(el("div", "ck-fh"), add(el("div", "ck-f"), el("span", "sr", step.state === "timed_out" ? "Timed out: " : "Failed: "), label));
+      var shownName = checkTitle(step.title) || checkTitle(record.title) || label;
+      var head = add(el("div", "ck-fh"), add(el("div", "ck-f"), el("span", "sr", step.state === "timed_out" ? "Timed out: " : "Failed: "), shownName));
       if (text(record.detail)) { head.appendChild(el("div", "ck-d", text(record.detail))); }
       var body = add(el("div", "ck-fb"), head);
       var tests = list(record.failures).map(text).filter(Boolean);

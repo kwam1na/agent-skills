@@ -109,6 +109,12 @@
                             "reusedFrom": {
                               "description": "For a reused check: the head of the lane's run it was reused from.",
                               "$ref": "#/$defs/commit"
+                            },
+                            "title": {
+                              "description": "The check's readable name, copied by the runner from the provider's or the binding's check and cut to 200 characters. Absent when the check has none; a view then names the check by its id.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
                             }
                           }
                         }
@@ -549,6 +555,12 @@
                   "reusedFrom": {
                     "description": "For a reused check: the head of the lane's run it was reused from.",
                     "$ref": "#/$defs/commit"
+                  },
+                  "title": {
+                    "description": "The check's readable name, copied by the runner from the provider's or the binding's check and cut to 200 characters. Absent when the check has none; a view then names the check by its id.",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
                   }
                 }
               }
@@ -892,6 +904,11 @@
           "parallelSafe": {
             "description": "true lets the runner run this check at the same time as other parallelSafe checks, up to the binding's parallelChecks. A check without it runs alone.",
             "type": "boolean"
+          },
+          "title": {
+            "description": "A readable name for a person, such as \"Webapp e2e (Playwright)\", shown in place of the id where the check is reported. Optional; the id stays the check's name everywhere else. The runner copies it into the delivery record, cut to 200 characters.",
+            "type": "string",
+            "minLength": 1
           }
         }
       }
@@ -1215,6 +1232,11 @@
           "parallelSafe": {
             "description": "true lets the runner run this check at the same time as other parallelSafe checks, up to the binding's parallelChecks. A check without it runs alone.",
             "type": "boolean"
+          },
+          "title": {
+            "description": "A readable name for a person, such as \"Webapp e2e (Playwright)\", shown in place of the id where the check is reported. Optional; the id stays the check's name everywhere else. The runner copies it into the delivery record, cut to 200 characters.",
+            "type": "string",
+            "minLength": 1
           }
         }
       },
@@ -2504,6 +2526,11 @@
           "parallelSafe": {
             "description": "true lets the runner run this check at the same time as other parallelSafe checks, up to the binding's parallelChecks. A check without it runs alone.",
             "type": "boolean"
+          },
+          "title": {
+            "description": "A readable name for a person, such as \"Webapp e2e (Playwright)\", shown in place of the id where the check is reported. Optional; the id stays the check's name everywhere else. The runner copies it into the delivery record, cut to 200 characters.",
+            "type": "string",
+            "minLength": 1
           }
         }
       }

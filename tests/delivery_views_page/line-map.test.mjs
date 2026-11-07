@@ -325,6 +325,36 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   expect(running.className).toBe("ck-run");
 });
 
+test("names each check by the title its provider gave, by its id where none was given, and cuts a long title short", async () => {
+  const document = fixtureDocument();
+  const now = document.state.meta.checking.now;
+  const long = "Behaviour scenario: shop-storefront-composition " + "x".repeat(200);
+  const titles = { "webapp typecheck": "Webapp typecheck (tsc)", "storefront build": "Storefront build <img src=x onerror=alert(1)>", "checkout end-to-end": long };
+  now.steps.forEach((step) => { if (titles[step.label]) { step.title = titles[step.label]; } });
+  document.state.queue[1].checks[0].title = "Webapp e2e (Playwright)";
+  const [{ app }, stopped] = await open(document, { steps: [{ click: '.stop-btn[data-subject="PAY-2360"]' }] });
+  const checking = app.querySelector(".checking");
+  // Titled checks show their title; the old ones beside them, with no title, keep their id.
+  const shown = [...checking.querySelectorAll(".ck-step")].map((step) => step.textContent);
+  const cut = long.slice(0, 79) + "…";
+  expect(shown).toEqual(["waiting: " + cut, "waiting: payments behavior scenarios",
+    "passed: Webapp typecheck (tsc)", "passed: checkout unit tests", "reused: convex audit"]);
+  // The full title is there to read on the cut one, and the id stays the check's name for everything that matches on it.
+  expect(checking.querySelector(".ck-step.pending").getAttribute("title")).toBe(long);
+  // Record text never becomes markup.
+  expect(checking.querySelector(".ck-run .sr").textContent).toMatch(/^Running Storefront build <img src=x onerror=alert\(1\)> · /);
+  expect(checking.querySelector("img")).toBeNull();
+  // A failed check, in the stopped piece's detail and in the failed list, goes by its title too.
+  expect(stopped.app.querySelector("#detail").textContent).toContain("Webapp e2e (Playwright) failed: declined card shows the retry button");
+  const failing = JSON.parse(JSON.stringify(document));
+  const typecheck = failing.state.meta.checking.now.steps.find((step) => step.label === "webapp typecheck");
+  typecheck.state = "failed";
+  const [{ app: failedApp }] = await open(failing);
+  const fails = [...failedApp.querySelectorAll(".ck-fails li")];
+  expect(fails.map((entry) => entry.querySelector(".ck-f").textContent)).toEqual(["Failed: Webapp typecheck (tsc)"]);
+  expect(fails[0].getAttribute("data-check")).toBe("webapp typecheck");
+});
+
 test("matches a note to a check whose name ends in punctuation", async () => {
   const document = fixtureDocument();
   document.state.meta.checking.now.steps[1] = { label: "lint(webapp)", state: "failed" };

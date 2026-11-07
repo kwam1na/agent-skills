@@ -964,8 +964,14 @@ need?", in format `affected-checks/1`.
 - **Input,** on stdin: `{base, baseHead, head, changes: [{path, status,
   oldPath?}]}`. The runner computes `changes` with rename detection.
 - **Output:** `{checks: [{id, argv, cwd, reasons, prerequisites,
-  environmentProfile?, timeoutSeconds?, parallelSafe?}], widened, uncovered:
-  [paths], notes?}`. A check marked `parallelSafe` may run at the same time
+  environmentProfile?, timeoutSeconds?, parallelSafe?, title?}], widened,
+  uncovered: [paths], notes?}`. A check's `title` is a readable name for a
+  person, such as "Webapp e2e (Playwright)": the runner copies it into the
+  record, cut to 200 characters, and the views show it in place of the id,
+  which stays the check's name everywhere else. A binding's `alwaysRun` and
+  `fallback` checks, and a lead's selection, may carry one too. Any provider
+  that reports work to a person should give it a display name like this
+  beside its stable id. A check marked `parallelSafe` may run at the same time
   as other such checks, up to the binding's `parallelChecks`; mark only checks
   that share nothing a concurrent run could disturb. The runner starts checks
   in order and still honours prerequisites.
@@ -994,7 +1000,7 @@ It is off unless the binding sets `selection: {"lead": true}`.
   row's `leadSelection`, with the reason and the time, and journals
   `check.selected`. Each check has the shape of an `alwaysRun` entry: `{id,
   argv, cwd, reasons, prerequisites, environmentProfile?, timeoutSeconds?,
-  parallelSafe?}`; `--checks -` reads them from stdin. The tool refuses a
+  parallelSafe?, title?}`; `--checks -` reads them from stdin. The tool refuses a
   binding without `selection.lead`, a head that is not the row's reviewed
   `head`, an empty list, an id the binding's own checks use, an unknown
   profile, a timeout above the ceiling, a `cwd` outside the checkout, and
@@ -1061,7 +1067,8 @@ binding declares may change.
 
 ### What the record shows about checks
 
-- **Progress.** Each step in `meta.checking.now.steps` carries its
+- **Progress.** Each step in `meta.checking.now.steps`, and each check on the
+  queue row, carries the check's `title` when it has one. Each step carries its
   `startedAt`, and its `finishedAt` once it ends. A step with history also
   carries `expectedSeconds`, the median of that check's last five passing
   durations. A check with no history has no estimate, never a guess. The

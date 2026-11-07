@@ -388,6 +388,17 @@ def binding_errors(binding: object) -> list[str]:
     return errors
 
 
+TITLE_LIMIT = 200
+
+
+def check_title(check: dict) -> dict:
+    """The check's readable name for the record, cut to the record's limit, or nothing when it has none."""
+    title = check.get("title")
+    if not isinstance(title, str) or not title:
+        return {}
+    return {"title": title if len(title) <= TITLE_LIMIT else title[:TITLE_LIMIT - 1] + "…"}
+
+
 def check_definition(check: dict, binding: dict) -> str:
     """How a check runs, as one digest: its argv, cwd, prerequisites, timeout and environment.
 
@@ -395,8 +406,8 @@ def check_definition(check: dict, binding: dict) -> str:
     definition digests alike on every tree; a reusable check may use only
     ``{treeSha}``, which the tree determines. The binding's prepare steps,
     which set up every check's checkout, are part of it. A change to the
-    binding that changes how the check runs changes the digest; its reasons
-    and ``parallelSafe`` do not.
+    binding that changes how the check runs changes the digest; its reasons,
+    title and ``parallelSafe`` do not.
     """
     profile = check.get("environmentProfile")
     described = {
@@ -890,11 +901,11 @@ class Runner:
         """
         steps = [
             {"label": record["id"], "state": record["state"],
-             **{key: record[key] for key in ("startedAt", "finishedAt", "expectedSeconds", "reusedFrom") if key in record}}
+             **{key: record[key] for key in ("title", "startedAt", "finishedAt", "expectedSeconds", "reusedFrom") if key in record}}
             for record in states
         ]
         rows = [
-            {"id": record["id"], "state": record["state"],
+            {"id": record["id"], "state": record["state"], **({"title": record["title"]} if "title" in record else {}),
              **({"failures": [failure["id"] for failure in record["failures"]]} if record.get("failures") else {}),
              **({"log": record["log"]} if "log" in record else {}),
              **({"reusedFrom": record["reusedFrom"]} if "reusedFrom" in record else {})}
@@ -1605,7 +1616,7 @@ class Runner:
             if changes:
                 raise Stop("no_checks", "nothing would check this candidate's changes")
             result.notes.append("the candidate changes nothing, so no check was selected")
-        self.write_progress([subject], [{"id": check["id"], "state": "pending"} for check in checks])
+        self.write_progress([subject], [{"id": check["id"], "state": "pending", **check_title(check)} for check in checks])
         reused = self.reusable([(subject, item)], checks, self.tree(synced))
         outcomes = self.run_checks([subject], checks, checkout, context.with_values(treeSha=self.tree(synced)), result,
                                    reused=reused)
@@ -1859,7 +1870,7 @@ class Runner:
         """Run the checks in order, and record each one the lane's evidence lets this run reuse instead."""
         reused = reused or {}
         outcomes: dict[str, str] = {}
-        records = {check["id"]: {"id": check["id"], "state": "pending"} for check in checks}
+        records = {check["id"]: {"id": check["id"], "state": "pending", **check_title(check)} for check in checks}
         history = self.history()["checks"]
         for check in checks:
             expected = delivery_state.median_seconds(history.get(check["id"], {}).get("seconds", []))
@@ -2182,7 +2193,7 @@ class Runner:
         result.selection = selection
         if not checks and changes:
             raise Stop("no_checks", "nothing would check this batch's changes")
-        self.write_progress(subjects, [{"id": check["id"], "state": "pending"} for check in checks])
+        self.write_progress(subjects, [{"id": check["id"], "state": "pending", **check_title(check)} for check in checks])
         # A member's evidence counts only when the combined tree is the tree it checked.
         reused = self.reusable([(member.subject, member.item) for member in members], checks, members[-1].tree)
         outcomes = self.run_checks(subjects, checks, checkout, context, result, whole_run=whole_run, reused=reused)
