@@ -38,7 +38,6 @@
         "skills/run-delivery/references/config.md",
         "scripts/release_channel.py",
         "tests/test_release_channel.py",
-        "provenance.lock.json",
         "skills/run-delivery/scripts/run_delivery.py",
         "tests/fixtures/delivery-views/*",
         "tests/test_run_delivery_supervisor.py"
@@ -58,7 +57,8 @@
         "skills/orchestrate-work/scripts/merge_queue.py",
         "tests/test_merge_queue.py",
         "tests/test_run_delivery.py",
-        "skills/run-delivery/SKILL.md"
+        "skills/run-delivery/SKILL.md",
+        "provenance.lock.json"
       ]
     },
     "lane-3": {
