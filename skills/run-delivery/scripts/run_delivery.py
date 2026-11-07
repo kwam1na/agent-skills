@@ -6628,7 +6628,7 @@ class Doctor:
     def candidate_step(self):
         import merge_queue  # noqa: E402  (the installed release's own, which check_binding put on the path)
         argv = self.binding["candidate"]
-        problems = merge_queue.candidate_problems(argv, lambda relative: (self.root / relative).exists(),
+        problems = merge_queue.candidate_problems(argv, lambda relative: (self.root / relative).is_file(),
                                                   os.environ.get("PATH"))
         if problems:
             return "wrong", (f"the binding's candidate step can't run: {'; '.join(problems)}; fix: correct its argv in "

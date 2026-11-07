@@ -485,7 +485,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "a2ea629e76b7a468e2ad9b3f3e7d1eb2be6e8aa54b2bc9dece36009c1945f599"
+          "sha256": "bb228a6542643f8735995995960c2a1d996d28091aa69c854db0c4d5b88f1f16"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
@@ -1046,7 +1046,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "2d004035c6df3d7036dacc2ce9eac559b593c19eb607109012f47fa8f6f94741"
+          "sha256": "c5dae2e87795e8620f41999baa0d13f6631617b9c25ca73e5996d925308541f4"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

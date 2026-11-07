@@ -4454,7 +4454,8 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         binding = json.loads(path.read_text())
         for argv, problem in (
                 ([sys.executable, "-B", "tools/missing.py", "{candidate}"], "its script tools/missing.py doesn't exist in the repository"),
-                (["no-such-candidate-program", "{candidate}"], "its program no-such-candidate-program isn't on PATH")):
+                (["no-such-candidate-program", "{candidate}"], "its program no-such-candidate-program isn't on PATH"),
+                ([sys.executable, "-B", "./tools", "{candidate}"], "its script ./tools doesn't exist in the repository")):
             with self.subTest(argv=argv):
                 path.write_text(json.dumps({**binding, "candidate": argv}, indent=2))
                 out = self.doctor(fx, "--offline")

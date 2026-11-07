@@ -180,8 +180,8 @@ SCRIPT_SUFFIX = re.compile(r"\.(?:py|sh|bash|zsh|js|mjs|cjs|ts|rb|pl|php|ps1)$",
 INTERPRETER = re.compile(r"^(?:python[\d.]*|pypy[\d.]*|py|node|bash|sh|zsh|dash|ruby|perl|php|deno|bun|pwsh|powershell)"
                          r"(?:\.exe)?$", re.IGNORECASE)
 # An interpreter flag after which comes code or a module, not a script file, and flags whose value is a separate element.
-INLINE_CODE = frozenset({"-c", "-e", "-m", "--eval", "--command", "-Command"})
-FLAG_VALUE = frozenset({"-X", "-W"})
+INLINE_CODE = frozenset({"-c", "-e", "-m", "-p", "--eval", "--print", "--command", "-Command"})
+FLAG_VALUE = frozenset({"-X", "-W", "-I", "-r", "--require", "--import", "--loader"})
 # An element with whitespace, quotes or shell and jq operators is an expression, never a path.
 EXPRESSION = re.compile(r"""[\s'"$|+();&<>`*]""")
 
@@ -217,9 +217,13 @@ def candidate_problems(argv: list[str], present: Callable[[str], bool], path: st
             continue
         if element.startswith("-") or "{" in element or "=" in element or "://" in element or EXPRESSION.search(element):
             continue
+        suffixed = SCRIPT_SUFFIX.search(element) is not None
+        if "/" not in element and not suffixed:
+            # A subcommand (deno run) or a flag's value (bash -o pipefail) never takes the script's place.
+            continue
         operand = not operand_seen
         operand_seen = True
-        if not (operand or SCRIPT_SUFFIX.search(element)):
+        if not (operand or suffixed):
             continue
         found = os.path.exists(element) if os.path.isabs(element) else present(element)
         if not found:

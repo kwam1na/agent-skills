@@ -5822,9 +5822,9 @@ class CandidateStepTests(MergeQueueTestCase):
         runner.binding = {**runner.binding, "candidate": [PY, "current-tools/missing.py", "{candidate}"]}
         self.assertEqual(runner.candidate_step_problems(base_head),
                          ["its script current-tools/missing.py doesn't exist in the repository"])
-        runner.binding = {**runner.binding, "candidate": [PY, "current-tools", "{candidate}"]}
+        runner.binding = {**runner.binding, "candidate": [PY, "./current-tools", "{candidate}"]}
         self.assertEqual(runner.candidate_step_problems(base_head),
-                         ["its script current-tools doesn't exist in the repository"], "a folder isn't a script")
+                         ["its script ./current-tools doesn't exist in the repository"], "a folder isn't a script")
 
     def test_serve_started_on_an_empty_queue_with_a_missing_script_holds_at_once(self) -> None:
         adopter = self.adopter({"candidate": [PY, "./tools/missing.py", "{candidate}"]})
@@ -5879,7 +5879,7 @@ class CandidateStepTests(MergeQueueTestCase):
         self.assertIn("its script tools/missing.py doesn't exist in the repository", hold["reason"])
 
     def test_the_program_check_finds_each_missing_part(self) -> None:
-        present = {"tools/c.py", "run.py"}.__contains__
+        present = {"tools/c.py", "run.py", "tools/c.ts", "tools/c.sh", "tools/c.pl", "tools/c.js"}.__contains__
         cases = [
             ([PY, "tools/c.py", "{candidate}"], []),
             ([PY, "-B", "./tools/c.py", "{candidate}"], []),
@@ -5894,16 +5894,32 @@ class CandidateStepTests(MergeQueueTestCase):
             ([PY, "tools/c.py", "candidate", "--key", "{candidate}", "--prefix", "story/", "--repo", "owner/repo"], []),
             (["sh", "-c", 'git rev-parse refs/heads/"$1"', "sh", "{candidate}"], []),
             ([PY, "-c", 'import sys; print("a/b")', "{candidate}"], []),
-            ([PY, "-m", "tools.candidate", "{candidate}"], []),
+            ([PY, "-m", "tools.candidate", "data/in", "{candidate}"], []),
             # A code flag the check doesn't know: its value reads as the operand, but it's an expression, not a path.
             (["perl", "-E", 'say "a/b.pl"', "{candidate}"], []),
+            # Subcommands and flag values never take the script's place.
+            (["deno", "run", "-A", "tools/c.ts", "{candidate}"], []),
+            (["bun", "run", "tools/c.ts", "{candidate}"], []),
+            (["bash", "-o", "pipefail", "tools/c.sh", "{candidate}"], []),
+            (["perl", "-I", "skills", "tools/c.pl", "{candidate}"], []),
+            (["node", "-r", "ts-node/register", "tools/c.js", "{candidate}"], []),
+            (["node", "-p", "process.argv/2", "{candidate}"], []),
+            (["deno", "run", "-A", "tools/gone.ts", "{candidate}"], ["its script tools/gone.ts doesn't exist in the repository"]),
+            (["bash", "-o", "pipefail", "tools/gone/run", "{candidate}"], ["its script tools/gone/run doesn't exist in the repository"]),
             (["git", "log", "--format=%H", "--jq", '.a + "/" + .b', "{candidate}"], []),
             ([PY, "-X", "importtime", "-X/importtime", "-Wignore", "tools/c.py", "{candidate}"], []),
             ([PY, "-X", "importtime", "tools/gone.py", "{candidate}"], ["its script tools/gone.py doesn't exist in the repository"]),
             (["git", "x/y", "lib/helper.rb", "{candidate}"], ["its script lib/helper.rb doesn't exist in the repository"]),
             ([PY, "tools/c.py", "other/thing.py", "{candidate}"], ["its script other/thing.py doesn't exist in the repository"]),
         ]
+        # Stand-ins for interpreters this machine may not have, first on the PATH the check reads.
+        stand_ins = self.directory / "bin"
+        stand_ins.mkdir()
+        for name in ("deno", "bun", "node", "perl"):
+            (stand_ins / name).write_text("#!/bin/sh\n")
+            (stand_ins / name).chmod(0o755)
+        search = os.pathsep.join([str(stand_ins), os.environ.get("PATH", "")])
         for argv, expected in cases:
             with self.subTest(argv=argv):
-                self.assertEqual(queue.candidate_problems(argv, lambda path: present(path.removeprefix("./")),
-                                                          os.environ.get("PATH")), expected)
+                self.assertEqual(queue.candidate_problems(argv, lambda path: present(path.removeprefix("./")), search),
+                                 expected)
