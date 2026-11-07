@@ -373,6 +373,44 @@ checkout when it is clean, and writes a friction note stub for
 which every lead command names from the supervisor's last pass, and the
 friction note. The steps below are for a delivery without it.
 
+The record marks how far a close got, in `meta.closing`, with two marks that
+each name the `delivery.closed` journal entry they belong to. The `started`
+mark goes into the record with that entry, whoever journals it through the state
+tool, the supervisor or the lead by hand. The `finished` mark is written once
+the close's archive has landed, by the supervisor's close-out or by
+`lead-close`, in the live record and in the archived copy, whose views are
+rendered again to show it. The supervisor's friction note comes after it.
+`closed.json` names the closing entry too.
+
+Only the latest close counts. New work after a close, a `lane.assigned`,
+`candidate.handed` or `check.started` entry, reopens the delivery, and closing
+it again journals a new `delivery.closed`. A mark or a `closed.json` naming an
+earlier entry says nothing of the new close, which archives again. A delivery
+`lead-close` closed stays closed to `lead-run` until a later `delivery.closed`
+is journaled.
+
+- **Finished:** both marks name the closing entry. The status line run-delivery's lead
+  commands print, `doctor`'s supervisor row and the line map say the delivery
+  is closed.
+- **Stopped partway:** the `started` mark names the closing entry, no
+  `finished` mark does, and no close is running. The status line and `doctor`'s
+  supervisor row, as `wrong`, say the close stopped partway and name what
+  finishes it, as the line map's "The close stopped partway" box does.
+  `lead-run --resume` finishes it when the record meets the close condition: no
+  planned story, nothing unmerged, every finish line met and no busy lane. A
+  lane checkout that cleanup hasn't removed yet doesn't count, since the
+  resumed supervisor's own pass removes it. Otherwise `lead-close` finishes it,
+  since a resumed supervisor would hold on what is still open; `lead-close`
+  doesn't wait for the tracker and lists the updates it still owes. A resumed
+  supervisor finds the archive it already made once `closed.json` names the
+  close, and archives afresh otherwise, leaving the earlier folder without the
+  `finished` mark; `lead-close` always archives the record afresh. Marking a
+  close finished again changes nothing.
+- **Unmarked:** no `started` mark names the closing entry, as in a record from
+  before the marks or a `delivery.closed` journaled by a tool that writes none.
+  The close still runs and archives, writes no mark, and reads as closed from
+  `closed.json` alone.
+
 - Read `.agents/delivery-posture.json` at the tip of the delivery's base, fetched
   fresh: never a candidate's copy or your own checkout's. Under `focused`, no run
   starts, a failed run at that head holds nothing, nothing runs in its place, and
@@ -392,6 +430,9 @@ friction note. The steps below are for a delivery without it.
   checkout the epic created.
 - Preserve what the epic taught with `$compound-learning`.
 - Journal `delivery.closed`, and render the views one last time.
+- Mark the close finished with `delivery_state.py close-finished --entry <its
+  journal id>`, and render again; a close left with only its `started` mark
+  reads as stopped partway.
 
 Every unit reached the delivery's base reviewed by two lenses, but the lead's own
 integration work has had no reviewer. The delivery reaches the default branch in

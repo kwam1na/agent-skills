@@ -6065,6 +6065,62 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         self.assertIn("| `review.round` | None: a lane posts each round on its own ticket, as its brief says, and the lead "
                       "posts the integration review's rounds on the epic. |", guide)
 
+    def test_the_close_out_says_how_far_a_close_got_by_its_two_marks(self) -> None:
+        def normal(path: str) -> str:
+            return " ".join((ROOT / path).read_text(encoding="utf-8").split())
+        guide = normal("skills/orchestrate-work/references/orchestration-guide.md")
+        close_out = guide[guide.index("### 8. Close out"):guide.index("## Lane brief template")]
+        for phrase in (
+            "The record marks how far a close got, in `meta.closing`, with two marks that each name the "
+            "`delivery.closed` journal entry they belong to.",
+            "The `started` mark goes into the record with that entry, whoever journals it through the state tool",
+            "The `finished` mark is written once the close's archive has landed, by the supervisor's close-out or by "
+            "`lead-close`, in the live record and in the archived copy",
+            "`closed.json` names the closing entry too.",
+            "Only the latest close counts. New work after a close, a `lane.assigned`, `candidate.handed` or "
+            "`check.started` entry, reopens the delivery",
+            "A mark or a `closed.json` naming an earlier entry says nothing of the new close, which archives again.",
+            "A delivery `lead-close` closed stays closed to `lead-run` until a later `delivery.closed` is journaled.",
+            "**Finished:** both marks name the closing entry.",
+            "**Stopped partway:** the `started` mark names the closing entry, no `finished` mark does, and no close is running.",
+            "`lead-run --resume` finishes it when the record meets the close condition: no planned story, nothing "
+            "unmerged, every finish line met and no busy lane. A lane checkout that cleanup hasn't removed yet doesn't count",
+            "Otherwise `lead-close` finishes it, since a resumed supervisor would hold on what is still open; "
+            "`lead-close` doesn't wait for the tracker and lists the updates it still owes.",
+            "A resumed supervisor finds the archive it already made once `closed.json` names the close, and archives "
+            "afresh otherwise, leaving the earlier folder without the `finished` mark; `lead-close` always archives the "
+            "record afresh. Marking a close finished again changes nothing.",
+            "whoever journals it through the state tool, the supervisor or the lead by hand.",
+            "The supervisor's friction note comes after it.",
+            "**Finished:** both marks name the closing entry. The status line run-delivery's lead commands print, "
+            "`doctor`'s supervisor row and the line map say the delivery is closed.",
+            "The status line and `doctor`'s supervisor row, as `wrong`, say the close stopped partway and name what "
+            "finishes it, as the line map's \"The close stopped partway\" box does.",
+            # The by-hand step reads its entry off the step before it.
+            "- Journal `delivery.closed`, and render the views one last time. - Mark the close finished with "
+            "`delivery_state.py close-finished --entry <its journal id>`",
+            "**Unmarked:** no `started` mark names the closing entry, as in a record from before the marks or a "
+            "`delivery.closed` journaled by a tool that writes none. The close still runs and archives, writes no mark, "
+            "and reads as closed from `closed.json` alone.",
+            "Mark the close finished with `delivery_state.py close-finished --entry <its journal id>`, and render again; "
+            "a close left with only its `started` mark reads as stopped partway.",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, close_out)
+        skill = normal("skills/run-delivery/SKILL.md")
+        for phrase in (
+            "ends with the supervisor's status line, which reads the record's close marks",
+            "a stopped supervisor whose close has both marks says the delivery is closed",
+            "lists the tracker updates still owed without waiting for them",
+            "says the close stopped partway and names `lead-run --resume` or `lead-close` to finish it",
+            "writes the close's `finished` mark in the record and the archived copy once the archive has landed, and "
+            "names the closing entry in `closed.json`. It finishes a close that stopped partway.",
+            "A close with its `started` mark and no `finished` mark, and no supervisor running, is `wrong`: it stopped "
+            "partway, and the row names what finishes it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
+
     def test_the_rule_is_pinned_where_a_delivery_without_the_supervisor_reads_it(self) -> None:
         def normal(path: str) -> str:
             return " ".join((ROOT / path).read_text(encoding="utf-8").split())
