@@ -346,13 +346,28 @@ test("names each check by the title its provider gave, by its id where none was 
   expect(checking.querySelector("img")).toBeNull();
   // A failed check, in the stopped piece's detail and in the failed list, goes by its title too.
   expect(stopped.app.querySelector("#detail").textContent).toContain("Webapp e2e (Playwright) failed: declined card shows the retry button");
+  // An uncut title needs nothing more to read; only a cut one carries the whole.
+  expect([...checking.querySelectorAll(".ck-step[title]")]).toHaveLength(1);
   const failing = JSON.parse(JSON.stringify(document));
   const typecheck = failing.state.meta.checking.now.steps.find((step) => step.label === "webapp typecheck");
   typecheck.state = "failed";
-  const [{ app: failedApp }] = await open(failing);
-  const fails = [...failedApp.querySelectorAll(".ck-fails li")];
+  // The unit tests start first and run alongside the typecheck, which takes the row below.
+  Object.assign(failing.state.meta.checking.now.steps.find((step) => step.label === "checkout unit tests"),
+    { title: "Checkout unit tests (vitest)", startedAt: "2026-10-22T05:04:00Z" });
+  const [failedShown, hovered] = await open(failing, { steps: [{ hover: ".rl-seg.failed" }] });
+  const fails = [...failedShown.app.querySelectorAll(".ck-fails li")];
   expect(fails.map((entry) => entry.querySelector(".ck-f").textContent)).toEqual(["Failed: Webapp typecheck (tsc)"]);
   expect(fails[0].getAttribute("data-check")).toBe("webapp typecheck");
+  // Pointing at a check on the run line names it, and the check it ran alongside, by title.
+  const card = hovered.app.querySelector(".issue-card");
+  expect(card.querySelector("b").textContent).toBe("Webapp typecheck (tsc)");
+  expect([...card.querySelectorAll(".ic-s")].map((line) => line.textContent)).toContain("Ran alongside Checkout unit tests (vitest)");
+  // A running check that finishes since the last draw rests on its result, by title.
+  const later = JSON.parse(JSON.stringify(document));
+  Object.assign(later.state.meta.checking.now.steps.find((step) => step.label === "storefront build"),
+    { state: "passed", finishedAt: "2026-10-22T05:09:30Z" });
+  const [, pushed] = await open(document, { store: {}, steps: [{ push: later }] });
+  expect(pushed.app.querySelector(".ck-run.settled .ck-run-name")?.textContent).toBe("Storefront build <img src=x onerror=alert(1)> passed");
 });
 
 test("says a piece whose check failed is waiting on the main line's rerun, on the line, in its detail and in the now block", async () => {

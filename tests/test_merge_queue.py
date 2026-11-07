@@ -231,6 +231,8 @@ if mode == "titled":
     checks = [check("unit", "src/app.txt", title="Unit tests (webapp) <b>&"), check("plain")]
 if mode == "long-title":
     checks = [check("unit", "src/app.txt", title="Behaviour scenario: " + "x" * 400)]
+if mode == "exact-title":
+    checks = [check("unit", "src/app.txt", title="T" * 200)]
 if mode == "empty-title":
     checks = [check("unit", "src/app.txt", title="")]
 if mode == "prereq":
@@ -3286,6 +3288,40 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertEqual(len(title), 200)
         self.assertTrue(title.startswith("Behaviour scenario: xxx"))
         self.assertTrue(title.endswith("…"))
+
+    def test_a_title_of_exactly_the_records_limit_is_kept_whole(self) -> None:
+        adopter = self.adopter(mode="exact-title")
+        self.candidate(adopter)
+        self.run_queue(adopter, "feature")
+        title = next(check for check in adopter.item("feature")["checks"] if check["id"] == "unit")["title"]
+        self.assertEqual(title, "T" * 200)
+
+    def test_a_titles_change_leaves_a_checks_definition_as_it_was(self) -> None:
+        binding = {"checkTimeoutSeconds": 20, "profiles": {}, "environment": {}, "prepare": [], "hooks": "bypass"}
+        plain = check_entry("unit", "src/app.txt")
+        definitions = {queue.check_definition({**plain, **more}, binding)
+                       for more in ({}, {"title": "Unit tests"}, {"title": "Unit tests, renamed"})}
+        self.assertEqual(len(definitions), 1)
+        self.assertNotEqual(queue.check_definition({**plain, "argv": [PY, "tools/check.py", "other"]}, binding),
+                            definitions.pop())
+
+    def test_a_batchs_first_write_names_its_checks_by_title(self) -> None:
+        adopter = self.adopter(mode="titled")
+        for name, changes in (("first", {"src/lib.txt": "lib two\n"}), ("second", {"src/extra.txt": "extra\n"})):
+            self.candidate(adopter, changes, name=name)
+        patched, seen = self.recorded_steps()
+        with patched:
+            adopter.runner().run_command("batch", ["first", "second"])
+        named = next(steps for steps in seen if any(step["label"] == "unit" for step in steps))
+        self.assertEqual({step["label"]: step.get("title") for step in named}["unit"], "Unit tests (webapp) <b>&")
+        self.assertTrue(all(step["state"] == "pending" for step in named))
+
+    def test_a_binding_check_with_an_empty_title_is_refused(self) -> None:
+        adopter = self.adopter({"alwaysRun": [check_entry("always", title="")]})
+        self.candidate(adopter)
+        last = self.run_queue(adopter, "feature")[-1].document()
+        self.assertEqual(last["outcome"], "refused", last)
+        self.assertIn("title", last["stop"]["detail"])
 
     def test_an_empty_title_makes_the_providers_answer_malformed(self) -> None:
         adopter = self.adopter(mode="empty-title")
