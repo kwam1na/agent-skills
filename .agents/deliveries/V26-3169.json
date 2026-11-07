@@ -35,7 +35,8 @@
         "tests/test_orchestration_adopter.py",
         "skills/orchestrate-work/references/orchestration-guide.md",
         "skills/orchestrate-work/scripts/render_state.py",
-        "tests/test_orchestration_render.py"
+        "tests/test_orchestration_render.py",
+        "provenance.lock.json"
       ]
     },
     "lane-2": {
@@ -50,7 +51,6 @@
         "tests/test_run_delivery_tracker.py",
         "skills/run-delivery/templates/round-brief.md",
         "tests/test_round_brief_template_corpus.py",
-        "provenance.lock.json",
         "skills/run-delivery/SKILL.md",
         "tests/test_run_delivery_plan_review.py"
       ]
@@ -497,6 +497,17 @@
         {
           "id": "v26-3215-done",
           "text": "The base rerun retries a declared flake once before base_broken, keeps its log beside the candidate's check log and links it from the stop, and base.broken names the rerun's failing tests in check.failed's shape"
+        }
+      ]
+    },
+    "V26-3218": {
+      "title": "The adoption guide's end-to-end test sometimes finds a lane's checkout still there after its merge",
+      "lane": "lane-3",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3218-done",
+          "text": "The cause of 'the lane's checkout outlived its merge' is stated with evidence, the guide's end-to-end row passes 20 runs in a row under load, and V26-3108's supervisor rows still pass"
         }
       ]
     }
