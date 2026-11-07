@@ -442,7 +442,8 @@ checks `signedIn` (falling back to `ready`) rather than `ready`.
 - Each `failed` entry has its time (`at`). A fail check needs every failure to come before the first eval.
 
 **The build.** `run_delivery.py build` writes `<artifact>/.flow-build.json` with `{head, tree}`, and so does a gate that is
-the build. The serve command must serve that file at `/.flow-build.json`.
+the build. It takes a story key, or none for the integration build of the whole delivery, which fills `{key}` with the
+delivery's own key. The serve command must serve that file at `/.flow-build.json`.
 
 `run_delivery.py adapter-test` runs a repository's serve and check adapters against a fixture page (the skill's `assets/adapter-fixture/` folder), under
 the lease, and fails if they break this contract.

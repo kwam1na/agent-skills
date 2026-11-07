@@ -3056,6 +3056,29 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
                     proc.kill()
                     proc.wait()
 
+    # -- the integration build ------------------------------------------------------------------------------
+
+    def test_build_without_a_story_key_builds_the_delivery_under_its_own_key(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        m = fx.main
+        conf = json.loads((m / ".agents/run-delivery.json").read_text())
+        conf["inApp"]["build"]["argv"] = ["sh", "-c", 'mkdir -p out && cp src/*.txt out/ && printf %s "$0" > out/key.txt', "{key}"]
+        (m / ".agents/run-delivery.json").write_text(json.dumps(conf, indent=2))
+        commit(m, "FX-1: the build names its key")
+        fx.flow("lead-init", cwd=m)
+        head = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        code, out = fx.flow("build", cwd=m)
+        expect(code == 0 and f"built {head[:10]}" in out, out)
+        self.assertEqual((m / "out/key.txt").read_text(), "FX-1")
+        self.assertEqual(json.loads((m / "out/.flow-build.json").read_text())["head"], head)
+        # A story's build still names the story, and a key that is not one of the delivery's is still refused.
+        code, out = fx.flow("build", "FX-2", cwd=m)
+        expect(code == 0, out)
+        self.assertEqual((m / "out/key.txt").read_text(), "FX-2")
+        code, out = fx.flow("build", "FX-9", cwd=m)
+        expect(code == 2 and "FX-9 is not a story of FX-1" in out, out)
+
     # -- sign-in values -------------------------------------------------------------------------------------
 
     def test_adapter_arguments_that_look_like_sign_in_values_are_refused(self) -> None:

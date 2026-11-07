@@ -391,5 +391,25 @@ class CorpusValidationTests(unittest.TestCase):
         self.assertEqual(validate_corpus(root).findings, ())
 
 
+    def test_tracker_properties_are_validated_without_repository_instructions(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        (root / "AGENTS.md").unlink()
+        properties = root / ".agents" / "tracker-properties.json"
+        properties.write_text('{"project": "Example"}\n', encoding="utf-8")
+
+        findings = validate_corpus(root).findings
+
+        self.assertEqual([finding.rule_id for finding in findings], ["tracker.contract"])
+        self.assertEqual(findings[0].artifact, ".agents/tracker-properties.json")
+        self.assertIn("omit statuses, team", findings[0].message)
+
+    def test_valid_tracker_properties_without_repository_instructions_pass(self) -> None:
+        temporary, root = self.copied_corpus()
+        self.addCleanup(temporary.cleanup)
+        (root / "AGENTS.md").unlink()
+
+        self.assertEqual(validate_corpus(root).findings, ())
+
 if __name__ == "__main__":
     unittest.main()
