@@ -72,8 +72,8 @@ the command reference.
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py doctor [--delivery <key>] [--offline] [--run-adapters] [--run-gates]
 ```
 
-It prints one line per check: `ok`, `missing` or `wrong` with its fix, or `skipped` with the check it depends on or the
-flag that turns it on. A check whose prerequisite failed is skipped, so one missing prerequisite shows as one line.
+It prints one line per check: `ok`, `missing` or `wrong` with its fix, `warn` for a finding that doesn't fail it, or
+`skipped` with the check it depends on or the flag that turns it on. A check whose prerequisite failed is skipped, so one missing prerequisite shows as one line.
 It exits 0 when no check is `missing` or `wrong`, 1 when one is, and 2 on a usage error or a non-POSIX host.
 
 | Check | When |

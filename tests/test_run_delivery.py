@@ -4439,7 +4439,8 @@ class RunDeliveryDoctorTests(unittest.TestCase):
                                  "- Scenarios: it loads; it fails.\n- Files: `src/one-new.txt`, `src/two.txt`, `tools/fake_check.py`, "
                                  "`app.txt`, `refs/notes.md`, `run_delivery.py`, `run_delivery.py gate`, `/api/two$`.\n")
                         .replace("| Copy | \"Couldn't be loaded.\" |\n",
-                                 "| Copy | \"Couldn't be loaded.\" |\n| S1's check | `tools/fake_forge.py` |\n"))
+                                 "| Copy | \"Couldn't be loaded.\" |\n| S1's check | `tools/fake_forge.py` |\n"
+                                 "| Lane 2's files | `tools/lane-two.py` | `src/two-only.txt`, after FX-2 |\n"))
         (m / "docs/refs").mkdir()
         (m / "docs/refs/notes.md").write_text("notes\n")
         commit(m, "FX-1: the plan names files")

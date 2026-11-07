@@ -4080,12 +4080,18 @@ def tracked_at_base(c) -> list[str]:
 def story_named_files(c, key: str, tracked: list[str]) -> list[str]:
     """The files a story's plan section, and the table rows naming it, name in backticks: a full path, a directory
     (trailing /), a glob, or a bare file name, resolved against the base's files. A bare name that matches several takes
-    the lane's own match when there is one; a path not tracked yet is the new file it names."""
+    the lane's own match when there is one; a path not tracked yet is the new file it names. A row names the story when
+    a cell with no backticked text does, and its files come from its other cells, so a passing mention in a files cell
+    ("after V26-1") doesn't hand that row's files to the story."""
     text = c.shelf.text(c.plan) or ""
     own = story_section(plan_sections(text), key) or ""
     names = {key, c.label(key)}
-    rows = [line for line in text.splitlines() if line.startswith("|")
-            and any(re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", line) for n in names)]
+    naming = lambda cell: "`" not in cell and any(re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", cell) for n in names)
+    rows = []
+    for line in text.splitlines():
+        cells = line.strip().strip("|").split("|") if line.startswith("|") else []
+        if any(naming(cell) for cell in cells):
+            rows += [cell for cell in cells if not naming(cell)]
     lane = c.lane_of(key)
     found: set[str] = set()
     for token in re.findall(r"`([^`\n]+)`", "\n".join([own, *rows])):
