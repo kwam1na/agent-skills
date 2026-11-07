@@ -5755,7 +5755,17 @@ class CandidateStepTests(MergeQueueTestCase):
     def test_a_candidate_command_that_runs_too_long_says_it_timed_out(self) -> None:
         adopter = self.adopter({"candidate": self.script("import time; time.sleep(30)"), "checkTimeoutSeconds": 1})
         detail, _ = self.stop(adopter)
-        self.assertIn("the candidate command timed out after 1s", detail)
+        self.assertTrue(detail.endswith("the candidate command timed out after 1s"), detail)
+
+    def test_a_failing_command_is_never_resolved_even_with_a_valid_answer(self) -> None:
+        code = ("import subprocess, sys; subprocess.run([sys.executable, 'tools/candidate.py', sys.argv[1]], check=True)"
+                "; sys.exit(3)")
+        detail, _ = self.stop(self.adopter({"candidate": self.script(code)}))
+        self.assertIn("the candidate command exited 3; stdout: {", detail)
+
+    def test_a_failing_command_that_explains_on_stdout_shows_it(self) -> None:
+        detail, _ = self.stop(self.adopter({"candidate": self.script("print('no such PR'); import sys; sys.exit(1)")}))
+        self.assertTrue(detail.endswith("the candidate command exited 1; stdout: no such PR"), detail)
 
     def test_an_invalid_branch_is_named(self) -> None:
         code = "import json; print(json.dumps({'branch': 'bad..name', 'head': '0' * 40}))"
@@ -5790,6 +5800,31 @@ class CandidateStepTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("feature")["stage"], "queued")
         self.assertIn("serve cannot use its setup: the binding's candidate step can't run: its script tools/missing.py "
                       "doesn't exist in the repository.", self.held(adopter))
+
+    def test_a_script_reached_through_a_committed_symlink_holds_nothing(self) -> None:
+        # As an installed release's .agent-skills/current is: the candidate step runs in a checkout, where it resolves.
+        adopter = self.adopter()
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        run("checkout", "--quiet", "-B", "base-work", "origin/main", cwd=adopter.lane)
+        os.symlink("tools", adopter.lane / "current-tools")
+        adopter.write(adopter.lane, ".agents/orchestration.json", json.dumps(
+            {**adopter.binding, "candidate": [PY, "-B", "current-tools/candidate.py", "{candidate}"]}, indent=2) + "\n")
+        run("add", "--all", cwd=adopter.lane)
+        run("commit", "--quiet", "-m", "a linked tools folder", cwd=adopter.lane)
+        run("push", "--quiet", "origin", "base-work:main", cwd=adopter.lane)
+        self.candidate(adopter)
+        results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"].get("hold"), [r.document()["stop"] for r in results])
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+        runner = adopter.runner()
+        base_head = runner.load()
+        self.assertEqual(runner.candidate_step_problems(base_head), [])
+        runner.binding = {**runner.binding, "candidate": [PY, "current-tools/missing.py", "{candidate}"]}
+        self.assertEqual(runner.candidate_step_problems(base_head),
+                         ["its script current-tools/missing.py doesn't exist in the repository"])
+        runner.binding = {**runner.binding, "candidate": [PY, "current-tools", "{candidate}"]}
+        self.assertEqual(runner.candidate_step_problems(base_head),
+                         ["its script current-tools doesn't exist in the repository"], "a folder isn't a script")
 
     def test_serve_started_on_an_empty_queue_with_a_missing_script_holds_at_once(self) -> None:
         adopter = self.adopter({"candidate": [PY, "./tools/missing.py", "{candidate}"]})
@@ -5855,6 +5890,18 @@ class CandidateStepTests(MergeQueueTestCase):
             (["tools/run.sh", "{candidate}"], ["its program tools/run.sh isn't in the repository"]),
             ([PY, "-c", "print(1)", "--out=x/y.py", "https://example.test/a.py", "run.py", "{candidate}"], []),
             ([PY, "lost.py", "{candidate}"], ["its script lost.py doesn't exist in the repository"]),
+            # Values with a slash that aren't the script, inline code and expressions aren't paths.
+            ([PY, "tools/c.py", "candidate", "--key", "{candidate}", "--prefix", "story/", "--repo", "owner/repo"], []),
+            (["sh", "-c", 'git rev-parse refs/heads/"$1"', "sh", "{candidate}"], []),
+            ([PY, "-c", 'import sys; print("a/b")', "{candidate}"], []),
+            ([PY, "-m", "tools.candidate", "{candidate}"], []),
+            # A code flag the check doesn't know: its value reads as the operand, but it's an expression, not a path.
+            (["perl", "-E", 'say "a/b.pl"', "{candidate}"], []),
+            (["git", "log", "--format=%H", "--jq", '.a + "/" + .b', "{candidate}"], []),
+            ([PY, "-X", "importtime", "-X/importtime", "-Wignore", "tools/c.py", "{candidate}"], []),
+            ([PY, "-X", "importtime", "tools/gone.py", "{candidate}"], ["its script tools/gone.py doesn't exist in the repository"]),
+            (["git", "x/y", "lib/helper.rb", "{candidate}"], ["its script lib/helper.rb doesn't exist in the repository"]),
+            ([PY, "tools/c.py", "other/thing.py", "{candidate}"], ["its script other/thing.py doesn't exist in the repository"]),
         ]
         for argv, expected in cases:
             with self.subTest(argv=argv):

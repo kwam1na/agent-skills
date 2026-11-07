@@ -176,17 +176,26 @@ def scrubbed_tail(text: str, environment: dict[str, str], limit: int = TAIL_LIMI
 
 
 SCRIPT_SUFFIX = re.compile(r"\.(?:py|sh|bash|zsh|js|mjs|cjs|ts|rb|pl|php|ps1)$", re.IGNORECASE)
+# A program whose first operand is the script it runs.
+INTERPRETER = re.compile(r"^(?:python[\d.]*|pypy[\d.]*|py|node|bash|sh|zsh|dash|ruby|perl|php|deno|bun|pwsh|powershell)"
+                         r"(?:\.exe)?$", re.IGNORECASE)
+# An interpreter flag after which comes code or a module, not a script file, and flags whose value is a separate element.
+INLINE_CODE = frozenset({"-c", "-e", "-m", "--eval", "--command", "-Command"})
+FLAG_VALUE = frozenset({"-X", "-W"})
+# An element with whitespace, quotes or shell and jq operators is an expression, never a path.
+EXPRESSION = re.compile(r"""[\s'"$|+();&<>`*]""")
 
 
 def candidate_problems(argv: list[str], present: Callable[[str], bool], path: str | None) -> list[str]:
     """What keeps the binding's candidate step from running, before any subject is resolved: its program not on
-    ``path`` or not where its path says, and a script argument (an absolute or repository-relative path) that
-    ``present`` doesn't find. ``present`` answers for a repository-relative path."""
+    ``path`` or not where its path says, and a script it names that doesn't exist. A script is an interpreter's own
+    operand (python3 -B tools/candidate.py), or any element with a script's extension; other values with a slash, such
+    as --prefix story/, inline code, and expressions aren't paths. ``present`` answers for a repository-relative path."""
     if not argv:
         return ["the candidate argv is empty"]
     problems = []
     program = argv[0]
-    if PLACEHOLDER.match(program) or "{" in program:
+    if "{" in program:
         pass
     elif os.path.isabs(program):
         if not os.path.exists(program):
@@ -196,10 +205,21 @@ def candidate_problems(argv: list[str], present: Callable[[str], bool], path: st
             problems.append(f"its program {program} isn't in the repository")
     elif shutil.which(program, path=path) is None:
         problems.append(f"its program {program} isn't on PATH")
+    interpreter = INTERPRETER.match(os.path.basename(program)) is not None
+    operand_seen, skip = not interpreter, False
     for element in argv[1:]:
-        if "{" in element or element.startswith("-") or "=" in element or "://" in element:
+        if skip:
+            skip = False
             continue
-        if not (os.path.isabs(element) or "/" in element or SCRIPT_SUFFIX.search(element)):
+        if element in INLINE_CODE or element in FLAG_VALUE:
+            skip = True
+            operand_seen = operand_seen or element in INLINE_CODE
+            continue
+        if element.startswith("-") or "{" in element or "=" in element or "://" in element or EXPRESSION.search(element):
+            continue
+        operand = not operand_seen
+        operand_seen = True
+        if not (operand or SCRIPT_SUFFIX.search(element)):
             continue
         found = os.path.exists(element) if os.path.isabs(element) else present(element)
         if not found:
@@ -1413,8 +1433,8 @@ class Runner:
         return branch, resolved["head"]
 
     def candidate_said(self, completed: Completed, resolved: object, timeout: float) -> str:
-        """Why the candidate step gave no branch and head, as a stop says it: its exit, the end of its stderr, and its
-        stdout when that isn't the JSON answer, each scrubbed and bounded like a failed check's words."""
+        """Why the candidate step gave no branch and head, as a stop says it: its exit, the end of its stderr, and the
+        end of what it printed, each scrubbed and bounded like a failed check's words."""
         env = self.environment()
         if completed.timed_out:
             parts = [f"the candidate command timed out after {timeout:g}s"]
@@ -1427,7 +1447,7 @@ class Runner:
         error = scrubbed_tail(completed.stderr, env)
         if error:
             parts.append(f"stderr: {error}")
-        if completed.stdout.strip() and (resolved is None or completed.returncode == 0):
+        if completed.stdout.strip():
             parts.append(f"stdout: {scrubbed_tail(completed.stdout, env, CANDIDATE_OUT_LIMIT)}")
         if len(parts) == 1 and not completed.timed_out:
             parts.append("it printed nothing")
@@ -1435,8 +1455,13 @@ class Runner:
 
     def candidate_step_problems(self, base_head: str) -> list[str]:
         """What keeps the binding's candidate step from running at this base: see candidate_problems."""
-        # A path git reads from the top level, where the runner's git runs, so ./tools/x.py is tools/x.py.
-        present = lambda relative: self.git("cat-file", "-e", f"{base_head}:{relative}", check=False).returncode == 0
+        def present(relative: str) -> bool:
+            # Through symlinks, as the checkout the step runs in resolves them (.agent-skills/current is one), and
+            # from the top level, where the runner's git runs, so ./tools/x.py is tools/x.py. Only a file counts.
+            looked = self.git("cat-file", "--batch-check", "--follow-symlinks", stdin=f"{base_head}:{relative}\n",
+                              check=False)
+            parts = looked.stdout.split("\n", 1)[0].split()
+            return looked.returncode == 0 and len(parts) == 3 and parts[1] == "blob"
         return candidate_problems(self.binding["candidate"], present, self.environment().get("PATH"))
 
     # -- sync --------------------------------------------------------------

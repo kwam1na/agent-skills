@@ -284,7 +284,7 @@ supervisor's.
   | Code | What the lead does |
   | --- | --- |
   | `candidate_moved` | The lane pushed after hand-off. Check the new head as a fresh hand-off, write it as `head`, and re-queue. |
-  | `candidate_unknown`, `candidate_unresolved` | Add the candidate to `queue[]`, or fix its reference, and re-queue. A `candidate_unresolved` stop carries the candidate command's exit code or timeout, the end of its stderr, and its stdout when that isn't the JSON answer, scrubbed of secrets. |
+  | `candidate_unknown`, `candidate_unresolved` | Add the candidate to `queue[]`, or fix its reference, and re-queue. A `candidate_unresolved` stop carries the candidate command's exit code or timeout, the end of its stderr, and the end of its stdout, scrubbed of secrets. |
   | `already_merged` | Nothing to do; mark the lane `done` only if it was left `handed` (see the merge rule below). |
   | `source_conflict` | Return the candidate to its lane to resolve the listed paths. |
   | `lease_required` | Obtain the named lease through the lease sequence, record the lead (the `--lead` name) as holder, and re-queue. |
