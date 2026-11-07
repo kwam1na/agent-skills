@@ -405,7 +405,7 @@
     },
     "V26-3088": {
       "title": "Prove the merge queue's candidate step at setup, and show why it failed",
-      "lane": "lane-1",
+      "lane": "lane-2",
       "inApp": "none",
       "criteria": [
         {
