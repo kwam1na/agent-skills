@@ -411,6 +411,12 @@ three steps, with the supervisor or without it:
    under the delivery as `review.round`, with the delivery's key as its subject.
 3. **Merge to the default branch** only once that review is aligned.
 
+Where the lead closes by hand, take these steps before journaling
+`delivery.closed`, so the review's rounds reach the archived record. Under the
+supervisor, which archives the record once nothing holds the close, the rounds
+land in the live record after the archive, and the lead's post of each round on
+the epic is their durable trace.
+
 ## Lane brief template
 
 The lead writes one brief per epic and sends it to every lane with its first

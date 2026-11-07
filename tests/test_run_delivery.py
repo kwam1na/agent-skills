@@ -5885,7 +5885,11 @@ class DeliveryPostureReaderTests(unittest.TestCase):
             "A delivery whose integration changed nothing beyond removing the delivery-only files still runs it, on that removal",
             "Findings are triaged as a lane's are",
             "each round is journaled under the delivery as `review.round`, with the delivery's key as its subject",
-            "only once that review is aligned",
+            "3. **Merge to the default branch** only once that review is aligned.",
+            "Where the lead closes by hand, take these steps before journaling `delivery.closed`, so the review's rounds "
+            "reach the archived record. Under the supervisor, which archives the record once nothing holds the close, "
+            "the rounds land in the live record after the archive, and the lead's post of each round on the epic is "
+            "their durable trace.",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, close_out)
