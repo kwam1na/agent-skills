@@ -4082,7 +4082,7 @@ def story_named_files(c, key: str, tracked: list[str]) -> list[str]:
     (trailing /), a glob, or a bare file name, resolved against the base's files. A bare name that matches several takes
     the lane's own match when there is one; a path not tracked yet is the new file it names. A row names the story when
     a cell with no backticked text does, and its files come from its other cells, so a passing mention in a files cell
-    ("after V26-1") doesn't hand that row's files to the story."""
+    (such as "after" another story's key) doesn't hand that row's files to the story."""
     text = c.shelf.text(c.plan) or ""
     own = story_section(plan_sections(text), key) or ""
     names = {key, c.label(key)}
