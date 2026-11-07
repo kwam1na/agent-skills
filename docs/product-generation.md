@@ -181,11 +181,20 @@ Setting `PYTHONDONTWRITEBYTECODE=1` for the suite stops it being written.
 ### Where the stored runtime comes from
 
 `product-runtime/` is the build output of `kwam1na/agent-delivery-harness`, now at
-`v26-technologies/agent-delivery-harness`. It declares 0.7.8 and was built with
-`npm run product:build-runtime` from a clean checkout of `b43281987d8bbb87e4b6d26c7cb636da5f7f4fbe`, the tip of that
-repository's `runtime/0.7.8` branch. That branch is `fa63884` with the declared posture
-cherry-picked. It leaves out the two later commits on that repository's `main`, whose work
-isn't finished, and a later runtime built from `main` picks them up.
+`v26-technologies/agent-delivery-harness`. It declares 0.8.0 and was built with
+`npm run product:build-runtime` from a clean checkout of
+`18523d91ff3843c5dbef6f2e85275d865cba0b4e`, that repository's `main` at the merge of its
+0.8.0 version bump, which the `v0.8.0` tag names. Unlike the 0.7.8 runtime before it, which
+was a cherry-pick branch, it is `main` itself, so it carries everything merged there up to
+the bump, including opt-in scoped-execution budgets and fail-fast, one warm snapshot base
+shared per setup key, finite physical source snapshots and bounded validation reads. Its
+`prepare` also changes what it checks: with no mechanical check selected, it validates the
+preparation without opening a scoped session and leaves runtime and source identity to
+`gate`, which still refuses what `prepare` used to.
+
+`HARNESS_VERSION` 0.8.0 is part of every preparation fingerprint, so it invalidates
+receipts prepared by an earlier runtime: an adopter's in-flight deliveries prepare again
+after applying it.
 
 ### Before the first version tag
 
