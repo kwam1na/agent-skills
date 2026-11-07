@@ -782,6 +782,12 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         setup_delivery(fx)
         code, out = fx.flow("lead-init", cwd=m)
         self.assertEqual(code, 0, out)
+        # The story's plan part mentions the lane's own heading, which a re-seed mustn't take for the lane's.
+        plan = m / "docs/plan.md"
+        plan.write_text(plan.read_text().replace("- Scenarios: it loads; it fails.\n",
+                                                 "- Scenarios: it loads; it fails.\n- Note: `## Evidence so far` heads the lane's part.\n"))
+        commit(m, "FX-1: a note in the plan")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
         wt = fx.lane("FX-2")
         (wt / "src/one.txt").write_text("one\n")
         commit(wt, "FX-2: one")
@@ -797,12 +803,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         first = base()
         lenses = fx.lenses(wt)
         self.assertIn(f"git show {first}:docs/plan.md", (review / f"brief-r1-{lenses[0][1][0]}.md").read_text())
-        # Between the rounds the lead changes the plan on the base, and rules on the round's finding without a lane fix.
-        plan = m / "docs/plan.md"
-        plan.write_text(plan.read_text().replace("- Scenarios: it loads; it fails.", "- Scenarios: it loads; it fails; NEW-SCENARIO."))
-        commit(m, "FX-1: the plan changes")
-        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
-        sh("git", "fetch", "-q", "origin", cwd=wt)
+        # The lead rules on the round's finding without a lane fix.
         short0 = lenses[0][1][0]
         write_results(review, 1, "FX-2", lenses, findings=[{"id": f"{short0}-r1-1", "severity": "P1", "summary": "fix"}], only=0)
         write_results(review, 1, "FX-2", lenses, only=1)
@@ -815,16 +816,65 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertIn("note the ruling in context.md's Evidence so far", out)
         sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m",
            "FX-2: the lead ruled the finding out of scope", cwd=wt)
+        # Then the lead changes the plan on the base, from a clone the lane shares no refs with, after every command that
+        # fetches it here: only round 2's own review-prepare can bring it before seeding.
+        clone = fx.tmp / "lead-elsewhere"
+        sh("git", "clone", "-q", "--branch", "feature/FX-1", fx.origin, clone)
+        elsewhere = clone / "docs/plan.md"
+        elsewhere.write_text(elsewhere.read_text().replace("- Scenarios: it loads; it fails.\n",
+                                                           "- Scenarios: it loads; it fails; NEW-SCENARIO.\n"))
+        commit(clone, "FX-1: the plan changes")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=clone)
         code, out = fx.flow("review-prepare", "FX-2", "--round", "2", cwd=wt)
         self.assertEqual(code, 0, out)
         seeded = context.read_text()
         self.assertIn("NEW-SCENARIO", seeded, "round 2's context kept round 1's plan")
         self.assertIn("- the lane's own evidence", seeded, "re-seeding the plan lost the lane's evidence")
-        self.assertNotEqual(base(), first)
+        self.assertNotEqual(base(), first, "review-prepare didn't fetch the base before seeding")
         brief = (review / f"brief-r2-{short0}.md").read_text()
         self.assertIn(f"git show {base()}:docs/plan.md", brief)
         self.assertIn("NEW-SCENARIO", brief)
+        # Round 1's plan part and header are gone, not kept beside round 2's.
+        for text in (seeded, brief):
+            self.assertNotIn(first, text, "round 1's base commit is still named")
+            self.assertNotIn("- Scenarios: it loads; it fails.\n", text, "round 1's plan line is still there")
+            self.assertEqual(text.count("## Ticket contract and plan unit"), 1, text)
+            self.assertEqual(text.count("heads the lane's part"), 1, text)
         self.assertIn("Every finding this lens raised in an earlier round that is still open must appear", brief)
+
+    def test_a_context_the_lane_wrote_its_own_way_is_left_as_it_is(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        context = wt / ".orchestration/review/FX-2/context.md"
+        context.parent.mkdir(parents=True, exist_ok=True)
+        context.write_text("- evidence")
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(context.read_text(), "- evidence", "a context without the evidence heading was re-seeded")
+
+    def test_a_plan_the_base_doesnt_hold_falls_back_to_the_lanes_copy_and_says_no_commit(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        sh("git", "rm", "-q", "docs/plan.md", cwd=m)
+        commit(m, "FX-1: the plan moves off the base")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 2, out)
+        seeded = (wt / ".orchestration/review/FX-2/context.md").read_text()
+        self.assertIn("Delivery base `origin/feature/FX-1`; the plan is `docs/plan.md` (approved, binding).", seeded)
+        self.assertNotIn("git show", seeded, "the context names a commit that doesn't hold the plan")
+        self.assertIn("- Scenarios: it loads; it fails.", seeded, "the lane's own copy of the plan wasn't read")
 
     def test_patches_apply_unstripped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

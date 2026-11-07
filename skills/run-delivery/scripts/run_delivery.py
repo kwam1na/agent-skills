@@ -838,9 +838,10 @@ def seed_context(key: str) -> Path:
             f"## Ticket contract and plan unit\n\n{plan_context(key, plan)}\n\n")
     if path.exists():
         text = path.read_text()
-        at = text.find(EVIDENCE_HEADING)
-        if at != -1:
-            path.write_text(head + text[at:])
+        # The lane's heading is a line of its own, and the last such line: the plan's part may mention it too.
+        found = list(re.finditer(rf"^{re.escape(EVIDENCE_HEADING)}[ \t]*$", text, re.M))
+        if found:
+            path.write_text(head + text[found[-1].start():])
         return path
     path.write_text(head + f"{EVIDENCE_HEADING}\n\n"
                     f"{CONTEXT_TODO}: the test-first or characterization runs (red then green), the gate results "
