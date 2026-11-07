@@ -5082,7 +5082,6 @@ def lead_close(args) -> None:
             done.append(what)
         else:
             left.append(f"the final render failed: {(rendered.stderr or rendered.stdout).strip()[-300:]}")
-    close_stop("lead-close render")
     render("rendered the views one last time")
     owed = tracker_owed(c, load_state(), closed)
     if owed:
@@ -5090,13 +5089,11 @@ def lead_close(args) -> None:
                     "for the tracker; post them, or let the publisher run")
     archive, archived = archive_delivery(c)
     done += archived
-    close_stop("lead-close archive")
     done += finish_close(c, closed, archive)
     c.flow_log.mkdir(parents=True, exist_ok=True)
     lead_file(c, "closed.json").write_text(json.dumps({"archive": str(archive), "said": archived, "by": "lead-close",
                                                        "at": now(), "entry": closed["id"], **closed_full_health(c)},
                                                       indent=2) + "\n")
-    close_stop("lead-close closed.json")
     render("rendered the views again, with the close marked finished")
     for pid, command in delivery_processes(lead, c.state, c.delivery, c.main):
         try:
@@ -5854,13 +5851,6 @@ def tracker_owed(c, doc: dict, closed: dict) -> str | None:
     return None
 
 
-def close_stop(point: str) -> None:
-    """Where a test stops a close, as a kill at that point would leave it: RUN_DELIVERY_CLOSE_STOP names the point."""
-    if os.environ.get("RUN_DELIVERY_CLOSE_STOP") == point:
-        sys.stdout.flush()
-        os._exit(9)
-
-
 def closed_step(c) -> tuple[bool, str]:
     """Journal delivery.closed once for this close, render, then wait until the tracker has every entry through it.
     A delivery closed, reopened by new work and closed again is closed by a new entry."""
@@ -5958,7 +5948,6 @@ def archive_step(c, closed: dict) -> tuple[Path, list[str]]:
         said.append(f"released the lead's leases: {', '.join(str(lease.get('id')) for lease in held)}")
     archive, archived = archive_delivery(c)
     said += archived
-    close_stop("archive")
     operator = c.main
     branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=operator, check=False)
     dirty = git("status", "--porcelain", cwd=operator, check=False)
@@ -5970,7 +5959,6 @@ def archive_step(c, closed: dict) -> tuple[Path, list[str]]:
         said.append(f"left {operator} where it is: " + ("it has uncommitted changes" if dirty else f"it is on {branch}"))
     marker.write_text(json.dumps({"archive": str(archive), "said": said, "at": now(), "entry": closed["id"],
                                   **closed_full_health(c)}, indent=2) + "\n")
-    close_stop("closed.json")
     return archive, said
 
 
@@ -5997,13 +5985,11 @@ def close_out(c, flapping: tuple[str, ...] = ()) -> tuple[list[str], bool]:
         ok, line = step(c)
         said.append(line)
         if not ok:
-            close_stop("tracker")
             return said, False
     closed = latest_close(load_state()["journal"])
     archive, archived = archive_step(c, closed)
     said += archived
     said += finish_close(c, closed, archive)
-    close_stop("friction")
     # Read once the steps above ran, so a filing the publisher refused for good during them is listed.
     shown = [item["text"] for item in needs_you(c, load_state(), flapping, closing=True) if not item["holding"]]
     note = friction_step(c, archive, archived, shown)

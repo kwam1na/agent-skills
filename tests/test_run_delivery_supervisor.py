@@ -2048,7 +2048,13 @@ class CloseStoppedPartwayTests(unittest.TestCase):
     closable = SupervisorTrackerTests.closable
 
     def stopped_at(self, fx: Fixture, point: str, *command: str) -> str:
-        code, out = fx.flow(*(command or ("lead-run", "--once")), cwd=fx.main, env={**fx.env, "RUN_DELIVERY_CLOSE_STOP": point})
+        """Run the real command, stopped at `point` as a kill there would stop it: a sitecustomize shim, first on the
+        command's PYTHONPATH, watches run_delivery.py's own calls and exits at the named one. Nothing ships."""
+        shim = fx.tmp / f"stop-{point.replace(' ', '-').replace('.', '-')}"
+        shim.mkdir(exist_ok=True)
+        (shim / "sitecustomize.py").write_text(STOP_SHIM.replace("POINT", repr(CLOSE_STOPS[point])))
+        env = {**fx.env, "PYTHONPATH": os.pathsep.join(filter(None, [str(shim), fx.env.get("PYTHONPATH")]))}
+        code, out = fx.flow(*(command or ("lead-run", "--once")), cwd=fx.main, env=env)
         self.assertEqual(code, 9, out)
         return out
 
@@ -2071,7 +2077,7 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         said = self.status(fx)
         self.assertIn(f"stopped partway through the close; finish it with", said)
         self.assertTrue(said.endswith(command) if command == "lead-run --resume" else command in said, said)
-        code, out = fx.flow("doctor", "--offline", cwd=fx.main)
+        code, out = fx.flow("doctor", "--offline", "--delivery", "FX-1", cwd=fx.main)
         self.assertIn("stopped partway through the close", out)
 
     def assert_finished(self, fx: Fixture) -> Path:
@@ -2094,7 +2100,9 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                  "the resumed supervisor to finish the close")
         wait_for(lambda: not read_lock_held(fx), "the supervisor to stop once the delivery closed")
         archive = self.assert_finished(fx)
-        self.assertEqual(len([text for text in epic_comments(self.backend) if "Delivery closed" in text]), 1)
+        # The tracker has every close, each once.
+        self.assertEqual(len([text for text in epic_comments(self.backend) if "Delivery closed" in text]),
+                         len(kinds(fx, "delivery.closed")))
         return archive
 
     def setUp(self) -> None:
@@ -2109,7 +2117,9 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         fx = self.closable_fixture()
         with self.backend.edit() as store:
             store["failures"].append({"op": "comment", "ticket": "FX-1", "status": 409, "times": 1})
-        self.stopped_at(fx, "tracker")
+        # The pass ends waiting on the tracker, and nothing runs another: the supervisor stopped there.
+        last = self.once(fx)
+        self.assertTrue(any(line.startswith("waiting for the tracker publisher") for line in last.get("closeOut", [])), last)
         self.assertFalse((fx.tmp / "flow-log/FX-1.closed.json").exists())
         self.assert_partway(fx, "lead-run --resume")
         self.finish_with_resume(fx)
@@ -2124,7 +2134,8 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                 archive = self.finish_with_resume(fx)
                 if point == "closed.json":
                     # The resume took the done-once return, and still wrote the mark in the kept archive.
-                    self.assertEqual(len(list(archive.parent.glob("2*"))), 1, list(archive.parent.iterdir()))
+                    self.assertEqual(len([path for path in archive.parent.glob("2*") if path.is_dir()]), 1,
+                                     list(archive.parent.iterdir()))
 
     def test_a_supervisor_stopped_in_its_friction_step_reads_finished(self) -> None:
         fx = self.closable_fixture()
@@ -2148,15 +2159,10 @@ class CloseStoppedPartwayTests(unittest.TestCase):
 
     def test_an_early_close_stopped_in_lead_close_names_lead_close_which_finishes_it_and_reports_what_is_unposted(self) -> None:
         fx = self.closable_fixture()
-        path = fx.main / ".agents/deliveries/FX-1.json"
-        d = json.loads(path.read_text())
-        d["finish"] = [{"id": "unmet", "text": "Something left unmet"}]
-        path.write_text(json.dumps(d, indent=2))
-        commit(fx.main, "FX-1: a finish line")
-        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
-        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
-        self.assertEqual(code, 0, out)
-        self.closable(fx)
+        # A finish line the lead closed early without meeting.
+        version = record(fx)["state"]["version"]
+        state_tool(fx, "patch", "--writer", "lead", "--version", str(version), "--patch",
+                   json.dumps({"finish": [{"id": "unmet", "text": "Something left unmet", "met": False}]}))
         with self.backend.edit() as store:
             store["failures"].append({"op": "comment", "ticket": "FX-1", "status": 409, "times": 50})
         state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed early, by hand")
@@ -2204,8 +2210,10 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                     # The archived copy's page reads the same marks the record holds: a close finished, by this entry.
                     shown = sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py",
                                "--dir", archive / "record", "show").stdout
+                    (fx.main / "views.json").write_text(json.dumps({"spec": "delivery-views-config/1"}))
                     page = sh(sys.executable, "-B", fx.release / "skills/delivery-views/scripts/render.py", "line-map",
-                              input=shown, cwd=fx.main).stdout
+                              "--config", "views.json", "--binding", ".agents/orchestration.json", "--state-dir",
+                              archive / "record", input=shown, cwd=fx.main).stdout
                     embedded = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S)
                     drawn = json.loads(embedded.group(1).replace("\\u003c", "<"))
                     entry = self.closing_entry(fx)
@@ -2230,6 +2238,34 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         self.assertGreater(self.closing_entry(fx), first)
         self.assert_partway(fx, "lead-run --resume")
         self.finish_with_resume(fx)
+
+
+# Where a row stops a close: (event, run_delivery.py function, the function that called it or None, which time).
+CLOSE_STOPS = {
+    "archive": ("return", "archive_delivery", "archive_step", 1),
+    "closed.json": ("return", "archive_step", None, 1),
+    "friction": ("call", "friction_step", None, 1),
+    "lead-close render": ("call", "render", "lead_close", 1),
+    "lead-close archive": ("return", "archive_delivery", "lead_close", 1),
+    "lead-close closed.json": ("call", "render", "lead_close", 2),
+}
+STOP_SHIM = """
+import os, sys
+_EVENT, _NAME, _CALLER, _TIME = POINT
+_seen = [0]
+def _profile(frame, event, arg):
+    if event != _EVENT or frame.f_code.co_name != _NAME:
+        return
+    if frame.f_globals.get("__name__") != "__main__" or not str(frame.f_globals.get("__file__", "")).endswith("run_delivery.py"):
+        return
+    if _CALLER is not None and (frame.f_back is None or frame.f_back.f_code.co_name != _CALLER):
+        return
+    _seen[0] += 1
+    if _seen[0] == _TIME:
+        sys.stdout.flush()
+        os._exit(9)
+sys.setprofile(_profile)
+"""
 
 
 def read_lock_held(fx: Fixture) -> bool:
