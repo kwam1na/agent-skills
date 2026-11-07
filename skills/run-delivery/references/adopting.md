@@ -608,7 +608,8 @@ change and the delivery file reach `main`, and each integration base, through a 
   left running and starts it on the new release, or with the new token exported. Nothing it did is done twice.
 - **Merge strategy.** Merge with merge commits. After each merge, the queue checks that the base holds the checked
   head's tree on top of the base it checked against, and a squash passes that too. But a squashed story's branch never
-  reaches the base, so the supervisor's cleanup reports it unmerged and leaves its checkout and branches for you.
+  reaches the base, so the supervisor's cleanup reports it unmerged and leaves its checkout and branches for you, and
+  the supervisor's close waits on "not cleaned up: <story>" until you remove that checkout.
   Squash, with the adapter's `--strategy squash`, only where the forge requires it.
 - **A test account that allows one session at a time.** The in-app lease serializes every lane's checks of the running
   app, so one account signs in for one check at a time. Give the lease's lock a path every checkout shares.

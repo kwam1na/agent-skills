@@ -965,6 +965,32 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(last["closeHeldBy"], [], last)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
 
+    def test_only_the_delivery_s_merged_stories_hold_the_close_for_their_checkouts(self) -> None:
+        fx = self.fixture()
+        self.closable(fx)
+        # FX-3 was handed off, then removed from the plan: it never merges, so cleanup never takes its checkout.
+        unmerged = hand_off(fx, "FX-3", "lane-2")
+        code, out = fx.flow("lead-accept", "FX-3", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        state_tool(fx, "focus", "--lane", "lane-2", "--text", "done", "--state", "done")
+        # A merged subject that isn't a story of the delivery, with a folder where a story's checkout would be.
+        doc = record(fx)
+        merged = next(q for q in doc["state"]["queue"] if q["subject"] == "FX-2")
+        state_tool(fx, "patch", "--writer", "lead", "--version", str(doc["state"]["version"]), "--patch", json.dumps(
+            {"planned": doc["state"]["planned"] + [{"subject": "FX-9", "title": "Not a story", "lane": "lane-1",
+                                                    "stage": "building"}]}))
+        state_tool(fx, "handoff", "--lane", "lane-1", "--subject", "FX-9", "--head", merged["head"], "--change-request",
+                   merged["changeRequest"], "--rounds", "1")
+        doc = record(fx)
+        state_tool(fx, "patch", "--writer", "runner", "--version", str(doc["state"]["version"]), "--patch", json.dumps(
+            {"queue": [{**q, "stage": "merged"} if q["subject"] == "FX-9" else q for q in doc["state"]["queue"]]}))
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        (fx.main / "lanes/FX-9").mkdir(parents=True)
+        last = self.once(fx)
+        self.assertFalse([h for h in last["closeHeldBy"] if "not cleaned up" in h], last["closeHeldBy"])
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+        self.assertTrue(unmerged.exists(), "the pass removed an unmerged story's checkout")
+
     def test_what_the_close_waits_on_is_cut_to_five_and_a_pass_still_writing_is_passed_over(self) -> None:
         fx = self.fixture()
         log = fx.tmp / "flow-log/FX-1.supervisor.jsonl"
