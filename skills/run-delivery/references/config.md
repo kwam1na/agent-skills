@@ -275,10 +275,10 @@ and every lead command repeats it. It keeps the merge queue's `serve` and the li
 5. the binding's `state` publishers; then "Needs you", written over the last pass's list in the record's
    `needs-you.json`; then the binding's renderers, so the line map shows this pass's list;
 6. a copy of the record and the flow log into `latest` at the archive location, under the state lock;
-7. the close-out, when the close condition holds, after that cleanup once more, so a lane that moved off its story during the pass doesn't leave its checkout behind a closed delivery.
+7. the close-out, when the close condition holds. When the only thing holding it is a merged story's checkout still there, the pass first runs that cleanup once more and reads the condition again, so a lane that moved off its story during the pass doesn't leave its checkout behind a closed delivery, and a checkout the cleanup can't remove holds the close until a later pass removes it.
 
-The close condition: every planned and queued story merged or removed, every finish line met, every lane idle or
-done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,
+The close condition: every planned and queued story merged or removed, every merged story's checkout cleaned up, every
+finish line met, every lane idle or done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,
 never read back: a failed `fullHealth` at the
 current base head, unless the base declares the `focused` posture, a broken base, a blocked lane or one waiting on the lead, an unresolved `blocker.recorded`, a
 child that won't stay up, and the tracker publisher's own items. `lead-resolve <journal id> --why TEXT` resolves a

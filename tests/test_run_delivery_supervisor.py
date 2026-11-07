@@ -14,6 +14,7 @@ import json
 import os
 import re
 import signal
+import contextlib
 import subprocess
 import sys
 import tempfile
@@ -2340,9 +2341,23 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         held = lambda: any("outbox" in item["text"] and item["holding"] for item in listed().get("items", []))
         wait_for(held, "the outbox to hold the close")
         # Posted and acked by hand, as a host does: the close is journaled, and waits on the outbox for its own entry.
-        state_tool(fx, "ack", "--version", str(record(fx)["state"]["version"]), "--through",
-                   str(max(e["id"] for e in record(fx)["journal"])))
-        wait_for(lambda: kinds(fx, "delivery.closed"), "the supervisor to journal the close")
+        # The host acks what the outbox holds, as each version of it is written, never the record's newest entry: a
+        # post-merge fullHealth beside the live supervisor journals base.verified after the outbox was first written.
+        acked: set[tuple[int, int]] = set()
+
+        def ack_and_check() -> bool:
+            if kinds(fx, "delivery.closed"):
+                return True
+            path = fx.tmp / "record/outbox/outbox.json"
+            outbox = json.loads(path.read_text()) if path.exists() else {}
+            pair = (outbox.get("state", {}).get("version"), outbox.get("journalThrough"))
+            if outbox.get("journal") and None not in pair and pair not in acked:
+                # An ack can meet a newer outbox the supervisor just wrote: it's refused, and the next try acks that.
+                with contextlib.suppress(AssertionError):
+                    state_tool(fx, "ack", "--version", str(pair[0]), "--through", str(pair[1]))
+                    acked.add(pair)
+            return False
+        wait_for(ack_and_check, "the supervisor to journal the close")
         wait_for(lambda: held() and listed().get("at", "") > kinds(fx, "delivery.closed")[-1]["at"],
                  "the supervisor's list to hold the close on the outbox after it was journaled")
         needs = json.loads((fx.tmp / "record/needs-you.json").read_text())
