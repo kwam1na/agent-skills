@@ -4412,9 +4412,9 @@ var InstalledDataResourceError = class extends Error {
     this.name = "InstalledDataResourceError";
   }
 };
-var fail = (code, message) => {
+function fail(code, message) {
   throw new InstalledDataResourceError(code, message);
-};
+}
 var object = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
 var keys = (v, expected) => object(v) && Object.keys(v).sort().join("\0") === [...expected].sort().join("\0");
 var text = (v) => typeof v === "string" && v.length > 0 && v.length <= 1024 && !/[\x00-\x1f\x7f]/u.test(v);
@@ -4641,6 +4641,32 @@ var PATH_MATCHER_KINDS = ["prefix", "glob"];
 var DEFAULT_STORAGE_NAMESPACE = "delivery-harness/";
 var DEFAULT_BASE_REF = "origin/main";
 var DEFAULT_BASE_MOVEMENT_POLICY = "stale";
+function isPhysicalSourceDefinition(value) {
+  if (!isRecord(value) || Object.keys(value).sort().join(",") !== "absentInputs,files,version" || value["version"] !== "physical-source/1") return false;
+  const files = value["files"], absent = value["absentInputs"];
+  if (!Array.isArray(files) || !files.length || !Array.isArray(absent) || files.length + absent.length > 1024) return false;
+  const paths = [...files, ...absent];
+  if (paths.some((p) => typeof p !== "string" || !p.length || p.length > 4096 || /[\\\x00-\x1f\x7f]/.test(p) || p.startsWith("/") || /^[A-Za-z]:/.test(p) || p.split("/").some((s) => !s || s === "." || s === ".." || s.toLowerCase() === ".git"))) return false;
+  const aliases = /* @__PURE__ */ new Map();
+  for (const file of paths) {
+    let prefix = "";
+    for (const segment of file.split("/")) {
+      prefix = prefix ? `${prefix}/${segment}` : segment;
+      const folded3 = prefix.normalize("NFC").toLowerCase(), previous = aliases.get(folded3);
+      if (previous !== void 0 && previous !== prefix) return false;
+      aliases.set(folded3, prefix);
+    }
+  }
+  const folded2 = paths.map((p) => p.normalize("NFC").toLowerCase());
+  if (files.some((p) => p.split("/").some((segment) => segment.toLowerCase() === "node_modules"))) return false;
+  return new Set(folded2).size === folded2.length && !folded2.some((p, i) => folded2.some((q, j) => i !== j && q.startsWith(`${p}/`)));
+}
+function physicalSourceOutputOverlap(source, outputs) {
+  return source.absentInputs.some((absent) => outputs.some((output) => {
+    const a = absent.normalize("NFC").toLowerCase(), o = output.replace(/\/$/, "").normalize("NFC").toLowerCase();
+    return a === o || a.startsWith(`${o}/`) || o.startsWith(`${a}/`);
+  }));
+}
 function isScopedCheckDefinition(value) {
   if (!isRecord(value) || Object.keys(value).sort().join(",") !== "cwd,environment,files,memberships,profile,tests,version" || value["version"] !== "scoped-check/1") return false;
   const safePath2 = (p) => typeof p === "string" && p.length > 0 && !p.includes("\\") && !p.includes("\0") && !p.startsWith("/") && !p.split("/").some((v) => v === "." || v === ".." || v === "");
@@ -4660,9 +4686,22 @@ function isInstalledDataConsumerDefinition(value) {
     return false;
   }
 }
+function scopedBudgetOffenders(config) {
+  const checks = config.providers.filter((p) => p.check?.scope).map((p) => ({ id: p.id, timeoutMs: p.check.timeoutMs }));
+  const { budgetMs, checkBudgetMs } = config.scopedExecution ?? {};
+  let totalMs = 0;
+  const overBudget = [];
+  for (const check of checks) {
+    totalMs += check.timeoutMs;
+    if (budgetMs !== void 0 && totalMs > budgetMs) overBudget.push(check.id);
+  }
+  return { overCap: checkBudgetMs === void 0 ? [] : checks.filter((c) => c.timeoutMs > checkBudgetMs).map((c) => c.id), overBudget, totalMs };
+}
 function isScopedExecution(value) {
-  if (!isRecord(value) || Object.keys(value).some((k) => !["mechanicalProviders", "profiles", "version", "repairCommands", "concurrency"].includes(k)) || value["version"] !== "scoped-execution/1" || !Array.isArray(value["profiles"]) || !Array.isArray(value["mechanicalProviders"])) return false;
+  if (!isRecord(value) || Object.keys(value).some((k) => !["mechanicalProviders", "profiles", "version", "repairCommands", "concurrency", "failFast", "budgetMs", "checkBudgetMs"].includes(k)) || value["version"] !== "scoped-execution/1" || !Array.isArray(value["profiles"]) || !Array.isArray(value["mechanicalProviders"])) return false;
   if (value["concurrency"] !== void 0 && (!Number.isSafeInteger(value["concurrency"]) || Number(value["concurrency"]) < 1)) return false;
+  if (value["failFast"] !== void 0 && typeof value["failFast"] !== "boolean") return false;
+  if (["budgetMs", "checkBudgetMs"].some((k) => value[k] !== void 0 && (!Number.isSafeInteger(value[k]) || Number(value[k]) < 1))) return false;
   const repairs = value["repairCommands"];
   if (repairs !== void 0 && (!Array.isArray(repairs) || new Set(repairs.map((r) => isRecord(r) ? r["id"] : null)).size !== repairs.length || !repairs.every((r) => isRecord(r) && Object.keys(r).sort().join(",") === "command,id,timeoutMs" && typeof r["id"] === "string" && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(r["id"]) && Array.isArray(r["command"]) && r["command"].length > 0 && r["command"].every((a) => typeof a === "string" && a.length > 0 && !a.includes("\0")) && Number.isSafeInteger(r["timeoutMs"]) && Number(r["timeoutMs"]) > 0 && Number(r["timeoutMs"]) <= 36e5))) return false;
   const safe = (v) => typeof v === "string" && v.length > 0 && !v.startsWith("/") && !v.includes("\\") && !v.includes("\0") && !v.replace(/\/$/, "").split("/").some((p) => p === ".." || p === "." || p === "") && !v.split("/").includes(".git") && !v.split("/").includes("node_modules");
@@ -5143,7 +5182,7 @@ function readShape(findings2, input) {
             findings2.add("config_invalid_member", `${at}.check`, "must be an object");
             sound = false;
           } else {
-            checkClosed(findings2, `${at}.check`, value, ["command", "timeoutMs", "outputs", "scope", "installedData"]);
+            checkClosed(findings2, `${at}.check`, value, ["command", "timeoutMs", "outputs", "scope", "installedData", "physicalSource"]);
             const argv = value["command"], timeout = value["timeoutMs"], outputs = value["outputs"];
             if (!Array.isArray(argv) || argv.length === 0 || typeof argv[0] !== "string" || argv[0].trim().length === 0 || argv.some((v) => typeof v !== "string" || v.includes("\0")) || typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > 36e5 || outputs !== void 0 && (!Array.isArray(outputs) || outputs.length > 64 || new Set(outputs).size !== outputs.length || outputs.some((v) => typeof v !== "string" || v.length === 0 || v.startsWith("/") || v.includes("\\") || v.split("/").some((part) => part === ".." || part === "." || part === "")))) {
               findings2.add("config_invalid_member", `${at}.check`, "requires non-empty argv, timeoutMs from 1 to 3600000 and at most 64 unique safe relative output paths");
@@ -5161,6 +5200,12 @@ function readShape(findings2, input) {
                 findings2.add("config_invalid_member", `${at}.check.installedData`, "requires a guarded installed-data consumer matching the actual scoped execution context");
                 sound = false;
               } else check = { ...check, installedData: resource };
+            }
+            if (value["physicalSource"] !== void 0) {
+              if (!isPhysicalSourceDefinition(value["physicalSource"]) || !check?.scope) {
+                findings2.add("config_invalid_member", `${at}.check.physicalSource`, "requires a finite physical-source/1 scoped declaration");
+                sound = false;
+              } else check = { ...check, physicalSource: value["physicalSource"] };
             }
             if (command !== void 0) {
               findings2.add("config_invalid_member", at, "command and check are mutually exclusive");
@@ -5220,10 +5265,17 @@ function readShape(findings2, input) {
   if (preparationWiringPaths !== void 0) checkDuplicateIds(findings2, "preparationWiringPaths", preparationWiringPaths);
   const additionalReviewLenses = input["additionalReviewLenses"] === void 0 ? void 0 : readAdditionalReviewLenses(findings2, input["additionalReviewLenses"]);
   const scopedExecution = input["scopedExecution"];
+  if (providers?.some((provider2) => provider2.check?.physicalSource) && !isScopedExecution(scopedExecution)) findings2.add("config_invalid_member", "physicalSource", "finite source requires an explicit scoped execution profile");
   if (scopedExecution !== void 0 && !isScopedExecution(scopedExecution)) findings2.add("config_invalid_member", "scopedExecution", "requires the supported scoped-execution/1 profiles");
   if (isScopedExecution(scopedExecution)) {
     for (const provider2 of providers ?? []) {
       if (provider2.check?.scope && !scopedExecution.profiles.some((p) => p.id === provider2.check.scope.profile)) findings2.add("config_invalid_member", "scopedExecution.profiles", "every scoped check requires its declared execution profile");
+      const source = provider2.check?.physicalSource;
+      if (source) {
+        const profile = scopedExecution.profiles.find((p) => p.id === provider2.check.scope.profile);
+        if (profile?.gitContext !== "none" || physicalSourceOutputOverlap(source, [...profile.mutableOutputs, ...provider2.check.outputs ?? []]) || profile.dependencyInputs.some((file) => !source.files.includes(file)) || provider2.check.scope.tests.some((file) => !source.files.includes(file)))
+          findings2.add("config_invalid_member", "physicalSource", "finite source requires Git-none, included dependency/test inputs and protected absences disjoint from outputs");
+      }
     }
     if (scopedExecution.mechanicalProviders.some((id) => !providers?.some((p) => p.id === id && p.check?.scope))) findings2.add("config_invalid_member", "scopedExecution.mechanicalProviders", "mechanical providers must name scoped check providers");
   }
@@ -5579,6 +5631,29 @@ function defineHarnessConfig(input) {
   const result2 = validateHarnessConfig(input);
   if (result2.ok) return result2.config;
   throw new BlockedError(result2.blockers, "The harness config is not valid.");
+}
+
+// packages/kernel/src/physical-source.ts
+init_digest();
+async function capturePhysicalSource(source, read) {
+  if (!isPhysicalSourceDefinition(source)) throw new Error("Invalid physical-source/1 declaration.");
+  const files = [];
+  let totalBytes = 0;
+  for (const file of [...source.files].sort()) {
+    const metadata = await read.metadata(file);
+    if (!["100644", "100755"].includes(metadata.mode ?? "") || metadata.links.length)
+      throw new Error("Physical source must contain regular candidate files without linked ancestors.");
+    const bytes = await read(file);
+    if (bytes === null || bytes.length > 8 * 1024 * 1024 || (totalBytes += bytes.length) > 64 * 1024 * 1024)
+      throw new Error("Physical source is missing or exceeds its byte bounds.");
+    files.push({ file, bytes, mode: metadata.mode, sha256: sha256Hex(bytes) });
+  }
+  await Promise.all(source.absentInputs.map(async (file) => {
+    const metadata = await read.metadata(file);
+    if (metadata.mode !== null || metadata.links.length)
+      throw new Error("Required physical source absence is present or linked in the candidate.");
+  }));
+  return { files, identity: { version: source.version, files: files.map(({ file, mode, sha256: sha2562 }) => ({ file, mode, sha256: sha2562 })), absentInputs: [...source.absentInputs].sort() } };
 }
 
 // packages/kernel/src/delivery-posture.ts
@@ -7939,7 +8014,7 @@ function recordOutputConfiguration(config, deliverableDigest) {
 // packages/kernel/src/preparation.ts
 var PREPARATION_RECEIPT_SCHEMA_VERSION = 1;
 var PREPARATION_RECEIPT_LEAF = "preparation";
-var HARNESS_VERSION = "0.7.8";
+var HARNESS_VERSION = "0.8.0";
 var PREPARATION_FAILURE_CLASSES = ["missing", "invalid", "wiring_mismatch", "base_changed", "stale"];
 var DIRECTORY_MODE2 = 448;
 var RECEIPT_MODE = 384;
@@ -10154,7 +10229,7 @@ async function captureScopedCheckInputs(definition, ports) {
       }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(8, selected.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(32, selected.length) }, worker));
   if (failure !== void 0) throw failure.error;
   const environment = [...definition.environment].sort((a, b) => a.name.localeCompare(b.name)).map((entry3) => {
     const value = ports.environment[entry3.name];
@@ -18061,8 +18136,12 @@ async function captureInstalledDataBinding(config, provider2, candidate2, observ
     if (bytes === null || !["100644", "100755"].includes(metadata.mode ?? "") || metadata.links.length) throw refuse5();
     dependencies.push({ file, sha256: sha256Hex(bytes), metadata });
   }
+  const physicalSource = provider2.check.physicalSource;
+  const physical = physicalSource ? await Promise.all([source.base, source.candidate].map((tree) => capturePhysicalSource(physicalSource, tree.read).then((value) => value.identity))).catch(() => {
+    throw refuse5();
+  }) : void 0;
   const context = {
-    setupRecipeDigest: digestCanonical({ ...profile, dependencyInputs: [...profile.dependencyInputs].sort(), mutableOutputs: [...profile.mutableOutputs].sort() }),
+    setupRecipeDigest: digestCanonical({ ...profile, dependencyInputs: [...profile.dependencyInputs].sort(), mutableOutputs: [...profile.mutableOutputs].sort(), ...physical ? { physicalSource: physical } : {} }),
     dependencyDigest: digestCanonical({ inputs: dependencies, setup: profile.dependencies ?? null }),
     runtimeDigest: observation.runtimeDigest,
     releaseDigest: digestCanonical(await readWorkflowRelease(readEvidence)),
@@ -18127,12 +18206,22 @@ async function scopedCheckIdentity(config, provider2, inventory, read, observati
   const dependencyDigest = digestCanonical({ inputs: dependencyInputs, setup: profile.dependencies ?? null });
   const releaseDigest = digestCanonical(await readWorkflowRelease(readEvidence));
   const policyDigest = digestCanonical(config.obligations.filter((o) => o.providers.includes(provider2.id)).map((o) => ({ ...o, providers: [provider2.id] })));
+  const physicalSource = provider2.check?.physicalSource;
+  let physicalIdentity;
+  if (physicalSource) {
+    try {
+      physicalIdentity = (await capturePhysicalSource(physicalSource, read)).identity;
+    } catch {
+      throw invalid("check_identity_invalid", "Physical source bytes, modes or protected absences are unavailable or unsafe.");
+    }
+  }
   const relevantProfile = {
     ...profile,
+    ...physicalIdentity ? { physicalSource: physicalIdentity } : {},
     mutableOutputs: profile.mutableOutputs.filter((m) => provider2.check.outputs?.some((o) => m.endsWith("/") ? o.startsWith(m) : o === m)),
     credentialIdentities: Object.fromEntries(credentials.filter((name) => profile.credentialIdentities[name] !== void 0).map((name) => [name, profile.credentialIdentities[name]]))
   };
-  const runtimeDigest = digestCanonical({ runtime: observation.runtimeDigest, base: candidate2.base, ...profile.gitContext === "none" ? {} : { headSha: candidate2.headSha, treeSha: candidate2.treeSha }, ...provider2.check?.installedData ? { installedData: provider2.check.installedData } : {} });
+  const runtimeDigest = digestCanonical({ runtime: observation.runtimeDigest, base: candidate2.base, ...profile.gitContext === "none" && !(physicalSource && provider2.check?.installedData) ? {} : { headSha: candidate2.headSha, treeSha: candidate2.treeSha }, ...provider2.check?.installedData ? { installedData: provider2.check.installedData } : {} });
   const profileDigest = digestCanonical({ profile: relevantProfile, runtimeDigest, dependencyDigest, releaseDigest, policyDigest });
   const capture = await captureScopedCheckInputs(scope, {
     listFiles: async () => inventory.filter((file) => file !== output),
@@ -18152,9 +18241,9 @@ async function scopedCheckIdentity(config, provider2, inventory, read, observati
 
 // packages/kernel/src/installed-data-portable.ts
 var object2 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
-var refuse3 = () => {
+function refuse3() {
   throw new Error("Retained installed resource origin or current source authority is invalid.");
-};
+}
 async function reconstructResourceApplicability(config, provider2, candidate2, proof, sourceTree, readEvidence) {
   if (!object2(proof) || Object.keys(proof).sort().join(",") !== "observation,origin,version" || proof["version"] !== "installed-data-proof/1" || !object2(proof["origin"])) refuse3();
   const row = proof["origin"];
@@ -18182,7 +18271,13 @@ async function reconstructResourceApplicability(config, provider2, candidate2, p
   if (original.workspaceId !== candidate2.workspaceId || original.identityToken !== candidate2.deliverable.identity) refuse3();
   const originalCandidate = { headSha: origin.source.headSha, treeSha: original.treeSha, base: { ref: original.baseRef, tipSha: original.baseTipSha, mergeBaseSha: original.mergeBaseSha }, deliverable: { digest: original.deliverableDigest, identity: original.identityToken } };
   const originalTree = await sourceTree(original.treeSha);
-  const identity = await scopedCheckIdentity(config, provider2, originalTree.inventory, originalTree.read, observation, originalCandidate, readEvidence);
+  let originalProvider = provider2;
+  if (payload["resourceScope"] !== void 0) {
+    const retained = payload["resourceScope"], current2 = provider2.check?.scope;
+    if (!isScopedCheckDefinition(retained) || Buffer.byteLength(JSON.stringify(retained), "utf8") > MAX_PORTABLE_ARTIFACT_BYTES || !current2 || retained.cwd !== current2.cwd || retained.profile !== current2.profile || digestCanonical([...retained.environment].sort((a, b) => a.name.localeCompare(b.name))) !== digestCanonical([...current2.environment].sort((a, b) => a.name.localeCompare(b.name)))) refuse3();
+    originalProvider = { ...provider2, check: { ...provider2.check, scope: retained } };
+  }
+  const identity = await scopedCheckIdentity(config, originalProvider, originalTree.inventory, originalTree.read, observation, originalCandidate, readEvidence);
   if (!identity.reusable || identity.inputDigest !== attempt.inputDigest || identity.profileDigest !== attempt.profileDigest) refuse3();
   const originalSource = await captureInstalledDataBinding(config, provider2, originalCandidate, observation, { base: await sourceTree(original.mergeBaseSha), candidate: originalTree }, readEvidence);
   if (originalSource.declarationDigest !== projection.declarationDigest || originalSource.sourceApplicabilityDigest !== projection.sourceApplicabilityDigest || digestCanonical(originalSource.context) !== digestCanonical(projection.capture.context)) refuse3();
@@ -18197,7 +18292,7 @@ async function reconstructResourceApplicability(config, provider2, candidate2, p
   const capture = projection.capture;
   if (projection.consumerId !== current.declaration.consumerId || digestCanonical(capture.requests) !== digestCanonical(normalizeInstalledDataResourceRequests(current.declaration.requests)) || digestCanonical(capture.context) !== digestCanonical(current.context)) refuse3();
   const bindingCandidate = { treeSha: candidate2.treeSha, deliverableDigest: candidate2.deliverable.digest, identityToken: candidate2.deliverable.identity, baseRef: candidate2.base.ref, baseTipSha: candidate2.base.tipSha, mergeBaseSha: candidate2.base.mergeBaseSha, workspaceId: candidate2.workspaceId };
-  return { binding: createResourceApplicabilityBinding({ candidateDigest: digestCanonical(bindingCandidate), definitionDigest: digestCanonical(provider2.check), declarationDigest: current.declarationDigest, sourceApplicabilityDigest: current.sourceApplicabilityDigest, capture, projection, originAttempt: origin }), observation };
+  return { binding: createResourceApplicabilityBinding({ candidateDigest: digestCanonical(bindingCandidate), definitionDigest: digestCanonical(recordOutputProvider(provider2, deliveryRecordPathFor(config, candidate2.deliverable.digest)).check), declarationDigest: current.declarationDigest, sourceApplicabilityDigest: current.sourceApplicabilityDigest, capture, projection, originAttempt: origin }), observation };
 }
 
 // packages/kernel/src/portable-inputs.ts
@@ -18232,18 +18327,20 @@ async function candidateTreeReader(rootDir, treeSha2, run, maxBytes, directoryLi
     return verifyObject(sha, type, bytes);
   };
   const queued = [];
-  let active = false, scheduled = false;
+  let active = 0, scheduled = false;
   const schedule = () => {
-    if (active || scheduled) return;
+    if (scheduled || active >= 4 || !queued.length) return;
     scheduled = true;
     queueMicrotask(() => {
-      void flush();
+      scheduled = false;
+      while (active < 4 && queued.length) {
+        const batch = queued.splice(0, 8);
+        active++;
+        void flush(batch);
+      }
     });
   };
-  const flush = async () => {
-    scheduled = false;
-    active = true;
-    const batch = queued.splice(0, 32);
+  const flush = async (batch) => {
     try {
       const result2 = await runGitCommandBytes(["git", "cat-file", "--batch"], {
         cwd: rootDir,
@@ -18268,8 +18365,8 @@ async function candidateTreeReader(rootDir, treeSha2, run, maxBytes, directoryLi
     } catch (error) {
       batch.forEach((request) => request.reject(error));
     } finally {
-      active = false;
-      if (queued.length) schedule();
+      active--;
+      schedule();
     }
   };
   const loadNativeObject = (sha, type) => new Promise((resolve2, reject2) => {
@@ -23985,6 +24082,7 @@ export {
   captureGitCandidate,
   captureInstalledDataBinding,
   captureInstalledDataResources,
+  capturePhysicalSource,
   capturePortableEvidenceContext,
   capturePortableVerificationInputs,
   captureRunArtifact,
@@ -24119,6 +24217,7 @@ export {
   isIntakeTransitionValid,
   isManifestRejectionCode,
   isObligationActive,
+  isPhysicalSourceDefinition,
   isRecordFreshForCandidate,
   isRecordNeutralPath,
   isResourceApplicabilityBinding,
@@ -24160,6 +24259,7 @@ export {
   parseReviewOutcome,
   parseTreeEntries,
   parseTrustState,
+  physicalSourceOutputOverlap,
   planExternalAction,
   portableArtifactContents,
   projectReviewActivation,
@@ -24182,6 +24282,7 @@ export {
   reconstructResourceApplicability,
   recordFileName,
   recordIdentity,
+  recordOutputProvider,
   recoverInterruptedMaintenance,
   redactSecretText,
   reduceDeliveryJournal,
@@ -24216,6 +24317,7 @@ export {
   runJournalCarries,
   runPrimaryTicket,
   sanitizedDetail,
+  scopedBudgetOffenders,
   scopedCheckIdentity,
   selectDeliveryRecordForIdentity,
   selectScopedCheckAttempt,
