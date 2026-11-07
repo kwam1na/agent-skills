@@ -1,7 +1,7 @@
 // Renders delivery-views pages with the shipped renderer and opens them as a browser would, under jsdom.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,25 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 export const RENDER = path.join(ROOT, "skills", "delivery-views", "scripts", "render.py");
 export const CORPUS = path.join(ROOT, "tests", "fixtures", "delivery-views", "line-map");
 const PYTHON = process.env.PYTHON || "python3";
+
+/**
+ * spawnSync, with any `input` given to the child as a file it reads for stdin rather than through a pipe: on macOS a
+ * pipe that `input` writes into can leave the child waiting on stdin for an end that never comes, and the page lane
+ * then runs out its whole limit. A child that still runs past `timeout` is stopped, so the row fails and says so.
+ */
+export function runSync(command, args, { input, timeout = 120000, ...options } = {}) {
+  if (input === undefined) return spawnSync(command, args, { timeout, ...options });
+  const folder = mkdtempSync(path.join(tmpdir(), "page-input-"));
+  const file = path.join(folder, "stdin");
+  writeFileSync(file, input);
+  const fd = openSync(file, "r");
+  try {
+    return spawnSync(command, args, { timeout, ...options, stdio: [fd, "pipe", "pipe"] });
+  } finally {
+    closeSync(fd);
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
 
 export function readJson(file) {
   return JSON.parse(readFileSync(file, "utf8"));
@@ -46,7 +65,7 @@ export const REPLAYED_RUNS = { argv: [PYTHON, "-B", "{root}/replay-runs.py", "{r
 
 /** Runs `render.py line-map` in a repository with the document on stdin. */
 export function renderIn(root, document, extra = []) {
-  const result = spawnSync(PYTHON, ["-B", RENDER, "line-map", "--config", ".agents/delivery-views.json",
+  const result = runSync(PYTHON, ["-B", RENDER, "line-map", "--config", ".agents/delivery-views.json",
     "--binding", ".agents/orchestration.json", ...extra], { cwd: root, input: JSON.stringify(document), encoding: "utf8" });
   return { page: result.stdout, status: result.status, stderr: result.stderr };
 }
@@ -85,7 +104,7 @@ export function renderHistoryPage(document, { config, runsCommands = null, expor
       mkdirSync(folder, { recursive: true });
       for (const [file, text] of Object.entries(exports)) writeFileSync(path.join(folder, file), text);
     }
-    const result = spawnSync(PYTHON, ["-B", RENDER, "history", "--config", ".agents/delivery-views.json",
+    const result = runSync(PYTHON, ["-B", RENDER, "history", "--config", ".agents/delivery-views.json",
       "--binding", ".agents/orchestration.json", ...(now ? ["--now", now] : [])],
       { cwd: root, input: JSON.stringify(document), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     if (result.status !== 0) throw new Error(`render.py history exited ${result.status}: ${result.stderr}`);
@@ -128,6 +147,10 @@ export function planEnd(app) {
  * `planEnd`, and the result's `scrollY` says where the window ended. The result's `fetched` lists fetches of the page's
  * address and `fetchOptions` what each asked for.
  *
+ * `frames: true` gives the page `requestAnimationFrame` with frames held, not run: a `{ frame: <ms> }` step moves the page's
+ * `performance.now()` on by that many milliseconds and runs the frames then waiting, once each, so a count that eases
+ * from one number to another can be read where it starts, part way and where it ends.
+ *
  * `motion: { reduced? }` stands in for what jsdom lacks to move things: elements get a height that grows with what
  * they hold, `matchMedia` answers the reduced-motion query as `reduced` says, and each `animate` call is recorded, as
  * { target, keyframes, options }, in the result's `animations`.
@@ -138,6 +161,8 @@ export async function openPage(page, scenario = {}) {
   let answerRead = null;
   const animations = [];
   const intervals = [];
+  let frames = [];
+  let clock = 0;
   const fetched = [];
   const fetchOptions = [];
   const dom = new JSDOM(page, {
@@ -145,6 +170,10 @@ export async function openPage(page, scenario = {}) {
     runScripts: "dangerously",
     beforeParse(window) {
       if (scenario.now) window.Date.now = () => Date.parse(scenario.now);
+      if (scenario.frames) {
+        window.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
+        Object.defineProperty(window, "performance", { configurable: true, value: { now: () => clock } });
+      }
       // Held, not run: a `tick` step runs each one as the page's timer would.
       window.setInterval = (callback) => { intervals.push(callback); return 0; };
       if (scenario.quicker) {
@@ -252,6 +281,12 @@ export async function openPage(page, scenario = {}) {
     if ("click" in step) { const node = document.querySelectorAll(step.click)[step.index || 0]; node.focus(); node.click(); }
     if ("toggle" in step) { const node = document.querySelector(step.toggle); node.open = !node.open; }
     if ("tick" in step) intervals.forEach((callback) => callback());
+    if ("frame" in step) {
+      clock += step.frame;
+      const waiting = frames;
+      frames = [];
+      waiting.forEach((callback) => callback(clock));
+    }
     if ("run" in step) step.run();
     if ("asked" in step) {
       const deadline = Date.now() + 20000;
@@ -271,7 +306,7 @@ export async function openPage(page, scenario = {}) {
 
 const TOOLS = path.join(ROOT, "tests", "delivery_views_page", "page_tools.py");
 function tool(request) {
-  const result = spawnSync(PYTHON, ["-B", TOOLS], { input: JSON.stringify(request), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const result = runSync(PYTHON, ["-B", TOOLS], { input: JSON.stringify(request), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0) throw new Error(`page_tools.py exited ${result.status}: ${result.stderr}`);
   return result.stdout;
 }

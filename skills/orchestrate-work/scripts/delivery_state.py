@@ -79,7 +79,7 @@ STATE_VERSION = "delivery-state/1"
 WRITERS = ("lead", "runner", "lane")
 # What a lane writes about itself, through the tool.
 LANE_FIELDS = ("focus", "state", "waitingOn", "since")
-# The runner writes a row only to say what became of a candidate; focusAt and focusBy are the tool's alone, for every writer.
+# The runner writes a row only to say what became of a candidate; focusAt, focusBy, waitingBy and restedFrom are the tool's alone, for every writer.
 RUNNER_LANE = ("focus", "state", "waitingOn", "since")
 # A review round is the lead's or a lane's record of its own review; the runner
 # never reviews, so it never writes one.
@@ -99,6 +99,7 @@ ELEMENT_KEYS = {
 SELECTOR = re.compile(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)\]$")
 # Fields only the runner writes. Everything else, apart from the fields the
 # tool itself maintains, belongs to the lead.
+CLOSED_KIND = "delivery.closed"
 RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory", "sources", "sourceReports")
 RUNNER_QUEUE = ("stage", "checks", "syncedHead", "checkSelection")
 # Written only by a lane's hand-off, through the tool: no patch, the lead's or the runner's, changes it.
@@ -432,6 +433,8 @@ def journal_errors(entries: list[object]) -> list[str]:
             errors.extend(f"entry {index + 1}: {problem}" for problem in _review_problems(entry))
             if (entry["kind"] == "review.evidence") != ("reviewArtifact" in entry) or (entry["kind"] == "review.evidence" and entry["subject"] is None):
                 errors.append(f"entry {index + 1}: review.evidence names its subject and artifact")
+            if "reviewCarry" in entry and (entry["kind"] != "decision.recorded" or entry["subject"] is None):
+                errors.append(f"entry {index + 1}: only a decision about a subject carries its review")
             if "occurredAt" in entry:
                 if entry["kind"] != "candidate.merged":
                     errors.append(f"entry {index + 1}: only a merge carries occurredAt")
@@ -707,8 +710,22 @@ def _stamp_lane(before: dict, after: dict, lane: str) -> None:
         new["since"] = now() if new["state"] != old.get("state") else old.get("since")
 
 
+def _own_word(row: dict | None) -> dict | None:
+    """A row's last word from its own lane: the row itself when the lane or the lead wrote it, else what the queue kept of
+    it when it spoke over it."""
+    if row is None:
+        return None
+    if row.get("focusBy") == "runner":
+        return row.get("restedFrom")
+    at = row.get("focusAt") or row.get("since")
+    return {"state": row["state"], "at": at} if row.get("state") and at else None
+
+
 def _stamp_focus(before: dict, after: dict, writer: str, spoke: str | None) -> None:
-    """The tool keeps focusAt and focusBy: when a row's words last changed or its lane said them again, and whether the queue said them."""
+    """The tool keeps focusAt and focusBy: when a row's words last changed or its lane said them again, and whether the
+    queue said them. It keeps restedFrom too: when the queue speaks over a row, the lane's own last word, its state and
+    when it said it, so the record carries that word past a merge whether or not anything read it in between. The
+    lane's or the lead's next word ends it."""
     rows = after.get("lanes")
     if not isinstance(rows, list):
         return
@@ -719,13 +736,64 @@ def _stamp_focus(before: dict, after: dict, writer: str, spoke: str | None) -> N
         previous = old.get(entry["id"])
         entry.pop("focusAt", None)
         entry.pop("focusBy", None)
+        entry.pop("restedFrom", None)
         if previous is None or previous.get("focus") != entry.get("focus") or entry["id"] == spoke:
             if entry.get("focus"):
                 entry["focusAt"] = now()
                 if writer == "runner":
                     entry["focusBy"] = "runner"
+                    kept = _own_word(previous)
+                    if kept:
+                        entry["restedFrom"] = kept
         else:
-            entry.update({key: previous[key] for key in ("focusAt", "focusBy") if key in previous})
+            entry.update({key: previous[key] for key in ("focusAt", "focusBy", "restedFrom") if key in previous})
+
+
+def _waiting_by(row: dict) -> str | None:
+    """Who set the row's waitingOn. A row written before the tool kept it has none: the queue set it if the queue's words stand."""
+    if not row.get("waitingOn"):
+        return None
+    if "waitingBy" in row:
+        return row["waitingBy"]
+    return "runner" if row.get("focusBy") == "runner" else None
+
+
+def _written_field(selector: str | None, changes: object, assignments: object, field: str) -> str | None:
+    """The lane row a patch selected and wrote ``field`` on, even to the value it already held."""
+    match = SELECTOR.match(selector or "")
+    if not match or match["array"] != "lanes":
+        return None
+    if (isinstance(changes, dict) and field in changes) or (isinstance(assignments, dict) and f"/{field}" in assignments):
+        return match["value"]
+    return None
+
+
+def _stamp_waiting(before: dict, after: dict, writer: str, wrote: str | None) -> None:
+    """The tool keeps waitingBy: who set a row's waitingOn, so only the queue's own wait ends when its lane speaks."""
+    rows = after.get("lanes")
+    if not isinstance(rows, list):
+        return
+    old = {entry.get("id"): entry for entry in before.get("lanes", []) if isinstance(entry, dict)}
+    for entry in rows:
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+            continue
+        previous = old.get(entry["id"])
+        entry.pop("waitingBy", None)
+        if not entry.get("waitingOn"):
+            continue
+        # The queue says a row's words whole, so a row it gives new words has its wait too, as focusBy says.
+        queue_wrote = (writer == "runner" and previous is not None and bool(entry.get("focus"))
+                       and previous.get("focus") != entry.get("focus"))
+        if previous is None or previous.get("waitingOn") != entry["waitingOn"] or entry["id"] == wrote or queue_wrote:
+            entry["waitingBy"] = writer
+        elif _waiting_by(previous) is not None:
+            entry["waitingBy"] = _waiting_by(previous)
+
+
+def _end_queue_wait(row: dict) -> None:
+    """End a row's waitingOn if the queue set it; a wait the lane or the lead set stays theirs."""
+    if _waiting_by(row) == "runner":
+        row["waitingOn"] = None
 
 
 def merged_item(item: dict, **fields: object) -> dict:
@@ -787,7 +855,8 @@ def lane_rows_put_back(state: dict, subject: str) -> list[dict]:
         if row["id"] == lane and row.get("focusBy") == "runner" and row["focus"].startswith(f"{subject} stopped:"):
             if row["state"] != "handed":
                 row["since"] = now()
-            row.update(focus="", state="handed", waitingOn=None)
+            _end_queue_wait(row)
+            row.update(focus="", state="handed")
     return rows
 
 
@@ -860,7 +929,8 @@ def handoff(
     ``evidence`` records the lane's own runs of the binding's reusable checks,
     each with the head and tree it ran on; a hand-off without it keeps none.
     ``run`` names the run that built the work; a hand-off without it keeps the
-    run already stored, from an earlier hand-off or the lead's plan.
+    run already stored, from an earlier hand-off or the lead's plan. A run another
+    planned or queued subject holds is refused with ``run_bound``.
     """
     problems = evidence_errors(evidence or [])
     if problems:
@@ -869,6 +939,12 @@ def handoff(
     def change(state: dict) -> dict:
         if lane not in [entry["id"] for entry in state["lanes"]]:
             raise StateError("writer_not_owned", f"there is no lane {lane}")
+        if run is not None:
+            # A run builds one subject: as bind-run refuses, a hand-off can't name a run another subject holds.
+            holder = next((entry["subject"] for entry in [*state.get("planned", []), *state["queue"]]
+                           if entry["subject"] != subject and entry.get("runId") == run), None)
+            if holder is not None:
+                raise StateError("run_bound", f"run {run} is already bound to {holder}")
         queued = next((item for item in state["queue"] if item["subject"] == subject), None)
         if queued is not None:
             if queued["lane"] != lane:
@@ -894,6 +970,9 @@ def handoff(
                 "syncedHead": None, "leadInputs": [], "reportedRounds": None, "runId": planned.get("runId"),
                 "checks": [], "changeRequest": change_request,
             }
+            # A ticket reconcile saw started stays so in the queue, so a rejection can hand the flag back.
+            if planned.get("trackerStarted"):
+                item["trackerStarted"] = True
             state["queue"].append(item)
         if rounds is not None:
             item["reportedRounds"] = rounds
@@ -908,8 +987,15 @@ def handoff(
         _set_lane_state(state, lane, "handed")
         for entry in state["lanes"]:
             # A new hand-off ends what the queue said: the record's derived words read from the line again.
-            if entry["id"] == lane and entry.get("focusBy") == "runner":
-                entry.update(focus="", waitingOn=None)
+            if entry["id"] != lane:
+                continue
+            # A wait the queue set ends whoever said the row's words last; the queue's words end only while they stand.
+            _end_queue_wait(entry)
+            if not entry["waitingOn"]:
+                entry.pop("waitingBy", None)
+            entry.pop("restedFrom", None)  # the hand-off is the lane's newer word
+            if entry.get("focusBy") == "runner":
+                entry["focus"] = ""
                 del entry["focusBy"]
                 entry.pop("focusAt", None)
         return copy.deepcopy(item)
@@ -956,6 +1042,8 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
             back["changeRequest"] = item["changeRequest"]
         if item.get("runId") is not None:
             back["runId"] = item["runId"]
+        if item.get("trackerStarted"):
+            back["trackerStarted"] = True
         state.setdefault("planned", []).append(back)
         if item["lane"] is not None:
             _set_lane_state(state, item["lane"], "working")
@@ -1068,6 +1156,47 @@ def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None
                  selector=f"lanes[id={lane}]", assignments=assignments)
 
 
+def bind_run(directory: Path, *, lane: str, subject: str, run: str) -> dict:
+    """A lane binds the run building its planned work, so the views show the run's rounds before the hand-off.
+
+    Only the lane's own planned element takes a run, and a bound run is never replaced: binding the same run again
+    changes nothing, and a different one, or a run another subject holds, is refused with ``run_bound``. The hand-off
+    keeps the bound run unless it names another.
+    """
+    if not isinstance(run, str) or not run:
+        raise StateError("run_bound", "name the run to bind")
+
+    def change(state: dict) -> dict | None:
+        if lane not in [entry["id"] for entry in state["lanes"]]:
+            raise StateError("writer_not_owned", f"there is no lane {lane}")
+        element = next((entry for entry in state.get("planned", []) if entry["subject"] == subject), None)
+        if element is None:
+            queued = any(item["subject"] == subject for item in state["queue"])
+            raise StateError("writer_not_owned" if queued else "subject_unknown",
+                             f"{subject} is queued; its hand-off names its run" if queued else f"{subject} is not planned")
+        if element["lane"] != lane:
+            raise StateError("writer_not_owned", f"{subject} is planned in {element['lane']}, not {lane}")
+        holder = next((entry["subject"] for entry in [*state.get("planned", []), *state["queue"]]
+                       if entry["subject"] != subject and entry.get("runId") == run), None)
+        if holder is not None:
+            raise StateError("run_bound", f"run {run} is already bound to {holder}")
+        if element.get("runId") not in (None, run):
+            raise StateError("run_bound", f"{subject} is already bound to run {element['runId']}")
+        if element.get("runId") == run:
+            return None
+        element["runId"] = run
+        return copy.deepcopy(element)
+
+    # Binding the same run again writes nothing, so the record's version stays where it is; the write checks again.
+    current = read_state(directory)
+    if change(copy.deepcopy(current)) is None:
+        return copy.deepcopy(next(entry for entry in current["planned"] if entry["subject"] == subject))
+    _, bound = _tool_write(directory, change)
+    if bound is None:
+        return copy.deepcopy(next(entry for entry in read_state(directory)["planned"] if entry["subject"] == subject))
+    return bound  # type: ignore[return-value]
+
+
 def patch(
     directory: Path,
     *,
@@ -1104,17 +1233,21 @@ def patch(
             if violations:
                 raise StateError("writer_not_owned", "; ".join(violations))
             _stamp_lane(current, updated, lane)
-            speaks = isinstance(changes, dict) and "focus" in changes
+            # A lane speaks when it writes its focus, by --patch or by --set.
+            speaks = _written_field(selector, changes, assignments, "focus") == lane
+            wrote = _written_field(selector, changes, assignments, "waitingOn")
             # What the queue said a lane waits on ends when the lane speaks, unless the lane says it still does.
-            if speaks and "waitingOn" not in changes and "/waitingOn" not in (assignments or {}):
+            if speaks and wrote is None:
                 previous = next(entry for entry in current["lanes"] if entry["id"] == lane)
-                if previous.get("focusBy") == "runner":
+                if _waiting_by(previous) == "runner":
                     next(entry for entry in updated["lanes"] if entry["id"] == lane)["waitingOn"] = None
+            _stamp_waiting(current, updated, writer, wrote)
             _stamp_focus(current, updated, writer, lane if speaks else None)
         else:
             violations = ownership_violations(current, updated, writer)
             if violations:
                 raise StateError("field_not_owned", "; ".join(sorted(set(violations))))
+            _stamp_waiting(current, updated, writer, _written_field(selector, changes, assignments, "waitingOn"))
             _stamp_focus(current, updated, writer, None)
         updated["version"] = version + 1
         if isinstance(updated.get("meta"), dict):
@@ -1141,6 +1274,7 @@ def append_journal(
     occurred_at: str | None = None,
     recovery: dict | None = None,
     review_artifact: dict | None = None,
+    review_carry: dict | None = None,
 ) -> dict:
     """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset."""
     if writer == "runner" and kind == REVIEW_KIND:
@@ -1175,10 +1309,16 @@ def append_journal(
                 raise StateError("recovery_identity", "candidate identity changed before recovery journal append")
         if review_artifact is not None:
             entry["reviewArtifact"] = review_artifact
+        if review_carry is not None:
+            entry["reviewCarry"] = review_carry
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
         _require_unicode(entry, "entry_invalid")
+        if kind == CLOSED_KIND:
+            # The close's started mark goes in with the entry, so a close journaled by hand carries it too. It is
+            # written first: a delivery.closed line never stands without its mark.
+            current = _with_closing(directory, current, {"started": {"entry": entry["id"], "at": entry["at"]}})
         line = json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
         complete = _journal_text(directory)[1]
         with open(directory / JOURNAL_FILE, "ab") as stream:
@@ -1189,6 +1329,38 @@ def append_journal(
             os.fsync(stream.fileno())
         _note_change(directory, "journal", version=current["version"], journal=entry["id"])
     return entry
+
+
+def _with_closing(directory: Path, current: dict, closing: dict) -> dict:
+    """Write the record's close marks, under the state lock the caller holds; returns the written state."""
+    updated = copy.deepcopy(current)
+    updated["meta"]["closing"] = closing
+    updated["version"] = current["version"] + 1
+    updated["meta"]["updatedAt"] = now()
+    errors = state_errors(updated)
+    if errors:
+        raise StateError("patch_invalid", "; ".join(errors))
+    _write_atomically(directory / STATE_FILE, dumps(updated))
+    _note_change(directory, "patch", version=updated["version"])
+    return updated
+
+
+def close_finished(directory: Path, *, entry: int) -> dict:
+    """The close's finished mark: the archive for delivery.closed entry ``entry`` has landed.
+
+    Only the latest delivery.closed counts, and only once its started mark is there; marking it again changes nothing.
+    """
+    with file_lock(directory / STATE_LOCK):
+        current = read_state(directory)
+        closed = [item for item in read_journal(directory) if item["kind"] == CLOSED_KIND]
+        if not closed or closed[-1]["id"] != entry:
+            raise StateError("close_unknown", f"journal entry {entry} is not the latest {CLOSED_KIND}")
+        closing = current["meta"].get("closing") or {}
+        if (closing.get("started") or {}).get("entry") != entry:
+            raise StateError("close_unknown", f"the record has no started mark for journal entry {entry}")
+        if (closing.get("finished") or {}).get("entry") == entry:
+            return current
+        return _with_closing(directory, current, {**closing, "finished": {"entry": entry, "at": now()}})
 
 
 # Native review observations: independent of product runs and admission.
@@ -1208,101 +1380,145 @@ def _review_json(data: bytes) -> object:
     return json.loads(data.decode("utf-8"), object_pairs_hook=unique)
 
 
+def _review_refusal(where: str, what: str) -> StateError:
+    """A refusal that names what was wrong and where: the round, the lens and the field."""
+    return StateError("review_artifact_invalid", f"native review outcome {where}: {what}" if where else
+                      f"native review outcome: {what}")
+
+
 def _review_outcomes(payload: dict, subject: str, candidate: str) -> list[dict]:
     """Validate identity and originating dispositions, without granting admission."""
-    def require(ok):
+    def require(ok, what):
         if not ok:
-            raise StateError("review_artifact_invalid", "native review outcome identity or report is invalid")
-    require(isinstance(payload, dict) and payload.get("spec") == "delivery-review-observation/1"
-            and payload.get("subjectRef") == subject and payload.get("candidateRef") == candidate)
+            raise _review_refusal("", what)
+    require(isinstance(payload, dict), "the capture is not a JSON object")
+    require(payload.get("spec") == "delivery-review-observation/1", "spec is not delivery-review-observation/1")
+    require(payload.get("subjectRef") == subject, f"subjectRef is not {subject}")
+    require(payload.get("candidateRef") == candidate, f"candidateRef is not {candidate}")
     sources = payload.get("outcomes")
-    require(isinstance(sources, list) and 1 <= len(sources) <= 32)
+    require(isinstance(sources, list) and 1 <= len(sources) <= 32, "outcomes is not a list of one to 32 rounds")
     outcomes = []
-    for encoded in sources:
-        require(isinstance(encoded, str) and len(encoded) <= REVIEW_SOURCE_LIMIT * 2)
+    for number, encoded in enumerate(sources, 1):
+        def require_round(ok, what, number=number):
+            if not ok:
+                raise _review_refusal(f"round {number}", what)
+        require_round(isinstance(encoded, str) and len(encoded) <= REVIEW_SOURCE_LIMIT * 2, "the outcome is not bounded base64 text")
         try:
             raw = base64.b64decode(encoded, validate=True)
-            require(len(raw) <= REVIEW_SOURCE_LIMIT)
+            require_round(len(raw) <= REVIEW_SOURCE_LIMIT, "the outcome file exceeds its byte limit")
             outcome = _review_json(raw)
             _require_unicode(outcome, "review_artifact_invalid")
         except (ValueError, UnicodeError, RecursionError) as error:
-            raise StateError("review_artifact_invalid", "native review outcome is not bounded JSON") from error
+            raise _review_refusal(f"round {number}", f"the outcome file is not bounded JSON ({error})") from error
         outcomes.append(outcome)
     validate_review_outcomes(outcomes, subject, candidate)
     return outcomes
 
 
-def validate_review_outcomes(outcomes: object, subject: str, candidate: str) -> None:
-    """Validate decoded reports at both the state reader and renderer boundary."""
-    def require(ok):
+def validate_review_outcomes(outcomes: object, subject: str, candidate: str) -> dict[str, str]:
+    """Validate decoded reports at both the state reader and renderer boundary.
+
+    Every refusal names the round, and the lens and field where one is at fault, so a lane can mend its outcome files.
+    Returns the findings still open after the last round, each with its severity.
+    """
+    def require(ok, what, where=""):
         if not ok:
-            raise StateError("review_artifact_invalid", "native review outcome identity or report is invalid")
-    require(isinstance(outcomes, list) and 1 <= len(outcomes) <= 32
-            and isinstance(candidate, str) and 0 < len(candidate) <= 2048)
+            raise _review_refusal(where, what)
+    require(isinstance(outcomes, list) and 1 <= len(outcomes) <= 32, "outcomes is not a list of one to 32 rounds")
+    require(isinstance(candidate, str) and 0 < len(candidate) <= 2048, "the candidate is not a reference of 1 to 2048 characters")
     selected, origins, severities, open_findings = None, {}, {}, set()
     _require_unicode(outcomes, "review_artifact_invalid")
     for number, outcome in enumerate(outcomes, 1):
-        require(isinstance(outcome, dict) and type(outcome.get("round")) is int and outcome["round"] == number)
+        here = f"round {number}"
+        require(isinstance(outcome, dict), "the outcome is not a JSON object", here)
+        require(type(outcome.get("round")) is int and outcome["round"] == number,
+                f"round is {outcome.get('round')!r}, not {number}: outcomes go in round order from 1", here)
         entries = outcome.get("entries")
-        require(isinstance(entries, list) and 1 <= len(entries) <= 16)
+        require(isinstance(entries, list) and 1 <= len(entries) <= 16, "entries is not a list of one to 16 lenses", here)
         lenses, round_candidate = [], None
-        for entry in entries:
-            require(isinstance(entry, dict))
+        for index, entry in enumerate(entries, 1):
+            require(isinstance(entry, dict), f"entries[{index}] is not a JSON object", here)
             lens, binding = entry.get("lens"), entry.get("binding")
-            require(isinstance(lens, str) and 0 < len(lens) <= 200 and lens not in lenses and isinstance(binding, dict))
+            require(isinstance(lens, str) and 0 < len(lens) <= 200, f"entries[{index}].lens is not a name of 1 to 200 characters", here)
+            at = f"{here}, lens {lens}"
+            require(lens not in lenses, "the lens appears twice in the round", at)
+            require(isinstance(binding, dict), "binding is not a JSON object", at)
             lenses.append(lens)
             ref = binding.get("candidateRef")
-            require(binding.get("subjectRef") == subject and type(binding.get("round")) is int
-                    and binding["round"] == number and isinstance(ref, str) and 0 < len(ref) <= 2048)
-            require(round_candidate is None or round_candidate == ref)
+            require(binding.get("subjectRef") == subject, f"binding.subjectRef is {binding.get('subjectRef')!r}, not {subject!r}", at)
+            require(type(binding.get("round")) is int and binding["round"] == number,
+                    f"binding.round is {binding.get('round')!r}, not {number}", at)
+            require(isinstance(ref, str) and 0 < len(ref) <= 2048, "binding.candidateRef is not a reference of 1 to 2048 characters", at)
+            require(round_candidate is None or round_candidate == ref,
+                    f"binding.candidateRef {ref!r} differs from the round's other lenses ({round_candidate!r})", at)
             round_candidate = ref
             if entry.get("state") != "obtained":
-                require(entry.get("state") in ("failed", "missing", "indeterminate") and "result" not in entry)
+                require(entry.get("state") in ("failed", "missing", "indeterminate"),
+                        f"state is {entry.get('state')!r}, not obtained, failed, missing or indeterminate", at)
+                require("result" not in entry, f"a {entry['state']} lens carries a result", at)
                 continue
             result = entry.get("result")
-            require(isinstance(result, dict) and result.get("schemaVersion") == "review-lens-result/1"
-                    and result.get("lensId") == lens and result.get("subjectRef") == subject
-                    and result.get("candidateRef") == ref and type(result.get("round")) is int
-                    and result["round"] == number and result.get("outcome") in ("aligned", "changes-requested")
-                    and bool(result.get("evidence")))
-            require(not ("resolvedFindings" in result and "resolutions" in result))
+            require(isinstance(result, dict), "result is not a JSON object", at)
+            require(result.get("schemaVersion") == "review-lens-result/1", "result.schemaVersion is not review-lens-result/1", at)
+            require(result.get("lensId") == lens, f"result.lensId is {result.get('lensId')!r}, not the entry's lens", at)
+            require(result.get("subjectRef") == subject, f"result.subjectRef is {result.get('subjectRef')!r}, not {subject!r}", at)
+            require(result.get("candidateRef") == ref, f"result.candidateRef is {result.get('candidateRef')!r}, not binding.candidateRef {ref!r}", at)
+            require(type(result.get("round")) is int and result["round"] == number, f"result.round is {result.get('round')!r}, not {number}", at)
+            require(result.get("outcome") in ("aligned", "changes-requested"),
+                    f"result.outcome is {result.get('outcome')!r}, not aligned or changes-requested", at)
+            require(bool(result.get("evidence")), "result.evidence is empty", at)
+            require(not ("resolvedFindings" in result and "resolutions" in result),
+                    "result carries both resolvedFindings and resolutions", at)
             findings = result.get("findings")
             closures = result.get("resolvedFindings", result.get("resolutions", []))
-            require(isinstance(findings, list) and isinstance(closures, list) and len(findings) <= 200 and len(closures) <= 200)
+            require(isinstance(findings, list) and len(findings) <= 200, "result.findings is not a list of at most 200", at)
+            require(isinstance(closures, list) and len(closures) <= 200, "result.resolvedFindings is not a list of at most 200", at)
             for finding in findings:
-                require(isinstance(finding, dict) and isinstance(finding.get("id"), str) and bool(finding["id"])
-                        and finding.get("severity") in SEVERITIES and isinstance(finding.get("summary"), str)
-                        and bool(finding["summary"]))
+                require(isinstance(finding, dict) and isinstance(finding.get("id"), str) and bool(finding["id"]),
+                        "a finding has no id", at)
                 identifier = finding["id"]
-                require(identifier not in origins or origins[identifier] == lens)
+                about = f"{at}, finding {identifier}"
+                require(finding.get("severity") in SEVERITIES, f"severity is {finding.get('severity')!r}, not one of {', '.join(SEVERITIES)}", about)
+                require(isinstance(finding.get("summary"), str) and bool(finding["summary"]), "summary is empty", about)
+                require(identifier not in origins or origins[identifier] == lens,
+                        f"the id was raised by {origins.get(identifier)!r}, another lens", about)
                 origins[identifier] = lens
                 severities[identifier] = min(severities.get(identifier, finding["severity"]), finding["severity"])
                 if finding.get("state") == "deferred":
-                    require(severities[identifier] in ("P2", "P3") and isinstance(finding.get("deferredIssue"), str)
-                            and bool(finding["deferredIssue"].strip()))
+                    require(severities[identifier] in ("P2", "P3"), "only a P2 or P3 finding may be deferred", about)
+                    require(isinstance(finding.get("deferredIssue"), str) and bool(finding["deferredIssue"].strip()),
+                            "a deferred finding names no deferredIssue", about)
                     open_findings.discard(identifier)
                 else:
                     open_findings.add(identifier)
             for closure in closures:
-                require(isinstance(closure, dict) and isinstance(closure.get("id"), str) and origins.get(closure["id"]) == lens
-                        and closure.get("originatingLens", lens) == lens
-                        and closure.get("state") in ("closed", "fixed", "withdrawn", "dropped", "deferred", "open")
-                        and isinstance(closure.get("resolution", closure.get("reason")), str)
-                        and bool(closure.get("resolution", closure.get("reason")).strip()))
+                require(isinstance(closure, dict) and isinstance(closure.get("id"), str), "a resolved finding has no id", at)
+                about = f"{at}, resolved finding {closure['id']}"
+                require(origins.get(closure["id"]) == lens, "no finding with this id was raised by this lens in an earlier or this round", about)
+                require(closure.get("originatingLens", lens) == lens, "originatingLens is not this lens", about)
+                require(closure.get("state") in ("closed", "fixed", "withdrawn", "dropped", "deferred", "open"),
+                        f"state is {closure.get('state')!r}, not closed, fixed, withdrawn, dropped, deferred or open", about)
+                require(isinstance(closure.get("resolution", closure.get("reason")), str)
+                        and bool(closure.get("resolution", closure.get("reason")).strip()), "resolution is empty", about)
                 if closure["state"] == "deferred":
-                    require(severities[closure["id"]] in ("P2", "P3") and isinstance(closure.get("deferredIssue"), str)
-                            and bool(closure["deferredIssue"].strip()))
+                    require(severities[closure["id"]] in ("P2", "P3"), "only a P2 or P3 finding may be deferred", about)
+                    require(isinstance(closure.get("deferredIssue"), str) and bool(closure["deferredIssue"].strip()),
+                            "a deferred finding names no deferredIssue", about)
                 if closure["state"] in ("closed", "fixed", "withdrawn", "dropped", "deferred"):
                     open_findings.discard(closure["id"])
                 else:
                     open_findings.add(closure["id"])
         if outcome.get("outcome") == "aligned":
-            require(not open_findings and all(entry.get("state") == "obtained"
-                    and entry["result"]["outcome"] == "aligned" for entry in entries))
-        require(selected is None or set(selected) == set(lenses))
+            require(not open_findings, f"the round is aligned with findings still open: {', '.join(sorted(open_findings))}", here)
+            require(all(entry.get("state") == "obtained" and entry["result"]["outcome"] == "aligned" for entry in entries),
+                    "the round is aligned but a lens is missing or asked for changes", here)
+        require(selected is None or set(selected) == set(lenses),
+                f"the lenses are {sorted(lenses)}, not the earlier rounds' {sorted(selected or [])}", here)
         selected = lenses
         if number == len(outcomes):
-            require(round_candidate == candidate)
+            require(round_candidate == candidate,
+                    f"the last round reviewed {round_candidate!r}, not the captured candidate {candidate!r}", here)
+    return {identifier: severities[identifier] for identifier in sorted(open_findings)}
 
 
 def _review_artifact_path(directory: Path, digest: str) -> Path:
@@ -1376,6 +1592,67 @@ def capture_review(directory: Path, *, subject: str, candidate: str, outcomes: l
         raise StateError("review_artifact_invalid", "native review artifact could not be read or stored") from error
 
 
+def _standing_carry(journal: list[dict], subject: str, capture: dict) -> dict | None:
+    """The lead's latest carry of a subject's capture, while it still holds: after that capture and its last round."""
+    carry = next((entry for entry in reversed(journal) if entry["subject"] == subject and "reviewCarry" in entry), None)
+    if carry is None or carry["reviewCarry"]["digest"] != capture["reviewArtifact"]["digest"] or carry["id"] < capture["id"]:
+        return None
+    rounds = [entry["id"] for entry in journal if entry["subject"] == subject and entry["kind"] == "review.round"]
+    return carry if not rounds or max(rounds) < carry["id"] else None
+
+
+def carry_review(directory: Path, *, subject: str, from_head: str, to_head: str, reason: str) -> dict:
+    """The lead carries a subject's captured review across a commit it judged needs no new round.
+
+    The carry changes nothing the evidence says: a capture whose last round isn't aligned, or that leaves a P0 or P1
+    open, is refused. It is display and acceptance evidence only, never a run, a review round or admission evidence.
+    """
+    if not isinstance(reason, str) or not reason.strip():
+        raise StateError("carry_invalid", "say why the commit needs no new round with --reason")
+    with file_lock(directory / "review-capture.lock"):
+        state, journal = read_state(directory), read_journal(directory)
+        item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
+        if item is None:
+            planned = any(entry["subject"] == subject for entry in state.get("planned", []))
+            raise StateError("carry_invalid", f"{subject} is planned, not handed off: a carry moves evidence to a queued head"
+                             if planned else f"the record holds no queued work named {subject}")
+        if item.get("runId"):
+            raise StateError("carry_invalid", f"{subject} is built by run {item['runId']}, which keeps its own evidence")
+        if item["stage"] == "merged":
+            raise StateError("carry_invalid", f"{subject} is merged")
+        capture = next((entry for entry in reversed(journal)
+                        if entry["subject"] == subject and entry["kind"] == "review.evidence"), None)
+        if capture is None:
+            raise StateError("carry_invalid", f"{subject} has no captured review to carry")
+        reference = capture["reviewArtifact"]
+        rounds = [entry for entry in journal if entry["subject"] == subject and entry["kind"] == "review.round"]
+        if rounds and rounds[-1]["id"] > capture["id"]:
+            raise StateError("carry_invalid", f"{subject}'s latest review round has not been captured")
+        standing = _standing_carry(journal, subject, capture)
+        covered = standing["reviewCarry"]["to"] if standing else reference["candidateRef"]
+        if from_head != covered:
+            raise StateError("carry_invalid", f"{subject}'s evidence covers {covered}, not {from_head}")
+        if to_head == from_head:
+            raise StateError("carry_invalid", "carry the evidence to a different head")
+        if item["head"] != to_head:
+            raise StateError("carry_invalid", f"{subject} is queued at {item['head']}, not {to_head}")
+        data = _read_review_file(_review_artifact_path(directory, reference["digest"]), REVIEW_ARTIFACT_LIMIT)
+        if hashlib.sha256(data).hexdigest() != reference["digest"]:
+            raise StateError("carry_invalid", "the captured review artifact is damaged")
+        outcomes = _review_outcomes(_review_json(data), subject, reference["candidateRef"])
+        still_open = {identifier: severity for identifier, severity in
+                      validate_review_outcomes(outcomes, subject, reference["candidateRef"]).items()}
+        blocking = [f"{identifier} ({severity})" for identifier, severity in still_open.items() if severity in ("P0", "P1")]
+        if blocking:
+            raise StateError("carry_invalid", f"the captured review leaves {', '.join(blocking)} open; a carry can't approve it")
+        if outcomes[-1].get("outcome") != "aligned":
+            raise StateError("carry_invalid", f"the captured review's last round, round {len(outcomes)}, is not aligned")
+        return append_journal(directory, kind="decision.recorded", subject=subject, lane=item.get("lane"),
+                              summary=f"The lead carried {subject}'s review from {from_head} to {to_head}, "
+                                      f"no new round needed: {reason.strip()}",
+                              review_carry={"from": from_head, "to": to_head, "digest": reference["digest"]})
+
+
 def review_observations(directory: Path, state: dict, journal: list[dict]) -> dict:
     references = {entry["subject"]: entry for entry in journal if entry["kind"] == "review.evidence"}
     latest_rounds = {entry["subject"]: entry for entry in journal if entry["kind"] == "review.round"}
@@ -1390,8 +1667,12 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
         try:
             item = items[subject]
             latest = latest_rounds.get(subject)
-            # Bound to the reviewed head: a runner sync only merges the base in, under its own checks.
-            if subject in queued and item.get("head") != candidate:
+            # Bound to the reviewed head: a runner sync only merges the base in, under its own checks. A head the
+            # lead carried the evidence to stands in for it while that carry holds.
+            carry = _standing_carry(journal, subject, event) if subject in queued else None
+            if carry is not None and carry["reviewCarry"]["to"] != item.get("head"):
+                carry = None
+            if subject in queued and item.get("head") != candidate and carry is None:
                 raise StateError("review_artifact_invalid", "review candidate is stale or unknown")
             # Before hand-off there is no head: bound to the round the lane journaled last, captured after it.
             if subject not in queued and latest is None:
@@ -1405,6 +1686,9 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
             if subject not in queued and (latest.get("review") or {}).get("round") != len(outcomes):
                 raise StateError("review_artifact_invalid", "the capture is not of the latest journaled round")
             observed[subject] = {"candidateRef": candidate, "digest": reference["digest"], "outcomes": outcomes}
+            if carry is not None and item.get("head") != candidate:
+                observed[subject]["carried"] = {"from": carry["reviewCarry"]["from"], "to": carry["reviewCarry"]["to"],
+                                                "note": carry["summary"]}
         except (StateError, OSError, ValueError, UnicodeError, RecursionError):
             observed[subject] = {"candidateRef": candidate, "unavailable": True}
     return observed
@@ -1430,7 +1714,9 @@ def review_evidence(directory: Path, subject: str) -> dict:
         return {**found, "evidence": "unavailable"}
     if len(observed["outcomes"]) < rounds:
         return {**found, "evidence": "incomplete", "roundsCaptured": len(observed["outcomes"])}
-    return {**found, "evidence": "captured", "roundsCaptured": len(observed["outcomes"])}
+    carried = ({"carriedFrom": observed["carried"]["from"], "carriedTo": observed["carried"]["to"]}
+               if "carried" in observed else {})
+    return {**found, "evidence": "captured", "roundsCaptured": len(observed["outcomes"]), **carried}
 
 
 def show(directory: Path, *, between_reads: Callable[[], None] | None = None) -> dict:
@@ -2041,6 +2327,8 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                     }
                     if entry.get("changeRequest"):
                         element["changeRequest"] = entry["changeRequest"]
+                    if entry.get("trackerStarted"):
+                        element["trackerStarted"] = True
                     # Under the lead's policy it waits like any hand-off, so its recovery can say the wait was skipped.
                     if state["meta"].get("handoffsNeedAcceptance"):
                         element["pending"] = True
@@ -3868,6 +4156,8 @@ def main(argv: list[str] | None = None) -> int:
     entry.add_argument("--subject")
     entry.add_argument("--writer", choices=("lead", "lane"), default="lead",
                        help="lane: a lane journals a review round of its own work")
+    finished = commands.add_parser("close-finished", help="mark the close of delivery.closed entry N finished, once its archive has landed")
+    finished.add_argument("--entry", type=int, required=True)
     _add_wait_arguments(commands.add_parser("wait", help="read the record and the machine until something needs the lead"))
     evidence = commands.add_parser("review-evidence",
                                    help="say whether a subject's review evidence is captured for its reviewed head")
@@ -3907,6 +4197,17 @@ def main(argv: list[str] | None = None) -> int:
     focused.add_argument("--text", required=True)
     focused.add_argument("--state", choices=("idle", "assigned", "working", "reviewing", "handed", "blocked", "done"))
     focused.add_argument("--waiting-on", help="who or what the lane waits on; an empty value clears it")
+    carried = commands.add_parser("carry-review",
+                                  help="the lead carries a captured review across a commit it judged needs no new round")
+    carried.add_argument("--writer", required=True, choices=WRITERS)
+    carried.add_argument("--subject", required=True)
+    carried.add_argument("--from", dest="from_head", required=True, help="the head the evidence covers now")
+    carried.add_argument("--to", dest="to_head", required=True, help="the queued head to carry it to")
+    carried.add_argument("--reason", required=True, help="why the commit between them needs no new round")
+    binding_run = commands.add_parser("bind-run", help="a lane binds the run building its planned work, before its hand-off")
+    binding_run.add_argument("--lane", required=True)
+    binding_run.add_argument("--subject", required=True)
+    binding_run.add_argument("--run", required=True, help="the id of the run, in the adopter's delivery product")
     display = commands.add_parser("show", help="print the validated state and journal, and whether publication lags")
     display.add_argument("--binding", type=Path, help="the repository binding, to tell whether the outbox is orphaned")
     sync = commands.add_parser("reconcile", help="bring the record up to date with forge and tracker snapshots")
@@ -3971,6 +4272,8 @@ def main(argv: list[str] | None = None) -> int:
                     writer="lane" if args.writer == "lane" else None,
                 ),
             }
+        elif args.command == "close-finished":
+            result = {"ok": True, "state": close_finished(args.dir, entry=args.entry)}
         elif args.command == "headline":
             bound = binding_state(args.binding).get("statusOverrideMaxAgeSeconds") if args.binding is not None else None
             age = args.max_age if args.max_age is not None else bound or STATUS_OVERRIDE_MAX_AGE_SECONDS
@@ -3996,6 +4299,13 @@ def main(argv: list[str] | None = None) -> int:
             waiting = ... if args.waiting_on is None else (args.waiting_on or None)
             result = {"ok": True, "state": set_focus(args.dir, args.lane, args.text, state=args.state,
                                                      waiting_on=waiting)}
+        elif args.command == "carry-review":
+            if args.writer != "lead":
+                raise StateError("writer_not_owned", "only the lead carries a review")
+            result = {"ok": True, "entry": carry_review(args.dir, subject=args.subject, from_head=args.from_head,
+                                                        to_head=args.to_head, reason=args.reason)}
+        elif args.command == "bind-run":
+            result = {"ok": True, "item": bind_run(args.dir, lane=args.lane, subject=args.subject, run=args.run)}
         elif args.command == "reconcile":
             bound = binding_state(args.binding).get("snapshotMaxAgeSeconds") if args.binding is not None else None
             max_age = args.max_age if args.max_age is not None else bound

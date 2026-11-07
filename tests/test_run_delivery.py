@@ -221,6 +221,18 @@ else:
     print(json.dumps({**pr, "url": args.url, "head": pr.get("head") or head(pr["source"])}))
 '''
 
+# A real listener: argv is the port, a mark that names it in its command line, and "reuse" to share the port.
+LISTENER = r'''
+import socket, sys, time
+s = socket.socket()
+if sys.argv[3] == "reuse":
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+s.bind(("127.0.0.1", int(sys.argv[1])))
+s.listen()
+print("listening", flush=True)
+time.sleep(60)
+'''
+
 FAKE_CHECK = r'''
 import datetime, json, sys, time, urllib.request
 spec = json.load(open(sys.argv[1])); port = sys.argv[2]
@@ -379,7 +391,23 @@ class Fixture:
 
     def close(self):
         stop_supervisors(self.tmp)
+        self.stop_in_app()
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def stop_in_app(self) -> None:
+        """Stop what a killed in-app holder left running. Its lease still names the groups it started, and taking the
+        lease, as lead-close does, has the tool stop them. A lease released cleanly names none, so this costs a run only
+        after a kill. The wait is defensive: the tool only signals the groups, and the folder they serve is removed next.
+        The fixture's own serve and check exit on SIGTERM well inside the tool's one-second port wait, so no case pins it."""
+        lock = self.tmp / "app.lock"
+        groups = [int(g) for g in re.findall(r"pgid (\d+)", lock.read_text())] if lock.exists() else []
+        if not groups:
+            return
+        with contextlib.suppress(Stopped):  # still held: its live holder stops its own groups
+            self.call("Lease", lock, self.port, "fixture-close", 0, then="close", cwd=Path(tempfile.gettempdir()))
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and any(group_alive(g) for g in groups):
+            time.sleep(0.1)
 
 
 def stop_supervisors(root: Path) -> None:
@@ -420,6 +448,16 @@ def stop_supervisors(root: Path) -> None:
         if isinstance(pid, int) and pid > 1:
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)
+
+
+def group_alive(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # the group exists, but isn't ours to signal
+        return True
 
 
 def report(**over):
@@ -746,7 +784,440 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         }.items():
             expect(check(r), f"{name} was accepted")
         expect(check(lens_result(round=2), carried={"l-r1-1"}, n=2), "a dropped carried finding was accepted")
+        # Only the still-open findings must appear; one closed in an earlier round may be listed again.
+        relisted = lens_result(round=2, resolvedFindings=[{"id": "l-r1-1", "state": "fixed", "resolution": "fixed"},
+                                                          {"id": "l-r1-2", "state": "fixed", "resolution": "fixed in round 1"}])
+        expect(check(relisted, carried={"l-r1-1"}, n=2) == [], check(relisted, carried={"l-r1-1"}, n=2))
         expect(check(lens_result(lateFindings=["l-r1-9"])), "a lateFindings id that isn't one of the result's own was accepted")
+
+    def test_lead_assign_warns_of_files_outside_the_lane_before_it_starts(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        plan = m / "docs/plan.md"
+        plan.write_text(plan.read_text()
+                        .replace("- Scenarios: it loads; it fails.\n",
+                                 "- Scenarios: it loads; it fails.\n- Files: `src/one.txt`, `src/two.txt`, `one.txt`, `tools/`, "
+                                 "`docs/refs/*.md`, `x/notes2.md`, `src/one-log.txt`, `x/a.md`, `./tools/fake_check.py`, "
+                                 "`Makefile`.\n")
+                        .replace("- Scenarios: it renders.\n", "- Scenarios: it renders.\n- Files: `src/two.txt`.\n")
+                        .replace("| Copy | \"Couldn't be loaded.\" |\n",
+                                 "| Copy | \"Couldn't be loaded.\" |\n| S10's files | `tools/s10.py` |\n"))
+        # A bare name or a path's end that several files share is the lane's own match; a directory and a glob resolve;
+        # a path's end matches whole folder names; a bare word with no extension, and a row naming S10, aren't S1's.
+        for path in ("src/one.txt", "docs/one.txt", "docs/refs/notes.md", "docs/deep/x/notes2.md", "docs/deep/yx/notes2.md",
+                     "src/one-dir/x/a.md", "docs/x/a.md", "docs/Makefile"):
+            (m / path).parent.mkdir(parents=True, exist_ok=True)
+            (m / path).write_text(f"{path}\n")
+        commit(m, "FX-1: the plan names FX-2's files")
+        (m / "docs/guide.md").write_text("guide\n")
+        (m / "docs/rare.md").write_text("rare\n")
+        commit(m, "FX-1: the docs")
+        # History, without the sweeping change below: src/one.txt changes 5 times, docs/refs/notes.md (named) 4.
+        # docs/pair.md changes with src/one.txt in 4 of 5 and with notes.md in 3 of 4, so its best match is the later
+        # name. docs/guide.md, z1 and z2 change with notes.md in 3 of 4, docs/rare.md twice (too few), docs/gone.md 3
+        # times but is gone from the base, and src/one-extra.txt, the lane's own, as often as docs/pair.md. Four are
+        # shown, so a fifth that shouldn't be (the lane's own, or docs/log.md below) would show.
+        named, own, zs = "docs/refs/notes.md", "src/one-extra.txt", ["docs/z1.md", "docs/z2.md"]
+        common = ["docs/guide.md", named, own, "docs/pair.md", "docs/gone.md", *zs]
+        for k, also in enumerate(([*common, "docs/rare.md"], [*common, "docs/rare.md"], common, ["docs/pair.md", own])):
+            (m / "src/one.txt").write_text(f"{k + 1}\n")
+            for path in also:
+                (m / path).write_text(f"{path} {k}\n")
+            commit(m, f"FX-1: change {k}")
+        sh("git", "rm", "-q", "docs/gone.md", cwd=m)
+        commit(m, "FX-1: docs/gone.md goes")
+        (m / "sweep").mkdir()
+        for k in range(45):
+            (m / f"sweep/{k}.txt").write_text("x\n")
+        for path in ("src/one.txt", "docs/guide.md", named):
+            (m / path).write_text("sweep\n")
+        commit(m, "FX-1: a sweeping change, which would make guide.md 4 of 5 with notes.md if it counted")
+        # src/one-log.txt changes 13 times, 3 of them with docs/log.md: often enough, but too small a share.
+        (m / "src/one-log.txt").write_text("0\n")
+        commit(m, "FX-1: a log")
+        for k in range(12):
+            (m / "src/one-log.txt").write_text(f"{k + 1}\n")
+            if k < 3:
+                (m / "docs/log.md").write_text(f"{k}\n")
+            commit(m, f"FX-1: log {k}")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        # The lead's checkout holds a commit the base doesn't: the warning reads the base's files.
+        (m / "tools/local-only.py").write_text("x\n")
+        commit(m, "FX-1: not on the base")
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1", cwd=m)
+        self.assertEqual(code, 0, out)
+        shared = "(no lane's; with docs/refs/notes.md in 3 of 4 changes)"
+        self.assertIn("Files outside lane-1's owns, before it starts (lead-accept refuses a change to any of them):\n"
+                      "  FX-2 names docs/deep/x/notes2.md (no lane's), docs/refs/notes.md (no lane's), src/two.txt (lane-2's), "
+                      "tools/fake_check.py (no lane's), tools/fake_forge.py (no lane's)\n"
+                      "  FX-2's files often change with docs/pair.md (no lane's; with src/one.txt in 4 of 5 changes), "
+                      f"docs/guide.md {shared}, docs/z1.md {shared}, docs/z2.md {shared}\n"
+                      "Move each to lane-1's owns now, or plan the story on the lane that owns it.\n", out)
+        for quiet in ("docs/rare.md", "docs/log.md", "src/one-extra.txt", "docs/gone.md", "docs/x/a.md",
+                      "yx/notes2.md", "tools/s10.py", "Makefile", "./tools", "tools/local-only.py"):
+            self.assertNotIn(quiet, out)
+        self.assertLess(out.index("Files outside"), out.index("Assignment message for lane-1"))
+        # A story that names only its lane's files gets no warning.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("Files outside", out)
+
+    def test_a_lens_keeps_one_checkout_across_rounds_and_is_reprepared_only_when_a_dependency_changes(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        prepares = fx.tmp / "prepares.log"
+        config = m / ".agents/run-delivery.json"
+        settings = json.loads(config.read_text())
+        settings["review"]["prepare"] = [["sh", "-c", f"echo run >> {prepares} && mkdir -p out && echo env > out/env"]]
+        config.write_text(json.dumps(settings, indent=2))
+        commit(m, "FX-1: a prepare step")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        review = wt / ".orchestration/review/FX-2"
+        lenses = fx.lenses(wt)
+        short0 = lenses[0][1][0]
+        runs = lambda: prepares.read_text().count("run") if prepares.exists() else 0
+
+        def prepare(n: int, change: str) -> dict[str, Path]:
+            (wt / "src/one.txt").write_text(change)
+            commit(wt, f"FX-2: {change.strip()}")
+            code, out = fx.flow("review-prepare", "FX-2", "--round", str(n), cwd=wt)
+            if code == 2 and "Evidence so far" in out:
+                context = review / "context.md"
+                context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                                    if line.startswith(CONTEXT_TODO)), "- evidence"))
+                code, out = fx.flow("review-prepare", "FX-2", "--round", str(n), cwd=wt)
+            self.assertEqual(code, 0, out)
+            found = {}
+            for _, (short, _) in lenses:
+                brief = (review / f"brief-r{n}-{short}.md").read_text()
+                found[short] = Path(re.search(r"Your private checkout: `([^`]+)`", brief).group(1))
+            return found
+
+        def plant(checkouts: dict[str, Path]) -> None:
+            for checkout in checkouts.values():
+                (checkout / "src/probe.txt").write_text("a lens's untracked probe\n")
+                (checkout / "out/cache").write_text("kept with the environment\n")
+                (checkout / "src/app.txt").write_text("a lens's unreverted edit\n")
+
+        def reduce(n: int, open_p1: bool) -> None:
+            if open_p1:
+                write_results(review, n, "FX-2", lenses, findings=[{"id": f"{short0}-r{n}-1", "severity": "P1", "summary": "fix"}],
+                              resolved=[{"id": f"{short0}-r{n - 1}-1", "state": "fixed", "resolution": "x"}] if n > 1 else None)
+            else:
+                write_results(review, n, "FX-2", lenses, resolved=[{"id": f"{short0}-r{n - 1}-1", "state": "fixed", "resolution": "x"}])
+            code, out = fx.flow("review-reduce", "FX-2", "--round", str(n), cwd=wt)
+            self.assertEqual(code, 0, out)
+
+        first = prepare(1, "one\n")
+        self.assertEqual(runs(), len(lenses), "each lens's checkout wasn't prepared once")
+        self.assertEqual(len(set(first.values())), len(lenses), first)
+        plant(first)
+        reduce(1, open_p1=True)
+        for checkout in first.values():
+            self.assertTrue(checkout.is_dir(), f"{checkout} was removed while the review goes on")
+
+        # Round 2 changes no dependency: the same checkouts, at the new candidate, clean, with the environment kept.
+        second = prepare(2, "two\n")
+        self.assertEqual(second, first, "a lens got a new checkout for round 2")
+        head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        for checkout in second.values():
+            self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=checkout).stdout.strip(), head)
+            self.assertEqual(sh("git", "status", "--porcelain", cwd=checkout).stdout, "", f"{checkout} isn't clean")
+            self.assertFalse((checkout / "src/probe.txt").exists(), "the lens's untracked probe was kept")
+            self.assertEqual((checkout / "src/app.txt").read_text(), "app\n", "the lens's edit to a tracked file was kept")
+            self.assertEqual((checkout / "src/one.txt").read_text(), "two\n")
+            self.assertTrue((checkout / "out/cache").exists(), "the prepared environment was thrown away with no dependency change")
+        self.assertEqual(runs(), len(lenses), "a round with no dependency change prepared again")
+        plant(second)
+        reduce(2, open_p1=True)
+
+        # Round 3 adds a dependency manifest: the environment is cleared and prepared again, in the same checkouts.
+        (wt / "requirements.txt").write_text("example==1.0\n")
+        third = prepare(3, "three\n")
+        self.assertEqual(third, first, "a lens got a new checkout for round 3")
+        self.assertEqual(runs(), 2 * len(lenses), "a dependency change didn't prepare each checkout again")
+        for checkout in third.values():
+            self.assertFalse((checkout / "out/cache").exists(), "an ignored file outlived a dependency change")
+            self.assertTrue((checkout / "out/env").exists(), "the environment wasn't prepared again")
+            self.assertTrue((checkout / "requirements.txt").exists())
+            self.assertEqual(sh("git", "status", "--porcelain", cwd=checkout).stdout, "", f"{checkout} isn't clean")
+        reduce(3, open_p1=False)
+        for checkout in third.values():
+            self.assertFalse(checkout.exists(), f"{checkout} outlived the aligned round")
+            self.assertFalse(checkout.with_name(checkout.name + ".prepared.json").exists(), "a removed checkout's stamp was kept")
+        self.assertNotIn(str(third[short0]), sh("git", "worktree", "list", cwd=wt).stdout)
+
+    def lens_round_one(self, bound: int = 3) -> tuple:
+        """FX-2 with a counting prepare step, through round 1's prepare: (fixture, lane, review folder, lenses,
+        prepares log, each lens's checkout by short name)."""
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        prepares = fx.tmp / "prepares.log"
+        config = m / ".agents/run-delivery.json"
+        settings = json.loads(config.read_text())
+        settings["review"].update(bound=bound, prepare=[["sh", "-c", f"echo run >> {prepares}"]])
+        config.write_text(json.dumps(settings, indent=2))
+        commit(m, "FX-1: a prepare step")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        review = wt / ".orchestration/review/FX-2"
+        lenses = fx.lenses(wt)
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        context = review / "context.md"
+        context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                            if line.startswith(CONTEXT_TODO)), "- evidence"))
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        checkouts = {short: Path(re.search(r"Your private checkout: `([^`]+)`",
+                                           (review / f"brief-r1-{short}.md").read_text()).group(1)) for _, (short, _) in lenses}
+        return fx, wt, review, lenses, prepares, checkouts
+
+    def test_a_review_that_reaches_its_bound_removes_the_lens_checkouts(self) -> None:
+        fx, wt, review, lenses, _, checkouts = self.lens_round_one(bound=1)
+        short0 = lenses[0][1][0]
+        write_results(review, 1, "FX-2", lenses, findings=[{"id": f"{short0}-r1-1", "severity": "P1", "summary": "fix"}])
+        code, out = fx.flow("review-reduce", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("Bound reached", out)
+        for checkout in checkouts.values():
+            self.assertFalse(checkout.exists(), f"{checkout} outlived a review at its bound")
+            self.assertFalse(checkout.with_name(checkout.name + ".prepared.json").exists(), "a removed checkout's stamp was kept")
+            self.assertNotIn(str(checkout), sh("git", "worktree", "list", cwd=wt).stdout)
+
+    def test_a_path_at_a_lens_checkout_that_isnt_its_own_worktree_is_made_afresh_and_the_lane_is_untouched(self) -> None:
+        fx, wt, review, lenses, prepares, checkouts = self.lens_round_one()
+        short0 = lenses[0][1][0]
+        write_results(review, 1, "FX-2", lenses, findings=[{"id": f"{short0}-r1-1", "severity": "P1", "summary": "fix"}])
+        code, out = fx.flow("review-reduce", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        # What a partial removal leaves: a plain folder, no .git, with its prepared stamp still beside it.
+        checkout = checkouts[short0]
+        sh("git", "worktree", "remove", "--force", checkout, cwd=wt)
+        checkout.mkdir()
+        (checkout / "leftover.txt").write_text("left\n")
+        (wt / "out").mkdir(exist_ok=True)
+        (wt / "out/lane-ignored").write_text("the lane's own\n")
+        (wt / "src/one.txt").write_text("two\n")
+        commit(wt, "FX-2: two")
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "2", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(Path(sh("git", "rev-parse", "--show-toplevel", cwd=checkout).stdout.strip()).resolve(), checkout.resolve(),
+                         "the plain folder wasn't made its own checkout")
+        self.assertFalse((checkout / "leftover.txt").exists())
+        self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=checkout).stdout.strip(), sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip())
+        self.assertEqual(sh("git", "symbolic-ref", "--short", "HEAD", cwd=wt).stdout.strip(), "feature/FX-2", "the lane was detached")
+        self.assertTrue((wt / "out/lane-ignored").exists(), "the lane's own ignored file was cleaned")
+        self.assertEqual(prepares.read_text().count("run"), len(lenses) + 1, "the made-afresh checkout wasn't prepared")
+
+    def test_a_lens_checkout_gone_between_rounds_is_made_and_prepared_afresh(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        prepares = fx.tmp / "prepares.log"
+        config = m / ".agents/run-delivery.json"
+        settings = json.loads(config.read_text())
+        fail = fx.tmp / "fail-once"
+        settings["review"]["prepare"] = [["sh", "-c", f"echo run >> {prepares}; test ! -f {fail} || {{ rm {fail}; exit 1; }}"]]
+        config.write_text(json.dumps(settings, indent=2))
+        commit(m, "FX-1: a prepare step")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        review = wt / ".orchestration/review/FX-2"
+        lenses = fx.lenses(wt)
+        short0 = lenses[0][1][0]
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        context = review / "context.md"
+        context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                            if line.startswith(CONTEXT_TODO)), "- evidence"))
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        checkout = Path(re.search(r"Your private checkout: `([^`]+)`", (review / f"brief-r1-{short0}.md").read_text()).group(1))
+        write_results(review, 1, "FX-2", lenses, findings=[{"id": f"{short0}-r1-1", "severity": "P1", "summary": "fix"}])
+        code, out = fx.flow("review-reduce", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        sh("git", "worktree", "remove", "--force", checkout, cwd=wt)
+        (wt / "src/one.txt").write_text("two\n")
+        commit(wt, "FX-2: two")
+        # The first prepare of the new checkout fails part-way; the retry must not take it as prepared.
+        fail.write_text("")
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "2", cwd=wt)
+        self.assertNotEqual(code, 0, out)
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "2", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=checkout).stdout.strip(),
+                         sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip())
+        self.assertEqual(prepares.read_text().count("run"), len(lenses) + 2,
+                         "the missing checkout wasn't prepared again after a failed prepare, or a kept one was")
+
+    def test_what_makes_a_lens_checkout_prepare_again(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            r = Path(tmp)
+            sh("git", "init", "-q", cwd=r)
+            (r / "src").mkdir()
+            (r / "src/app.txt").write_text("app\n")
+            (r / "tools").mkdir()
+            (r / "tools/setup.sh").write_text("true\n")
+            commit(r, "base")
+            commands = [["sh", "./tools/setup.sh"]]
+            fingerprint = lambda cmds=commands: self.call("dependency_fingerprint", "HEAD", cmds, cwd=r)
+            before = fingerprint()
+            (r / "src/app.txt").write_text("changed\n")
+            commit(r, "a source change")
+            self.assertEqual(fingerprint(), before, "a source change re-prepares")
+            self.assertNotEqual(fingerprint([["sh", "./tools/setup.sh", "--again"]]), fingerprint(),
+                                "changed prepare commands don't re-prepare")
+            for path in ("tools/setup.sh", "requirements-dev.txt", "web/package.json", "pyproject.toml"):
+                last = fingerprint()
+                (r / path).parent.mkdir(parents=True, exist_ok=True)
+                (r / path).write_text(f"{path} changed\n")
+                commit(r, f"change {path}")
+                self.assertNotEqual(fingerprint(), last, f"a change to {path} doesn't re-prepare")
+
+    def test_each_round_reads_the_plan_from_the_base_and_a_ruled_round_needs_its_own_commit(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        # The story's plan part mentions the lane's own heading, which a re-seed mustn't take for the lane's.
+        plan = m / "docs/plan.md"
+        plan.write_text(plan.read_text().replace("- Scenarios: it loads; it fails.\n",
+                                                 "- Scenarios: it loads; it fails.\n- Note: `## Evidence so far` heads the lane's part.\n"))
+        commit(m, "FX-1: a note in the plan")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        review = wt / ".orchestration/review/FX-2"
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 2, out)
+        context = review / "context.md"
+        context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                            if line.startswith(CONTEXT_TODO)), "- the lane's own evidence"))
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        base = lambda: sh("git", "rev-parse", "origin/feature/FX-1", cwd=wt).stdout.strip()
+        first = base()
+        lenses = fx.lenses(wt)
+        self.assertIn(f"git show {first}:docs/plan.md", (review / f"brief-r1-{lenses[0][1][0]}.md").read_text())
+        # The lead rules on the round's finding without a lane fix.
+        short0 = lenses[0][1][0]
+        write_results(review, 1, "FX-2", lenses, findings=[{"id": f"{short0}-r1-1", "severity": "P1", "summary": "fix"}], only=0)
+        write_results(review, 1, "FX-2", lenses, only=1)
+        code, out = fx.flow("review-reduce", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "2", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("HEAD is the candidate of the previous round", out)
+        self.assertIn('git commit --allow-empty -m "FX-2: <the ruling>"', out)
+        self.assertIn("note the ruling in context.md's Evidence so far", out)
+        sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m",
+           "FX-2: the lead ruled the finding out of scope", cwd=wt)
+        # Then the lead changes the plan on the base, from a clone the lane shares no refs with, after every command that
+        # fetches it here: only round 2's own review-prepare can bring it before seeding.
+        clone = fx.tmp / "lead-elsewhere"
+        sh("git", "clone", "-q", "--branch", "feature/FX-1", fx.origin, clone)
+        elsewhere = clone / "docs/plan.md"
+        elsewhere.write_text(elsewhere.read_text().replace("- Scenarios: it loads; it fails.\n",
+                                                           "- Scenarios: it loads; it fails; NEW-SCENARIO.\n"))
+        commit(clone, "FX-1: the plan changes")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=clone)
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "2", cwd=wt)
+        self.assertEqual(code, 0, out)
+        seeded = context.read_text()
+        self.assertIn("NEW-SCENARIO", seeded, "round 2's context kept round 1's plan")
+        self.assertIn("- the lane's own evidence", seeded, "re-seeding the plan lost the lane's evidence")
+        self.assertNotEqual(base(), first, "review-prepare didn't fetch the base before seeding")
+        brief = (review / f"brief-r2-{short0}.md").read_text()
+        self.assertIn(f"git show {base()}:docs/plan.md", brief)
+        self.assertIn("NEW-SCENARIO", brief)
+        # Round 1's plan part and header are gone, not kept beside round 2's.
+        for text in (seeded, brief):
+            self.assertNotIn(first, text, "round 1's base commit is still named")
+            self.assertNotIn("- Scenarios: it loads; it fails.\n", text, "round 1's plan line is still there")
+            self.assertEqual(text.count("## Ticket contract and plan unit"), 1, text)
+            self.assertEqual(text.count("heads the lane's part"), 1, text)
+        self.assertIn("Every finding this lens raised in an earlier round that is still open must appear", brief)
+
+    def test_a_plan_line_that_is_the_evidence_heading_isnt_taken_for_the_lanes(self) -> None:
+        # Only a top-level story heading lets the plan's part carry a whole `## Evidence so far` line; the lane's own
+        # heading comes after it, so a re-seed must cut at the last one.
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        plan = m / "docs/plan.md"
+        plan.write_text(plan.read_text().replace("### S1 (FX-2). Thing one (AC1). Regex `/api/one$`\n\n- Scenarios: it loads; it fails.\n",
+                                                 "# S1 (FX-2). Thing one (AC1)\n\n- Scenarios: it loads; it fails.\n\n"
+                                                 "## Evidence so far\n\n- PLAN-OWN-EVIDENCE\n\n# Rest\n"))
+        commit(m, "FX-1: a top-level story heading")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        context = wt / ".orchestration/review/FX-2/context.md"
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 2, out)
+        context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                            if line.startswith(CONTEXT_TODO)), "- LANE-EVIDENCE"))
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        seeded = context.read_text()
+        self.assertEqual(seeded.count("PLAN-OWN-EVIDENCE"), 1, seeded)
+        self.assertEqual(seeded.count("- LANE-EVIDENCE"), 1, seeded)
+        self.assertEqual(seeded.count("## Evidence so far\n"), 2, seeded)
+        self.assertLess(seeded.index("PLAN-OWN-EVIDENCE"), seeded.rindex("## Evidence so far"), seeded)
+
+    def test_a_context_the_lane_wrote_its_own_way_is_left_as_it_is(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        context = wt / ".orchestration/review/FX-2/context.md"
+        context.parent.mkdir(parents=True, exist_ok=True)
+        context.write_text("- evidence")
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(context.read_text(), "- evidence", "a context without the evidence heading was re-seeded")
+
+    def test_a_plan_the_base_doesnt_hold_falls_back_to_the_lanes_copy_and_says_no_commit(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        sh("git", "rm", "-q", "docs/plan.md", cwd=m)
+        commit(m, "FX-1: the plan moves off the base")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 2, out)
+        seeded = (wt / ".orchestration/review/FX-2/context.md").read_text()
+        self.assertIn("Delivery base `origin/feature/FX-1`; the plan is `docs/plan.md` (approved, binding).", seeded)
+        self.assertNotIn("git show", seeded, "the context names a commit that doesn't hold the plan")
+        self.assertIn("- Scenarios: it loads; it fails.", seeded, "the lane's own copy of the plan wasn't read")
 
     def test_patches_apply_unstripped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -784,6 +1255,101 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                     holder.kill()
                     holder.wait()
                 holder.stdout.close()
+
+    def raced_lead(self, fx: Fixture, argv: list[str], writes: int) -> tuple[int, str, list[str]]:
+        """Run a lead command in-process, with lane-1 writing its focus just before each of the command's first
+        `writes` patches: the record moves between the command's read and its patch, as a supervisor's or a lane's
+        write does. Returns (exit code, output, every patch call's first argument)."""
+        spec = importlib.util.spec_from_file_location("run_delivery_raced", ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        tool = importlib.util.module_from_spec(spec)
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(tool)
+        finally:
+            sys.dont_write_bytecode = previous
+        real, patches = tool.state_tool, []
+
+        def raced(*args, check=True):
+            if args and args[0] == "patch":
+                if len(patches) < writes:
+                    state = json.loads(real("show").stdout)["state"]
+                    if any(lane["id"] == "lane-1" for lane in state["lanes"]):
+                        real("focus", "--lane", "lane-1", "--text", f"lane-1 at work ({len(patches) + 1})")
+                    else:  # no lane yet: another writer moves the record's headline
+                        real("patch", "--writer", "lead", "--version", str(state["version"]), "--patch",
+                             json.dumps({"meta": {"headline": f"moved in between ({len(patches) + 1})"}}))
+                patches.append(args[0])
+            return real(*args, check=check)
+        out, code = io.StringIO(), 0
+        here = os.getcwd()
+        try:
+            os.chdir(fx.main)
+            with mock.patch.dict(os.environ, fx.env, clear=True), mock.patch.object(tool, "state_tool", raced), \
+                    mock.patch.object(tool.signal, "signal"), contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                tool.main(argv)
+        except SystemExit as stopped:
+            code = stopped.code
+        finally:
+            os.chdir(here)
+        return code, out.getvalue(), patches
+
+    def assigned_fixture(self) -> Fixture:
+        fx = self.fixture()
+        setup_delivery(fx)
+        for argv in (["lead-init"], ["lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1"]):
+            code, out = fx.flow(*argv, cwd=fx.main)
+            self.assertEqual(code, 0, out)
+        return fx
+
+    def test_a_lead_write_raced_by_another_writer_reads_again_and_keeps_both(self) -> None:
+        fx = self.assigned_fixture()
+        code, out, patches = self.raced_lead(fx, ["lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2"], writes=1)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(patches), 2, f"the raced patch wasn't tried again from a fresh read: {patches}")
+        lanes = {lane["id"]: lane for lane in json.loads((fx.tmp / "record/state.json").read_text())["lanes"]}
+        self.assertEqual((lanes["lane-2"]["state"], lanes["lane-2"]["focus"]), ("assigned", "assigned FX-3"))
+        self.assertEqual(lanes["lane-1"]["focus"], "lane-1 at work (1)", "the write in between was overwritten")
+
+    def test_lead_init_raced_by_another_writer_reads_again_and_keeps_both(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        code, out, patches = self.raced_lead(fx, ["lead-init"], writes=1)
+        self.assertEqual(code, 0, out)
+        state = json.loads((fx.tmp / "record/state.json").read_text())
+        self.assertEqual(state["meta"]["headline"], "moved in between (1)", "the write in between was overwritten")
+        self.assertEqual(state["meta"]["trackerParent"], "FX-1")
+        self.assertEqual({p["subject"] for p in state["planned"]}, {"FX-2", "FX-3"})
+        self.assertEqual(len(patches), 2, patches)
+
+    def test_a_story_registered_under_a_race_is_planned_and_journalled_once(self) -> None:
+        fx = self.assigned_fixture()
+        path = fx.main / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        d["stories"]["FX-4"] = {**{k: v for k, v in d["stories"]["FX-3"].items() if k != "inApp"}, "title": "Thing four",
+                                "lane": "lane-1"}
+        path.write_text(json.dumps(d, indent=2))
+        plan = fx.main / "docs/plan.md"
+        plan.write_text(plan.read_text() + "\n### S4 (FX-4). Thing four\n\n- Scenarios: it four.\n")
+        commit(fx.main, "FX-1: a story added")
+        # The race lands on the first patch, register_stories' own, so its retry runs from a fresh read.
+        code, out, patches = self.raced_lead(fx, ["lead-assign", "FX-4", "--lane", "lane-1", "--title", "Lane 1"], writes=1)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(patches), 3, f"register_stories' raced patch wasn't tried again: {patches}")
+        record = json.loads((fx.tmp / "record/state.json").read_text())
+        self.assertEqual([p["subject"] for p in record["planned"]].count("FX-4"), 1, record["planned"])
+        journal = [json.loads(line) for line in (fx.tmp / "record/journal.jsonl").read_text().splitlines()]
+        added = [e for e in journal if e.get("subject") == "FX-4" and "added to the delivery as planned work" in e["summary"]]
+        self.assertEqual(len(added), 1, added)
+
+    def test_a_lead_write_that_never_lands_says_so_after_its_bound(self) -> None:
+        fx = self.assigned_fixture()
+        code, out, patches = self.raced_lead(fx, ["lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2"], writes=99)
+        self.assertEqual(code, 2, out)
+        self.assertIn("version_stale: the record kept changing while lane-2's assignment was written; tried 5 times", out)
+        self.assertEqual(len(patches), 5, patches)
+        lanes = {lane["id"] for lane in json.loads((fx.tmp / "record/state.json").read_text())["lanes"]}
+        self.assertNotIn("lane-2", lanes, "a patch from a stale read was written")
 
     def test_plan_context_is_found_by_key(self) -> None:
         sections = self.call("plan_sections", PLAN)
@@ -1034,6 +1600,127 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect('"passed": true' in (fx.tmp / "flow-log/FX-1.ship-gates.jsonl").read_text(), "the ship gate run wasn't logged")
         code, out = flow_run("ship", cwd=m)
         expect(code == 2 and "already exists" in out, f"ship overwrote an existing branch: {out}")
+
+    # -- ship: the product-only branch ---------------------------------------------------------------------
+
+    def ship_fixture(self, **ship) -> tuple[Fixture, Path]:
+        """A delivery whose base is ready to ship, with `ship` overridden by `ship`, and a checkout of `main` beside."""
+        fx = self.fixture()
+        path = setup_delivery(fx)
+        if ship:
+            d = json.loads(path.read_text())
+            d["ship"].update(ship)
+            path.write_text(json.dumps(d, indent=2))
+            commit(fx.main, "FX-1: ship settings")
+            sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        main = fx.tmp / "default"
+        sh("git", "worktree", "add", "-q", main, "main", cwd=fx.main)
+        return fx, main
+
+    def on(self, checkout: Path, branch: str, files: dict[str, str], message: str) -> str:
+        for rel, text in files.items():
+            (checkout / rel).parent.mkdir(parents=True, exist_ok=True)
+            (checkout / rel).write_text(text)
+        commit(checkout, message)
+        sh("git", "push", "-q", "origin", branch, cwd=checkout)
+        return sh("git", "rev-parse", "HEAD", cwd=checkout).stdout.strip()
+
+    def shipped(self, fx: Fixture) -> tuple[list[str], dict[str, str]]:
+        """The ship checkout's staged files, and their staged contents."""
+        path = fx.main / "lanes/ship-FX-1"
+        names = sh("git", "diff", "--cached", "--name-only", cwd=path).stdout.split()
+        return names, {n: sh("git", "show", f":{n}", cwd=path).stdout for n in names}
+
+    def test_ship_names_the_integration_review_before_the_default_branch(self) -> None:
+        fx, _ = self.ship_fixture()
+        m = fx.main
+        self.on(m, "feature/FX-1", {"src/one.txt": "one\n"}, "FX-2: one")
+        step = "review the integration with `$review-work` before it reaches the default branch"
+        for options in ((), ("--no-gates",)):
+            with self.subTest(options=options):
+                code, out = fx.flow("ship", *options, cwd=m)
+                # The next run builds the branch afresh.
+                sh("git", "worktree", "remove", "--force", m / "lanes/ship-FX-1", cwd=m, check=False)
+                sh("git", "branch", "-D", "ship/FX-1", cwd=m, check=False)
+                self.assertEqual(code, 0, out)
+                said = out.splitlines()[-1]
+                self.assertIn(step, said)
+                # Named between committing the change and its PR, the order the guide's close-out gives.
+                self.assertLess(said.index("commit"), said.index(step))
+                self.assertLess(said.index(step), said.index("Its PR waits for the user"))
+
+    def test_ship_leaves_out_tooling_changed_after_the_tooling_commit(self) -> None:
+        for whole in (".", "./"):
+            with self.subTest(paths=whole):
+                fx, main = self.ship_fixture(paths=[whole], gateTooling=["tools/gate-extra.sh"])
+                m = fx.main
+                # The lead's tooling spans three commits, and the last is the one ship names.
+                self.on(m, "feature/FX-1", {"tools/first.sh": "echo first\n"}, "FX-1: first tooling")
+                tooling = self.on(m, "feature/FX-1", {"tools/lead.sh": "echo lead\n"}, "FX-1: more tooling")
+                d = json.loads((m / ".agents/deliveries/FX-1.json").read_text())
+                d["ship"]["toolingCommit"] = tooling[:12]
+                (m / ".agents/deliveries/FX-1.json").write_text(json.dumps(d, indent=2))
+                # Later, a product change, and tooling changed again: the run-delivery config, a settings file no
+                # tooling commit touched, both tooling commits' own files, a declared gate tool, and a generation.
+                conf = json.loads((m / ".agents/run-delivery.json").read_text())
+                conf["gates"].append({"id": "later", "argv": ["true"]})
+                self.on(m, "feature/FX-1", {"src/one.txt": "one\n", "tools/lead.sh": "echo lead, changed\n",
+                                            "tools/first.sh": "echo first, changed\n", "tools/gate-extra.sh": "true\n",
+                                            ".agents/run-delivery.json": json.dumps(conf, indent=2),
+                                            ".agents/later.json": "{}\n", ".agent-skills/active.json": "{}\n"},
+                        "FX-1: product and tooling")
+                code, out = fx.flow("ship", "--no-gates", cwd=m)
+                self.assertEqual(code, 0, out)
+                names, _ = self.shipped(fx)
+                self.assertEqual(names, ["src/one.txt"], out)
+                self.assertIn("left out the delivery's tooling: ", out)
+                self.assertIn("tools/lead.sh", out.split("left out the delivery's tooling: ", 1)[1].splitlines()[0])
+                self.assertIn("changed after the tooling commit and left out: tools/first.sh, tools/lead.sh; "
+                              "a product change there doesn't ship", out)
+
+    def test_ship_reports_a_failed_apply_that_staged_nothing(self) -> None:
+        fx, main = self.ship_fixture()
+        sh("git", "rm", "-q", "src/app.txt", cwd=main)
+        self.on(main, "main", {}, "the default branch drops the file the delivery changes")
+        self.on(fx.main, "feature/FX-1", {"src/app.txt": "app, changed by the delivery\n"}, "FX-2: app")
+        code, out = fx.flow("ship", "--no-gates", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("git apply failed", out)
+        self.assertNotIn("nothing to ship", out)
+        self.assertTrue((fx.main / "lanes/ship-FX-1").exists(), "a failed apply's checkout was removed before it was seen")
+
+    def test_ship_refuses_a_branch_with_nothing_staged(self) -> None:
+        fx, main = self.ship_fixture()
+        self.on(fx.main, "feature/FX-1", {"src/one.txt": "one\n"}, "FX-2: one")
+        self.on(main, "main", {"src/one.txt": "one\n"}, "the same change, already on the default branch")
+        code, out = fx.flow("ship", "--no-gates", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("nothing to ship", out)
+        self.assertNotIn("next:", out)
+        # Nothing is left to remove by hand before it runs again.
+        self.assertFalse((fx.main / "lanes/ship-FX-1").exists(), "the empty ship checkout was left behind")
+        self.assertEqual(sh("git", "branch", "--list", "ship/FX-1", cwd=fx.main).stdout.strip(), "")
+
+    def test_ship_builds_from_a_base_that_merged_the_default_branch(self) -> None:
+        fx, main = self.ship_fixture()
+        m = fx.main
+        # Tooling outside the ship paths (src/), named by ship and changed later: nothing under the paths is lost.
+        tooling = self.on(m, "feature/FX-1", {"tools/lead.sh": "echo lead\n"}, "FX-1: more tooling")
+        d = json.loads((m / ".agents/deliveries/FX-1.json").read_text())
+        d["ship"]["toolingCommit"] = tooling[:12]
+        (m / ".agents/deliveries/FX-1.json").write_text(json.dumps(d, indent=2))
+        self.on(m, "feature/FX-1", {"src/one.txt": "one\n", "tools/lead.sh": "echo lead, changed\n"}, "FX-2: one")
+        self.on(main, "main", {"src/main-only.txt": "main\n", "src/app.txt": "app, on main\n"}, "the default branch moves")
+        sh("git", "fetch", "-q", "origin", cwd=m)
+        sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "--no-ff", "-m", "merge main", "origin/main", cwd=m)
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        self.on(m, "feature/FX-1", {"src/two.txt": "two\n", "src/app.txt": "app, on main\nand the delivery\n"}, "FX-3: two")
+        code, out = fx.flow("ship", "--no-gates", cwd=m)
+        self.assertEqual(code, 0, out)
+        names, staged = self.shipped(fx)
+        self.assertEqual(names, ["src/app.txt", "src/one.txt", "src/two.txt"], out)
+        self.assertEqual(staged["src/app.txt"], "app, on main\nand the delivery\n")
+        self.assertNotIn("changed after the tooling commit", out, "a later tooling change outside the ship paths was named")
 
     def test_cleanup_removes_only_merged_clean_work_and_close_archives(self) -> None:
         fx = self.fixture()
@@ -1294,6 +1981,65 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         flow_run("app-video", "FX-2", "failing", "--mode", "fail", "--path", "/one", "--fail", "/api/one$", cwd=wt)
         code, out = flow_run("lead-evidence", "status", cwd=wt)
         expect(code == 1 and "aren't on the published page" in out, f"a new clip didn't make the page stale: {out}")
+
+    def test_the_evidence_pages_notes_are_recorded_so_a_rebuild_keeps_them(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        record = fx.tmp / "record"
+        page, again = fx.tmp / "page", fx.tmp / "page-again"
+        code, out = fx.flow("lead-evidence", "page", "FX-2", "FX-3", "--out", page, "--title", "FX-1 proof",
+                            "--intro", "What each story shows.", "--note", "FX-2=Covered by its hold check",
+                            "--note", "FX-3=Nothing visible changes: the copy is server-side", cwd=m)
+        self.assertEqual(code, 0, out)
+        first = (page / "index.html").read_text()
+        for text in ("FX-1 proof", "What each story shows.", "Covered by its hold check", "Nothing visible changes: the copy is server-side"):
+            self.assertIn(text, first)
+        kept = record.parent / "evidence-notes.json"
+        before = kept.read_bytes()
+        # After a compaction the lead has none of it in mind: the same page, rebuilt from the record alone.
+        code, out = fx.flow("lead-evidence", "page", "FX-2", "FX-3", "--out", again, cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertEqual((again / "index.html").read_text(), first, "a rebuild without the notes lost some")
+        self.assertIn("reused the recorded note(s) for FX-2, FX-3", out)
+        self.assertNotIn("recorded the page's words", out)
+        self.assertEqual(kept.read_bytes(), before, "a rebuild that changed nothing rewrote the kept words")
+        # A new note replaces its story's, and the other story's kept note stands.
+        code, out = fx.flow("lead-evidence", "page", "FX-2", "FX-3", "--out", again, "--note", "FX-3=Server-side only", cwd=m)
+        self.assertEqual(code, 0, out)
+        html = (again / "index.html").read_text()
+        self.assertIn("Server-side only", html)
+        self.assertNotIn("the copy is server-side", html)
+        self.assertIn("Covered by its hold check", html, "a note for one story dropped another story's kept note")
+        # An empty note removes its story's, and the rest stands.
+        code, out = fx.flow("lead-evidence", "page", "FX-2", "FX-3", "--out", again, "--note", "FX-2=", cwd=m)
+        self.assertEqual(code, 0, out)
+        html = (again / "index.html").read_text()
+        self.assertNotIn("Covered by its hold check", html)
+        self.assertIn("No recording: this story has no visible loading or failure state to show.", html)
+        self.assertIn("Server-side only", html, "removing one note dropped another")
+        self.assertIn("FX-1 proof", html, "a note change dropped the recorded title")
+        # What's published carries the words the published folder was built with, even after a later draft changed
+        # the kept ones.
+        draft = fx.tmp / "page-draft"
+        code, out = fx.flow("lead-evidence", "page", "FX-3", "--out", draft, "--note", "FX-3=Trying other wording", cwd=m)
+        self.assertEqual(code, 0, out)
+        (again / "videos/FX-9-clip.mp4").write_bytes(b"a clip, as far as published can tell")
+        code, out = fx.flow("lead-evidence", "published", "--url", "https://pages.test/e", "--out", again, cwd=m)
+        self.assertEqual(code, 0, out)
+        published = json.loads((record.parent / "evidence-page.json").read_text())
+        self.assertEqual({k: published.get(k) for k in ("notes", "title", "intro")},
+                         {"notes": {"FX-3": "Server-side only"}, "title": "FX-1 proof", "intro": "What each story shows."})
+        # A note that isn't KEY=TEXT, or names no story of the delivery, is refused and records nothing.
+        before = (record.parent / "evidence-notes.json").read_text()
+        for bad in ("FX-3", "FX-3 has no equals sign", "FX-99=not a story"):
+            with self.subTest(note=bad):
+                code, out = fx.flow("lead-evidence", "page", "FX-3", "--out", again, "--note", bad, cwd=m)
+                self.assertEqual(code, 2, out)
+                self.assertIn("--note", out)
+                self.assertEqual((record.parent / "evidence-notes.json").read_text(), before)
 
     def test_one_run_cant_meet_two_requirements_and_stale_heads_fail_closed(self) -> None:
         fx = self.fixture()
@@ -1836,6 +2582,83 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                     orphan.kill()
                 orphan.wait()
 
+    def listener(self, port: int, mark: str, reuse: bool = False) -> subprocess.Popen:
+        """A real listener on `port`, started here and stopped at cleanup by the pid recorded here. `mark` rides in its
+        argv, so its command line can be told from any other's."""
+        proc = subprocess.Popen([sys.executable, "-c", LISTENER, str(port), mark, "reuse" if reuse else "plain"],
+                                stdout=subprocess.PIPE, text=True)
+
+        def stop():
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            proc.stdout.close()
+        self.addCleanup(stop)
+        self.assertEqual(proc.stdout.readline().strip(), "listening", f"the {mark} listener didn't start")
+        return proc
+
+    def test_the_port_holder_is_named_by_its_listening_pid(self) -> None:
+        port = free_port()  # an ephemeral port this case owns
+        listener = self.listener(port, "holder-mark-one")
+        # A client connected to the port (a browser looking at the build, say) isn't a holder, and isn't to be killed.
+        client = subprocess.Popen([sys.executable, "-c", "import socket,sys,time; c=socket.create_connection(('127.0.0.1', "
+                                   "int(sys.argv[1]))); print('connected', flush=True); time.sleep(60)", str(port)],
+                                  stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(client.stdout.readline().strip(), "connected")
+            holders = self.call("port_holders", port)
+            self.assertEqual([pid for pid, _ in holders], [listener.pid], holders)
+            self.assertIn("holder-mark-one", holders[0][1], "the named command line isn't the listener's")
+            busy = self.call("port_busy", port)
+            self.assertIn(f"outside the in-app lease: pid {listener.pid} (", busy)
+            self.assertIn(f"stop it (kill {listener.pid}) and run again", busy)
+            self.assertNotIn(str(client.pid), busy, "the kill hint named a connected client")
+        finally:
+            if client.poll() is None:  # started here, stopped by the pid recorded here
+                client.kill()
+            client.wait()
+            client.stdout.close()
+        with tempfile.TemporaryDirectory() as empty:  # no lsof or ps on PATH: nothing named, nothing raised
+            unseen = dict(cwd=Path(empty), env={**clean_environment(), "PATH": empty})
+            self.assertEqual(call(self.tool, "port_holders", port, **unseen), [])
+            busy = call(self.tool, "port_busy", port, **unseen)
+            self.assertIn(f"something else is listening on {port}, outside the in-app lease (its process isn't visible here)", busy)
+            self.assertNotIn("kill", busy, "an unseen holder got a kill hint")
+        listener.kill()
+        listener.wait()
+        self.assertEqual(self.call("port_holders", port), [], "a closed port still named a holder")
+
+    def test_every_holder_of_a_shared_port_is_named_once(self) -> None:
+        if not hasattr(socket, "SO_REUSEPORT"):
+            self.skipTest("no SO_REUSEPORT here, so two listeners can't share a port")
+        port = free_port()
+        first, second = self.listener(port, "holder-mark-a", reuse=True), self.listener(port, "holder-mark-b", reuse=True)
+        holders = self.call("port_holders", port)
+        self.assertEqual([pid for pid, _ in holders], sorted([first.pid, second.pid]), holders)
+        self.assertEqual({pid: "holder-mark-a" in command or "holder-mark-b" in command for pid, command in holders},
+                         {first.pid: True, second.pid: True})
+        busy = self.call("port_busy", port)
+        hint = re.search(r"stop it \(kill ([\d ]+)\)", busy)
+        self.assertIsNotNone(hint, busy)
+        self.assertEqual(hint.group(1).split(), [str(pid) for pid in sorted([first.pid, second.pid])], busy)
+
+    def test_a_check_refused_by_a_busy_port_names_the_listener_and_how_to_release_it(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        fx.flow("lead-init", cwd=fx.main)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        fx.flow("build", "FX-2", cwd=wt)
+        listener = self.listener(fx.port, "served-by-hand")  # a build served on the in-app port, outside the lease
+        code, out = fx.flow("app-check", "FX-2", "page", "--mode", "loaded", "--path", "/one", "--eval", "true", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"something else is listening on {fx.port}, outside the in-app lease: pid {listener.pid} (", out)
+        self.assertIn("served-by-hand", out)
+        self.assertIn(f"stop it (kill {listener.pid}) and run again", out)
+        self.assertIsNone(listener.poll(), "app-check stopped a process it didn't start")
+        self.assertFalse((wt / ".orchestration/review/FX-2/app-checks/page.json").exists(), "a refused check became evidence")
+
     def test_an_interrupted_check_releases_the_lease_and_its_server(self) -> None:
         fx = self.fixture()
         flow_run = fx.flow
@@ -1871,6 +2694,64 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             time.sleep(0.5)
             expect(not port_open(), f"the server outlived a check interrupted by {sent.name}")
             fx.call("Lease", fx.tmp / "app.lock", fx.port, "selftest", 2, then="close", cwd=fx.tmp)
+
+    def test_a_killed_check_leaves_nothing_running_once_its_fixture_closes(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        fx.flow("lead-init", cwd=fx.main)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        fx.flow("build", "FX-2", cwd=wt)
+        lock = fx.tmp / "app.lock"
+        recorded = lambda: [int(g) for g in re.findall(r"pgid (\d+)", lock.read_text())] if lock.exists() else []
+        groups: list[int] = []
+        proc = subprocess.Popen([sys.executable, "-B", str(fx.tool), "app-check", "FX-2", "slow", "--mode", "loaded",
+                                 "--path", "/slow", "--eval", "true"], cwd=wt, env=fx.env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and len(recorded()) < 2:  # the server's group, then the check's
+                time.sleep(0.1)
+            groups = recorded()
+            self.assertEqual(len(groups), 2, f"the lease didn't record the server and the check: {lock.read_text()}")
+            self.assertTrue(fx.call("port_open", fx.port, cwd=fx.tmp), "the check's server never came up")
+            # A SIGKILL can't be caught, so app-check never stops what it started: the lease's record is what's left.
+            proc.kill()
+            proc.wait(timeout=20)
+            time.sleep(0.5)
+            self.assertTrue(all(group_alive(g) for g in groups), "the kill didn't leave the check's groups running")
+            fx.close()
+            self.assertEqual([g for g in groups if group_alive(g)], [], "the fixture closed with the check's groups running")
+            self.assertFalse(fx.call("port_open", fx.port, cwd=Path(tempfile.gettempdir())), "the server outlived its fixture")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            for group in groups:  # the groups this case's own check started, by the pids its lease recorded
+                if group_alive(group):
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        os.killpg(group, signal.SIGKILL)
+
+    def test_closing_a_fixture_leaves_a_live_holders_lease_and_groups_alone(self) -> None:
+        fx = self.fixture()
+        lock = fx.tmp / "app.lock"
+        served = subprocess.Popen(["sleep", "60"], start_new_session=True)
+        holder = subprocess.Popen([sys.executable, "-c", "import fcntl,sys,time; f=open(sys.argv[1],'a+'); "
+                                   "fcntl.flock(f, fcntl.LOCK_EX); f.write('lane-1 FX-2 hold pid 1 pgid %s\\n' % sys.argv[2]); "
+                                   "f.flush(); print('held', flush=True); time.sleep(60)", str(lock), str(served.pid)],
+                                  stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(holder.stdout.readline().strip(), "held")
+            fx.stop_in_app()  # raises if a held lease isn't left to its holder
+            self.assertIsNone(served.poll(), "closing the fixture stopped a live holder's group")
+            self.assertIn(f"pgid {served.pid}", lock.read_text(), "closing the fixture rewrote a live holder's lease")
+        finally:
+            for proc in (holder, served):  # both started here, stopped by the pids recorded here
+                if proc.poll() is None:
+                    proc.kill()
+                proc.wait()
+            holder.stdout.close()
 
 # The fallbacks to the tool's earlier names, pinned: removing one takes a later approved change to this list.
 LEGACY_NAMES = (
@@ -2281,6 +3162,32 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
                 if proc.poll() is None:
                     proc.kill()
                     proc.wait()
+
+    # -- the integration build ------------------------------------------------------------------------------
+
+    def test_build_without_a_story_key_builds_the_delivery_under_its_own_key(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        m = fx.main
+        conf = json.loads((m / ".agents/run-delivery.json").read_text())
+        conf["inApp"]["build"]["argv"] = ["sh", "-c", 'mkdir -p out && cp src/*.txt out/ && printf %s "$0" > out/key.txt', "{key}"]
+        (m / ".agents/run-delivery.json").write_text(json.dumps(conf, indent=2))
+        commit(m, "FX-1: the build names its key")
+        fx.flow("lead-init", cwd=m)
+        head = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        code, out = fx.flow("build", cwd=m)
+        expect(code == 0 and f"built {head[:10]}" in out, out)
+        self.assertEqual((m / "out/key.txt").read_text(), "FX-1")
+        self.assertEqual(json.loads((m / "out/.flow-build.json").read_text())["head"], head)
+        # A story's build still names the story, and a key that is not one of the delivery's is still refused.
+        code, out = fx.flow("build", "FX-2", cwd=m)
+        expect(code == 0, out)
+        self.assertEqual((m / "out/key.txt").read_text(), "FX-2")
+        code, out = fx.flow("build", "FX-9", cwd=m)
+        expect(code == 2 and "FX-9 is not a story of FX-1" in out, out)
+        # An empty key is a key, refused like any other that is not a story, never the integration build.
+        code, out = fx.flow("build", "", cwd=m)
+        expect(code == 2 and " is not a story of FX-1" in out, out)
 
     # -- sign-in values -------------------------------------------------------------------------------------
 
@@ -3188,14 +4095,14 @@ def doctor_lines(out: str) -> dict[str, tuple[str, str]]:
     """Each check's line, by its label: (status, the rest)."""
     found = {}
     for line in out.splitlines():
-        match = re.match(r"^(ok|missing|wrong|skipped) +([^:]+): (.*)$", line)
+        match = re.match(r"^(ok|missing|wrong|skipped|warn) +([^:]+): (.*)$", line)
         if match:
             found[match.group(2)] = (match.group(1), match.group(3))
     return found
 
 
 def failing(out: str) -> dict[str, str]:
-    return {label: rest for label, (status, rest) in doctor_lines(out).items() if status not in ("ok", "skipped")}
+    return {label: rest for label, (status, rest) in doctor_lines(out).items() if status not in ("ok", "skipped", "warn")}
 
 
 # The words each failing doctor line starts its detail with, as the adoption guide's troubleshooting section keys them.
@@ -3224,11 +4131,11 @@ def troubleshooting_section() -> str:
     return text[text.index("## Troubleshooting"):]
 
 
-DOCTOR_LABELS = ["host and tools", "orchestration binding", "configuration", "release generation",
+DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candidate step", "configuration", "release generation",
                  "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
                  "snapshots and publishers", "in-app adapters", "in-app adapter contract", "video evidence tools",
-                 "Node", "harness configuration", "delivery file", "plan chapter", "plan sections", "context sections",
+                 "Node", "harness configuration", "delivery file", "plan chapter", "plan sections", "story files", "context sections",
                  "configuration on the remote base", "pull requests marked ready", "delivery supervisor",
                  "gates on the base"]
 
@@ -3571,6 +4478,32 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             expect(code == expect_code, f"doctor exited {code}, not {expect_code}:\n{out}")
         return out
 
+    def test_the_candidate_row_proves_the_merge_queues_candidate_step_can_run(self) -> None:
+        fx = self.fixture()
+        path = fx.main / ".agents/orchestration.json"
+        self.assertEqual(doctor_lines(self.doctor(fx, "--offline"))["merge queue candidate step"],
+                         ("ok", "true {candidate} resolves"))
+        binding = json.loads(path.read_text())
+        for argv, problem in (
+                ([sys.executable, "-B", "tools/missing.py", "{candidate}"], "its script tools/missing.py doesn't exist in the repository"),
+                (["no-such-candidate-program", "{candidate}"], "its program no-such-candidate-program isn't on PATH"),
+                ([sys.executable, "-B", "./tools", "{candidate}"], "its script ./tools doesn't exist in the repository")):
+            with self.subTest(argv=argv):
+                path.write_text(json.dumps({**binding, "candidate": argv}, indent=2))
+                out = self.doctor(fx, "--offline")
+                self.assertEqual(failing(out), {"merge queue candidate step": (
+                    f"the binding's candidate step can't run: {problem}; fix: correct its argv in .agents/orchestration.json, "
+                    "then run it once by hand with a branch that exists")}, out)
+        # A script the repository holds resolves.
+        path.write_text(json.dumps({**binding, "candidate": [sys.executable, "-B", "tools/fake_forge.py", "{candidate}"]}, indent=2))
+        self.assertEqual(doctor_lines(self.doctor(fx, "--offline"))["merge queue candidate step"][0], "ok")
+        # An argv without {candidate} fails the binding itself, and the candidate row waits on it.
+        path.write_text(json.dumps({**binding, "candidate": ["true", "feature"]}, indent=2))
+        lines = doctor_lines(self.doctor(fx, "--offline"))
+        self.assertEqual(lines["orchestration binding"][0], "wrong")
+        self.assertIn("/candidate: the candidate argv must use {candidate} as a whole element", lines["orchestration binding"][1])
+        self.assertEqual(lines["merge queue candidate step"], ("skipped", "(needs binding)"))
+
     def test_the_plan_row_checks_the_plan_a_delivery_with_criteria_makes(self) -> None:
         fx = self.fixture()
         path = fx.main / ".agents/deliveries/FX-1.json"
@@ -3591,6 +4524,48 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         out = self.doctor(fx, "--offline")
         self.assertEqual(list(failing(out)), ["plan chapter"], out)
         self.assertIn("finish[0].covers.criteria[1]: names no criterion of the plan's units", failing(out)["plan chapter"])
+
+    def test_the_story_files_row_warns_of_a_named_file_outside_its_lane_without_failing(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        out = self.doctor(fx, "--offline")
+        self.assertEqual(doctor_lines(out)["story files"], ("ok", "every file a story's plan section names is its lane's"), out)
+        plan = m / "docs/plan.md"
+        plan.write_text(plan.read_text()
+                        .replace("- Scenarios: it loads; it fails.\n",
+                                 "- Scenarios: it loads; it fails.\n- Files: `src/one-new.txt`, `src/two.txt`, `tools/fake_check.py`, "
+                                 "`app.txt`, `refs/notes.md`, `run_delivery.py`, `run_delivery.py gate`, `/api/two$`.\n")
+                        .replace("| Copy | \"Couldn't be loaded.\" |\n",
+                                 "| Copy | \"Couldn't be loaded.\" |\n| S1's check | `tools/fake_forge.py` |\n"
+                                 "| Lane 2's files | `tools/lane-two.py` | `src/two-only.txt`, after FX-2 |\n"))
+        (m / "docs/refs").mkdir()
+        (m / "docs/refs/notes.md").write_text("notes\n")
+        commit(m, "FX-1: the plan names files")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        # The installed release is tracked too, but no lane edits it: a bare name only it holds names nothing.
+        self.assertTrue(sh("git", "ls-files", "*/run_delivery.py", cwd=m).stdout.strip())
+        out = self.doctor(fx, "--offline")
+        self.assertEqual(doctor_lines(out)["story files"],
+                         ("warn", "FX-2 (lane-1) names docs/refs/notes.md (no lane's), src/app.txt (no lane's), "
+                                  "src/two.txt (lane-2's) and 2 more; fix: move each to the story's lane's owns before it "
+                                  "starts, or plan the story on the lane that owns it"), out)
+        self.assertEqual(failing(out), {}, out)
+        self.assertEqual(fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=m)[0], 0, "a warning failed doctor")
+        # Past five stories, doctor's one line counts the rest.
+        path = m / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        heading = "### S2 (FX-3). Thing two (AC2)\n"
+        extra = "".join(f"### S{k} (FX-{k}). Thing {k}\n\n- Files: `src/two.txt`.\n\n" for k in range(4, 10))
+        plan.write_text(plan.read_text().replace(heading, extra + heading))
+        for k in range(4, 10):
+            d["stories"][f"FX-{k}"] = {"title": f"Thing {k}", "lane": "lane-1", "label": f"S{k}"}
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: more stories")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        status, detail = doctor_lines(self.doctor(fx, "--offline"))["story files"]
+        self.assertEqual(status, "warn")
+        self.assertEqual(detail.count(" names "), 5, detail)
+        self.assertIn("; and 2 more stories (lead-assign lists each one's); fix:", detail)
 
     def test_a_binding_serves_a_delivery_to_any_of_its_bases(self) -> None:
         """Bases: a delivery committed only on integration-2 runs from the lead's setup to a lane's draft PR."""
@@ -3627,6 +4602,24 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         code, out = fx.flow("lead-init", cwd=m); expect(code == 0, out)
         code, out = fx.flow("lead-brief", cwd=m); expect(code == 0, out)
         self.assertIn("origin/integration-2", (m / "docs/lane-brief.md").read_text())
+
+        # lane-start serves a base the binding's bases match by pattern, and only by the pattern's own segment.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lane-start", "FX-3", "--base", "integration-9/sub", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("doesn't serve the base integration-9/sub", out)
+        code, out = fx.flow("lane-start", "FX-3", "--base", "integration-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        started = m / "lanes/FX-3"
+        self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=started).stdout.strip(),
+                         sh("git", "rev-parse", "origin/integration-2", cwd=m).stdout.strip())
+        # A lane command there reads the base it was started on, served by the pattern, with no variable to name it.
+        c = fx.call("Config", started, "FX-1", cwd=started, attrs=["base_branch", "delivery_where"])
+        self.assertEqual(c["base_branch"], "integration-2")
+        self.assertTrue(c["delivery_where"].startswith("origin/integration-2:"), c)
+        code, out = fx.flow("gate", "FX-3", cwd=started)
+        self.assertEqual(code, 0, out)
 
         # A lane reads the delivery's settings from origin/integration-2, with the base it was given.
         wt = m / "lanes/FX-2"
@@ -4152,6 +5145,24 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             holder.wait()
             holder.stdout.close()
 
+    def test_a_busy_port_outside_the_lease_names_its_listener_in_the_adapter_run(self) -> None:
+        fx = self.fixture()
+        listener = subprocess.Popen([sys.executable, "-c", LISTENER, str(fx.port), "served-by-hand", "plain"],
+                                    stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(listener.stdout.readline().strip(), "listening")
+            out = self.doctor(fx, "--run-adapters")
+            status, detail = doctor_lines(out)["in-app adapter contract"]
+            self.assertEqual(status, "wrong", out)
+            self.assertIn(f"outside the in-app lease: pid {listener.pid} (", detail)
+            self.assertIn(f"kill {listener.pid}", detail)
+            self.assertIsNone(listener.poll(), "doctor stopped a process it didn't start")
+        finally:
+            if listener.poll() is None:  # started here, stopped by the pid recorded here
+                listener.kill()
+            listener.wait()
+            listener.stdout.close()
+
     def test_by_default_doctor_leaves_nothing_behind(self) -> None:
         fx = self.fixture()
         m = fx.main
@@ -4259,7 +5270,9 @@ GUIDE_NAMES = {
 # The worked adopter's binding: its bases, and a merge step that calls the forge adapter, pinned to the checked head.
 WORKED_BASES = ["main", "integration-*"]
 WORKED_MERGE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge",
-                "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge"]
+                "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"]
+WORKED_CANDIDATE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py",
+                    "candidate", "--key", "{candidate}"]
 # Every push in an example is labelled, on the line just above it, for an unprotected base.
 UNPROTECTED = "unprotected base"
 PUSH = re.compile(r"\bgit\b(?:\s+-[Cc]\s+\S+)*\s+push\b|git\(\"push\"")
@@ -4534,6 +5547,7 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
         binding = next(document for document in worked if "merge" in document)
         self.assertEqual(binding["bases"], WORKED_BASES)
         self.assertEqual(binding["merge"], WORKED_MERGE)
+        self.assertEqual(binding["candidate"], WORKED_CANDIDATE)
         self.assertEqual(set(binding["environment"]), {"FLOW_FORGE_REPOSITORY", "FLOW_FORGE_TOKEN_ENV"})
         self.assertTrue(any("tracker_publisher.py" in part for entry in binding["state"]["publishers"]
                             for part in entry["argv"]))
@@ -4751,7 +5765,7 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         record = lambda args: seen.append(self.tool.DELIVERY_ARG)
         with mock.patch.object(self.tool, "lead_init", record), mock.patch.object(self.tool, "plan_review_prepare", record), \
                 mock.patch.object(self.tool, "lead_plan", record), mock.patch.object(self.tool, "lead_assign", record), \
-                mock.patch.object(self.tool.signal, "signal"):
+                mock.patch.object(self.tool, "view", record), mock.patch.object(self.tool.signal, "signal"):
             self.tool.main(list(argv))
         return seen[0]
 
@@ -4759,10 +5773,61 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         for argv in (["--delivery", "K", "lead-init"], ["lead-init", "--delivery", "K"], ["--delivery=K", "lead-init"],
                      ["lead-init", "--delivery=K"], ["--delivery", "K", "lead-init", "--delivery", "K"],
                      ["plan-review", "prepare", "--delivery", "K"], ["lead-plan", "why", "c1", "--why", "x", "--delivery", "K"],
-                     ["lead-assign", "FX-1", "--delivery", "K", "--lane", "l", "--title", "t"]):
+                     ["lead-assign", "FX-1", "--delivery", "K", "--lane", "l", "--title", "t"],
+                     ["view", "--delivery", "K"], ["--delivery", "K", "view"], ["view", "--archive", "a", "--delivery=K"]):
             with self.subTest(argv=argv):
                 self.assertEqual(self.delivery_of(*argv), "K")
         self.assertIsNone(self.delivery_of("lead-init"))
+
+    def written_by_patch_from(self, answers: list[dict], compute) -> tuple[object, list[list[str]], list[int]]:
+        """patch_from against a fake state tool: each read returns the next version, each patch the next answer."""
+        reads, calls = [], []
+
+        def show():
+            reads.append(len(reads) + 1)
+            return {"state": {"version": reads[-1], "n": reads[-1]}}
+
+        def state_tool(*args, check=True):
+            calls.append(list(args))
+            answer = answers[len(calls) - 1]
+            if isinstance(answer, str):  # a state tool that crashed: no JSON, its traceback on stderr
+                return types.SimpleNamespace(returncode=1, stdout=answer, stderr="Traceback: the state tool broke")
+            return types.SimpleNamespace(returncode=0 if answer.get("ok") else 1, stdout=json.dumps(answer, indent=2),
+                                         stderr="")
+        with mock.patch.object(self.tool, "load_state", show), mock.patch.object(self.tool, "state_tool", state_tool):
+            written = self.tool.patch_from(compute, "the thing")
+        return written, calls, reads
+
+    def test_patch_from_computes_each_try_from_its_own_fresh_read(self) -> None:
+        stale = {"ok": False, "code": "version_stale", "error": "patch is pinned to version 1; state is at 2"}
+        written, calls, reads = self.written_by_patch_from([stale, stale, {"ok": True}], lambda doc: {"n": doc["state"]["n"]})
+        self.assertEqual(written, {"n": 3})
+        self.assertEqual([(c[c.index("--version") + 1], c[-1]) for c in calls], [("1", '{"n": 1}'), ("2", '{"n": 2}'), ("3", '{"n": 3}')])
+
+    def test_patch_from_doesnt_retry_another_refusal_or_write_nothing(self) -> None:
+        refused = {"ok": False, "code": "writer_not_owned", "error": "the lead can't write that"}
+        with self.assertRaises(self.tool.Stop) as stopped:
+            self.written_by_patch_from([refused, {"ok": True}], lambda doc: {"n": 1})
+        self.assertIn("the state tool refused the thing: the lead can't write that", str(stopped.exception))
+        written, calls, _ = self.written_by_patch_from([], lambda doc: None)
+        self.assertEqual((written, calls), (None, []))
+        def gone(doc):
+            raise self.tool.Stop("it moved on")
+        with self.assertRaises(self.tool.Stop) as stopped:
+            self.written_by_patch_from([], gone)
+        self.assertEqual(str(stopped.exception), "it moved on")
+
+    def test_patch_from_stops_at_once_on_a_refusal_it_cant_read(self) -> None:
+        with self.assertRaises(self.tool.Stop) as stopped:
+            self.written_by_patch_from(["not json", {"ok": True}], lambda doc: {"n": 1})
+        self.assertIn("the state tool refused the thing: Traceback: the state tool broke", str(stopped.exception))
+        self.assertNotIn("version_stale", str(stopped.exception))
+
+    def test_patch_from_passes_an_element_patch_through(self) -> None:
+        element = ["--element", "queue[subject=K]", "--set", '{"/stage": "queued"}']
+        written, calls, _ = self.written_by_patch_from([{"ok": True}], lambda doc: element)
+        self.assertEqual(written, element)
+        self.assertEqual(calls[0][-4:], element)
 
     def test_two_different_deliveries_are_a_usage_error(self) -> None:
         with mock.patch.object(self.tool, "lead_init", side_effect=AssertionError("reached the command")), \
@@ -4989,6 +6054,86 @@ class DeliveryPostureReaderTests(unittest.TestCase):
                 said["reason"].encode("utf-8")
                 closing = {"fullHealth": "skipped", **said}
                 views.validate_plan({**plan(), "closeOut": closing})
+
+    def test_the_close_out_reviews_the_leads_integration_between_integrating_and_merging(self) -> None:
+        guide = " ".join((ROOT / "skills/orchestrate-work/references/orchestration-guide.md").read_text(encoding="utf-8").split())
+        close_out = guide[guide.index("### 8. Close out"):guide.index("## Lane brief template")]
+        steps = ["1. **Integrate.**", "2. **Review the integration.**", "3. **Merge to the default branch**"]
+        at = [close_out.index(step) for step in steps]
+        self.assertEqual(at, sorted(at), "the review sits between the integration and the merge")
+        for phrase in (
+            "Run `$review-work` with the delivery's lenses and round bound on the lead's own changes since the last unit merged",
+            "removing the delivery-only files, any merge of the default branch with its conflict resolutions, read as "
+            "`git show --cc` and not as the whole incoming branch, and any fix the merged tree needed",
+            "A delivery whose integration changed nothing beyond removing the delivery-only files still runs it, on that removal",
+            "Findings are triaged as a lane's are",
+            "each round is journaled under the delivery as `review.round`, with the delivery's key as its subject",
+            "3. **Merge to the default branch** only once that review is aligned.",
+            "Where the lead closes by hand, take these steps before journaling `delivery.closed`, so the review's rounds "
+            "reach the archived record. Under the supervisor, which archives the record once nothing holds the close, "
+            "the rounds land in the live record after the archive, and the lead's post of each round on the epic is "
+            "their durable trace.",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, close_out)
+        self.assertIn("| `review.round` | None: a lane posts each round on its own ticket, as its brief says, and the lead "
+                      "posts the integration review's rounds on the epic. |", guide)
+
+    def test_the_close_out_says_how_far_a_close_got_by_its_two_marks(self) -> None:
+        def normal(path: str) -> str:
+            return " ".join((ROOT / path).read_text(encoding="utf-8").split())
+        guide = normal("skills/orchestrate-work/references/orchestration-guide.md")
+        close_out = guide[guide.index("### 8. Close out"):guide.index("## Lane brief template")]
+        for phrase in (
+            "The record marks how far a close got, in `meta.closing`, with two marks that each name the "
+            "`delivery.closed` journal entry they belong to.",
+            "The `started` mark goes into the record with that entry, whoever journals it through the state tool",
+            "The `finished` mark is written once the close's archive has landed, by the supervisor's close-out or by "
+            "`lead-close`, in the live record and in the archived copy",
+            "`closed.json` names the closing entry too.",
+            "Only the latest close counts. New work after a close, a `lane.assigned`, `candidate.handed` or "
+            "`check.started` entry, reopens the delivery",
+            "A mark or a `closed.json` naming an earlier entry says nothing of the new close, which archives again.",
+            "A delivery `lead-close` closed stays closed to `lead-run` until a later `delivery.closed` is journaled.",
+            "**Finished:** both marks name the closing entry.",
+            "**Stopped partway:** the `started` mark names the closing entry, no `finished` mark does, and no close is running.",
+            "`lead-run --resume` finishes it when the record meets the close condition: no planned story, nothing "
+            "unmerged, every finish line met and no busy lane. A lane checkout that cleanup hasn't removed yet doesn't count",
+            "Otherwise `lead-close` finishes it, since a resumed supervisor would hold on what is still open; "
+            "`lead-close` doesn't wait for the tracker and lists the updates it still owes.",
+            "A resumed supervisor finds the archive it already made once `closed.json` names the close, and archives "
+            "afresh otherwise, leaving the earlier folder without the `finished` mark; `lead-close` always archives the "
+            "record afresh. Marking a close finished again changes nothing.",
+            "whoever journals it through the state tool, the supervisor or the lead by hand.",
+            "The supervisor's friction note comes after it.",
+            "**Finished:** both marks name the closing entry. The status line run-delivery's lead commands print, "
+            "`doctor`'s supervisor row and the line map say the delivery is closed.",
+            "The status line and `doctor`'s supervisor row, as `wrong`, say the close stopped partway and name what "
+            "finishes it, as the line map's \"The close stopped partway\" box does.",
+            # The by-hand step reads its entry off the step before it.
+            "- Journal `delivery.closed`, and render the views one last time. - Mark the close finished with "
+            "`delivery_state.py close-finished --entry <its journal id>`",
+            "**Unmarked:** no `started` mark names the closing entry, as in a record from before the marks or a "
+            "`delivery.closed` journaled by a tool that writes none. The close still runs and archives, writes no mark, "
+            "and reads as closed from `closed.json` alone.",
+            "Mark the close finished with `delivery_state.py close-finished --entry <its journal id>`, and render again; "
+            "a close left with only its `started` mark reads as stopped partway.",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, close_out)
+        skill = normal("skills/run-delivery/SKILL.md")
+        for phrase in (
+            "ends with the supervisor's status line, which reads the record's close marks",
+            "a stopped supervisor whose close has both marks says the delivery is closed",
+            "lists the tracker updates still owed without waiting for them",
+            "says the close stopped partway and names `lead-run --resume` or `lead-close` to finish it",
+            "writes the close's `finished` mark in the record and the archived copy once the archive has landed, and "
+            "names the closing entry in `closed.json`. It finishes a close that stopped partway.",
+            "A close with its `started` mark and no `finished` mark, and no supervisor running, is `wrong`: it stopped "
+            "partway, and the row names what finishes it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
 
     def test_the_rule_is_pinned_where_a_delivery_without_the_supervisor_reads_it(self) -> None:
         def normal(path: str) -> str:

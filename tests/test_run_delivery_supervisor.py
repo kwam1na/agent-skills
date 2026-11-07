@@ -14,6 +14,7 @@ import json
 import os
 import re
 import signal
+import contextlib
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,7 @@ import types
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 from tests.test_run_delivery import (POSIX_ONLY, Fixture, commit, doctor_binding, installed_release, setup_delivery,
                                      sh, stop_supervisors, write_results)
@@ -310,6 +312,161 @@ class ProofStateTests(unittest.TestCase):
         self.assertEqual(handed({"stage": "queued", "pending": True}), "open")
         self.assertEqual(handed({"stage": "stopped"}), "open")
         self.assertEqual(handed({"stage": "queued"}), "done")
+
+
+class ArchiveNameTests(unittest.TestCase):
+    """Two close-outs' archives in one second: each gets its own folder, and the folders sort in the order made."""
+
+    def setUp(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
+        spec = importlib.util.spec_from_file_location("run_delivery_for_archive_names", path)
+        self.module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = self.module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(self.module)
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        (self.root / "record").mkdir()
+        (self.root / "record/state.json").write_text("{}\n")
+        (self.root / "flow-log").mkdir()
+        self.c = types.SimpleNamespace(state=self.root / "record", flow_log=self.root / "flow-log")
+        for name, value in (("archive_root", lambda c: self.root / "archive"), ("archive_plan_review", lambda archive: None)):
+            patcher = mock.patch.object(self.module, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def archive_at(self, *instants: datetime.datetime) -> list[Path]:
+        """Archive once per instant, with the clock reading that instant."""
+        made = []
+        for instant in instants:
+            clock = types.SimpleNamespace(datetime=types.SimpleNamespace(now=lambda instant=instant: instant))
+            with mock.patch.object(self.module, "datetime", clock):
+                made.append(self.module.archive_delivery(self.c)[0])
+        return made
+
+    def test_two_archives_in_one_second_each_get_their_own_folder(self) -> None:
+        second = datetime.datetime(2026, 11, 4, 23, 47, 25)
+        made = self.archive_at(second.replace(microsecond=1000), second.replace(microsecond=2000))
+        self.assertEqual(len(set(made)), 2, made)
+        self.assertTrue(all((path / "record/state.json").is_file() for path in made), made)
+        self.assertEqual(sorted(made), made, "the archives don't sort in the order they were made")
+
+    def test_the_same_instant_twice_still_gets_two_folders_in_order(self) -> None:
+        instant = datetime.datetime(2026, 11, 4, 23, 47, 25, 1000)
+        made = self.archive_at(instant, instant, instant)
+        self.assertEqual(len(set(made)), 3, made)
+        self.assertTrue(all((path / "record/state.json").is_file() for path in made), made)
+        self.assertEqual(sorted(made), made, "the archives don't sort in the order they were made")
+        self.assertTrue(all(path.name.startswith("20261104T234725") for path in made), made)
+
+    def test_a_dozen_at_one_instant_still_sort_in_the_order_made(self) -> None:
+        instant = datetime.datetime(2026, 11, 4, 23, 47, 25, 1000)
+        made = self.archive_at(*[instant] * 12)  # past -009, where an unpadded -10 would sort before -2
+        self.assertEqual(len(set(made)), 12, made)
+        self.assertEqual(sorted(made), made, "the archives don't sort in the order they were made")
+
+    def test_every_name_at_one_instant_taken_stops_without_a_folder(self) -> None:
+        instant = datetime.datetime(2026, 11, 4, 23, 47, 25, 1000)
+        stamp = instant.strftime("%Y%m%dT%H%M%S.%f")
+        root = self.root / "archive"
+        for n in range(1, 1000):
+            (root / (stamp if n == 1 else f"{stamp}-{n:03d}")).mkdir(parents=True)
+        before = sorted(path.name for path in root.iterdir())
+        with self.assertRaises(self.module.Stop) as refused:
+            self.archive_at(instant)
+        self.assertIn(str(root), str(refused.exception))
+        self.assertEqual(sorted(path.name for path in root.iterdir()), before, "an exhausted root still made a folder")
+        self.assertFalse((root / "record").exists(), "the record was archived into the root itself")
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class RecordedPidGuardTests(unittest.TestCase):
+    """The guard against stopping a recorded pid of -1, 0 or 1, or one that isn't an integer. Every signal call is
+    patched: a real kill(-1, sig) would signal every process the user may signal, and kill(1, sig) init."""
+
+    def setUp(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
+        spec = importlib.util.spec_from_file_location("run_delivery_for_pid_guard", path)
+        self.module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = self.module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(self.module)
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.c = types.SimpleNamespace(flow_log=Path(folder.name), delivery="FX-1")
+        self.lock = self.module.supervisor_lock_path(self.c)
+        self.sent: list[tuple[str, object, object]] = []
+        self.held = None
+        # Nothing reaches the operating system: every call is recorded, and answers that no such process exists.
+        def refuse(name):
+            def call(pid, sig):
+                self.sent.append((name, pid, sig))
+                if self.held is not None:  # the positive control's stand-in "exits" on the first signal
+                    self.release()
+                raise ProcessLookupError
+            return call
+        for name in ("kill", "killpg"):
+            patcher = mock.patch.object(self.module.os, name, side_effect=refuse(name))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        # Membership, not truthiness: a recorded group of 0 must reach the guard as 0.
+        patcher = mock.patch.object(self.module.os, "getpgid", side_effect=lambda pid: self.groups[pid] if pid in self.groups
+                                    else (_ for _ in ()).throw(ProcessLookupError()))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.groups: dict[int, int] = {}
+        self.addCleanup(self.release)
+
+    def record(self, recorded: dict, held: bool) -> None:
+        self.lock.write_text(json.dumps(recorded))
+        if held:
+            self.held = open(self.lock, "a+")
+            fcntl.flock(self.held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def release(self) -> None:
+        if self.held is not None:
+            fcntl.flock(self.held, fcntl.LOCK_UN)
+            self.held.close()
+            self.held = None
+
+    def test_a_held_lock_with_an_unsafe_pid_is_refused_without_a_signal(self) -> None:
+        for pid in (-1, 0, 1, True, "123", None, 2.5):
+            with self.subTest(pid=pid):
+                self.sent.clear()
+                self.record({"pid": pid}, held=True)
+                with self.assertRaises(self.module.Stop) as refused:
+                    self.module.stop_supervisor(self.c)
+                self.assertIn("records no pid to stop", str(refused.exception))
+                self.assertEqual(self.sent, [], f"a recorded pid of {pid!r} was signalled")
+                self.release()
+
+    def test_a_held_lock_with_a_real_pid_is_signalled(self) -> None:
+        # The positive control: the same patched calls do see a pid the guard lets through.
+        self.record({"pid": 424242}, held=True)
+        self.assertEqual(self.module.stop_supervisor(self.c), "stopped the supervisor (pid 424242)")
+        self.assertEqual(self.sent[0], ("killpg", 424242, signal.SIGTERM))
+
+    def test_orphans_under_an_unsafe_group_or_with_unsafe_pids_are_left_alone(self) -> None:
+        for group, child in ((-1, 424243), (0, 424243), (1, 424243), (True, 424243), (424242, -1), (424242, 0),
+                             (424242, 1), (424242, True)):
+            with self.subTest(group=group, child=child):
+                self.sent.clear()
+                self.groups = {424243: group, -1: 424242, 0: 424242, 1: 424242}
+                self.record({"pid": group, "children": [{"name": "queue", "pid": child}]}, held=False)
+                self.assertEqual(self.module.stop_orphans(self.c), [])
+                self.assertEqual(self.sent, [], f"group {group!r} or child {child!r} was signalled")
+
+    def test_an_orphan_in_a_real_group_is_stopped_by_its_group(self) -> None:
+        self.groups = {424243: 424242}
+        self.record({"pid": 424242, "children": [{"name": "queue", "pid": 424243}]}, held=False)
+        def gone(pid, sig):
+            self.sent.append(("killpg", pid, sig))
+            self.groups.clear()
+        with mock.patch.object(self.module.os, "killpg", side_effect=gone):
+            said = self.module.stop_orphans(self.c)
+        self.assertEqual(self.sent, [("killpg", 424242, signal.SIGTERM)])
+        self.assertEqual(said, ["stopped queue (pid 424243), left by the earlier supervisor (pid 424242)"])
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
@@ -805,6 +962,47 @@ class SupervisorPassTests(unittest.TestCase):
         self.once(fx)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, passes(fx)[-1])
 
+    def test_a_merged_story_whose_checkout_is_still_there_holds_the_close(self) -> None:
+        fx = self.fixture()
+        self.closable(fx)
+        # Everything else is met, but cleanup can't remove FX-2's checkout this pass: the close waits for it, as it
+        # does when the merge lands after the pass's cleanup has read the record.
+        wt = fx.main / "lanes/FX-2"
+        (wt / "stray.txt").write_text("not committed\n")
+        self.holds_alone(fx, "not cleaned up: FX-2")
+        self.assertTrue(wt.exists())
+        (wt / "stray.txt").unlink()
+        last = self.once(fx)
+        self.assertFalse(wt.exists(), "the pass closed without cleaning up the merged story's checkout")
+        self.assertEqual(last["closeHeldBy"], [], last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+
+    def test_only_the_delivery_s_merged_stories_hold_the_close_for_their_checkouts(self) -> None:
+        fx = self.fixture()
+        self.closable(fx)
+        # FX-3 was handed off, then removed from the plan: it never merges, so cleanup never takes its checkout.
+        unmerged = hand_off(fx, "FX-3", "lane-2")
+        code, out = fx.flow("lead-accept", "FX-3", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        state_tool(fx, "focus", "--lane", "lane-2", "--text", "done", "--state", "done")
+        # A merged subject that isn't a story of the delivery, with a folder where a story's checkout would be.
+        doc = record(fx)
+        merged = next(q for q in doc["state"]["queue"] if q["subject"] == "FX-2")
+        state_tool(fx, "patch", "--writer", "lead", "--version", str(doc["state"]["version"]), "--patch", json.dumps(
+            {"planned": doc["state"]["planned"] + [{"subject": "FX-9", "title": "Not a story", "lane": "lane-1",
+                                                    "stage": "building"}]}))
+        state_tool(fx, "handoff", "--lane", "lane-1", "--subject", "FX-9", "--head", merged["head"], "--change-request",
+                   merged["changeRequest"], "--rounds", "1")
+        doc = record(fx)
+        state_tool(fx, "patch", "--writer", "runner", "--version", str(doc["state"]["version"]), "--patch", json.dumps(
+            {"queue": [{**q, "stage": "merged"} if q["subject"] == "FX-9" else q for q in doc["state"]["queue"]]}))
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        (fx.main / "lanes/FX-9").mkdir(parents=True)
+        last = self.once(fx)
+        self.assertFalse([h for h in last["closeHeldBy"] if "not cleaned up" in h], last["closeHeldBy"])
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+        self.assertTrue(unmerged.exists(), "the pass removed an unmerged story's checkout")
+
     def test_what_the_close_waits_on_is_cut_to_five_and_a_pass_still_writing_is_passed_over(self) -> None:
         fx = self.fixture()
         log = fx.tmp / "flow-log/FX-1.supervisor.jsonl"
@@ -974,6 +1172,116 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertFalse(wt.exists(), "a lane quiet since its hand-off kept its checkout after the merge")
         self.assertEqual(len([e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]), 1)
         self.assertFalse(any("lane-1" in h for h in held), held)
+
+    def lane_with_two_stories(self) -> Fixture:
+        """lane-1 takes both stories, so the lead can give it the second around the first's merge."""
+        fx = self.fixture()
+        m = fx.main
+        path = m / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        d["stories"]["FX-3"]["lane"] = "lane-1"
+        d["lanes"]["lane-1"]["owns"] = [*d["lanes"]["lane-1"]["owns"], *d["lanes"]["lane-2"]["owns"]]
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: lane-1 takes FX-3 too")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", "--replace", cwd=m)
+        self.assertEqual(code, 0, out)
+        return fx
+
+    def test_an_assignment_before_the_merge_isnt_the_lane_moving_off(self) -> None:
+        fx = self.lane_with_two_stories()
+        m = fx.main
+        wt = hand_off(fx, "FX-2", "lane-1")
+        # The lead gives lane-1 its next story before FX-2 merges, and the lane is still at work on FX-2.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-1", "--title", "lane-1", cwd=m)
+        self.assertEqual(code, 0, out)
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing FX-2's docs", "--state", "working")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        self.once(fx)
+        self.assertTrue(wt.exists(), "an assignment made before the merge counted as the lane moving off it")
+        self.assertIn("FX-2: waits for lane-1 to move off it", passes(fx)[-1]["cleanup"])
+
+    def test_another_lanes_assignment_after_the_merge_isnt_this_lane_moving_off(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        code, out = fx.flow("lead-init", "--replace", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = hand_off(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing FX-2's docs", "--state", "working")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        # After the merge the lead gives lane-2, not lane-1, its story: lane-1 hasn't moved off FX-2.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "lane-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.once(fx)
+        self.assertTrue(wt.exists(), "another lane's assignment counted as lane-1 moving off its merged story")
+        self.assertIn("FX-2: waits for lane-1 to move off it", passes(fx)[-1]["cleanup"])
+
+    def test_a_lane_assigned_other_work_after_its_story_merges_has_moved_off_it(self) -> None:
+        fx = self.lane_with_two_stories()
+        m = fx.main
+        # The lane says it is still at work on FX-2 after handing it off, so the merge alone doesn't move it off.
+        wt = hand_off(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing FX-2's docs", "--state", "working")
+        self.once(fx)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        self.once(fx)
+        self.assertTrue(wt.exists())
+        self.assertIn("FX-2: waits for lane-1 to move off it", passes(fx)[-1]["cleanup"])
+        # The lead gives lane-1 its next story: an assignment after the merge is the lane moving off FX-2.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-1", "--title", "lane-1", cwd=m)
+        self.assertEqual(code, 0, out)
+        row = next(lane for lane in record(fx)["state"]["lanes"] if lane["id"] == "lane-1")
+        self.assertNotIn(row["state"], ("idle", "done"), "the row alone would read as moved off, so this proves nothing")
+        self.once(fx)
+        self.assertFalse(wt.exists(), "a lane assigned other work after its story merged kept that story's checkout")
+        self.assertEqual(len([e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]), 1)
+
+    def test_a_lane_at_work_with_no_pass_before_the_merge_keeps_its_checkout(self) -> None:
+        fx = self.fixture()
+        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        # The lane says it is at work after its hand-off, and the story is accepted and merged before any pass runs:
+        # the record itself has to carry the lane's word past the queue resting its row.
+        wt = hand_off(fx, "FX-2", "lane-1")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing FX-2's docs", "--state", "working")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        row = next(lane for lane in record(fx)["state"]["lanes"] if lane["id"] == "lane-1")
+        self.assertEqual((row["state"], row["focus"], row.get("focusBy")), ("idle", "FX-2 merged", "runner"), row)
+        self.assertEqual(row.get("restedFrom", {}).get("state"), "working", row)
+        self.once(fx)
+        self.assertTrue(wt.exists(), "the checkout of a lane still at work was removed after the merge")
+        self.assertIn("FX-2: waits for lane-1 to move off it", passes(fx)[-1]["cleanup"])
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        self.once(fx)
+        self.assertFalse(wt.exists(), "the merged story wasn't cleaned up once its lane moved off it")
+
+    def test_a_lanes_word_kept_on_its_row_outranks_an_older_one_a_pass_remembered(self) -> None:
+        fx = self.fixture()
+        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        # A pass sees the lane just handed off and remembers that; the lane then says it is at work, and the story
+        # merges before another pass. The record's kept word is newer than the pass log's and has to win.
+        wt = hand_off(fx, "FX-2", "lane-1")
+        self.once(fx)
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "fixing FX-2's docs", "--state", "working")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        self.assertEqual(passes(fx)[-1]["laneWords"]["lane-1"]["state"], "handed", "the pass didn't remember the older word")
+        self.once(fx)
+        self.assertTrue(wt.exists(), "an older word the pass remembered outranked the lane's word kept on its row")
+        self.assertIn("FX-2: waits for lane-1 to move off it", passes(fx)[-1]["cleanup"])
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        self.once(fx)
+        self.assertFalse(wt.exists(), "the merged story wasn't cleaned up once its lane moved off it")
 
     def test_a_lane_that_says_it_is_done_after_its_hand_off_is_cleaned_up_when_its_story_merges(self) -> None:
         fx = self.fixture()
@@ -1792,6 +2100,336 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class CloseStoppedPartwayTests(unittest.TestCase):
+    """A close that stopped partway says so, by the record's two marks, and names what finishes it: each stop is made
+    by the real commands, stopped where a kill would have stopped them, and then finished by the command named."""
+
+    run_serially = True
+    setUpClass = classmethod(SupervisorTrackerTests.setUpClass.__func__)
+    fixture = SupervisorTrackerTests.fixture
+    once = SupervisorTrackerTests.once
+    closable = SupervisorTrackerTests.closable
+    drawn = SupervisorTrackerTests.drawn
+
+    def stopped_at(self, fx: Fixture, point: str, *command: str) -> str:
+        """Run the real command, stopped at `point` as a kill there would stop it: a sitecustomize shim, first on the
+        command's PYTHONPATH, watches run_delivery.py's own calls and exits at the named one. Nothing ships."""
+        shim = fx.tmp / f"stop-{point.replace(' ', '-').replace('.', '-')}"
+        shim.mkdir(exist_ok=True)
+        (shim / "sitecustomize.py").write_text(STOP_SHIM.replace("POINT", repr(CLOSE_STOPS[point])))
+        env = {**fx.env, "PYTHONPATH": os.pathsep.join(filter(None, [str(shim), fx.env.get("PYTHONPATH")]))}
+        code, out = fx.flow(*(command or ("lead-run", "--once")), cwd=fx.main, env=env)
+        self.assertEqual(code, 9, out)
+        return out
+
+    def marks(self, directory: Path) -> dict:
+        return json.loads((directory / "state.json").read_text())["meta"].get("closing") or {}
+
+    def closing_entry(self, fx: Fixture) -> int:
+        return kinds(fx, "delivery.closed")[-1]["id"]
+
+    def status(self, fx: Fixture) -> str:
+        code, out = fx.flow("lead-brief", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        return next(line for line in out.splitlines() if line.startswith("supervisor:"))
+
+    def assert_partway(self, fx: Fixture, command: str) -> None:
+        entry = self.closing_entry(fx)
+        marks = self.marks(fx.tmp / "record")
+        self.assertEqual(marks["started"]["entry"], entry, marks)
+        self.assertNotEqual((marks.get("finished") or {}).get("entry"), entry, marks)
+        said = self.status(fx)
+        # The command named is the one after "finish it with", not one the line mentions anywhere else.
+        named = re.search(r"stopped partway through the close; finish it with .*?(lead-run --resume|lead-close)(;|$)", said)
+        self.assertIsNotNone(named, said)
+        self.assertEqual(named.group(1), command, said)
+        code, out = fx.flow("doctor", "--offline", "--delivery", "FX-1", cwd=fx.main)
+        verdict = next(line for line in out.splitlines() if "stopped partway through the close" in line)
+        self.assertTrue(verdict.startswith("wrong"), verdict)
+
+    def assert_finished(self, fx: Fixture) -> Path:
+        entry = self.closing_entry(fx)
+        live = self.marks(fx.tmp / "record")
+        self.assertEqual((live["started"]["entry"], live["finished"]["entry"]), (entry, entry), live)
+        closed = closed_of(fx)
+        self.assertEqual(closed["entry"], entry, closed)
+        archive = Path(closed["archive"])
+        kept = self.marks(archive / "record")
+        self.assertEqual(kept["finished"]["entry"], entry, kept)
+        self.assertTrue(self.status(fx).startswith("supervisor: stopped; the delivery is closed."))
+        return archive
+
+    def finish_with_resume(self, fx: Fixture) -> Path:
+        """The command the record names, run: a resumed supervisor finishes the close with the tracker covered."""
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        wait_for(lambda: (self.marks(fx.tmp / "record").get("finished") or {}).get("entry") == self.closing_entry(fx),
+                 "the resumed supervisor to finish the close")
+        wait_for(lambda: not read_lock_held(fx), "the supervisor to stop once the delivery closed")
+        archive = self.assert_finished(fx)
+        # The tracker has every close, each once.
+        self.assertEqual(len([text for text in epic_comments(self.backend) if "Delivery closed" in text]),
+                         len(kinds(fx, "delivery.closed")))
+        return archive
+
+    def setUp(self) -> None:
+        self.backend = None
+
+    def closable_fixture(self) -> Fixture:
+        fx, self.backend = self.fixture()
+        self.closable(fx)
+        return fx
+
+    def test_a_supervisor_stopped_waiting_on_the_tracker_reads_unfinished_and_a_resume_finishes_it(self) -> None:
+        fx = self.closable_fixture()
+        with self.backend.edit() as store:
+            store["failures"].append({"op": "comment", "ticket": "FX-1", "status": 409, "times": 1})
+        # The pass ends waiting on the tracker, and nothing runs another: the supervisor stopped there.
+        last = self.once(fx)
+        self.assertTrue(any(line.startswith("waiting for the tracker publisher") for line in last.get("closeOut", [])), last)
+        self.assertFalse((fx.tmp / "flow-log/FX-1.closed.json").exists())
+        self.assert_partway(fx, "lead-run --resume")
+        self.finish_with_resume(fx)
+
+    def test_a_supervisor_stopped_in_the_archive_or_before_its_mark_reads_unfinished_and_a_resume_finishes_it(self) -> None:
+        for point in ("archive", "closed.json"):
+            with self.subTest(point=point):
+                fx = self.closable_fixture()
+                self.stopped_at(fx, point)
+                self.assertEqual((fx.tmp / "flow-log/FX-1.closed.json").exists(), point == "closed.json")
+                # A merged story's checkout still there holds a resumed supervisor only until its own cleanup, so the
+                # record still names a resume.
+                left = fx.main / "lanes/FX-2"
+                left.mkdir(parents=True, exist_ok=True)
+                self.assert_partway(fx, "lead-run --resume")
+                left.rmdir()
+                archive = self.finish_with_resume(fx)
+                if point == "closed.json":
+                    # The resume took the done-once return, and still wrote the mark in the kept archive.
+                    self.assertEqual(len([path for path in archive.parent.glob("2*") if path.is_dir()]), 1,
+                                     list(archive.parent.iterdir()))
+
+    def test_a_supervisor_stopped_in_its_friction_step_reads_finished(self) -> None:
+        fx = self.closable_fixture()
+        self.stopped_at(fx, "friction")
+        self.assert_finished(fx)
+
+    def test_lead_close_stopped_before_its_mark_reads_unfinished_and_a_resume_finishes_it(self) -> None:
+        for point in ("lead-close render", "lead-close archive"):
+            with self.subTest(point=point):
+                fx = self.closable_fixture()
+                state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by hand")
+                self.stopped_at(fx, point, "lead-close")
+                self.assert_partway(fx, "lead-run --resume")
+                self.finish_with_resume(fx)
+
+    def test_lead_close_stopped_after_closed_json_reads_finished(self) -> None:
+        fx = self.closable_fixture()
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by hand")
+        self.stopped_at(fx, "lead-close closed.json", "lead-close")
+        self.assert_finished(fx)
+
+    def test_an_early_close_stopped_in_lead_close_names_lead_close_which_finishes_it_and_reports_what_is_unposted(self) -> None:
+        fx = self.closable_fixture()
+        # A finish line the lead closed early without meeting.
+        version = record(fx)["state"]["version"]
+        state_tool(fx, "patch", "--writer", "lead", "--version", str(version), "--patch",
+                   json.dumps({"finish": [{"id": "unmet", "text": "Something left unmet", "met": False}]}))
+        with self.backend.edit() as store:
+            store["failures"].append({"op": "comment", "ticket": "FX-1", "status": 409, "times": 50})
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed early, by hand")
+        self.stopped_at(fx, "lead-close archive", "lead-close")
+        self.assert_partway(fx, "lead-close")
+        # A resumed supervisor holds on the unmet line and writes no mark.
+        self.once(fx)
+        self.assertNotIn("finished", self.marks(fx.tmp / "record"))
+        code, out = fx.flow("lead-close", cwd=fx.main)
+        self.assertIn(code, (0, 1), out)
+        self.assertIn("the tracker hasn't had every update", out)
+        self.assertIn("lead-close doesn't wait for the tracker", out)
+        self.assert_finished(fx)
+
+    def test_an_older_closed_json_without_an_entry_is_still_refused_and_still_returns_its_archive(self) -> None:
+        fx = self.closable_fixture()
+        self.once(fx)
+        closed = closed_of(fx)
+        older = {key: value for key, value in closed.items() if key != "entry"}
+        (fx.tmp / "flow-log/FX-1.closed.json").write_text(json.dumps({**older, "by": "lead-close"}, indent=2) + "\n")
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the delivery is closed: lead-close closed it", out)
+        (fx.tmp / "flow-log/FX-1.closed.json").write_text(json.dumps(older, indent=2) + "\n")
+        self.once(fx)
+        self.assertEqual(closed_of(fx)["archive"], closed["archive"])
+
+    def test_lead_close_refuses_a_supervisor_until_a_later_close_is_journaled(self) -> None:
+        fx = self.closable_fixture()
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by hand")
+        code, out = fx.flow("lead-close", cwd=fx.main)
+        self.assertIn(code, (0, 1), out)
+        # New work alone doesn't undo lead-close's close: its entry is still the latest delivery.closed.
+        state_tool(fx, "journal", "--kind", "lane.assigned", "--summary", "more work", "--lane", "lane-1")
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the delivery is closed: lead-close closed it", out)
+        # A later close is a close closed.json doesn't speak for.
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed again by hand")
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+
+    def test_a_clean_close_and_a_clean_second_close_on_each_path(self) -> None:
+        for path in ("supervisor", "lead-close"):
+            with self.subTest(path=path):
+                fx, self.backend = self.fixture()
+                self.drawn(fx)
+                self.closable(fx)
+                for turn in (1, 2):
+                    if turn == 2:
+                        # Reopened by new work, then closed again: a new entry, a new archive, its own marks.
+                        state_tool(fx, "journal", "--kind", "lane.assigned", "--summary", "more work", "--lane", "lane-1")
+                        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+                    if path == "supervisor":
+                        self.once(fx)
+                    else:
+                        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", f"closed by hand, turn {turn}")
+                        code, out = fx.flow("lead-close", cwd=fx.main)
+                        self.assertIn(code, (0, 1), out)
+                    self.assertEqual(len(kinds(fx, "delivery.closed")), turn)
+                    archive = self.assert_finished(fx)
+                    # The archived copy's own line map, as the close re-rendered it, reads the close finished: what the
+                    # page draws from, and so no "stopped partway" box.
+                    entry = self.closing_entry(fx)
+                    for folder in (archive / "record", fx.tmp / "record"):
+                        page = (folder / "line-map.html").read_text(encoding="utf-8")
+                        embedded = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S)
+                        drawn = json.loads(embedded.group(1).replace("\\u003c", "<"))
+                        self.assertEqual(drawn["state"]["meta"]["closing"]["finished"]["entry"], entry, folder)
+
+    def strip_marks(self, fx: Fixture) -> None:
+        """As a delivery.closed a tool that wrote no marks journaled leaves the record."""
+        state = fx.tmp / "record"
+        written = json.loads((state / "state.json").read_text())
+        written["meta"].pop("closing", None)
+        (state / "state.json").write_text(json.dumps(written, indent=2) + "\n")
+
+    def test_a_close_journaled_without_marks_still_closes_on_each_path_unmarked(self) -> None:
+        for path in ("supervisor", "lead-close"):
+            with self.subTest(path=path):
+                fx = self.closable_fixture()
+                state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by an older tool")
+                self.strip_marks(fx)
+                if path == "supervisor":
+                    last = self.once(fx)
+                    self.assertFalse(any("failed" in line for line in last.get("closeOut", [])), last)
+                    # A close-out that raised is recorded under the pass's close, and never reaches its friction note.
+                    self.assertFalse(str(last.get("close", "")).startswith("failed"), last)
+                    self.assertIn("friction", closed_of(fx), last)
+                else:
+                    code, out = fx.flow("lead-close", cwd=fx.main)
+                    self.assertIn(code, (0, 1), out)
+                closed = closed_of(fx)
+                self.assertEqual(closed["entry"], self.closing_entry(fx))
+                self.assertNotIn("closing", json.loads((fx.tmp / "record/state.json").read_text())["meta"])
+                self.assertTrue(self.status(fx).startswith("supervisor: stopped; the delivery is closed."))
+
+    def test_a_close_waiting_on_the_host_outbox_under_a_live_supervisor_is_its_needs_not_a_stop(self) -> None:
+        fx, self.backend = self.fixture(updates="host")
+        self.closable(fx)
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        listed = lambda: json.loads((fx.tmp / "record/needs-you.json").read_text()) if (fx.tmp / "record/needs-you.json").exists() else {}
+        held = lambda: any("outbox" in item["text"] and item["holding"] for item in listed().get("items", []))
+        wait_for(held, "the outbox to hold the close")
+        # Posted and acked by hand, as a host does: the close is journaled, and waits on the outbox for its own entry.
+        # The host acks what the outbox holds, as each version of it is written, never the record's newest entry: a
+        # post-merge fullHealth beside the live supervisor journals base.verified after the outbox was first written.
+        acked: set[tuple[int, int]] = set()
+
+        def ack_and_check() -> bool:
+            if kinds(fx, "delivery.closed"):
+                return True
+            path = fx.tmp / "record/outbox/outbox.json"
+            outbox = json.loads(path.read_text()) if path.exists() else {}
+            pair = (outbox.get("state", {}).get("version"), outbox.get("journalThrough"))
+            if outbox.get("journal") and None not in pair and pair not in acked:
+                # An ack can meet a newer outbox the supervisor just wrote: it's refused, and the next try acks that.
+                with contextlib.suppress(AssertionError):
+                    state_tool(fx, "ack", "--version", str(pair[0]), "--through", str(pair[1]))
+                    acked.add(pair)
+            return False
+        wait_for(ack_and_check, "the supervisor to journal the close")
+        wait_for(lambda: held() and listed().get("at", "") > kinds(fx, "delivery.closed")[-1]["at"],
+                 "the supervisor's list to hold the close on the outbox after it was journaled")
+        needs = json.loads((fx.tmp / "record/needs-you.json").read_text())
+        # What the page reads as a close still running: the list current, its supervisor running, the outbox holding it.
+        self.assertTrue(needs["running"], needs)
+        self.assertGreater(datetime.datetime.fromisoformat(needs["staleAfter"].replace("Z", "+00:00")),
+                           datetime.datetime.now(datetime.timezone.utc))
+        self.assertEqual(self.marks(fx.tmp / "record").get("finished"), None)
+        self.assertTrue(self.status(fx).startswith("supervisor: running"))
+        self.assertNotIn("stopped partway", self.status(fx))
+
+    def test_a_record_without_marks_reads_as_it_did(self) -> None:
+        fx = self.closable_fixture()
+        self.once(fx)
+        state = fx.tmp / "record"
+        written = json.loads((state / "state.json").read_text())
+        written["meta"].pop("closing")
+        (state / "state.json").write_text(json.dumps(written, indent=2) + "\n")
+        self.assertTrue(self.status(fx).startswith("supervisor: stopped; the delivery is closed."))
+
+    def test_a_delivery_closed_reopened_closed_again_and_stopped_is_judged_on_its_last_close(self) -> None:
+        for kind in ("lane.assigned", "candidate.handed", "check.started"):
+            with self.subTest(reopened_by=kind):
+                fx = self.closable_fixture()
+                self.once(fx)
+                first, archive = self.closing_entry(fx), closed_of(fx)["archive"]
+                state_tool(fx, "journal", "--kind", kind, "--summary", "more work", "--lane", "lane-1",
+                           *(["--subject", "FX-2"] if kind != "lane.assigned" else []))
+                state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+                self.stopped_at(fx, "archive")
+                self.assertGreater(self.closing_entry(fx), first)
+                self.assert_partway(fx, "lead-run --resume")
+                self.assertNotEqual(self.finish_with_resume(fx), Path(archive))
+
+
+# Where a row stops a close: (event, run_delivery.py function, the function that called it or None, which time).
+CLOSE_STOPS = {
+    "archive": ("return", "archive_delivery", "archive_step", 1),
+    "closed.json": ("return", "archive_step", None, 1),
+    "friction": ("call", "friction_step", None, 1),
+    "lead-close render": ("call", "render", "lead_close", 1),
+    "lead-close archive": ("return", "archive_delivery", "lead_close", 1),
+    "lead-close closed.json": ("call", "render", "lead_close", 2),
+}
+STOP_SHIM = """
+import os, sys
+_EVENT, _NAME, _CALLER, _TIME = POINT
+_seen = [0]
+def _profile(frame, event, arg):
+    if event != _EVENT or frame.f_code.co_name != _NAME:
+        return
+    if frame.f_globals.get("__name__") != "__main__" or not str(frame.f_globals.get("__file__", "")).endswith("run_delivery.py"):
+        return
+    if _CALLER is not None and (frame.f_back is None or frame.f_back.f_code.co_name != _CALLER):
+        return
+    _seen[0] += 1
+    if _seen[0] == _TIME:
+        sys.stdout.flush()
+        os._exit(9)
+sys.setprofile(_profile)
+"""
+
+
+def read_lock_held(fx: Fixture) -> bool:
+    lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
+    if not lock.exists():
+        return False
+    try:
+        return alive(json.loads(lock.read_text() or "{}").get("pid") or 0)
+    except ValueError:
+        return False
+
 class SupervisorPostMergeTests(unittest.TestCase):
     """The post-merge tier: under `gate`, the binding's fullHealth runs after each merge, not only at close-out."""
 

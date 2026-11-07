@@ -59,14 +59,23 @@ file that is malformed or can't be read runs `fullHealth` and holds the close on
   `waitingOn` and `since`. A lane with nothing else open rests. A row that doesn't
   name the candidate stays if its lane has another assignment open, or is
   active and has spoken since its hand-off. So does a blocked lane's row while it
-  has other work open. Any later `focus` wins, and ends a `waitingOn` the queue
-  wrote unless it sets its own; a new hand-off, or the queue putting the candidate
-  back, ends the queue's words. A lead who drops a stopped candidate from the
-  queue also clears a row still saying it stopped, since no later queue write
-  will. The tool alone keeps a row's `focusAt` and
-  `focusBy`, which says the queue wrote its words. A lane writes only its own
-  lane's `focus`, `state` and `waitingOn`, its own review rounds, and its own
-  hand-off, which the tool turns into a queue element, with any suite evidence
+  has other work open. Any later `focus` wins: the lane's next write of its
+  own focus, by `focus` or by `patch` with `--patch` or `--set`, ends a
+  `waitingOn` the queue set unless it sets its own. A `waitingOn` the lane or
+  the lead set stays until they change it, even under the queue's words, and
+  a lead rewriting only the focus leaves the queue's `waitingOn` for the lane
+  to end. A new hand-off ends the queue's words and a `waitingOn` the queue
+  set. The queue putting the candidate back ends its words saying the
+  candidate stopped, and a `waitingOn` the queue set, while those words
+  stand; once anyone else rewrote them, the wait stays for the lane to end.
+  A lead who drops a stopped candidate from the queue also clears a row still
+  saying it stopped, since no later queue write will. The tool alone keeps a
+  row's `focusAt`, `focusBy`, which says the queue wrote its words,
+  `waitingBy`, which says who set its `waitingOn`, and `restedFrom`, the
+  lane's own last word, kept while the queue's words stand over it. A lane writes only its own
+  lane's `focus`, `state` and `waitingOn`, its own review rounds, the run
+  building its own planned work, and its own hand-off, which the tool turns
+  into a queue element, with any suite evidence
   it gives in `queue[i].evidence`, which only a hand-off writes. Every write goes
   through the state tool, which checks the declared writer against this
   ownership and refuses anything else with `writer_not_owned` for a lane.
@@ -127,6 +136,15 @@ Every lane works to one named profile, not a posture:
    `$review-work`'s bound; at the bound, stop and report the blocker.
 4. Run the repository's compounding check.
 5. Open a draft change request.
+
+A lane whose work a product run builds binds that run at start, with
+`delivery_state.py bind-run --lane <lane> --subject <subject> --run <id>`, so
+the views show the run's rounds while the work is still planned. It binds only
+its own lane's planned element, never replaces a bound run (binding the same
+one again changes nothing), and is refused with `run_bound` for a run another
+subject holds; another lane's or a queued element is refused with
+`writer_not_owned`. The hand-off keeps the bound run unless it names another. A
+hand-off naming a run another subject holds is refused with `run_bound` too.
 
 The lane hands off the candidate reference, the reviewed head, the review
 rounds, the validation, the run id or `none`, every declared lead input the
@@ -246,7 +264,11 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   on a fresh checkout of the synced head. Each check's elapsed time shows
   against its usual duration; a failed check's failing tests and its log reach
   the record, the journal and the views, journaled as `check.failed` as soon as
-  the check fails, before the base re-run. A failure made only of the binding's
+  the check fails, before the base re-run. While the failing checks re-run on
+  the base, the checking panel's `baseRerun` says the candidate failed and
+  waits on that re-run; its start and its verdict are journaled as
+  `base.rerun.started` and `base.rerun.finished`, so the journal reads failure,
+  re-run start, verdict, stop. A failure made only of the binding's
   declared flakes is retried once and journaled as `check.retried`; any other
   failure is never retried. A check the binding lists in `reusableChecks` is
   not run again when the synced tree is exactly the tree the lane's hand-off
@@ -468,10 +490,12 @@ run the sync loop in this order:
    - Planned work at `planned` whose ticket the tracker shows `started` moves
      to `building`, so a lane starting its ticket moves its stop with no lead
      step. The first time reconcile sees a planned item's ticket `started`, it
-     sets the item's `trackerStarted`. Work at `building` or in review whose
-     ticket was started and that the tracker shows back in `backlog` is
-     reported for the lead, never moved back. Work a draft change request
-     moved while its ticket was never started is not reported.
+     sets the item's `trackerStarted`, which a hand-off carries onto the
+     queue element and a rejected hand-off hands back. Work at `building` or
+     in review whose ticket was started and that the tracker shows back in
+     `backlog` is reported for the lead, never moved back. Work a draft
+     change request moved while its ticket was never started is not
+     reported.
    - A change request is linked to its queue or planned item. A draft one
      moves planned work at `planned` to `building`, so a delivery with no
      tracker snapshot sees the stop move once the lane's draft opens; an open
@@ -683,3 +707,26 @@ capture and evidence path. This optional display path does not qualify a release
 A later journal review makes an earlier capture unavailable until its extended
 outcomes are captured. Originating reopenings remain unresolved; deferrals need
 a tracked follow-up and cannot discharge a carried P0 or P1.
+
+A refused capture names the round, the lens and the field at fault, so the lane
+can mend its outcome files before it hands off.
+
+A capture binds to the head its last round reviewed. When a commit after that
+round needs no new round, such as a fixture-only change, only the lead may
+carry the evidence to the queued head:
+
+```bash
+python3 -B scripts/delivery_state.py --dir <state directory> carry-review --writer lead \
+  --subject <subject> --from <head the evidence covers> --to <queued head> --reason "<why no new round>"
+```
+
+Before carrying, the lead reads the diff between the two heads and judges that
+nothing in it needs review; the tool does no git work. The carry journals a
+`decision.recorded` entry with `reviewCarry` naming both heads and the capture's
+digest, and the views then show the capture at the queued head with that
+decision, never as a review of the new head. A carry never changes what the
+evidence says: a capture whose last round is not aligned, or that leaves a P0 or
+P1 open, is refused. Each later head needs its own carry, from the head the last
+carry reached, and a later review round or capture ends a carry. Like a capture,
+a carry is display and acceptance evidence only: it creates no run, is no review
+round in the stats, and is no product admission evidence.

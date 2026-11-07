@@ -53,6 +53,17 @@ MACHINERY = re.compile(
 )
 
 
+def _sections(note: str) -> list[tuple[str, str]]:
+    """A note's second-level sections, in order, outside its frontmatter: each heading and the text under it."""
+    parts = re.split(r"(?m)^## (.+?)[ \t]*$", note.split("---\n", 2)[2])
+    return list(zip(parts[1::2], parts[2::2]))
+
+
+def _singular(category: str) -> str:
+    """A category's `problem_type`: its singular form, as `build_error` for `build-errors`."""
+    return (category[:-1] if category.endswith("s") else category).replace("-", "_")
+
+
 def _text(relative: str = SKILL) -> str:
     return " ".join((ROOT / relative).read_text(encoding="utf-8").split())
 
@@ -89,10 +100,29 @@ class CompoundLearningCorpusTests(unittest.TestCase):
                 category = note.parent.name
                 self.assertIn(category, (*BUG_CATEGORIES, *KNOWLEDGE_CATEGORIES))
                 self.assertRegex(note.name, r"-\d{4}-\d{2}-\d{2}\.md$")
-                head = note.read_text(encoding="utf-8").split("---\n")[1]
+                text = note.read_text(encoding="utf-8")
+                head = text.split("---\n")[1]
                 self.assertIn(f"category: {category}\n", head)
-                for field in SHARED_FIELDS:
-                    self.assertRegex(head, rf"(?m)^{field}:")
+                bug = category in BUG_CATEGORIES
+                for field in (*SHARED_FIELDS, *(BUG_FIELDS if bug else KNOWLEDGE_FIELDS)):
+                    self.assertRegex(head, rf"(?m)^{field}: \S")
+                self.assertRegex(head, rf"(?m)^problem_type: {_singular(category)}$")
+                sections = _sections(text)
+                self.assertEqual([heading for heading, _ in sections],
+                                 (BUG_SECTIONS if bug else KNOWLEDGE_SECTIONS).split(", "))
+                for heading, body in sections:
+                    # A heading with nothing of its own under it, or only subheadings, is not a section.
+                    self.assertRegex(re.sub(r"(?m)^###.*$", "", body), r"\S", heading)
+
+    def test_problem_type_is_the_category_singular_for_every_category(self) -> None:
+        self.assertEqual(_singular("build-errors"), "build_error")
+        self.assertEqual(_singular("best-practices"), "best_practice")
+        self.assertEqual(_singular("developer-experience"), "developer_experience")
+        for category in (*BUG_CATEGORIES, *KNOWLEDGE_CATEGORIES):
+            with self.subTest(category=category):
+                self.assertNotIn("-", _singular(category))
+                self.assertTrue(category.replace("-", "_").startswith(_singular(category)))
+
 
     def test_each_track_lists_exactly_its_categories(self) -> None:
         section = _section("Solution Notes")

@@ -484,8 +484,8 @@ When a lane has no story left, tell it so; it sets its focus `done`, as its brie
 python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir .orchestration/state focus --lane lane-1 --text "<story-key> merged; nothing left" --state done
 ```
 
-When every story is merged or removed, every finish line is met, every lane is idle or done, and nothing in "Needs
-you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head (skipped when the
+When every story is merged or removed, every merged story's checkout is cleaned up, every finish line is met, every
+lane is idle or done, and nothing in "Needs you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head (skipped when the
 base declares the `focused` posture, and already run at that head when the delivery merged anything, since the
 supervisor runs it after each merge or batch), a follow-up for
 each deferred finding, `delivery.closed` and then a wait until the tracker has every update, the archive, a friction
@@ -515,6 +515,10 @@ run_delivery.py lead-evidence published --url <address> --out <folder>
 run_delivery.py ship
 ```
 
+`lead-evidence page` keeps its `--title`, `--intro` and `--note KEY=TEXT` words in the record, in
+`evidence-notes.json`, and reuses them each time the page is rebuilt, so a later rebuild says what the first one did.
+A flag given again replaces what was kept, and `--note KEY=` with no text removes that story's note.
+
 ## 7. A worked adopter
 
 A repository on Bitbucket, with Jira as its tracker, a pipeline that reviews each pull request, a default branch,
@@ -524,6 +528,7 @@ one this repository changes from the walk-through above; everything else stays a
 | Setting | Default | This repository |
 | --- | --- | --- |
 | `base.ref`, `bases` | `main`, none | `main`, `["main", "integration-*"]` |
+| The binding's `candidate` | a script of your own | the forge adapter's `candidate`, by key |
 | The binding's `merge` | a git-only script | the forge adapter's `merge`, by branch |
 | `environment` | `{}` | the adapter's repository and token variable |
 | `forge` | `github` | `bitbucket`, with `mergeNeedsReady` |
@@ -534,15 +539,18 @@ one this repository changes from the walk-through above; everything else stays a
 | `reviewWhen` | none: lanes make the review move by hand | `pipeline-green` |
 | `authority` | `push`, `draftPullRequests` | adds `readyPullRequests` |
 
-The binding merges through the forge adapter, by branch and checked head, so no merge script of its own is needed and
-nothing pushes to `main`:
+The binding finds each story's `feature/<key>` branch and merges it through the forge adapter, by branch and checked
+head, so neither a candidate script nor a merge script of its own is needed and nothing pushes to `main`. Because it serves several bases, it passes `--destination {base}` too, so a pull request
+retargeted to another base in the forge is refused rather than merged there:
 
 ```json example outline
 {
   "base": {"remote": "origin", "ref": "main"},
   "bases": ["main", "integration-*"],
+  "candidate": ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "candidate",
+                "--key", "{candidate}"],
   "merge": ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge", "--source", "{branch}",
-            "--head", "{expectedHead}", "--strategy", "merge"],
+            "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"],
   "environment": {"FLOW_FORGE_REPOSITORY": "<workspace>/<repository>", "FLOW_FORGE_TOKEN_ENV": "BITBUCKET_TOKEN"},
   "state": {"directory": ".orchestration/state", "renderers": [],
             "forgeSnapshot": {"argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
@@ -601,7 +609,8 @@ change and the delivery file reach `main`, and each integration base, through a 
   left running and starts it on the new release, or with the new token exported. Nothing it did is done twice.
 - **Merge strategy.** Merge with merge commits. After each merge, the queue checks that the base holds the checked
   head's tree on top of the base it checked against, and a squash passes that too. But a squashed story's branch never
-  reaches the base, so the supervisor's cleanup reports it unmerged and leaves its checkout and branches for you.
+  reaches the base, so the supervisor's cleanup reports it unmerged and leaves its checkout and branches for you, and
+  the supervisor's close waits on "not cleaned up: <story>" until you remove that checkout.
   Squash, with the adapter's `--strategy squash`, only where the forge requires it.
 - **A test account that allows one session at a time.** The in-app lease serializes every lane's checks of the running
   app, so one account signs in for one check at a time. Give the lease's lock a path every checkout shares.

@@ -14,6 +14,7 @@ from pathlib import Path
 from agent_skills.validate import validate_corpus
 
 from corpus_copy import SharedCorpus, copy_corpus
+from quiet_git import quieten
 
 ROOT = Path(__file__).resolve().parents[1]
 WRITER = ROOT / "scripts" / "update-provenance.py"
@@ -115,6 +116,7 @@ class UpdateProvenanceTests(unittest.TestCase):
             self.assertEqual(git("commit", "-q", "-am", branch).returncode, 0)
 
         self.assertEqual(git("init", "-q", "--initial-branch=base").returncode, 0)
+        quieten(self.root)  # no maintenance writes into the folder while restored() removes it
         git("add", "-A")
         self.assertEqual(git("commit", "-q", "-m", "base").returncode, 0)
         lines = (self.root / guide).read_text(encoding="utf-8").split("\n")
@@ -257,6 +259,71 @@ class UpdateProvenanceTests(unittest.TestCase):
         missing_entry = self.write("--skill", skill["id"])
         self.assertEqual(missing_entry.returncode, 2)
         self.assertIn("has no entry", missing_entry.stderr)
+
+    def listing(self, contents: bytes) -> subprocess.CompletedProcess[bytes]:
+        """The writer's listing of one version of a lock, given on stdin, run from outside any corpus."""
+        return subprocess.run([sys.executable, "-B", str(WRITER), "--list-outputs"], input=contents,
+                              capture_output=True, cwd=self.directory, check=False)
+
+    def listed(self, contents: bytes) -> list[str]:
+        completed = self.listing(contents)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return json.loads(completed.stdout)
+
+    def test_the_listing_is_unchanged_by_a_digest_only_edit(self) -> None:
+        pristine = (self.root / LOCK).read_bytes()
+        expected = sorted({path for _, path in outputs(self.root)})
+        self.assertEqual(self.listed(pristine), expected)
+        lock = json.loads(pristine)
+        for entry in lock["entries"]:
+            for output in entry["outputs"]:
+                output["sha256"] = "0" * 64
+        self.assertEqual(self.listed(json.dumps(lock).encode("utf-8")), expected)
+
+    def test_the_listing_changes_when_an_output_is_added_or_removed(self) -> None:
+        lock = json.loads((self.root / LOCK).read_bytes())
+        expected = sorted({path for _, path in outputs(self.root)})
+        added = json.loads(json.dumps(lock))
+        added["entries"][0]["outputs"].append({"path": "skills/new/added.md", "sha256": "0" * 64})
+        self.assertEqual(self.listed(json.dumps(added).encode("utf-8")), sorted([*expected, "skills/new/added.md"]))
+        removed = json.loads(json.dumps(lock))
+        gone = removed["entries"][0]["outputs"].pop(0)["path"]
+        still = {output["path"] for entry in removed["entries"] for output in entry["outputs"]}
+        self.assertEqual(self.listed(json.dumps(removed).encode("utf-8")), sorted(still))
+        self.assertNotIn(gone, still)
+
+    def test_the_listing_reads_the_version_it_is_given_not_the_lock_on_disk(self) -> None:
+        version = {"schemaVersion": "x", "entries": [{"id": "e", "outputs": [{"path": "only/this.md", "sha256": "0" * 64}]}]}
+        before = (self.root / LOCK).read_bytes()
+        self.assertEqual(self.listed(json.dumps(version).encode("utf-8")), ["only/this.md"])
+        self.assertEqual((self.root / LOCK).read_bytes(), before)
+
+    def test_the_listing_refuses_a_malformed_lock(self) -> None:
+        text = (self.root / LOCK).read_text(encoding="utf-8")
+        cases = {
+            "not JSON": b"{not json",
+            "conflict markers": ("<<<<<<< HEAD\n" + text + "=======\n" + text + ">>>>>>> lane\n").encode("utf-8"),
+            "duplicate key": b'{"entries": [], "entries": []}',
+            "no entries": b'{"schemaVersion": "x"}',
+            "an entry without outputs": b'{"entries": [{"id": "e"}]}',
+            "an output without a path": b'{"entries": [{"id": "e", "outputs": [{"sha256": "x"}]}]}',
+            "nothing at all": b"",
+            "deep nesting": b"[" * 100000 + b"]" * 100000,
+        }
+        for name, contents in cases.items():
+            with self.subTest(name):
+                completed = self.listing(contents)
+                self.assertEqual(completed.returncode, 2, completed.stdout)
+                self.assertEqual(completed.stdout, b"")
+                self.assertNotIn(b"Traceback", completed.stderr)
+        # A well-formed lock, so only the option guard can refuse it.
+        skill = json.loads((self.root / "catalog.json").read_text(encoding="utf-8"))["skills"][0]["id"]
+        for extra in (("--check",), ("--skill", skill)):
+            with self.subTest(extra=extra):
+                mixed = subprocess.run([sys.executable, "-B", str(WRITER), "--list-outputs", *extra],
+                                       input=(self.root / LOCK).read_bytes(), capture_output=True, check=False)
+                self.assertEqual((mixed.returncode, mixed.stdout), (2, b""))
+                self.assertIn(b"takes no other option", mixed.stderr)
 
     def test_an_output_outside_the_corpus_is_never_read(self) -> None:
         outside = self.directory / "outside.md"

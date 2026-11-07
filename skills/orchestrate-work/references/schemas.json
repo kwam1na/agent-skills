@@ -109,6 +109,32 @@
                             "reusedFrom": {
                               "description": "For a reused check: the head of the lane's run it was reused from.",
                               "$ref": "#/$defs/commit"
+                            },
+                            "title": {
+                              "description": "The check's readable name, copied by the runner from the provider's or the binding's check and cut to 200 characters. Absent when the check has none; a view then names the check by its id.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            }
+                          }
+                        }
+                      },
+                      "baseRerun": {
+                        "description": "Present while the queue re-runs a candidate's failing checks on the base, after they failed and before the verdict: the candidate has failed and waits on the re-run to tell whether the failure is the base's own.",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "startedAt",
+                          "checks"
+                        ],
+                        "properties": {
+                          "startedAt": {
+                            "$ref": "#/$defs/timestamp"
+                          },
+                          "checks": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/name"
                             }
                           }
                         }
@@ -335,6 +361,50 @@
                 }
               }
             }
+          },
+          "closing": {
+            "description": "The close's two marks, each naming its delivery.closed journal entry. The state tool writes started in the same write as that entry; finished is written once the archive has landed, in the live record and the archived copy. Started with no finished mark for the same entry, and no close running, is a close that stopped partway. A mark for an earlier entry doesn't count.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "started"
+            ],
+            "properties": {
+              "started": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "entry",
+                  "at"
+                ],
+                "properties": {
+                  "entry": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "at": {
+                    "$ref": "#/$defs/timestamp"
+                  }
+                }
+              },
+              "finished": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "entry",
+                  "at"
+                ],
+                "properties": {
+                  "entry": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "at": {
+                    "$ref": "#/$defs/timestamp"
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -392,6 +462,39 @@
               "enum": [
                 "runner"
               ]
+            },
+            "waitingBy": {
+              "description": "Kept by the tool alone: which writer set the row's waitingOn, present while waitingOn is set. Only a wait the queue (runner) set ends when the lane next writes its focus without setting one, or at a new hand-off or put-back; a wait the lane or the lead set stays until they change it. A row written before the tool kept it reads as the queue's when focusBy is runner.",
+              "enum": [
+                "runner",
+                "lane",
+                "lead"
+              ]
+            },
+            "restedFrom": {
+              "description": "Kept by the tool alone: the lane's own last word, its state and when it said it, kept when the queue (runner) speaks over the row, as it does when it rests a lane whose candidate merged. It carries forward while the queue's words stand, and ends at the lane's or the lead's next word or a new hand-off.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state",
+                "at"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "idle",
+                    "assigned",
+                    "working",
+                    "reviewing",
+                    "handed",
+                    "blocked",
+                    "done"
+                  ]
+                },
+                "at": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
             }
           }
         }
@@ -516,12 +619,42 @@
                   "reusedFrom": {
                     "description": "For a reused check: the head of the lane's run it was reused from.",
                     "$ref": "#/$defs/commit"
+                  },
+                  "title": {
+                    "description": "The check's readable name, copied by the runner from the provider's or the binding's check and cut to 200 characters. Absent when the check has none; a view then names the check by its id.",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "baseRerun": {
+                    "description": "For a check that failed on the candidate and was re-run on the base: that re-run's failing tests, as the binding's failure pattern finds them, and its output, relative to the state directory. After a declared flake's retry there, the retry's.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "log"
+                    ],
+                    "properties": {
+                      "failures": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/$defs/name"
+                        }
+                      },
+                      "log": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
                   }
                 }
               }
             },
             "changeRequest": {
               "$ref": "#/$defs/name"
+            },
+            "trackerStarted": {
+              "description": "Carried from the planned element by a hand-off, and by a reconcile that queues planned work it finds merged: true when reconcile had seen the work's ticket started. A rejected hand-off hands it back to the planned element. Absent otherwise.",
+              "const": true
             },
             "pending": {
               "description": "Set by a lane's hand-off when the binding needs the lead to accept it; the runner takes the candidate once the lead accepts. A reconcile sets it too on planned work it finds merged under that policy, until it records the merge. Recording the candidate's merge clears it. An item merged under an earlier version may still carry it, which means nothing, until a reconcile with a forge snapshot clears it. Absent otherwise.",
@@ -671,7 +804,7 @@
               "$ref": "#/$defs/name"
             },
             "runId": {
-              "description": "The run that is building the work, as in the queue. Optional; the lead's patch writes it and reconcile keeps it.",
+              "description": "The run that is building the work, as in the queue. Optional; the lane binds it at start with bind-run, which never replaces a bound run nor binds one another subject holds, the lead's patch may write it, reconcile keeps it, and the hand-off carries it unless it names another.",
               "$ref": "#/$defs/name"
             },
             "trackerStarted": {
@@ -864,6 +997,11 @@
           "parallelSafe": {
             "description": "true lets the runner run this check at the same time as other parallelSafe checks, up to the binding's parallelChecks. A check without it runs alone.",
             "type": "boolean"
+          },
+          "title": {
+            "description": "A readable name for a person, such as \"Webapp e2e (Playwright)\", shown in place of the id where the check is reported. Optional; the id stays the check's name everywhere else. The runner copies it into the delivery record, cut to 200 characters.",
+            "type": "string",
+            "minLength": 1
           }
         }
       }
@@ -907,6 +1045,8 @@
           "base.verified",
           "base.broken",
           "base.repaired",
+          "base.rerun.started",
+          "base.rerun.finished",
           "lease.granted",
           "lease.released",
           "release.started",
@@ -1047,6 +1187,32 @@
           }
         }
       },
+      "reviewCarry": {
+        "description": "Written only by the lead's carry-review, on a decision.recorded entry: the captured review evidence (digest) the lead judged still holds for the work after a commit that needs no new round, from the head it covered to the queued head. Display and acceptance evidence only: it creates no run, is no review round, and is no admission evidence. A later review round or capture for the subject ends it.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "from",
+          "to",
+          "digest"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      },
       "reviewArtifact": {
         "type": "object",
         "additionalProperties": false,
@@ -1163,6 +1329,11 @@
           "parallelSafe": {
             "description": "true lets the runner run this check at the same time as other parallelSafe checks, up to the binding's parallelChecks. A check without it runs alone.",
             "type": "boolean"
+          },
+          "title": {
+            "description": "A readable name for a person, such as \"Webapp e2e (Playwright)\", shown in place of the id where the check is reported. Optional; the id stays the check's name everywhere else. The runner copies it into the delivery record, cut to 200 characters.",
+            "type": "string",
+            "minLength": 1
           }
         }
       },
@@ -1734,6 +1905,7 @@
           "base_broken",
           "base_moved",
           "ready_refused",
+          "review_not_current",
           "merge_refused",
           "merged_unverified",
           "batch_tree_mismatch",
@@ -1849,6 +2021,27 @@
             "type": "array",
             "items": {
               "$ref": "#/$defs/argv"
+            }
+          },
+          "listings": {
+            "description": "Optional. For a regenerable path, a command that reads one version of the file on stdin and prints the outputs that version lists, as a JSON array of strings. When the path conflicts, the runner lists it at the merge base, the base and the candidate. If the candidate's listing changed it stops with source_conflict naming the path, since regeneration can't restore what the candidate added or removed; if only the base's changed it takes the base side and regenerates. A listing that fails, prints nothing or prints anything else, or a version without the path, stops with source_conflict and never regenerates. A regenerable path with no listing regenerates as before.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "argv"
+              ],
+              "properties": {
+                "path": {
+                  "description": "One regenerable file, named exactly.",
+                  "$ref": "#/$defs/path"
+                },
+                "argv": {
+                  "$ref": "#/$defs/argv"
+                }
+              }
             }
           }
         }
@@ -1989,6 +2182,24 @@
       "merge": {
         "description": "Merges the candidate at exactly {expectedHead}, which must appear as a whole element.",
         "$ref": "#/$defs/argv"
+      },
+      "reviewGate": {
+        "description": "Optional. A command the runner runs after ready and before merge, at the synced head, at a single merge and at each batch landing. Exit 0 says the candidate's change-request review is current at that head; any other exit, or running past timeoutSeconds, stops the candidate with review_not_current and nothing merges. The command may wait for the forge's pipeline itself, within its timeout. Its argv must name the head as a whole element, {expectedHead} or {head}. Its output is kept under the state directory, as a failed check's is, and only that log's path reaches the record. Absent, merging is unchanged.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "argv"
+        ],
+        "properties": {
+          "argv": {
+            "$ref": "#/$defs/argv"
+          },
+          "timeoutSeconds": {
+            "description": "Seconds the gate may run; checkTimeoutSeconds when absent, and never above checkTimeoutCeiling.",
+            "type": "integer",
+            "minimum": 1
+          }
+        }
       },
       "release": {
         "type": "array",
@@ -2421,6 +2632,11 @@
           "parallelSafe": {
             "description": "true lets the runner run this check at the same time as other parallelSafe checks, up to the binding's parallelChecks. A check without it runs alone.",
             "type": "boolean"
+          },
+          "title": {
+            "description": "A readable name for a person, such as \"Webapp e2e (Playwright)\", shown in place of the id where the check is reported. Optional; the id stays the check's name everywhere else. The runner copies it into the delivery record, cut to 200 characters.",
+            "type": "string",
+            "minLength": 1
           }
         }
       }

@@ -115,7 +115,7 @@ posts as the publishing step says.
 | Journal kind | Tracker update |
 | --- | --- |
 | `lane.assigned` | On the ticket: it moves to started, naming the lane and what it delivers. |
-| `review.round` | None: the lane posts each round on its own ticket, as its brief says. |
+| `review.round` | None: a lane posts each round on its own ticket, as its brief says, and the lead posts the integration review's rounds on the epic. |
 | `review.evidence` | None: the lane already posted each captured round on its own ticket; the evidence shows in the record and the views. |
 | `candidate.handed` | On the ticket: the hand-off checked as a claim and queued, with its change request, reviewed head and review rounds. |
 | `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. |
@@ -130,6 +130,8 @@ posts as the publishing step says.
 | `base.verified` | None: the post-merge `fullHealth` passed at the base head the named merge reached, and the result shows in the record and the views. |
 | `base.broken` | On the epic: the stop code and its detail (the failing check, an unverified merge, a base that moved under a batch, or a batch that landed in part), and that the queue is stopped; `base.repaired` reopens it. |
 | `base.repaired` | On the epic: the fix that landed and the gap it closed. |
+| `base.rerun.started` | None: the candidate's failure already reached the lead as `check.failed`, and the record and the views show the re-run in progress. |
+| `base.rerun.finished` | None: its verdict posts with `candidate.stopped`, or with `base.broken` when the base fails the check too. |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. |
 | `lease.released` | On the same ticket: the lease is released. |
 | `release.started` | None: the release posts once it finishes. |
@@ -284,7 +286,7 @@ supervisor's.
   | Code | What the lead does |
   | --- | --- |
   | `candidate_moved` | The lane pushed after hand-off. Check the new head as a fresh hand-off, write it as `head`, and re-queue. |
-  | `candidate_unknown`, `candidate_unresolved` | Add the candidate to `queue[]`, or fix its reference, and re-queue. |
+  | `candidate_unknown`, `candidate_unresolved` | Add the candidate to `queue[]`, or fix its reference, and re-queue. A `candidate_unresolved` stop carries the candidate command's exit code or timeout, the end of its stderr, and the end of its stdout, scrubbed of secrets. |
   | `already_merged` | Nothing to do; mark the lane `done` only if it was left `handed` (see the merge rule below). |
   | `source_conflict` | Return the candidate to its lane to resolve the listed paths. |
   | `lease_required` | Obtain the named lease through the lease sequence, record the lead (the `--lead` name) as holder, and re-queue. |
@@ -393,6 +395,44 @@ and writes a friction note stub for `$compound-learning`, in that order. The lea
 which every lead command names from the supervisor's last pass, and the
 friction note. The steps below are for a delivery without it.
 
+The record marks how far a close got, in `meta.closing`, with two marks that
+each name the `delivery.closed` journal entry they belong to. The `started`
+mark goes into the record with that entry, whoever journals it through the state
+tool, the supervisor or the lead by hand. The `finished` mark is written once
+the close's archive has landed, by the supervisor's close-out or by
+`lead-close`, in the live record and in the archived copy, whose views are
+rendered again to show it. The supervisor's friction note comes after it.
+`closed.json` names the closing entry too.
+
+Only the latest close counts. New work after a close, a `lane.assigned`,
+`candidate.handed` or `check.started` entry, reopens the delivery, and closing
+it again journals a new `delivery.closed`. A mark or a `closed.json` naming an
+earlier entry says nothing of the new close, which archives again. A delivery
+`lead-close` closed stays closed to `lead-run` until a later `delivery.closed`
+is journaled.
+
+- **Finished:** both marks name the closing entry. The status line run-delivery's lead
+  commands print, `doctor`'s supervisor row and the line map say the delivery
+  is closed.
+- **Stopped partway:** the `started` mark names the closing entry, no
+  `finished` mark does, and no close is running. The status line and `doctor`'s
+  supervisor row, as `wrong`, say the close stopped partway and name what
+  finishes it, as the line map's "The close stopped partway" box does.
+  `lead-run --resume` finishes it when the record meets the close condition: no
+  planned story, nothing unmerged, every finish line met and no busy lane. A
+  lane checkout that cleanup hasn't removed yet doesn't count, since the
+  resumed supervisor's own pass removes it. Otherwise `lead-close` finishes it,
+  since a resumed supervisor would hold on what is still open; `lead-close`
+  doesn't wait for the tracker and lists the updates it still owes. A resumed
+  supervisor finds the archive it already made once `closed.json` names the
+  close, and archives afresh otherwise, leaving the earlier folder without the
+  `finished` mark; `lead-close` always archives the record afresh. Marking a
+  close finished again changes nothing.
+- **Unmarked:** no `started` mark names the closing entry, as in a record from
+  before the marks or a `delivery.closed` journaled by a tool that writes none.
+  The close still runs and archives, writes no mark, and reads as closed from
+  `closed.json` alone.
+
 - Read `.agents/delivery-posture.json` at the tip of the delivery's base, fetched
   fresh: never a candidate's copy or your own checkout's. Under `focused`, no run
   starts, a failed run at that head holds nothing, nothing runs in its place, and
@@ -412,6 +452,33 @@ friction note. The steps below are for a delivery without it.
   checkout the epic created.
 - Preserve what the epic taught with `$compound-learning`.
 - Journal `delivery.closed`, and render the views one last time.
+- Mark the close finished with `delivery_state.py close-finished --entry <its
+  journal id>`, and render again; a close left with only its `started` mark
+  reads as stopped partway.
+
+Every unit reached the delivery's base reviewed by two lenses, but the lead's own
+integration work has had no reviewer. The delivery reaches the default branch in
+three steps, with the supervisor or without it:
+
+1. **Integrate.** Build the product-only change, with run-delivery's `ship`
+   where the repository uses it. Merge the default branch into the delivery's
+   base first when it moved, resolve its conflicts, and fix what the merged
+   tree breaks.
+2. **Review the integration.** Run `$review-work` with the delivery's lenses and
+   round bound on the lead's own changes since the last unit merged: removing
+   the delivery-only files, any merge of the default branch with its conflict
+   resolutions, read as `git show --cc` and not as the whole incoming branch,
+   and any fix the merged tree needed. A delivery whose integration changed
+   nothing beyond removing the delivery-only files still runs it, on that
+   removal. Findings are triaged as a lane's are, and each round is journaled
+   under the delivery as `review.round`, with the delivery's key as its subject.
+3. **Merge to the default branch** only once that review is aligned.
+
+Where the lead closes by hand, take these steps before journaling
+`delivery.closed`, so the review's rounds reach the archived record. Under the
+supervisor, which archives the record once nothing holds the close, the rounds
+land in the live record after the archive, and the lead's post of each round on
+the epic is their durable trace.
 
 ## Lane brief template
 
@@ -987,8 +1054,14 @@ need?", in format `affected-checks/1`.
 - **Input,** on stdin: `{base, baseHead, head, changes: [{path, status,
   oldPath?}]}`. The runner computes `changes` with rename detection.
 - **Output:** `{checks: [{id, argv, cwd, reasons, prerequisites,
-  environmentProfile?, timeoutSeconds?, parallelSafe?}], widened, uncovered:
-  [paths], notes?}`. A check marked `parallelSafe` may run at the same time
+  environmentProfile?, timeoutSeconds?, parallelSafe?, title?}], widened,
+  uncovered: [paths], notes?}`. A check's `title` is a readable name for a
+  person, such as "Webapp e2e (Playwright)": the runner copies it into the
+  record, cut to 200 characters, and the views show it in place of the id,
+  which stays the check's name everywhere else. A binding's `alwaysRun` and
+  `fallback` checks, and a lead's selection, may carry one too. Any provider
+  that reports work to a person should give it a display name like this
+  beside its stable id. A check marked `parallelSafe` may run at the same time
   as other such checks, up to the binding's `parallelChecks`; mark only checks
   that share nothing a concurrent run could disturb. The runner starts checks
   in order and still honours prerequisites.
@@ -1017,7 +1090,7 @@ It is off unless the binding sets `selection: {"lead": true}`.
   row's `leadSelection`, with the reason and the time, and journals
   `check.selected`. Each check has the shape of an `alwaysRun` entry: `{id,
   argv, cwd, reasons, prerequisites, environmentProfile?, timeoutSeconds?,
-  parallelSafe?}`; `--checks -` reads them from stdin. The tool refuses a
+  parallelSafe?, title?}`; `--checks -` reads them from stdin. The tool refuses a
   binding without `selection.lead`, a head that is not the row's reviewed
   `head`, an empty list, an id the binding's own checks use, an unknown
   profile, a timeout above the ceiling, a `cwd` outside the checkout, and
@@ -1097,7 +1170,8 @@ binding declares may change.
 
 ### What the record shows about checks
 
-- **Progress.** Each step in `meta.checking.now.steps` carries its
+- **Progress.** Each step in `meta.checking.now.steps`, and each check on the
+  queue row, carries the check's `title` when it has one. Each step carries its
   `startedAt`, and its `finishedAt` once it ends. A step with history also
   carries `expectedSeconds`, the median of that check's last five passing
   durations. A check with no history has no estimate, never a guess. The
@@ -1131,6 +1205,13 @@ binding declares may change.
   A narrower run would also change the answer: a test the candidate adds doesn't
   exist on the base, so it could fail there for that reason alone and read as a
   broken base, and a test that fails only beside others could pass there alone.
+  The re-run's output is kept under `logs/` beside the candidate's, and the
+  queue row's check carries it as `baseRerun`, with the failing tests the
+  binding's failure pattern finds in it. A declared flake failing there is
+  retried once, as on the candidate, before it can read as a broken base. A
+  `base_broken` stop and its `base.broken` entry name the check, its failing
+  tests and the re-run's log, in the words `check.failed` uses for the
+  candidate's run, and `base.rerun.finished` links each re-run's log.
 - **Queue estimates.** The state tool's `show` adds a position and an expected
   start for each candidate waiting at `queued`. The start counts what remains
   of the run in progress once (a batch is one run), then one median run for
@@ -1151,7 +1232,9 @@ fails again stops the candidate as usual, and its result keeps both failures.
 Never retried: a mix of a flake and anything else; a timeout; and, for a flake
 declared with `tests`, a failure whose ids the pattern cannot read, since the
 patterns can only vouch for failures they can name. A declaration without
-`tests` covers the whole check, whatever its output says.
+`tests` covers the whole check, whatever its output says. The same rule holds
+on the base re-run: a flake failing there is retried once there, journaled as
+`check.retried` and counted, before the queue stops with `base_broken`.
 
 ### Reused checks
 
@@ -1235,6 +1318,10 @@ for every member.
 
 - Every argv is an array of strings, and placeholders stand alone.
 - `merge` uses `{expectedHead}`.
+- `candidate` uses `{candidate}`, so each subject resolves to its own branch and head.
+- Run the `candidate` command once by hand, with a branch that exists, and see it print the JSON
+  answer. run-delivery's `doctor` checks that its program and any script it names exist, and `serve`
+  holds itself, taking nothing, while they don't.
 - Every check's `environmentProfile` names a profile in `profiles`.
 - Every check timeout is at or below `checkTimeoutCeiling`.
 - Every `leadInputs` lease names a lease in `leases`.

@@ -202,6 +202,55 @@ class StateToolTests(unittest.TestCase):
         self.assertEqual(shown["journal"][0]["lane"], "lane-1")
         self.assertIsNone(shown["journal"][0]["subject"])
 
+    def test_a_close_journaled_by_hand_carries_its_started_mark_and_finishes_once(self) -> None:
+        run_tool(self.directory, "journal", "--kind", "decision.recorded", "--summary", "Before")
+        code, closed = run_tool(self.directory, "journal", "--kind", "delivery.closed", "--summary", "Closed by hand")
+        self.assertEqual(code, 0, closed)
+        entry = closed["entry"]
+        closing = state_tool.read_state(self.directory)["meta"]["closing"]
+        self.assertEqual(closing, {"started": {"entry": entry["id"], "at": entry["at"]}})
+        # Only the latest close finishes, and only once.
+        code, refused = run_tool(self.directory, "close-finished", "--entry", "1")
+        self.assertEqual((code, refused["code"]), (1, "close_unknown"))
+        code, done = run_tool(self.directory, "close-finished", "--entry", str(entry["id"]))
+        self.assertEqual(code, 0, done)
+        finished = done["state"]["meta"]["closing"]["finished"]
+        self.assertEqual(finished["entry"], entry["id"])
+        before = self.state_bytes()
+        code, again = run_tool(self.directory, "close-finished", "--entry", str(entry["id"]))
+        self.assertEqual(code, 0, again)
+        self.assertEqual(self.state_bytes(), before)
+        # A later close starts afresh, its finished mark gone until its own archive lands.
+        later = state_tool.append_journal(self.directory, kind="delivery.closed", summary="Closed again")
+        self.assertEqual(state_tool.read_state(self.directory)["meta"]["closing"], {"started": {"entry": later["id"], "at": later["at"]}})
+        with self.assertRaises(state_tool.StateError) as stale:
+            state_tool.close_finished(self.directory, entry=entry["id"])
+        self.assertEqual(stale.exception.code, "close_unknown")
+
+    def test_only_the_latest_close_finishes_even_when_its_mark_names_an_earlier_one(self) -> None:
+        first = state_tool.append_journal(self.directory, kind="delivery.closed", summary="Closed")
+        later = state_tool.append_journal(self.directory, kind="delivery.closed", summary="Closed again")
+        # As an older tool would leave it: a later close appended with no mark of its own.
+        state = state_tool.read_state(self.directory)
+        state["meta"]["closing"] = {"started": {"entry": first["id"], "at": first["at"]}}
+        (self.directory / state_tool.STATE_FILE).write_text(state_tool.dumps(state), encoding="utf-8")
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.close_finished(self.directory, entry=first["id"])
+        self.assertEqual(refused.exception.code, "close_unknown")
+        self.assertNotIn("finished", state_tool.read_state(self.directory)["meta"]["closing"])
+        self.assertGreater(later["id"], first["id"])
+
+    def test_a_close_cannot_finish_without_its_started_mark(self) -> None:
+        state_tool.append_journal(self.directory, kind="delivery.closed", summary="Closed")
+        state = state_tool.read_state(self.directory)
+        del state["meta"]["closing"]
+        (self.directory / state_tool.STATE_FILE).write_text(state_tool.dumps(state), encoding="utf-8")
+        before = self.state_bytes()
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.close_finished(self.directory, entry=1)
+        self.assertEqual(refused.exception.code, "close_unknown")
+        self.assertEqual(self.state_bytes(), before)
+
     def test_unknown_journal_kind_is_refused(self) -> None:
         journal = self.directory / state_tool.JOURNAL_FILE
         before = journal.read_bytes()
@@ -876,6 +925,55 @@ class ReconcileTests(unittest.TestCase):
             self.assertEqual(result["reports"], [
                 {"subject": "work-x", "note": "building in the record but back in the tracker's backlog: check it"}])
             self.assertEqual(self.bytes(), before)
+
+    def test_a_ticket_seen_started_keeps_its_flag_through_a_rejected_hand_off(self) -> None:
+        """The flag rides the queue element and comes back with the rejection, so the return to backlog is still
+        reported and a ticket still started writes no second "recorded as started"."""
+        self.lead({"meta": {"handoffsNeedAcceptance": True}, "lanes": [lane("lane-1")],
+                   "planned": [{"subject": "work-x", "title": "X", "lane": "lane-1", "stage": "planned"},
+                               {"subject": "work-y", "title": "Y", "lane": "lane-1", "stage": "building"}]})
+        started = self.snapshot("tracker", [{"subject": "work-x", "title": "X", "state": "started"}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", started)
+        self.assertEqual([entry["change"] for entry in result["changes"]], ["started in the tracker: now building"])
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-x", head=HEAD_A, change_request="cr-x")
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-y", head=HEAD_B, change_request="cr-y")
+        queue = {entry["subject"]: entry for entry in state_tool.show(self.directory)["state"]["queue"]}
+        self.assertIs(queue["work-x"]["trackerStarted"], True)
+        self.assertNotIn("trackerStarted", queue["work-y"], "a ticket never seen started gains no flag")
+        back = state_tool.reject_handoff(self.directory, "work-x", "the review missed a case")
+        never = state_tool.reject_handoff(self.directory, "work-y", "the review missed a case")
+        self.assertIs(back["trackerStarted"], True)
+        self.assertNotIn("trackerStarted", never)
+        planned_now = {entry["subject"]: entry for entry in state_tool.show(self.directory)["state"]["planned"]}
+        self.assertIs(planned_now["work-x"]["trackerStarted"], True)
+        self.assertNotIn("trackerStarted", planned_now["work-y"])
+        # Still started: nothing to record, so the pass writes nothing.
+        before = self.bytes()
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", started)
+        self.assertEqual((code, result["drift"], result["changes"], result["reports"]), (0, False, [], []), result)
+        self.assertEqual(self.bytes(), before)
+        # Back in backlog before reconcile sees it started again: reported, and the record is left as it is.
+        backlog = self.snapshot("tracker", [{"subject": "work-x", "title": "X", "state": "backlog"},
+                                            {"subject": "work-y", "title": "Y", "state": "backlog"}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", backlog)
+        self.assertEqual((code, result["drift"], result["changes"]), (0, False, []), result)
+        self.assertEqual(result["reports"], [
+            {"subject": "work-x", "note": "in review in the record but back in the tracker's backlog: check it"}])
+        self.assertEqual(self.bytes(), before)
+
+    def test_planned_work_found_merged_takes_its_started_flag_into_the_queue(self) -> None:
+        self.lead({"meta": {"handoffsNeedAcceptance": True}, "lanes": [lane("lane-1")],
+                   "planned": [{"subject": "work-m", "title": "M", "lane": "lane-1", "stage": "review",
+                                "trackerStarted": True, "changeRequest": "cr-m"},
+                               {"subject": "work-n", "title": "N", "lane": "lane-1", "stage": "review",
+                                "changeRequest": "cr-n"}]})
+        forge = self.snapshot("forge", [{"subject": "work-m", "state": "merged", "changeRequest": "cr-m", "head": HEAD_A},
+                                        {"subject": "work-n", "state": "merged", "changeRequest": "cr-n", "head": HEAD_B}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
+        self.assertEqual(code, 0, result)
+        queue = {entry["subject"]: entry for entry in state_tool.show(self.directory)["state"]["queue"]}
+        self.assertIs(queue["work-m"]["trackerStarted"], True)
+        self.assertNotIn("trackerStarted", queue["work-n"])
 
     def test_each_stage_against_each_tracker_state_settles_in_one_pass(self) -> None:
         # (stage, ticket seen started before, tracker state) -> (stage after, change, report); a second pass writes
@@ -3104,6 +3202,296 @@ class LaneWriterTests(unittest.TestCase):
         unchanged = self.as_lane("lane-1", {"focus": "Still wiring"}, selector="lanes[id=lane-1]")
         self.assertEqual(next(entry for entry in unchanged["lanes"] if entry["id"] == "lane-1")["since"], own["since"])
 
+    def queue_stops(self, lane_id: str = "lane-1", waiting_on: str = "lead") -> None:
+        """The queue's words on a row, as the runner writes them when it stops a candidate."""
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector=f"lanes[id={lane_id}]",
+                         changes={"focus": "work-q stopped: check_failed", "state": "blocked", "waitingOn": waiting_on})
+
+    def row(self, lane_id: str = "lane-1") -> dict:
+        return next(entry for entry in state_tool.read_state(self.directory)["lanes"] if entry["id"] == lane_id)
+
+    def test_the_queues_wait_ends_when_its_lane_speaks_by_set_too(self) -> None:
+        self.queue_stops()
+        self.assertEqual((self.row()["waitingOn"], self.row()["waitingBy"]), ("lead", "runner"))
+        self.as_lane("lane-1", selector="lanes[id=lane-1]", assignments={"/focus": "fixing the check"})
+        row = self.row()
+        self.assertEqual((row["focus"], row["waitingOn"]), ("fixing the check", None))
+        self.assertNotIn("waitingBy", row)
+        self.assertNotIn("focusBy", row)
+        # On the command line as well.
+        self.queue_stops()
+        code, result = run_tool(self.directory, "patch", "--writer", "lane", "--lane", "lane-1", "--version",
+                                str(self.version()), "--element", "lanes[id=lane-1]", "--set", '{"/focus": "again"}')
+        self.assertEqual(code, 0, result)
+        self.assertEqual((self.row()["focus"], self.row()["waitingOn"]), ("again", None))
+
+    def test_a_wait_the_lane_sets_under_the_queues_words_stays_through_its_next_focus(self) -> None:
+        for name, waiting, kwargs in (
+                ("a new wait by --patch", "the lead's answer", {"changes": {"waitingOn": "the lead's answer"}}),
+                ("the same wait by --patch", "lead", {"changes": {"waitingOn": "lead"}}),
+                ("the same wait by --set", "lead", {"assignments": {"/waitingOn": "lead"}})):
+            with self.subTest(name):
+                self.queue_stops()
+                self.as_lane("lane-1", selector="lanes[id=lane-1]", **kwargs)
+                row = self.row()
+                self.assertEqual((row["focus"], row["waitingOn"], row["waitingBy"], row["focusBy"]),
+                                 ("work-q stopped: check_failed", waiting, "lane", "runner"))
+                state_tool.set_focus(self.directory, "lane-1", "still asking")
+                self.assertEqual((self.row()["waitingOn"], self.row()["waitingBy"]), (waiting, "lane"))
+                state_tool.set_focus(self.directory, "lane-1", "answered", waiting_on="")
+                self.assertNotIn("waitingBy", self.row())
+
+    def test_a_wait_the_lead_sets_under_the_queues_words_stays_through_the_lanes_next_focus(self) -> None:
+        for name, kwargs in (("by --patch", {"changes": {"waitingOn": "lead"}}),
+                             ("by --set", {"assignments": {"/waitingOn": "lead"}})):
+            with self.subTest(name):
+                self.queue_stops()
+                state_tool.patch(self.directory, writer="lead", version=self.version(), selector="lanes[id=lane-1]",
+                                 **kwargs)
+                self.assertEqual((self.row()["waitingBy"], self.row()["focusBy"]), ("lead", "runner"))
+                state_tool.set_focus(self.directory, "lane-1", "working on it")
+                self.assertEqual((self.row()["waitingOn"], self.row()["waitingBy"]), ("lead", "lead"))
+                state_tool.patch(self.directory, writer="lead", version=self.version(), selector="lanes[id=lane-1]",
+                                 assignments={"/waitingOn": None})
+                self.assertNotIn("waitingBy", self.row())
+
+    def test_the_lead_rewriting_only_the_focus_leaves_the_queues_wait_for_the_lane_to_end(self) -> None:
+        self.queue_stops()
+        self.lead({"focus": "the lead says: see the failing check"}, selector="lanes[id=lane-1]")
+        row = self.row()
+        self.assertNotIn("focusBy", row)
+        self.assertEqual((row["waitingOn"], row["waitingBy"]), ("lead", "runner"))
+        state_tool.set_focus(self.directory, "lane-1", "fixing the check")
+        self.assertEqual(self.row()["waitingOn"], None)
+
+    def runner_stops_as_the_queue_does(self, subject: str = "work-q") -> None:
+        """The queue's stop as the runner writes it: the whole lanes list from lane_rows_after, with no selector."""
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="runner", version=state["version"],
+                         changes={"lanes": state_tool.lane_rows_after(self.directory, state, subject,
+                                                                      stopped="check_failed")})
+
+    def test_the_queue_rewriting_a_rows_words_owns_its_wait_even_at_the_same_value(self) -> None:
+        state_tool.set_focus(self.directory, "lane-1", "work-q: asking the lead", waiting_on="lead")
+        self.assertEqual(self.row()["waitingBy"], "lane")
+        self.runner_stops_as_the_queue_does()
+        row = self.row()
+        self.assertEqual((row["focus"], row["waitingOn"], row["waitingBy"], row["focusBy"]),
+                         ("work-q stopped: check_failed", "lead", "runner", "runner"))
+        state_tool.set_focus(self.directory, "lane-1", "fixing the check")
+        self.assertEqual(self.row()["waitingOn"], None)
+
+    def test_a_wait_the_lead_changes_in_a_whole_lanes_list_is_the_leads(self) -> None:
+        self.runner_stops_as_the_queue_does()
+        self.assertEqual(self.row()["waitingBy"], "runner")
+        lanes = [{**entry, "waitingOn": "the lead's ruling"} if entry["id"] == "lane-1" else entry
+                 for entry in state_tool.read_state(self.directory)["lanes"]]
+        self.lead({"lanes": lanes})
+        self.assertEqual((self.row()["waitingOn"], self.row()["waitingBy"]), ("the lead's ruling", "lead"))
+        state_tool.set_focus(self.directory, "lane-1", "working on it")
+        self.assertEqual((self.row()["waitingOn"], self.row()["waitingBy"]), ("the lead's ruling", "lead"))
+
+    def test_a_hand_off_ends_the_queues_wait_after_the_lead_rewrote_its_words(self) -> None:
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-q]",
+                         assignments={"/stage": "stopped"})
+        self.runner_stops_as_the_queue_does()
+        self.lead({"focus": "the lead says: see the failing check"}, selector="lanes[id=lane-1]")
+        self.assertNotIn("focusBy", self.row())
+        # Another lane the queue stopped, whose words and wait a hand-off in lane-1 must leave alone.
+        self.queue_stops("lane-2")
+        other = self.row("lane-2")
+        self.assertEqual((other["focusBy"], other["waitingBy"]), ("runner", "runner"))
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-q", head="b" * 40, change_request="cr")
+        row = self.row()
+        self.assertEqual((row["focus"], row["state"], row["waitingOn"]),
+                         ("the lead says: see the failing check", "handed", None))
+        self.assertNotIn("waitingBy", row)
+        self.assertEqual(self.row("lane-2"), other)
+
+    def test_a_put_back_leaves_the_queues_wait_once_the_lead_rewrote_its_words(self) -> None:
+        self.runner_stops_as_the_queue_does()
+        self.lead({"focus": "the lead says: retrying it"}, selector="lanes[id=lane-1]")
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="runner", version=state["version"],
+                         changes={"lanes": state_tool.lane_rows_put_back(state, "work-q")})
+        row = self.row()
+        self.assertEqual((row["focus"], row["waitingOn"], row["waitingBy"]), ("the lead says: retrying it", "lead", "runner"))
+        state_tool.set_focus(self.directory, "lane-1", "back on it")
+        self.assertEqual(self.row()["waitingOn"], None)
+
+    def test_a_hand_off_and_a_put_back_end_only_the_queues_wait(self) -> None:
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-q]",
+                         assignments={"/stage": "stopped"})
+        for name, own in (("the queue's wait", None), ("the lane's own wait", "the lead's answer")):
+            with self.subTest(name):
+                self.queue_stops()
+                if own:
+                    self.as_lane("lane-1", {"waitingOn": own}, selector="lanes[id=lane-1]")
+                state_tool.handoff(self.directory, lane="lane-1", subject="work-q", head="b" * 40, change_request="cr")
+                row = self.row()
+                self.assertEqual((row["focus"], row["waitingOn"], row.get("waitingBy")),
+                                 ("", own, "lane" if own else None))
+                state_tool.patch(self.directory, writer="runner", version=self.version(),
+                                 selector="queue[subject=work-q]", assignments={"/stage": "stopped"})
+                self.as_lane("lane-1", selector="lanes[id=lane-1]", assignments={"/waitingOn": None})
+        for name, own in (("the queue's wait", None), ("the lane's own wait", "the lead's answer")):
+            with self.subTest("put back: " + name):
+                self.queue_stops()
+                if own:
+                    self.as_lane("lane-1", {"waitingOn": own}, selector="lanes[id=lane-1]")
+                state = state_tool.read_state(self.directory)
+                rows = state_tool.lane_rows_put_back(state, "work-q")
+                state_tool.patch(self.directory, writer="runner", version=state["version"], changes={"lanes": rows})
+                row = self.row()
+                self.assertEqual((row["focus"], row["state"], row["waitingOn"], row.get("waitingBy")),
+                                 ("", "handed", own, "lane" if own else None))
+                self.as_lane("lane-1", selector="lanes[id=lane-1]", assignments={"/waitingOn": None})
+
+    def test_a_row_written_before_waiting_by_reads_as_the_queues_while_its_words_stand(self) -> None:
+        state = state_tool.read_state(self.directory)
+        for entry in state["lanes"]:
+            if entry["id"] == "lane-1":
+                entry.update(focus="work-q stopped: check_failed", state="blocked", waitingOn="lead",
+                             focusBy="runner", focusAt="2026-10-21T09:00:00Z")
+            if entry["id"] == "lane-2":
+                entry.update(focus="asking", state="blocked", waitingOn="lead")
+        (self.directory / state_tool.STATE_FILE).write_text(state_tool.dumps(state), encoding="utf-8")
+        # A lead write that leaves the wait alone labels it from the words that stood.
+        self.lead({"focus": "the lead says: see the failing check"}, selector="lanes[id=lane-1]")
+        self.assertEqual(self.row()["waitingBy"], "runner")
+        self.assertNotIn("waitingBy", self.row("lane-2"))
+        state_tool.set_focus(self.directory, "lane-1", "fixing the check")
+        state_tool.set_focus(self.directory, "lane-2", "still asking")
+        self.assertEqual((self.row()["waitingOn"], self.row("lane-2")["waitingOn"]), (None, "lead"))
+
+    def test_who_set_the_wait_is_the_tools_alone(self) -> None:
+        self.queue_stops()
+        self.assertEqual(self.refused(lambda: self.as_lane("lane-1", {"waitingBy": "lead"}, selector="lanes[id=lane-1]")),
+                         "writer_not_owned")
+        self.assertEqual(self.refused(lambda: state_tool.patch(
+            self.directory, writer="runner", version=self.version(), selector="lanes[id=lane-1]",
+            changes={"waitingBy": "lead"})), "field_not_owned")
+        self.lead({"waitingBy": "lane", "title": "Renamed"}, selector="lanes[id=lane-1]")
+        self.assertEqual(self.row()["waitingBy"], "runner")
+        self.lead({"waitingBy": "runner"}, selector="lanes[id=lane-2]")
+        self.assertNotIn("waitingBy", self.row("lane-2"))
+
+    def planned_entry(self, subject: str) -> dict:
+        return next(entry for entry in state_tool.read_state(self.directory)["planned"] if entry["subject"] == subject)
+
+    def test_a_lane_binds_a_run_to_its_own_planned_work_before_its_hand_off(self) -> None:
+        journal = (self.directory / state_tool.JOURNAL_FILE).read_bytes()
+        bound = state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-a")
+        self.assertEqual(bound, {**planned("work-a"), "runId": "run-a"})
+        self.assertEqual(self.planned_entry("work-a")["runId"], "run-a")
+        self.assertNotIn("runId", self.planned_entry("work-b"))
+        self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), journal, "a binding journals nothing")
+        # The same run again changes nothing at all.
+        before = (self.directory / state_tool.STATE_FILE).read_bytes()
+        self.assertEqual(state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-a"), bound)
+        self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
+
+    def test_a_lane_cannot_bind_a_run_to_work_that_is_not_its_own_planned_work(self) -> None:
+        for name, lane_id, subject, code in (
+                ("another lane's planned work", "lane-1", "work-b", "writer_not_owned"),
+                ("its own queued work", "lane-1", "work-q", "writer_not_owned"),
+                ("work the record lacks", "lane-1", "work-z", "subject_unknown"),
+                ("a lane the record lacks", "lane-9", "work-z", "writer_not_owned")):
+            with self.subTest(name):
+                self.assertEqual(self.refused(lambda: state_tool.bind_run(
+                    self.directory, lane=lane_id, subject=subject, run="run-x")), code)
+        self.assertEqual(self.refused(lambda: state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="")),
+                         "run_bound")
+
+    def test_a_bound_run_is_never_replaced_nor_bound_to_a_second_subject(self) -> None:
+        state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-a")
+        self.assertEqual(self.refused(lambda: state_tool.bind_run(
+            self.directory, lane="lane-1", subject="work-a", run="run-x")), "run_bound")
+        self.assertEqual(self.refused(lambda: state_tool.bind_run(
+            self.directory, lane="lane-2", subject="work-b", run="run-a")), "run_bound")
+        # A run a queued candidate carries is taken too.
+        state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr", run="run-b")
+        self.lead({"planned": [*state_tool.read_state(self.directory)["planned"], planned("work-c")]})
+        self.assertEqual(self.refused(lambda: state_tool.bind_run(
+            self.directory, lane="lane-1", subject="work-c", run="run-b")), "run_bound")
+        self.assertEqual(self.planned_entry("work-a")["runId"], "run-a")
+
+    def test_the_write_checks_again_under_the_lock_when_the_record_moved_after_the_first_look(self) -> None:
+        # The first look reads the record from before another write; the write under the lock must still refuse.
+        for name, settle, lane_id, subject, run in (
+                ("another subject took the run", ("lane-2", "work-b", "run-a"), "lane-1", "work-a", "run-a"),
+                ("the element was bound to another run", ("lane-1", "work-a", "run-x"), "lane-1", "work-a", "run-y")):
+            with self.subTest(name):
+                stale = state_tool.read_state(self.directory)
+                state_tool.bind_run(self.directory, lane=settle[0], subject=settle[1], run=settle[2])
+                before = (self.directory / state_tool.STATE_FILE).read_bytes()
+                real = state_tool.read_state
+                looks = iter([stale])
+                with mock.patch.object(state_tool, "read_state", side_effect=lambda directory: next(looks, None) or real(directory)):
+                    self.assertEqual(self.refused(lambda: state_tool.bind_run(
+                        self.directory, lane=lane_id, subject=subject, run=run)), "run_bound")
+                self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
+                # Start the next case from a record with no run bound.
+                for entry in ("work-a", "work-b"):
+                    version = self.version()
+                    state_tool.patch(self.directory, writer="lead", version=version, selector=f"planned[subject={entry}]",
+                                     changes={"runId": None})
+
+    def test_the_hand_off_keeps_the_bound_run_unless_it_names_another(self) -> None:
+        state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-a")
+        state_tool.bind_run(self.directory, lane="lane-2", subject="work-b", run="run-b")
+        kept = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr")
+        named = state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr",
+                                   run="run-other")
+        self.assertEqual((kept["runId"], named["runId"]), ("run-a", "run-other"))
+
+    def test_a_hand_off_naming_a_run_another_subject_holds_is_refused_and_writes_nothing(self) -> None:
+        state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-r")
+        self.assertEqual(self.refused(lambda: state_tool.handoff(
+            self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr", run="run-r")), "run_bound")
+        self.assertEqual(self.planned_entry("work-b")["subject"], "work-b", "work-b is still planned")
+        # A queued subject holds its run too, and so does one the queue has merged, as for bind-run.
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr")
+        self.assertEqual(self.refused(lambda: state_tool.handoff(
+            self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr", run="run-r")), "run_bound")
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-a]",
+                         assignments={"/stage": "merged"})
+        self.assertEqual(self.refused(lambda: state_tool.handoff(
+            self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr", run="run-r")), "run_bound")
+        # A queued subject handed off again at a new head, naming another subject's run, is refused the same way.
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-q]",
+                         assignments={"/stage": "stopped"})
+        self.assertEqual(self.refused(lambda: state_tool.handoff(
+            self.directory, lane="lane-1", subject="work-q", head="b" * 40, change_request="cr", run="run-r")), "run_bound")
+        code, refused = run_tool(self.directory, "handoff", "--lane", "lane-2", "--subject", "work-b", "--head", "c" * 40,
+                                 "--change-request", "cr", "--run", "run-r")
+        self.assertEqual((code, refused["code"]), (1, "run_bound"))
+        self.assertIn("run-r", refused["error"])
+        self.assertIn("work-a", refused["error"])
+
+    def test_the_bound_subject_hands_off_with_its_own_run_and_a_hand_off_without_a_run_still_works(self) -> None:
+        state_tool.bind_run(self.directory, lane="lane-1", subject="work-a", run="run-r")
+        handed = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40, change_request="cr",
+                                    run="run-r")
+        self.assertEqual(handed["runId"], "run-r")
+        # Handed off again at a new head with the same run, once it stopped.
+        state_tool.patch(self.directory, writer="runner", version=self.version(), selector="queue[subject=work-a]",
+                         assignments={"/stage": "stopped"})
+        again = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="d" * 40, change_request="cr",
+                                   run="run-r")
+        self.assertEqual((again["head"], again["runId"]), ("d" * 40, "run-r"))
+        plain = state_tool.handoff(self.directory, lane="lane-2", subject="work-b", head="c" * 40, change_request="cr")
+        self.assertIsNone(plain["runId"])
+
+    def test_the_command_line_binds_a_run_and_says_why_it_refuses(self) -> None:
+        code, bound = run_tool(self.directory, "bind-run", "--lane", "lane-1", "--subject", "work-a", "--run", "run-a")
+        self.assertEqual(code, 0, bound)
+        self.assertEqual(bound["item"]["runId"], "run-a")
+        code, refused = run_tool(self.directory, "bind-run", "--lane", "lane-1", "--subject", "work-a", "--run", "run-x")
+        self.assertEqual((code, refused["code"]), (1, "run_bound"))
+        code, refused = run_tool(self.directory, "bind-run", "--lane", "lane-1", "--subject", "work-b", "--run", "run-y")
+        self.assertEqual((code, refused["code"]), (1, "writer_not_owned"))
+
     def test_every_write_a_lane_does_not_own_is_refused(self) -> None:
         refusals = {
             "another lane's focus": lambda: self.as_lane("lane-1", {"focus": "x"}, selector="lanes[id=lane-2]"),
@@ -4686,11 +5074,15 @@ SNAPSHOT = {"takenAt": "2026-10-20T10:00:00Z", "source": "tracker",
 VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
     "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
+    "queued with its ticket started", "lane wait set by the queue", "a decision carrying a review",
+    "queue check with a title", "step with a title", "a close started", "a close finished", "queue check with its base re-run",
+    "checking now awaiting the base rerun",
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
     "check.failed", "check.retried", "check.reused", "candidate.merged", "candidate.stopped", "base.verified", "base.broken",
-    "base.repaired", "lease.granted", "lease.released", "release.started", "release.finished",
+    "base.repaired", "base.rerun.started", "base.rerun.finished",
+    "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
     "selection.refused",
 ]
@@ -4722,10 +5114,46 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("check without state", with_change(state, ("queue", 0, "checks"), [{"id": "unit"}])),
                 ("unknown lane state", with_change(state, ("lanes", 0, "state"), "napping")),
                 ("waitingOn as number", with_change(state, ("lanes", 0, "waitingOn"), 3)),
+                ("lane wait set by the queue", with_change(state, ("lanes", 0, "waitingBy"), "runner")),
+                ("lane wait set by someone else", with_change(state, ("lanes", 0, "waitingBy"), "someone")),
                 ("checking now absent", with_change(state, ("meta", "checking", "now"), KeyError)),
                 ("checking now null", with_change(state, ("meta", "checking", "now"), None)),
+                ("queue check with a title", with_change(state, ("queue", 0, "checks"),
+                                                         [{"id": "unit", "state": "passed", "title": "Unit tests"},
+                                                          {"id": "lint", "state": "passed"}])),
+                ("queue check with its base re-run", with_change(state, ("queue", 0, "checks"), [
+                    {"id": "unit", "state": "failed", "failures": ["test_a"], "log": "logs/a.log",
+                     "baseRerun": {"failures": ["test_a"], "log": "logs/b.log"}},
+                    {"id": "lint", "state": "failed", "baseRerun": {"log": "logs/c.log"}}])),
+                ("base re-run without its log", with_change(state, ("queue", 0, "checks"), [
+                    {"id": "unit", "state": "failed", "baseRerun": {"failures": ["test_a"]}}])),
+                ("base re-run with an unknown field", with_change(state, ("queue", 0, "checks"), [
+                    {"id": "unit", "state": "failed", "baseRerun": {"log": "logs/b.log", "verdict": "broken"}}])),
+                ("queue check with an empty title", with_change(state, ("queue", 0, "checks"),
+                                                                [{"id": "unit", "state": "passed", "title": ""}])),
+                ("queue check title over long", with_change(state, ("queue", 0, "checks"),
+                                                            [{"id": "unit", "state": "passed", "title": "t" * 201}])),
+                ("step with a title", with_change(state, ("meta", "checking", "now", "steps"),
+                                                  [{"label": "unit", "state": "running", "title": "Unit tests"}])),
+                ("step title over long", with_change(state, ("meta", "checking", "now", "steps"),
+                                                     [{"label": "unit", "state": "running", "title": "t" * 201}])),
+                ("a close started", with_change(state, ("meta", "closing"), {"started": {"entry": 4, "at": "2026-10-20T10:00:00Z"}})),
+                ("a close finished", with_change(state, ("meta", "closing"), {"started": {"entry": 4, "at": "2026-10-20T10:00:00Z"},
+                                                                              "finished": {"entry": 4, "at": "2026-10-20T10:05:00Z"}})),
+                ("a close finished but never started", with_change(state, ("meta", "closing"),
+                                                                   {"finished": {"entry": 4, "at": "2026-10-20T10:05:00Z"}})),
+                ("a close mark for entry zero", with_change(state, ("meta", "closing"), {"started": {"entry": 0, "at": "2026-10-20T10:00:00Z"}})),
                 ("step state unknown",
                  with_change(state, ("meta", "checking", "now", "steps"), [{"label": "x", "state": "?"}])),
+                ("checking now awaiting the base rerun", with_change(state, ("meta", "checking", "now", "baseRerun"),
+                                                                     {"startedAt": "2026-10-20T10:00:00Z", "checks": ["unit"]})),
+                ("base rerun naming a check by number", with_change(state, ("meta", "checking", "now", "baseRerun"),
+                                                                    {"startedAt": "2026-10-20T10:00:00Z", "checks": [3]})),
+                ("base rerun without its start", with_change(state, ("meta", "checking", "now", "baseRerun"),
+                                                             {"checks": ["unit"]})),
+                ("base rerun with an unknown field", with_change(state, ("meta", "checking", "now", "baseRerun"),
+                                                                 {"startedAt": "2026-10-20T10:00:00Z", "checks": ["unit"],
+                                                                  "verdict": "passed"})),
                 ("finish met as text", with_change(state, ("finish", 0, "met"), "no")),
                 ("lease without holder", with_change(state, ("leases", 0), {"id": "x", "since": "2026-10-20T08:00:00Z"})),
                 ("with tickets", with_change(state, ("tickets",), {"pr-1": {"title": "Candidate", "summary": "What it does."},
@@ -4739,6 +5167,9 @@ class SchemaAgreementTests(unittest.TestCase):
                     {"subject": "pr-3", "title": "Planned", "lane": "lane-1", "stage": "building", "trackerStarted": True}])),
                 ("planned with trackerStarted as text", with_change(state, ("planned",), [
                     {"subject": "pr-3", "title": "Planned", "lane": "lane-1", "stage": "building", "trackerStarted": "yes"}])),
+                ("queued with its ticket started", with_change(state, ("queue", 0, "trackerStarted"), True)),
+                ("queued with trackerStarted false", with_change(state, ("queue", 0, "trackerStarted"), False)),
+                ("queued with trackerStarted as text", with_change(state, ("queue", 0, "trackerStarted"), "yes")),
                 ("planned with an empty run", with_change(state, ("planned",), [
                     {"subject": "pr-3", "title": "Planned", "lane": "lane-1", "stage": "planned", "runId": ""}])),
                 ("empty run", with_change(state, ("queue", 0, "runId"), "")),
@@ -4747,6 +5178,12 @@ class SchemaAgreementTests(unittest.TestCase):
             "delivery-journal/1": [
                 ("valid", VALID_ENTRY),
                 ("with lane", {**VALID_ENTRY, "lane": "lane-1"}),
+                ("a decision carrying a review", {**VALID_ENTRY, "kind": "decision.recorded",
+                                                 "reviewCarry": {"from": HEAD_A, "to": HEAD_B, "digest": "0" * 64}}),
+                ("a review carry with a short digest", {**VALID_ENTRY, "kind": "decision.recorded",
+                                                       "reviewCarry": {"from": HEAD_A, "to": HEAD_B, "digest": "0" * 8}}),
+                ("a review carry without its target", {**VALID_ENTRY, "kind": "decision.recorded",
+                                                      "reviewCarry": {"from": HEAD_A, "digest": "0" * 64}}),
                 ("unknown kind", {**VALID_ENTRY, "kind": "candidate.vanished"}),
                 ("id zero", {**VALID_ENTRY, "id": 0}),
                 ("id as boolean", {**VALID_ENTRY, "id": True}),
@@ -4902,10 +5339,276 @@ def bullets_after(text: str, lead_in: str) -> list[str]:
 
 
 # Files the skill text names that live in an adopter's repository or are
-# written into its state directory, as views, the outbox or the
-# acknowledgement, not shipped with the skill.
+# written into its state directory, as views, the outbox, the
+# acknowledgement, or beside it, as the close's closed.json; none
+# is shipped with the skill.
 ADOPTER_FILES = frozenset({".agents/orchestration.json", ".agents/delivery-posture.json", "delivery.md", "delivery.html", "outbox/outbox.json",
-                           "published.json", "recovery.json", "changes.jsonl", "plan.json"})
+                           "published.json", "recovery.json", "changes.jsonl", "plan.json", "closed.json"})
+
+
+def review_round(number: int, candidate: str, *, finding: bool = False, resolved: bool = False) -> dict:
+    """One native review outcome file for work-a, as review-reduce writes it, with two lenses."""
+    entries = []
+    for lens in ("lens.outcome-correctness", "lens.adversarial-testing"):
+        raised = ([{"id": "F1", "severity": "P1", "summary": "A real problem.", "state": "open"}]
+                  if finding and lens.endswith("correctness") else [])
+        closures = ([{"id": "F1", "state": "fixed", "resolution": "Fixed and confirmed."}]
+                    if resolved and lens.endswith("correctness") else [])
+        binding = {"subjectRef": "work-a", "candidateRef": candidate, "round": number}
+        entries.append({"lens": lens, "state": "obtained", "binding": binding, "result": {
+            "schemaVersion": "review-lens-result/1", "lensId": lens, **binding,
+            "outcome": "changes-requested" if raised else "aligned", "findings": raised,
+            "resolvedFindings": closures, "evidence": ["observed"]}})
+    return {"round": number, "outcome": "unresolved" if finding else "aligned", "entries": entries}
+
+
+class ReviewRefusalTests(unittest.TestCase):
+    """A refused capture says which round, lens and field were wrong, so a lane can mend its files before hand-off."""
+
+    def rounds(self) -> list[dict]:
+        return [review_round(1, HEAD_A, finding=True), review_round(2, HEAD_B, resolved=True)]
+
+    def refusal(self, outcomes: list[dict], candidate: str = HEAD_B) -> str:
+        with self.assertRaises(state_tool.StateError) as caught:
+            state_tool.validate_review_outcomes(outcomes, "work-a", candidate)
+        self.assertEqual(caught.exception.code, "review_artifact_invalid")
+        return str(caught.exception)
+
+    def test_the_valid_rounds_pass(self) -> None:
+        state_tool.validate_review_outcomes(self.rounds(), "work-a", HEAD_B)
+
+    def test_each_refusal_names_its_round_lens_and_field(self) -> None:
+        def change(edit):
+            outcomes = self.rounds()
+            edit(outcomes)
+            return outcomes
+
+        def result(outcomes, number=2, lens=0):
+            return outcomes[number - 1]["entries"][lens]["result"]
+
+        cases = {
+            "a round out of order": (lambda o: o[1].update(round=3), "round 2: round is 3, not 2"),
+            "a binding for another subject": (lambda o: o[0]["entries"][1]["binding"].update(subjectRef="work-b"),
+                                              "round 1, lens lens.adversarial-testing: binding.subjectRef is 'work-b'"),
+            "a binding round that disagrees": (lambda o: o[1]["entries"][0]["binding"].update(round=1),
+                                               "round 2, lens lens.outcome-correctness: binding.round is 1, not 2"),
+            "lenses that reviewed different heads": (lambda o: o[1]["entries"][1]["binding"].update(candidateRef=HEAD_A),
+                                                     "round 2, lens lens.adversarial-testing: binding.candidateRef"),
+            "a result for another head": (lambda o: result(o).update(candidateRef=HEAD_A),
+                                          "round 2, lens lens.outcome-correctness: result.candidateRef is"),
+            "a result for another lens": (lambda o: result(o).update(lensId="lens.other"),
+                                          "round 2, lens lens.outcome-correctness: result.lensId is 'lens.other'"),
+            "an unknown outcome": (lambda o: result(o, 1).update(outcome="maybe"),
+                                   "round 1, lens lens.outcome-correctness: result.outcome is 'maybe'"),
+            "no evidence": (lambda o: result(o, 1, 1).update(evidence=[]),
+                            "round 1, lens lens.adversarial-testing: result.evidence is empty"),
+            "a finding with an unknown severity": (lambda o: result(o, 1)["findings"][0].update(severity="P9"),
+                                                   "round 1, lens lens.outcome-correctness, finding F1: severity is 'P9'"),
+            "a P1 deferred": (lambda o: result(o, 1)["findings"][0].update(state="deferred", deferredIssue="later"),
+                              "round 1, lens lens.outcome-correctness, finding F1: only a P2 or P3 finding may be deferred"),
+            "a closure by another lens": (lambda o: o[1]["entries"][1]["result"].update(
+                                              resolvedFindings=[{"id": "F1", "state": "fixed", "resolution": "x"}]),
+                                          "round 2, lens lens.adversarial-testing, resolved finding F1: no finding with this id"),
+            "a closure with no resolution": (lambda o: result(o)["resolvedFindings"][0].update(resolution=" "),
+                                             "round 2, lens lens.outcome-correctness, resolved finding F1: resolution is empty"),
+            "an aligned round with an open finding": (lambda o: result(o).update(resolvedFindings=[]),
+                                                      "round 2: the round is aligned with findings still open: F1"),
+            "a lens dropped in a later round": (lambda o: o[1]["entries"].pop(),
+                                                "round 2: the lenses are ['lens.outcome-correctness']"),
+        }
+        for name, (edit, message) in cases.items():
+            with self.subTest(name):
+                self.assertIn(message, self.refusal(change(edit)))
+        self.assertIn("round 2: the last round reviewed", self.refusal(self.rounds(), candidate="c" * 40))
+
+    def test_capture_review_says_what_it_refused(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        directory = root / "state"
+        state_tool.init(directory, "Epic underway")
+        state_tool.patch(directory, writer="lead", version=1, changes={"queue": [queue_item("work-a", head=HEAD_B)]})
+        rounds = self.rounds()
+        rounds[1]["entries"][0]["result"]["round"] = 1
+        paths = []
+        for number, data in enumerate(rounds, 1):
+            paths.append(root / f"round-{number}.json")
+            paths[-1].write_text(json.dumps(data), encoding="utf-8")
+        code, refused = run_tool(directory, "capture-review", "--subject", "work-a", "--candidate", HEAD_B,
+                                 *[part for path in paths for part in ("--outcome", str(path))])
+        self.assertEqual((code, refused["code"]), (1, "review_artifact_invalid"))
+        self.assertIn("round 2, lens lens.outcome-correctness: result.round is 1, not 2", refused["error"])
+        paths[0].write_text("{not json", encoding="utf-8")
+        code, refused = run_tool(directory, "capture-review", "--subject", "work-a", "--candidate", HEAD_B,
+                                 *[part for path in paths for part in ("--outcome", str(path))])
+        self.assertIn("round 1: the outcome file is not bounded JSON", refused["error"])
+        self.assertEqual(state_tool.read_journal(directory), [])
+
+
+HEAD_C = "c" * 40
+HEAD_D = "d" * 40
+
+
+class CarryReviewTests(unittest.TestCase):
+    """The lead carries captured review evidence across a commit it judged needs no new round, and nothing more."""
+
+    def setUp(self, rounds: list[dict] | None = None) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.directory = self.root / "state"
+        state_tool.init(self.directory, "Epic underway")
+        state_tool.patch(self.directory, writer="lead", version=1, changes={
+            "lanes": [lane("lane-1")], "planned": [{"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "review"}]})
+        # Reviewed at HEAD_B; a fixture commit after the last round hands off HEAD_C.
+        self.capture(rounds or [review_round(1, HEAD_A, finding=True), review_round(2, HEAD_B, resolved=True)])
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_C, change_request="cr", rounds=2)
+
+    def capture(self, rounds: list[dict], candidate: str = HEAD_B) -> dict:
+        paths = []
+        for number, data in enumerate(rounds, 1):
+            paths.append(self.root / f"round-{len(list(self.root.glob('round-*')))}-{number}.json")
+            paths[-1].write_text(json.dumps(data), encoding="utf-8")
+        return state_tool.capture_review(self.directory, subject="work-a", candidate=candidate, outcomes=paths)
+
+    def carry(self, from_head: str = HEAD_B, to_head: str = HEAD_C, reason: str = "only a fixture changed") -> dict:
+        return state_tool.carry_review(self.directory, subject="work-a", from_head=from_head, to_head=to_head, reason=reason)
+
+    def refused(self, call) -> str:
+        before = (self.directory / state_tool.JOURNAL_FILE).read_bytes()
+        with self.assertRaises(state_tool.StateError) as caught:
+            call()
+        self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), before)
+        return f"{caught.exception.code}: {caught.exception}"
+
+    def evidence(self) -> dict:
+        return state_tool.review_evidence(self.directory, "work-a")
+
+    def test_a_carry_makes_the_evidence_hold_at_the_queued_head_and_says_so(self) -> None:
+        self.assertEqual(self.evidence()["evidence"], "unavailable", "a capture binds to the head it reviewed")
+        before = state_tool.show(self.directory)
+        entry = self.carry()
+        self.assertEqual((entry["kind"], entry["subject"]), ("decision.recorded", "work-a"))
+        self.assertEqual(entry["reviewCarry"]["from"], HEAD_B)
+        self.assertEqual(entry["reviewCarry"]["to"], HEAD_C)
+        self.assertIn("only a fixture changed", entry["summary"])
+        found = self.evidence()
+        self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_B, HEAD_C))
+        after = state_tool.show(self.directory)
+        observed = after["reviewEvidence"]["work-a"]
+        # The evidence itself is unchanged: its rounds, its own reviewed head, its digest.
+        self.assertEqual(observed["candidateRef"], HEAD_B)
+        self.assertEqual(len(observed["outcomes"]), 2)
+        self.assertEqual(observed["carried"], {"from": HEAD_B, "to": HEAD_C, "note": entry["summary"]})
+
+    def test_a_carry_is_no_run_no_round_and_no_admission_evidence(self) -> None:
+        before = state_tool.show(self.directory)
+        self.carry()
+        after = state_tool.show(self.directory)
+        self.assertEqual(after["state"]["queue"], before["state"]["queue"], "the queue element, its run and evidence, unchanged")
+        self.assertIsNone(after["state"]["queue"][0]["runId"])
+        self.assertNotIn("evidence", after["state"]["queue"][0])
+        self.assertEqual(after["stats"]["work-a"].get("rounds"), before["stats"]["work-a"].get("rounds"))
+        self.assertEqual([entry["kind"] for entry in after["journal"]][len(before["journal"]):], ["decision.recorded"])
+
+    def test_a_later_round_or_capture_ends_a_carry(self) -> None:
+        self.carry()
+        state_tool.append_journal(self.directory, kind="review.round", summary="Round 3", lane="lane-1", subject="work-a",
+                                  review=review(3, "2026-10-21T09:00:00Z", "2026-10-21T09:10:00Z"), writer="lane")
+        self.assertEqual(self.evidence()["evidence"], "unavailable")
+        self.capture([review_round(1, HEAD_A, finding=True), review_round(2, HEAD_B, resolved=True),
+                      review_round(3, HEAD_B)])
+        found = self.evidence()
+        self.assertEqual(found["evidence"], "unavailable", "the new capture is of HEAD_B and needs a carry of its own")
+        self.assertNotIn("carriedTo", found)
+        self.carry()
+        self.assertEqual(self.evidence()["evidence"], "captured")
+
+    def test_each_hop_is_carried_by_name_from_the_head_the_last_carry_reached(self) -> None:
+        self.carry()
+        state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                         selector="queue[subject=work-a]", assignments={"/stage": "stopped"})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_D, change_request="cr", rounds=2)
+        self.assertEqual(self.evidence()["evidence"], "unavailable", "the carry was to HEAD_C, not the new head")
+        self.assertIn(f"covers {HEAD_C}, not {HEAD_B}", self.refused(lambda: self.carry(HEAD_B, HEAD_D)))
+        self.carry(HEAD_C, HEAD_D, "another fixture")
+        found = self.evidence()
+        self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_C, HEAD_D))
+
+    def test_a_carry_never_changes_what_the_evidence_says(self) -> None:
+        cases = (
+            ("an open P1", [review_round(1, HEAD_A), review_round(2, HEAD_B, finding=True)], "leaves F1 (P1) open"),
+            ("an open P0", [review_round(1, HEAD_A), {**review_round(2, HEAD_B, finding=True),
+                                                     "entries": self.open_at(HEAD_B, "P0")}], "leaves F1 (P0) open"),
+            ("an unaligned last round", [review_round(1, HEAD_A), {**review_round(2, HEAD_B, finding=True),
+                                                                   "entries": self.minor_open(HEAD_B)}],
+             "round 2, is not aligned"),
+        )
+        for name, rounds, message in cases:
+            with self.subTest(name):
+                self.setUp(rounds)
+                self.assertEqual(self.evidence()["evidence"], "unavailable")
+                self.assertIn(message, self.refused(lambda: self.carry()))
+                self.assertEqual(self.evidence()["evidence"], "unavailable")
+
+    def minor_open(self, candidate: str) -> list[dict]:
+        return self.open_at(candidate, "P2")
+
+    def open_at(self, candidate: str, severity: str) -> list[dict]:
+        entries = review_round(2, candidate, finding=True)["entries"]
+        entries[0]["result"]["findings"][0]["severity"] = severity
+        return entries
+
+    def test_run_built_merged_or_damaged_evidence_is_never_carried(self) -> None:
+        artifact = next((self.directory / "review-artifacts").glob("*.json"))
+        original = artifact.read_bytes()
+        artifact.write_bytes(original + b" ")
+        self.assertIn("carry_invalid: the captured review artifact is damaged", self.refused(lambda: self.carry()))
+        artifact.write_bytes(original)
+        version = state_tool.read_state(self.directory)["version"]
+        state_tool.patch(self.directory, writer="runner", version=version, selector="queue[subject=work-a]",
+                         assignments={"/stage": "merged"})
+        self.assertIn("carry_invalid: work-a is merged", self.refused(lambda: self.carry()))
+        state = state_tool.read_state(self.directory)
+        state["queue"][0].update(stage="queued", runId="run-a")
+        (self.directory / state_tool.STATE_FILE).write_text(state_tool.dumps(state), encoding="utf-8")
+        self.assertIn("carry_invalid: work-a is built by run run-a", self.refused(lambda: self.carry()))
+
+    def test_each_refusal_says_why_and_writes_nothing(self) -> None:
+        self.assertIn("carry_invalid: say why", self.refused(lambda: self.carry(reason=" ")))
+        self.assertIn(f"covers {HEAD_B}, not {HEAD_A}", self.refused(lambda: self.carry(from_head=HEAD_A)))
+        self.assertIn("to a different head", self.refused(lambda: self.carry(to_head=HEAD_B)))
+        self.assertIn(f"queued at {HEAD_C}, not {HEAD_D}", self.refused(lambda: self.carry(to_head=HEAD_D)))
+        state_tool.append_journal(self.directory, kind="review.round", summary="Round 3", lane="lane-1", subject="work-a",
+                                  review=review(3, "2026-10-21T09:00:00Z", "2026-10-21T09:10:00Z"), writer="lane")
+        self.assertIn("latest review round has not been captured", self.refused(lambda: self.carry()))
+        self.assertIn("no queued work named work-z", self.refused(lambda: state_tool.carry_review(
+            self.directory, subject="work-z", from_head=HEAD_B, to_head=HEAD_C, reason="r")))
+
+    def test_planned_work_and_work_without_a_capture_have_nothing_to_carry(self) -> None:
+        state_tool.patch(self.directory, writer="lead", version=state_tool.read_state(self.directory)["version"],
+                         changes={"planned": [{"subject": "work-b", "title": "B", "lane": "lane-1", "stage": "review"},
+                                              {"subject": "work-c", "title": "C", "lane": "lane-1", "stage": "review"}]})
+        self.assertIn("planned, not handed off", self.refused(lambda: state_tool.carry_review(
+            self.directory, subject="work-b", from_head=HEAD_B, to_head=HEAD_C, reason="r")))
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-c", head=HEAD_C, change_request="cr")
+        self.assertIn("no captured review", self.refused(lambda: state_tool.carry_review(
+            self.directory, subject="work-c", from_head=HEAD_B, to_head=HEAD_C, reason="r")))
+
+    def test_only_the_lead_carries_and_only_a_decision_holds_a_carry(self) -> None:
+        arguments = ("carry-review", "--subject", "work-a", "--from", HEAD_B, "--to", HEAD_C, "--reason", "fixtures only")
+        code, refused = run_tool(self.directory, *arguments, "--writer", "lane")
+        self.assertEqual((code, refused["code"]), (1, "writer_not_owned"))
+        code, carried = run_tool(self.directory, *arguments, "--writer", "lead")
+        self.assertEqual(code, 0, carried)
+        self.assertEqual(carried["entry"]["reviewCarry"]["to"], HEAD_C)
+        carry = {"from": HEAD_B, "to": HEAD_C, "digest": "0" * 64}
+        for stray in ({**VALID_ENTRY, "kind": "candidate.merged", "reviewCarry": carry},
+                      {**VALID_ENTRY, "kind": "decision.recorded", "subject": None, "reviewCarry": carry}):
+            with self.subTest(kind=stray["kind"], subject=stray["subject"]):
+                self.assertTrue(any("only a decision about a subject carries its review" in error
+                                    for error in state_tool.journal_errors([stray])))
+        self.assertEqual(state_tool.journal_errors([{**VALID_ENTRY, "kind": "decision.recorded", "reviewCarry": carry}]), [])
 
 
 class SkillTextTests(unittest.TestCase):
@@ -4937,6 +5640,23 @@ class SkillTextTests(unittest.TestCase):
                 with self.subTest(path=path.name, link=target):
                     self.assertTrue((path.parent / target).is_file(), target)
 
+    def test_the_run_is_bound_at_start_in_the_skill_and_the_lane_brief(self) -> None:
+        def normal(path: Path) -> str:
+            return " ".join(path.read_text(encoding="utf-8").split())
+        skill = normal(SKILL / "SKILL.md")
+        for phrase in ("A lane whose work a product run builds binds that run at start, with"
+                       " `delivery_state.py bind-run --lane <lane> --subject <subject> --run <id>`",
+                       "is refused with `run_bound` for a run another subject holds",
+                       "The hand-off keeps the bound run unless it names another.",
+                       "A hand-off naming a run another subject holds is refused with `run_bound` too."):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
+        brief = normal(PRODUCT_ROOT / "skills/run-delivery/templates/lane-brief.md")
+        for phrase in ("If a product run builds your story, bind its run id at start, before your first round:",
+                       "bind-run --lane <lane> --subject <key> --run <run id>"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, brief)
+
     def test_the_work_root_row_lists_every_git_folder_the_runner_refuses(self) -> None:
         runner = _load("merge_queue")
         row = next(line for line in GUIDE.read_text(encoding="utf-8").splitlines() if line.startswith("| `workRoot` |"))
@@ -4963,6 +5683,23 @@ class SkillTextTests(unittest.TestCase):
                 # An update is never a gate: no instruction waits on, blocks or
                 # orders anything after itself.
                 self.assertIsNone(re.search(r"\b(?:wait(?:s|ing|ed)?|block(?:s|ing)?|until|till|before|after|gate[sd]?|hold(?:s|ing)?)\b", instruction), instruction)
+
+    def test_the_tracker_publisher_posts_nothing_for_exactly_the_kinds_the_guide_says_post_nothing(self) -> None:
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "tracker_publisher_for_the_guide", PRODUCT_ROOT / "skills/run-delivery/scripts/tracker_publisher.py")
+            publisher = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(publisher)
+        finally:
+            sys.dont_write_bytecode = previous
+        table = section(GUIDE.read_text(encoding="utf-8"), "### Tracker updates")
+        rows = {row.split("`")[1]: row.split("|")[2].strip() for row in table.splitlines() if row.startswith("| `")}
+        self.assertEqual(sorted(publisher.UPDATES), sorted(rows))
+        for kind, instruction in rows.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(publisher.UPDATES[kind] is None, instruction.startswith("None: "), instruction)
 
     def test_the_operator_escalation_list_is_closed_and_pinned(self) -> None:
         for path in (SKILL / "SKILL.md", GUIDE):
@@ -5051,6 +5788,11 @@ class LeadSelectionTests(unittest.TestCase):
         self.assertEqual((entry["kind"], entry["subject"], entry["lane"]), ("check.selected", "work-q", "lane-1"))
         self.assertIn("parser", entry["summary"])
         self.assertIn("only the parser changed", entry["summary"])
+
+    def test_a_selected_check_keeps_its_title_and_an_empty_one_is_refused(self) -> None:
+        item = self.select([{**selected_check("parser"), "title": "Parser unit tests"}])
+        self.assertEqual(item["leadSelection"]["checks"][0]["title"], "Parser unit tests")
+        self.assertEqual(self.refused(lambda: self.select([{**selected_check("lexer"), "title": ""}])), "select_invalid")
 
     def test_the_command_line_records_and_clears_a_selection(self) -> None:
         binding = Path(self.directory.parent) / "orchestration.json"

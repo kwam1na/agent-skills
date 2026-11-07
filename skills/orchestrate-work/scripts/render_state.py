@@ -246,9 +246,20 @@ def _elapsed(start: object, end: object) -> int | None:
     return max(0, int((moments[1] - moments[0]).total_seconds()))
 
 
+# A check's title is cut short past a line's worth; the page's program cuts at the same length.
+TITLE_SHOWN = 80
+
+
+def _check_name(title: object, name: object) -> str:
+    """A check's readable title, cut short, or its id when it has none."""
+    if isinstance(title, str) and title:
+        return title if len(title) <= TITLE_SHOWN else title[:TITLE_SHOWN - 1] + "…"
+    return str(name)
+
+
 def _step_text(step: dict, as_of: str) -> str:
     """A check step with its timing, as of the record's last write; the page counts on from its own clock."""
-    text = f"{step['label']}: {step['state']}"
+    text = f"{_check_name(step.get('title'), step['label'])}: {step['state']}"
     if step["state"] == "reused" and "reusedFrom" in step:
         return text + f" · reused from the lane's run at {step['reusedFrom']}"
     if "finishedAt" in step and "startedAt" in step:
@@ -265,7 +276,7 @@ def _step_text(step: dict, as_of: str) -> str:
 
 def _check_text(check: dict) -> str:
     """A queue row's check with its failing tests and log; the page's program writes the same line."""
-    text = f"{check['id']}: {check['state']}"
+    text = f"{_check_name(check.get('title'), check['id'])}: {check['state']}"
     if check["state"] == "reused" and "reusedFrom" in check:
         text += f" · reused from the lane's run at {check['reusedFrom']}"
     if check.get("failures"):
@@ -533,8 +544,13 @@ _PAGE_PROGRAM = """
     var at = new Date(Math.max(Date.now(), Date.parse(asOf) || 0));
     return isNaN(at.getTime()) ? asOf : at.toISOString();
   }
+  /* A check's readable title, cut short past a line's worth, or its id when it has none. */
+  function checkName(title, name) {
+    if (typeof title === "string" && title) { return title.length <= 80 ? title : title.slice(0, 79) + "\u2026"; }
+    return show(name);
+  }
   function stepText(step, asOf) {
-    var text = show(step.label) + ": " + show(step.state);
+    var text = checkName(step.title, step.label) + ": " + show(step.state);
     if (step.state === "reused" && typeof step.reusedFrom === "string") {
       return text + " \\u00b7 reused from the lane's run at " + step.reusedFrom;
     }
@@ -552,7 +568,7 @@ _PAGE_PROGRAM = """
     return text;
   }
   function checkText(check) {
-    var text = show(check.id) + ": " + show(check.state);
+    var text = checkName(check.title, check.id) + ": " + show(check.state);
     if (check.state === "reused" && typeof check.reusedFrom === "string") { text += " \\u00b7 reused from the lane's run at " + check.reusedFrom; }
     if (isArray(check.failures) && check.failures.length) { text += " \\u00b7 failing " + check.failures.map(show).join(", "); }
     if (typeof check.log === "string") { text += " \\u00b7 log " + check.log; }
@@ -712,7 +728,7 @@ _PAGE_PROGRAM = """
     var queue = state.queue.slice().sort(function (a, b) { return a.order - b.order; });
     parts.push(el("h2", "Queue"));
     parts.push(list("ol", queue, "The queue is empty.", function (item) {
-      var checks = item.checks.map(function (check) { return show(check.id) + " " + show(check.state); }).join(", ");
+      var checks = item.checks.map(function (check) { return checkName(check.title, check.id) + " " + show(check.state); }).join(", ");
       var known = ticket([item.subject], item.title);
       var entry = withStats(row(show(item.order) + ". " + show(item.subject) + ": " + show(known.title),
         "Lane " + show(item.lane) + " \\u00b7 head " + show(item.head) + changeRequest(item) + (checks ? " \\u00b7 " + checks : ""),

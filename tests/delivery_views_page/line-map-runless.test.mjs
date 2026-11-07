@@ -133,6 +133,11 @@ test('a planned story whose latest round was not captured stays visibly stale', 
   expect(shown.app.querySelector('.d-run-none').textContent).toBe('Review evidence unavailable or stale for this candidate.'
     +" Its rounds show here again once the lane's review-reduce records its latest round.");
   expect(shown.app.querySelector('.run-card')).toBeNull();
+  // Closed, nothing will record a later round, so the sentence stops at what is true.
+  const closed=structuredClone(doc);
+  closed.journal.push({id:5, at:'2026-01-01T00:05:00Z', kind:'delivery.closed', subject:null, lane:null, summary:'closed'});
+  const [shut]=await openPage(renderPage(closed,{config}));
+  expect(shut.app.querySelector('.d-run-none').textContent).toBe('Review evidence unavailable or stale for this candidate.');
   const fresh=plannedDocument(),pushed=structuredClone(fresh);pushed.journal.push(doc.journal[3]);
   const [before,after]=await openPage(pageWithRuns(fresh,{}, {config}),{steps:[{push:pushed}]});
   expect(before.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
@@ -144,4 +149,32 @@ test('a planned story with no round yet says when its rounds will appear', async
   expect(shown.app.querySelector('.d-run-none').textContent)
     .toBe('No review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off.');
   expect(shown.app.querySelector('.run-card')).toBeNull();
+});
+test('evidence the lead carried to a later head shows as carried, and only at that head', async()=>{
+  const C = 'c'.repeat(40);
+  const carriedDocument = (head, carried) => {
+    const doc = document();
+    doc.state.queue = [{subject:'WORK-1',title:'Work',stage:'queued',head,runId:null}];
+    doc.reviewEvidence['WORK-1'] = {...doc.reviewEvidence['WORK-1'], ...(carried ? {carried} : {})};
+    return doc;
+  };
+  const carry = {from:B, to:C, note:'The lead carried WORK-1\'s review from '+B+' to '+C+', no new round needed: only a fixture changed'};
+  const [shown] = await openPage(pageWithRuns(carriedDocument(C, carry), {}, {config}));
+  expect(shown.app.querySelector('.d-run-none')).toBeNull();
+  expect(shown.app.querySelector('.d-run-carried').textContent).toBe('Carried by the lead. '+carry.note);
+  expect(shown.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
+  // The rounds still name the head they reviewed, never the carried one.
+  expect(shown.app.querySelector('.run-card .run-quiet').getAttribute('aria-label')).toBe('Reviewed candidate '+B);
+  // The same capture at the later head without a carry, or carried to another head, is stale.
+  for (const doc of [carriedDocument(C, null), carriedDocument(C, {...carry, to:'d'.repeat(40)})]) {
+    const [stale] = await openPage(pageWithRuns(doc, {}, {config}));
+    expect(stale.app.querySelector('.d-run-none').textContent).toBe('Review evidence unavailable or stale for this candidate.');
+    expect(stale.app.querySelector('.d-run-carried')).toBeNull();
+  }
+  // A carry that isn't the shape the state tool writes is refused outright.
+  for (const malformed of [{...carry, extra:'x'}, {...carry, note:''}, {...carry, to:7}]) {
+    const [refused] = await openPage(pageWithRuns(carriedDocument(C, malformed), {}, {config}));
+    expect(refused.app.querySelector('.d-run-carried')).toBeNull();
+    expect(refused.app.querySelector('.d-run-none').textContent).toContain('unavailable or stale');
+  }
 });

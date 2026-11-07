@@ -164,7 +164,7 @@ def decide(runs: list[dict], jobs_for: Callable[[int], list[dict]], commit: str,
     named = {job.get("name") for job in finished}
     unfinished = [job.get("name") for job in jobs if job not in finished] + [name for name in REQUIRED_JOBS if name not in {job.get("name") for job in jobs}]
     if unfinished and run.get("status") != "completed":
-        return Decision(WAIT, f"{CI_WORKFLOW} run {run['id']} is {run.get('status')}, without {', '.join(unfinished)}")
+        return Decision(WAIT, f"{CI_WORKFLOW} run {run['id']} is {run.get('status')}, still waiting on {', '.join(unfinished)}")
     missing = [name for name in REQUIRED_JOBS if name not in named]
     if missing or unfinished:
         return Decision(REFUSE, f"{CI_WORKFLOW} run {run['id']} has no finished job named {', '.join(missing or unfinished)}")

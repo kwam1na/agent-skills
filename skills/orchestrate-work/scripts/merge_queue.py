@@ -148,6 +148,94 @@ IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
 WINDOWS = os.name == "nt"
 
 
+# What a stop detail never carries from a command's output: the command's own secret-looking environment values,
+# common token shapes, and whatever follows a keyword that introduces one. Redacted before the tail is cut.
+# "auth" counts only as a whole name segment, so the runner's own GIT_AUTHOR_* identity is not taken for a secret.
+SECRET_NAME = re.compile(r"token|secret|passw|api[-_]?key|credent\w*|private[-_]?key|(?:^|[_-])o?auth(?:[_-]|$|orization|key)",
+                         re.IGNORECASE)
+TOKEN_SHAPE = re.compile(
+    r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|glpat-[A-Za-z0-9_-]{16,}|xox[abprs]-[A-Za-z0-9-]{10,}"
+    r"|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,})")
+# An authorization header is redacted to the end of its line, whatever scheme and value follow.
+HEADER_VALUE = re.compile(r"(?im)\b(authorization|proxy-authorization)(\s*:\s*)[^\r\n]+")
+# A keyword, the separator after it (quoted as JSON writes it, or not), and the value that follows.
+KEYED_VALUE = re.compile(
+    r'(?i)\b(bearer|token|password|passwd|secret|api[-_]?key)("?\s*[:=]\s*"?|\s+)(?!\[redacted\])([^\s"]+)')
+TAIL_LIMIT = 400
+CANDIDATE_OUT_LIMIT = 200
+
+
+def scrubbed_tail(text: str, environment: dict[str, str], limit: int = TAIL_LIMIT) -> str:
+    """The last ``limit`` characters of a command's output, with anything that looks secret redacted first."""
+    # Longest first, so a value that contains a shorter one is redacted whole.
+    for value in sorted((value for name, value in environment.items() if SECRET_NAME.search(name) and len(value) >= 4),
+                        key=len, reverse=True):
+        text = text.replace(value, "[redacted]")
+    text = TOKEN_SHAPE.sub("[redacted]", text)
+    text = HEADER_VALUE.sub(lambda match: f"{match[1]}{match[2]}[redacted]", text)
+    text = KEYED_VALUE.sub(lambda match: f"{match[1]}{match[2]}[redacted]", text)
+    return text.strip()[-limit:]
+
+
+SCRIPT_SUFFIX = re.compile(r"\.(?:py|sh|bash|zsh|js|mjs|cjs|ts|rb|pl|php|ps1)$", re.IGNORECASE)
+# A program whose first operand is the script it runs.
+INTERPRETER = re.compile(r"^(?:python[\d.]*|pypy[\d.]*|py|node|bash|sh|zsh|dash|ruby|perl|php|deno|bun|pwsh|powershell)"
+                         r"(?:\.exe)?$", re.IGNORECASE)
+# An interpreter flag after which comes code or a module, not a script file, and flags whose value is a separate element.
+INLINE_CODE = frozenset({"-c", "-e", "-m", "-p", "--eval", "--print", "--command", "-Command"})
+FLAG_VALUE = frozenset({"-X", "-W", "-I", "-r", "--require", "--import", "--loader"})
+# Python's own -I is isolated mode, with no value: the script follows it.
+PYTHON = re.compile(r"^(?:python[\d.]*|pypy[\d.]*|py)(?:\.exe)?$", re.IGNORECASE)
+# An element with whitespace, quotes or shell and jq operators is an expression, never a path.
+EXPRESSION = re.compile(r"""[\s'"$|+();&<>`*]""")
+
+
+def candidate_problems(argv: list[str], present: Callable[[str], bool], path: str | None) -> list[str]:
+    """What keeps the binding's candidate step from running, before any subject is resolved: its program not on
+    ``path`` or not where its path says, and a script it names that doesn't exist. A script is an interpreter's own
+    operand (python3 -B tools/candidate.py), or any element with a script's extension; other values with a slash, such
+    as --prefix story/, inline code, and expressions aren't paths. ``present`` answers for a repository-relative path."""
+    if not argv:
+        return ["the candidate argv is empty"]
+    problems = []
+    program = argv[0]
+    if "{" in program:
+        pass
+    elif os.path.isabs(program):
+        if not os.path.exists(program):
+            problems.append(f"its program {program} doesn't exist")
+    elif "/" in program or "\\" in program:
+        if not present(program):
+            problems.append(f"its program {program} isn't in the repository")
+    elif shutil.which(program, path=path) is None:
+        problems.append(f"its program {program} isn't on PATH")
+    interpreter = INTERPRETER.match(os.path.basename(program)) is not None
+    value_flags = FLAG_VALUE - {"-I"} if PYTHON.match(os.path.basename(program)) else FLAG_VALUE
+    operand_seen, skip = not interpreter, False
+    for element in argv[1:]:
+        if skip:
+            skip = False
+            continue
+        if element in INLINE_CODE or element in value_flags:
+            skip = True
+            operand_seen = operand_seen or element in INLINE_CODE
+            continue
+        if element.startswith("-") or "{" in element or "=" in element or "://" in element or EXPRESSION.search(element):
+            continue
+        suffixed = SCRIPT_SUFFIX.search(element) is not None
+        if "/" not in element and not suffixed:
+            # A subcommand (deno run) or a flag's value (bash -o pipefail) never takes the script's place.
+            continue
+        operand = not operand_seen
+        operand_seen = True
+        if not (operand or suffixed):
+            continue
+        found = os.path.exists(element) if os.path.isabs(element) else present(element)
+        if not found:
+            problems.append(f"its script {element} doesn't exist" + ("" if os.path.isabs(element) else " in the repository"))
+    return problems
+
+
 def environment_name(name: str) -> str:
     """The name as the platform compares it."""
     return name.upper() if WINDOWS else name
@@ -258,7 +346,19 @@ def binding_errors(binding: object) -> list[str]:
         ("/fullHealth", binding["fullHealth"]),
     ]
     commands += [(f"/prepare/{i}", argv) for i, argv in enumerate(binding["prepare"])]
+    if binding.get("reviewGate") is not None:
+        commands.append(("/reviewGate", binding["reviewGate"]["argv"]))
     commands += [(f"/regenerable/regenerators/{i}", argv) for i, argv in enumerate(binding["regenerable"]["regenerators"])]
+    listings = binding["regenerable"].get("listings", [])
+    commands += [(f"/regenerable/listings/{i}", entry["argv"]) for i, entry in enumerate(listings)]
+    for index, entry in enumerate(listings):
+        if "*" in entry["path"]:
+            errors.append(f"/regenerable/listings/{index}: a listing names one file, not a pattern")
+        elif not matches_any(entry["path"], binding["regenerable"]["paths"]):
+            errors.append(f"/regenerable/listings/{index}: {entry['path']} is not a regenerable path")
+    listed = [entry["path"] for entry in listings]
+    for path in sorted({path for path in listed if listed.count(path) > 1}):
+        errors.append(f"/regenerable/listings: {path} is listed twice")
     commands += [(f"/postSync/{i}", step["argv"]) for i, step in enumerate(binding["postSync"])]
     commands += [(f"/leadInputs/{i}", item["argv"]) for i, item in enumerate(binding["leadInputs"])]
     commands += [(f"/release/{i}", target["argv"]) for i, target in enumerate(binding["release"])]
@@ -280,6 +380,15 @@ def binding_errors(binding: object) -> list[str]:
             errors.append(f"/environment: {variable} changes how git reads a pathspec and must not be set")
     if "{expectedHead}" not in binding["merge"]:
         errors.append("/merge: the merge argv must use {expectedHead} as a whole element")
+    if "{candidate}" not in binding["candidate"]:
+        # Without it every subject resolves to the same answer, or none.
+        errors.append("/candidate: the candidate argv must use {candidate} as a whole element")
+    gate = binding.get("reviewGate")
+    if gate is not None:
+        if not {"{expectedHead}", "{head}"} & set(gate["argv"]):
+            errors.append("/reviewGate: the gate's argv must name the head, {expectedHead} or {head}, as a whole element")
+        if gate.get("timeoutSeconds", 0) > binding["checkTimeoutCeiling"]:
+            errors.append("/reviewGate/timeoutSeconds: above checkTimeoutCeiling")
     if binding["checkTimeoutSeconds"] > binding["checkTimeoutCeiling"]:
         errors.append("/checkTimeoutSeconds: above checkTimeoutCeiling")
     # fullHealthTimeoutSeconds is the post-merge run's own bound: checkTimeoutCeiling bounds the queue's checks, not it.
@@ -352,6 +461,37 @@ def binding_errors(binding: object) -> list[str]:
     return errors
 
 
+def started_run(completed: Completed | None) -> bool:
+    """Whether a check's run started at all: one that could not start says nothing about the tree."""
+    return completed is not None and (completed.timed_out or completed.returncode is not None)
+
+
+def failed_run(completed: Completed) -> bool:
+    return completed.timed_out or completed.returncode != 0
+
+
+def failure_words(check_id: str, failures: list[str], log: str | None) -> str:
+    """A failed check as a stop or the journal names it: the check, its failing tests and its log."""
+    parts = []
+    if failures:
+        more = f" and {len(failures) - STOP_FAILURES} more" if len(failures) > STOP_FAILURES else ""
+        parts.append("failing " + ", ".join(failures[:STOP_FAILURES]) + more)
+    if log:
+        parts.append("log " + log)
+    return check_id + (f" ({'; '.join(parts)})" if parts else "")
+
+
+TITLE_LIMIT = 200
+
+
+def check_title(check: dict) -> dict:
+    """The check's readable name for the record, cut to the record's limit, or nothing when it has none."""
+    title = check.get("title")
+    if not isinstance(title, str) or not title:
+        return {}
+    return {"title": title if len(title) <= TITLE_LIMIT else title[:TITLE_LIMIT - 1] + "…"}
+
+
 def check_definition(check: dict, binding: dict) -> str:
     """How a check runs, as one digest: its argv, cwd, prerequisites, timeout and environment.
 
@@ -359,8 +499,8 @@ def check_definition(check: dict, binding: dict) -> str:
     definition digests alike on every tree; a reusable check may use only
     ``{treeSha}``, which the tree determines. The binding's prepare steps,
     which set up every check's checkout, are part of it. A change to the
-    binding that changes how the check runs changes the digest; its reasons
-    and ``parallelSafe`` do not.
+    binding that changes how the check runs changes the digest; its reasons,
+    title and ``parallelSafe`` do not.
     """
     profile = check.get("environmentProfile")
     described = {
@@ -854,11 +994,11 @@ class Runner:
         """
         steps = [
             {"label": record["id"], "state": record["state"],
-             **{key: record[key] for key in ("startedAt", "finishedAt", "expectedSeconds", "reusedFrom") if key in record}}
+             **{key: record[key] for key in ("title", "startedAt", "finishedAt", "expectedSeconds", "reusedFrom") if key in record}}
             for record in states
         ]
         rows = [
-            {"id": record["id"], "state": record["state"],
+            {"id": record["id"], "state": record["state"], **({"title": record["title"]} if "title" in record else {}),
              **({"failures": [failure["id"] for failure in record["failures"]]} if record.get("failures") else {}),
              **({"log": record["log"]} if "log" in record else {}),
              **({"reusedFrom": record["reusedFrom"]} if "reusedFrom" in record else {})}
@@ -1286,24 +1426,60 @@ class Runner:
         return Context(values)
 
     def resolve(self, subject: str, context: Context, cwd: Path) -> tuple[str, str]:
-        completed = self.run_argv(self.binding["candidate"], cwd, context, self.binding["checkTimeoutSeconds"])
+        timeout = self.binding["checkTimeoutSeconds"]
+        completed = self.run_argv(self.binding["candidate"], cwd, context, timeout)
         try:
-            resolved = json.loads(completed.stdout) if completed.returncode == 0 else None
+            resolved = json.loads(completed.stdout)
         except json.JSONDecodeError:
             resolved = None
         if (
-            not isinstance(resolved, dict)
+            completed.returncode != 0
+            or not isinstance(resolved, dict)
             or not isinstance(resolved.get("branch"), str)
             or not isinstance(resolved.get("head"), str)
             or not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", resolved["head"])
         ):
-            raise Stop("candidate_unresolved", f"{subject} did not resolve to a branch and head")
+            raise Stop("candidate_unresolved", f"{subject} did not resolve to a branch and head: "
+                                               f"{self.candidate_said(completed, resolved, timeout)}")
         branch = resolved["branch"]
         if not self.valid_branch(branch):
-            raise Stop("ref_invalid", f"{subject} resolved to an invalid branch name")
+            raise Stop("ref_invalid", f"{subject} resolved to an invalid branch name: "
+                                      f"{scrubbed_tail(json.dumps(branch), self.environment(), CANDIDATE_OUT_LIMIT)}")
         if branch == self.base:
             raise Stop("ref_invalid", f"{subject} resolved to the base branch")
         return branch, resolved["head"]
+
+    def candidate_said(self, completed: Completed, resolved: object, timeout: float) -> str:
+        """Why the candidate step gave no branch and head, as a stop says it: its exit, the end of its stderr, and the
+        end of what it printed, each scrubbed and bounded like a failed check's words."""
+        env = self.environment()
+        if completed.timed_out:
+            parts = [f"the candidate command timed out after {timeout:g}s"]
+        elif completed.returncode != 0:
+            parts = [f"the candidate command exited {completed.returncode}"]
+        elif resolved is None:
+            parts = ["the candidate command printed no JSON"]
+        else:
+            parts = ["its JSON has no branch and full head"]
+        error = scrubbed_tail(completed.stderr, env)
+        if error:
+            parts.append(f"stderr: {error}")
+        if completed.stdout.strip():
+            parts.append(f"stdout: {scrubbed_tail(completed.stdout, env, CANDIDATE_OUT_LIMIT)}")
+        if len(parts) == 1 and not completed.timed_out:
+            parts.append("it printed nothing")
+        return "; ".join(parts)
+
+    def candidate_step_problems(self, base_head: str) -> list[str]:
+        """What keeps the binding's candidate step from running at this base: see candidate_problems."""
+        def present(relative: str) -> bool:
+            # Through symlinks, as the checkout the step runs in resolves them (.agent-skills/current is one), and
+            # from the top level, where the runner's git runs, so ./tools/x.py is tools/x.py. Only a file counts.
+            looked = self.git("cat-file", "--batch-check", "--follow-symlinks", stdin=f"{base_head}:{relative}\n",
+                              check=False)
+            parts = looked.stdout.split("\n", 1)[0].split()
+            return looked.returncode == 0 and len(parts) == 3 and parts[1] == "blob"
+        return candidate_problems(self.binding["candidate"], present, self.environment().get("PATH"))
 
     # -- sync --------------------------------------------------------------
 
@@ -1340,7 +1516,7 @@ class Runner:
         self.checking(subject, item["title"], [{"label": "sync", "state": "running"}])
         context = context.with_values(branch=branch, head=head)
         checkout = self.checkout(head, "sync", prepare=True, context=context.with_values(treeSha=self.tree(head)))
-        self.merge_base_in(checkout, base_head, branch)
+        self.merge_base_in(checkout, base_head, branch, context)
         declared = self.declared_paths(item)
         self.settle(subject, item, checkout, context, inputs, declared, f"Regenerate after syncing {branch} with {self.base}")
         self.seam("after_sync", subject)
@@ -1376,18 +1552,21 @@ class Runner:
         if undeclared:
             raise Stop("undeclared_change", "a sync step changed files outside the declared paths", undeclared)
 
-    def merge_base_in(self, checkout: Path, base_head: str, branch: str) -> None:
-        self.merge_in(checkout, base_head, base_head, "--theirs", f"Merge {self.base} into {branch}")
+    def merge_base_in(self, checkout: Path, base_head: str, branch: str, context: Context | None = None) -> None:
+        self.merge_in(checkout, base_head, base_head, "--theirs", f"Merge {self.base} into {branch}", context=context)
 
     def merge_in(
         self, checkout: Path, other: str, base_side: str, side: str, message: str, against: str = "the base",
+        context: Context | None = None,
     ) -> None:
         """Merge ``other`` into the checkout; only regenerable paths may conflict, and they take the base side.
 
         ``base_side`` is the commit that holds the base's version of a path and
         ``side`` the checkout option that selects it: the base is the incoming
         side when a candidate syncs, and the checkout's own side when a batch
-        merges a candidate into the tree it has accumulated.
+        merges a candidate into the tree it has accumulated. A conflicted path
+        with a listing takes the base side only when the candidate left its
+        listing as the merge base had it.
         """
         merged = self.git("merge", "--no-ff", "--no-commit", "--no-edit", other, cwd=checkout, check=False)
         conflicts = sorted(set(filter(None, self.git(
@@ -1398,6 +1577,18 @@ class Runner:
         if outside:
             self.git("merge", "--abort", cwd=checkout, check=False)
             raise Stop("source_conflict", f"{against} conflicts outside the regenerable paths", outside)
+        listings = {entry["path"]: entry["argv"] for entry in self.binding["regenerable"].get("listings", [])}
+        if any(path in listings for path in conflicts):
+            # The candidate is the side that isn't the base's: the incoming commit in a batch, the checkout's own in a sync.
+            candidate = other if other != base_side else self.rev("HEAD", cwd=checkout)
+            merge_base = self.git("merge-base", base_side, candidate, cwd=checkout).stdout.strip()
+            try:
+                for path in conflicts:
+                    if path in listings:
+                        self.check_listing(checkout, path, listings[path], merge_base, base_side, candidate, context)
+            except Stop:
+                self.git("merge", "--abort", cwd=checkout, check=False)
+                raise
         for path in conflicts:
             # Take the base side; a path the base deleted stays deleted.
             if self.git("cat-file", "-e", f"{base_side}:{path}", cwd=checkout, check=False).returncode == 0:
@@ -1408,6 +1599,46 @@ class Runner:
         if self.git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=checkout, check=False).returncode == 0:
             # Committed before anything else runs, so every later step sees the new merge base.
             self.git("commit", "--quiet", "-m", message, cwd=checkout)
+
+    def listed_outputs(self, checkout: Path, path: str, argv: list[str], commit: str, which: str,
+                       context: Context | None) -> list[str]:
+        """The outputs one version of ``path`` lists, as its listing command prints them."""
+        shown = self.git("show", f"{commit}:{path}", cwd=checkout, check=False)
+        if shown.returncode != 0:
+            raise Stop("source_conflict", f"{path} is absent at the {which}, so its listings can't be compared; "
+                       "nothing was regenerated", [path])
+        completed = self.run_argv(argv, checkout, context or Context(), self.binding["checkTimeoutSeconds"], stdin=shown.stdout)
+        listed: object = None
+        why = None
+        if completed.timed_out:
+            why = "timed out"
+        elif completed.returncode != 0:
+            why = f"exited {completed.returncode}: {completed.stderr.strip()[-200:]}"
+        elif not completed.stdout.strip():
+            why = "printed nothing"
+        else:
+            try:
+                listed = json.loads(completed.stdout)
+            except (ValueError, RecursionError):
+                listed = None
+            if not isinstance(listed, list) or not all(isinstance(entry, str) for entry in listed):
+                why = "printed something other than a JSON array of strings"
+        if why is not None:
+            raise Stop("source_conflict", f"the listing of {path} at the {which} {why}; nothing was regenerated", [path])
+        return listed  # type: ignore[return-value]
+
+    def check_listing(
+        self, checkout: Path, path: str, argv: list[str], merge_base: str, base: str, candidate: str, context: Context | None,
+    ) -> None:
+        """Stop when the candidate changed what ``path`` lists: regeneration can't restore an output it added or removed."""
+        before = set(self.listed_outputs(checkout, path, argv, merge_base, "merge base", context))
+        self.listed_outputs(checkout, path, argv, base, "base", context)
+        after = set(self.listed_outputs(checkout, path, argv, candidate, "candidate", context))
+        if after != before:
+            changes = [f"added {', '.join(sorted(after - before))}" if after - before else "",
+                       f"removed {', '.join(sorted(before - after))}" if before - after else ""]
+            raise Stop("source_conflict", f"the candidate changed the outputs {path} lists ({'; '.join(filter(None, changes))}); "
+                       "resolve it by hand, taking the candidate's side, and hand off again", [path])
 
     def run_pass(self, subject: str, item: dict, checkout: Path, context: Context, inputs: dict) -> None:
         timeout = self.binding["checkTimeoutSeconds"]
@@ -1514,14 +1745,14 @@ class Runner:
             if changes:
                 raise Stop("no_checks", "nothing would check this candidate's changes")
             result.notes.append("the candidate changes nothing, so no check was selected")
-        self.write_progress([subject], [{"id": check["id"], "state": "pending"} for check in checks])
+        self.write_progress([subject], [{"id": check["id"], "state": "pending", **check_title(check)} for check in checks])
         reused = self.reusable([(subject, item)], checks, self.tree(synced))
         outcomes = self.run_checks([subject], checks, checkout, context.with_values(treeSha=self.tree(synced)), result,
                                    reused=reused)
         self.assert_clean(checkout, "the checkout after the checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
         if failed:
-            self.classify(failed, checks, checkout, base_head, changes, context, result)
+            self.classify(subject, failed, checks, checkout, base_head, changes, context, result)
         self.set_item(subject, stage="checked")
         self.write(assignments={"/meta/baseHead": base_head})
         self.journal("check.finished", f"Checks passed for {item['title']}", subject)
@@ -1792,7 +2023,7 @@ class Runner:
         """Run the checks in order, and record each one the lane's evidence lets this run reuse instead."""
         reused = reused or {}
         outcomes: dict[str, str] = {}
-        records = {check["id"]: {"id": check["id"], "state": "pending"} for check in checks}
+        records = {check["id"]: {"id": check["id"], "state": "pending", **check_title(check)} for check in checks}
         history = self.history()["checks"]
         for check in checks:
             expected = delivery_state.median_seconds(history.get(check["id"], {}).get("seconds", []))
@@ -1915,7 +2146,7 @@ class Runner:
         self.record_history(passed, flaked, int(round(time.monotonic() - began)) if whole else None)
         return outcomes
 
-    def classify(self, failed: list[dict], selected: list[dict], checkout: Path, base_head: str, changes: list[dict], context: Context, result: Result) -> None:
+    def classify(self, subject: str, failed: list[dict], selected: list[dict], checkout: Path, base_head: str, changes: list[dict], context: Context, result: Result) -> None:
         """A failure is the base's own only when the base fails the same check unchanged."""
         changed = {change["path"] for change in changes} | {change.get("oldPath") for change in changes}
         candidates = []
@@ -1935,32 +2166,113 @@ class Runner:
             if unchanged:
                 candidates.append(check)
         if candidates:
+            self.rerun_on_base(subject, candidates, selected, base_head, context)
+        raise Stop("check_failed", "failing checks: " + "; ".join(self.failure_text(check["id"], result) for check in failed))
+
+    def rerun_on_base(self, subject: str, candidates: list[dict], selected: list[dict], base_head: str, context: Context) -> None:
+        """Re-run the failing checks on the base, on the record: the wait is written before it starts, and its verdict journaled.
+
+        The candidate already failed, so the checking panel says it waits on the
+        re-run, and the journal reads failure, re-run start, verdict, stop.
+        Raises base_broken when a check also fails on the base.
+        """
+        names = ", ".join(check["id"] for check in candidates)
+        began = time.monotonic()
+        waiting = {"startedAt": now(), "checks": [check["id"] for check in candidates]}
+
+        def begin(current: dict) -> tuple[dict, dict]:
+            checking = current["meta"]["checking"]["now"]
+            return ({}, {}) if checking is None else ({}, {"/meta/checking/now/baseRerun": waiting})
+
+        self.write(build=begin)
+        self.journal("base.rerun.started",
+                     f"Rerunning {names} on {self.base} at {base_head}, to tell whether the failure is the base's own", subject)
+        verdicts: list[str] = []
+        broken: Stop | None = None
+        try:
             base_checkout = self.checkout(base_head, "base-rerun", context=context.with_values(treeSha=self.tree(base_head)))
             base_context = context.with_values(head=base_head, treeSha=self.tree(base_head))
             by_id = {check["id"]: check for check in selected}
             for check in candidates:
                 if not self.base_prerequisites_pass(check, by_id, base_checkout, base_context):
                     # The check cannot be judged on the base; the failure stays the candidate's.
+                    verdicts.append(f"{check['id']} could not be judged there")
                     continue
                 completed = self.run_one(check, base_checkout, base_context)
                 # A re-run that could not start says nothing about the base.
-                started = completed is not None and (completed.timed_out or completed.returncode is not None)
-                if started and (completed.timed_out or completed.returncode != 0):
-                    raise Stop("base_broken", f"{check['id']} also fails on {self.base} at {base_head}")
-        raise Stop("check_failed", "failing checks: " + "; ".join(self.failure_text(check["id"], result) for check in failed))
+                if not started_run(completed):
+                    verdicts.append(f"{check['id']} could not start there")
+                    continue
+                failures, log = self.rerun_outcome(check["id"], completed)
+                retried = False
+                flake = self.flake_for(check["id"], failures) if failed_run(completed) and not completed.timed_out else None
+                if flake is not None:
+                    # As on the candidate: a failure made only of declared flakes is retried once, on the record.
+                    named = ", ".join(failure["id"] for failure in failures) or "the whole check"
+                    self.journal("check.retried", f"{check['id']} failed on the base re-run only on known flakes "
+                                                  f"({named}; {flake}); retrying once there", subject)
+                    self.record_history({}, {check["id"]: 1}, None)
+                    completed = self.run_one(check, base_checkout, base_context)
+                    retried = True
+                    if not started_run(completed):
+                        self.record_rerun(subject, check["id"], failures, log)
+                        verdicts.append(f"{check['id']} could not start there on its flake retry")
+                        continue
+                    failures, log = self.rerun_outcome(check["id"], completed)
+                self.record_rerun(subject, check["id"], failures, log)
+                if failed_run(completed):
+                    named = failure_words(check["id"], [failure["id"] for failure in failures], log)
+                    verdicts.append(f"{check['id']} also fails{named[len(check['id']):]}")
+                    broken = Stop("base_broken", f"{named} also fails on {self.base} at {base_head}")
+                    break
+                verdicts.append(f"{check['id']} passed{' after a flake retry' if retried else ''} (log {log})")
+        except BaseException as error:
+            self.end_rerun(subject, base_head, began, f"ended without a verdict ({type(error).__name__})")
+            raise
+        verdict = "; ".join(verdicts)
+        if broken is not None:
+            self.end_rerun(subject, base_head, began, f"{verdict}: the base is broken")
+            raise broken
+        self.end_rerun(subject, base_head, began, f"{verdict}: the failure is the candidate's")
+
+    def rerun_outcome(self, check_id: str, completed: Completed) -> tuple[list[dict], str]:
+        """A base re-run's failing tests, as the binding's failure pattern finds them, and its kept log."""
+        failures = self.failures(completed) if failed_run(completed) else []
+        return failures, self.save_log(f"{check_id}.base-rerun", completed)
+
+    def record_rerun(self, subject: str, check_id: str, failures: list[dict], log: str) -> None:
+        """Put a base re-run's failing tests and log on the candidate's queue row, beside its own run's."""
+        rerun = {**({"failures": [failure["id"] for failure in failures]} if failures else {}), "log": log}
+
+        def build(current: dict) -> tuple[dict, dict]:
+            queue = [dict(item) for item in current["queue"]]
+            for item in queue:
+                if item["subject"] == subject:
+                    item["checks"] = [{**row, "baseRerun": rerun} if row["id"] == check_id else row for row in item["checks"]]
+            return {"queue": queue}, {}
+
+        with contextlib.suppress(Stop, delivery_state.StateError):
+            self.write(build=build)
+
+    def end_rerun(self, subject: str, base_head: str, began: float, verdict: str) -> None:
+        """Journal the base re-run's verdict and how long the candidate waited on it, and end the waiting state."""
+
+        def build(current: dict) -> tuple[dict, dict]:
+            checking = current["meta"]["checking"]["now"]
+            if checking is None or "baseRerun" not in checking:
+                return {}, {}
+            return {}, {"/meta/checking/now": {key: value for key, value in checking.items() if key != "baseRerun"}}
+
+        with contextlib.suppress(Stop, delivery_state.StateError):
+            self.write(build=build)
+        self.journal("base.rerun.finished",
+                     f"Base re-run on {self.base} at {base_head} after {int(round(time.monotonic() - began))}s: {verdict}", subject)
 
     @staticmethod
     def failure_text(check_id: str, result: Result) -> str:
         """A failed check as a stop names it: its failing tests and its log."""
         entry = next((item for item in reversed(result.checks) if item["id"] == check_id), {})
-        parts = []
-        if entry.get("failures"):
-            named = [failure["id"] for failure in entry["failures"]]
-            more = f" and {len(named) - STOP_FAILURES} more" if len(named) > STOP_FAILURES else ""
-            parts.append("failing " + ", ".join(named[:STOP_FAILURES]) + more)
-        if entry.get("log"):
-            parts.append("log " + entry["log"])
-        return check_id + (f" ({'; '.join(parts)})" if parts else "")
+        return failure_words(check_id, [failure["id"] for failure in entry.get("failures") or []], entry.get("log"))
 
     def base_prerequisites_pass(self, check: dict, by_id: dict[str, dict], checkout: Path, context: Context) -> bool:
         """Run a check's prerequisites, in order, on the base re-run checkout."""
@@ -2011,8 +2323,14 @@ class Runner:
         timeout = self.binding["checkTimeoutSeconds"]
         if self.run_argv(self.binding["ready"], anchor, context, timeout).returncode != 0:
             raise Stop("ready_refused", f"ready refused {subject}")
-        if self.run_argv(self.binding["merge"], anchor, context, timeout).returncode != 0:
-            raise Stop("merge_refused", f"merge refused {subject} at {synced}")
+        self.review_gate(subject, synced, anchor, context)
+        merging = self.run_argv(self.binding["merge"], anchor, context, timeout)
+        if merging.returncode != 0:
+            # Why it refused, from the command itself: its whole output in a log, a bounded and scrubbed tail here.
+            log = self.save_log("merge", merging)
+            said = "timed out" if merging.timed_out else (scrubbed_tail(merging.stderr, self.environment()) or "printed nothing")
+            raise Stop("merge_refused", f"merge refused {subject} at {synced}: {said}; "
+                                        f"its whole output is in {log} under the state directory")
         merged = self.fetch(self.base, "base")
         result.mergedHead = merged
         parent = self.git("rev-parse", "--verify", "-q", f"{merged}^1", check=False).stdout.strip()
@@ -2022,6 +2340,19 @@ class Runner:
         self.write(assignments={"/meta/baseHead": merged})
         self.journal("candidate.merged", f"Merged {item['title']} at {synced}", subject)
         result.outcome = "merged"
+
+    def review_gate(self, subject: str, synced: str, anchor: Path, context: Context) -> None:
+        """Merge only with a review current at the synced head, when the binding declares a gate that says so."""
+        gate = self.binding.get("reviewGate")
+        if gate is None:
+            return
+        completed = self.run_argv(gate["argv"], anchor, context, gate.get("timeoutSeconds", self.binding["checkTimeoutSeconds"]))
+        if completed.timed_out or completed.returncode != 0:
+            # Its output may carry whatever the forge printed, secrets included: it stays in a log, as a failed check's does.
+            log = self.save_log("review-gate", completed)
+            how = "timed out" if completed.timed_out else f"exited {completed.returncode}"
+            raise Stop("review_not_current", f"the review gate {how}: {subject} has no current review at {synced}; "
+                                             f"its output is in {log} under the state directory")
 
     # -- batch -------------------------------------------------------------
 
@@ -2060,7 +2391,7 @@ class Runner:
                     raise Stop("binding_invalid", f"the binding declares no lead input {unknown}")
                 context = context.with_values(branch=branch, head=head)
                 self.merge_in(checkout, head, accumulated, "--ours", f"Merge {branch} into the batch",
-                              against="the batch built so far")
+                              against="the batch built so far", context=context)
                 declared = self.declared_paths(item)
                 self.settle(subject, item, checkout, context, inputs, declared, f"Regenerate after adding {branch} to the batch")
                 self.compare_with_review(checkout, item["head"], accumulated, declared)
@@ -2096,7 +2427,7 @@ class Runner:
         result.selection = selection
         if not checks and changes:
             raise Stop("no_checks", "nothing would check this batch's changes")
-        self.write_progress(subjects, [{"id": check["id"], "state": "pending"} for check in checks])
+        self.write_progress(subjects, [{"id": check["id"], "state": "pending", **check_title(check)} for check in checks])
         # A member's evidence counts only when the combined tree is the tree it checked.
         reused = self.reusable([(member.subject, member.item) for member in members], checks, members[-1].tree)
         outcomes = self.run_checks(subjects, checks, checkout, context, result, whole_run=whole_run, reused=reused)
@@ -2214,7 +2545,7 @@ class Runner:
                 if found == 1:
                     # Alone on the base, the usual rule tells the base's own failures apart.
                     try:
-                        self.classify(failing.failed, failing.checks, failing.checkout, base_head, failing.changes,
+                        self.classify(culprit.subject, failing.failed, failing.checks, failing.checkout, base_head, failing.changes,
                                       self.context(culprit.subject, base_head), failing.result)
                     except Stop as classified:
                         if classified.reason == "base_broken":
@@ -2508,9 +2839,11 @@ def _refused_stop(directory: Path, subject: str, head: str | None, reason: str) 
 
 
 def _setup_stop(repository: Path, state_directory: Path, *, remote: str, base: str,
-                lead: str) -> tuple[Result, dict | None]:
-    """Read the binding from the base and check the checkout once, under the queue lock, before serving anything."""
+                lead: str) -> tuple[Result, dict | None, list[str]]:
+    """Read the binding from the base and check the checkout once, under the queue lock, before serving anything.
+    Also returns what keeps the binding's candidate step from running, which holds serve rather than ending it."""
     runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead)
+    candidate: list[str] = []
 
     def check(result: Result) -> None:
         with runner.locked():
@@ -2524,12 +2857,19 @@ def _setup_stop(repository: Path, state_directory: Path, *, remote: str, base: s
                 delivery_state.snapshot_config(member, source)
         except delivery_state.StateError as error:
             raise Stop("binding_invalid", str(error)) from None
+        candidate.extend(runner.candidate_step_problems(result.baseHead))
 
     try:
         result = runner.invoke("serve", None, check)
     finally:
         shutil.rmtree(runner._bootstrap_hooks, ignore_errors=True)
-    return result, runner.binding
+    return result, runner.binding, candidate if result.stop is None else []
+
+
+def candidate_hold(problems: list[str]) -> str:
+    """The setup hold's detail for a candidate step that can't run."""
+    return (f"the binding's candidate step can't run: {'; '.join(problems)}. Correct its argv on the base, run it once "
+            "by hand with a branch that exists, then clear meta.hold")
 
 
 def _refresh(repository: Path, state_directory: Path, member: dict) -> None:
@@ -2646,7 +2986,9 @@ def serve(
     (meta.hold, set only where none is) and puts that turn's candidates back
     to queued, since none was at fault, except one whose merge had begun. A
     checkout or binding the runner cannot use ends serve before it takes
-    anything, with that one result. Each turn takes the queue lock afresh, so
+    anything, with that one result. A binding whose candidate step can't run,
+    its program or a script it names missing, holds serve instead, at start and
+    at each of those checks, taking nothing. Each turn takes the queue lock afresh, so
     a serve killed outright is cleared by the next one's recovery. Between
     turns, on the binding's state.refreshSeconds, serve reads the declared
     forge and tracker snapshots and reconciles them, whether or not it is
@@ -2658,8 +3000,11 @@ def serve(
     results: list[Result] = []
     while True:
         # A wrong checkout or binding would refuse every candidate in turn: find it once, before taking any.
-        setup, binding = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+        setup, binding, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
         if setup.stop is None:
+            if candidate:
+                # The binding validates but its candidate step can't run: hold, taking nothing, rather than stop each.
+                hold_for_setup(state_directory, candidate_hold(candidate))
             break
         if setup.stop["reason"] != "queue_locked":
             write_result(state_directory, setup)
@@ -2696,9 +3041,11 @@ def serve(
             pause()
             continue
         # A setup that broke since the last turn would refuse every candidate in turn: hold instead, taking none.
-        checked, _ = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
-        if checked.stop is not None:
-            if checked.stop["reason"] != "queue_locked":
+        checked, _, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+        if checked.stop is not None or candidate:
+            if candidate:
+                hold_for_setup(state_directory, candidate_hold(candidate))
+            elif checked.stop["reason"] != "queue_locked":
                 hold_for_setup(state_directory, checked.stop["detail"])
             if until_idle:
                 return results
@@ -2721,10 +3068,12 @@ def serve(
         cause_known, broken = True, None
         if troubled:
             # A stop or refusal names its code, not its cause: the setup check says whether the setup broke this turn.
-            again, _ = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
+            again, _, candidate = _setup_stop(repository, state_directory, remote=remote, base=base, lead=lead)
             if again.stop is not None:
                 cause_known = again.stop["reason"] != "queue_locked"
-                broken = again if cause_known else None
+                broken = again.stop["detail"] if cause_known else None
+            elif candidate:
+                broken = candidate_hold(candidate)
         for result in taken:
             write_result(state_directory, result)
             if cause_known and broken is None and result in refused:
@@ -2734,7 +3083,7 @@ def serve(
         if broken is not None:
             # None of this turn's candidates was at fault: back to queued, so no lane hands anything off again.
             requeued, kept = _requeue_after_setup(runner, taken, heads)
-            hold_for_setup(state_directory, broken.stop["detail"], kept, requeued)
+            hold_for_setup(state_directory, broken, kept, requeued)
         for result in taken:
             # Reported only once every result is written and every refusal stopped, so a reader never loses them.
             if on_result is not None:

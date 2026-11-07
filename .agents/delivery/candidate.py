@@ -11,9 +11,17 @@ binding = json.loads((Path(__file__).resolve().parents[1] / "orchestration.json"
 listed = subprocess.run(["gh", "pr", "list", "--repo", "kwam1na/agent-skills", "--base", binding["base"]["ref"],
                          "--state", "open", "--limit", "100", "--json", "headRefName,headRefOid,title"],
                         capture_output=True, text=True, check=True).stdout
-# The key opens the title, as `<key>: ...` or `[<key>]: ...`, so a later ticket naming this one isn't taken for it.
-opening = re.compile(r"^\[?" + re.escape(sys.argv[1]) + r"[\],:]")
-pulls = [pull for pull in json.loads(listed) if opening.match(pull["title"])]
+
+
+def named(title: str) -> list[str]:
+    """The keys a title opens with, as `<key>: ...`, `[<key>]: ...` or `[<key>, <key>]: ...`, read as the forge snapshot
+    reads them, so a change request the line map counts for a key is the one its candidate step finds. A later ticket
+    naming this one further on isn't taken for it."""
+    opening = re.match(r"^\[([^\]]+)\]", title.strip()) or re.match(r"^([^\s:\[\]]+):\s", title.strip())
+    return [part for part in re.split(r"[\s,]+", opening.group(1)) if part] if opening else []
+
+
+pulls = [pull for pull in json.loads(listed) if sys.argv[1] in named(pull["title"])]
 if len(pulls) != 1:
     sys.exit(f"{sys.argv[1]}: expected one open change request, found {len(pulls)}")
 print(json.dumps({"branch": pulls[0]["headRefName"], "head": pulls[0]["headRefOid"]}))

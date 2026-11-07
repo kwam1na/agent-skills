@@ -214,6 +214,57 @@ Lane 1, tier 5, after V26-3088. If the close-out refuses to merge without this r
 only that the words are there. Files: `references/orchestration-guide.md`, `run_delivery.py`, `tests/test_run_delivery.py`. Sensors: `tests/test_run_delivery.py`,
 the `orchestrate-work` corpus pins.
 
+### V26-3171. Check only the timed-out group's own pids in run-delivery's timeout test
+
+Lane 2, added by the lead when the queue stopped with `base_broken` on it, ahead of lane 2's other work. The test's machine-wide
+`pgrep -f "sleep 30"` fails whenever a lane's own test run has a `sleep 30` alive, so it broke the base for V26-2951's check. Files:
+`tests/test_run_delivery.py`. Sensors: `tests/test_run_delivery.py`, run while an unrelated `sleep 30` is alive.
+
+### V26-3181. Find why a SupervisorPostureTests case failed once in a loaded full run
+
+Lane 2, added by the lead after V26-3091, because it can stop the queue as V26-3171's flake did. Lane 2 found the cause: `archive_delivery` names
+the archive folder to the second and creates it without `exist_ok`, so two archives in the same second collide with `FileExistsError`. Files:
+`run_delivery.py`, `tests/test_run_delivery_supervisor.py`. Sensors: `tests/test_run_delivery_supervisor.py`, including two archives in one second.
+
+### V26-3191. Retry run-delivery's lead writes when the record moved under them
+
+Lane 2, added by the lead after V26-3181, because it failed V26-3091's queue check: `lead_assign` patches pinned to the version it read, so a
+supervisor write in between fails the guide's end-to-end test with `version_stale`. Files: `run_delivery.py`, `tests/test_run_delivery.py`.
+Sensors: `tests/test_run_delivery.py`, with a write forced between read and patch.
+
+### V26-3215. Have the merge queue's base rerun honour flakes, keep its log, and name its failing tests
+
+Lane 1, added by the lead after V26-2807, as the follow-up V26-3089 deferred: lane-1's planned stories wait on lane-2's chain, and this one is
+unblocked in lane-1's files. Files: `merge_queue.py`, `schemas.json`, `references/orchestration-guide.md`, `tests/test_merge_queue.py`,
+`tests/test_orchestration_state.py`. Sensors: `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`, the corpus guards.
+
+### V26-3218. The adoption guide's end-to-end test sometimes finds a lane's checkout still there after its merge
+
+Lane 3, added by the lead after the row failed twice in lane-2's runs, the second time on a branch without V26-3087. V26-3108's cleanup wait is
+the first suspect. Diagnose before any code. Files: `tests/test_run_delivery.py` and, if the product is wrong, `run_delivery.py`, both moved
+from lane-2 once the cause is known. Sensors: `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_lane_rows.py`.
+
+### V26-3228. Tighten setup's interpreter-operand rule for Python's -I and Node's module-loading flags
+
+Lane 2, added by the lead after V26-3088, whose review deferred these two edges at its round bound. Files: `merge_queue.py`, `run_delivery.py`,
+`tests/test_merge_queue.py`, `tests/test_run_delivery.py`. Sensors: those tests and the corpus guards.
+
+### V26-3239. Describe the delivery record's close marks in the orchestration guide and run-delivery's SKILL.md
+
+Lane 2, added by the lead after V26-3109, whose hand-off named this doc gap. It starts once V26-3109 merges. Files:
+`references/orchestration-guide.md`, `skills/run-delivery/SKILL.md`, and the corpus pins that guard the close-out. Sensors: those pins and
+`tests/test_run_delivery.py`.
+
+### V26-3178. Refuse a hand-off whose --run another subject already holds
+
+Lane 1, added by the lead while V26-2986 waits for V26-3064 to merge: a follow-up lane 1 found at V26-3005's hand-off. Files: `delivery_state.py`,
+`tests/test_orchestration_state.py`. Sensors: `tests/test_orchestration_state.py`, `tests/test_registry.py`.
+
+### V26-3192. Close the round-brief drift test's three remaining gaps
+
+Lane 3, added by the lead after V26-3085: the three gaps V26-3085's last review round passed on, in lane 3's own test. Files:
+`tests/test_round_brief_template_corpus.py`, and the two round-brief templates only where an entry is reconciled. Sensors: that test.
+
 ### V26-3105. Prove this repository's own delivery path on its first real run
 
 The lead, tier 6, after all others. The merges and snapshots of this delivery are its evidence. The lead also fixes or declines the two small gaps. Files:

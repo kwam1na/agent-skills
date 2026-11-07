@@ -1194,3 +1194,27 @@ test("a close-out skipped under the posture says so, with its source and reason,
   const plain = await first(document, plan);
   expect(plain.querySelector("#plan .plan-close-out")).toBeNull();
 });
+
+test("a plan unit's review proof holds at the head the lead carried its evidence to, and only there", async () => {
+  const folder = path.join(CORPUS, "plan-records");
+  const handed = readJson(path.join(folder, "handed.json"));
+  const kinds = [...RECORD_KINDS, APP_KIND];
+  const reviewed = handed.state.queue.find((entry) => entry.subject === "native-sync").head;
+  const next = headOf("native-sync", 7);
+  // The lane handed the unit off again at a fixture commit after its last round.
+  const moved = (carried) => {
+    const document = structuredClone(handed);
+    const entry = document.state.queue.find((item) => item.subject === "native-sync");
+    entry.head = next;
+    const last = document.journal[document.journal.length - 1];
+    document.journal.push({ id: last.id + 1, at: last.at, kind: "candidate.handed", lane: entry.lane, subject: "native-sync", summary: "Handed off again" });
+    if (carried) { document.reviewEvidence["native-sync"].carried = carried; }
+    return document;
+  };
+  const plan = planFor([unit("journal-sync"), unit("native-sync")], { kinds });
+  const carry = { from: reviewed, to: next, note: "The lead carried native-sync's review: only a fixture changed" };
+  const review = async (document) => proofs(await first(document, plan), "native-sync").Review;
+  expect(await review(moved(carry))).toBe("done: approved");
+  expect(await review(moved(null))).toBe("stale: approved for another head");
+  expect(await review(moved({ ...carry, to: headOf("native-sync", 8) }))).toBe("stale: approved for another head");
+});

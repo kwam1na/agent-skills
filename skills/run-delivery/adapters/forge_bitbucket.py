@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """run-delivery forge adapter for Bitbucket Cloud.
 
+  candidate --key KEY [--prefix P]                       -> {"branch": P+KEY, "head": its tip} (P defaults to feature/)
   find --source BRANCH                                   -> {"url": ...} for its open PR, or {}
   open --source B --destination D --title T --body-file F -> {"url": ...}  (opened as a draft)
   get  --url URL                                          -> {"url", "state": open|merged|closed, "draft", "head", "source",
@@ -9,15 +10,18 @@
                                                               "reviews": [{"author", "at", "body"}]}
   ready --url URL                                         -> {"url", "draft": false}
   merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
-  merge --source BRANCH --head SHA --strategy merge|squash -> {"url", "state": "merged"}
+  merge --source BRANCH --head SHA --strategy merge|squash [--destination D] -> {"url", "state": "merged"}
 
 Environment: FLOW_FORGE_REPOSITORY (workspace/repo) and FLOW_FORGE_TOKEN_ENV (the name of the variable holding a
 token Bitbucket accepts as a bearer token). Prints JSON on stdout; exits 1 with a message on stderr otherwise.
-It writes three ways: it opens a pull request as a draft (a lane's open-pr), marks one ready (the lead's acceptance,
+`candidate` is a merge queue's candidate step for the conventional branch: it prints the branch `--prefix` + `--key`
+names and that branch's full tip, and refuses when no branch has that name or when several answer to it, differing
+only in case, as a case-insensitive checkout would mix them. It writes three ways: it opens a pull request as a draft (a lane's open-pr), marks one ready (the lead's acceptance,
 under the delivery's readyPullRequests grant), and merges one (the binding's merge step), refusing a head that moved
 when --head is given. `merge --source` merges the branch's one open pull request at exactly `--head`, so a binding's
 merge step, which knows the branch and the checked head but not the pull request, can call it; it refuses a branch
-with no open pull request or with more than one. Neither the token nor the Authorization value is ever printed.
+with no open pull request or with more than one. With the optional `--destination`, which a binding serving several
+bases passes as `{base}`, it also refuses unless that pull request targets that branch, so a pull request retargeted to another base is never merged. Neither the token nor the Authorization value is ever printed.
 """
 
 import argparse
@@ -75,6 +79,19 @@ STRATEGIES = {"merge": "merge_commit", "squash": "squash"}
 CHECK_STATES = {"SUCCESSFUL": "passed", "FAILED": "failed", "STOPPED": "failed", "INPROGRESS": "pending"}
 
 
+def resolve_candidate(forge, branch, tips):
+    """The candidate step's answer from the forge's branches and their tips: exactly the one named, at a full hash."""
+    answering = sorted(name for name in tips if name.lower() == branch.lower())
+    if len(answering) > 1:
+        fail(f"{forge}: {len(answering)} branches on {REPO} answer to {branch} ({', '.join(answering)}), not one; "
+             "not resolved")
+    if branch not in tips:
+        fail(f"{forge}: no branch {branch} on {REPO}; not resolved")
+    if not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", tips[branch]):
+        fail(f"{forge}: {branch}'s tip {tips[branch]!r} is not a full commit hash; not resolved")
+    return {"branch": branch, "head": tips[branch]}
+
+
 def pr_number(url):
     match = re.fullmatch(rf"https://bitbucket\.org/{re.escape(REPO)}/pull-requests/(\d+)/?", url)
     if not match:
@@ -92,6 +109,7 @@ def pages(path):
 def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("candidate"); p.add_argument("--key", required=True); p.add_argument("--prefix", default="feature/")
     p = sub.add_parser("find"); p.add_argument("--source", required=True)
     p = sub.add_parser("open"); p.add_argument("--source", required=True); p.add_argument("--destination", required=True)
     p.add_argument("--title", required=True); p.add_argument("--body-file", required=True)
@@ -100,9 +118,16 @@ def main():
     p = sub.add_parser("ready"); p.add_argument("--url", required=True)
     p = sub.add_parser("merge"); target = p.add_mutually_exclusive_group(required=True)
     target.add_argument("--url"); target.add_argument("--source")
+    p.add_argument("--destination", help="with --source: the branch the pull request must target")
     p.add_argument("--strategy", choices=tuple(STRATEGIES), required=True); p.add_argument("--head")
     args = parser.parse_args()
-    if args.command == "find":
+    if args.command == "candidate":
+        branch = args.prefix + args.key
+        query = urllib.parse.quote(f'name ~ "{branch}"')
+        tips = {entry["name"]: (entry.get("target") or {}).get("hash", "")
+                for entry in pages(f"/refs/branches?q={query}&pagelen=100")}
+        print(json.dumps(resolve_candidate("bitbucket", branch, tips)))
+    elif args.command == "find":
         query = urllib.parse.quote(f'source.branch.name="{args.source}" AND state="OPEN"')
         values = call("GET", f"/pullrequests?q={query}").get("values", [])
         print(json.dumps({"url": values[0]["links"]["html"]["href"]} if values else {}))
@@ -125,6 +150,8 @@ def main():
         call("PUT", f"/pullrequests/{pr_number(args.url)}", {"draft": False})
         print(json.dumps({"url": args.url, "draft": False}))
     elif args.command == "merge":
+        if args.destination is not None and not args.source:
+            fail("bitbucket: merge --destination applies only with --source; not merged")
         if args.source:
             if not args.head:
                 fail("bitbucket: merge --source needs --head, the head the merge is pinned to")
@@ -136,10 +163,16 @@ def main():
             args.url = values[0]["links"]["html"]["href"]
         number = pr_number(args.url)
         if args.head:
-            # Bitbucket's merge takes no expected head, so the head is checked just before it.
-            head = call("GET", f"/pullrequests/{number}")["source"]["commit"]["hash"]
+            # Bitbucket's merge takes no expected head or destination, so both are checked just before it.
+            pr = call("GET", f"/pullrequests/{number}")
+            head = pr["source"]["commit"]["hash"]
             if not (head.startswith(args.head) or args.head.startswith(head)):
                 fail(f"bitbucket: {args.url} is at {head[:12]}, not {args.head[:12]}; not merged")
+            if args.destination is not None:
+                target = ((pr.get("destination") or {}).get("branch") or {}).get("name")
+                if target != args.destination:
+                    fail(f"bitbucket: {args.source}'s open pull request targets {target}, not {args.destination}; "
+                         "not merged")
         call("POST", f"/pullrequests/{number}/merge", {"merge_strategy": STRATEGIES[args.strategy],
                                                        "close_source_branch": False})
         print(json.dumps({"url": args.url, "state": "merged"}))

@@ -6,7 +6,7 @@ import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { CORPUS, RENDER, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderIn, repository, summarize } from "./support.mjs";
+import { CORPUS, RENDER, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderIn, repository, runSync, summarize } from "./support.mjs";
 import { FIX, readings, reportView } from "./round-reports.mjs";
 
 const SOURCE = path.join(CORPUS, "source");
@@ -323,6 +323,123 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   const running = checking.querySelector(".ck-run");
   expect(running.querySelector(".sr").textContent).toBe(`Running ${ids[12]} · 20m so far`);
   expect(running.className).toBe("ck-run");
+});
+
+test("names each check by the title its provider gave, by its id where none was given, and cuts a long title short", async () => {
+  const document = fixtureDocument();
+  const now = document.state.meta.checking.now;
+  const long = "Behaviour scenario: shop-storefront-composition " + "x".repeat(200);
+  const titles = { "webapp typecheck": "Webapp typecheck (tsc)", "storefront build": "Storefront build <img src=x onerror=alert(1)>", "checkout end-to-end": long };
+  now.steps.forEach((step) => { if (titles[step.label]) { step.title = titles[step.label]; } });
+  document.state.queue[1].checks[0].title = "Webapp e2e (Playwright)";
+  const [{ app }, stopped] = await open(document, { steps: [{ click: '.stop-btn[data-subject="PAY-2360"]' }] });
+  const checking = app.querySelector(".checking");
+  // Titled checks show their title; the old ones beside them, with no title, keep their id.
+  const shown = [...checking.querySelectorAll(".ck-step")].map((step) => step.textContent);
+  const cut = long.slice(0, 79) + "…";
+  expect(shown).toEqual(["waiting: " + cut, "waiting: payments behavior scenarios",
+    "passed: Webapp typecheck (tsc)", "passed: checkout unit tests", "reused: convex audit"]);
+  // The full title is there to read on the cut one, and the id stays the check's name for everything that matches on it.
+  expect(checking.querySelector(".ck-step.pending").getAttribute("title")).toBe(long);
+  // Record text never becomes markup.
+  expect(checking.querySelector(".ck-run .sr").textContent).toMatch(/^Running Storefront build <img src=x onerror=alert\(1\)> · /);
+  expect(checking.querySelector("img")).toBeNull();
+  // A failed check, in the stopped piece's detail and in the failed list, goes by its title too.
+  expect(stopped.app.querySelector("#detail").textContent).toContain("Webapp e2e (Playwright) failed: declined card shows the retry button");
+  // An uncut title needs nothing more to read; only a cut one carries the whole.
+  expect([...checking.querySelectorAll(".ck-step[title]")]).toHaveLength(1);
+  const failing = JSON.parse(JSON.stringify(document));
+  const typecheck = failing.state.meta.checking.now.steps.find((step) => step.label === "webapp typecheck");
+  typecheck.state = "failed";
+  // The unit tests start first and run alongside the typecheck, which takes the row below.
+  Object.assign(failing.state.meta.checking.now.steps.find((step) => step.label === "checkout unit tests"),
+    { title: "Checkout unit tests (vitest)", startedAt: "2026-10-22T05:04:00Z" });
+  const [failedShown, hovered] = await open(failing, { steps: [{ hover: ".rl-seg.failed" }] });
+  const fails = [...failedShown.app.querySelectorAll(".ck-fails li")];
+  expect(fails.map((entry) => entry.querySelector(".ck-f").textContent)).toEqual(["Failed: Webapp typecheck (tsc)"]);
+  expect(fails[0].getAttribute("data-check")).toBe("webapp typecheck");
+  // Pointing at a check on the run line names it, and the check it ran alongside, by title.
+  const card = hovered.app.querySelector(".issue-card");
+  expect(card.querySelector("b").textContent).toBe("Webapp typecheck (tsc)");
+  expect([...card.querySelectorAll(".ic-s")].map((line) => line.textContent)).toContain("Ran alongside Checkout unit tests (vitest)");
+  // A running check that finishes since the last draw rests on its result, by title.
+  const later = JSON.parse(JSON.stringify(document));
+  Object.assign(later.state.meta.checking.now.steps.find((step) => step.label === "storefront build"),
+    { state: "passed", finishedAt: "2026-10-22T05:09:30Z" });
+  const [, pushed] = await open(document, { store: {}, steps: [{ push: later }] });
+  expect(pushed.app.querySelector(".ck-run.settled .ck-run-name")?.textContent).toBe("Storefront build <img src=x onerror=alert(1)> passed");
+});
+
+test("says a piece whose check failed is waiting on the main line's rerun, on the line, in its detail and in the now block", async () => {
+  const document = fixtureDocument();
+  const now = document.state.meta.checking.now;
+  const building = now.steps.find((step) => step.label === "storefront build");
+  Object.assign(building, { state: "failed", finishedAt: "2026-10-22T05:06:50Z" });
+  now.baseRerun = { startedAt: "2026-10-22T05:07:00Z", checks: ["storefront build"] };
+  document.journal.push(
+    { at: "2026-10-22T05:06:55Z", id: 40, kind: "check.failed", lane: "payments", subject: "PAY-2361", summary: "Check failed: storefront build" },
+    { at: "2026-10-22T05:07:00Z", id: 41, kind: "base.rerun.started", lane: "payments", subject: "PAY-2361", summary: "Rerunning storefront build on main" },
+  );
+  const steps = [{ click: '.stop-btn[data-subject="PAY-2361"]' }];
+  const [first, shown] = await open(document, { steps });
+  const checking = first.app.querySelector(".checking");
+  expect(checking.querySelector(".ck-h-words")?.textContent).toBe("Failed, waiting on the main line's rerun");
+  expect(checking.querySelector(".ck-rerun")?.textContent)
+    .toBe("Rerunning storefront build on the main line, to tell whether it fails there too · started 3 minutes ago");
+  expect(checking.querySelector(".ck-verdict")?.textContent).toMatch(/^Won't merge from this run\./);
+  const stop = first.app.querySelector('.stop-btn[data-subject="PAY-2361"]');
+  expect(stop.getAttribute("aria-label")).toBe("Retry card payments once on a dropped connection, Failed, waiting on the main line's rerun");
+  const meta = shown.app.querySelector("#detail .d-meta");
+  expect(meta.querySelector(".d-stage").textContent).toContain("Failed, waiting on the main line's rerun · Waiting on the rerun since 3 minutes ago");
+  expect(meta.querySelector(".d-stage-time").getAttribute("aria-label")).toBe("Recorded base rerun start: 2026-10-22T05:07:00Z");
+  // The piece's merge check lists the rerun after the failure, and names it as the last step.
+  const history = shown.app.querySelector("#detail .mh");
+  expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Rerun on the main line 3 minutes ago · /);
+  expect([...history.querySelectorAll("li span")].map((row) => row.textContent).slice(-2))
+    .toEqual(["Check failed: storefront build", "Rerunning storefront build on main"]);
+  // Its verdict reads as one in the feed and as the merge check's last step.
+  const verdict = JSON.parse(JSON.stringify(document));
+  verdict.journal.push({ at: "2026-10-22T05:09:00Z", id: 42, kind: "base.rerun.finished", lane: "payments", subject: "PAY-2361",
+    summary: "Base re-run on main after 120s: storefront build passed: the failure is the candidate's" });
+  const [, verdictShown] = await open(verdict, { steps });
+  expect([...verdictShown.app.querySelectorAll(".who")].map((who) => who.textContent)).toContain("Rerun verdict · Payments · PAY-2361");
+  expect(verdictShown.app.querySelector("#detail .mh summary .mh-sub").textContent).toMatch(/^ · Rerun verdict a minute ago · /);
+  // Rendered between the panel's write and the started entry, the wait's time comes from the panel.
+  const unjournaled = JSON.parse(JSON.stringify(document));
+  unjournaled.journal = unjournaled.journal.filter((entry) => entry.kind !== "base.rerun.started");
+  const [, unjournaledShown] = await open(unjournaled, { steps });
+  expect(unjournaledShown.app.querySelector("#detail .d-stage-time").getAttribute("aria-label")).toBe("Recorded base rerun start: 2026-10-22T05:07:00Z");
+  // A piece the panel names that is no longer being checked is not waiting on a rerun.
+  const settled = JSON.parse(JSON.stringify(document));
+  settled.state.queue[2].stage = "checked";
+  const [settledShown] = await open(settled);
+  expect(settledShown.app.querySelector('.stop-btn[data-subject="PAY-2361"]').getAttribute("aria-label"))
+    .toBe("Retry card payments once on a dropped connection, Checked, about to merge");
+  // A batch keeps its own header, and the rerun line still says the run is waiting on the main line.
+  const batch = JSON.parse(JSON.stringify(document));
+  const summary = "Checking Retry card payments once on a dropped connection, Keep the order number on the receipt page as one batch";
+  batch.state.queue[3].stage = "checking";
+  batch.journal.push(
+    { at: "2026-10-22T05:05:00Z", id: 43, kind: "check.started", lane: "payments", subject: "PAY-2361", summary },
+    { at: "2026-10-22T05:05:00Z", id: 44, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary },
+  );
+  const [batchShown] = await open(batch);
+  expect(batchShown.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
+  expect(batchShown.app.querySelector(".checking .ck-rerun")?.textContent)
+    .toBe("Rerunning storefront build on the main line, to tell whether it fails there too · started 3 minutes ago");
+  // The same failure before the rerun starts, or once it is over, is a check that failed, not a wait on the main line.
+  delete document.state.meta.checking.now.baseRerun;
+  const [before] = await open(document);
+  expect(before.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked now");
+  expect(before.app.querySelector(".checking .ck-rerun")).toBeNull();
+  expect(before.app.querySelector('.stop-btn[data-subject="PAY-2361"]').getAttribute("aria-label"))
+    .toBe("Retry card payments once on a dropped connection, Being checked before merge");
+  // A rerun the panel names for another piece says nothing about this one.
+  document.state.meta.checking.now.baseRerun = { startedAt: "2026-10-22T05:07:00Z", checks: ["storefront build"] };
+  document.state.meta.checking.now.subject = "PAY-2362";
+  const [other] = await open(document);
+  expect(other.app.querySelector('.stop-btn[data-subject="PAY-2361"]').getAttribute("aria-label"))
+    .toBe("Retry card payments once on a dropped connection, Being checked before merge");
 });
 
 test("matches a note to a check whose name ends in punctuation", async () => {
@@ -990,7 +1107,7 @@ test("draws checks as chips up to twelve, says a run is stale after ninety minut
 
 test("follows the live server through the adapter it injects into the page", async () => {
   // The page exactly as the server serves it at /view/: the adapter goes in right after the opt-in marker.
-  const served = spawnSync("python3", ["-B", "-c", [
+  const served = runSync("python3", ["-B", "-c", [
     "import sys; sys.path.insert(0, sys.argv[1]); import render_state as r",
     "sys.stdin.reconfigure(encoding='utf-8'); sys.stdout.reconfigure(encoding='utf-8', newline='\\n')",
     "page = sys.stdin.read()",
@@ -1034,7 +1151,7 @@ test("prints the page for a document on stdin, and nothing for anything else", a
     expect(block(good.page, "delivery-runs")).toEqual({ "run-7": { runId: "run-7", unavailable: true } });
     // renderIn sends its document as JSON, so the raw text goes to the same command directly.
     for (const bad of ["not json", "[1]", "null"]) {
-      const result = spawnSync("python3", ["-B", RENDER, "line-map", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json"],
+      const result = runSync("python3", ["-B", RENDER, "line-map", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json"],
         { cwd: root, input: bad, encoding: "utf8" });
       expect(result.status).toBe(1);
       expect(result.stdout).toBe("");
@@ -1043,4 +1160,24 @@ test("prints the page for a document on stdin, and nothing for anything else", a
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("shows a planned story's bound run's rounds before its hand-off", async () => {
+  // The record a lane leaves once it binds its run with bind-run: the planned element carries the run, nothing is queued.
+  const planned = (runId) => ({ state: { lanes: [], queue: [], planned: [{ subject: "PAY-2370", title: "Work in flight", lane: "storefront",
+    stage: "review", ...(runId ? { runId } : {}) }] }, journal: [] });
+  const round = { round: 1, at: "2026-10-22T04:40:00Z", outcome: "changes", findings: { P0: 0, P1: 1, P2: 0, P3: 0 },
+    raised: [{ id: "F1", lens: "lens.adversarial-testing", severity: "P1", summary: "A row reaches the wait by the wrong path", state: "open",
+      deferredIssue: null }], settled: [] };
+  const summary = { runId: "run-9", ticket: null, open: true, status: null, startedAt: null, lastAt: null, durationSeconds: null, rounds: 1,
+    findings: null, roundDetail: [round] };
+  const [bound] = await open(planned("run-9"), {}, render(planned("run-9"), { "run-9": summary }));
+  expect(bound.app.querySelector("#detail .d-run-none")).toBeNull();
+  expect(bound.app.querySelector("#detail .run-card .run-card-head b")?.textContent).toBe("Round 1");
+  expect(bound.app.querySelector("#detail .run-finding-text")?.textContent).toBe("A row reaches the wait by the wrong path.");
+  // Without a bound run the same stop has nothing to show until the lane reduces a round.
+  const [unbound] = await open(planned(null), {}, render(planned(null), { "run-9": summary }));
+  expect(unbound.app.querySelector("#detail .run-card")).toBeNull();
+  expect(unbound.app.querySelector("#detail .d-run-none")?.textContent)
+    .toBe("No review rounds yet. Each round shows here as soon as the lane reduces it, before the hand-off.");
 });

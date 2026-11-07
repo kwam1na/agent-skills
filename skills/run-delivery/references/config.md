@@ -174,7 +174,7 @@ checks may need no file at all.
   },
   "ship": {                                   // optional
     "from": "origin/main",                    // the product branch's base
-    "toolingCommit": "abc1234",               // the delivery-only commit; what follows it under `paths` ships
+    "toolingCommit": "abc1234",               // the last delivery-only commit: its files never ship, see below
     "paths": ["src/"],
     "branch": "ship/{delivery}",
     "checkout": ".orchestration/lanes/{branch}", // default: beside the lane checkouts
@@ -182,6 +182,12 @@ checks may need no file at all.
   }
 }
 ```
+
+`ship` builds the product-only branch from the delivery's changes under `paths` since the base and `ship.from` last
+met, so changes the base merged from the default branch aren't shipped again. The tooling never ships, whenever it
+changed: every file the tooling commits touched (from that meeting point to `toolingCommit`), `.agents`,
+`.agent-skills` and `gateTooling` are left out. A file the tooling commits touched that changed again after
+`toolingCommit` is left out too, and `ship` names each one, since a product change there doesn't ship.
 
 `ship` runs the prepare steps and the gates in the ship checkout, with `{base}` as `ship.from`. The ship tree carries
 only the ship paths, so a gate script that lives with the delivery's tooling isn't there. `ship` lends it for the run:
@@ -223,13 +229,21 @@ The command is called with one of:
   pending.
 - `merge --url URL --strategy merge|squash [--head SHA]` merges the PR through the forge and prints `{"url", "state":
   "merged"}`, refusing a PR whose head moved from `--head`.
-- `merge --source BRANCH --head SHA --strategy merge|squash` merges the branch's one open PR, at exactly `--head`. It
-  refuses a branch with no open PR or with more than one, and a PR whose head isn't `--head`. A binding's `merge` step,
-  which knows the branch and the checked head but not the PR, calls it directly:
-  `["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge", "--source",
-  "{branch}", "--head", "{expectedHead}", "--strategy", "merge"]`, with `FLOW_FORGE_REPOSITORY` and
+- `merge --source BRANCH --head SHA --strategy merge|squash [--destination D]` merges the branch's one open PR, at
+  exactly `--head`. It refuses a branch with no open PR or with more than one, and a PR whose head isn't `--head`. With
+  `--destination`, it also refuses a PR that doesn't target `D`, naming the base it does target. `--destination` is
+  optional, but a binding that serves several bases should pass it as `{base}`, or a PR retargeted in the forge merges
+  into another base. A binding's `merge` step, which knows the branch and the checked head but not the PR, calls it
+  directly: `["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "merge",
+  "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"]`, with `FLOW_FORGE_REPOSITORY` and
   `FLOW_FORGE_TOKEN_ENV` in the binding's `environment`. A repository that merges through its forge needs no merge
   script of its own.
+- `candidate --key KEY [--prefix P]` prints `{"branch", "head"}` for the branch named `P` + `KEY` (`P` is `feature/`
+  unless given) and its tip, a full commit hash, read from the forge. It refuses when no branch has that name, and when
+  several answer to it, differing only in case. A binding's `candidate` step can call it directly, so a repository
+  whose story branches follow the convention needs no candidate script of its own:
+  `["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py", "candidate", "--key",
+  "{candidate}"]`.
 
 `FLOW_FORGE_REPOSITORY` and `FLOW_FORGE_TOKEN_ENV` carry the `forge` settings. Both shipped adapters answer every
 command. With `forge.mergeNeedsReady` set, `doctor` reports a delivery without the `readyPullRequests` grant, and
@@ -261,10 +275,10 @@ and every lead command repeats it. It keeps the merge queue's `serve` and the li
 5. the binding's `state` publishers; then "Needs you", written over the last pass's list in the record's
    `needs-you.json`; then the binding's renderers, so the line map shows this pass's list;
 6. a copy of the record and the flow log into `latest` at the archive location, under the state lock;
-7. the close-out, when the close condition holds, after that cleanup once more, so a lane that moved off its story during the pass doesn't leave its checkout behind a closed delivery.
+7. the close-out, when the close condition holds. When the only thing holding it is a merged story's checkout still there, the pass first runs that cleanup once more and reads the condition again, so a lane that moved off its story during the pass doesn't leave its checkout behind a closed delivery, and a checkout the cleanup can't remove holds the close until a later pass removes it.
 
-The close condition: every planned and queued story merged or removed, every finish line met, every lane idle or
-done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,
+The close condition: every planned and queued story merged or removed, every merged story's checkout cleaned up, every
+finish line met, every lane idle or done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,
 never read back: a failed `fullHealth` at the
 current base head, unless the base declares the `focused` posture, a broken base, a blocked lane or one waiting on the lead, an unresolved `blocker.recorded`, a
 child that won't stay up, and the tracker publisher's own items. `lead-resolve <journal id> --why TEXT` resolves a
@@ -441,7 +455,8 @@ checks `signedIn` (falling back to `ready`) rather than `ready`.
 - Each `failed` entry has its time (`at`). A fail check needs every failure to come before the first eval.
 
 **The build.** `run_delivery.py build` writes `<artifact>/.flow-build.json` with `{head, tree}`, and so does a gate that is
-the build. The serve command must serve that file at `/.flow-build.json`.
+the build. It takes a story key, or none for the integration build of the whole delivery, which fills `{key}` with the
+delivery's own key. The serve command must serve that file at `/.flow-build.json`.
 
 `run_delivery.py adapter-test` runs a repository's serve and check adapters against a fixture page (the skill's `assets/adapter-fixture/` folder), under
 the lease, and fails if they break this contract.

@@ -41,6 +41,7 @@ import argparse
 import contextlib
 import datetime
 import fcntl
+import collections
 import fnmatch
 import hashlib
 import json
@@ -776,9 +777,12 @@ def context_section(sections: list[tuple[int, str, str]], name: str) -> str | No
     return next((body for _, title, body in sections if title == name or title.startswith(name)), None)
 
 
-def plan_context(key: str) -> str:
+def plan_context(key: str, text: str | None = None) -> str:
+    """The plan's part for one story: its section, the table rows naming it and the delivery's context sections. From
+    `text` when given (the plan at a named commit), else as the settings shelf reads it."""
     c = cfg()
-    text = c.shelf.text(c.plan)
+    if text is None:
+        text = c.shelf.text(c.plan)
     if text is None:
         raise Stop(f"the plan {c.shelf.where(c.plan)} is missing")
     sections = plan_sections(text)
@@ -799,8 +803,63 @@ def plan_context(key: str) -> str:
 
 # -- lane: review rounds -------------------------------------------------------------------
 
-def lens_checkout(key: str, round_no: int, short: str) -> Path:
-    return repo() / cfg().work / "lens" / f"{key}-r{round_no}-{short}"
+def lens_checkout(key: str, short: str) -> Path:
+    """A lens's one checkout for a story's review, kept across its rounds."""
+    return repo() / cfg().work / "lens" / f"{key}-{short}"
+
+
+def prepared_stamp(checkout: Path) -> Path:
+    """Beside the checkout, not in it: what the checkout was last prepared for."""
+    return checkout.with_name(checkout.name + ".prepared.json")
+
+
+# Files that decide what the prepare commands install, by name at any depth, besides the files those commands name.
+DEPENDENCY_FILES = {"package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+                    "bun.lockb", "pyproject.toml", "setup.py", "setup.cfg", "uv.lock", "poetry.lock", "Pipfile",
+                    "Pipfile.lock", "Gemfile", "Gemfile.lock", "go.mod", "go.sum", "Cargo.toml", "Cargo.lock",
+                    ".python-version", ".nvmrc", ".node-version", ".tool-versions"}
+
+
+def dependency_fingerprint(candidate: str, commands: list[list[str]]) -> str:
+    """The prepare commands and the candidate's blobs of every dependency file: a change in either re-prepares."""
+    named = {a.removeprefix("./") for argv in commands for a in argv}
+    picked = []
+    for line in filter(None, git("ls-tree", "-r", "-z", "--full-tree", candidate).split("\0")):
+        path = line.split("\t", 1)[1]
+        name = path.rsplit("/", 1)[-1]
+        if name in DEPENDENCY_FILES or re.fullmatch(r"requirements.*\.txt", name) or path in named:
+            picked.append(line)
+    return hashlib.sha256(json.dumps([commands, picked]).encode()).hexdigest()
+
+
+def ready_lens_checkout(checkout: Path, candidate: str) -> None:
+    """Bring a lens's checkout to exactly this round's candidate. One kept from an earlier round is reset: tracked
+    changes and untracked files go, while ignored files (the prepared environment) stay unless a dependency changed, in
+    which case they go too and the prepare commands run again. A missing or broken checkout is made afresh."""
+    commands = prepare_commands()
+    fingerprint = dependency_fingerprint(candidate, commands)
+    stamp = prepared_stamp(checkout)
+    top = run(["git", "rev-parse", "--show-toplevel"], cwd=checkout, check=False) if checkout.is_dir() else None
+    if top is not None and top.returncode == 0 and Path(top.stdout.strip()).resolve() == checkout.resolve():
+        git("checkout", "-q", "--force", "--detach", candidate, cwd=checkout)
+        git("clean", "-q", "-ffd", cwd=checkout)
+        prepared = json.loads(stamp.read_text()).get("dependencies") if stamp.exists() else None
+        if prepared == fingerprint:
+            return
+        git("clean", "-q", "-ffdx", cwd=checkout)
+    else:
+        remove_checkout(checkout)
+        checkout.parent.mkdir(parents=True, exist_ok=True)
+        git("worktree", "add", "--detach", "-q", str(checkout), candidate)
+    stamp.unlink(missing_ok=True)
+    for argv in commands:
+        run(argv, cwd=checkout)
+    stamp.write_text(json.dumps({"candidate": candidate, "dependencies": fingerprint}, indent=2) + "\n")
+
+
+def remove_lens_checkout(checkout: Path) -> None:
+    remove_checkout(checkout)
+    prepared_stamp(checkout).unlink(missing_ok=True)
 
 
 def remove_checkout(path: Path) -> None:
@@ -817,18 +876,37 @@ def prepare_commands() -> list[list[str]]:
     return (c.shelf.json(".agents/orchestration.json") or {}).get("prepare", [])
 
 
+EVIDENCE_HEADING = "## Evidence so far"
+
+
 def seed_context(key: str) -> Path:
+    """The review context: the plan's part, read from the delivery base as it stands now, and the lane's own evidence.
+    Every round seeds the plan's part again, so a lens never reviews against a plan the lead has since changed; the
+    lane's "Evidence so far" is kept as written. A context without that heading is the lane's own, left as it is."""
     path = review_dir(key) / "context.md"
-    if not path.exists():
-        c = cfg()
-        path.write_text(
-            f"# Review context: {key} ({c.label(key)}), part of {c.delivery}\n\n"
-            f"Repository: your private checkout; read its root instruction file. Delivery base `{c.base_ref}`; the plan "
-            f"is `{c.plan}` (approved, binding). Reference stories, once the lead names them, are in the assignment.\n\n"
-            f"## Ticket contract and plan unit\n\n{plan_context(key)}\n\n"
-            "## Evidence so far\n\n"
-            f"{CONTEXT_TODO}: the test-first or characterization runs (red then green), the gate results "
-            "(run_delivery.py gate), mutants tried, and known limits. The in-app check records are attached to each brief.\n")
+    c = cfg()
+    sha = git("rev-parse", "--verify", "--quiet", c.base_ref, check=False)
+    # The plan as the base has it now: a lane's own checkout, and so a shelf reading it, holds the copy its branch forked with.
+    shown = run(["git", "show", f"{sha}:{c.plan}"], check=False) if sha else None
+    plan = shown.stdout if shown is not None and shown.returncode == 0 else None
+    sha = sha if plan is not None else None
+    where = (f"Delivery base `{c.base_ref}` at `{sha}`; the plan is `{c.plan}` there (approved, binding). Read it as "
+             f"`git show {sha}:{c.plan}`, not your checkout's copy, which is only as new as your candidate's fork."
+             if sha else f"Delivery base `{c.base_ref}`; the plan is `{c.plan}` (approved, binding).")
+    head = (f"# Review context: {key} ({c.label(key)}), part of {c.delivery}\n\n"
+            f"Repository: your private checkout; read its root instruction file. {where} Reference stories, once the "
+            "lead names them, are in the assignment.\n\n"
+            f"## Ticket contract and plan unit\n\n{plan_context(key, plan)}\n\n")
+    if path.exists():
+        text = path.read_text()
+        # The lane's heading is a line of its own, and the last such line: the plan's part may mention it too.
+        found = list(re.finditer(rf"^{re.escape(EVIDENCE_HEADING)}[ \t]*$", text, re.M))
+        if found:
+            path.write_text(head + text[found[-1].start():])
+        return path
+    path.write_text(head + f"{EVIDENCE_HEADING}\n\n"
+                    f"{CONTEXT_TODO}: the test-first or characterization runs (red then green), the gate results "
+                    "(run_delivery.py gate), mutants tried, and known limits. The in-app check records are attached to each brief.\n")
     return path
 
 
@@ -949,9 +1027,11 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
                        f"- `{candidate}` resolves to git commit `{candidate}`")
         later = ("- `lateFindings`: ids of this result's own findings you raised late (against lines unchanged since "
                  "your previous round); omit when none.\n"
-                 "- `resolvedFindings`: required. One entry for every finding this lens raised in an earlier round, "
-                 '`{"id", "state": "closed|fixed|withdrawn|deferred|open", "resolution": "..."}`. Every carried '
-                 "finding must appear; a deferral (P2/P3 only) also carries `deferredIssue`.")
+                 "- `resolvedFindings`: required. One entry per finding, "
+                 '`{"id", "state": "closed|fixed|withdrawn|deferred|open", "resolution": "..."}`. Every finding this '
+                 "lens raised in an earlier round that is still open must appear (one deferred earlier needn't); one "
+                 "closed in an earlier round may be listed again or left out. A deferral (P2/P3 only) also carries "
+                 "`deferredIssue`.")
     span = f"{merge_base}..{candidate}" if round_no == 1 else f"{prior_candidate}..{candidate}"
     if round_no <= c.bound:
         bound_text = f"`ordinary counted`: round {round_no} of {c.bound}, counted against the declared bound."
@@ -997,17 +1077,20 @@ def review_prepare(args) -> None:
     if previous and not args.restart:
         raise Stop(f"round {n} is already prepared (at {previous['candidate'][:10]}). Reduce it, or pass --restart to "
                    "discard it; a restart is recorded and the lead has to accept it")
+    git("fetch", "-q", c.remote, c.base_branch)  # before the context, which reads the plan from the base
     context = seed_context(key)
     if CONTEXT_TODO in context.read_text():
         raise Stop(f"fill in 'Evidence so far' in {context} first (the rest is seeded from the plan)")
     candidate = clean_head()
     tree = git("rev-parse", "HEAD^{tree}")
-    git("fetch", "-q", c.remote, c.base_branch)
     merge_base = git("merge-base", c.base_ref, "HEAD")
     prior_rounds = [json.loads(p.read_text()) for p in round_files(folder)]
     prior_candidate = prior_rounds[-1]["entries"][0]["binding"]["candidateRef"] if prior_rounds else None
     if prior_candidate == candidate:
-        raise Stop("HEAD is the candidate of the previous round; commit the fixes first")
+        raise Stop("HEAD is the candidate of the previous round; commit the fixes first. When the round's findings were "
+                   "settled without a change here (a ruling, or a fix on the base, which a lane doesn't merge), record "
+                   f'that as its own commit, `git commit --allow-empty -m "{key}: <the ruling>"`, and note the ruling in '
+                   "context.md's Evidence so far, so each round still has its own candidate")
     restarts = list(previous.get("restarts", [])) if previous else []
     attempts = previous.get("attempts", 0) if previous else 0
     if previous:
@@ -1020,12 +1103,8 @@ def review_prepare(args) -> None:
         restarts.append({"at": now(), "previousCandidate": previous["candidate"], "discardedResults": discarded})
     briefs = []
     for lens, (short, _) in c.lenses.items():
-        checkout = lens_checkout(key, n, short)
-        remove_checkout(checkout)
-        checkout.parent.mkdir(parents=True, exist_ok=True)
-        git("worktree", "add", "--detach", "-q", str(checkout), candidate)
-        for argv in prepare_commands():
-            run(argv, cwd=checkout)
+        checkout = lens_checkout(key, short)
+        ready_lens_checkout(checkout, candidate)
         if git("status", "--porcelain", cwd=checkout):
             raise Stop(f"preparing {checkout} left it dirty; the repository's prepare commands must not touch tracked files")
         prior = [next(e for e in r["entries"] if e["lens"] == lens) for r in prior_rounds]
@@ -1303,8 +1382,9 @@ def review_reduce(args) -> None:
     except Exception as error:
         refuse(set(c.lenses), f"the release's validator refuses the round: {error}")
     done_path.write_text(json.dumps(outcome, indent=1) + "\n")
-    for lens, (short, _) in c.lenses.items():
-        remove_checkout(lens_checkout(key, n, short))
+    if status != "unresolved":  # another round reuses each lens's checkout; an aligned or bounded review is done with it
+        for lens, (short, _) in c.lenses.items():
+            remove_lens_checkout(lens_checkout(key, short))
     ensure_recorded(key, outcome, lane, folder)
     summarize(key, outcome)
 
@@ -1744,7 +1824,10 @@ def plan_review_reduce(args) -> None:
     for lens in meta["lenses"]:
         remove_checkout(folder / "checkouts" / lens)
     plan_review_summary(c, [*rounds, outcome])
-    if not getattr(c, "plan_store", None) and (c.state / "state.json").exists():
+    if getattr(c, "plan_store", None):
+        if aligned:
+            print(f"  {write_plan_review_record(c, [*rounds, outcome])}")
+    elif (c.state / "state.json").exists():
         print(f"  {rebuild_plan_quietly(c)}")
 
 
@@ -1788,8 +1871,168 @@ def plan_review_end(args) -> None:
     (folder / "ended.json").write_text(json.dumps({"at": now(), "round": rounds[-1]["round"], "reason": reason},
                                                   indent=2) + "\n")
     print(f"{plan_review_name(c)} plan review ended after round {rounds[-1]['round']}: {reason}")
-    if not getattr(c, "plan_store", None) and (c.state / "state.json").exists():
+    if getattr(c, "plan_store", None):
+        print(f"  {write_plan_review_record(c, rounds)}")
+    elif (c.state / "state.json").exists():
         print(f"  {rebuild_plan_quietly(c)}")
+
+
+# A standalone plan's review record, `<plan stem>.review.json` beside the plan: the shape the hand-written records in a
+# repository's plans already have, with what the store adds. One validator checks both.
+
+PLAN_REVIEW_RECORD = "plan-review-evidence/1"
+PLAN_REVIEW_RECORD_WRITER = "run-delivery plan-review"
+PLAN_REVIEW_OUTCOMES = {"aligned": "unanimous-alignment", "ended": "ended-without-alignment"}
+
+
+def plan_review_record_path(c) -> Path:
+    return c.root / c.plan.with_name(c.plan.stem + ".review.json")
+
+
+def plan_review_record(c, rounds: list[dict]) -> dict:
+    """The record of a review that aligned or was ended, from its store alone."""
+    last = rounds[-1]
+    ended = plan_review_ended(c)
+    plan = c.plan.as_posix()
+    reviewed = subprocess.run(["git", "show", f"{last['candidate']}:{plan}"], cwd=c.root, capture_output=True,
+                              check=True).stdout  # the blob's own bytes, with no newline translation
+    folder = plan_review_dir(c)
+    reviews = []
+    for lens in last["lenses"]:
+        n, entry = next((r["round"], e) for r in reversed(rounds) for e in r["entries"] if e["lens"] == lens)
+        raw = result_path(folder, n, c.lenses[lens][0]).read_bytes()
+        reviews.append({"lens": lens, "round": n, "findings": entry["result"].get("findings", []),
+                        "result": entry["result"], "resultSha256": hashlib.sha256(raw).hexdigest()})
+    count = len(rounds)
+    risks = [f"{count} review round{'' if count == 1 else 's'}; findings open after each round: "
+             f"{', '.join(str(len(r['open'])) for r in rounds)}."]
+    if ended:
+        risks.append(f"Ended without alignment after round {ended['round']}: {ended['reason']}")
+        risks += [f"Open {f['severity']} {f['id']} ({f['lens']}): {f['summary']}" for f in last["open"]]
+    current = c.root / c.plan
+    if not current.is_file() or current.read_bytes() != reviewed:
+        risks.append(f"The plan's current text differs from round {last['round']}'s candidate {last['candidate'][:12]}; "
+                     "this record covers the reviewed text.")
+    record = {"schemaVersion": PLAN_REVIEW_RECORD, "writtenBy": PLAN_REVIEW_RECORD_WRITER, "plan": plan,
+              "planSha256": hashlib.sha256(reviewed).hexdigest(), "planCommit": last["candidate"],
+              "outcome": PLAN_REVIEW_OUTCOMES["ended" if ended else "aligned"], "requiredLenses": last["lenses"],
+              "rounds": [{"round": r["round"], "candidate": r["candidate"], "outcome": r["outcome"],
+                          "startedAt": r["startedAt"], "finishedAt": r["finishedAt"],
+                          "open": [f["id"] for f in r["open"]]} for r in rounds],
+              "reviews": reviews, "residualRisks": risks}
+    if ended:
+        record["ended"] = {"round": ended["round"], "reason": ended["reason"], "at": ended["at"]}
+    return record
+
+
+def write_plan_review_record(c, rounds: list[dict]) -> str:
+    """Write the review's record beside the plan, unless a hand-written one is there; says which."""
+    path = plan_review_record_path(c)
+    shown = path.relative_to(c.root).as_posix()
+    existing = load_json(path) if path.is_file() else None
+    if path.exists() and not (isinstance(existing, dict) and existing.get("writtenBy") == PLAN_REVIEW_RECORD_WRITER):
+        return f"kept the hand-written review record {shown}; the store's record wasn't written"
+    record = plan_review_record(c, rounds)
+    problems = plan_review_record_problems(record)
+    if problems:
+        raise Stop(f"the review record for {shown} fails its own check:\n  " + "\n  ".join(problems))
+    path.write_text(json.dumps(record, indent=2) + "\n")
+    return f"wrote the review record {shown}; commit it with the plan"
+
+
+def plan_review_record_problems(record: object) -> list[str]:
+    """What's wrong with a `plan-review-evidence/1` record, hand-written or generated, as messages; empty when valid."""
+    if not isinstance(record, dict):
+        return ["the record must be a JSON object"]
+    problems = []
+    if record.get("schemaVersion") != PLAN_REVIEW_RECORD:
+        problems.append(f"schemaVersion must be {PLAN_REVIEW_RECORD}")
+    plan = record.get("plan")
+    if (not isinstance(plan, str) or not plan.strip() or plan.startswith("/") or "\\" in plan
+            or ".." in plan.split("/")):
+        problems.append("plan must be the plan's path inside the repository, with / separators")
+    if not isinstance(record.get("planSha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", record["planSha256"]):
+        problems.append("planSha256 must be 64 lowercase hex digits")
+    outcome = record.get("outcome")
+    if outcome not in PLAN_REVIEW_OUTCOMES.values():
+        problems.append(f"outcome must be one of {', '.join(PLAN_REVIEW_OUTCOMES.values())}")
+    lenses = record.get("requiredLenses")
+    if (not isinstance(lenses, list) or not 1 <= len(lenses) <= 12 or len(set(map(str, lenses))) != len(lenses)
+            or not all(isinstance(lens, str) and lens.strip() for lens in lenses)):
+        problems.append("requiredLenses must be 1 to 12 different lens names")
+        lenses = None
+    reviews = record.get("reviews")
+    if not isinstance(reviews, list) or not all(isinstance(r, dict) for r in reviews):
+        problems.append("reviews must be a list of objects, one per required lens")
+        reviews = []
+    elif lenses is not None and sorted(map(str, (r.get("lens") for r in reviews))) != sorted(lenses):
+        problems.append("reviews must hold exactly one review for each required lens")
+    risks = record.get("residualRisks")
+    if not isinstance(risks, list) or not all(isinstance(r, str) and r.strip() for r in risks):
+        problems.append("residualRisks must be a list of non-empty strings")
+    for review in reviews:
+        lens = review.get("lens")
+        findings = review.get("findings")
+        if not isinstance(findings, list) or not all(isinstance(f, dict) for f in findings):
+            problems.append(f"{lens}: findings must be a list of objects")
+            continue
+        if findings and outcome == PLAN_REVIEW_OUTCOMES["aligned"]:
+            problems.append(f"{lens}: a review with findings contradicts outcome unanimous-alignment")
+    ended = record.get("ended")
+    if outcome == PLAN_REVIEW_OUTCOMES["ended"]:
+        if not isinstance(ended, dict) or not isinstance(ended.get("reason"), str) or not ended["reason"].strip():
+            problems.append("ended must give the operator's reason when the outcome is ended-without-alignment")
+    elif ended is not None:
+        problems.append("ended belongs only to outcome ended-without-alignment")
+    rounds = record.get("rounds")
+    if rounds is None:  # a hand-written record names no rounds; what follows is the store's part
+        return problems
+    if (not isinstance(rounds, list) or not rounds or not all(isinstance(r, dict) for r in rounds)
+            or [r.get("round") for r in rounds] != list(range(1, len(rounds) + 1))):
+        return problems + ["rounds must be the review's rounds, numbered from 1 with none skipped"]
+    outcomes = [r.get("outcome") for r in rounds]
+    # An amendment reviews on after an aligned round, so an earlier round may be aligned; the last decides the outcome.
+    if any(o not in ("unresolved", "aligned") for o in outcomes[:-1]) or outcomes[-1] != (
+            "aligned" if outcome == PLAN_REVIEW_OUTCOMES["aligned"] else "unresolved"):
+        problems.append("rounds: each round is aligned or unresolved, and the last must agree with outcome")
+    if not all(isinstance(r.get("candidate"), str) and re.fullmatch(r"[0-9a-f]{40,64}", r["candidate"]) for r in rounds):
+        problems.append("rounds: each round's candidate must be a full commit id")
+    if record.get("planCommit") != rounds[-1].get("candidate"):
+        problems.append("planCommit must be the last round's candidate")
+    if isinstance(ended, dict) and ended.get("round") != len(rounds):
+        problems.append("ended.round must be the last round")
+    for review in reviews:
+        lens, result, n = review.get("lens"), review.get("result"), review.get("round")
+        if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= len(rounds):
+            problems.append(f"{lens}: round must be one of the review's rounds")
+        if not isinstance(result, dict) or result.get("lensId") != lens or result.get("round") != n:
+            problems.append(f"{lens}: result must be this lens's own result from its round (lensId and round)")
+        elif result.get("findings", []) != review.get("findings"):
+            problems.append(f"{lens}: findings must be its result's findings")
+        if not isinstance(review.get("resultSha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", review["resultSha256"]):
+            problems.append(f"{lens}: resultSha256 must be 64 lowercase hex digits")
+    return problems
+
+
+def plan_review_check(args) -> None:
+    """Validate review records; prints one line per record and refuses when any fails."""
+    failed = False
+    for given in args.records:
+        path = Path(given)
+        try:
+            record = json.loads(path.read_text())
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            print(f"{path}: can't be read as JSON ({error})")
+            failed = True
+            continue
+        problems = plan_review_record_problems(record)
+        if problems:
+            failed = True
+            print(f"{path}: not a valid {PLAN_REVIEW_RECORD} record:\n  " + "\n  ".join(problems))
+        else:
+            print(f"{path}: a valid {PLAN_REVIEW_RECORD} record")
+    if failed:
+        raise Stop("some review records aren't valid")
 
 
 # -- lane: gates, build and in-app checks -------------------------------------------------
@@ -1859,8 +2102,10 @@ def need_in_app() -> dict:
 
 
 def build(args) -> None:
+    """Build HEAD for the in-app checks: a story's build, or with no key the delivery's integration build."""
     c = cfg()
-    key = c.require(args.key)
+    # The integration build of the whole delivery goes by the delivery's own key, as the lead's checkout does.
+    key = c.require(args.key) if args.key is not None else c.delivery
     spec = need_in_app()["build"]
     head = clean_head()
     tree = git("rev-parse", "HEAD^{tree}")
@@ -1885,6 +2130,35 @@ def port_open(port: int) -> bool:
         except OSError:
             continue
     return False
+
+
+def port_holders(port: int) -> list[tuple[int, str]]:
+    """The processes listening on `port`, as (pid, command line); empty when none can be seen (or lsof is missing)."""
+    try:
+        listing = run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"], check=False).stdout
+    except OSError:
+        return []
+    holders = []
+    for pid in sorted({int(line) for line in listing.split() if line.isdigit()}):
+        try:
+            command = run(["ps", "-o", "command=", "-p", str(pid)], check=False).stdout.strip()
+        except OSError:
+            command = ""
+        holders.append((pid, command or "command unknown"))
+    return holders
+
+
+def port_busy(port: int) -> str:
+    """Why the in-app port can't be used: who listens on it, outside the lease, and how to release it."""
+    holders = port_holders(port)
+    if not holders:
+        return f"something else is listening on {port}, outside the in-app lease (its process isn't visible here); stop it first"
+    # A long command keeps its head (the program) and its tail (the arguments, which tell one server from another).
+    short = lambda command: command if len(command) <= 160 else f"{command[:40]} ... {command[-110:]}"
+    named = ", ".join(f"pid {pid} ({short(command)})" for pid, command in holders)
+    pids = " ".join(str(pid) for pid, _ in holders)
+    return (f"something else is listening on {port}, outside the in-app lease: {named}. A build served by hand doesn't "
+            f"hold the lease, so app-check can't use the port: stop it (kill {pids}) and run again")
 
 
 class Lease:
@@ -1996,7 +2270,7 @@ def run_in_app(dist: Path, spec: dict, passthrough: list[str], owner: str, lock_
     try:
         spec_file.write_text(json.dumps(spec))
         if port_open(port):
-            raise Stop(f"something else is listening on {port} (a dev server?); stop it first")
+            raise Stop(port_busy(port))
         server = subprocess.Popen(expand_argv(ia["serve"]["argv"], dir=str(dist), port=str(port)),
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         lease.track(server.pid)
@@ -2287,6 +2561,38 @@ def evidence_status(keys: list[str]) -> tuple[list[str], list[str]]:
     return current, problems
 
 
+def evidence_inputs(c, args, keys: list[str]) -> dict:
+    """The evidence page's words, its title, intro and per-story notes, kept in the record beside the published page's
+    record, so a page rebuilt after the lead's context is gone says what it said. A flag given now replaces what's
+    kept; `--note KEY=` with no text removes that story's note."""
+    path = c.state.parent / "evidence-notes.json"
+    kept = json.loads(path.read_text()) if path.exists() else {}
+    notes = dict(kept.get("notes") or {})
+    given = {}
+    for note in args.note or []:
+        key, sep, text = note.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            raise Stop(f"--note takes KEY=TEXT, not {note!r}")
+        if key not in c.stories:
+            raise Stop(f"--note names {key}, which isn't a story of {c.delivery}")
+        given[key] = text.strip()
+    for key, text in given.items():
+        if text:
+            notes[key] = text
+        else:
+            notes.pop(key, None)
+    inputs = {"title": args.title if args.title is not None else kept.get("title"),
+              "intro": args.intro if args.intro is not None else kept.get("intro"), "notes": notes}
+    if inputs != {k: kept.get(k, {} if k == "notes" else None) for k in ("title", "intro", "notes")}:
+        path.write_text(json.dumps({**inputs, "at": now()}, indent=2) + "\n")
+        print(f"recorded the page's words in {path}")
+    reused = sorted(k for k in keys if k in notes and k not in given)
+    if reused:
+        print(f"reused the recorded note(s) for {', '.join(reused)}")
+    return inputs
+
+
 def lead_evidence(args) -> None:
     c = cfg()
     keys = [c.require(k) for k in args.keys] if args.keys else [k for k in c.stories if needs_video(k)]
@@ -2329,7 +2635,10 @@ def lead_evidence(args) -> None:
         clips = {f.name: digest(f) for f in sorted((out / "videos").glob("*.mp4"))}
         if not (out / "index.html").exists() or not clips:
             raise Stop(f"{out} has no built page with clips: run lead-evidence page first")
-        record = {"url": args.url, "at": now(), "clips": clips}
+        words = out / "evidence-notes.json"  # the words this folder's page was built with, not the latest kept ones
+        kept = json.loads(words.read_text()) if words.exists() else {}
+        record = {"url": args.url, "at": now(), "clips": clips,
+                  **{k: kept.get(k, {} if k == "notes" else None) for k in ("title", "intro", "notes")}}
         (c.state.parent / "evidence-page.json").write_text(json.dumps(record, indent=2) + "\n")
         state_tool("journal", "--kind", "decision.recorded", "--summary",
                    f"Evidence page published at {args.url} with {len(clips)} before/after clip(s).", check=False)
@@ -2345,6 +2654,7 @@ def lead_evidence(args) -> None:
             sys.exit(1)
         print("the evidence page is current")
         return
+    words = evidence_inputs(c, args, keys)
     out = Path(expand(args.out))
     (out / "videos").mkdir(parents=True, exist_ok=True)
     doc = load_state()
@@ -2365,7 +2675,7 @@ def lead_evidence(args) -> None:
         links = [f'<a href="{html_escape(c.issue_url.format(key=key))}">Ticket</a>']
         if prs.get(key):
             links.append(f'<a href="{html_escape(prs[key])}">Pull request</a>')
-        notes = dict(n.split("=", 1) for n in (args.note or []))
+        notes = words["notes"]
         body = "\n".join(figures) or (f'    <p class="none">{html_escape(notes[key])}</p>' if key in notes else
                                        '    <p class="none">No recording: this story has no visible loading or failure state to show.</p>')
         sections.append(f"""  <section class="story" id="{key.lower()}">
@@ -2373,10 +2683,10 @@ def lead_evidence(args) -> None:
 {body}
   </section>""")
     values = {
-        "title": html_escape(args.title or f"{c.delivery} Evidence"),
+        "title": html_escape(words["title"] or f"{c.delivery} Evidence"),
         "eyebrow": html_escape(f"{c.delivery} · delivery evidence"),
         "heading": html_escape(c.raw.get("headline", c.delivery)),
-        "intro": html_escape(args.intro or "Each clip runs the same steps twice: on the base before this delivery (left) and "
+        "intro": html_escape(words["intro"] or "Each clip runs the same steps twice: on the base before this delivery (left) and "
                              "on the delivered code (right). Loading clips hold the page's request for a few seconds; "
                              "failure clips make it fail."),
         "before": html_escape(", ".join(sorted(befores)) or "-"), "after": html_escape(", ".join(sorted(afters)) or "-"),
@@ -2385,6 +2695,7 @@ def lead_evidence(args) -> None:
     }
     page = re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], (TOOL / "templates/evidence.html").read_text())
     (out / "index.html").write_text(page)
+    (out / "evidence-notes.json").write_text(json.dumps(words, indent=2) + "\n")
     print(f"wrote {out / 'index.html'} with {count} clip(s); publish the folder (index.html plus videos/)")
 
 
@@ -3561,13 +3872,11 @@ def lead_plan(args) -> None:
         entry = record_plan_change(c, change)
         git("commit", "-q", "-m", f"{c.delivery}: plan change {entry['id']} ({args.kind} "
             f"{', '.join(change['subjects']) or change.get('finish', '')})".rstrip(), cwd=root)
-        if planned_after is not None:
-            doc = load_state()  # as it stands now: a story registered since the check above stays planned
-            patch({"planned": [p for p in doc["state"].get("planned", []) if p["subject"] not in change["subjects"]]},
-                  doc["state"]["version"])
+        if planned_after is not None:  # as it stands now: a story registered since the check above stays planned
+            patch_from(lambda doc: {"planned": [p for p in doc["state"].get("planned", [])
+                                                if p["subject"] not in change["subjects"]]}, "the plan change's planned work")
         if record_finish is not None:
-            doc = load_state()
-            patch({"finish": [*doc["state"]["finish"], record_finish]}, doc["state"]["version"])
+            patch_from(lambda doc: {"finish": [*doc["state"]["finish"], record_finish]}, "the new finish line")
         rebuild_plan(c, mark=True)
     print(f"recorded {entry['id']}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
     print(f"committed the delivery file; push it so lanes see it: git push {c.remote} HEAD:{c.base_branch}")
@@ -3743,6 +4052,137 @@ def plan_problems(c, keys: list[str]) -> list[str]:
             f"correct its key in {c.delivery_where}"]
 
 
+# Ownership is the plan's: lead-accept refuses a hand-off that changes a file outside its lane's `owns`. These warn
+# before a lane starts of the files its story will need: the ones its plan names, and (for lead-assign) the ones that
+# have tended to change with them.
+
+PATH_TOKEN = re.compile(r"[A-Za-z0-9._*?\[\]-][A-Za-z0-9._/*?\[\]-]*")
+CO_CHANGE = {"commits": 200, "sweep": 40, "support": 3, "share": 0.25, "shown": 5}
+
+
+def owner_of(c, path: str) -> str | None:
+    return next((lane for lane, entry in c.lanes.items() if any(fnmatch.fnmatch(path, g) for g in entry["owns"])), None)
+
+
+def owned_by(c, lane: str, path: str) -> bool:
+    return any(fnmatch.fnmatch(path, g) for g in c.lanes[lane]["owns"])
+
+
+def owner_words(c, path: str) -> str:
+    owner = owner_of(c, path)
+    return f"{owner}'s" if owner else "no lane's"
+
+
+def files_ref(c) -> str:
+    return c.base_ref if run(["git", "rev-parse", "--verify", "--quiet", c.base_ref], check=False).returncode == 0 else "HEAD"
+
+
+def tracked_at_base(c) -> list[str]:
+    """The base's files a story can change: not the installed release, which no lane edits."""
+    installed = Path(RECEIPT).parent.as_posix() + "/"
+    return [f for f in git("ls-tree", "-r", "--name-only", files_ref(c), check=False).splitlines()
+            if not f.startswith(installed)]
+
+
+def story_named_files(c, key: str, tracked: list[str]) -> list[str]:
+    """The files a story's plan section, and the table rows naming it, name in backticks: a full path, a directory
+    (trailing /), a glob, or a bare file name, resolved against the base's files. A bare name that matches several takes
+    the lane's own match when there is one; a path not tracked yet is the new file it names. A row names the story when
+    a cell with no backticked text does, and its files come from its other cells, so a passing mention in a files cell
+    (such as "after" another story's key) doesn't hand that row's files to the story."""
+    text = c.shelf.text(c.plan) or ""
+    own = story_section(plan_sections(text), key) or ""
+    names = {key, c.label(key)}
+    naming = lambda cell: "`" not in cell and any(re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", cell) for n in names)
+    rows = []
+    for line in text.splitlines():
+        cells = line.strip().strip("|").split("|") if line.startswith("|") else []
+        if any(naming(cell) for cell in cells):
+            rows += [cell for cell in cells if not naming(cell)]
+    lane = c.lane_of(key)
+    found: set[str] = set()
+    for token in re.findall(r"`([^`\n]+)`", "\n".join([own, *rows])):
+        token = token.strip().removeprefix("./")
+        if not PATH_TOKEN.fullmatch(token) or not ("/" in token or re.search(r"\.[A-Za-z0-9]{1,8}$", token)):
+            continue
+        if token.endswith("/"):
+            found |= {f for f in tracked if f.startswith(token)}
+        elif "/" not in token:
+            matches = [f for f in tracked if fnmatch.fnmatch(f.rsplit("/", 1)[-1], token)]
+            mine = [f for f in matches if owned_by(c, lane, f)]
+            found |= set(mine or matches)
+        elif re.search(r"[*?\[]", token):
+            found |= {f for f in tracked if fnmatch.fnmatch(f, token)}
+        elif token in tracked or not (tail := [f for f in tracked if f.endswith("/" + token)]):
+            found.add(token)  # a tracked path, or the new file it names
+        else:  # the end of a tracked path, such as references/adopting.md
+            mine = [f for f in tail if owned_by(c, lane, f)]
+            found |= set(mine or tail)
+    return sorted(found)
+
+
+def outside_lane(c, key: str, tracked: list[str]) -> list[str]:
+    """The files a story names that its lane doesn't own."""
+    lane = c.lane_of(key)
+    return [f for f in story_named_files(c, key, tracked) if not owned_by(c, lane, f)]
+
+
+def named_outside(c, key: str, outside: list[str], shown: int | None = None) -> str:
+    """"FX-2 names a (lane-2's), b (no lane's)", to `shown` files and a count of the rest."""
+    listed = ", ".join(f"{f} ({owner_words(c, f)})" for f in outside[:shown])
+    rest = len(outside) - len(outside[:shown])
+    return f"{key} names {listed}" + (f" and {rest} more" if rest else "")
+
+
+def story_file_problems(c, keys: list[str], tracked: list[str]) -> list[str]:
+    """One phrase per story that names a file outside its lane, as doctor's one line has room for: three files a
+    story, five stories, and how many more."""
+    found = [(key, outside) for key in keys if (outside := outside_lane(c, key, tracked))]
+    phrases = [named_outside(c, f"{key} ({c.lane_of(key)})", outside, 3) for key, outside in found[:5]]
+    if len(found) > 5:
+        phrases.append(f"and {len(found) - 5} more stories (lead-assign lists each one's)")
+    return phrases
+
+
+def co_changed(c, path: str, ref: str) -> tuple[int, collections.Counter]:
+    """How many of the recent changes to `path` on `ref` count, and how often each other file changed with it. A
+    sweeping change (more than CO_CHANGE['sweep'] files) says nothing about coupling, so it isn't counted."""
+    out = git("log", "--no-merges", "--full-diff", f"-n{CO_CHANGE['commits']}", "--format=tformat:@", "--name-only", ref, "--",
+              path, check=False)
+    count, together = 0, collections.Counter()
+    for change in out.split("@")[1:]:
+        files = set(change.split())
+        if not files or len(files) > CO_CHANGE["sweep"]:
+            continue
+        count += 1
+        together.update(files - {path})
+    return count, together
+
+
+def co_change_warning(c, key: str, tracked: list[str]) -> str | None:
+    """The files outside a story's lane that changed with a file it names in at least CO_CHANGE['support'] and
+    CO_CHANGE['share'] of that file's changes: the CO_CHANGE['shown'] most coupled, each with the named file it
+    changes with most."""
+    lane = c.lane_of(key)
+    named = story_named_files(c, key, tracked)
+    ref, present = files_ref(c), set(tracked)
+    best: dict[str, tuple[float, int, int, str]] = {}
+    for path in named:
+        if path not in present:
+            continue
+        count, together = co_changed(c, path, ref)
+        for f, n in together.items():
+            if (n >= CO_CHANGE["support"] and n >= CO_CHANGE["share"] * count and f in present and f not in named
+                    and not owned_by(c, lane, f) and (n / count, n) > best.get(f, (0, 0))[:2]):
+                best[f] = (n / count, n, count, path)
+    if not best:
+        return None
+    often = sorted(best.items(), key=lambda item: (-item[1][0], -item[1][1], item[0]))[:CO_CHANGE["shown"]]
+    return (f"{key}'s files often change with "
+            + ", ".join(f"{f} ({owner_words(c, f)}; with {path} in {n} of {count} changes)"
+                        for f, (_, n, count, path) in often))
+
+
 def context_problems(c) -> list[str]:
     """Each context.sections heading the plan lacks, which every lane's review context would go without."""
     text = c.shelf.text(c.plan)
@@ -3820,8 +4260,35 @@ def setup_problems(c) -> list[str]:
 
 # -- lead ----------------------------------------------------------------------------------
 
-def patch(body: dict, version: int) -> None:
-    state_tool("patch", "--writer", "lead", "--version", str(version), "--patch", json.dumps(body))
+# How many times a write computed from a read is tried before it gives up: each try reads the record afresh.
+PATCH_ATTEMPTS = 5
+
+
+def patch_from(compute, what: str, writer: str = "lead", attempts: int = PATCH_ATTEMPTS):
+    """Read the record, compute a patch from that read, and write it pinned to the version read. When another writer
+    (the supervisor, the queue, a lane) moved the record in between, the state tool refuses it as version_stale. Then
+    read again and compute again, so no patch is ever written from a stale read, up to `attempts` times. `compute`
+    takes the record and returns the patch body, a list of the state tool's own patch arguments (an element patch),
+    or None for nothing to write; it may raise Stop when the fresh record no longer allows the write. Returns what was
+    written, or None."""
+    for _ in range(attempts):
+        doc = load_state()
+        body = compute(doc)
+        if body is None:
+            return None
+        given = body if isinstance(body, list) else ["--patch", json.dumps(body)]
+        done = state_tool("patch", "--writer", writer, "--version", str(doc["state"]["version"]), *given, check=False)
+        if done.returncode == 0:
+            return body
+        try:  # the state tool answers with one JSON document, pretty-printed
+            answer = json.loads(done.stdout)
+        except ValueError:
+            answer = {}
+        answer = answer if isinstance(answer, dict) else {}
+        if answer.get("code") != "version_stale":
+            raise Stop(f"the state tool refused {what}: {(answer.get('error') or done.stderr or done.stdout).strip()[-600:]}")
+    raise Stop(f"version_stale: the record kept changing while {what} was written; tried {attempts} times, reading "
+               "it afresh each time. Run it again once the other writer settles")
 
 
 LANE_GRANTS = ("push", "draftPullRequests")
@@ -4046,12 +4513,11 @@ def lead_init(args) -> None:
     for line in replace_record(c) if args.replace else []:
         print(line)
     state_tool("init", "--headline", c.raw.get("headline", c.delivery))
-    doc = load_state()
     planned = [planned_entry(c, key) for key in c.stories]
     # The record's finish items take no other keys: covers, label and at are the plan's.
     finish = [{"id": f["id"], "text": f["text"], "met": False} for f in c.finish]
-    patch({"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True}, "planned": planned, "finish": finish},
-          doc["state"]["version"])
+    patch_from(lambda doc: {"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True}, "planned": planned,
+                            "finish": finish}, "the delivery's planned work and finish lines")
     lease = (f" The {c.in_app.get('lease', 'in-app')} lease is granted on demand through run-delivery app-check's OS lock,"
              " held only for a lane's own in-app checks.") if c.in_app else ""
     shipping = (f" The tooling never ships: the product branch is built from {', '.join(c.ship['paths'])} of the "
@@ -4084,17 +4550,21 @@ def register_stories(c) -> list[str]:
     Returns the keys added; a delivery not yet initialized is left to lead-init."""
     if not (c.state / "state.json").exists():
         return []
-    doc = load_state()
-    state = doc["state"]
-    if not state.get("planned") and not state.get("queue"):
+    added: list[str] = []
+
+    def compute(doc: dict) -> dict | None:
+        state = doc["state"]
+        added.clear()
+        if not state.get("planned") and not state.get("queue"):
+            return None
+        held = {item["subject"] for item in [*state["queue"], *state.get("planned", [])]}
+        added.extend(key for key in c.stories if key not in held)
+        if not added:
+            return None
+        followups = [f for f in state["followups"] if f["id"] not in added and f.get("reference") not in added]
+        return {"planned": [*state.get("planned", []), *(planned_entry(c, key) for key in added)], "followups": followups}
+    if patch_from(compute, "the stories added to the delivery") is None:
         return []
-    held = {item["subject"] for item in [*state["queue"], *state.get("planned", [])]}
-    added = [key for key in c.stories if key not in held]
-    if not added:
-        return []
-    followups = [f for f in state["followups"] if f["id"] not in added and f.get("reference") not in added]
-    patch({"planned": [*state.get("planned", []), *(planned_entry(c, key) for key in added)], "followups": followups},
-          state["version"])
     for key in added:
         state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                    f"{key} added to the delivery as planned work for {c.lane_of(key)}")
@@ -4158,11 +4628,18 @@ def lead_assign(args) -> None:
         raise Stop("; ".join(problems))
     register_stories(c)
     rebuild_plan(c)
-    doc = load_state()
-    lanes = [entry for entry in doc["state"]["lanes"] if entry["id"] != args.lane]
-    lanes.append({"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
-                  "waitingOn": None, "since": now()})
-    patch({"lanes": lanes}, doc["state"]["version"])
+    tracked = tracked_at_base(c)
+    warnings = [*(named_outside(c, key, outside) for key in keys if (outside := outside_lane(c, key, tracked))),
+                *(line for key in keys if (line := co_change_warning(c, key, tracked)))]
+    if warnings:
+        print(f"Files outside {args.lane}'s owns, before it starts (lead-accept refuses a change to any of them):")
+        for line in warnings:
+            print(f"  {line}")
+        print(f"Move each to {args.lane}'s owns now, or plan the story on the lane that owns it.\n")
+    row = {"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
+           "waitingOn": None, "since": now()}
+    patch_from(lambda doc: {"lanes": [*(entry for entry in doc["state"]["lanes"] if entry["id"] != args.lane), row]},
+               f"{args.lane}'s assignment")
     # One entry per story, so each ticket's start is its own, made when its lane begins it.
     for key in keys:
         state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", key, "--summary",
@@ -4573,7 +5050,8 @@ def lead_close(args) -> None:
         raise Stop(f"the lead's settings have uncommitted changes; commit or drop them first:\n{dirty[:600]}")
     # Everything that can refuse is checked before the supervisor, and the serve it keeps, is stopped.
     doc = load_state()
-    if not any(e.get("kind") == "delivery.closed" for e in doc["journal"]):
+    closed = latest_close(doc["journal"])
+    if closed is None:
         raise Stop("journal delivery.closed first (orchestrate-work's close-out): lead-close runs after it")
     state = doc["state"]
     busy = [q["subject"] for q in state["queue"] if q.get("stage") not in ("merged", "stopped")]
@@ -4604,17 +5082,28 @@ def lead_close(args) -> None:
         left += [f"{key}: {x}" for x in l]
     release = c.release / "skills/orchestrate-work/scripts/render_state.py"
     binding = c.root / ".agents/orchestration.json"
-    if binding.exists():
+
+    def render(what: str) -> None:
+        if not binding.exists():
+            return
         rendered = run([sys.executable, "-B", str(release), "--dir", str(c.state), "--binding", str(binding)], check=False)
         if rendered.returncode == 0:
-            done.append("rendered the views one last time")
+            done.append(what)
         else:
             left.append(f"the final render failed: {(rendered.stderr or rendered.stdout).strip()[-300:]}")
+    render("rendered the views one last time")
+    owed = tracker_owed(c, load_state(), closed)
+    if owed:
+        left.append(f"the tracker hasn't had every update: it is still waiting for {owed}. lead-close doesn't wait "
+                    "for the tracker; post them, or let the publisher run")
     archive, archived = archive_delivery(c)
     done += archived
+    done += finish_close(c, closed, archive)
     c.flow_log.mkdir(parents=True, exist_ok=True)
     lead_file(c, "closed.json").write_text(json.dumps({"archive": str(archive), "said": archived, "by": "lead-close",
-                                                       "at": now(), **closed_full_health(c)}, indent=2) + "\n")
+                                                       "at": now(), "entry": closed["id"], **closed_full_health(c)},
+                                                      indent=2) + "\n")
+    render("rendered the views again, with the close marked finished")
     for pid, command in delivery_processes(lead, c.state, c.delivery, c.main):
         try:
             os.kill(pid, signal.SIGTERM)
@@ -4651,10 +5140,11 @@ def lead_close(args) -> None:
         try:
             Lease(lock, port, "lead-close", 0).close()  # stops whatever a dead holder left running
             done.append(f"the in-app lease {lock} is free")
-        except Stop as held:
+        except Stop as held:  # a live check's: its server is inside the lease, and isn't the operator's to kill
             left.append(str(held))
-        if port_open(port):
-            left.append(f"something still listens on port {port}")
+        else:
+            if port_open(port):
+                left.append(port_busy(port))
     print(f"{c.delivery}: closed out")
     for line in done:
         print(f"  done: {line}")
@@ -4720,10 +5210,47 @@ def supervisor_line(c) -> str | None:
     if held:
         return (f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
                 + waits_on(c))
-    closed = load_json(lead_file(c, "closed.json"))
-    if closed:
-        return "supervisor: stopped; the delivery is closed. " + closed_words(closed)
+    said = closed_status(c)
+    if said is not None:
+        return "supervisor: " + said
     return f"supervisor: down; restart it with {flow_command()} lead-run --resume" + waits_on(c)
+
+
+def close_progress(doc: dict) -> str | None:
+    """How far this close got, by the record's marks: "finished", "partway", or None when the record has no started
+    mark for it (an older record, or a delivery not closed)."""
+    closed = latest_close(doc["journal"])
+    closing = doc["state"]["meta"].get("closing") or {}
+    if closed is None or (closing.get("started") or {}).get("entry") != closed["id"]:
+        return None
+    return "finished" if (closing.get("finished") or {}).get("entry") == closed["id"] else "partway"
+
+
+def finishing_command(c, doc: dict) -> str:
+    """What finishes a close that stopped partway: a resumed supervisor when the record meets the close condition (no
+    planned story, nothing unmerged, every finish line met, no busy lane, as close_holds reads it); otherwise lead-close,
+    since a resumed supervisor would hold on what is unmet and never finish it."""
+    # A checkout cleanup hasn't removed yet holds only until the resumed supervisor's own next pass cleans it up.
+    unmet = [hold for hold in close_holds(c, doc, []) if not hold.startswith("not cleaned up:")]
+    return "lead-run --resume" if not unmet else "lead-close"
+
+
+def closed_status(c) -> str | None:
+    """What a stopped supervisor says of the close: finished, or stopped partway and what finishes it. A record with no
+    marks reads as before, by closed.json alone."""
+    tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    doc = json.loads(run([sys.executable, "-B", str(tool), "--dir", str(c.state), "show"]).stdout)
+    closed = kept_close(c, last_close(doc["journal"]))
+    progress = close_progress(doc)
+    if progress == "partway":
+        command = finishing_command(c, doc)
+        return (f"stopped partway through the close; finish it with {flow_command()} {command}"
+                + ("; lead-close doesn't wait for the tracker" if command == "lead-close" else ""))
+    if progress == "finished":
+        return "stopped; the delivery is closed. " + (closed_words(closed) if closed else "")
+    if closed:
+        return "stopped; the delivery is closed. " + closed_words(closed)
+    return None
 
 
 def closed_words(closed: dict) -> str:
@@ -4847,7 +5374,8 @@ def lane_moved_off(doc: dict, item: dict, words: dict | None = None) -> bool:
     if lane is None:
         return True
     rested = lane.get("focusBy") == "runner" and lane.get("focus") == f"{item['subject']} merged"
-    said = (words or {}).get(item["lane"]) or {}
+    # The lane's own word the record kept when the queue rested its row first; a pass's memory of it after that.
+    said = (lane.get("restedFrom") if rested else None) or (words or {}).get(item["lane"]) or {}
     handed = max((e["at"] for e in doc["journal"] if e["kind"] == "candidate.handed" and e.get("subject") == item["subject"]),
                  default=None)
     at_work = rested and said.get("state") in LANE_AT_WORK and bool(said.get("at")) and handed is not None \
@@ -4955,9 +5483,9 @@ def journal_finish_met(c, doc: dict) -> list[str]:
         journalled = any(e["kind"] == "finish.met" and (e.get("subject") == line["id"] or re.search(
             rf"(?<![\w-]){re.escape(line['id'])}(?![\w-])", e.get("summary", ""))) for e in doc["journal"])
         if not line.get("met"):
-            fresh = load_state()
-            finish = [{**entry, "met": True} if entry["id"] == line["id"] else entry for entry in fresh["state"]["finish"]]
-            patch({"finish": finish}, fresh["state"]["version"])
+            patch_from(lambda fresh, line=line: {"finish": [{**entry, "met": True} if entry["id"] == line["id"] else entry
+                                                            for entry in fresh["state"]["finish"]]},
+                       f"finish line {line['id']} met")
         if not journalled:
             state_tool("journal", "--kind", "finish.met", "--subject", line["id"], "--summary",
                        f"{line['id']}: {line['text']} Every criterion it covers has its proofs done.")
@@ -5180,6 +5708,12 @@ def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
     busy = [lane["id"] for lane in state["lanes"] if lane.get("state") not in LANE_DONE]
     if busy:
         holds.append(f"lanes not idle or done: {', '.join(busy)}")
+    # A merge can land after the pass's cleanup read the record, and the close ends the passes: it waits for the next
+    # pass's cleanup, as it does for a checkout cleanup couldn't remove.
+    left = [q["subject"] for q in state["queue"] if q["stage"] == "merged" and q["subject"] in c.stories
+            and c.lane_checkout(q["subject"]).exists()]
+    if left:
+        holds.append(f"not cleaned up: {', '.join(left)}")
     holds += [item["text"] for item in needs if item["holding"]]
     return holds
 
@@ -5633,10 +6167,10 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
             written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--subject",
                                                  finding["story"], "--summary", FOLLOWUP.format(**finding))))
     if missing:
-        fresh = load_state()
-        followups = [*fresh["state"]["followups"], *({"id": f"{f['story']}-{f['finding']}", "title": f["title"],
-                                                      "reference": None} for f in missing)]
-        patch({"followups": followups}, fresh["state"]["version"])
+        patch_from(lambda fresh: {"followups": [*fresh["state"]["followups"],
+                                                *({"id": f"{f['story']}-{f['finding']}", "title": f["title"],
+                                                   "reference": None} for f in missing)]},
+                   "the deferred findings' follow-ups")
         render_views(c)
         doc = load_state()
     if tracker_conf(c)["mode"] != "publisher":
@@ -5651,10 +6185,47 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
     return True, f"follow-ups: {len(marks)} filed or refused"
 
 
+# New work after a close reopens the delivery, as the line map reads it.
+REOPENING = ("lane.assigned", "candidate.handed", "check.started")
+
+
+def latest_close(journal: list[dict]) -> dict | None:
+    """The delivery.closed entry that closes the delivery now: the latest one, unless work resumed after it."""
+    closed = None
+    for entry in sorted(journal, key=lambda e: e["id"]):
+        if entry["kind"] == "delivery.closed":
+            closed = entry
+        elif entry["kind"] in REOPENING:
+            closed = None
+    return closed
+
+
+def last_close(journal: list[dict]) -> dict | None:
+    """The latest delivery.closed entry, reopened since or not."""
+    return next((e for e in sorted(journal, key=lambda e: e["id"], reverse=True) if e["kind"] == "delivery.closed"), None)
+
+
+def tracker_owed(c, doc: dict, closed: dict) -> str | None:
+    """What the tracker hasn't had yet through the closing entry, or None when it has every update."""
+    mode = tracker_conf(c)["mode"]
+    if mode == "publisher":
+        journal = sorted(doc["journal"], key=lambda e: e["id"])
+        done = tracker_publisher.covered(tracker_publisher.read_ledger(c.state), tracker_publisher.init_id(journal))
+        owed = [e["id"] for e in journal if e["id"] <= closed["id"] and e["id"] not in done]
+        if owed:
+            return f"the tracker publisher to cover journal entries {', '.join(map(str, owed[:10]))}"
+    elif mode == "host":
+        through = (load_json(c.state / "published.json") or {}).get("journalThrough", 0)
+        if through < closed["id"]:
+            return f"the host outbox to be acked through journal entry {closed['id']}"
+    return None
+
+
 def closed_step(c) -> tuple[bool, str]:
-    """Journal delivery.closed once, render, then wait until the tracker has every entry through it."""
+    """Journal delivery.closed once for this close, render, then wait until the tracker has every entry through it.
+    A delivery closed, reopened by new work and closed again is closed by a new entry."""
     doc = load_state()
-    closed = next((e for e in doc["journal"] if e["kind"] == "delivery.closed"), None)
+    closed = latest_close(doc["journal"])
     if closed is None:
         skip = full_health_skip(c)
         skipped = (f" fullHealth was skipped under the {skip['posture']} posture declared on {skip['source']}: "
@@ -5663,25 +6234,32 @@ def closed_step(c) -> tuple[bool, str]:
                    f"{c.delivery} closed: every story merged or removed, every finish line met, and nothing holding.{skipped}")
         render_views(c)
         doc = load_state()
-        closed = next(e for e in doc["journal"] if e["kind"] == "delivery.closed")
-    mode = tracker_conf(c)["mode"]
-    if mode == "publisher":
-        journal = sorted(doc["journal"], key=lambda e: e["id"])
-        done = tracker_publisher.covered(tracker_publisher.read_ledger(c.state), tracker_publisher.init_id(journal))
-        owed = [e["id"] for e in journal if e["id"] <= closed["id"] and e["id"] not in done]
-        if owed:
-            return False, f"waiting for the tracker publisher to cover journal entries {', '.join(map(str, owed[:10]))}"
-    elif mode == "host":
-        through = (load_json(c.state / "published.json") or {}).get("journalThrough", 0)
-        if through < closed["id"]:
-            return False, f"waiting for the host outbox to be acked through journal entry {closed['id']}"
+        closed = latest_close(doc["journal"])
+    owed = tracker_owed(c, doc, closed)
+    if owed:
+        return False, f"waiting for {owed}"
     return True, f"delivery.closed is journal entry {closed['id']}"
+
+
+def new_archive_folder(root: Path) -> Path:
+    """A new, empty folder under `root`, named by the time to the microsecond as replace_record's are, so two close-outs
+    in one second don't collide. A name already taken, by a clock that didn't move or another process, gets the next
+    free -002, -003 suffix. Every name sorts in the order the folders were made."""
+    stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S.%f")
+    root.mkdir(parents=True, exist_ok=True)
+    for n in range(1, 1000):
+        folder = root / (stamp if n == 1 else f"{stamp}-{n:03d}")
+        try:
+            folder.mkdir()
+            return folder
+        except FileExistsError:
+            continue
+    raise Stop(f"{root} already holds 999 archives stamped {stamp}; remove some, then run it again")
 
 
 def archive_delivery(c) -> tuple[Path, list[str]]:
     """Copy the record, the lead-side logs, the lanes' evidence and the plan review into a new archive folder."""
-    archive = archive_root(c) / datetime.datetime.now().strftime("%Y%m%dT%H%M%S.%f")
-    archive.mkdir(parents=True)
+    archive = new_archive_folder(archive_root(c))
     for source in (c.state, c.flow_log, c.flow_log.parent / "evidence"):
         if source.exists():
             shutil.copytree(source, archive / source.name)
@@ -5696,19 +6274,50 @@ def closed_full_health(c) -> dict:
     return {"fullHealth": {"state": "skipped", **{key: skip[key] for key in ("posture", "source", "reason", "head")}}} if skip else {}
 
 
-def archive_step(c) -> tuple[Path, list[str]]:
+def kept_close(c, closed: dict | None) -> dict | None:
+    """closed.json, when it is this close's: it names the closing entry, or is an older one that names none."""
+    kept = load_json(lead_file(c, "closed.json"))
+    if not kept:
+        return None
+    return kept if kept.get("entry") is None or (closed is not None and kept["entry"] == closed["id"]) else None
+
+
+def finish_close(c, closed: dict, archive: Path) -> list[str]:
+    """The close's finished mark, once its archive has landed: in the live record, and in the archived copy and its
+    views. Writing it again changes nothing. A record with no started mark for this close, journaled by a tool that
+    wrote no marks, closes as before: unmarked."""
+    if close_progress(load_state()) is None:
+        return []
+    state_tool("close-finished", "--entry", str(closed["id"]))
+    copy = archive / c.state.name
+    if not (copy / "state.json").exists():
+        return ["marked the close finished in the record"]
+    tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    run([sys.executable, "-B", str(tool), "--dir", str(copy), "close-finished", "--entry", str(closed["id"])])
+    config = binding_state(c)
+    if config is not None:
+        script = c.release / "skills/orchestrate-work/scripts/render_state.py"
+        run([sys.executable, "-B", str(script), "--dir", str(copy), "--state-config",
+             json.dumps({**{key: value for key, value in config.items() if key != "liveHome"}, "publishers": []})],
+            cwd=c.root, check=False, timeout=300)
+    return ["marked the close finished in the record and its archive"]
+
+
+def archive_step(c, closed: dict) -> tuple[Path, list[str]]:
     """Release every lease the lead holds, archive the record, and fast-forward the operator's checkout when it is
-    clean and on the final base. Done once: a resumed close-out finds its archive."""
+    clean and on the final base. Done once for each close: a resumed close-out finds its archive."""
     marker = lead_file(c, "closed.json")
-    kept = load_json(marker)
+    kept = kept_close(c, closed)
     if kept:
         return Path(kept["archive"]), kept["said"]
-    doc = load_state()
-    leases = doc["state"]["leases"]
-    held = [lease for lease in leases if lease.get("holder") == "lead"]
+    held: list[dict] = []
+
+    def release(doc: dict) -> dict | None:
+        leases = doc["state"]["leases"]
+        held[:] = [lease for lease in leases if lease.get("holder") == "lead"]
+        return {"leases": [lease for lease in leases if lease.get("holder") != "lead"]} if held else None
     said = []
-    if held:
-        patch({"leases": [lease for lease in leases if lease.get("holder") != "lead"]}, doc["state"]["version"])
+    if patch_from(release, "the lead's released leases") is not None:
         said.append(f"released the lead's leases: {', '.join(str(lease.get('id')) for lease in held)}")
     archive, archived = archive_delivery(c)
     said += archived
@@ -5721,7 +6330,8 @@ def archive_step(c) -> tuple[Path, list[str]]:
                     else f"left {operator} where it is: it can't fast-forward to {c.base_ref}")
     else:
         said.append(f"left {operator} where it is: " + ("it has uncommitted changes" if dirty else f"it is on {branch}"))
-    marker.write_text(json.dumps({"archive": str(archive), "said": said, "at": now(), **closed_full_health(c)}, indent=2) + "\n")
+    marker.write_text(json.dumps({"archive": str(archive), "said": said, "at": now(), "entry": closed["id"],
+                                  **closed_full_health(c)}, indent=2) + "\n")
     return archive, said
 
 
@@ -5749,8 +6359,10 @@ def close_out(c, flapping: tuple[str, ...] = (), wait: bool = False) -> tuple[li
         said.append(line)
         if not ok:
             return said, False
-    archive, archived = archive_step(c)
+    closed = latest_close(load_state()["journal"])
+    archive, archived = archive_step(c, closed)
     said += archived
+    said += finish_close(c, closed, archive)
     # Read once the steps above ran, so a filing the publisher refused for good during them is listed.
     shown = [item["text"] for item in needs_you(c, load_state(), flapping, closing=True) if not item["holding"]]
     note = friction_step(c, archive, archived, shown)
@@ -5897,11 +6509,14 @@ class Supervisor:
             doc = derived.get("doc") or load_state()
             needs = derived["needs"] if "needs" in derived else needs_you(c, doc, self.flapping())
             holds = close_holds(c, doc, needs)
+            if all(hold.startswith("not cleaned up: ") for hold in holds):
+                # A lane may have moved off its story since this pass's cleanup, as its last word: clean up again, so
+                # the close never outruns the checkout it leaves, then read the holds again. A checkout this cleanup
+                # still can't remove keeps holding the close until a later pass removes it.
+                entry["cleanupBeforeClose"] = cleanup()
+                holds = close_holds(c, load_state(), needs)
             entry["needsYou"], entry["closeHeldBy"] = needs, holds
             if not holds:
-                # A lane may have moved off its story since this pass's cleanup, as its last word: clean up again, so
-                # the close never outruns the checkout it leaves.
-                entry["cleanupBeforeClose"] = cleanup()
                 entry["closeOut"], closed = close_out(c, self.flapping(), self.once)
                 render_views(c)
         except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
@@ -5966,7 +6581,7 @@ def lead_run(args) -> None:
     c = cfg()
     if not (c.state / "state.json").exists():
         raise Stop(f"no record at {c.state}: lead-init starts it, and its supervisor")
-    closed = load_json(lead_file(c, "closed.json"))
+    closed = kept_close(c, last_close(load_state()["journal"]))
     if closed and closed.get("by") == "lead-close":
         raise Stop("the delivery is closed: lead-close closed it. " + closed_words(closed))
     if args.resume:
@@ -6021,19 +6636,24 @@ def lead_resolve(args) -> None:
 def requeue(c, key: str) -> None:
     """Put a stopped candidate the lead has resolved back to queued at its handed head, with no new hand-off. The
     stage is the runner's, so the write is the runner's, exactly as the queue puts back what it takes again."""
-    doc = load_state()
-    item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
-    if item is None or item["stage"] != "stopped":
-        raise Stop(f"{key} isn't stopped ({item['stage'] if item else 'not queued'}); --requeue takes back a "
-                   "stopped candidate")
-    if item.get("pending"):
-        raise Stop(f"{key}'s hand-off still waits for acceptance; accept it instead")
-    if remote_head(c.branch(key)) not in (item["head"], item.get("syncedHead")):
-        raise Stop(f"{c.remote}/{c.branch(key)} moved from the handed head {item['head'][:10]}"
-                   + (f" and the queue's synced head {item['syncedHead'][:10]}" if item.get("syncedHead") else "")
-                   + ": the lane hands it off again")
-    state_tool("patch", "--writer", "runner", "--version", str(doc["state"]["version"]), "--element",
-               f"queue[subject={key}]", "--set", json.dumps({"/stage": "queued", "/checks": []}))
+    found: list[dict] = []
+
+    def back_to_queued(doc: dict) -> list[str]:
+        # Checked against each fresh read: a write in between may have taken the candidate past stopped.
+        item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
+        if item is None or item["stage"] != "stopped":
+            raise Stop(f"{key} isn't stopped ({item['stage'] if item else 'not queued'}); --requeue takes back a "
+                       "stopped candidate")
+        if item.get("pending"):
+            raise Stop(f"{key}'s hand-off still waits for acceptance; accept it instead")
+        if remote_head(c.branch(key)) not in (item["head"], item.get("syncedHead")):
+            raise Stop(f"{c.remote}/{c.branch(key)} moved from the handed head {item['head'][:10]}"
+                       + (f" and the queue's synced head {item['syncedHead'][:10]}" if item.get("syncedHead") else "")
+                       + ": the lane hands it off again")
+        found[:] = [item]
+        return ["--element", f"queue[subject={key}]", "--set", json.dumps({"/stage": "queued", "/checks": []})]
+    patch_from(back_to_queued, f"{key}'s re-queue", writer="runner")
+    item = found[0]
     state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                f"{key} re-queued at {item['head'][:10]} once its stop was resolved, with no new hand-off")
     print(f"re-queued {key}; the runner takes it again")
@@ -6058,25 +6678,59 @@ def ship(args) -> None:
         raise Stop(f"{path} or the branch {branch} already exists; remove both first if you mean to rebuild")
     if run(["git", "merge-base", "--is-ancestor", s["toolingCommit"], c.base_ref], check=False).returncode != 0:
         raise Stop(f"the tooling commit {s['toolingCommit']} is not an ancestor of {c.base_ref}")
-    diff = run(["git", "diff", "--binary", s["toolingCommit"], c.base_ref, "--", *s["paths"]]).stdout  # unstripped
+    diff, tooling = ship_diff(c, s)
     if not diff:
         raise Stop(f"nothing under {s['paths']} to ship")
     git("worktree", "add", "-q", "--no-track", "-b", branch, str(path), s["from"])
     applied = apply_patch(diff, path)
     files = git("diff", "--cached", "--name-only", cwd=path).splitlines()
-    outside = [f for f in files if not any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") for p in s["paths"])]
+    outside = [f for f in files if not any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") or p in (".", "./")
+                                           for p in s["paths"])]
     print(f"{branch} at {path}, from {s['from']} ({git('rev-parse', '--short', s['from'])})")
+    print(f"  left out the delivery's tooling: {', '.join(tooling[:10])}" + (f" and {len(tooling) - 10} more" if len(tooling) > 10 else ""))
+    # A tooling file the delivery changed again later is left out too: name every one, so a product change to a file
+    # the tooling commit also touched can't go missing unnoticed.
+    committed = set(git("diff", "--name-only", git("merge-base", s["from"], s["toolingCommit"]), s["toolingCommit"]).splitlines())
+    later = sorted(f for f in git("diff", "--name-only", s["toolingCommit"], c.base_ref, "--", *s["paths"]).splitlines()
+                   if f in committed and not f.startswith((".agents/", ".agent-skills/")))
+    if later:
+        print(f"  changed after the tooling commit and left out: {', '.join(later)}; a product change there doesn't ship")
     print(f"  {len(files)} file(s) staged; outside {s['paths']}: {outside or 'none'}")
+    if applied.returncode == 0 and not files:  # a clean apply that changed nothing is no product branch
+        git("worktree", "remove", "--force", str(path))
+        git("branch", "-D", branch)
+        raise Stop(f"nothing to ship: {s['from']} already has every change the delivery made under {s['paths']}; "
+                   f"removed {path} and {branch}")
     if applied.returncode != 0:
         unmerged = git("diff", "--name-only", "--diff-filter=U", cwd=path)
         raise Stop("git apply failed" + (f"; resolve the conflicts in {path}: {unmerged}" if unmerged else f": {applied.stderr.strip()}"))
     if outside:
         raise Stop("files outside the ship paths were staged; this must not happen")
+    # The lead's own integration is reviewed like a lane's unit before it reaches the default branch: the
+    # orchestration guide's close-out, "Review the integration".
+    review = ("then review the integration with `$review-work` before it reaches the default branch, as the "
+              "orchestration guide's close-out says")
     if args.no_gates or not c.gates:
-        print("  next: prepare the checkout, run the gates there, then commit as one change. Its PR waits for the user.")
+        print(f"  next: prepare the checkout, run the gates there, then commit as one change, {review}. "
+              "Its PR waits for the user.")
         return
     ship_gates(c, path, s)
-    print("  next: commit the staged change as one commit. Its PR waits for the user.")
+    print(f"  next: commit the staged change as one commit, {review}. Its PR waits for the user.")
+
+
+def ship_diff(c, s: dict) -> tuple[str, list[str]]:
+    """The delivery's product changes under the ship paths, as one diff to apply onto `ship.from`, and the tooling it
+    leaves out. The diff starts where the base and `ship.from` last met, so changes the base merged from the default
+    branch aren't shipped again. Tooling never ships, whenever it changed: every file the tooling commits touched
+    (from that meeting point to `ship.toolingCommit`), run-delivery's own `.agents/` settings, the installed generation
+    and `ship.gateTooling`."""
+    since = git("merge-base", s["from"], c.base_ref)
+    fork = git("merge-base", s["from"], s["toolingCommit"])
+    tooling = sorted(set(git("diff", "--name-only", fork, s["toolingCommit"]).splitlines())
+                     | {".agents", ".agent-skills", *s.get("gateTooling", [])})
+    left_out = [f":(top,exclude,literal){rel.rstrip('/')}" for rel in tooling]
+    diff = run(["git", "diff", "--binary", since, c.base_ref, "--", *s["paths"], *left_out]).stdout  # unstripped
+    return diff, tooling
 
 
 def ship_tooling(c, path: Path, s: dict) -> list[str]:
@@ -6197,7 +6851,7 @@ def adapter_contract(ia: dict, lease: "Lease", say) -> list[str]:
         failures = []
         try:
             if port_open(ia["port"]):
-                raise Stop(f"something else is listening on {ia['port']}; stop it first")
+                raise Stop(port_busy(ia["port"]))
             server = subprocess.Popen(expand_argv(ia["serve"]["argv"], dir=str(site), port=str(ia["port"])),
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             lease.track(server.pid)
@@ -6332,6 +6986,7 @@ class Doctor:
         return [
             ("platform", "host and tools", (), self.platform),
             ("binding", "orchestration binding", ("platform",), self.check_binding),
+            ("candidate", "merge queue candidate step", ("binding",), self.candidate_step),
             ("config", "configuration", ("platform",), self.config),
             ("generation", "release generation", ("platform",), self.generation),
             ("committed", "release on the delivery base", ("config", "binding", "generation"), self.committed),
@@ -6352,6 +7007,7 @@ class Doctor:
             ("delivery", "delivery file", ("config", "binding"), self.check_delivery),
             ("plan", "plan chapter", ("delivery",), self.check_plan),
             ("plan-sections", "plan sections", ("delivery",), self.stories_planned),
+            ("story-files", "story files", ("plan-sections",), self.story_files),
             ("context-sections", "context sections", ("delivery",), self.context_planned),
             ("remote-base", "configuration on the remote base", ("delivery",), self.remote_base),
             ("ready", "pull requests marked ready", ("delivery",), self.ready),
@@ -6457,6 +7113,16 @@ class Doctor:
                              "orchestration-binding/1")
         self.binding = binding
         return "ok", f"{path.name} validates against orchestration-binding/1"
+
+    def candidate_step(self):
+        import merge_queue  # noqa: E402  (the installed release's own, which check_binding put on the path)
+        argv = self.binding["candidate"]
+        problems = merge_queue.candidate_problems(argv, lambda relative: (self.root / relative).is_file(),
+                                                  os.environ.get("PATH"))
+        if problems:
+            return "wrong", (f"the binding's candidate step can't run: {'; '.join(problems)}; fix: correct its argv in "
+                             ".agents/orchestration.json, then run it once by hand with a branch that exists")
+        return "ok", f"{' '.join(argv)} resolves"
 
     def base(self) -> str | None:
         """The delivery base: the named delivery file's baseBranch, or the binding's base.ref (also when the file
@@ -6735,6 +7401,15 @@ class Doctor:
         problems = plan_problems(d, list(d.stories))
         return ("wrong", problems[0]) if problems else ("ok", f"each of the {len(d.stories)} stories has a section in {d.plan}")
 
+    def story_files(self):
+        d = self.delivery
+        problems = story_file_problems(d, list(d.stories), tracked_at_base(d))
+        if not problems:
+            return "ok", "every file a story's plan section names is its lane's"
+        # A warning, not a failure: a plan may move a file between lanes as its stories merge.
+        return "warn", ("; ".join(problems) + "; fix: move each to the story's lane's owns before it starts, or plan the "
+                        "story on the lane that owns it")
+
     def context_planned(self):
         d = self.delivery
         if not d.context_sections:
@@ -6763,9 +7438,9 @@ class Doctor:
             return self.not_applicable("no record yet: lead-init starts it, and its supervisor")
         held, recorded = read_lock(supervisor_lock_path(d))
         if not held:
-            closed = load_json(lead_file(d, "closed.json"))
-            if closed:
-                return "ok", "stopped; the delivery is closed. " + closed_words(closed)
+            said = closed_status(d)
+            if said is not None:
+                return ("wrong" if said.startswith("stopped partway") else "ok"), said
             return "wrong", f"the supervisor is down; fix: {flow_command()} lead-run --resume"
         if not Path("/proc/self/status").exists():
             return "ok", (f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}. Its children's "
@@ -6842,8 +7517,10 @@ def main(argv: list[str] | None = None) -> None:
     q = command(review_commands, "end", help="end a review that isn't converging, with the operator's reason")
     q.add_argument("--plan", help=plan_help)
     q.add_argument("--reason", required=True); q.set_defaults(fn=plan_review_end)
+    q = command(review_commands, "check", help="validate plan-review-evidence/1 records, hand-written or written by a review")
+    q.add_argument("records", nargs="+", metavar="RECORD"); q.set_defaults(fn=plan_review_check)
     p = command(sub, "gate"); p.add_argument("key"); p.set_defaults(fn=gate)
-    p = command(sub, "build"); p.add_argument("key"); p.set_defaults(fn=build)
+    p = command(sub, "build"); p.add_argument("key", nargs="?"); p.set_defaults(fn=build)
     p = command(sub, "app-check"); p.add_argument("key"); p.add_argument("name")
     p.add_argument("--mode", choices=("hold", "fail", "loaded"), required=True)
     p.add_argument("--path", required=True)
@@ -6916,7 +7593,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--url", help="published: the page's address")
     p.add_argument("keys", nargs="*"); p.add_argument("--after-build"); p.add_argument("--out", default="evidence-page")
     p.add_argument("--title"); p.add_argument("--intro")
-    p.add_argument("--note", action="append", help="KEY=TEXT: what to say for a story without clips")
+    p.add_argument("--note", action="append", help="KEY=TEXT: what to say for a story without clips; kept in the record "
+                   "for later rebuilds, and KEY= removes it")
     p.set_defaults(fn=lead_evidence)
     p = command(sub, "lead-plan", help="record a change to the approved plan, or a reason for one")
     plan_commands = p.add_subparsers(dest="action", required=True)

@@ -4,11 +4,13 @@ import contextlib
 import copy
 import errno
 import gc
+import hashlib
 import io
 import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -116,6 +118,17 @@ if args[:1] == ["--fail-with"]:
         print("FAIL: " + test + " boom")
     print("some other output")
     sys.exit(1)
+if args[:1] == ["--base-flake"]:
+    # Fails for real on a tree carrying the candidate's file; on the base, fails on a flaky test, once or always.
+    if pathlib.Path("src/candidate.txt").exists():
+        print("FAIL: test_real boom")
+        sys.exit(1)
+    flag = pathlib.Path(os.environ["MQ_LOG"] + ".base-flaked")
+    if args[1] == "always" or not flag.exists():
+        flag.write_text("")
+        print("FAIL: test_launcher_cancel flaked on the base")
+        sys.exit(1)
+    sys.exit(0)
 if args[:1] == ["--flaky-once"]:
     # Fails the first time only, naming its tests; a flag file remembers the first run.
     flag = pathlib.Path(os.environ["MQ_LOG"] + ".flaked-" + name)
@@ -228,6 +241,14 @@ if mode == "shadow":
     checks = [{"id": "always", "argv": [py, "-c", "pass"], "cwd": ".", "reasons": ["shadow"], "prerequisites": []}]
 if mode == "dummy":
     checks = [check("dummy")]
+if mode == "titled":
+    checks = [check("unit", "src/app.txt", title="Unit tests (webapp) <b>&"), check("plain")]
+if mode == "long-title":
+    checks = [check("unit", "src/app.txt", title="Behaviour scenario: " + "x" * 400)]
+if mode == "exact-title":
+    checks = [check("unit", "src/app.txt", title="T" * 200)]
+if mode == "empty-title":
+    checks = [check("unit", "src/app.txt", title="")]
 if mode == "prereq":
     checks = [check("build", "--build"), check("needs-build", "--needs-build", prerequisites=["build"])]
 if mode == "dirty":
@@ -254,6 +275,16 @@ with open(os.environ["MQ_LOG"], "a") as log:
 if sys.argv[1] == "ready":
     sys.exit(1 if os.environ.get("MQ_READY") == "refuse" else 0)
 branch, expected = sys.argv[2], sys.argv[3]
+if os.environ.get("MQ_MERGE") == "hang":
+    import time
+    time.sleep(30)
+if os.environ.get("MQ_MERGE") == "loud":
+    # A refusal that says why, and echoes what a careless helper might: secrets among the reason.
+    sys.stderr.write("POST /repos/acme/shop/pulls/7/merge\\n" + "x" * int(os.environ.get("MQ_MERGE_PAD", "0"))
+                     + "token=ghx_keyedvalue123 Authorization: Bearer abc.def.ghi\\n"
+                     # On a line of their own, so only the environment and token-shape rules can remove them.
+                     + os.environ.get("MQ_FORGE_TOKEN", "") + " ghp_" + "A" * 36 + "\\nmerge refused: Head branch was modified. Review and try the merge again.\\n")
+    sys.exit(1)
 if os.environ.get("MQ_MERGE") == "refuse" or tip(branch) != expected:
     sys.exit(1)
 onto = sys.argv[sys.argv.index("--onto") + 1] if "--onto" in sys.argv else "main"
@@ -535,6 +566,62 @@ class MergeQueueTestCase(unittest.TestCase):
         self.assertIn(last["outcome"], ("stopped", "refused"), last)
         self.assertEqual(last["stop"]["reason"], reason, last["stop"])
         return last
+
+
+class FixtureMaintenanceTests(MergeQueueTestCase):
+    """No git in a fixture starts automatic maintenance, so nothing repacks a repository a test is still reading.
+
+    Git starts a detached `git maintenance run --auto` after a push, a fetch or a
+    commit, and from Git 2.52 its default strategy repacks geometrically on nearly
+    every push: it writes a temporary `bitmap-ref-tips` file and deletes the packs
+    it merged, beside a test's next clone, fetch or push. On a loaded machine the
+    detached repack outlives the command that started it, which is how a fixture
+    clone failed to copy a vanished `bitmap-ref-tips` file and a batch landing
+    stopped on `runner_error` rather than `batch_tree_mismatch`. `quieten` sets
+    `maintenance.auto = false` on every repository the fixture makes.
+    """
+
+    MAINTENANCE = ("maintenance", "gc", "repack", "multi-pack-index", "pack-refs")
+
+    def started(self, trace: Path) -> list[list[str]]:
+        """Every git command the trace saw start, as its argv after the program."""
+        commands = []
+        for path in trace.iterdir():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                event = json.loads(line)
+                if event.get("event") in ("start", "child_start"):
+                    commands.append([str(part) for part in event.get("argv", [])[1:]])
+        return commands
+
+    def test_a_batch_whose_base_moves_starts_no_maintenance_in_any_fixture_repository(self) -> None:
+        trace = self.directory / "trace"
+        trace.mkdir()
+        with mock.patch.dict(os.environ, {"GIT_TRACE2_EVENT": str(trace)}):
+            adopter = self.adopter()
+            subjects = ["first", "second", "third"]
+            for name, path in zip(subjects, ("src/lib.txt", "src/app.txt", "src/extra.txt")):
+                self.candidate(adopter, {path: f"{name}\n"}, name=name)
+
+            def push_base(runner, subject) -> None:
+                if subject == "first":
+                    adopter.advance_base({"src/other.txt": "other\n"})
+
+            results = adopter.runner(seams={"before_batch_landing": push_base}).run_command("batch", subjects)
+        documents = {result.document()["candidate"]: result.document() for result in results}
+        self.assertEqual(documents["first"]["stop"]["reason"], "batch_tree_mismatch", documents["first"]["stop"])
+        commands = self.started(trace)
+        # The trace saw the fixture's pushes and the runner's fetches, so an empty match is not an empty trace.
+        self.assertTrue(any("push" in command for command in commands), commands[:20])
+        self.assertTrue(any("receive-pack" in " ".join(command) for command in commands), commands[:20])
+        maintenance = [command for command in commands if any(word in command for word in self.MAINTENANCE)]
+        self.assertEqual(maintenance, [])
+
+    def test_every_repository_the_fixture_makes_turns_automatic_maintenance_off(self) -> None:
+        adopter = self.adopter()
+        lane = adopter.lane
+        for repository in (adopter.remote, adopter.operator, lane):
+            with self.subTest(repository.name):
+                self.assertEqual(run("config", "--get", "maintenance.auto", cwd=repository), "false")
 
 
 class LeadWriteTests(MergeQueueTestCase):
@@ -894,6 +981,500 @@ class SyncSafetyTests(MergeQueueTestCase):
         self.assertIn("pre-commit", fired)
         self.assertIn("pre-push", fired)
         self.assertFalse(any(result.document()["hooksBypassed"] for result in results))
+
+
+REGEN_LOCK = """
+import hashlib, json, pathlib, sys
+# Refreshes only the digests, as update-provenance.py does: it never adds or removes an output.
+lock_path = pathlib.Path("gen/lock.json")
+if lock_path.exists():
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    for entry in lock["entries"]:
+        for output in entry["outputs"]:
+            path = pathlib.Path(output["path"])
+            if not path.is_file():
+                sys.exit(f"listed output {output['path']} is missing")
+            output["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    lock_path.write_bytes((json.dumps(lock, indent=2, sort_keys=True) + "\\n").encode("utf-8"))
+"""
+
+# A listing that fails as the version it reads says to, so each of the three versions can be made the one that fails.
+FAILING_LISTING = """
+import json, sys
+text = sys.stdin.read()
+lock = json.loads(text)
+how = lock.get("listingMode")
+if how == "fails":
+    sys.exit("cannot list")
+if how == "empty":
+    sys.exit(0)
+if how == "garbage":
+    print("not a listing")
+    sys.exit(0)
+if how == "deep":
+    print("[" * 100000 + "]" * 100000)
+    sys.exit(0)
+if how == "object":
+    print(json.dumps({"outputs": []}))
+    sys.exit(0)
+if how == "numbers":
+    print(json.dumps([1, 2]))
+    sys.exit(0)
+# A listing given an argument checks it is the head the runner placed there, so a missing placeholder value shows.
+if len(sys.argv) > 1 and len(sys.argv[1]) != 40:
+    sys.exit(f"expected a head, not {sys.argv[1]!r}")
+print(json.dumps(sorted(output["path"] for entry in lock["entries"] for output in entry["outputs"])))
+"""
+
+REAL_LISTING = [PY, "-B", str(ROOT / "scripts" / "update-provenance.py"), "--list-outputs"]
+
+
+def fixture_lock(files: dict[str, str], **extra: object) -> str:
+    """A lock in provenance.lock.json's real format, listing ``files`` with their digests."""
+    outputs = [{"path": path, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()} for path, text in sorted(files.items())]
+    lock = {"entries": [{"classification": "fixture", "id": "fixture-entry", "outputs": outputs, "owner": "fixture"}],
+            "schemaVersion": "provenance-lock/1", "sourceBaseline": {"commit": "0" * 40}, **extra}
+    return json.dumps(lock, indent=2, sort_keys=True) + "\n"
+
+
+class RegenerableListingTests(MergeQueueTestCase):
+    """A conflicted lock regenerates only when the candidate left its listing alone; otherwise the queue stops."""
+
+    START = {"src/app.txt": "app one\n", "src/lib.txt": "lib one\n", "gen/generated.txt": "app one\nlib one\n"}
+
+    def lock_adopter(self, listing: list[str] | None = None, **extra: object) -> Adopter:
+        adopter = self.adopter({"regenerable": {
+            "paths": ["gen/**"], "regenerators": [[PY, "tools/regen.py"], [PY, "tools/regen_lock.py"]],
+            "listings": [{"path": "gen/lock.json", "argv": listing or REAL_LISTING}]}})
+        adopter.advance_base({"tools/regen_lock.py": REGEN_LOCK.lstrip(), "tools/listing.py": FAILING_LISTING.lstrip(),
+                              "gen/lock.json": fixture_lock(self.START, **extra)})
+        return adopter
+
+    def side(self, files: dict[str, str], listed: dict[str, str] | None = None, **extra: object) -> dict[str, str]:
+        """A side's own change, carrying the generated file and the lock as that side regenerated them."""
+        tree = {**self.START, **files}
+        generated = "".join(tree[path] for path in sorted(path for path in tree if path.startswith("src/")))
+        tree["gen/generated.txt"] = generated
+        listed_files = {path: tree[path] for path in (listed if listed is not None else self.START)}
+        return {**files, "gen/generated.txt": generated, "gen/lock.json": fixture_lock(listed_files, **extra)}
+
+    def listed(self, adopter: Adopter, revision: str = "origin/main") -> list[str]:
+        lock = json.loads(adopter.show(revision, "gen/lock.json"))
+        return sorted(output["path"] for entry in lock["entries"] for output in entry["outputs"])
+
+    def stopped_naming_the_lock(self, adopter: Adopter, results: list, base: str, head: str, expect: str) -> None:
+        document = self.assertStopped(results, "source_conflict")
+        self.assertIn("gen/lock.json", document["stop"]["detail"])
+        self.assertIn(expect, document["stop"]["detail"])
+        self.assertEqual(document["stop"]["paths"], ["gen/lock.json"])
+        # Nothing was regenerated or pushed: the base and the candidate's branch are as they were.
+        self.assertEqual(adopter.tip("main"), base)
+        self.assertEqual(adopter.tip("feature"), head)
+
+    def test_a_digest_only_conflict_regenerates_and_merges(self) -> None:
+        adopter = self.lock_adopter()
+        self.candidate(adopter, self.side({"src/app.txt": "app two\n"}))
+        adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document().get("stop"))
+        # gen/generated.txt, a regenerable path with no listing, regenerates as before.
+        self.assertEqual(adopter.show("origin/main", "gen/generated.txt"), "app two\nlib two")
+        lock = json.loads(adopter.show("origin/main", "gen/lock.json"))
+        digests = {output["path"]: output["sha256"] for output in lock["entries"][0]["outputs"]}
+        self.assertEqual(digests["src/app.txt"], hashlib.sha256(b"app two\n").hexdigest())
+        self.assertEqual(digests["src/lib.txt"], hashlib.sha256(b"lib two\n").hexdigest())
+        self.assertEqual(sorted(digests), sorted(self.START))
+
+    def test_a_candidate_that_adds_an_output_stops_before_any_check(self) -> None:
+        adopter = self.lock_adopter()
+        head = self.candidate(adopter, self.side({"src/new.txt": "new\n"},
+                                                 listed={**self.START, "src/new.txt": "new\n"}))
+        base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        results = self.run_queue(adopter, "feature")
+        self.stopped_naming_the_lock(adopter, results, base, head, "added src/new.txt")
+        self.assertFalse([line for line in adopter.log_lines() if line.startswith("check ")], "no check ran")
+
+    def test_a_candidate_that_removes_an_output_stops(self) -> None:
+        adopter = self.lock_adopter()
+        listed = {path: text for path, text in self.START.items() if path != "src/lib.txt"}
+        head = self.candidate(adopter, self.side({"src/app.txt": "app two\n"}, listed=listed))
+        base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        self.stopped_naming_the_lock(adopter, self.run_queue(adopter, "feature"), base, head, "removed src/lib.txt")
+
+    def test_both_sides_adding_different_outputs_stops(self) -> None:
+        adopter = self.lock_adopter(listing=[PY, "tools/listing.py"])
+        head = self.candidate(adopter, self.side({"src/c.txt": "c\n"}, listed={**self.START, "src/c.txt": "c\n"}))
+        base = adopter.advance_base(self.side({"src/b.txt": "b\n"}, listed={**self.START, "src/b.txt": "b\n"}))
+        self.stopped_naming_the_lock(adopter, self.run_queue(adopter, "feature"), base, head, "added src/c.txt")
+
+    def test_an_output_only_the_base_added_regenerates_and_merges(self) -> None:
+        adopter = self.lock_adopter()
+        self.candidate(adopter, self.side({"src/app.txt": "app two\n"}))
+        adopter.advance_base(self.side({"src/b.txt": "b\n"}, listed={**self.START, "src/b.txt": "b\n"}))
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document().get("stop"))
+        self.assertEqual(self.listed(adopter), sorted([*self.START, "src/b.txt"]))
+        lock = json.loads(adopter.show("origin/main", "gen/lock.json"))
+        digests = {output["path"]: output["sha256"] for output in lock["entries"][0]["outputs"]}
+        self.assertEqual(digests["src/app.txt"], hashlib.sha256(b"app two\n").hexdigest())
+
+    def test_a_listing_that_fails_at_any_version_stops_and_never_regenerates(self) -> None:
+        for how, says in (("fails", "exited"), ("empty", "printed nothing"), ("garbage", "printed something other than a JSON array"),
+                          ("deep", "printed something other than a JSON array"),
+                          ("object", "printed something other than a JSON array of strings"),
+                          ("numbers", "printed something other than a JSON array of strings")):
+            for version in ("merge base", "base", "candidate"):
+                with self.subTest(listing=how, version=version):
+                    self.fresh()
+                    marked = {"listingMode": how}
+                    adopter = self.lock_adopter([PY, "tools/listing.py"], **(marked if version == "merge base" else {}))
+                    keep = marked if version == "merge base" else {}
+                    head = self.candidate(adopter, self.side({"src/app.txt": "app two\n"},
+                                                             **(marked if version == "candidate" else keep)))
+                    base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"},
+                                                          **(marked if version == "base" else keep)))
+                    results = self.run_queue(adopter, "feature")
+                    self.stopped_naming_the_lock(adopter, results, base, head, f"at the {version} {says}")
+
+    def test_a_version_without_the_path_stops(self) -> None:
+        adopter = self.adopter({"regenerable": {
+            "paths": ["gen/**"], "regenerators": [[PY, "tools/regen.py"], [PY, "tools/regen_lock.py"]],
+            "listings": [{"path": "gen/lock.json", "argv": REAL_LISTING}]}})
+        adopter.advance_base({"tools/regen_lock.py": REGEN_LOCK.lstrip()})
+        # Both sides add the lock: the merge base has none, so there is nothing to compare against.
+        head = self.candidate(adopter, self.side({"src/app.txt": "app two\n"}))
+        base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        self.stopped_naming_the_lock(adopter, self.run_queue(adopter, "feature"), base, head, "absent at the merge base")
+
+    def test_in_a_batch_a_member_that_adds_an_output_is_dropped_and_a_digest_only_one_merges(self) -> None:
+        adopter = self.lock_adopter()
+        self.candidate(adopter, self.side({"src/lib.txt": "lib two\n"}), name="first")
+        self.candidate(adopter, self.side({"src/new.txt": "new\n"}, listed={**self.START, "src/new.txt": "new\n"}),
+                       name="adds")
+        self.candidate(adopter, self.side({"src/app.txt": "app two\n"}), name="digests")
+        documents = {result.document()["candidate"]: result.document()
+                     for result in adopter.runner().run_command("batch", ["first", "adds", "digests"])}
+        self.assertEqual(documents["adds"]["stop"]["reason"], "source_conflict")
+        self.assertIn("dropped from the batch", documents["adds"]["stop"]["detail"])
+        self.assertIn("added src/new.txt", documents["adds"]["stop"]["detail"])
+        self.assertEqual((documents["first"]["outcome"], documents["digests"]["outcome"]), ("merged", "merged"))
+        self.assertEqual(self.listed(adopter), sorted(self.START))
+        self.assertEqual(adopter.show("origin/main", "gen/generated.txt"), "app two\nlib two")
+
+    def batched(self, adopter: Adopter, first: dict[str, str], member: dict[str, str]) -> dict:
+        """The member's result when a batch merges it into a tree that already holds ``first``: the batch's base side."""
+        self.candidate(adopter, first, name="first")
+        head = self.candidate(adopter, member, name="member")
+        documents = {result.document()["candidate"]: result.document()
+                     for result in adopter.runner().run_command("batch", ["first", "member"])}
+        self.assertEqual(documents["first"]["outcome"], "merged", documents["first"].get("stop"))
+        return {"document": documents["member"], "head": head}
+
+    def test_in_a_batch_every_row_holds_as_at_sync(self) -> None:
+        listed_without_lib = {path: text for path, text in self.START.items() if path != "src/lib.txt"}
+        stops = {
+            "removes": ({"src/lib.txt": "lib two\n"}, ({"src/app.txt": "app two\n"}, listed_without_lib), "removed src/lib.txt"),
+            "both add": ({"src/b.txt": "b\n"}, ({"src/c.txt": "c\n"}, {**self.START, "src/c.txt": "c\n"}), "added src/c.txt"),
+        }
+        for name, (first, (member, listed), expect) in stops.items():
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.lock_adopter()
+                base_listed = {**self.START, "src/b.txt": "b\n"} if name == "both add" else None
+                got = self.batched(adopter, self.side(first, listed=base_listed), self.side(member, listed=listed))
+                self.assertEqual(got["document"]["stop"]["reason"], "source_conflict")
+                self.assertIn("dropped from the batch", got["document"]["stop"]["detail"])
+                self.assertIn(expect, got["document"]["stop"]["detail"])
+                self.assertEqual(got["document"]["stop"]["paths"], ["gen/lock.json"])
+                self.assertEqual(adopter.tip("member"), got["head"])
+                # What landed is the first member's lock, untouched by the dropped one.
+                self.assertEqual(adopter.show("origin/main", "gen/lock.json").rstrip("\n"),
+                                 self.side(first, listed=base_listed)["gen/lock.json"].rstrip("\n"))
+        with self.subTest("only the batch's side added an output"):
+            self.fresh()
+            adopter = self.lock_adopter()
+            got = self.batched(adopter, self.side({"src/b.txt": "b\n"}, listed={**self.START, "src/b.txt": "b\n"}),
+                               self.side({"src/app.txt": "app two\n"}))
+            self.assertEqual(got["document"]["outcome"], "merged", got["document"].get("stop"))
+            self.assertEqual(self.listed(adopter), sorted([*self.START, "src/b.txt"]))
+        for how in ("fails", "empty", "garbage", "deep", "object", "numbers"):
+            for version in ("merge base", "base", "candidate"):
+                with self.subTest(listing=how, version=version):
+                    self.fresh()
+                    marked = {"listingMode": how}
+                    keep = marked if version == "merge base" else {}
+                    adopter = self.lock_adopter([PY, "tools/listing.py"], **keep)
+                    first = self.side({"src/lib.txt": "lib two\n"}, **(marked if version == "base" else keep))
+                    member = self.side({"src/app.txt": "app two\n"}, **(marked if version == "candidate" else keep))
+                    got = self.batched(adopter, first, member)
+                    self.assertEqual(got["document"]["stop"]["reason"], "source_conflict")
+                    self.assertIn(f"listing of gen/lock.json at the {version}", got["document"]["stop"]["detail"])
+                    self.assertEqual(adopter.tip("member"), got["head"])
+        with self.subTest("a version without the path"):
+            self.fresh()
+            adopter = self.adopter({"regenerable": {
+                "paths": ["gen/**"], "regenerators": [[PY, "tools/regen.py"], [PY, "tools/regen_lock.py"]],
+                "listings": [{"path": "gen/lock.json", "argv": REAL_LISTING}]}})
+            adopter.advance_base({"tools/regen_lock.py": REGEN_LOCK.lstrip()})
+            got = self.batched(adopter, self.side({"src/lib.txt": "lib two\n"}), self.side({"src/app.txt": "app two\n"}))
+            self.assertEqual(got["document"]["stop"]["reason"], "source_conflict")
+            self.assertIn("absent at the merge base", got["document"]["stop"]["detail"])
+
+    def test_a_listing_gets_the_placeholder_values_of_its_step(self) -> None:
+        argv = [PY, "tools/listing.py", "{head}"]
+        adopter = self.lock_adopter(argv)
+        self.candidate(adopter, self.side({"src/app.txt": "app two\n"}))
+        adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document().get("stop"))
+        self.fresh()
+        adopter = self.lock_adopter(argv)
+        got = self.batched(adopter, self.side({"src/lib.txt": "lib two\n"}), self.side({"src/app.txt": "app two\n"}))
+        self.assertEqual(got["document"]["outcome"], "merged", got["document"].get("stop"))
+
+    def test_a_listing_must_name_one_regenerable_file(self) -> None:
+        binding = Adopter.default_binding(type("Fixture", (), {"work": Path("/work"), "state": Path("/state"),
+                                                                "remote": Path("/r"), "log": Path("/l")})())
+        for name, listings, error in (
+                ("a pattern", [{"path": "gen/*.json", "argv": REAL_LISTING}], "names one file, not a pattern"),
+                ("a source file", [{"path": "src/app.txt", "argv": REAL_LISTING}], "is not a regenerable path"),
+                ("twice", [{"path": "gen/lock.json", "argv": REAL_LISTING}] * 2, "is listed twice"),
+                ("an empty argv", [{"path": "gen/lock.json", "argv": []}], "an argv must not be empty"),
+                ("an unknown placeholder", [{"path": "gen/lock.json", "argv": ["{nope}"]}], "unknown placeholder")):
+            with self.subTest(name):
+                changed = {**binding, "regenerable": {**binding["regenerable"], "listings": listings}}
+                self.assertTrue(any(error in problem for problem in queue.binding_errors(changed)),
+                                queue.binding_errors(changed))
+        self.assertEqual(queue.binding_errors({**binding, "regenerable": {
+            **binding["regenerable"], "listings": [{"path": "gen/lock.json", "argv": REAL_LISTING}]}}), [])
+
+
+REVIEW_GATE = """
+import os, subprocess, sys, time
+remote = os.environ["MQ_REMOTE"]
+branch, head = sys.argv[1], sys.argv[2]
+with open(os.environ["MQ_LOG"], "a") as log:
+    log.write("review " + branch + " " + head + "\\n")
+listed = subprocess.run(["git", "ls-remote", "--heads", remote, "refs/heads/" + branch],
+                        capture_output=True, text=True, check=True).stdout.split()
+mode = os.environ.get("MQ_REVIEW", "current")
+if mode == "slow":
+    # Past the gate's own timeout, within checkTimeoutSeconds: only the gate's timeout stops it.
+    time.sleep(5)
+if mode == "pause":
+    time.sleep(2)
+if mode == "missing":
+    sys.exit("no review by the pipeline yet; token=ghp_SECRETVALUE123")
+if mode == "stale" or not listed or listed[0] != head:
+    sys.exit("the latest review is of another head")
+"""
+
+GATE = {"argv": [PY, "tools/review_gate.py", "{branch}", "{expectedHead}"], "timeoutSeconds": 10}
+
+
+class ReviewGateTests(MergeQueueTestCase):
+    """The merge step merges only with a review current at the synced head, when the binding declares a gate."""
+
+    def gated(self, review: str = "current", gate: dict | None = None) -> Adopter:
+        adopter = self.environment_adopter({"MQ_REVIEW": review}, {"reviewGate": gate or GATE})
+        adopter.advance_base({"tools/review_gate.py": REVIEW_GATE.lstrip()})
+        return adopter
+
+    def forge_steps(self, adopter: Adopter) -> list[str]:
+        return [line.split()[0] + " " + line.split()[1] for line in adopter.log_lines()
+                if line.startswith(("forge ready", "forge merge", "review "))]
+
+    def test_a_current_review_at_the_synced_head_merges(self) -> None:
+        adopter = self.gated()
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        adopter.advance_base({"src/lib.txt": "lib two\n"})
+        results = self.run_queue(adopter, "feature")
+        document = results[-1].document()
+        self.assertEqual(document["outcome"], "merged", document.get("stop"))
+        # The gate ran after ready and before merge, given the synced head the base now carries as a parent.
+        self.assertEqual(self.forge_steps(adopter), ["forge ready", "review feature", "forge merge"])
+        reviewed = next(line.split()[2] for line in adopter.log_lines() if line.startswith("review "))
+        self.assertEqual(reviewed, document["syncedHead"])
+        self.assertNotEqual(reviewed, adopter.item("feature")["head"], "the sync moved the head, and the gate saw the new one")
+
+    def test_a_missing_stale_or_slow_review_stops_and_nothing_merges(self) -> None:
+        for review, how in (("missing", "exited 1"), ("stale", "exited 1"), ("slow", "timed out")):
+            with self.subTest(review=review):
+                self.fresh()
+                gate = {**GATE, "timeoutSeconds": 1} if review == "slow" else None
+                adopter = self.gated(review, gate)
+                self.candidate(adopter, {"src/app.txt": "app two\n"})
+                before = adopter.tip("main")
+                document = self.assertStopped(self.run_queue(adopter, "feature"), "review_not_current")
+                Draft202012Validator(schema("merge-queue-result")).validate(document)
+                self.assertIn(f"the review gate {how}", document["stop"]["detail"])
+                self.assertIn(document["syncedHead"], document["stop"]["detail"])
+                self.assertEqual(adopter.tip("main"), before)
+                self.assertNotIn("forge merge", self.forge_steps(adopter))
+                self.assertEqual(adopter.item("feature")["stage"], "stopped")
+
+    def test_the_gates_output_stays_in_its_log_and_out_of_the_record(self) -> None:
+        adopter = self.gated("missing")
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "review_not_current")
+        log = re.search(r"logs/\S+\.log", document["stop"]["detail"]).group(0)
+        self.assertIn("ghp_SECRETVALUE123", (adopter.state / log).read_text(encoding="utf-8"))
+        for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
+            self.assertNotIn("ghp_SECRETVALUE123", (adopter.state / name).read_text(encoding="utf-8"))
+        self.assertNotIn("ghp_SECRETVALUE123", json.dumps(document))
+
+    def test_in_a_batch_each_member_lands_only_with_a_current_review(self) -> None:
+        adopter = self.gated()
+        self.candidate(adopter, {"src/one.txt": "one\n"}, name="one")
+        self.candidate(adopter, {"src/two.txt": "two\n"}, name="two")
+        documents = {result.document()["candidate"]: result.document()
+                     for result in adopter.runner().run_command("batch", ["one", "two"])}
+        self.assertEqual((documents["one"]["outcome"], documents["two"]["outcome"]), ("merged", "merged"))
+        reviewed = [line.split()[1:] for line in adopter.log_lines() if line.startswith("review ")]
+        self.assertEqual(reviewed, [["one", documents["one"]["syncedHead"]], ["two", documents["two"]["syncedHead"]]])
+        self.fresh()
+        adopter = self.gated("missing")
+        self.candidate(adopter, {"src/one.txt": "one\n"}, name="one")
+        self.candidate(adopter, {"src/two.txt": "two\n"}, name="two")
+        before = adopter.tip("main")
+        documents = {result.document()["candidate"]: result.document()
+                     for result in adopter.runner().run_command("batch", ["one", "two"])}
+        self.assertEqual(documents["one"]["stop"]["reason"], "review_not_current")
+        self.assertEqual(adopter.tip("main"), before)
+        self.assertNotIn("forge merge", self.forge_steps(adopter))
+
+    def test_a_gate_without_its_own_timeout_has_the_checks_timeout(self) -> None:
+        # Two seconds is within checkTimeoutSeconds (20), so the gate finishes and the candidate merges.
+        adopter = self.gated("pause", {"argv": GATE["argv"]})
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        document = self.run_queue(adopter, "feature")[-1].document()
+        self.assertEqual(document["outcome"], "merged", document.get("stop"))
+
+    def test_without_a_gate_merging_is_unchanged(self) -> None:
+        adopter = self.environment_adopter({"MQ_REVIEW": "missing"})
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        self.assertEqual(self.run_queue(adopter, "feature")[-1].document()["outcome"], "merged")
+        self.assertNotIn("review feature", self.forge_steps(adopter))
+
+    def test_the_binding_refuses_a_gate_that_names_no_head(self) -> None:
+        binding = Adopter.default_binding(type("Fixture", (), {"work": Path("/work"), "state": Path("/state"),
+                                                                "remote": Path("/r"), "log": Path("/l")})())
+        for name, gate, error in (
+                ("no head", {"argv": [PY, "gate.py", "{branch}"]}, "must name the head"),
+                ("a head inside an element", {"argv": [PY, "gate.py", "--head={expectedHead}"]}, "must name the head"),
+                ("an empty argv", {"argv": []}, "an argv must not be empty"),
+                ("an unknown placeholder", {"argv": [PY, "{expectedHead}", "{nope}"]}, "unknown placeholder"),
+                ("over the ceiling", {**GATE, "timeoutSeconds": 61}, "above checkTimeoutCeiling"),
+                ("no time at all", {**GATE, "timeoutSeconds": 0}, "timeoutSeconds")):
+            with self.subTest(name):
+                problems = queue.binding_errors({**binding, "reviewGate": gate})
+                self.assertTrue(any(error in problem for problem in problems), problems)
+        for head in ("{expectedHead}", "{head}"):
+            with self.subTest(head=head):
+                self.assertEqual(queue.binding_errors({**binding, "reviewGate": {"argv": [PY, "gate.py", head]}}), [])
+        self.assertEqual(queue.binding_errors({**binding, "reviewGate": {**GATE, "timeoutSeconds": 60}}), [],
+                         "a gate may take the whole ceiling")
+
+
+class MergeRefusalDetailTests(MergeQueueTestCase):
+    """A refused merge says why in the stop detail, bounded and scrubbed, and keeps its whole output in a log."""
+
+    SECRET = "s3cr3t-forge-value-from-the-environment"
+
+    def refused(self, pad: int = 0) -> tuple[Adopter, dict]:
+        adopter = self.environment_adopter({"MQ_MERGE": "loud", "MQ_MERGE_PAD": str(pad), "MQ_FORGE_TOKEN": self.SECRET})
+        self.candidate(adopter)
+        before = adopter.tip("main")
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "merge_refused")
+        Draft202012Validator(schema("merge-queue-result")).validate(document)
+        self.assertEqual(adopter.tip("main"), before)
+        return adopter, document
+
+    def test_the_merge_commands_reason_reaches_the_stop_detail_and_its_secrets_do_not(self) -> None:
+        adopter, document = self.refused()
+        detail = document["stop"]["detail"]
+        self.assertIn("merge refused: Head branch was modified. Review and try the merge again.", detail)
+        self.assertIn(document["syncedHead"], detail)
+        for secret in (self.SECRET, "ghx_keyedvalue123", "abc.def.ghi", "ghp_" + "A" * 36):
+            with self.subTest(secret=secret):
+                self.assertNotIn(secret, detail)
+                for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
+                    self.assertNotIn(secret, (adopter.state / name).read_text(encoding="utf-8"))
+                self.assertNotIn(secret, json.dumps(document))
+        self.assertIn("[redacted]", detail)
+        # The whole output, secrets and all, stays in the log the detail names, under the state directory.
+        log = re.search(r"logs/\S+\.log", detail).group(0)
+        kept = (adopter.state / log).read_text(encoding="utf-8")
+        self.assertIn(self.SECRET, kept)
+        self.assertIn("Head branch was modified", kept)
+
+    def test_a_long_refusal_keeps_only_its_bounded_tail(self) -> None:
+        _, document = self.refused(pad=5000)
+        detail = document["stop"]["detail"]
+        self.assertIn("Head branch was modified", detail, "the end of the output is what's kept")
+        self.assertNotIn("x" * (queue.TAIL_LIMIT + 1), detail)
+        self.assertLess(len(detail), queue.TAIL_LIMIT + 400)
+
+    def test_a_silent_refusal_says_so_and_still_names_its_log(self) -> None:
+        adopter = self.environment_adopter({"MQ_MERGE": "refuse"})
+        self.candidate(adopter)
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "merge_refused")
+        self.assertIn("printed nothing", document["stop"]["detail"])
+        self.assertTrue((adopter.state / re.search(r"logs/\S+\.log", document["stop"]["detail"]).group(0)).is_file())
+
+    def test_a_merge_that_times_out_says_so_and_names_its_log(self) -> None:
+        adopter = self.environment_adopter({"MQ_MERGE": "hang"}, {"checkTimeoutSeconds": 4})
+        self.candidate(adopter)
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "merge_refused")
+        self.assertIn(": timed out;", document["stop"]["detail"])
+        self.assertTrue((adopter.state / re.search(r"logs/\S+\.log", document["stop"]["detail"]).group(0)).is_file())
+
+    def test_the_scrub_covers_each_kind_of_name_shape_and_length(self) -> None:
+        names = {"API_KEY": "key-value-1", "DB_PASSWORD": "pass-value-2", "APP_SECRET": "secret-value-3",
+                 "CLOUD_CREDENTIALS": "cred-value-4", "SSH_PRIVATE_KEY": "private-value-5", "FORGE_TOKEN": "token-value-6"}
+        for name, value in names.items():
+            with self.subTest(name=name):
+                self.assertEqual(queue.scrubbed_tail(f"saw {value} here", {name: value}), "saw [redacted] here")
+        # The length boundary: four characters are redacted, three are left, as too likely to be ordinary text.
+        self.assertEqual(queue.scrubbed_tail("x abcd y", {"A_TOKEN": "abcd"}), "x [redacted] y")
+        self.assertEqual(queue.scrubbed_tail("x abc y", {"A_TOKEN": "abc"}), "x abc y")
+        shapes = ("ghp_" + "a" * 36, "gho_" + "b" * 36, "github_pat_" + "c" * 30, "glpat-" + "d" * 20,
+                  "xoxb-" + "1" * 12, "AKIA" + "E" * 16, "sk-" + "f" * 24)
+        for shape in shapes:
+            with self.subTest(shape=shape[:6]):
+                self.assertEqual(queue.scrubbed_tail(f"leaked {shape} there", {}), "leaked [redacted] there")
+        self.assertEqual(queue.scrubbed_tail("Proxy-Authorization: Basic Zm9vOmJhcg==\nnext", {}),
+                         "Proxy-Authorization: [redacted]\nnext")
+
+    def test_the_scrub_redacts_before_it_cuts(self) -> None:
+        environment = {"FORGE_TOKEN": "value-of-the-token", "API_KEY": "abcd1234", "PATH": "/usr/bin", "SHORT_SECRET": "ab"}
+        cases = {
+            "an environment secret": ("failed with value-of-the-token", "failed with [redacted]"),
+            "a keyed value": ("password: hunter22 then", "password: [redacted] then"),
+            "an authorization header, to the end of its line": ("Authorization: Bearer xyz.abc\nnext", "Authorization: [redacted]\nnext"),
+            "a bearer value": ("sent Bearer xyz.abc", "sent Bearer [redacted]"),
+            "a token shape": ("saw github_pat_" + "B" * 30 + " there", "saw [redacted] there"),
+            "a variable not named secret": ("in /usr/bin", "in /usr/bin"),
+            "a secret too short to match safely": ("ab cd", "ab cd"),
+            "JSON-quoted keys": ('{"token": "plainvalue1", "password":"hunter22"}', '{"token": "[redacted]", "password":"[redacted]"}'),
+        }
+        for name, (text, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(queue.scrubbed_tail(text, environment), expected)
+        # A value containing a shorter one is redacted whole.
+        self.assertEqual(queue.scrubbed_tail("leak abcdSECRETTAIL99 end", {"A_TOKEN": "abcd", "B_TOKEN": "abcdSECRETTAIL99"}),
+                         "leak [redacted] end")
+        # The runner's own identity is not a secret, though its variable names hold "AUTH"; an auth segment is.
+        self.assertEqual(queue.scrubbed_tail("refused by merge-queue rule", {"GIT_AUTHOR_NAME": "merge-queue"}),
+                         "refused by merge-queue rule")
+        for name in ("HTTP_AUTH", "AUTH_HEADER", "FORGE_OAUTH_KEY", "FORGE_AUTHORIZATION", "AUTHKEY", "NPM_AUTHKEY"):
+            with self.subTest(name=name):
+                self.assertEqual(queue.scrubbed_tail("sent hidden-value-1", {name: "hidden-value-1"}), "sent [redacted]")
+        # A secret straddling the cut is redacted whole before the tail is taken, so no part of it survives.
+        straddling = "value-of-the-token" + "y" * 20
+        tail = queue.scrubbed_tail(straddling, environment, limit=25)
+        self.assertEqual(tail, ("[redacted]" + "y" * 20)[-25:])
+        self.assertFalse(any(part in tail for part in ("value", "the-token", "of-the")))
 
 
 class SelectionTests(MergeQueueTestCase):
@@ -2331,6 +2912,13 @@ class BatchTests(MergeQueueTestCase):
         self.assertIn("base_broken", documents["third"]["stop"]["detail"])
         self.assertEqual(adopter.item("third")["stage"], "queued")
         self.assertEqual(adopter.item("first")["stage"], "stopped")
+        # The culprit's re-run on the base is journaled on the culprit, between its failure and the stop.
+        rerun = [(entry["kind"], entry["subject"]) for entry in state_tool.read_journal(adopter.state)
+                 if entry["kind"] in ("base.rerun.started", "base.rerun.finished", "base.broken")]
+        self.assertEqual(rerun, [("base.rerun.started", "first"), ("base.rerun.finished", "first"),
+                                 ("base.broken", "first")])
+        [finished] = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "base.rerun.finished"]
+        self.assertIn("also fails", finished["summary"])
 
     def test_members_a_failed_batch_requeues_are_journalled_so_the_stats_end_their_check(self) -> None:
         adopter = self.adopter()
@@ -2682,6 +3270,82 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertTrue(unit)
         self.assertNotIn("expectedSeconds", unit[0])
 
+    def test_a_providers_titles_reach_the_record_and_untitled_checks_keep_their_ids(self) -> None:
+        adopter = self.adopter({"alwaysRun": [check_entry("always", title="Always-on smoke")]}, mode="titled")
+        self.candidate(adopter)
+        patched, seen = self.recorded_steps()
+        with patched:
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        rows = {check["id"]: check for check in adopter.item("feature")["checks"]}
+        self.assertEqual(rows["unit"]["title"], "Unit tests (webapp) <b>&")
+        self.assertEqual(rows["always"]["title"], "Always-on smoke")
+        self.assertNotIn("title", rows["plain"])
+        # The checking panel carries the same titles from the first write that names the checks.
+        self.assertTrue(seen)
+        named = next(steps for steps in seen if any(step["label"] == "unit" for step in steps))
+        first = {step["label"]: step for step in named}
+        self.assertEqual(first["unit"]["title"], "Unit tests (webapp) <b>&")
+        self.assertEqual(first["always"]["title"], "Always-on smoke")
+        self.assertNotIn("title", first["plain"])
+        every = [step for steps in seen for step in steps if step["label"] == "unit"]
+        self.assertTrue(all(step["title"] == "Unit tests (webapp) <b>&" for step in every))
+        # The id stays the check's name everywhere else.
+        [selection] = [result.document()["selection"] for result in results if result.document().get("selection")]
+        self.assertIn("unit", selection["checks"])
+
+    def test_a_long_title_is_cut_to_the_records_limit(self) -> None:
+        adopter = self.adopter(mode="long-title")
+        self.candidate(adopter)
+        self.run_queue(adopter, "feature")
+        title = next(check for check in adopter.item("feature")["checks"] if check["id"] == "unit")["title"]
+        self.assertEqual(len(title), 200)
+        self.assertTrue(title.startswith("Behaviour scenario: xxx"))
+        self.assertTrue(title.endswith("…"))
+
+    def test_a_title_of_exactly_the_records_limit_is_kept_whole(self) -> None:
+        adopter = self.adopter(mode="exact-title")
+        self.candidate(adopter)
+        self.run_queue(adopter, "feature")
+        title = next(check for check in adopter.item("feature")["checks"] if check["id"] == "unit")["title"]
+        self.assertEqual(title, "T" * 200)
+
+    def test_a_titles_change_leaves_a_checks_definition_as_it_was(self) -> None:
+        binding = {"checkTimeoutSeconds": 20, "profiles": {}, "environment": {}, "prepare": [], "hooks": "bypass"}
+        plain = check_entry("unit", "src/app.txt")
+        definitions = {queue.check_definition({**plain, **more}, binding)
+                       for more in ({}, {"title": "Unit tests"}, {"title": "Unit tests, renamed"})}
+        self.assertEqual(len(definitions), 1)
+        self.assertNotEqual(queue.check_definition({**plain, "argv": [PY, "tools/check.py", "other"]}, binding),
+                            definitions.pop())
+
+    def test_a_batchs_first_write_names_its_checks_by_title(self) -> None:
+        adopter = self.adopter(mode="titled")
+        for name, changes in (("first", {"src/lib.txt": "lib two\n"}), ("second", {"src/extra.txt": "extra\n"})):
+            self.candidate(adopter, changes, name=name)
+        patched, seen = self.recorded_steps()
+        with patched:
+            adopter.runner().run_command("batch", ["first", "second"])
+        named = next(steps for steps in seen if any(step["label"] == "unit" for step in steps))
+        self.assertEqual({step["label"]: step.get("title") for step in named}["unit"], "Unit tests (webapp) <b>&")
+        self.assertTrue(all(step["state"] == "pending" for step in named))
+
+    def test_a_binding_check_with_an_empty_title_is_refused(self) -> None:
+        adopter = self.adopter({"alwaysRun": [check_entry("always", title="")]})
+        self.candidate(adopter)
+        last = self.run_queue(adopter, "feature")[-1].document()
+        self.assertEqual(last["outcome"], "refused", last)
+        self.assertIn("title", last["stop"]["detail"])
+
+    def test_an_empty_title_makes_the_providers_answer_malformed(self) -> None:
+        adopter = self.adopter(mode="empty-title")
+        self.candidate(adopter)
+        results = self.run_queue(adopter, "feature")
+        [selection] = [result.document()["selection"] for result in results if result.document().get("selection")]
+        [provider] = [record for record in selection["providers"] if record["source"] == "base"]
+        self.assertEqual(provider["outcome"], "malformed")
+        self.assertIn("title", provider["detail"])
+
     def test_a_passing_run_adds_to_the_history_and_keeps_the_last_five(self) -> None:
         adopter = self.visible_adopter([check_entry("always")])
         self.seed_history(adopter, {"checks": {"always": {"seconds": [1, 2, 3, 4, 5], "flakes": 2}},
@@ -2799,11 +3463,38 @@ class CheckVisibilityTests(MergeQueueTestCase):
             self.assertNotIn("candidate.stopped", kinds)
             self.assertNotIn("base.broken", kinds)
             self.assertEqual(adopter.item("feature")["stage"], "checking")
+            # Before the re-run starts, the record says the candidate failed and waits on it.
+            deadline = time.monotonic() + 30
+            while not self.journal(adopter, "base.rerun.started") and time.monotonic() < deadline:
+                time.sleep(0.02)
+            [started] = self.journal(adopter, "base.rerun.started")
+            self.assertEqual(started["subject"], "feature")
+            self.assertIn("held", started["summary"])
+            self.assertEqual(self.journal(adopter, "base.rerun.finished"), [])
+            now = state_tool.read_state(adopter.state)["meta"]["checking"]["now"]
+            self.assertEqual(now["subject"], "feature")
+            self.assertEqual(now["baseRerun"]["checks"], ["held"])
+            self.assertLessEqual(now["baseRerun"]["startedAt"], started["at"])
+            self.assertEqual(adopter.item("feature")["stage"], "checking")
         finally:
             marker.write_text(str(ended))
             turn.join(60)
         self.assertFalse(turn.is_alive())
         return results, adopter
+
+    def rerun_order(self, adopter: Adopter, stop: str) -> dict:
+        """The re-run's entries fall between the failure and the stop; returns its verdict entry."""
+        order = [entry["kind"] for entry in state_tool.read_journal(adopter.state)
+                 if entry["kind"] in ("check.failed", "base.rerun.started", "base.rerun.finished", stop)]
+        self.assertEqual(order, ["check.failed", "base.rerun.started", "base.rerun.finished", stop])
+        [started] = self.journal(adopter, "base.rerun.started")
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertEqual(finished["subject"], "feature")
+        self.assertLessEqual(started["at"], finished["at"])
+        self.assertRegex(finished["summary"], r"after [0-9]+s")
+        # The waiting state ends with the turn.
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])
+        return finished
 
     def test_the_wait_returns_on_the_failure_while_the_base_rerun_holds_and_the_base_passes(self) -> None:
         results, adopter = self.wait_through_a_held_base_rerun(0)
@@ -2812,6 +3503,9 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertIn("test_held", document["stop"]["detail"])
         self.assertEqual(self.journal(adopter, "base.broken"), [])
         self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
+        finished = self.rerun_order(adopter, "candidate.stopped")
+        self.assertIn("held passed", finished["summary"])
+        self.assertIn("the failure is the candidate's", finished["summary"])
 
     def test_the_wait_returns_on_the_failure_while_the_base_rerun_holds_and_the_base_fails(self) -> None:
         results, adopter = self.wait_through_a_held_base_rerun(1)
@@ -2819,6 +3513,201 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertTrue(document["stop"]["queueStopped"])
         self.assertEqual(len(self.journal(adopter, "base.broken")), 1)
         self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
+        finished = self.rerun_order(adopter, "base.broken")
+        self.assertIn("held also fails", finished["summary"])
+        self.assertNotIn("the failure is the candidate's", finished["summary"])
+
+    def rerun_with(self, adopter: Adopter, *, judged: bool = True, starts: bool = True, raises: bool = False) -> tuple[list, list]:
+        """Run the queue with the base re-run bent as asked; returns the results and the panel at each re-run entry."""
+        real_journal, real_run_one, real_checkout = queue.Runner.journal, queue.Runner.run_one, queue.Runner.checkout
+        real_prerequisites = queue.Runner.base_prerequisites_pass
+        seen: list = []
+        rerunning = []
+
+        def journal(runner, kind, summary, subject=None):
+            if kind in ("base.rerun.started", "base.rerun.finished"):
+                seen.append((kind, copy.deepcopy(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])))
+            if kind == "base.rerun.started":
+                rerunning.append(True)
+            return real_journal(runner, kind, summary, subject)
+
+        def run_one(runner, check, checkout, context):
+            return None if rerunning and not starts else real_run_one(runner, check, checkout, context)
+
+        def prerequisites(runner, *args):
+            return real_prerequisites(runner, *args) if judged else False
+
+        def checkout(runner, commit, label, *args, **kwargs):
+            if raises and label == "base-rerun":
+                raise OSError("no room for the base checkout")
+            return real_checkout(runner, commit, label, *args, **kwargs)
+
+        with mock.patch.object(queue.Runner, "journal", journal), mock.patch.object(queue.Runner, "run_one", run_one), \
+                mock.patch.object(queue.Runner, "base_prerequisites_pass", prerequisites), \
+                mock.patch.object(queue.Runner, "checkout", checkout):
+            results = self.run_queue(adopter, "feature")
+        return results, seen
+
+    def test_the_panel_says_the_candidate_waits_on_the_rerun_until_its_verdict_and_no_longer(self) -> None:
+        adopter = self.adopter(mode="implicit")
+        self.candidate(adopter, {"src/app.txt": "FAIL here\n"})
+        results, seen = self.rerun_with(adopter)
+        self.assertStopped(results, "check_failed")
+        (started, at_start), (finished, at_verdict) = seen
+        self.assertEqual((started, finished), ("base.rerun.started", "base.rerun.finished"))
+        self.assertEqual(at_start["baseRerun"]["checks"], ["implicit"])
+        # The verdict is in: the panel still names the candidate until the stop, but no longer says it waits.
+        self.assertEqual(at_verdict["subject"], "feature")
+        self.assertNotIn("baseRerun", at_verdict)
+
+    def test_a_base_rerun_that_cannot_judge_or_start_the_check_says_so_and_leaves_the_failure_the_candidates(self) -> None:
+        for name, bent, words in (("unjudged", {"judged": False}, "implicit could not be judged there"),
+                                  ("unstarted", {"starts": False}, "implicit could not start there")):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.adopter(mode="implicit")
+                self.candidate(adopter, {"src/app.txt": "FAIL here\n"})
+                results, _ = self.rerun_with(adopter, **bent)
+                self.assertStopped(results, "check_failed")
+                [finished] = self.journal(adopter, "base.rerun.finished")
+                self.assertIn(words + ": the failure is the candidate's", finished["summary"])
+                self.assertNotIn("passed", finished["summary"])
+
+    def test_a_base_rerun_that_raises_partway_still_journals_its_end_and_the_error(self) -> None:
+        adopter = self.adopter(mode="implicit")
+        self.candidate(adopter, {"src/app.txt": "FAIL here\n"})
+        results, seen = self.rerun_with(adopter, raises=True)
+        last = results[-1].document()
+        self.assertEqual(last["outcome"], "stopped", last)
+        self.assertIn("no room for the base checkout", last["stop"]["detail"])
+        self.assertEqual([kind for kind, _ in seen], ["base.rerun.started", "base.rerun.finished"])
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertIn("ended without a verdict (OSError)", finished["summary"])
+        self.assertNotIn("baseRerun", seen[1][1])
+
+    def test_a_failure_with_no_check_to_rerun_on_the_base_journals_no_rerun(self) -> None:
+        adopter = self.adopter(mode="new-cwd")
+        self.candidate(adopter, {"src/app.txt": "app two\n", "newdir/readme.txt": "new\n"})
+        self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
+        self.assertEqual(self.journal(adopter, "base.rerun.started"), [])
+        self.assertEqual(self.journal(adopter, "base.rerun.finished"), [])
+
+    BASE_FLAKES = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-9"}]
+
+    def base_flake_adopter(self, how: str) -> Adopter:
+        adopter = self.visible_adopter([check_entry("suite", "--base-flake", how)], flakes=self.BASE_FLAKES)
+        self.candidate(adopter, {"src/candidate.txt": "candidate\n"})
+        return adopter
+
+    def test_a_declared_flake_failing_on_the_base_rerun_is_retried_once_there(self) -> None:
+        adopter = self.base_flake_adopter("once")
+        results = self.run_queue(adopter, "feature")
+        document = self.assertStopped(results, "check_failed")
+        self.assertFalse(document["stop"]["queueStopped"])
+        self.assertEqual(self.journal(adopter, "base.broken"), [])
+        [retried] = self.journal(adopter, "check.retried")
+        self.assertEqual(retried["subject"], "feature")
+        self.assertIn("base re-run", retried["summary"])
+        self.assertIn("test_launcher_cancel", retried["summary"])
+        self.assertIn("FLAKE-9", retried["summary"])
+        [started] = self.journal(adopter, "base.rerun.started")
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertLess(started["id"], retried["id"])
+        self.assertLess(retried["id"], finished["id"])
+        self.assertIn("suite passed after a flake retry", finished["summary"])
+        self.assertEqual(state_tool.read_state(adopter.state)["meta"]["checkHistory"]["checks"]["suite"]["flakes"], 1)
+        # The record keeps the retry's run, the one the verdict stands on, not the flaky first one.
+        rerun = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")["baseRerun"]
+        self.assertNotIn("failures", rerun)
+        self.assertIn(f"(log {rerun['log']})", finished["summary"])
+        self.assertNotIn("flaked on the base", (adopter.state / rerun["log"]).read_text(encoding="utf-8"))
+
+    def test_a_declared_flake_failing_its_base_retry_too_breaks_the_base_naming_its_tests_and_log(self) -> None:
+        adopter = self.base_flake_adopter("always")
+        results = self.run_queue(adopter, "feature")
+        document = self.assertStopped(results, "base_broken")
+        self.assertEqual(len(self.journal(adopter, "check.retried")), 1)
+        row = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")
+        rerun = row["baseRerun"]
+        self.assertEqual(rerun["failures"], ["test_launcher_cancel"])
+        self.assertIn("flaked on the base", (adopter.state / rerun["log"]).read_text(encoding="utf-8"))
+        # The candidate's own run keeps its tests and log beside the re-run's.
+        self.assertEqual(row["failures"], ["test_real"])
+        self.assertNotEqual(row["log"], rerun["log"])
+        words = f"suite (failing test_launcher_cancel; log {rerun['log']})"
+        self.assertIn(words, document["stop"]["detail"])
+        [broken] = self.journal(adopter, "base.broken")
+        self.assertIn(words, broken["summary"])
+
+    def test_a_base_rerun_failure_keeps_its_log_and_names_its_tests_like_a_check_failure(self) -> None:
+        adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha", "test_beta")])
+        adopter.advance_base({"src/app.txt": "app broken\n"})
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"})
+        results = self.run_queue(adopter, "feature")
+        document = self.assertStopped(results, "base_broken")
+        self.assertTrue(document["stop"]["queueStopped"])
+        row = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")
+        rerun = row["baseRerun"]
+        self.assertEqual(rerun["failures"], ["test_alpha", "test_beta"])
+        self.assertTrue(rerun["log"].startswith("logs/"))
+        self.assertIn("some other output", (adopter.state / rerun["log"]).read_text(encoding="utf-8"))
+        [failed] = self.journal(adopter, "check.failed")
+        [broken] = self.journal(adopter, "base.broken")
+        # Named as check.failed names the candidate's run: the check, then its failing tests and log.
+        self.assertIn(f"suite (failing test_alpha, test_beta; log {row['log']})", failed["summary"])
+        self.assertIn(f"suite (failing test_alpha, test_beta; log {rerun['log']})", broken["summary"])
+        self.assertIn(rerun["log"], document["stop"]["detail"])
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertIn(f"suite also fails (failing test_alpha, test_beta; log {rerun['log']})", finished["summary"])
+        # No flake is declared, so nothing is retried.
+        self.assertEqual(self.journal(adopter, "check.retried"), [])
+
+    def test_a_base_rerun_that_times_out_is_never_retried_even_under_a_whole_check_flake(self) -> None:
+        adopter = self.visible_adopter([check_entry("hang", "--sleep-child", timeoutSeconds=2)],
+                                       flakes=[{"check": "hang", "ref": "FLAKE-3"}])
+        self.candidate(adopter, {"src/candidate.txt": "candidate\n"})
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "base_broken")
+        self.assertIn("hang", document["stop"]["detail"])
+        self.assertEqual(self.journal(adopter, "check.retried"), [])
+        history = state_tool.read_state(adopter.state)["meta"]["checkHistory"]["checks"]
+        self.assertEqual(history.get("hang", {}).get("flakes", 0), 0)
+
+    def test_a_base_flake_retry_that_cannot_start_leaves_the_failure_the_candidates(self) -> None:
+        adopter = self.base_flake_adopter("always")
+        real = queue.Runner.run_one
+        base_runs = []
+
+        def run_one(runner, check, checkout, context):
+            if "base-rerun" in checkout.name:
+                base_runs.append(check["id"])
+                if len(base_runs) == 2:
+                    return None
+            return real(runner, check, checkout, context)
+
+        with mock.patch.object(queue.Runner, "run_one", run_one):
+            document = self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        self.assertFalse(document["stop"]["queueStopped"])
+        self.assertEqual(self.journal(adopter, "base.broken"), [])
+        self.assertEqual(len(self.journal(adopter, "check.retried")), 1)
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertIn("suite could not start there on its flake retry: the failure is the candidate's", finished["summary"])
+        # The first run, the only one there is, stays on the record.
+        rerun = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")["baseRerun"]
+        self.assertEqual(rerun["failures"], ["test_launcher_cancel"])
+        self.assertIn("flaked on the base", (adopter.state / rerun["log"]).read_text(encoding="utf-8"))
+
+    def test_a_base_rerun_that_passes_keeps_its_log_on_the_record(self) -> None:
+        adopter = self.base_flake_adopter("once")
+        (Path(str(adopter.log) + ".base-flaked")).write_text("")
+        results = self.run_queue(adopter, "feature")
+        self.assertStopped(results, "check_failed")
+        row = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")
+        self.assertNotIn("failures", row["baseRerun"])
+        self.assertTrue((adopter.state / row["baseRerun"]["log"]).is_file())
+        self.assertEqual(self.journal(adopter, "check.retried"), [])
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertIn(row["baseRerun"]["log"], finished["summary"])
 
     def test_a_failure_matching_only_a_declared_flake_is_retried_once_and_journaled(self) -> None:
         flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
@@ -4814,6 +5703,241 @@ class LeadSelectionTests(MergeQueueTestCase):
         self.assertIn("selection_invalid", reasons)
         self.assertNotEqual(adopter.item("first")["stage"], "merged")
 
+
+class CandidateStepTests(MergeQueueTestCase):
+    """The candidate step says why it gave no branch and head, a binding must pass {candidate}, and serve holds,
+    taking nothing, when the step's program or script is missing."""
+
+    SECRET = "s3cr3t-candidate-value-from-the-environment"
+
+    def script(self, code: str) -> list[str]:
+        return [PY, "-c", code, "{candidate}"]
+
+    def stop(self, adopter: Adopter, reason: str = "candidate_unresolved") -> tuple[str, str]:
+        """The stop's detail and the journal's candidate.stopped summary."""
+        self.candidate(adopter)
+        document = self.assertStopped(self.run_queue(adopter, "feature"), reason)
+        Draft202012Validator(schema("merge-queue-result")).validate(document)
+        summary = next(entry["summary"] for entry in reversed(state_tool.read_journal(adopter.state))
+                       if entry["kind"] == "candidate.stopped")
+        self.assertIn(document["stop"]["detail"], summary)
+        return document["stop"]["detail"], summary
+
+    def test_a_missing_script_stops_with_the_interpreters_own_words(self) -> None:
+        detail, _ = self.stop(self.adopter({"candidate": [PY, "tools/missing.py", "{candidate}"]}))
+        self.assertTrue(detail.startswith("feature did not resolve to a branch and head: the candidate command exited 2; "
+                                          "stderr: "), detail)
+        self.assertIn("can't open file", detail)
+        self.assertIn("missing.py", detail)
+
+    def test_a_secret_in_stderr_never_reaches_the_record(self) -> None:
+        code = ("import os, sys; sys.stderr.write('auth failed with ' + os.environ['MQ_API_TOKEN'] + ' and ghp_' + 'A' * 36)"
+                "; sys.exit(1)")
+        adopter = self.environment_adopter({"MQ_API_TOKEN": self.SECRET}, {"candidate": self.script(code)})
+        detail, _ = self.stop(adopter)
+        self.assertIn("the candidate command exited 1; stderr: auth failed with [redacted] and [redacted]", detail)
+        for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
+            text = (adopter.state / name).read_text(encoding="utf-8")
+            self.assertNotIn(self.SECRET, text)
+            self.assertNotIn("ghp_" + "A" * 36, text)
+
+    def test_text_where_json_belongs_is_shown_bounded(self) -> None:
+        detail, _ = self.stop(self.adopter({"candidate": self.script("print('x' * 1000 + ' END')")}))
+        self.assertIn("the candidate command printed no JSON; stdout: ", detail)
+        self.assertTrue(detail.endswith("x END"), detail)
+        self.assertNotIn("x" * queue.CANDIDATE_OUT_LIMIT, detail)
+
+    def test_json_without_a_head_shows_the_answer(self) -> None:
+        detail, _ = self.stop(self.adopter({"candidate": self.script("import json; print(json.dumps({'branch': 'feature'}))")}))
+        self.assertIn('its JSON has no branch and full head; stdout: {"branch": "feature"}', detail)
+
+    def test_a_silent_failure_says_so(self) -> None:
+        detail, _ = self.stop(self.adopter({"candidate": self.script("import sys; sys.exit(4)")}))
+        self.assertTrue(detail.endswith("the candidate command exited 4; it printed nothing"), detail)
+
+    def test_a_candidate_command_that_runs_too_long_says_it_timed_out(self) -> None:
+        adopter = self.adopter({"candidate": self.script("import time; time.sleep(30)"), "checkTimeoutSeconds": 1})
+        detail, _ = self.stop(adopter)
+        self.assertTrue(detail.endswith("the candidate command timed out after 1s"), detail)
+
+    def test_a_failing_command_is_never_resolved_even_with_a_valid_answer(self) -> None:
+        code = ("import subprocess, sys; subprocess.run([sys.executable, 'tools/candidate.py', sys.argv[1]], check=True)"
+                "; sys.exit(3)")
+        detail, _ = self.stop(self.adopter({"candidate": self.script(code)}))
+        self.assertIn("the candidate command exited 3; stdout: {", detail)
+
+    def test_a_failing_command_that_explains_on_stdout_shows_it(self) -> None:
+        detail, _ = self.stop(self.adopter({"candidate": self.script("print('no such PR'); import sys; sys.exit(1)")}))
+        self.assertTrue(detail.endswith("the candidate command exited 1; stdout: no such PR"), detail)
+
+    def test_an_invalid_branch_is_named(self) -> None:
+        code = "import json; print(json.dumps({'branch': 'bad..name', 'head': '0' * 40}))"
+        detail, _ = self.stop(self.adopter({"candidate": self.script(code)}), "ref_invalid")
+        self.assertEqual(detail, 'feature resolved to an invalid branch name: "bad..name"')
+
+    def test_a_candidate_argv_without_the_placeholder_is_invalid(self) -> None:
+        adopter = self.adopter()
+        rule = "/candidate: the candidate argv must use {candidate} as a whole element"
+        self.assertEqual(queue.binding_errors({**adopter.binding, "candidate": [PY, "tools/candidate.py", "feature"]}), [rule])
+        self.assertEqual(queue.binding_errors(adopter.binding), [])
+        self.fresh()
+        adopter = self.adopter({"candidate": [PY, "tools/candidate.py", "feature"]})
+        self.candidate(adopter)
+        self.assertIn(rule, self.assertStopped(self.run_queue(adopter, "feature"), "binding_invalid")["stop"]["detail"])
+        served = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertIn(rule, self.assertStopped(served, "binding_invalid")["stop"]["detail"])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+
+    def held(self, adopter: Adopter) -> str:
+        hold = state_tool.read_state(adopter.state)["meta"]["hold"]
+        blockers = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "blocker.recorded"]
+        self.assertEqual(len(blockers), 1)
+        self.assertNotIn("candidate.stopped", [entry["kind"] for entry in state_tool.read_journal(adopter.state)])
+        return hold["reason"]
+
+    def test_serve_started_with_a_missing_script_holds_and_takes_nothing(self) -> None:
+        adopter = self.adopter({"candidate": [PY, "tools/missing.py", "{candidate}"]})
+        self.candidate(adopter)
+        results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertEqual(results, [])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertIn("serve cannot use its setup: the binding's candidate step can't run: its script tools/missing.py "
+                      "doesn't exist in the repository.", self.held(adopter))
+
+    def test_a_script_reached_through_a_committed_symlink_holds_nothing(self) -> None:
+        # As an installed release's .agent-skills/current is: the candidate step runs in a checkout, where it resolves.
+        adopter = self.adopter()
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        run("checkout", "--quiet", "-B", "base-work", "origin/main", cwd=adopter.lane)
+        os.symlink("tools", adopter.lane / "current-tools")
+        adopter.write(adopter.lane, ".agents/orchestration.json", json.dumps(
+            {**adopter.binding, "candidate": [PY, "-B", "current-tools/candidate.py", "{candidate}"]}, indent=2) + "\n")
+        run("add", "--all", cwd=adopter.lane)
+        run("commit", "--quiet", "-m", "a linked tools folder", cwd=adopter.lane)
+        run("push", "--quiet", "origin", "base-work:main", cwd=adopter.lane)
+        self.candidate(adopter)
+        results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"].get("hold"), [r.document()["stop"] for r in results])
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+        runner = adopter.runner()
+        base_head = runner.load()
+        self.assertEqual(runner.candidate_step_problems(base_head), [])
+        runner.binding = {**runner.binding, "candidate": [PY, "current-tools/missing.py", "{candidate}"]}
+        self.assertEqual(runner.candidate_step_problems(base_head),
+                         ["its script current-tools/missing.py doesn't exist in the repository"])
+        runner.binding = {**runner.binding, "candidate": [PY, "./current-tools", "{candidate}"]}
+        self.assertEqual(runner.candidate_step_problems(base_head),
+                         ["its script ./current-tools doesn't exist in the repository"], "a folder isn't a script")
+
+    def test_serve_started_on_an_empty_queue_with_a_missing_script_holds_at_once(self) -> None:
+        adopter = self.adopter({"candidate": [PY, "./tools/missing.py", "{candidate}"]})
+        self.assertEqual(queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True), [])
+        self.assertIn("its script ./tools/missing.py doesn't exist in the repository", self.held(adopter))
+
+    def test_a_present_script_named_from_the_top_level_holds_nothing(self) -> None:
+        adopter = self.adopter({"candidate": [PY, "./tools/candidate.py", "{candidate}"]})
+        self.candidate(adopter)
+        results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"].get("hold"))
+        self.assertEqual(adopter.item("feature")["stage"], "merged", [r.document()["stop"] for r in results])
+
+    def test_a_candidate_step_broken_after_serve_starts_holds_before_its_first_turn(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.recover
+        broken: list[bool] = []
+
+        def break_after_startup(runner) -> None:
+            # The startup check has passed; the candidate step breaks before the first turn takes anything.
+            if not broken:
+                broken.append(True)
+                adopter.advance_base({".agents/orchestration.json": json.dumps(
+                    {**adopter.binding, "candidate": [PY, "tools/missing.py", "{candidate}"]}, indent=2) + "\n"})
+            real(runner)
+
+        with mock.patch.object(queue.Runner, "recover", break_after_startup):
+            results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertEqual(results, [])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertIn("its script tools/missing.py doesn't exist in the repository", self.held(adopter))
+
+    def test_a_candidate_step_broken_during_a_turn_puts_its_candidate_back_and_holds(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        real = queue.Runner.run_command
+        broken: list[bool] = []
+
+        def break_then_run(runner, *args, **kwargs):
+            if not broken:
+                broken.append(True)
+                adopter.advance_base({".agents/orchestration.json": json.dumps(
+                    {**adopter.binding, "candidate": [PY, "tools/missing.py", "{candidate}"]}, indent=2) + "\n"})
+            return real(runner, *args, **kwargs)
+
+        with mock.patch.object(queue.Runner, "run_command", break_then_run):
+            results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True)
+        self.assertEqual(results[-1].document()["stop"]["reason"], "candidate_unresolved")
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        hold = state_tool.read_state(adopter.state)["meta"]["hold"]
+        self.assertIn("its script tools/missing.py doesn't exist in the repository", hold["reason"])
+
+    def test_the_program_check_finds_each_missing_part(self) -> None:
+        present = {"tools/c.py", "run.py", "tools/c.ts", "tools/c.sh", "tools/c.pl", "tools/c.js", "tools/c.rb"}.__contains__
+        cases = [
+            ([PY, "tools/c.py", "{candidate}"], []),
+            ([PY, "-B", "./tools/c.py", "{candidate}"], []),
+            ([PY, "tools/missing.py", "{candidate}"], ["its script tools/missing.py doesn't exist in the repository"]),
+            ([PY, "/no/such/script.py", "{candidate}"], ["its script /no/such/script.py doesn't exist"]),
+            (["no-such-program-anywhere", "{candidate}"], ["its program no-such-program-anywhere isn't on PATH"]),
+            (["/no/such/program", "{candidate}"], ["its program /no/such/program doesn't exist"]),
+            (["tools/run.sh", "{candidate}"], ["its program tools/run.sh isn't in the repository"]),
+            ([PY, "-c", "print(1)", "--out=x/y.py", "https://example.test/a.py", "run.py", "{candidate}"], []),
+            ([PY, "lost.py", "{candidate}"], ["its script lost.py doesn't exist in the repository"]),
+            # Values with a slash that aren't the script, inline code and expressions aren't paths.
+            ([PY, "tools/c.py", "candidate", "--key", "{candidate}", "--prefix", "story/", "--repo", "owner/repo"], []),
+            (["sh", "-c", 'git rev-parse refs/heads/"$1"', "sh", "{candidate}"], []),
+            ([PY, "-c", 'import sys; print("a/b")', "{candidate}"], []),
+            ([PY, "-m", "tools.candidate", "data/in", "{candidate}"], []),
+            # A code flag the check doesn't know: its value reads as the operand, but it's an expression, not a path.
+            (["perl", "-E", 'say "a/b.pl"', "{candidate}"], []),
+            # Subcommands and flag values never take the script's place.
+            (["deno", "run", "-A", "tools/c.ts", "{candidate}"], []),
+            (["bun", "run", "tools/c.ts", "{candidate}"], []),
+            (["bash", "-o", "pipefail", "tools/c.sh", "{candidate}"], []),
+            (["perl", "-I", "lib/perl5", "tools/c.pl", "{candidate}"], []),
+            # Python's -I is isolated mode and takes no value, so the script after it is still checked.
+            ([PY, "-I", "tools/gone.py", "{candidate}"], ["its script tools/gone.py doesn't exist in the repository"]),
+            ([PY, "-I", "tools/c.py", "{candidate}"], []),
+            (["pypy3", "-I", "tools/gone.py", "{candidate}"], ["its script tools/gone.py doesn't exist in the repository"]),
+            (["py", "-I", "tools/gone.py", "{candidate}"], ["its script tools/gone.py doesn't exist in the repository"]),
+            (["PYTHON.EXE", "-I", "tools/gone.py", "{candidate}"], ["its script tools/gone.py doesn't exist in the repository"]),
+            # Ruby's -I, like perl's, names a folder to load from: its value isn't the script.
+            (["ruby", "-I", "lib/ruby", "tools/c.rb", "{candidate}"], []),
+            (["node", "--import", "tsx/esm", "tools/c.js", "{candidate}"], []),
+            (["node", "--require", "ts-node/register", "tools/c.js", "{candidate}"], []),
+            (["node", "--loader", "ts-node/esm", "tools/c.js", "{candidate}"], []),
+            (["node", "--print", "process.argv/2", "{candidate}"], []),
+            (["node", "-r", "ts-node/register", "tools/c.js", "{candidate}"], []),
+            (["node", "-p", "process.argv/2", "{candidate}"], []),
+            (["deno", "run", "-A", "tools/gone.ts", "{candidate}"], ["its script tools/gone.ts doesn't exist in the repository"]),
+            (["bash", "-o", "pipefail", "tools/gone/run", "{candidate}"], ["its script tools/gone/run doesn't exist in the repository"]),
+            (["git", "log", "--format=%H", "--jq", '.a + "/" + .b', "{candidate}"], []),
+            ([PY, "-X", "importtime", "-X/importtime", "-Wignore", "tools/c.py", "{candidate}"], []),
+            ([PY, "-X", "importtime", "tools/gone.py", "{candidate}"], ["its script tools/gone.py doesn't exist in the repository"]),
+            (["git", "x/y", "lib/helper.rb", "{candidate}"], ["its script lib/helper.rb doesn't exist in the repository"]),
+            ([PY, "tools/c.py", "other/thing.py", "{candidate}"], ["its script other/thing.py doesn't exist in the repository"]),
+        ]
+        # Stand-ins for interpreters this machine may not have, first on the PATH the check reads.
+        stand_ins = self.directory / "bin"
+        stand_ins.mkdir()
+        for name in ("deno", "bun", "node", "perl", "ruby", "pypy3", "py", "PYTHON.EXE"):
+            (stand_ins / name).write_text("#!/bin/sh\n")
+            (stand_ins / name).chmod(0o755)
+        search = os.pathsep.join([str(stand_ins), os.environ.get("PATH", "")])
+        for argv, expected in cases:
+            with self.subTest(argv=argv):
+                self.assertEqual(queue.candidate_problems(argv, lambda path: present(path.removeprefix("./")), search),
+                                 expected)
 
 class ProviderRefusalTests(MergeQueueTestCase):
     """A provider that exits non-zero widens to fallback, unless the binding's selection.refusalStops makes it a stop."""
