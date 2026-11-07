@@ -3614,6 +3614,11 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertLess(retried["id"], finished["id"])
         self.assertIn("suite passed after a flake retry", finished["summary"])
         self.assertEqual(state_tool.read_state(adopter.state)["meta"]["checkHistory"]["checks"]["suite"]["flakes"], 1)
+        # The record keeps the retry's run, the one the verdict stands on, not the flaky first one.
+        rerun = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")["baseRerun"]
+        self.assertNotIn("failures", rerun)
+        self.assertIn(f"(log {rerun['log']})", finished["summary"])
+        self.assertNotIn("flaked on the base", (adopter.state / rerun["log"]).read_text(encoding="utf-8"))
 
     def test_a_declared_flake_failing_its_base_retry_too_breaks_the_base_naming_its_tests_and_log(self) -> None:
         adopter = self.base_flake_adopter("always")
@@ -3650,8 +3655,44 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertIn(f"suite (failing test_alpha, test_beta; log {row['log']})", failed["summary"])
         self.assertIn(f"suite (failing test_alpha, test_beta; log {rerun['log']})", broken["summary"])
         self.assertIn(rerun["log"], document["stop"]["detail"])
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertIn(f"suite also fails (failing test_alpha, test_beta; log {rerun['log']})", finished["summary"])
         # No flake is declared, so nothing is retried.
         self.assertEqual(self.journal(adopter, "check.retried"), [])
+
+    def test_a_base_rerun_that_times_out_is_never_retried_even_under_a_whole_check_flake(self) -> None:
+        adopter = self.visible_adopter([check_entry("hang", "--sleep-child", timeoutSeconds=2)],
+                                       flakes=[{"check": "hang", "ref": "FLAKE-3"}])
+        self.candidate(adopter, {"src/candidate.txt": "candidate\n"})
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "base_broken")
+        self.assertIn("hang", document["stop"]["detail"])
+        self.assertEqual(self.journal(adopter, "check.retried"), [])
+        history = state_tool.read_state(adopter.state)["meta"]["checkHistory"]["checks"]
+        self.assertEqual(history.get("hang", {}).get("flakes", 0), 0)
+
+    def test_a_base_flake_retry_that_cannot_start_leaves_the_failure_the_candidates(self) -> None:
+        adopter = self.base_flake_adopter("always")
+        real = queue.Runner.run_one
+        base_runs = []
+
+        def run_one(runner, check, checkout, context):
+            if "base-rerun" in checkout.name:
+                base_runs.append(check["id"])
+                if len(base_runs) == 2:
+                    return None
+            return real(runner, check, checkout, context)
+
+        with mock.patch.object(queue.Runner, "run_one", run_one):
+            document = self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        self.assertFalse(document["stop"]["queueStopped"])
+        self.assertEqual(self.journal(adopter, "base.broken"), [])
+        self.assertEqual(len(self.journal(adopter, "check.retried")), 1)
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertIn("suite could not start there on its flake retry: the failure is the candidate's", finished["summary"])
+        # The first run, the only one there is, stays on the record.
+        rerun = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")["baseRerun"]
+        self.assertEqual(rerun["failures"], ["test_launcher_cancel"])
+        self.assertIn("flaked on the base", (adopter.state / rerun["log"]).read_text(encoding="utf-8"))
 
     def test_a_base_rerun_that_passes_keeps_its_log_on_the_record(self) -> None:
         adopter = self.base_flake_adopter("once")
